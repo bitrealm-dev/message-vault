@@ -1,13 +1,21 @@
 //! Read-only message export query used by `GET /v1/export/messages`
 //! and `GET /v1/export/messages/count`.
 
+use axum::Json;
+use axum::extract::{Query, State};
+use axum::http::HeaderMap;
 use rusqlite::{Connection, params_from_iter};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::db::sql::group_rows_by_id;
+use crate::export_api::{self};
 #[cfg(test)]
 use crate::search_query::MAX_SEARCH_QUERY_BYTES;
 use crate::search_query::{FtsNode, ParsedSearchQuery, SearchMode, validate_search_query};
+use crate::server::{
+    ApiError, AppState, require_export_access, resolve_auth, resolve_import_account,
+    with_configured_db_map,
+};
 
 pub use crate::page_limits::{DEFAULT_EXPORT_LIMIT, MAX_EXPORT_LIMIT, MAX_EXPORT_OFFSET};
 
@@ -1091,6 +1099,130 @@ fn load_tapbacks(
             ))
         },
     )
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ExportMessagesQuery {
+    #[serde(default)]
+    pub(crate) q: String,
+    #[serde(default)]
+    pub(crate) limit: Option<usize>,
+    #[serde(default)]
+    pub(crate) offset: Option<usize>,
+    #[serde(default)]
+    pub(crate) cursor: Option<String>,
+    #[serde(default)]
+    pub(crate) account: Option<String>,
+    #[serde(default)]
+    pub(crate) source: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ExportMessagesCountQuery {
+    #[serde(default)]
+    q: String,
+    #[serde(default)]
+    account: Option<String>,
+    #[serde(default)]
+    source: Option<String>,
+}
+
+/// Count messages, conversations, and attachment fingerprints matching a
+/// query.
+#[utoipa::path(
+    get,
+    path = "/v1/export/messages/count",
+    tag = "Export",
+    security(("bearer" = [])),
+    params(
+        ("q" = String, Query, description = "Metadata search subset; empty is all non-trashed"),
+        ("account" = Option<String>, Query),
+        ("source" = Option<String>, Query)
+    ),
+    responses(
+        (status = 200, body = crate::export_api::ExportCountResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn export_messages_count_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ExportMessagesCountQuery>,
+) -> Result<Json<export_api::ExportCountResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_export_access(&auth)?;
+    let account =
+        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
+    let q = query.q.clone();
+    let source = query.source.clone();
+
+    let body = with_configured_db_map(&state.cfg.paths.db, "export count task", move |conn| {
+        export_api::export_message_count(
+            conn,
+            ExportCountOpts {
+                account_id: &account,
+                query: &q,
+                source_override: source.as_deref(),
+            },
+        )
+    })
+    .await?;
+    Ok(Json(body))
+}
+
+/// Export messages matching a search query (message mode; cursor paging).
+#[utoipa::path(
+    get,
+    path = "/v1/export/messages",
+    tag = "Export",
+    security(("bearer" = [])),
+    params(
+        ("q" = String, Query, description = "Metadata search subset; empty is all non-trashed"),
+        ("limit" = Option<usize>, Query, description = "Page size, default 100, max 500"),
+        ("offset" = Option<usize>, Query, description = "Legacy offset; prefer cursor"),
+        ("cursor" = Option<String>, Query, description = "Opaque next_cursor from a previous page"),
+        ("account" = Option<String>, Query),
+        ("source" = Option<String>, Query)
+    ),
+    responses(
+        (status = 200, body = crate::export_api::ExportMessagesResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn export_messages_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ExportMessagesQuery>,
+) -> Result<Json<export_api::ExportMessagesResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_export_access(&auth)?;
+    let account =
+        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
+    let limit = query.limit.unwrap_or(DEFAULT_EXPORT_LIMIT);
+    let offset = query.offset;
+    let q = query.q.clone();
+    let cursor = query.cursor.clone();
+    let source = query.source.clone();
+
+    let body = with_configured_db_map(&state.cfg.paths.db, "export task", move |conn| {
+        export_api::export_messages(
+            conn,
+            ExportPageOpts {
+                account_id: &account,
+                query: &q,
+                limit,
+                offset,
+                cursor: cursor.as_deref(),
+                source_override: source.as_deref(),
+            },
+        )
+    })
+    .await?;
+    Ok(Json(body))
 }
 
 #[cfg(test)]
