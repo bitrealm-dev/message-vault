@@ -13,12 +13,7 @@ use crate::db::handles::infer_handle_type_from_shape;
 use crate::db::sql::in_placeholders;
 use crate::export_api::ExportQueryError;
 
-/// Default page size for a contact list request.
-pub const DEFAULT_LIST_LIMIT: usize = 40;
-/// Largest allowed page size for a contact list request.
-pub const MAX_LIST_LIMIT: usize = 500;
-/// Cap expensive OFFSET skips on contact list pages.
-pub const MAX_LIST_OFFSET: usize = 50_000;
+pub use crate::page_limits::{DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, MAX_LIST_OFFSET};
 
 /// One page of the contact list.
 #[derive(Debug, Serialize, utoipa::ToSchema)]

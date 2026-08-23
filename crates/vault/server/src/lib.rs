@@ -23,6 +23,7 @@ pub mod media_tools;
 pub mod models;
 pub mod openapi;
 pub mod operation_lock;
+pub(crate) mod page_limits;
 pub mod process_assets;
 pub mod profile;
 pub mod reset_demo;

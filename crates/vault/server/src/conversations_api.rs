@@ -9,12 +9,9 @@ use crate::db::sql::{fold_in_id_chunks, group_rows_by_id, in_placeholders};
 use crate::export_api::ExportQueryError;
 use crate::search_query::{CountComparison, parse_count_comparison};
 
-/// Default page size for a conversation list request.
-pub const DEFAULT_LIST_LIMIT: usize = 40;
-/// Largest allowed page size for a conversation list request.
-pub const MAX_LIST_LIMIT: usize = 100;
-/// Cap expensive OFFSET skips on conversation list pages.
-pub const MAX_LIST_OFFSET: usize = 50_000;
+pub use crate::page_limits::{
+    DEFAULT_LIST_LIMIT, MAX_CONVERSATION_LIST_LIMIT as MAX_LIST_LIMIT, MAX_LIST_OFFSET,
+};
 
 /// One page of the conversation list.
 #[derive(Debug, Serialize, utoipa::ToSchema)]

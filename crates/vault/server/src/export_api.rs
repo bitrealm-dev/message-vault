@@ -9,12 +9,7 @@ use crate::db::sql::group_rows_by_id;
 use crate::search_query::MAX_SEARCH_QUERY_BYTES;
 use crate::search_query::{FtsNode, ParsedSearchQuery, SearchMode, validate_search_query};
 
-/// Default page size for an export query.
-pub const DEFAULT_EXPORT_LIMIT: usize = 100;
-/// Largest allowed page size for an export query.
-pub const MAX_EXPORT_LIMIT: usize = 500;
-/// Cap expensive OFFSET skips (prefer cursor pagination for deep pages).
-pub const MAX_EXPORT_OFFSET: usize = 50_000;
+pub use crate::page_limits::{DEFAULT_EXPORT_LIMIT, MAX_EXPORT_LIMIT, MAX_EXPORT_OFFSET};
 
 /// Options for one exported page of messages.
 #[derive(Debug, Clone)]
