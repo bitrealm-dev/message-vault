@@ -2212,7 +2212,8 @@ pub(crate) struct ExportMessagesCountQuery {
     responses(
         (status = 200, body = crate::export_api::ExportCountResponse),
         (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody)
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
     )
 )]
 pub(crate) async fn export_messages_count_handler(
@@ -2257,7 +2258,8 @@ pub(crate) async fn export_messages_count_handler(
     responses(
         (status = 200, body = crate::export_api::ExportMessagesResponse),
         (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody)
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
     )
 )]
 pub(crate) async fn export_messages_handler(
