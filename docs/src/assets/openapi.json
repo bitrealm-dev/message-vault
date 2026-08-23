@@ -2955,7 +2955,7 @@
         "tags": [
           "Import"
         ],
-        "summary": "Start an import session and return its id (see POST /v1/import and\ncomplete).",
+        "summary": "Start an import session and return its id. Finish the session at\nPOST /v1/imports/{id}/complete.",
         "operationId": "imports_create_handler",
         "requestBody": {
           "content": {

@@ -742,8 +742,8 @@ pub(crate) async fn imports_get_handler(
     Ok(Json(import_detail_response(detail)))
 }
 
-/// Start an import session and return its id (see POST /v1/import and
-/// complete).
+/// Start an import session and return its id. Finish the session at
+/// POST /v1/imports/{id}/complete.
 #[utoipa::path(
     post,
     path = "/v1/imports",

@@ -31,7 +31,8 @@ impl ApiTokenScopes {
         }
     }
 
-    /// Canonical scope string (`import`, `export`, or `both`) used in token labels.
+    /// Canonical scope string (`import`, `export`, or `both`) stored in the
+    /// `scopes` column and returned in the API's `scopes` field.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Import => "import",

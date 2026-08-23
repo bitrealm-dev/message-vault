@@ -8,6 +8,7 @@ use rusqlite::{Connection, params_from_iter};
 use serde::{Deserialize, Serialize};
 
 use crate::db::sql::group_rows_by_id;
+// Required so the moved handlers' unqualified `export_api::…` paths resolve.
 use crate::export_api::{self};
 #[cfg(test)]
 use crate::search_query::MAX_SEARCH_QUERY_BYTES;

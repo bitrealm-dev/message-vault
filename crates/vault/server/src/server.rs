@@ -672,7 +672,7 @@ pub async fn resolve_auth(headers: &HeaderMap, state: &AppState) -> Result<AuthI
     resolved.ok_or_else(|| ApiError::Unauthorized("invalid API token".into()))
 }
 
-/// Resolve the account id for an import: Bearer token binds the account.
+/// Resolve the account id for an import or export: Bearer token binds the account.
 /// Optional query may be username or UUID and must match the token.
 pub(crate) async fn resolve_import_account(
     auth: &AuthIdentity,
@@ -779,7 +779,7 @@ pub(crate) async fn discard_body(
     Ok(())
 }
 
-pub(crate) async fn create_dest_file(dest: &Path) -> Result<tokio::fs::File, ApiError> {
+async fn create_dest_file(dest: &Path) -> Result<tokio::fs::File, ApiError> {
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent)
             .await

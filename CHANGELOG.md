@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Server crate cleanup: rustdoc and HTTP API descriptions rewritten, handlers
   moved out of `server.rs`, thread-tag and contact-group CRUD unified, and
-  API-token label validation typed. No behavior change.
+  API-token label validation typed. No API behavior change.
 
 Installable builds and release notes also appear on
 [GitHub Releases](https://github.com/bitrealm-io/message-vault/releases).
