@@ -290,4 +290,15 @@ mod tests {
         assert!(!paths.contains_key("/v1/auth/login"));
         assert!(paths.contains_key("/v1/auth/hanko/session"));
     }
+
+    #[test]
+    fn committed_openapi_matches_dump() {
+        let dumped = dump_openapi_json();
+        let committed = include_str!("../../../../docs/src/assets/openapi.json");
+        assert_eq!(
+            dumped.trim_end(),
+            committed.trim_end(),
+            "run: cargo run -p message-vault-server -- dump-openapi --output docs/src/assets/openapi.json"
+        );
+    }
 }
