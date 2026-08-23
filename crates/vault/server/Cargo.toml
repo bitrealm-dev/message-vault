@@ -14,7 +14,7 @@ contacts = { workspace = true }
 demo-seed = { path = "../demo-seed" }
 fs2 = "0.4.3"
 futures-util = { version = "0.3.31", default-features = false }
-jsonwebtoken = "9.3.1"
+jsonwebtoken = "11.0.0"
 libc = "0.2"
 message-ir = { workspace = true }
 message-ir-format = { path = "../../libs/ir-format" }
