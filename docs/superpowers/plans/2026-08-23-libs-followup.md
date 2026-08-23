@@ -711,10 +711,12 @@ Findings 9 (medium — cross-crate string contract) and the `ir-format` part of 
 In `crates/libs/ir-format/src/util.rs`, add above `read_attachment_file` (line 68):
 
 ```rust
-/// Message prefix for bails about relative attachment paths that contain `..`.
+/// Shared message prefix for unsafe-attachment-path errors.
 ///
-/// The server's import tests match this exact text; keep it stable.
-pub const UNSAFE_ATTACHMENT_PATH_PREFIX: &str = "unsafe attachment path (contains ..)";
+/// The ir-format path check and the server's `safe_rel_path` both format
+/// their bail from this const, and the server's import tests match it —
+/// keep the exact text stable.
+pub const UNSAFE_ATTACHMENT_PATH_PREFIX: &str = "unsafe attachment path";
 ```
 
 Change the bail at line 82 from:
@@ -726,7 +728,7 @@ anyhow::bail!("unsafe attachment path (contains ..): {rel}");
 to:
 
 ```rust
-anyhow::bail!("{UNSAFE_ATTACHMENT_PATH_PREFIX}: {rel}");
+anyhow::bail!("{UNSAFE_ATTACHMENT_PATH_PREFIX} (contains ..): {rel}");
 ```
 
 In `crates/libs/ir-format/src/lib.rs`, add to the `pub use` block:
@@ -735,7 +737,7 @@ In `crates/libs/ir-format/src/lib.rs`, add to the `pub use` block:
 pub use util::UNSAFE_ATTACHMENT_PATH_PREFIX;
 ```
 
-- [ ] **Step 2: Point the server's two asserts at the const**
+- [ ] **Step 2: Point the server's two asserts at the const, and format the server's own bail from it**
 
 In `crates/vault/server/src/import/mod.rs` lines 2105 and 2166, replace the hardcoded text:
 
@@ -750,6 +752,13 @@ err.to_string().contains(message_ir_format::UNSAFE_ATTACHMENT_PATH_PREFIX)
 ```
 
 (Use the fully qualified path — no new imports.)
+
+In `crates/vault/server/src/config.rs`, change the `safe_rel_path` bail from
+`bail!("unsafe attachment path: {name}")` to
+`bail!("{message_ir_format::UNSAFE_ATTACHMENT_PATH_PREFIX}: {name}")` — the
+emitted text is byte-identical (the server already depends on message-ir-format).
+Both bails and both asserts now reference one const, so the contract is
+compile-time and every emitted text is unchanged.
 
 - [ ] **Step 3: Add the gate and document the ir-format gaps**
 

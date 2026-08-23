@@ -80,16 +80,20 @@ Findings 5, 6, 7.
 Findings 9, 10.
 
 - **The string contract (finding 9).** `ir-format` gains
-  `pub const UNSAFE_ATTACHMENT_PATH_PREFIX: &str = "unsafe attachment path (contains ..)";`
-  re-exported from `lib.rs`. `util.rs:82` formats its bail from the const, so
-  the emitted text is byte-identical. The server's two string-match sites
-  (`crates/vault/server/src/import/mod.rs:2105,2166`, both test asserts)
-  import the const instead of hardcoding the text. Behavior is unchanged —
-  the asserts still pass.
-  - Out of scope here: the two *other* bails with a similar prefix
-    (`crates/cli/vault-push/src/run.rs:732`, `crates/vault/server/src/config.rs:145`)
-    are separate texts and separate contracts in other groups' crates; they
-    are not touched.
+  `pub const UNSAFE_ATTACHMENT_PATH_PREFIX: &str = "unsafe attachment path";`
+  — the **shared prefix**, re-exported from `lib.rs`. `util.rs`'s bail formats
+  `"{PREFIX} (contains ..)"` and the server's `safe_rel_path`
+  (`crates/vault/server/src/config.rs`) formats `"{PREFIX}: {name}"`, so both
+  emitted texts stay byte-identical. The server's two string-match sites
+  (`crates/vault/server/src/import/mod.rs`, both test asserts) match the const
+  instead of hardcoding the text — the contract is compile-time across all
+  four sites.
+  - Scope correction (found during implementation, user-approved): the
+    audit's premise that the asserts match ir-format's bail was wrong — the
+    import tests exercise the server's own `safe_rel_path`, so the const is
+    consumed by both bails as a prefix. The remaining copy in
+    `crates/cli/vault-push/src/run.rs:732` is a separate contract and stays
+    with the CLI group.
 - **csv error types (finding 10).** `parse_utc_offset`, `DateRange::parse`,
   and its sibling `DateRange::parse_optional_tz` switch from
   `Result<_, String>` to `anyhow::Result` (adding `anyhow` as a dependency —
