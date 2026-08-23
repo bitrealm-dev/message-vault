@@ -1,50 +1,11 @@
-use std::path::PathBuf;
-
 use anyhow::Result;
 use clap::Parser;
+use imessage_ir_exporter::cli::Cli;
 use imessage_ir_exporter::run;
 use message_vault_io_core::{
-    AppleConfig, ApplePlatform, CommonCli, ExporterConfig, MediaConfig, OutputFormat, SourceConfig,
+    AppleConfig, ApplePlatform, ExporterConfig, MediaConfig, OutputFormat, SourceConfig,
     parse_date_range,
 };
-
-#[derive(Parser, Debug)]
-#[command(name = "imessage-ir-exporter")]
-#[command(
-    about = "Export Apple Messages (chat.db) via common message to JSON/CSV/EML/MBOX/JSONL/XML"
-)]
-struct Cli {
-    /// Path to chat.db (macOS) or iOS backup root (default: system Messages DB)
-    #[arg(long)]
-    input: Option<PathBuf>,
-
-    /// Platform: `macOS`, `iOS`, or omit to auto-detect
-    #[arg(long)]
-    platform: Option<String>,
-
-    /// Attachment mode: `clone` (default), `basic`, `full`, or `disabled`
-    #[arg(long = "copy-method", default_value = "clone")]
-    copy_method: String,
-
-    /// Custom attachment root (macOS)
-    #[arg(long = "attachment-root")]
-    attachment_root: Option<String>,
-
-    /// iOS backup password (cleartext; prompted elsewhere in GUI)
-    #[arg(long = "backup-password")]
-    backup_password: Option<String>,
-
-    /// Limit export to one conversation (chat identifier / handle)
-    #[arg(long = "conversation")]
-    conversation: Option<String>,
-
-    /// Use destination caller id for outgoing From display name (default on)
-    #[arg(long = "use-caller-id", default_value_t = true, action = clap::ArgAction::Set)]
-    use_caller_id: bool,
-
-    #[command(flatten)]
-    common: CommonCli,
-}
 
 fn main() -> Result<()> {
     let cli = Cli::parse();

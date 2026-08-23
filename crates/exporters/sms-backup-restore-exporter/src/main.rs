@@ -1,31 +1,11 @@
-use std::path::PathBuf;
-
 use anyhow::Result;
 use clap::Parser;
 use media::compress_options_from_cli;
 use message_vault_io_core::{
-    CommonCli, ExporterConfig, MediaConfig, OutputFormat, SmsBackupRestoreConfig, SourceConfig,
+    ExporterConfig, MediaConfig, OutputFormat, SmsBackupRestoreConfig, SourceConfig,
 };
+use sms_backup_restore_exporter::cli::Cli;
 use sms_backup_restore_exporter::{parse_date_range, run};
-
-#[derive(Parser, Debug)]
-#[command(name = "sms-backup-restore-exporter")]
-#[command(
-    about = "Convert SMS Backup & Restore XML via common message to JSON/CSV/EML/MBOX/JSONL/XML"
-)]
-struct Cli {
-    /// Path to sms-*.xml file, or a directory of .xml files
-    #[arg(long)]
-    input: PathBuf,
-
-    /// Owner phone (E.164 or digits). Repeat for multiple owner numbers.
-    /// Required — there is no demo default (wrong owner flips MMS chat keys).
-    #[arg(long = "owner-phone", required = true)]
-    owner_phones: Vec<String>,
-
-    #[command(flatten)]
-    common: CommonCli,
-}
 
 fn main() -> Result<()> {
     let cli = Cli::parse();

@@ -1,31 +1,11 @@
-use std::path::PathBuf;
-
 use anyhow::Result;
 use clap::Parser;
+use go_sms_pro_exporter::cli::Cli;
 use go_sms_pro_exporter::{parse_date_range, run};
 use media::compress_options_from_cli;
 use message_vault_io_core::{
-    CommonCli, ExporterConfig, GoSmsProConfig, MediaConfig, OutputFormat, SourceConfig,
+    ExporterConfig, GoSmsProConfig, MediaConfig, OutputFormat, SourceConfig,
 };
-
-#[derive(Parser, Debug)]
-#[command(name = "go-sms-pro-exporter")]
-#[command(
-    about = "Convert GO SMS Pro XML+PDU backups via common message to JSON/CSV/EML/MBOX/JSONL/XML"
-)]
-struct Cli {
-    /// Directory containing gosms_sys*.xml and I_*.pdu files
-    #[arg(long)]
-    input: PathBuf,
-
-    /// Owner phone (E.164 or digits). Repeat for multiple owner numbers.
-    /// Required — there is no demo default (wrong owner flips PDU direction).
-    #[arg(long = "owner-phone", required = true)]
-    owner_phones: Vec<String>,
-
-    #[command(flatten)]
-    common: CommonCli,
-}
 
 fn main() -> Result<()> {
     let cli = Cli::parse();

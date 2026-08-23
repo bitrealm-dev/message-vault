@@ -19,3 +19,8 @@ mod session;
 
 pub use message_vault_io_core::RunResult;
 pub use run::run;
+
+#[cfg(feature = "cli")]
+pub mod cli;
+#[cfg(feature = "cli")]
+pub use cli::clap_command;

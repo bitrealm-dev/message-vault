@@ -1,5 +1,7 @@
 //! Convert an existing Message Vault output directory to another format.
 
+pub mod cli;
+
 use anyhow::{Context, Result, bail};
 use message_ir::ConversationDocument;
 use message_ir_format::{
@@ -13,6 +15,8 @@ use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+
+pub use cli::clap_command;
 
 /// Convert the prior export in `config.inputs[0]` to `config.output_format`.
 ///
