@@ -89,7 +89,7 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(crate::profile::account_profile_handler))
         .routes(routes!(crate::profile::account_profile_update_handler))
         .routes(routes!(crate::profile::delete_messages_handler))
-        .routes(routes!(crate::server::account_storage_handler))
+        .routes(routes!(crate::profile::account_storage_handler))
         .routes(routes!(crate::api_tokens_api::list_api_tokens_handler))
         .routes(routes!(crate::api_tokens_api::create_api_token_handler))
         .routes(routes!(crate::api_tokens_api::delete_api_token_handler))

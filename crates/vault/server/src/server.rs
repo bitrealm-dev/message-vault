@@ -158,7 +158,7 @@ pub struct AppState {
     /// Warm connection for short import-session SQL only (`POST /v1/imports`,
     /// complete, import-id verify / one-shot start). Bulk `POST /v1/import` and
     /// export open their own connections so they do not hold this mutex.
-    db: Arc<StdMutex<Connection>>,
+    pub(crate) db: Arc<StdMutex<Connection>>,
     /// Per-account import mutex: same-account imports stay serialized so staging
     /// rows (the temporary import area) for that tenant are not wiped mid-run.
     /// Different accounts may overlap at the lock layer; SQLite write-ahead
@@ -460,7 +460,7 @@ where
     .join_map(task, ApiError::from)
 }
 
-async fn with_locked_conn<T, E, F>(
+pub(crate) async fn with_locked_conn<T, E, F>(
     db: Arc<StdMutex<Connection>>,
     task: &str,
     f: F,
@@ -1754,52 +1754,6 @@ pub(crate) async fn imports_get_handler(
     .join_map("import detail task", ApiError::from)?;
 
     Ok(Json(import_detail_response(detail)))
-}
-
-/// Attachment usage and the largest files.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct AccountStorageResponse {
-    pub total_bytes: i64,
-    pub attachment_count: i64,
-    pub top_attachments: Vec<crate::db::vault_imports::TopAttachment>,
-}
-
-/// Attachment storage usage for the account: total bytes, count, and the 100
-/// largest files.
-#[utoipa::path(
-    get,
-    path = "/v1/account/storage",
-    tag = "Account",
-    security(("bearer" = [])),
-    responses(
-        (status = 200, body = AccountStorageResponse),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn account_storage_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<AccountStorageResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    let account_id = auth.account_id;
-    let db = Arc::clone(&state.db);
-    let result = with_locked_conn(db, "account storage task", move |conn| {
-        let total_bytes = crate::db::vault_imports::account_attachment_bytes(conn, &account_id)?;
-        let attachment_count =
-            crate::db::vault_imports::account_attachment_count(conn, &account_id)?;
-        let top_attachments =
-            crate::db::vault_imports::top_attachments_by_size(conn, &account_id, 100)?;
-        Ok::<_, anyhow::Error>(AccountStorageResponse {
-            total_bytes,
-            attachment_count,
-            top_attachments,
-        })
-    })
-    .await?;
-
-    Ok(Json(result))
 }
 
 /// Start an import session and return its id (see POST /v1/import and

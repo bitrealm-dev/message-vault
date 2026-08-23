@@ -1,5 +1,7 @@
 //! Account profile read + update handlers.
 
+use std::sync::Arc;
+
 use anyhow::{Context, Result, bail};
 use axum::Json;
 use axum::extract::State;
@@ -9,7 +11,9 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::db::{account_profile, schema};
-use crate::server::{ApiError, AppState, JoinBlocking, require_full_access, resolve_auth};
+use crate::server::{
+    ApiError, AppState, JoinBlocking, require_full_access, resolve_auth, with_locked_conn,
+};
 
 /// The signed-in account's profile.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -345,6 +349,52 @@ pub async fn delete_messages_handler(
         conversations: stats.conversations,
         attachments: stats.attachments,
     }))
+}
+
+/// Attachment usage and the largest files.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct AccountStorageResponse {
+    pub total_bytes: i64,
+    pub attachment_count: i64,
+    pub top_attachments: Vec<crate::db::vault_imports::TopAttachment>,
+}
+
+/// Attachment storage usage for the account: total bytes, count, and the 100
+/// largest files.
+#[utoipa::path(
+    get,
+    path = "/v1/account/storage",
+    tag = "Account",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = AccountStorageResponse),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn account_storage_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<AccountStorageResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let account_id = auth.account_id;
+    let db = Arc::clone(&state.db);
+    let result = with_locked_conn(db, "account storage task", move |conn| {
+        let total_bytes = crate::db::vault_imports::account_attachment_bytes(conn, &account_id)?;
+        let attachment_count =
+            crate::db::vault_imports::account_attachment_count(conn, &account_id)?;
+        let top_attachments =
+            crate::db::vault_imports::top_attachments_by_size(conn, &account_id, 100)?;
+        Ok::<_, anyhow::Error>(AccountStorageResponse {
+            total_bytes,
+            attachment_count,
+            top_attachments,
+        })
+    })
+    .await?;
+
+    Ok(Json(result))
 }
 
 #[cfg(test)]
