@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
 use crate::assets::{self, StoredAsset};
@@ -156,6 +157,7 @@ fn write_manifest(session: &Path, manifest: &UploadManifest) -> Result<()> {
 }
 
 /// Exclusive lock for manifest read-modify-write (concurrent part uploads).
+#[derive(Debug)]
 struct ManifestLock {
     _file: File,
 }
@@ -169,14 +171,8 @@ fn lock_session(session: &Path) -> Result<ManifestLock> {
         .write(true)
         .open(&path)
         .with_context(|| format!("open {}", path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::io::AsRawFd;
-        let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
-        if rc != 0 {
-            bail!("failed to lock {}", path.display());
-        }
-    }
+    file.try_lock_exclusive()
+        .map_err(|_| anyhow::anyhow!("failed to lock {}", path.display()))?;
     Ok(ManifestLock { _file: file })
 }
 
@@ -622,5 +618,20 @@ mod tests {
         };
         let err = start_upload(root, &sha, 4096, None, limits).unwrap_err();
         assert!(err.to_string().contains("server limit"));
+    }
+
+    #[test]
+    fn manifest_lock_is_exclusive() {
+        let dir = tempdir().unwrap();
+        let sha = "c".repeat(64);
+        let session = session_dir(dir.path(), &sha, "locktest01");
+        fs::create_dir_all(&session).unwrap();
+
+        let _held = lock_session(&session).unwrap();
+        let err = lock_session(&session).unwrap_err();
+        assert!(
+            err.to_string().contains("failed to lock"),
+            "expected lock failure, got: {err}"
+        );
     }
 }
