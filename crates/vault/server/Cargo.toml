@@ -2,7 +2,7 @@
 name = "message-vault-server"
 version = "0.7.3"
 edition = "2024"
-license = "AGPL-3.0-only"
+license = "LicenseRef-FCL-1.0-ALv2"
 
 [dependencies]
 anyhow = "1.0.103"

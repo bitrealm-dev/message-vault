@@ -16,6 +16,10 @@ use crate::server::AppState;
     info(
         title = "Message Vault HTTP API",
         description = "HTTP API for a local Message Vault. Bearer session tokens come from login. API tokens come from Settings → Account and can import and export only. Register and login exist when VAULT_AUTH is local (the default). POST /v1/auth/hanko/session exists for Hanko sign-in.",
+        license(
+            name = "Fair Core License 1.0 (ALv2 future)",
+            url = "https://github.com/bitrealm-io/message-vault/blob/main/LICENSE.md"
+        ),
         version = env!("CARGO_PKG_VERSION")
     ),
     modifiers(&BearerAddon),

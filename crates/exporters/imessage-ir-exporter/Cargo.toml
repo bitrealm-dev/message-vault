@@ -2,7 +2,7 @@
 name = "imessage-ir-exporter"
 version = "0.1.0"
 edition = "2024"
-license = "AGPL-3.0-only"
+license = "LicenseRef-FCL-1.0-ALv2"
 description = "Export iMessage data to per-conversation CSV / EML / MBOX / JSON via message-ir"
 repository = "https://github.com/bitrealm-io/message-vault"
 

@@ -2,7 +2,7 @@
 name = "message-vault-io-gui"
 version = "0.6.0"
 edition = "2024"
-license = "AGPL-3.0-only"
+license = "LicenseRef-FCL-1.0-ALv2"
 description = "Slint desktop GUI for message-vault-io"
 build = "build.rs"
 

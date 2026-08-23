@@ -3,7 +3,7 @@ name = "message-ir"
 version = "0.1.0"
 edition = "2024"
 description = "Schema types for the common-message ConversationDocument intermediate representation"
-license = "AGPL-3.0-only"
+license = "LicenseRef-FCL-1.0-ALv2"
 
 [dependencies]
 hex = "0.4.3"

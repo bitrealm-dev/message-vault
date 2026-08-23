@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Local pre-PR check: format Rust and web, then workspace build/test, web lint/test,
-# docs check/build.
+# Local pre-PR check: format Rust and web, then license consistency, workspace
+# build/test, web lint/test, docs check/build.
 #
 #   ./scripts/check-pr.sh
 #
@@ -14,6 +14,9 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
 "${SCRIPT_DIR}/format-all.sh"
+
+echo "==> license consistency"
+"${SCRIPT_DIR}/check-license.sh"
 
 echo "==> cargo build --workspace"
 cargo build --workspace

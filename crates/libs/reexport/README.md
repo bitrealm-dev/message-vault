@@ -21,4 +21,4 @@ How conversion works: https://bitrealm.io/vault/developer/formats/convert/
 
 ## License
 
-AGPL-3.0. See the repository root `LICENSE`.
+Fair Core License. See the repository root `LICENSE.md`.
