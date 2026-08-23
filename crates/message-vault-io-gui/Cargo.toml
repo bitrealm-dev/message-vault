@@ -16,7 +16,7 @@ anyhow = "1.0.103"
 chrono = "0.4.44"
 dark-light = "2"
 slint = "1.17"
-rfd = "0.15"
+rfd = "0.17"
 open = "5"
 
 go-sms-pro-exporter = { path = "../exporters/go-sms-pro-exporter", default-features = false }
