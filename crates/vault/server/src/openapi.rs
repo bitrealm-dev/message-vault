@@ -47,20 +47,59 @@ impl Modify for BearerAddon {
     }
 }
 
-#[allow(dead_code)] // Live(AuthMode) is matched when later tasks filter routes by sign-in mode.
 pub enum SpecAuth {
     Live(AuthMode),
     Full,
 }
 
-pub fn openapi_router(_auth: SpecAuth) -> OpenApiRouter<AppState> {
-    OpenApiRouter::with_openapi(ApiDoc::openapi()).routes(routes!(crate::server::health))
+/// Unauthenticated auth JSON (Hanko, Try it, and Local register/login).
+pub fn auth_public_openapi(auth: SpecAuth) -> OpenApiRouter<AppState> {
+    let mut router = OpenApiRouter::with_openapi(ApiDoc::openapi())
+        .routes(routes!(crate::auth::hanko_session_handler))
+        .routes(routes!(crate::auth::try_demo_handler));
+
+    let include_local = match auth {
+        SpecAuth::Full => true,
+        SpecAuth::Live(AuthMode::Local) => true,
+        SpecAuth::Live(AuthMode::Hanko) => false,
+    };
+    if include_local {
+        router = router
+            .routes(routes!(crate::auth::register_handler))
+            .routes(routes!(crate::auth::login_handler));
+    }
+    router
+}
+
+/// Health, session-backed auth, and account settings.
+pub fn api_openapi() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(crate::server::health))
+        .routes(routes!(crate::server::auth_mode_handler))
+        .routes(routes!(crate::server::auth_check))
+        .routes(routes!(crate::auth::logout_handler))
+        .routes(routes!(crate::auth::change_password_handler))
+        .routes(routes!(crate::auth::delete_account_handler))
+        .routes(routes!(crate::profile::account_profile_handler))
+        .routes(routes!(crate::profile::account_profile_update_handler))
+        .routes(routes!(crate::profile::delete_messages_handler))
+        .routes(routes!(crate::server::account_storage_handler))
+        .routes(routes!(crate::api_tokens_api::list_api_tokens_handler))
+        .routes(routes!(crate::api_tokens_api::create_api_token_handler))
+        .routes(routes!(crate::api_tokens_api::delete_api_token_handler))
+        .routes(routes!(crate::api_tokens_api::rename_api_token_handler))
+}
+
+pub fn openapi_router(auth: SpecAuth) -> OpenApiRouter<AppState> {
+    auth_public_openapi(auth).merge(api_openapi())
 }
 
 /// Pretty OpenAPI JSON. Same string the CLI writes and the stale-spec test compares.
 pub fn dump_openapi_json() -> String {
-    let (_router, api) = openapi_router(SpecAuth::Full).split_for_parts();
-    serde_json::to_string_pretty(&api).expect("OpenAPI document serializes to JSON")
+    let (_a, mut spec) = auth_public_openapi(SpecAuth::Full).split_for_parts();
+    let (_b, rest) = api_openapi().split_for_parts();
+    spec.merge(rest);
+    serde_json::to_string_pretty(&spec).expect("OpenAPI document serializes to JSON")
 }
 
 /// Write the dump to `path`, or stdout when `path` is `None`.
@@ -82,7 +121,8 @@ pub fn write_openapi(path: Option<&Path>) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::dump_openapi_json;
+    use super::{SpecAuth, dump_openapi_json, openapi_router};
+    use crate::config::AuthMode;
 
     #[test]
     fn dump_is_openapi_3_with_crate_version() {
@@ -111,5 +151,53 @@ mod tests {
             v["paths"]["/health"]["get"].is_object(),
             "expected GET /health in dump"
         );
+    }
+
+    #[test]
+    fn dump_includes_auth_and_account_paths() {
+        let v: serde_json::Value = serde_json::from_str(&dump_openapi_json()).unwrap();
+        let paths = v["paths"].as_object().unwrap();
+        for p in [
+            "/v1/auth/register",
+            "/v1/auth/login",
+            "/v1/auth/hanko/session",
+            "/v1/auth/try-demo",
+            "/v1/auth/mode",
+            "/v1/auth/check",
+            "/v1/auth/logout",
+            "/v1/auth/change-password",
+            "/v1/auth/delete-account",
+            "/v1/account/profile",
+            "/v1/account/delete-messages",
+            "/v1/account/storage",
+            "/v1/account/api-tokens",
+            "/v1/account/api-tokens/{id}",
+        ] {
+            assert!(paths.contains_key(p), "missing {p}");
+        }
+        assert!(
+            !operation_has_bearer(&paths["/v1/auth/register"]["post"]),
+            "register is public"
+        );
+        assert!(
+            operation_has_bearer(&paths["/v1/auth/check"]["get"]),
+            "GET /v1/auth/check must require bearer"
+        );
+    }
+
+    fn operation_has_bearer(op: &serde_json::Value) -> bool {
+        op["security"]
+            .as_array()
+            .is_some_and(|schemes| schemes.iter().any(|s| s.get("bearer").is_some()))
+    }
+
+    #[test]
+    fn live_hanko_spec_omits_register_login() {
+        let (_router, api) = openapi_router(SpecAuth::Live(AuthMode::Hanko)).split_for_parts();
+        let v = serde_json::to_value(&api).unwrap();
+        let paths = v["paths"].as_object().unwrap();
+        assert!(!paths.contains_key("/v1/auth/register"));
+        assert!(!paths.contains_key("/v1/auth/login"));
+        assert!(paths.contains_key("/v1/auth/hanko/session"));
     }
 }

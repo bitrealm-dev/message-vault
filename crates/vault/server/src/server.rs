@@ -354,18 +354,8 @@ fn build_cors_layer(origins: &[String]) -> CorsLayer {
 }
 
 fn auth_public_router(mode: AuthMode) -> Router<AppState> {
-    let router = Router::new()
-        .route(
-            "/v1/auth/hanko/session",
-            post(crate::auth::hanko_session_handler),
-        )
-        .route("/v1/auth/try-demo", post(crate::auth::try_demo_handler));
-    let router = match mode {
-        AuthMode::Hanko => router,
-        AuthMode::Local => router
-            .route("/v1/auth/register", post(crate::auth::register_handler))
-            .route("/v1/auth/login", post(crate::auth::login_handler)),
-    };
+    let (router, _spec) =
+        crate::openapi::auth_public_openapi(crate::openapi::SpecAuth::Live(mode)).split_for_parts();
     router
         // Auth JSON is tiny; keep a tight limit so Argon2/JWKS abuse cannot ship 512 MiB bodies.
         .layer(RequestBodyLimitLayer::new(32 * 1024))
@@ -385,42 +375,17 @@ pub(crate) fn http_app(state: AppState) -> Router {
         .map(|s| s.cors_origins.clone())
         .unwrap_or_default();
     let mode = AuthMode::from_env();
-    let (doc_router, spec) =
-        crate::openapi::openapi_router(crate::openapi::SpecAuth::Live(mode)).split_for_parts();
+    let (auth_small, mut spec) =
+        crate::openapi::auth_public_openapi(crate::openapi::SpecAuth::Live(mode)).split_for_parts();
+    let (doc_router, rest) = crate::openapi::api_openapi().split_for_parts();
+    spec.merge(rest);
 
     let mut api = Router::new()
         .merge(doc_router)
-        .merge(auth_public_router(mode))
-        .route("/v1/auth/mode", get(auth_mode_handler))
-        .route("/v1/auth/check", get(auth_check))
-        .route("/v1/auth/logout", post(crate::auth::logout_handler))
-        .route(
-            "/v1/auth/change-password",
-            post(crate::auth::change_password_handler),
-        )
-        .route(
-            "/v1/auth/delete-account",
-            post(crate::auth::delete_account_handler),
-        )
-        .route(
-            "/v1/account/profile",
-            get(crate::profile::account_profile_handler)
-                .post(crate::profile::account_profile_update_handler),
-        )
-        .route(
-            "/v1/account/delete-messages",
-            post(crate::profile::delete_messages_handler),
-        )
-        .route("/v1/account/storage", get(account_storage_handler))
-        .route(
-            "/v1/account/api-tokens",
-            get(crate::api_tokens_api::list_api_tokens_handler)
-                .post(crate::api_tokens_api::create_api_token_handler),
-        )
-        .route(
-            "/v1/account/api-tokens/{id}",
-            delete(crate::api_tokens_api::delete_api_token_handler)
-                .patch(crate::api_tokens_api::rename_api_token_handler),
+        .merge(
+            auth_small
+                // Auth JSON is tiny; keep a tight limit so Argon2/JWKS abuse cannot ship 512 MiB bodies.
+                .layer(RequestBodyLimitLayer::new(32 * 1024)),
         )
         .route(
             "/v1/export/messages/count",
@@ -736,31 +701,45 @@ pub(crate) async fn health() -> (StatusCode, &'static str) {
     (StatusCode::OK, "ok\n")
 }
 
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct AuthModeResponse {
+    pub mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hanko_api_url: Option<String>,
+    pub try_demo: bool,
+}
+
 /// Returns the server's configured authentication mode so clients
 /// can render the correct login form before authenticating.
-async fn auth_mode_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
+#[utoipa::path(
+    get,
+    path = "/v1/auth/mode",
+    tag = "Auth",
+    responses((status = 200, description = "Sign-in mode", body = AuthModeResponse))
+)]
+pub(crate) async fn auth_mode_handler(State(state): State<AppState>) -> Json<AuthModeResponse> {
     let mode = crate::config::AuthMode::from_env();
     let hanko_api_url = std::env::var("HANKO_API_URL")
         .ok()
         .or_else(|| std::env::var("NEXT_PUBLIC_HANKO_API_URL").ok());
-    Json(serde_json::json!({
-        "mode": match mode {
-            crate::config::AuthMode::Hanko => "hanko",
-            crate::config::AuthMode::Local => "local",
+    Json(AuthModeResponse {
+        mode: match mode {
+            crate::config::AuthMode::Hanko => "hanko".into(),
+            crate::config::AuthMode::Local => "local".into(),
         },
-        "hanko_api_url": hanko_api_url,
-        "try_demo": state.guest.enabled,
-    }))
+        hanko_api_url,
+        try_demo: state.guest.enabled,
+    })
 }
 
 #[derive(Debug, Deserialize)]
-struct AuthCheckQuery {
+pub(crate) struct AuthCheckQuery {
     #[serde(default)]
     account: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct AuthCheckResponse {
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct AuthCheckResponse {
     ok: bool,
     sources: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -773,7 +752,19 @@ struct AuthCheckResponse {
     admin: Option<bool>,
 }
 
-async fn auth_check(
+#[utoipa::path(
+    get,
+    path = "/v1/auth/check",
+    tag = "Auth",
+    security(("bearer" = [])),
+    params(("account" = Option<String>, Query, description = "Must match the token account")),
+    responses(
+        (status = 200, body = AuthCheckResponse),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn auth_check(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<AuthCheckQuery>,
@@ -1537,11 +1528,29 @@ async fn imports_get_handler(
     Ok(Json(import_detail_response(detail)))
 }
 
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct AccountStorageResponse {
+    pub total_bytes: i64,
+    pub attachment_count: i64,
+    pub top_attachments: Vec<crate::db::vault_imports::TopAttachment>,
+}
+
 /// `GET /v1/account/storage` — attachment usage + top 100 largest attachments.
-async fn account_storage_handler(
+#[utoipa::path(
+    get,
+    path = "/v1/account/storage",
+    tag = "Account",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = AccountStorageResponse),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn account_storage_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<AccountStorageResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let account_id = auth.account_id;
@@ -1552,11 +1561,11 @@ async fn account_storage_handler(
             crate::db::vault_imports::account_attachment_count(conn, &account_id)?;
         let top_attachments =
             crate::db::vault_imports::top_attachments_by_size(conn, &account_id, 100)?;
-        Ok::<_, anyhow::Error>(serde_json::json!({
-            "total_bytes": total_bytes,
-            "attachment_count": attachment_count,
-            "top_attachments": top_attachments,
-        }))
+        Ok::<_, anyhow::Error>(AccountStorageResponse {
+            total_bytes,
+            attachment_count,
+            top_attachments,
+        })
     })
     .await?;
 
@@ -2668,8 +2677,8 @@ mod tests {
     async fn auth_mode_includes_try_demo_flag() {
         let (_tmp, state, _token, _import_id) = test_state();
         let Json(value) = auth_mode_handler(State(state)).await;
-        assert_eq!(value["try_demo"], false);
-        assert!(value.get("mode").is_some());
+        assert_eq!(value.try_demo, false);
+        assert!(!value.mode.is_empty());
     }
 
     #[tokio::test]
