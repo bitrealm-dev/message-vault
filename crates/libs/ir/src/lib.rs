@@ -119,8 +119,8 @@ impl HandleType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
 /// Roster and computed stats for one chat.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationMeta {
     /// Stable chat id from the source (E.164, group key, or app thread id).
     pub chat_identifier: String,
@@ -148,8 +148,8 @@ pub struct ConversationStats {
     pub last_timestamp_unix_ms: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
 /// One chat member: handle, optional display name and handle type.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IrParticipant {
     /// Phone, email, or username string.
     pub handle: String,
@@ -322,8 +322,8 @@ impl IrMessageKind {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
 /// One message in a conversation: sender, body text, and attachments.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IrMessage {
     /// Stable message id; derived from content when the source has no id
     /// (see message-csv's `stable_guid`).
@@ -398,12 +398,12 @@ impl From<&IrAttachment> for AttachmentMeta {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
 /// Metadata for one attachment.
 ///
 /// Bytes are never serialized: JSON, JSONL, and CSV carry only this metadata,
 /// and the bytes live in a sidecar file under `attachments/` (or in `bytes`
 /// for in-memory EML/MBOX/XML embedding).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IrAttachment {
     /// Relative path under `attachments/` to the staged file.
     pub path: Option<String>,
@@ -415,7 +415,8 @@ pub struct IrAttachment {
     pub digest_sha256: Option<String>,
     /// Sticker flag.
     pub is_sticker: bool,
-    /// OCR text of an image attachment.
+    /// Transcribed text of the attachment (e.g., OCR of an image or a
+    /// voice-note transcript).
     pub transcription: Option<String>,
     /// iMessage sticker effect name.
     pub sticker_effect: Option<String>,

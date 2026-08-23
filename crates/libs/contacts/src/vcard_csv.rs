@@ -44,7 +44,6 @@ pub fn is_phone_header(h: &str) -> bool {
 }
 
 /// Column indexes for a vCard CSV header row.
-/// Resolved column indexes for a vCard CSV header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VcardCsvColumns {
     /// Index of the first-name column, if present.

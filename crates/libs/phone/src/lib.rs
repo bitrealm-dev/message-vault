@@ -56,7 +56,7 @@ impl PhoneRegion {
 }
 
 /// Strip non-digits and a leading US country code `1`.
-/// Returns `None` when too few digits remain.
+/// Returns `None` when fewer than the minimum digit count (4) remain.
 pub fn sanitize_number(num: &str) -> Option<String> {
     if num.is_empty() {
         return None;

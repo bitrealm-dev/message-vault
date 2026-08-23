@@ -21,7 +21,8 @@ pub struct AttachmentCell {
     /// Sticker flag.
     #[serde(default)]
     pub is_sticker: bool,
-    /// OCR text of an image attachment.
+    /// Transcribed text of the attachment (e.g., OCR of an image or a
+    /// voice-note transcript).
     pub transcription: Option<String>,
     /// iMessage sticker effect name.
     pub sticker_effect: Option<String>,

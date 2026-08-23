@@ -56,7 +56,6 @@ struct UnableEntry {
 }
 
 /// Formats accepted by contacts-validate and by [`crate::ContactsBook::load_contacts_file`].
-/// Recognized contacts input formats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContactsFormat {
     /// vCard `.vcf`/`.vcard` input.
@@ -69,7 +68,6 @@ pub enum ContactsFormat {
 const UNRECOGNIZED_CONTACTS_FORMAT: &str = "Unrecognized contacts format.";
 
 /// Probe failure for GUI preflight (short `message` + optional log `details`).
-/// Short UI message plus optional log details for probe failures.
 #[derive(Debug, Clone)]
 pub struct ContactsInputError {
     /// Short human-readable error (e.g. `"Unrecognized contacts format."`).

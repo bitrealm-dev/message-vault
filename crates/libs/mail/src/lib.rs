@@ -65,8 +65,8 @@ pub struct Participant {
 pub struct MailAttachment {
     /// Raw file bytes attached as a MIME part.
     pub bytes: Vec<u8>,
-    /// Shared attachment metadata (`path` is always `None` — mail archives never
-    /// store an on-disk path; readers restore the IR path separately).
+    /// Shared attachment metadata (`path` is never serialized to the EML; readers
+    /// restore the IR path separately).
     pub meta: message_ir::AttachmentMeta,
     /// Sticker flag serialized in the attachment meta JSON.
     pub is_sticker: bool,
