@@ -308,7 +308,7 @@ fn copy_media(
     }
     fs::copy(&src_path, &dest)
         .with_context(|| format!("copy {} → {}", src_path.display(), dest.display()))?;
-    let digest = media::file_sha256(&dest)?;
+    let digest = file_sha256(&dest)?;
     Ok(Some(PendingAttachment {
         rel_path: rel,
         content_type: msg.mime.clone().unwrap_or_default(),
@@ -316,6 +316,11 @@ fn copy_media(
         digest_sha256: Some(digest),
         name_hint: Some(original),
     }))
+}
+
+/// Shared hasher with the historical bare-io-error text this exporter emitted.
+fn file_sha256(path: &std::path::Path) -> anyhow::Result<String> {
+    media::file_sha256(path).map_err(|e| anyhow::anyhow!("{}", e.root_cause()))
 }
 
 /// Resolve a wtsexporter media path against `media_base` and search roots.

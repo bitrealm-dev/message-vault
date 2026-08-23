@@ -12,7 +12,7 @@ path = "src/lib.rs"
 
 [features]
 default = ["cli"]
-cli = ["dep:clap", "message-vault-io-core/cli"]
+cli = ["dep:clap"]
 
 [[bin]]
 name = "imessage-ir-exporter"

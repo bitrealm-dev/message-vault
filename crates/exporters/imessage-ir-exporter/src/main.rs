@@ -93,4 +93,17 @@ mod tests {
         assert_eq!(config.media.mode, MediaMode::Convert);
         assert_eq!(config.media.compress.max_resolution, MaxResolution::P720);
     }
+
+    #[test]
+    fn media_defaults_match_old_default_config() {
+        let cli = Cli::parse_from([
+            "imessage-ir-exporter",
+            "--output",
+            "/tmp/imessage-ir-test-out",
+        ]);
+        let config = build_config_from_cli(&cli).unwrap();
+        let default_media = MediaConfig::default();
+        assert_eq!(config.media.mode, default_media.mode);
+        assert_eq!(config.media.compress, default_media.compress);
+    }
 }

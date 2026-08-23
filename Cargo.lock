@@ -3462,7 +3462,6 @@ dependencies = [
  "clap",
  "contacts",
  "csv",
- "hex",
  "media",
  "message-csv",
  "message-ir",
@@ -3471,7 +3470,6 @@ dependencies = [
  "obfuscate",
  "phone",
  "serde_json",
- "sha2 0.11.0",
  "tempfile",
 ]
 
@@ -8129,7 +8127,6 @@ dependencies = [
  "phone",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "tempfile",
 ]
 
