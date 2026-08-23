@@ -34,6 +34,8 @@ Most converters accept `--format json|jsonl|csv|eml|mbox|xml`, an input path, an
 
 Keep input and output separate. Use `--help` on the installed command for its exact options. Open a command in the sidebar for its flags.
 
+Command pages are generated from clap. Edit flags in the Rust `Cli` structs, then run `dump-cli-docs`.
+
 ## Vault server CLI notes
 
 The [vault server CLI](/vault/developer/reference/server-cli/) page lists flags from clap. Extra meaning that clap does not carry lives here.

@@ -10,6 +10,7 @@ These pages are for people who compile the vault, run Compose, or call the HTTP 
 - [Operator Docker](/vault/developer/docker-compose/) — release-shaped Compose from a checkout
 - [Command-line tools](/vault/developer/reference/cli/) — exporter binaries, `vault-push`, `vault-pull`
 - [HTTP API](/vault/developer/reference/api/) — tokens and import flow; [route reference](/vault/developer/reference/http/)
+- [Rust crate docs](/vault/developer/rustdoc/) — `cargo doc` HTML for workspace crates (not the HTTP route list)
 - [Formats](/vault/developer/formats/) — converter capabilities and mapping tables
 - [Config and accounts](/vault/developer/reference/config-and-accounts/) — `config.toml` and local accounts
 - [Database](/vault/developer/reference/database/)

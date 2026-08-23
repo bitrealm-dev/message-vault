@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Generated OpenAPI reference for the vault HTTP API on the docs site, plus an optional explorer at `/docs` when `[server] openapi_ui` is true
+- CLI reference pages on the docs site generated from clap
+- Workspace rustdoc on the docs site at `/vault/developer/rustdoc/`
 
 Installable builds and release notes also appear on
 [GitHub Releases](https://github.com/bitrealm-io/message-vault/releases).

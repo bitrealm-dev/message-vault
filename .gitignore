@@ -36,6 +36,7 @@ config/config.toml
 /docs/.astro/
 /docs/dist/
 /docs/node_modules/
+/docs/public/vault/developer/rustdoc/
 
 # PlantUML extension default dump (workspace export goes to docs/maintainers/architecture/puml/img)
 /out/
