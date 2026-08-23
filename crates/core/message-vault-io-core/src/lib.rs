@@ -16,7 +16,7 @@ mod process;
 
 pub use attachments::{attachment_dest_name, copy_if_missing, digest_prefix, write_if_missing};
 #[cfg(feature = "cli")]
-pub use cli::{CommonCli, clap_command};
+pub use cli::{CommonCli, clap_command, run_cli};
 pub use config::{
     AppleConfig, ContactsConfig, ExporterConfig, FormatConfig, GoSmsProConfig, ImazingConfig,
     MediaConfig, OUTPUT_FORMATS_MAIL, ObfuscateConfig, OpenExtractConfig, OutputFormat,

@@ -5,9 +5,14 @@
 
 use std::path::PathBuf;
 
-use media::{MaxResolution, MediaMode};
+use media::{CompressOptions, MaxResolution, MediaMode, compress_options_from_cli};
+use message_csv::DateRange;
 
-use crate::{ContactsConfig, ContactsKind, ObfuscateConfig, contacts_kind_from_path};
+use crate::pipeline::{RunResult, print_result};
+use crate::{
+    ContactsConfig, ContactsKind, ExporterConfig, ObfuscateConfig, OutputFormat,
+    contacts_kind_from_path,
+};
 
 /// CLI arguments common to (nearly) every exporter.
 ///
@@ -108,6 +113,35 @@ impl CommonCli {
 /// into GUI docs).
 pub fn clap_command<C: clap::CommandFactory>() -> clap::Command {
     C::command()
+}
+
+/// The shared exporter main: parse the common CLI flags, build the source
+/// config, run, and print the result with the standard stdout/stderr split.
+///
+/// `parse_dates` supplies the exporter's date parsing (local or
+/// timezone-aware); `build` builds the exporter's `ExporterConfig` from the
+/// parsed common values; `run` is the exporter's run function.
+///
+/// # Errors
+///
+/// Returns an error when a flag value cannot be parsed or the run fails.
+pub fn run_cli(
+    common: &CommonCli,
+    parse_dates: impl FnOnce(&CommonCli) -> Result<DateRange, String>,
+    build: impl FnOnce(DateRange, OutputFormat, CompressOptions) -> ExporterConfig,
+    run: impl FnOnce(&ExporterConfig) -> anyhow::Result<RunResult>,
+) -> anyhow::Result<()> {
+    let date_range = parse_dates(common).map_err(anyhow::Error::msg)?;
+    let output_format = OutputFormat::parse(&common.format).map_err(anyhow::Error::msg)?;
+    let compress = compress_options_from_cli(
+        common.media_max_resolution,
+        common.media_max_fps,
+        &common.media_min_size,
+        common.media_skip_efficient,
+    )?;
+    let result = run(&build(date_range, output_format, compress))?;
+    print_result(&result);
+    Ok(())
 }
 
 /// Declare the standard test that a crate's `clap_command()` reports its
