@@ -4,6 +4,11 @@
 //! (shared pragmas) and ensure the schema with `ensure_vault_schema` /
 //! `ensure_accounts_schema`. DDL lives in the SQL files embedded at compile
 //! time; the functions here apply and evolve it.
+//!
+//! Schema changes are versioned with `PRAGMA user_version` (see
+//! [`SCHEMA_VERSION`]). The rule is: any schema change requires a fresh
+//! reload of data, so an out-of-date database is rebuilt empty from the
+//! embedded DDL instead of being patched in place.
 
 use std::path::Path;
 
@@ -67,17 +72,94 @@ const DROP_MESSAGES_FTS_TRIGGERS_SQL: &str =
 const CREATE_MESSAGES_FTS_TRIGGERS_SQL: &str =
     include_str!("../../../../../schema/sql/fts_triggers_create.sql");
 
-/// Create every table and index required by a current vault.
+/// Current vault schema version, stamped into each database with
+/// `PRAGMA user_version`. Bump this and append a [`MIGRATIONS`] entry
+/// whenever any `schema/sql/*.sql` file changes.
+pub const SCHEMA_VERSION: i64 = 1;
+
+/// Ordered schema migrations: `MIGRATIONS[v]` upgrades a database at version
+/// `v` to `v + 1`. Every migration follows the same rule — a schema change
+/// requires a fresh reload of data — so each one drops all tables and
+/// recreates the schema from the current embedded DDL. Migrations never patch
+/// columns or copy data; the rebuilt vault is empty and the user re-imports.
+const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[rebuild_vault_schema];
+
+/// Bring the database to [`SCHEMA_VERSION`].
 ///
-/// # Errors
-///
-/// Returns an error when a DDL statement fails.
-pub fn ensure_vault_schema(conn: &Connection) -> Result<()> {
+/// A database already at the current version is left untouched. Anything else
+/// — a fresh file, a pre-versioning vault, or one stamped by a different
+/// server — is rebuilt empty and stamped; the user re-imports afterwards.
+fn migrate_vault_schema(conn: &Connection) -> Result<()> {
+    let version = user_version(conn)?;
+    if version == SCHEMA_VERSION {
+        return Ok(());
+    }
+    if version > SCHEMA_VERSION {
+        eprintln!(
+            "warning: vault schema is version {version}, newer than this server's {SCHEMA_VERSION}; rebuilding empty (re-import your data)"
+        );
+        rebuild_vault_schema(conn)?;
+    } else {
+        if has_user_tables(conn)? {
+            eprintln!(
+                "warning: vault schema is version {version}; rebuilding empty at version {SCHEMA_VERSION} (re-import your data)"
+            );
+        }
+        for migration in MIGRATIONS.iter().skip(version.max(0) as usize) {
+            migration(conn)?;
+        }
+    }
+    stamp_user_version(conn, SCHEMA_VERSION)?;
+    Ok(())
+}
+
+/// The `user_version` pragma value stamped by [`migrate_vault_schema`].
+fn user_version(conn: &Connection) -> Result<i64> {
+    Ok(conn.query_row("PRAGMA user_version", [], |row| row.get(0))?)
+}
+
+fn stamp_user_version(conn: &Connection, version: i64) -> Result<()> {
+    conn.pragma_update(None, "user_version", version)?;
+    Ok(())
+}
+
+/// Whether any user table exists. A fresh file has none, so a first run stays
+/// quiet instead of warning about a rebuild.
+fn has_user_tables(conn: &Connection) -> Result<bool> {
+    let tables: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(tables > 0)
+}
+
+/// Drop every user table and recreate the current schema from the embedded
+/// DDL. This is the only kind of migration: schema changes require a fresh
+/// reload of data, never in-place column patches.
+fn rebuild_vault_schema(conn: &Connection) -> Result<()> {
+    conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
+    let tables: Vec<String> = {
+        let mut stmt = conn.prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+        )?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    // `IF EXISTS` keeps this safe when an FTS table's shadow tables were
+    // already removed with their parent.
+    for table in &tables {
+        conn.execute(&format!("DROP TABLE IF EXISTS \"{table}\""), [])?;
+    }
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
-    ensure_accounts_schema(conn)?;
-    // Older vaults used `contact_labels`. Rename those tables before CREATE
-    // so a restart picks up the current names.
-    migrate_contact_labels_to_groups(conn)?;
+    apply_vault_ddl(conn)?;
+    Ok(())
+}
+
+/// Apply the current embedded DDL: accounts, contacts, messages, staging,
+/// then the FTS index and its sync triggers.
+fn apply_vault_ddl(conn: &Connection) -> Result<()> {
+    conn.execute_batch(ACCOUNTS_DDL)?;
     // Contacts DDL defines `handles`, the FK target of conversations, participants,
     // messages, and tapbacks (messages.sql) plus account_handles (accounts.sql).
     // Apply it before the tables that reference handles.
@@ -86,6 +168,16 @@ pub fn ensure_vault_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(STAGING_TABLES_DDL)?;
     ensure_messages_fts(conn)?;
     Ok(())
+}
+
+/// Create every table and index required by a current vault.
+///
+/// # Errors
+///
+/// Returns an error when a DDL statement fails.
+pub fn ensure_vault_schema(conn: &Connection) -> Result<()> {
+    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+    migrate_vault_schema(conn)
 }
 
 /// Marker that current full-text search (FTS) sync trigger definitions are installed.
@@ -286,85 +378,18 @@ pub fn reset_staging_for_account(conn: &Connection, account_id: &str) -> Result<
     Ok(())
 }
 
-fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
-    let exists: bool = conn.query_row(
-        "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = ?1",
-        [name],
-        |row| row.get(0),
-    )?;
-    Ok(exists)
-}
-
-/// Rename leftover `contact_labels` tables from vaults created before groups.
-fn migrate_contact_labels_to_groups(conn: &Connection) -> Result<()> {
-    if !table_exists(conn, "contact_labels")? {
-        return Ok(());
-    }
-    if table_exists(conn, "contact_groups")? {
-        return Ok(());
-    }
-    conn.execute_batch(
-        r#"
-        PRAGMA foreign_keys = OFF;
-        ALTER TABLE contact_labels RENAME TO contact_groups;
-        ALTER TABLE contact_label_members RENAME TO contact_group_members;
-        ALTER TABLE contact_group_members RENAME COLUMN label_id TO group_id;
-        PRAGMA foreign_keys = ON;
-        "#,
-    )?;
-    Ok(())
-}
-
 /// Create current account and vault metadata tables.
+///
+/// Account tables live in the same database file as the rest of the vault, so
+/// the one `user_version` stamp covers them. A stamped database needs nothing;
+/// anything else gets the full vault schema (with the rebuild that implies).
 ///
 /// # Errors
 ///
-/// Returns an error when DDL or a column migration fails.
+/// Returns an error when a DDL statement fails.
 pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
-    conn.execute_batch(ACCOUNTS_DDL)?;
-    // Additive migrations for DBs created before expiry/disable columns existed.
-    ensure_column(
-        conn,
-        "account_session_tokens",
-        "expires_at",
-        "ALTER TABLE account_session_tokens ADD COLUMN expires_at TEXT NOT NULL DEFAULT '0'",
-    )?;
-    ensure_column(
-        conn,
-        "account_api_tokens",
-        "expires_at",
-        "ALTER TABLE account_api_tokens ADD COLUMN expires_at TEXT",
-    )?;
-    ensure_column(
-        conn,
-        "account_api_tokens",
-        "disabled",
-        "ALTER TABLE account_api_tokens ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0",
-    )?;
-    ensure_column(
-        conn,
-        "accounts",
-        "guest_status",
-        "ALTER TABLE accounts ADD COLUMN guest_status TEXT",
-    )?;
-    Ok(())
-}
-
-fn ensure_column(conn: &Connection, table: &str, column: &str, alter_sql: &str) -> Result<()> {
-    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
-    let mut exists = false;
-    let mut rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-    for row in rows.by_ref() {
-        let Ok(name) = row else {
-            continue;
-        };
-        if name == column {
-            exists = true;
-            break;
-        }
-    }
-    if !exists {
-        conn.execute_batch(alter_sql)?;
+    if user_version(conn)? != SCHEMA_VERSION {
+        ensure_vault_schema(conn)?;
     }
     Ok(())
 }
@@ -375,6 +400,15 @@ mod tests {
 
     const A1: &str = "11111111-1111-1111-1111-111111111111";
     const A2: &str = "22222222-2222-2222-2222-222222222222";
+
+    fn table_exists(conn: &Connection, name: &str) -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [name],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
 
     fn setup() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -470,6 +504,19 @@ mod tests {
     fn fresh_vault_has_complete_current_schema() {
         let conn = Connection::open_in_memory().unwrap();
         ensure_vault_schema(&conn).unwrap();
+        assert_current_schema_contract(&conn);
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION, "a fresh vault is stamped at once");
+        // Ensuring again on a current vault is a no-op.
+        ensure_vault_schema(&conn).unwrap();
+        assert_current_schema_contract(&conn);
+    }
+
+    /// Assert every table, index, trigger, metadata marker, and column the
+    /// current schema contract lists is present.
+    fn assert_current_schema_contract(conn: &Connection) {
         let contract: serde_json::Value = serde_json::from_str(include_str!(
             "../../../../../tests/fixtures/schema/current-schema.json"
         ))
@@ -477,7 +524,7 @@ mod tests {
 
         for table in contract["tables"].as_array().unwrap() {
             let table = table.as_str().unwrap();
-            assert!(table_exists(&conn, table).unwrap(), "missing table {table}");
+            assert!(table_exists(conn, table), "missing table {table}");
         }
         for index in contract["indexes"].as_array().unwrap() {
             let index = index.as_str().unwrap();
@@ -576,8 +623,6 @@ mod tests {
                 .iter()
                 .any(|c| c == "missing_reason")
         );
-
-        ensure_vault_schema(&conn).unwrap();
     }
 
     #[test]
@@ -654,9 +699,14 @@ mod tests {
     }
 
     #[test]
-    fn restart_renames_contact_labels_tables() {
+    fn old_vault_rebuilds_empty_at_current_version() {
         let conn = Connection::open_in_memory().unwrap();
-        ensure_vault_schema(&conn).unwrap();
+        // A pre-versioning vault from the pre-groups era: contact_labels
+        // tables, no user_version stamp.
+        conn.execute_batch(include_str!(
+            "../../../../../tests/fixtures/schema/v0-vault.sql"
+        ))
+        .unwrap();
         conn.execute(
             "INSERT INTO accounts (id, username) VALUES (?1, 'alice')",
             params![A1],
@@ -668,52 +718,64 @@ mod tests {
         )
         .unwrap();
         let contact_id = conn.last_insert_rowid();
-        conn.execute_batch(
-            r#"
-            PRAGMA foreign_keys = OFF;
-            DROP TABLE contact_group_members;
-            DROP TABLE contact_groups;
-            CREATE TABLE contact_labels (
-                id INTEGER PRIMARY KEY,
-                account_id TEXT NOT NULL,
-                name TEXT NOT NULL
-            );
-            CREATE TABLE contact_label_members (
-                contact_id INTEGER NOT NULL,
-                label_id INTEGER NOT NULL,
-                PRIMARY KEY (contact_id, label_id)
-            );
-            PRAGMA foreign_keys = ON;
-            "#,
-        )
-        .unwrap();
         conn.execute(
             "INSERT INTO contact_labels (account_id, name) VALUES (?1, 'Family')",
             params![A1],
         )
         .unwrap();
-        let group_id = conn.last_insert_rowid();
+        let label_id = conn.last_insert_rowid();
         conn.execute(
             "INSERT INTO contact_label_members (contact_id, label_id) VALUES (?1, ?2)",
-            params![contact_id, group_id],
+            params![contact_id, label_id],
         )
         .unwrap();
 
         ensure_vault_schema(&conn).unwrap();
 
-        assert!(!table_exists(&conn, "contact_labels").unwrap());
-        assert!(table_exists(&conn, "contact_groups").unwrap());
-        let name: String = conn
-            .query_row(
-                "SELECT cg.name
-                 FROM contact_groups cg
-                 JOIN contact_group_members cgm ON cgm.group_id = cg.id
-                 WHERE cgm.contact_id = ?1",
-                params![contact_id],
-                |row| row.get(0),
-            )
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(name, "Family");
+        assert_eq!(version, SCHEMA_VERSION, "old vault must be stamped current");
+        assert!(!table_exists(&conn, "contact_labels"));
+        assert!(!table_exists(&conn, "contact_label_members"));
+        assert_current_schema_contract(&conn);
+        let accounts: i64 = conn
+            .query_row("SELECT COUNT(*) FROM accounts", [], |r| r.get(0))
+            .unwrap();
+        let contacts: i64 = conn
+            .query_row("SELECT COUNT(*) FROM contacts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(accounts, 0, "rebuild drops old vault data");
+        assert_eq!(contacts, 0, "rebuild drops old vault data");
+    }
+
+    #[test]
+    fn current_version_vault_keeps_data_across_reensure() {
+        let conn = setup();
+        ensure_vault_schema(&conn).unwrap();
+        let accounts: i64 = conn
+            .query_row("SELECT COUNT(*) FROM accounts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            accounts, 2,
+            "re-ensuring a current vault must not wipe data"
+        );
+    }
+
+    #[test]
+    fn newer_version_vault_rebuilds_to_current() {
+        let conn = setup();
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION + 1)
+            .unwrap();
+        ensure_vault_schema(&conn).unwrap();
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION, "downgrade rebuilds at current");
+        let accounts: i64 = conn
+            .query_row("SELECT COUNT(*) FROM accounts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(accounts, 0, "downgrade rebuild drops data");
     }
 
     #[test]
