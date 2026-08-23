@@ -14,7 +14,7 @@ use crate::{ContactsConfig, ContactsKind, ObfuscateConfig, contacts_kind_from_pa
 /// Use with `#[command(flatten)]` in the exporter's `Cli` struct.
 #[derive(Debug, Clone, clap::Args)]
 pub struct CommonCli {
-    /// Output directory for packaging + attachments/
+    /// Output directory for packaging + `attachments/`
     #[arg(long)]
     pub output: PathBuf,
 

@@ -26,7 +26,7 @@ Use with `#[command(flatten)]` in the exporter's `Cli` struct.
 
 * `--input <INPUT>` — Directory containing gosms_sys*.xml and I_*.pdu files
 * `--owner-phone <OWNER_PHONES>` — Owner phone (E.164 or digits). Repeat for multiple owner numbers. Required — there is no demo default (wrong owner flips PDU direction)
-* `--output <OUTPUT>` — Output directory for packaging + attachments/
+* `--output <OUTPUT>` — Output directory for packaging + `attachments/`
 * `--format <FORMAT>` — Output format: `json` (default), `jsonl`, `csv`, `eml`, `mbox`, or `xml`
 
   Default value: `json`

@@ -49,9 +49,10 @@ fn discover_files_into(
     Ok(())
 }
 
-/// Result of a successful exporter [`crate`]-style `run`: human-readable log lines.
+/// Result of a successful exporter `run`: human-readable log lines.
 #[derive(Debug, Default)]
 pub struct RunResult {
+    /// Human-readable log lines (summary lines plus mid-run notes).
     pub messages: Vec<String>,
 }
 
@@ -59,13 +60,21 @@ pub struct RunResult {
 /// dedupe counts, etc.) are stored in the `extra` map.
 #[derive(Debug, Default, Clone)]
 pub struct ExportReport {
+    /// Conversations exported.
     pub conversations: u64,
+    /// Messages exported.
     pub messages: u64,
+    /// Outgoing messages exported.
     pub sent: u64,
+    /// Incoming messages exported.
     pub received: u64,
+    /// Rows skipped because their date could not be parsed.
     pub skipped_invalid_date: u64,
+    /// Rows skipped because they fell outside the date range.
     pub skipped_out_of_range: u64,
+    /// Duplicate rows dropped during dedupe.
     pub duplicates_dropped: u64,
+    /// Attachment files saved to the output.
     pub attachments_saved: u64,
     /// Human-readable error/warning lines (capped by each exporter).
     pub errors: Vec<String>,

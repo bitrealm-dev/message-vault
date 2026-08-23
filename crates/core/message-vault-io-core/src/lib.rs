@@ -3,6 +3,8 @@
 //! The desktop app and exporter command-line tools share this crate so every
 //! backup type validates the same way before a job starts.
 
+#![warn(missing_docs)]
+
 #[cfg(feature = "cli")]
 mod cli;
 mod config;
