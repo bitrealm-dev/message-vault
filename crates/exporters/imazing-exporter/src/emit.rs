@@ -220,17 +220,17 @@ pub(crate) fn convert_export(
                     if copy_failures > 0 {
                         bump(&mut report, "attachment-copy-failures", copy_failures);
                     }
-                    let rel_path = cell.path.clone().unwrap_or_default();
+                    let rel_path = cell.meta.path.clone().unwrap_or_default();
                     attachments.push(PendingAttachment {
                         rel_path: rel_path.clone(),
-                        content_type: cell.mime_type.clone().unwrap_or_default(),
+                        content_type: cell.meta.mime_type.clone().unwrap_or_default(),
                         extension: Path::new(&rel_path)
                             .extension()
                             .and_then(|e| e.to_str())
                             .unwrap_or("")
                             .to_string(),
-                        digest_sha256: cell.digest_sha256.clone(),
-                        name_hint: cell.original_name.clone(),
+                        digest_sha256: cell.meta.digest_sha256.clone(),
+                        name_hint: cell.meta.original_name.clone(),
                     });
                     // iMazing rows carry at most one attachment, so sticker
                     // metadata fits on the message.

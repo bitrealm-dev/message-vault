@@ -282,19 +282,5 @@ fn parse_attachments(raw: &str) -> Result<Vec<IrAttachment>> {
     }
     let cells: Vec<AttachmentCell> =
         serde_json::from_str(raw).with_context(|| format!("parse attachments_json: {raw}"))?;
-    Ok(cells
-        .into_iter()
-        .map(|a| IrAttachment {
-            path: a.path,
-            original_name: a.original_name,
-            mime_type: a.mime_type,
-            digest_sha256: a.digest_sha256,
-            is_sticker: a.is_sticker,
-            transcription: a.transcription,
-            sticker_effect: a.sticker_effect,
-            size_bytes: None,
-            missing_reason: None,
-            bytes: None,
-        })
-        .collect())
+    Ok(cells.into_iter().map(Into::into).collect())
 }

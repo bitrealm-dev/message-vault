@@ -132,10 +132,12 @@ pub(crate) fn resolve_attachment_cell(args: ResolveAttachmentArgs<'_>) -> Attach
     let is_sticker = attachment_type.eq_ignore_ascii_case("sticker");
     if !copy_attachments {
         return AttachmentCell {
-            path: Some(csv_name.to_string()),
-            original_name: Some(csv_name.to_string()),
-            mime_type: mime,
-            digest_sha256: None,
+            meta: message_ir::AttachmentMeta {
+                path: Some(csv_name.to_string()),
+                original_name: Some(csv_name.to_string()),
+                mime_type: mime,
+                digest_sha256: None,
+            },
             is_sticker,
             transcription: None,
             sticker_effect: None,
@@ -150,19 +152,23 @@ pub(crate) fn resolve_attachment_cell(args: ResolveAttachmentArgs<'_>) -> Attach
         attachments_saved,
     ) {
         Ok(Some((rel_path, digest))) => AttachmentCell {
-            path: Some(rel_path),
-            original_name: Some(csv_name.to_string()),
-            mime_type: mime,
-            digest_sha256: Some(digest),
+            meta: message_ir::AttachmentMeta {
+                path: Some(rel_path),
+                original_name: Some(csv_name.to_string()),
+                mime_type: mime,
+                digest_sha256: Some(digest),
+            },
             is_sticker,
             transcription: None,
             sticker_effect: None,
         },
         Ok(None) => AttachmentCell {
-            path: Some(csv_name.to_string()),
-            original_name: Some(csv_name.to_string()),
-            mime_type: mime,
-            digest_sha256: None,
+            meta: message_ir::AttachmentMeta {
+                path: Some(csv_name.to_string()),
+                original_name: Some(csv_name.to_string()),
+                mime_type: mime,
+                digest_sha256: None,
+            },
             is_sticker,
             transcription: None,
             sticker_effect: None,
@@ -170,10 +176,12 @@ pub(crate) fn resolve_attachment_cell(args: ResolveAttachmentArgs<'_>) -> Attach
         Err(_) => {
             *copy_failures += 1;
             AttachmentCell {
-                path: Some(csv_name.to_string()),
-                original_name: Some(csv_name.to_string()),
-                mime_type: mime,
-                digest_sha256: None,
+                meta: message_ir::AttachmentMeta {
+                    path: Some(csv_name.to_string()),
+                    original_name: Some(csv_name.to_string()),
+                    mime_type: mime,
+                    digest_sha256: None,
+                },
                 is_sticker,
                 transcription: None,
                 sticker_effect: None,
@@ -348,9 +356,9 @@ mod tests {
         });
         assert_eq!(saved, 1);
         assert_eq!(failures, 0);
-        let digest = cell.digest_sha256.expect("digest set after copy");
+        let digest = cell.meta.digest_sha256.expect("digest set after copy");
         assert_eq!(digest.len(), 64);
-        assert!(cell.path.as_deref().unwrap().starts_with("attachments/"));
+        assert!(cell.meta.path.as_deref().unwrap().starts_with("attachments/"));
     }
 
     #[cfg(unix)]

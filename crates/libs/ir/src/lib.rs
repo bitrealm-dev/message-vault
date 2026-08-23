@@ -12,9 +12,9 @@
 
 #![warn(missing_docs)]
 
-use message_csv::conversation_filename;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 
 /// Schema version written into every [`ConversationDocument`] (currently 3).
 pub const SCHEMA_VERSION: u32 = 3;
@@ -323,7 +323,7 @@ impl IrMessageKind {
 /// One message in a conversation: sender, body text, and attachments.
 pub struct IrMessage {
     /// Stable message id; derived from content when the source has no id
-    /// (see `message_csv::stable_guid`).
+    /// (see message-csv's `stable_guid`).
     pub guid: String,
     /// Unix milliseconds; the chronological sort key.
     pub timestamp_unix_ms: i64,
@@ -365,6 +365,32 @@ impl IrDirection {
         match self {
             Self::Incoming => "incoming",
             Self::Outgoing => "outgoing",
+        }
+    }
+}
+
+/// Core attachment metadata shared by the IR attachment, the CSV cell, and the
+/// mail MIME layer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentMeta {
+    /// Relative path under `attachments/` to the staged file.
+    pub path: Option<String>,
+    /// Filename the sender's device had for the file.
+    pub original_name: Option<String>,
+    /// Detected or declared MIME type.
+    pub mime_type: Option<String>,
+    /// 64-hex SHA-256 of the file contents (content addressing).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest_sha256: Option<String>,
+}
+
+impl From<&IrAttachment> for AttachmentMeta {
+    fn from(a: &IrAttachment) -> Self {
+        Self {
+            path: a.path.clone(),
+            original_name: a.original_name.clone(),
+            mime_type: a.mime_type.clone(),
+            digest_sha256: a.digest_sha256.clone(),
         }
     }
 }
@@ -523,6 +549,106 @@ impl ConversationDocument {
     pub fn finalize_stats(&mut self) {
         self.conversation.stats = compute_stats(&self.messages);
     }
+}
+
+/// Max peer phones included in an untitled group filename stem.
+const GROUP_FILENAME_MAX_PHONES: usize = 10;
+
+fn sanitize_stem(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '+' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn is_phone_handle(value: &str) -> bool {
+    let value = value.trim();
+    if value.is_empty() {
+        return false;
+    }
+    if let Some(rest) = value.strip_prefix('+') {
+        !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit())
+    } else {
+        value.chars().all(|c| c.is_ascii_digit())
+    }
+}
+
+fn with_suffix(stem: &str, suffix: Option<&str>) -> String {
+    match suffix {
+        Some(s) if !s.is_empty() => format!("{stem}{s}.csv"),
+        _ => format!("{stem}.csv"),
+    }
+}
+
+/// Standard per-conversation CSV filename.
+///
+/// - Individual → `safe_filename(chat_id)` (+ optional suffix)
+/// - Group with a real `group_title` → sanitized title
+/// - Untitled group → `group_+A_+B_…` (sorted unique E.164, max 10);
+///   if more than 10 peers, append `_<16 hex>` of SHA-256 over the full roster
+/// - Untitled group with empty roster → `group_unknown` (or hash of `chat_id`)
+pub fn conversation_filename(
+    conversation_type: &str,
+    chat_id: &str,
+    group_title: Option<&str>,
+    participant_e164s: &[String],
+    suffix: Option<&str>,
+) -> String {
+    let is_group = conversation_type.eq_ignore_ascii_case("group");
+    if !is_group {
+        let stem = sanitize_stem(chat_id);
+        return with_suffix(&stem, suffix);
+    }
+
+    if let Some(title) = group_title.map(str::trim).filter(|t| !t.is_empty()) {
+        let stem = sanitize_stem(title);
+        if !stem.is_empty() && !stem.chars().all(|c| c == '_') {
+            return with_suffix(&stem, suffix);
+        }
+    }
+
+    let phones = unique_sorted_phone_handles(participant_e164s);
+
+    if phones.is_empty() {
+        let stem = if chat_id.trim().is_empty() {
+            "group_unknown".to_string()
+        } else {
+            let digest = hex::encode(Sha256::digest(chat_id.as_bytes()));
+            format!("group_{}", &digest[..16])
+        };
+        return with_suffix(&stem, suffix);
+    }
+
+    let mut stem = String::from("group");
+    for phone in phones.iter().take(GROUP_FILENAME_MAX_PHONES) {
+        stem.push('_');
+        stem.push_str(phone);
+    }
+    if phones.len() > GROUP_FILENAME_MAX_PHONES {
+        let joined = phones.join("|");
+        let digest = hex::encode(Sha256::digest(joined.as_bytes()));
+        stem.push('_');
+        stem.push_str(&digest[..16]);
+    }
+    with_suffix(&stem, suffix)
+}
+
+/// Trim, keep phone-looking handles, sort, and drop duplicates.
+fn unique_sorted_phone_handles(participant_e164s: &[String]) -> Vec<String> {
+    let mut phones: Vec<String> = participant_e164s
+        .iter()
+        .map(|p| p.trim().to_string())
+        .filter(|p| is_phone_handle(p))
+        .collect();
+    phones.sort();
+    phones.dedup();
+    phones
 }
 
 /// Count messages and attachments and find first/last timestamps.

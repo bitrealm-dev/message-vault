@@ -57,13 +57,31 @@ pub struct Participant {
 /// Attachment bytes plus metadata for MIME parts / `X-ME-Attachment-Meta`.
 #[derive(Debug, Clone)]
 pub struct MailAttachment {
+    /// Raw file bytes attached as a MIME part.
     pub bytes: Vec<u8>,
-    pub original_name: Option<String>,
-    pub mime_type: Option<String>,
-    pub digest_sha256: Option<String>,
+    /// Shared attachment metadata (`path` is always `None` — mail archives never
+    /// store an on-disk path; readers restore the IR path separately).
+    pub meta: message_ir::AttachmentMeta,
     pub is_sticker: bool,
     pub transcription: Option<String>,
     pub sticker_effect: Option<String>,
+}
+
+impl From<&MailAttachment> for message_ir::IrAttachment {
+    fn from(a: &MailAttachment) -> Self {
+        Self {
+            path: None,
+            original_name: a.meta.original_name.clone(),
+            mime_type: a.meta.mime_type.clone(),
+            digest_sha256: a.meta.digest_sha256.clone(),
+            is_sticker: a.is_sticker,
+            transcription: a.transcription.clone(),
+            sticker_effect: a.sticker_effect.clone(),
+            size_bytes: None,
+            missing_reason: None,
+            bytes: None,
+        }
+    }
 }
 
 /// How to package a conversation for mail-archive export.
@@ -782,12 +800,12 @@ fn build_eml(msg: &MailMessage) -> Result<Vec<u8>> {
             .iter()
             .map(|a| AttachmentMetaCell {
                 path: None,
-                original_name: a.original_name.as_deref(),
-                mime_type: a.mime_type.as_deref(),
+                original_name: a.meta.original_name.as_deref(),
+                mime_type: a.meta.mime_type.as_deref(),
                 is_sticker: a.is_sticker,
                 transcription: a.transcription.as_deref(),
                 sticker_effect: a.sticker_effect.as_deref(),
-                digest_sha256: a.digest_sha256.as_deref(),
+                digest_sha256: a.meta.digest_sha256.as_deref(),
             })
             .collect();
         let meta_json = serde_json::to_string(&meta).unwrap_or_else(|_| "[]".into());
@@ -798,11 +816,13 @@ fn build_eml(msg: &MailMessage) -> Result<Vec<u8>> {
 
     for (i, att) in msg.attachments.iter().enumerate() {
         let mime = att
+            .meta
             .mime_type
             .as_deref()
             .filter(|m| !m.is_empty())
             .unwrap_or("application/octet-stream");
         let filename = att
+            .meta
             .original_name
             .clone()
             .unwrap_or_else(|| format!("attachment-{i}"));
@@ -993,9 +1013,12 @@ mod tests {
         ];
         msg.attachments = vec![MailAttachment {
             bytes: b"\xff\xd8\xfffakejpeg".to_vec(),
-            original_name: Some("photo.jpg".into()),
-            mime_type: Some("image/jpeg".into()),
-            digest_sha256: Some("deadbeef".into()),
+            meta: message_ir::AttachmentMeta {
+                path: None,
+                original_name: Some("photo.jpg".into()),
+                mime_type: Some("image/jpeg".into()),
+                digest_sha256: Some("deadbeef".into()),
+            },
             is_sticker: false,
             transcription: None,
             sticker_effect: None,
@@ -1199,9 +1222,12 @@ mod tests {
         msg.text = "Loved a message".into();
         msg.attachments = vec![MailAttachment {
             bytes: b"<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>".to_vec(),
-            original_name: Some("handwriting.svg".into()),
-            mime_type: Some("image/svg+xml".into()),
-            digest_sha256: None,
+            meta: message_ir::AttachmentMeta {
+                path: None,
+                original_name: Some("handwriting.svg".into()),
+                mime_type: Some("image/svg+xml".into()),
+                digest_sha256: None,
+            },
             is_sticker: false,
             transcription: None,
             sticker_effect: None,
