@@ -8,6 +8,8 @@ use media::{MaxResolution, MediaMode};
 #[derive(Parser, Debug)]
 #[command(name = "message-reexporter")]
 #[command(about = "Convert an existing Message Vault output to another format")]
+/// Command-line flags for the `message-reexporter` binary; the about text
+/// comes from the `#[command(about)]` attribute.
 pub struct Cli {
     /// Directory containing a prior Message Vault output (auto-detected)
     #[arg(long)]
@@ -54,6 +56,7 @@ pub struct Cli {
     pub media_skip_efficient: bool,
 }
 
+/// The clap `Command` for embedding `--help` output into GUI docs.
 pub fn clap_command() -> Command {
     Cli::command()
 }

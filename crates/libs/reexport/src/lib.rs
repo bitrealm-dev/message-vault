@@ -1,5 +1,7 @@
 //! Convert an existing Message Vault output directory to another format.
 
+#![warn(missing_docs)]
+
 pub mod cli;
 
 use anyhow::{Context, Result, bail};
