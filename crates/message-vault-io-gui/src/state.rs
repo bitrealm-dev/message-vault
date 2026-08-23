@@ -100,6 +100,7 @@ impl AppState {
 
     /// Save settings when the window closes. Print a message if the write fails.
     pub fn persist_on_exit(&mut self) {
+        self.flush_session_log();
         if let Err(error) = self.save_export_ini() {
             eprintln!("Could not save settings: {error}");
         }

@@ -352,12 +352,15 @@ fn build_cors_layer(origins: &[String]) -> CorsLayer {
         .allow_headers(AllowHeaders::mirror_request())
 }
 
-fn auth_public_router(mode: AuthMode) -> Router<AppState> {
-    let (router, _spec) =
+fn limited_auth_router(mode: AuthMode) -> (Router<AppState>, utoipa::openapi::OpenApi) {
+    let (router, spec) =
         crate::openapi::auth_public_openapi(crate::openapi::SpecAuth::Live(mode)).split_for_parts();
-    router
-        // Auth JSON is tiny; keep a tight limit so Argon2/JWKS abuse cannot ship 512 MiB bodies.
-        .layer(RequestBodyLimitLayer::new(32 * 1024))
+    (
+        router
+            // Auth JSON is tiny; keep a tight limit so Argon2/JWKS abuse cannot ship 512 MiB bodies.
+            .layer(RequestBodyLimitLayer::new(32 * 1024)),
+        spec,
+    )
 }
 
 pub(crate) fn http_app(state: AppState) -> Router {
@@ -374,18 +377,13 @@ pub(crate) fn http_app(state: AppState) -> Router {
         .map(|s| s.cors_origins.clone())
         .unwrap_or_default();
     let mode = AuthMode::from_env();
-    let (auth_small, mut spec) =
-        crate::openapi::auth_public_openapi(crate::openapi::SpecAuth::Live(mode)).split_for_parts();
+    let (auth_small, mut spec) = limited_auth_router(mode);
     let (doc_router, rest) = crate::openapi::api_openapi().split_for_parts();
     spec.merge(rest);
 
     let mut api = Router::new()
         .merge(doc_router)
-        .merge(
-            auth_small
-                // Auth JSON is tiny; keep a tight limit so Argon2/JWKS abuse cannot ship 512 MiB bodies.
-                .layer(RequestBodyLimitLayer::new(32 * 1024)),
-        )
+        .merge(auth_small)
         .fallback_service(ServeDir::new("static"))
         .layer(build_cors_layer(&cors_origins))
         .layer(RequestBodyLimitLayer::new(state.max_body_bytes));
@@ -3046,6 +3044,10 @@ mod tests {
     use std::sync::{Arc, Mutex as StdMutex};
     use tempfile::TempDir;
 
+    fn auth_public_router(mode: AuthMode) -> Router<AppState> {
+        limited_auth_router(mode).0
+    }
+
     #[test]
     fn jsonl_content_type_accepts_x_ndjson() {
         assert!(is_jsonl_content_type("application/x-ndjson"));
@@ -3190,7 +3192,7 @@ mod tests {
     async fn auth_mode_includes_try_demo_flag() {
         let (_tmp, state, _token, _import_id) = test_state();
         let Json(value) = auth_mode_handler(State(state)).await;
-        assert_eq!(value.try_demo, false);
+        assert!(!value.try_demo);
         assert!(!value.mode.is_empty());
     }
 
