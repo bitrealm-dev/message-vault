@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect } from "react";
 import { Dialog, Modal, ModalOverlay } from "react-aria-components";
 import { useAssetObjectUrl } from "../hooks/useAssetObjectUrl";
 import type { MessageAttachment } from "../lib/types";
@@ -24,6 +24,18 @@ export default function AttachmentLightbox({
   const item = items[currentIndex];
   const attachment = item?.attachment;
   const { url, loading, error } = useAssetObjectUrl(attachment?.sha256, item?.source);
+
+  // React Aria's Dialog type omits keyboard events and drops them at runtime,
+  // so arrow-key navigation is handled with a window listener (as in ContactDrawer).
+  useEffect(() => {
+    if (!attachment) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") onPrev();
+      else if (e.key === "ArrowRight") onNext();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [attachment, onPrev, onNext]);
 
   if (!attachment) return null;
 
@@ -53,10 +65,6 @@ export default function AttachmentLightbox({
         <Dialog
           aria-label="Attachment viewer"
           className="flex items-center justify-center outline-none"
-          onKeyDown={(e) => {
-            if (e.key === "ArrowLeft") onPrev();
-            else if (e.key === "ArrowRight") onNext();
-          }}
         >
           <div className="flex items-center justify-center outline-none">
             {items.length > 1 && (

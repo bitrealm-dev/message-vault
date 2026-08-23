@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Local pre-PR check: format Rust and web, then license consistency, workspace
-# build/test, web lint/test, docs check/build.
+# build/test, web lint/test/build, docs check/build.
 #
 #   ./scripts/check-pr.sh
 #
@@ -28,6 +28,8 @@ echo "==> web lint"
 (cd web && npm run lint)
 echo "==> web test"
 (cd web && npm test)
+echo "==> web build (type-check + bundle)"
+(cd web && npm run build)
 
 if [[ ! -d docs/node_modules ]]; then
   echo "==> npm ci (docs)"
