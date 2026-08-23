@@ -10,7 +10,7 @@ This page is the standard for `///` and `//!` comments and utoipa annotations in
 Open every doc comment with a single sentence stating what the item is or does. Put examples, rationale, and error notes in later sentences.
 
 - `crates/vault/server/src/api_tokens_api.rs:112` — "`GET /v1/account/api-tokens`" — Bad: the route echo as the opening summary adds nothing; the first sentence should describe the operation.
-- `crates/vault/server/src/assets.rs:28` — "SHA-256 fingerprint of `data` as 64 lowercase hex digits. SHA-256 is a short fingerprint of the file contents." — Bad: the second sentence restates the first; later sentences must add information.
+- `crates/vault/server/src/assets.rs:27–29` — "SHA-256 fingerprint of `data` as 64 lowercase hex digits. SHA-256 is a short fingerprint of the file contents." — Bad: the second sentence restates the first; later sentences must add information.
 - `crates/libs/ir/src/lib.rs:469` — "Intermediate message before conversion to [`IrMessage`]." — Good: one sentence states what the type is.
 
 ## Module `//!` intros state responsibility
@@ -26,7 +26,7 @@ Give every module a `//!` intro that states its responsibility or invariants. Ke
 Include a concrete example or quantified rationale whenever a field, constant, or parser behaves non-obviously. Name the exact values involved.
 
 - `src-tauri/src/commands/extract.rs:490` — "True for backup-setup lines like `[1/5] Deriving backup keys...`. Those counts are setup steps, not message progress, so they must not move the progress bar." — Good: a concrete example plus the reason the fiddly parser exists.
-- `crates/cli/vault-push/src/run.rs:62` — "Kept far under Cloudflare's ~100 MiB upload cap so a large group chat is split into several requests instead of one giant one that gets rejected." — Good: names the external constraint behind the chosen value.
+- `crates/cli/vault-push/src/run.rs:63` — "Kept far under Cloudflare's ~100 MiB upload cap so a large group chat is split into several requests instead of one giant one that gets rejected." — Good: names the external constraint behind the chosen value.
 - `crates/libs/media/src/lib.rs:132` — "Build compress options from CLI-style fields (min_size like `20M`)." — Bad: waves at four parameters as "CLI-style fields" without naming them or documenting the error case.
 
 ## No filler, invented terms, or jargon
