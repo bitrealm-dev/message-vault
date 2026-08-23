@@ -61,7 +61,7 @@ lsof -i :8080
 netstat -ano | findstr :8080
 ```
 
-Stop the other process. From a clone, `./scripts/run-vault-dev.sh` and a Compose stack both want port 8080. See [Operator Docker](/vault/developer/docker-compose/) if two Compose files are fighting over that port.
+Stop the other process. From a clone, `./scripts/run-vault-dev.sh` and a Compose stack both want port 8080. See [Docker](/vault/developer/docker/) if two Compose files are fighting over that port.
 
 ## Command-line import errors
 

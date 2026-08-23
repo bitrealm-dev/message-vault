@@ -1,13 +1,14 @@
 ---
 title: Developer
-description: Set up a development environment, then vault design, message transfer, CLI tools, the HTTP API, formats, and instance internals.
+description: Environment setup, releasing, vault design, message transfer, Docker, CLI tools, the HTTP API, formats, and instance internals.
 ---
 
 These pages are for people who compile the vault, run Compose, or call the HTTP API. The [User Guide](/vault/user/) is the try-it and import path.
 
 - [Contributing](/vault/developer/contributing/) — environment setup, tests, pull requests
+- [Release](/vault/developer/release/) — how product versions ship
 - **Architecture** — [Vault Design](/vault/developer/vault-design/), [Message Transfer](/vault/developer/message-transfer/), [Common message](/vault/developer/architecture/common-message/)
-- [Operator Docker](/vault/developer/docker-compose/) — release-shaped Compose from a checkout
+- [Docker](/vault/developer/docker/) — build a release-shaped image from a checkout, or run the published image
 - [Command-line tools](/vault/developer/reference/cli/) — exporter binaries, `vault-push`, `vault-pull`
 - [HTTP API](/vault/developer/reference/api/) — tokens and import flow; [route reference](/vault/developer/rustdoc/http/)
 - [Rust crate docs](/vault/developer/rustdoc/) — `cargo doc` HTML for workspace crates (not the HTTP route list)

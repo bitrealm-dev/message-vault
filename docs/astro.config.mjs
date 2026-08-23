@@ -55,6 +55,7 @@ const userGuideItems = [
 const developerItems = [
   'vault/developer',
   'vault/developer/contributing',
+  'vault/developer/release',
   'vault/developer/rustdoc-style',
   {
     label: 'Architecture',
@@ -64,7 +65,7 @@ const developerItems = [
       'vault/developer/architecture/common-message',
     ],
   },
-  'vault/developer/docker-compose',
+  'vault/developer/docker',
   {
     label: 'CLI tools',
     items: [
@@ -168,6 +169,9 @@ const developerItems = [
 
 export default defineConfig({
   site: 'https://bitrealm.io',
+  redirects: {
+    '/vault/developer/docker-compose/': '/vault/developer/docker/',
+  },
   integrations: [
     mermaid({
       autoTheme: true,
