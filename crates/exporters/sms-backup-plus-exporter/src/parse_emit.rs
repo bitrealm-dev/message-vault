@@ -1,0 +1,154 @@
+//! Parse pipeline: discover `.eml` inputs and turn each file into
+//! [`ParsedMessage`]s (archive or flat format) in parallel chunks.
+
+use crate::archive::parse_archive_eml_mail;
+use crate::contacts::{apply_name_mapping, enrich_display_names, fill_unknown_phone};
+use crate::emit::is_eml_file;
+use crate::flat_eml::{MailHeaders, is_archive_eml, is_flat_sms_eml, parse_flat_eml_mail};
+use crate::types::ParsedMessage;
+use anyhow::{Result, bail};
+use contacts::{ContactsBook, NameMapping};
+use message_vault_io_core::CancelFlag;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+
+/// Collect `.eml` paths from files and directories, skipping `duplicate` /
+/// `exclude` / `.git` folders.
+///
+/// # Errors
+///
+/// Returns an error when an input is neither a file nor a directory, a file is
+/// not `.eml`, no `.eml` files are found, or the user cancels.
+pub(super) fn collect_eml_paths<P: AsRef<Path>>(
+    inputs: &[P],
+    cancel: Option<&CancelFlag>,
+) -> Result<Vec<PathBuf>> {
+    if inputs.is_empty() {
+        bail!("at least one --input path is required");
+    }
+
+    // Preserve the previous behavior of never descending into these directories.
+    fn in_skipped_dir(path: &Path) -> bool {
+        path.components().any(|c| {
+            matches!(
+                c.as_os_str()
+                    .to_str()
+                    .map(str::to_ascii_lowercase)
+                    .as_deref(),
+                Some("duplicate" | "exclude" | ".git")
+            )
+        })
+    }
+
+    let mut paths = Vec::new();
+    for input in inputs {
+        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        let input = input.as_ref();
+        if input.is_file() {
+            if is_eml_file(input) {
+                paths.push(input.to_path_buf());
+            } else {
+                bail!("input file is not .eml: {}", input.display());
+            }
+            continue;
+        }
+        if !input.is_dir() {
+            bail!("input is not a file or directory: {}", input.display());
+        }
+        let mut found = message_vault_io_core::discover_files(input, &is_eml_file)?;
+        found.retain(|p| !in_skipped_dir(p));
+        paths.extend(found);
+    }
+
+    // Stable order for deterministic CSV dedupe winners when timestamps tie.
+    paths.sort();
+    paths.dedup();
+    if paths.is_empty() {
+        let listed = inputs
+            .iter()
+            .map(|p| p.as_ref().display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        bail!("no .eml files under: {listed}");
+    }
+    Ok(paths)
+}
+
+/// Per-file parse result produced in parallel; merged serially into conversations.
+pub(super) enum ParsedEmlKind {
+    Archive {
+        msgs: Vec<ParsedMessage>,
+        skipped_dates: u64,
+        path_display: String,
+    },
+    Flat {
+        msg: Box<ParsedMessage>,
+        path_display: String,
+    },
+    FlatNone,
+    NotSms,
+    IoError(String),
+    ParseError(String),
+    /// Cooperative cancel observed at the start of a parallel worker.
+    Cancelled,
+}
+
+pub(super) fn parse_one_eml(
+    eml_path: &Path,
+    rel_path: String,
+    owner_digits: &HashSet<String>,
+    owner_emails_lc: &[String],
+    contacts: &ContactsBook,
+    name_mapping: &NameMapping,
+) -> ParsedEmlKind {
+    let bytes = match std::fs::read(eml_path) {
+        Ok(b) => b,
+        Err(err) => {
+            return ParsedEmlKind::IoError(format!("{}: {err}", eml_path.display()));
+        }
+    };
+    let mail = match mailparse::parse_mail(&bytes) {
+        Ok(m) => m,
+        Err(err) => {
+            return ParsedEmlKind::ParseError(format!("{}: parse EML: {err}", eml_path.display()));
+        }
+    };
+    let headers = MailHeaders::from_mail(&mail);
+    let path_display = eml_path.display().to_string();
+
+    if is_archive_eml(&headers) {
+        match parse_archive_eml_mail(eml_path, &mail, &headers) {
+            Ok((mut msgs, skipped_dates)) => {
+                for msg in &mut msgs {
+                    msg.eml_path = rel_path.clone();
+                    let _ = apply_name_mapping(msg, name_mapping, contacts);
+                    let _ = fill_unknown_phone(msg, contacts);
+                    enrich_display_names(msg, contacts);
+                }
+                ParsedEmlKind::Archive {
+                    msgs,
+                    skipped_dates,
+                    path_display,
+                }
+            }
+            Err(err) => ParsedEmlKind::ParseError(format!("{path_display}: {err:#}")),
+        }
+    } else if is_flat_sms_eml(&headers) {
+        match parse_flat_eml_mail(eml_path, &mail, &headers, owner_digits, owner_emails_lc) {
+            Ok(Some(mut msg)) => {
+                msg.eml_path = rel_path;
+                let _ = apply_name_mapping(&mut msg, name_mapping, contacts);
+                let _ = fill_unknown_phone(&mut msg, contacts);
+                enrich_display_names(&mut msg, contacts);
+                ParsedEmlKind::Flat {
+                    msg: Box::new(msg),
+                    path_display,
+                }
+            }
+            Ok(None) => ParsedEmlKind::FlatNone,
+            Err(err) => ParsedEmlKind::ParseError(format!("{path_display}: {err:#}")),
+        }
+    } else {
+        ParsedEmlKind::NotSms
+    }
+}

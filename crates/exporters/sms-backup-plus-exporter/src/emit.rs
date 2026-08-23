@@ -1,11 +1,10 @@
 //! Convert SMS Backup+ `.eml` trees into the shared conversation structure,
 //! then write the chosen output format via [`FormatSink`].
 
-use crate::archive::parse_archive_eml_mail;
-use crate::contacts::{apply_name_mapping, enrich_display_names, fill_unknown_phone};
-use crate::flat_eml::{MailHeaders, is_archive_eml, is_flat_sms_eml, parse_flat_eml_mail};
+use crate::attachments_emit::{merge_attachments, pending_attachment_to_ir, write_attachments};
 use crate::identity::{chat_id_for, cover_identity, timestamp_ms};
-use crate::types::{AttachmentBlob, ParsedMessage};
+use crate::parse_emit::{ParsedEmlKind, collect_eml_paths, parse_one_eml};
+use crate::types::ParsedMessage;
 use anyhow::{Context, Result, bail};
 use contacts::{ContactsBook, NameMapping};
 use message_csv::{DateRange, format_local_ts, stable_guid};
@@ -17,7 +16,7 @@ use message_ir::{
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
 use message_vault_io_core::{
-    CancelFlag, ExportReport, LogSink, OutputFormat, emit_log, prepare_outputs, write_if_missing,
+    CancelFlag, ExportReport, LogSink, OutputFormat, emit_log, prepare_outputs,
 };
 use phone::OwnerHandleSet;
 use rayon::prelude::*;
@@ -51,52 +50,6 @@ fn relative_eml_path(
         }
     }
     eml_path.display().to_string()
-}
-
-/// Write attachment blobs, returning the ones that succeeded.
-///
-/// A single failing attachment (disk full, permissions, ENAMETOOLONG) must not
-/// drop the whole message: the failure is recorded in `report.errors` and the
-/// message is kept without that attachment.
-fn write_attachments(
-    blobs: &[AttachmentBlob],
-    attachments_dir: &Path,
-    report: &mut ExportReport,
-    copy_attachments: bool,
-    path_display: &str,
-) -> Vec<PendingAttachment> {
-    if !copy_attachments {
-        return Vec::new();
-    }
-    let mut out = Vec::with_capacity(blobs.len());
-    for blob in blobs {
-        let path = attachments_dir.join(&blob.filename);
-        match write_if_missing(&path, &blob.data) {
-            Ok(true) => {
-                report.attachments_saved += 1;
-            }
-            Ok(false) => {}
-            Err(err) => {
-                report.errors.push(format!(
-                    "{path_display}: failed to write attachment {}: {err}",
-                    blob.filename
-                ));
-                continue;
-            }
-        }
-        out.push(PendingAttachment {
-            rel_path: format!("attachments/{}", blob.filename),
-            content_type: blob.mime_type.clone().unwrap_or_default(),
-            extension: Path::new(&blob.filename)
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-                .to_string(),
-            digest_sha256: Some(blob.digest_hex.clone()),
-            name_hint: blob.original_name.clone(),
-        });
-    }
-    out
 }
 
 fn ensure_convo<'a>(
@@ -156,19 +109,6 @@ fn should_replace_kept(existing: &PendingMessage, incoming: &ParsedMessage) -> b
         return true;
     }
     (incoming.timestamp_secs as i64) < existing.sort_key
-}
-
-/// Union attachment lists by content digest so flat↔archive dedupe does not drop media.
-fn merge_attachments(into: &mut Vec<PendingAttachment>, from: Vec<PendingAttachment>) {
-    let mut seen: HashSet<String> = into
-        .iter()
-        .map(|a| a.digest_sha256.clone().unwrap_or_default())
-        .collect();
-    for att in from {
-        if seen.insert(att.digest_sha256.clone().unwrap_or_default()) {
-            into.push(att);
-        }
-    }
 }
 
 fn pending_from_parsed(msg: ParsedMessage, pending_atts: Vec<PendingAttachment>) -> PendingMessage {
@@ -297,24 +237,8 @@ fn first_contact_name(convo: &PendingConversation) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Map a staged attachment onto the shared [`IrAttachment`] shape.
-fn pending_attachment_to_ir(a: &PendingAttachment) -> IrAttachment {
-    IrAttachment {
-        path: Some(a.rel_path.clone()),
-        original_name: a.name_hint.clone(),
-        mime_type: a.mime_type(),
-        digest_sha256: a.digest_sha256.clone(),
-        is_sticker: false,
-        transcription: None,
-        sticker_effect: None,
-        size_bytes: None,
-        missing_reason: None,
-        bytes: None,
-    }
-}
-
 /// True when the path has a `.eml` extension (any case).
-fn is_eml_file(p: &Path) -> bool {
+pub(super) fn is_eml_file(p: &Path) -> bool {
     p.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("eml"))
@@ -488,147 +412,6 @@ fn pending_to_document(
         messages,
         packaging_stem_suffix: None,
     })
-}
-
-/// Collect `.eml` paths from files and directories, skipping `duplicate` /
-/// `exclude` / `.git` folders.
-///
-/// # Errors
-///
-/// Returns an error when an input is neither a file nor a directory, a file is
-/// not `.eml`, no `.eml` files are found, or the user cancels.
-fn collect_eml_paths<P: AsRef<Path>>(
-    inputs: &[P],
-    cancel: Option<&CancelFlag>,
-) -> Result<Vec<PathBuf>> {
-    if inputs.is_empty() {
-        bail!("at least one --input path is required");
-    }
-
-    // Preserve the previous behavior of never descending into these directories.
-    fn in_skipped_dir(path: &Path) -> bool {
-        path.components().any(|c| {
-            matches!(
-                c.as_os_str()
-                    .to_str()
-                    .map(str::to_ascii_lowercase)
-                    .as_deref(),
-                Some("duplicate" | "exclude" | ".git")
-            )
-        })
-    }
-
-    let mut paths = Vec::new();
-    for input in inputs {
-        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
-        let input = input.as_ref();
-        if input.is_file() {
-            if is_eml_file(input) {
-                paths.push(input.to_path_buf());
-            } else {
-                bail!("input file is not .eml: {}", input.display());
-            }
-            continue;
-        }
-        if !input.is_dir() {
-            bail!("input is not a file or directory: {}", input.display());
-        }
-        let mut found = message_vault_io_core::discover_files(input, &is_eml_file)?;
-        found.retain(|p| !in_skipped_dir(p));
-        paths.extend(found);
-    }
-
-    // Stable order for deterministic CSV dedupe winners when timestamps tie.
-    paths.sort();
-    paths.dedup();
-    if paths.is_empty() {
-        let listed = inputs
-            .iter()
-            .map(|p| p.as_ref().display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        bail!("no .eml files under: {listed}");
-    }
-    Ok(paths)
-}
-
-/// Per-file parse result produced in parallel; merged serially into conversations.
-enum ParsedEmlKind {
-    Archive {
-        msgs: Vec<ParsedMessage>,
-        skipped_dates: u64,
-        path_display: String,
-    },
-    Flat {
-        msg: Box<ParsedMessage>,
-        path_display: String,
-    },
-    FlatNone,
-    NotSms,
-    IoError(String),
-    ParseError(String),
-    /// Cooperative cancel observed at the start of a parallel worker.
-    Cancelled,
-}
-
-fn parse_one_eml(
-    eml_path: &Path,
-    rel_path: String,
-    owner_digits: &HashSet<String>,
-    owner_emails_lc: &[String],
-    contacts: &ContactsBook,
-    name_mapping: &NameMapping,
-) -> ParsedEmlKind {
-    let bytes = match std::fs::read(eml_path) {
-        Ok(b) => b,
-        Err(err) => {
-            return ParsedEmlKind::IoError(format!("{}: {err}", eml_path.display()));
-        }
-    };
-    let mail = match mailparse::parse_mail(&bytes) {
-        Ok(m) => m,
-        Err(err) => {
-            return ParsedEmlKind::ParseError(format!("{}: parse EML: {err}", eml_path.display()));
-        }
-    };
-    let headers = MailHeaders::from_mail(&mail);
-    let path_display = eml_path.display().to_string();
-
-    if is_archive_eml(&headers) {
-        match parse_archive_eml_mail(eml_path, &mail, &headers) {
-            Ok((mut msgs, skipped_dates)) => {
-                for msg in &mut msgs {
-                    msg.eml_path = rel_path.clone();
-                    let _ = apply_name_mapping(msg, name_mapping, contacts);
-                    let _ = fill_unknown_phone(msg, contacts);
-                    enrich_display_names(msg, contacts);
-                }
-                ParsedEmlKind::Archive {
-                    msgs,
-                    skipped_dates,
-                    path_display,
-                }
-            }
-            Err(err) => ParsedEmlKind::ParseError(format!("{path_display}: {err:#}")),
-        }
-    } else if is_flat_sms_eml(&headers) {
-        match parse_flat_eml_mail(eml_path, &mail, &headers, owner_digits, owner_emails_lc) {
-            Ok(Some(mut msg)) => {
-                msg.eml_path = rel_path;
-                let _ = apply_name_mapping(&mut msg, name_mapping, contacts);
-                let _ = fill_unknown_phone(&mut msg, contacts);
-                enrich_display_names(&mut msg, contacts);
-                ParsedEmlKind::Flat {
-                    msg: Box::new(msg),
-                    path_display,
-                }
-            }
-            Ok(None) => ParsedEmlKind::FlatNone,
-            Err(err) => ParsedEmlKind::ParseError(format!("{path_display}: {err:#}")),
-        }
-    } else {
-        ParsedEmlKind::NotSms
-    }
 }
 
 const EML_PROGRESS_EVERY: u64 = 5000;
@@ -921,6 +704,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::AttachmentBlob;
 
     #[test]
     fn merge_attachments_unions_by_digest() {
