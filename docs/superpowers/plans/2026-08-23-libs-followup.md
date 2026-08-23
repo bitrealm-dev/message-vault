@@ -755,10 +755,11 @@ err.to_string().contains(message_ir_format::UNSAFE_ATTACHMENT_PATH_PREFIX)
 
 In `crates/vault/server/src/config.rs`, change the `safe_rel_path` bail from
 `bail!("unsafe attachment path: {name}")` to
-`bail!("{message_ir_format::UNSAFE_ATTACHMENT_PATH_PREFIX}: {name}")` — the
-emitted text is byte-identical (the server already depends on message-ir-format).
-Both bails and both asserts now reference one const, so the contract is
-compile-time and every emitted text is unchanged.
+`bail!("{UNSAFE_ATTACHMENT_PATH_PREFIX}: {name}")` (with a
+`use message_ir_format::UNSAFE_ATTACHMENT_PATH_PREFIX;`) — the emitted text
+is byte-identical. The server gains a `message-ir-format` dependency to
+consume the const. Both bails and both asserts now reference one const, so
+the contract is compile-time and every emitted text is unchanged.
 
 - [ ] **Step 3: Add the gate and document the ir-format gaps**
 
