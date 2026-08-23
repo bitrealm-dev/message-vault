@@ -30,4 +30,4 @@ Open **Settings** in the sidebar. Settings has four tabs:
 
 ## Demo reset
 
-Resetting sample data is a server command: [`reset-demo`](/vault/developer/reference/server-cli/#reset-demo). For a Docker volume, see [Operator Docker](/vault/developer/docker-compose/).
+Resetting sample data is a server command: [`reset-demo`](/vault/developer/reference/server-cli/#reset-demo). For a Docker volume, see [Docker](/vault/developer/docker/).

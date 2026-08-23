@@ -28,7 +28,7 @@ docker compose pull
 docker compose up -d
 ```
 
-A release-shaped image from a git checkout: [Operator Docker](/vault/developer/docker-compose/).
+A release-shaped image from a git checkout: [Docker](/vault/developer/docker/).
 
 ## Updating the desktop app
 
