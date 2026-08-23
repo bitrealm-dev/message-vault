@@ -103,3 +103,31 @@ impl CommonCli {
         }
     }
 }
+
+/// The clap `Command` for an exporter binary (for embedding `--help` output
+/// into GUI docs).
+pub fn clap_command<C: clap::CommandFactory>() -> clap::Command {
+    C::command()
+}
+
+/// Declare the standard test that a crate's `clap_command()` reports its
+/// binary name.
+///
+/// Usage: `message_vault_io_core::clap_command_uses_binary_name_test!("go-sms-pro-exporter");`
+#[cfg(feature = "cli")]
+// `crate` here is deliberate: it resolves to the exporter crate that invokes
+// this macro, whose own `cli::clap_command()` is what the test asserts on.
+#[allow(clippy::crate_in_macro_def)]
+#[macro_export]
+macro_rules! clap_command_uses_binary_name_test {
+    ($bin:literal) => {
+        #[cfg(test)]
+        mod clap_command_tests {
+            #[test]
+            fn clap_command_uses_binary_name() {
+                let cmd = crate::cli::clap_command();
+                assert_eq!(cmd.get_name(), $bin);
+            }
+        }
+    };
+}

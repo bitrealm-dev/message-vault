@@ -24,7 +24,7 @@ obfuscate = { path = "../../libs/obfuscate" }
 contacts = { path = "../../libs/contacts" }
 go-sms-mms = { path = "../../libs/go-sms-mms" }
 message-csv = { path = "../../libs/csv" }
-message-vault-io-core = { path = "../../core/message-vault-io-core" }
+message-vault-io-core = { path = "../../core/message-vault-io-core", features = ["cli"] }
 message-ir = { path = "../../libs/ir" }
 message-ir-format = { path = "../../libs/ir-format" }
 media = { path = "../../libs/media" }

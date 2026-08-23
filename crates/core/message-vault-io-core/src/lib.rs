@@ -14,7 +14,7 @@ mod pipeline;
 mod process;
 
 #[cfg(feature = "cli")]
-pub use cli::CommonCli;
+pub use cli::{CommonCli, clap_command};
 pub use config::{
     AppleConfig, ContactsConfig, ExporterConfig, FormatConfig, GoSmsProConfig, ImazingConfig,
     MediaConfig, OUTPUT_FORMATS_MAIL, ObfuscateConfig, OpenExtractConfig, OutputFormat,

@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use clap::{Command, CommandFactory, Parser, ValueEnum};
+use clap::{Command, Parser, ValueEnum};
 use message_vault_io_core::{CommonCli, WhatsappPlatform};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -70,14 +70,7 @@ pub struct Cli {
 }
 
 pub fn clap_command() -> Command {
-    Cli::command()
+    message_vault_io_core::clap_command::<Cli>()
 }
 
-#[cfg(test)]
-mod clap_command_tests {
-    #[test]
-    fn clap_command_uses_binary_name() {
-        let cmd = super::clap_command();
-        assert_eq!(cmd.get_name(), "whatsapp-exporter");
-    }
-}
+message_vault_io_core::clap_command_uses_binary_name_test!("whatsapp-exporter");
