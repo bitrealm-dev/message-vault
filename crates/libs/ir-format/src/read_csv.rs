@@ -42,7 +42,7 @@ where
     Ok(s.map(|s| HandleType::parse(&s)))
 }
 
-/// Read a conversation CSV written by [`crate::write_conversation_csv`].
+/// Read a conversation CSV written by `write_conversation_csv`.
 ///
 /// Conversation and export header fields come from the first data row.
 ///

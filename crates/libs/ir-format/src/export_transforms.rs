@@ -18,9 +18,13 @@ use std::path::Path;
 /// Options passed into [`crate::FormatSink`] for media and obfuscation.
 #[derive(Debug, Clone)]
 pub struct ExportTransforms {
+    /// Media mode applied at finish (clone/convert/compress/disabled).
     pub media: MediaMode,
+    /// Video/audio compression options used with Compress mode.
     pub compress: CompressOptions,
+    /// Whether to replace PII and media with obfuscated placeholders.
     pub obfuscate: bool,
+    /// Seed for deterministic obfuscation; `None` generates one.
     pub obfuscate_seed: Option<String>,
     /// Mid-run notes (e.g. generated obfuscate seed). `None` → stderr.
     pub log: Option<LogSink>,
@@ -39,6 +43,8 @@ impl Default for ExportTransforms {
 }
 
 impl ExportTransforms {
+    /// Build transforms from a `MediaConfig` and `ObfuscateConfig`
+    /// (obfuscation is enabled when either obfuscation flag or the seed is set).
     pub fn from_configs(media: &MediaConfig, obfuscate: &ObfuscateConfig) -> Self {
         Self {
             media: media.mode,
@@ -49,15 +55,20 @@ impl ExportTransforms {
         }
     }
 
+    /// All-defaults transform set (clone, no obfuscation, no log).
     pub fn none() -> Self {
         Self::default()
     }
 
+    /// True when ffmpeg/ffprobe will be required (false when obfuscating,
+    /// which replaces media with placeholders).
     pub fn needs_media_tools(&self) -> bool {
         // Obfuscate replaces all media with placeholders — no ffmpeg work.
         !self.obfuscate && self.media.needs_tools()
     }
 
+    /// True when attachment bytes should be staged under `attachments/`
+    /// (false when obfuscating).
     pub fn copies_attachments(&self) -> bool {
         // Obfuscate discards real bytes; skip staging them in the first place.
         !self.obfuscate && self.media.copies_attachments()

@@ -14,8 +14,11 @@ use std::path::{Path, PathBuf};
 /// Result of [`FormatSink::finish`].
 #[derive(Debug, Default)]
 pub struct FormatSinkResult {
+    /// Path of the written `smses.xml` when the format is XML.
     pub xml_path: Option<PathBuf>,
+    /// Media pass report from the finish step.
     pub media: MediaReport,
+    /// Number of documents obfuscated.
     pub obfuscated_docs: usize,
 }
 

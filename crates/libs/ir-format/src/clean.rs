@@ -12,6 +12,10 @@ pub const EXPORT_SENTINEL: &str = ".message-vault-export";
 
 /// Write a sentinel file marking `output_dir` as an export target.
 /// Callers should run this after `create_dir_all` on a fresh export.
+///
+/// # Errors
+///
+/// Returns an error when the sentinel cannot be written.
 pub fn write_export_sentinel(output_dir: &Path) -> Result<()> {
     fs::write(output_dir.join(EXPORT_SENTINEL), "")?;
     Ok(())

@@ -4245,6 +4245,7 @@ dependencies = [
  "jsonwebtoken",
  "libc",
  "message-ir",
+ "message-ir-format",
  "phone",
  "rand 0.8.7",
  "reqwest",

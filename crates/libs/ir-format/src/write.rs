@@ -388,6 +388,10 @@ fn write_conversation_mail(
 }
 
 /// Build [`MailMessage`] list from IR (reads attachment bytes from disk when missing).
+///
+/// # Errors
+///
+/// Returns an error when an attachment file cannot be read from disk.
 pub fn document_to_mail_messages(
     doc: &ConversationDocument,
     output_dir: &Path,
