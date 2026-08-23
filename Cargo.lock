@@ -4199,6 +4199,7 @@ name = "message-vault-io-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "media",
  "message-csv",

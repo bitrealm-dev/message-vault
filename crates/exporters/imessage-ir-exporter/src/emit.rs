@@ -9,7 +9,6 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use chrono::{Local, TimeZone};
 use imessage_database::{
     message_types::{
         handwriting::HandwrittenMessage,
@@ -451,19 +450,13 @@ fn attachment_dest_name(
     digest_hex: &str,
     original_name: Option<&str>,
 ) -> String {
-    let digest_prefix = &digest_hex[..16.min(digest_hex.len())];
     let secs = timestamp_unix_ms.div_euclid(1000);
-    let date_prefix = Local
-        .timestamp_opt(secs, 0)
-        .single()
-        .map(|t| t.format("%Y%m%d_%H%M%S").to_string())
-        .unwrap_or_else(|| secs.to_string());
     let ext = original_name
         .and_then(|n| Path::new(n).extension())
         .and_then(|e| e.to_str())
         .map(|e| format!(".{e}"))
         .unwrap_or_default();
-    format!("{date_prefix}-{digest_prefix}{ext}")
+    message_vault_io_core::attachments::attachment_dest_name(secs, digest_hex, &ext)
 }
 
 /// Write attachment bytes under `attachments_dir` (idempotent by digest name).

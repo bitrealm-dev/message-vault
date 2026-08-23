@@ -15,7 +15,9 @@ use message_ir::{
     owner_sender, parse_android_type,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
-use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat, prepare_outputs};
+use message_vault_io_core::{
+    CancelFlag, ExportReport, OutputFormat, digest_prefix, prepare_outputs, write_if_missing,
+};
 use phone::OwnerHandleSet;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
@@ -217,7 +219,7 @@ fn save_pdu_attachments(
     let mut out = Vec::new();
     for (idx, att) in parsed.attachments.iter().enumerate() {
         let digest_hex = hex::encode(Sha256::digest(&att.data));
-        let digest_prefix = &digest_hex[..16.min(digest_hex.len())];
+        let digest_prefix = digest_prefix(&digest_hex);
         let name = format!(
             "{}-I_{}_{}_{}{}",
             date_prefix,
@@ -228,8 +230,7 @@ fn save_pdu_attachments(
         );
         let path = attachments_dir.join(&name);
         // Content-addressed name: rewrite only when missing (same bytes → same path).
-        if !path.exists() {
-            fs::write(&path, &att.data)?;
+        if write_if_missing(&path, &att.data)? {
             report.attachments_saved += 1;
         }
         out.push(PendingAttachment {

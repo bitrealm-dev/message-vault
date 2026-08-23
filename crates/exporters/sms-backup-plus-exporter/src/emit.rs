@@ -17,12 +17,11 @@ use message_ir::{
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
 use message_vault_io_core::{
-    CancelFlag, ExportReport, LogSink, OutputFormat, emit_log, prepare_outputs,
+    CancelFlag, ExportReport, LogSink, OutputFormat, emit_log, prepare_outputs, write_if_missing,
 };
 use phone::OwnerHandleSet;
 use rayon::prelude::*;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 const EXPORT_SOURCE: &str = "sms-backup-plus";
@@ -72,15 +71,18 @@ fn write_attachments(
     let mut out = Vec::with_capacity(blobs.len());
     for blob in blobs {
         let path = attachments_dir.join(&blob.filename);
-        if !path.exists() {
-            if let Err(err) = fs::write(&path, &blob.data) {
+        match write_if_missing(&path, &blob.data) {
+            Ok(true) => {
+                report.attachments_saved += 1;
+            }
+            Ok(false) => {}
+            Err(err) => {
                 report.errors.push(format!(
                     "{path_display}: failed to write attachment {}: {err}",
                     blob.filename
                 ));
                 continue;
             }
-            report.attachments_saved += 1;
         }
         out.push(PendingAttachment {
             rel_path: format!("attachments/{}", blob.filename),

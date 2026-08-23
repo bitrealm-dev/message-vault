@@ -1,8 +1,8 @@
 //! Locate and copy iMazing attachment files next to CSV exports.
 
-use anyhow::{Context, Result};
-use chrono::{Local, TimeZone};
+use anyhow::Result;
 use message_csv::AttachmentCell;
+use message_vault_io_core::attachments::{attachment_dest_name, copy_if_missing};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -247,22 +247,14 @@ fn find_and_copy_attachment(
         return Ok(None);
     };
     let digest_hex = media::file_sha256(&src)?;
-    let digest_prefix = &digest_hex[..16.min(digest_hex.len())];
     let ext = src
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| format!(".{e}"))
         .unwrap_or_default();
-    let date_prefix = Local
-        .timestamp_opt(message_secs, 0)
-        .single()
-        .map(|t| t.format("%Y%m%d_%H%M%S").to_string())
-        .unwrap_or_else(|| message_secs.to_string());
-    let name = format!("{date_prefix}-{digest_prefix}{ext}");
+    let name = attachment_dest_name(message_secs, &digest_hex, &ext);
     let dest = attachments_dir.join(&name);
-    if !dest.exists() {
-        fs::copy(&src, &dest)
-            .with_context(|| format!("copy {} to {}", src.display(), dest.display()))?;
+    if copy_if_missing(&src, &dest)? {
         *attachments_saved += 1;
     }
     Ok(Some((format!("attachments/{name}"), digest_hex)))

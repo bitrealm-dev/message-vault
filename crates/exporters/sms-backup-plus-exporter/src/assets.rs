@@ -2,6 +2,7 @@
 
 use crate::types::AttachmentBlob;
 use mailparse::{MailHeaderMap, ParsedMail};
+use message_vault_io_core::attachments::digest_prefix;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -136,7 +137,7 @@ pub(crate) fn extract_attachments(
         // Content-addressed prefix: re-exports with different bytes get a new path
         // instead of leaving stale attachment files under the old name.
         let digest_hex = hex::encode(Sha256::digest(&payload));
-        let digest_prefix = &digest_hex[..16.min(digest_hex.len())];
+        let digest_prefix = digest_prefix(&digest_hex);
         let out_name = if let Some(ref orig) = original {
             format!(
                 "{name_prefix}{date_prefix}_{digest_prefix}_{}",
