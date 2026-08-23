@@ -88,6 +88,18 @@ jobs:
       - name: Test workspace
         run: cargo test --workspace
 
+  # ── Always: cargo-deny advisories ─────────────────────────────────────
+  deny:
+    name: cargo-deny (advisories)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories
+
   # ── Always: web Biome (lint + format) + TypeScript ────────────────────
   web-lint:
     name: Lint (web)

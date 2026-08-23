@@ -18,6 +18,13 @@ cd "${REPO_ROOT}"
 echo "==> license consistency"
 "${SCRIPT_DIR}/check-license.sh"
 
+echo "==> cargo deny check advisories"
+if cargo deny --version >/dev/null 2>&1; then
+  cargo deny check advisories
+else
+  echo "cargo-deny not installed; skipping advisory check (CI enforces it)" >&2
+fi
+
 echo "==> cargo build --workspace"
 cargo build --workspace
 
