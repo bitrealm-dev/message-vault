@@ -82,9 +82,6 @@ impl ImportMode {
 /// Full import settings: paths, mode, media handling, and contact naming.
 #[derive(Debug, Clone)]
 pub struct ImportOptions<'a> {
-    /// Used by [`import_jsonl_files`] (CLI/tests). Warm HTTP path opens its own connection.
-    #[allow(dead_code)]
-    pub db_path: &'a Path,
     /// Content-addressed asset store when [`Self::source_from_jsonl`] is false.
     pub assets_dir: &'a Path,
     /// Root for resolving relative attachment paths in JSONL.
@@ -118,8 +115,6 @@ pub struct ImportOptions<'a> {
 /// Path/mode fields for [`ImportOptions::fixed`].
 #[derive(Debug, Clone, Copy)]
 pub struct FixedImportArgs<'a> {
-    /// Database path.
-    pub db_path: &'a Path,
     /// Content-addressed asset store directory.
     pub assets_dir: &'a Path,
     /// Root for resolving relative attachment paths in JSONL.
@@ -144,7 +139,6 @@ impl<'a> ImportOptions<'a> {
     /// HTTP / tests / reset-demo: fixed source + assets dir, copy media.
     pub fn fixed(args: FixedImportArgs<'a>) -> Self {
         Self {
-            db_path: args.db_path,
             assets_dir: args.assets_dir,
             asset_root: args.asset_root,
             contacts: args.contacts,
@@ -269,7 +263,6 @@ pub fn import_export(args: &ImportExportArgs<'_>) -> Result<ImportStats> {
         &mut conn,
         &paths,
         &ImportOptions::fixed(FixedImportArgs {
-            db_path: args.db_path,
             assets_dir: args.assets_dir,
             asset_root: args.export_dir,
             contacts: args.contacts,
@@ -301,26 +294,28 @@ pub enum ImportSchemaMode {
     AssumeReady,
 }
 
-/// Import one or more JSON Lines files. Attachment relative paths resolve against `opts.asset_root`.
+/// Test helper: open a configured database and run one import.
 ///
-/// # Errors
-///
-/// Returns an error when options are invalid, the database cannot be opened, or
-/// import fails.
-#[allow(dead_code)] // CLI/tests; HTTP serve uses [`import_jsonl_files_on_conn`]
-pub fn import_jsonl_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Result<ImportStats> {
+/// Production paths use [`import_jsonl_files_on_conn`] on their own
+/// connection (HTTP serve) or [`import_export`] (CLI directory import).
+#[cfg(test)]
+pub(crate) fn import_jsonl_files(
+    db_path: &Path,
+    paths: &[PathBuf],
+    opts: &ImportOptions<'_>,
+) -> Result<ImportStats> {
     validate_import_options(opts)?;
 
-    if let Some(parent) = opts.db_path.parent()
+    if let Some(parent) = db_path.parent()
         && !parent.as_os_str().is_empty()
     {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
 
-    let mut conn = schema::open_configured(opts.db_path)
-        .with_context(|| format!("failed to open database {}", opts.db_path.display()))?;
-    println!("  sql:      opened {}", opts.db_path.display());
+    let mut conn = schema::open_configured(db_path)
+        .with_context(|| format!("failed to open database {}", db_path.display()))?;
+    println!("  sql:      opened {}", db_path.display());
     let _ = io::stdout().flush();
     import_jsonl_files_on_conn(&mut conn, paths, opts, ImportSchemaMode::Ensure)
 }
@@ -1143,7 +1138,6 @@ async fn run_import_path(
         };
 
         let mut opts = ImportOptions::fixed(FixedImportArgs {
-            db_path: &cfg.paths.db,
             assets_dir: &assets_dir,
             asset_root: &asset_root_owned,
             contacts: None,
@@ -1234,9 +1228,9 @@ mod tests {
 "#,
         );
         let first_stats = import_jsonl_files(
+            &db,
             &[first],
             &ImportOptions::fixed(FixedImportArgs {
-                db_path: &db,
                 assets_dir: &assets,
                 asset_root: tmp.path(),
                 contacts: None,
@@ -1261,9 +1255,9 @@ mod tests {
 "#,
         );
         let second_stats = import_jsonl_files(
+            &db,
             &[second],
             &ImportOptions::fixed(FixedImportArgs {
-                db_path: &db,
                 assets_dir: &assets,
                 asset_root: tmp.path(),
                 contacts: None,
@@ -1334,7 +1328,6 @@ mod tests {
             ),
         );
         let options = ImportOptions::fixed(FixedImportArgs {
-            db_path: &db,
             assets_dir: &assets,
             asset_root: tmp.path(),
             contacts: None,
@@ -1345,7 +1338,7 @@ mod tests {
             fill_content_keys: false,
             import_id: None,
         });
-        import_jsonl_files(&[first], &options).unwrap();
+        import_jsonl_files(&db, &[first], &options).unwrap();
 
         let second = write_jsonl(
             tmp.path(),
@@ -1357,7 +1350,7 @@ mod tests {
         );
 
         for _ in 0..2 {
-            import_jsonl_files(std::slice::from_ref(&second), &options).unwrap();
+            import_jsonl_files(&db, std::slice::from_ref(&second), &options).unwrap();
         }
 
         let conn = Connection::open(&db).unwrap();
@@ -1393,7 +1386,6 @@ mod tests {
 "#,
         );
         let options = ImportOptions::fixed(FixedImportArgs {
-            db_path: &db,
             assets_dir: &assets,
             asset_root: tmp.path(),
             contacts: None,
@@ -1405,7 +1397,7 @@ mod tests {
             import_id: None,
         });
 
-        import_jsonl_files(std::slice::from_ref(&path), &options).unwrap();
+        import_jsonl_files(&db, std::slice::from_ref(&path), &options).unwrap();
         // Rows of the full-text search index storage: a redundant re-index writes a new
         // segment even when the indexed text is unchanged.
         let index_rows = || -> i64 {
@@ -1416,7 +1408,7 @@ mod tests {
         };
         let after_first_import = index_rows();
         for _ in 0..2 {
-            import_jsonl_files(std::slice::from_ref(&path), &options).unwrap();
+            import_jsonl_files(&db, std::slice::from_ref(&path), &options).unwrap();
         }
         assert_eq!(
             index_rows(),
@@ -1483,9 +1475,9 @@ mod tests {
 "#,
         );
         import_jsonl_files(
+            &db,
             &[path],
             &ImportOptions::fixed(FixedImportArgs {
-                db_path: &db,
                 assets_dir: &assets,
                 asset_root: tmp.path(),
                 contacts: None,
@@ -1542,7 +1534,6 @@ mod tests {
             &mut conn,
             &[path],
             &ImportOptions::fixed(FixedImportArgs {
-                db_path: &db,
                 assets_dir: &assets,
                 asset_root: tmp.path(),
                 contacts: None,
@@ -1621,7 +1612,6 @@ mod tests {
             &mut conn,
             &[path],
             &ImportOptions::fixed(FixedImportArgs {
-                db_path: &db,
                 assets_dir: &assets,
                 asset_root: tmp.path(),
                 contacts: None,
@@ -1680,9 +1670,9 @@ mod tests {
 "#,
         );
         let stats = import_jsonl_files(
+            &db,
             &[path],
             &ImportOptions {
-                db_path: &db,
                 assets_dir: &placeholder,
                 asset_root: tmp.path(),
                 contacts: None,
@@ -1740,9 +1730,9 @@ mod tests {
 "#,
         );
         let stats = import_jsonl_files(
+            &db,
             &[path],
             &ImportOptions {
-                db_path: &db,
                 assets_dir: &placeholder,
                 asset_root: tmp.path(),
                 contacts: None,
@@ -1829,7 +1819,6 @@ mod tests {
 "#,
         );
         let mut opts = ImportOptions::fixed(FixedImportArgs {
-            db_path: &db,
             assets_dir: &assets,
             asset_root: tmp.path(),
             contacts: None,
@@ -1841,7 +1830,7 @@ mod tests {
             import_id: None,
         });
         opts.contact_name_mode = ContactNameMode::FillMissing;
-        import_jsonl_files(&[path], &opts).unwrap();
+        import_jsonl_files(&db, &[path], &opts).unwrap();
         assert_eq!(participant_name_alias(&db).as_deref(), Some("Backup Bob"));
     }
 
@@ -1859,7 +1848,6 @@ mod tests {
 "#,
         );
         let mut opts = ImportOptions::fixed(FixedImportArgs {
-            db_path: &db,
             assets_dir: &assets,
             asset_root: tmp.path(),
             contacts: None,
@@ -1871,7 +1859,7 @@ mod tests {
             import_id: None,
         });
         opts.contact_name_mode = ContactNameMode::FillMissing;
-        import_jsonl_files(&[path], &opts).unwrap();
+        import_jsonl_files(&db, &[path], &opts).unwrap();
         assert_eq!(participant_name_alias(&db).as_deref(), Some("Vault Alice"));
     }
 
@@ -1889,7 +1877,6 @@ mod tests {
 "#,
         );
         let mut opts = ImportOptions::fixed(FixedImportArgs {
-            db_path: &db,
             assets_dir: &assets,
             asset_root: tmp.path(),
             contacts: None,
@@ -1901,7 +1888,7 @@ mod tests {
             import_id: None,
         });
         opts.contact_name_mode = ContactNameMode::AsIs;
-        import_jsonl_files(&[path], &opts).unwrap();
+        import_jsonl_files(&db, &[path], &opts).unwrap();
         assert_eq!(participant_name_alias(&db), None);
     }
 
@@ -1919,7 +1906,6 @@ mod tests {
 "#,
         );
         let mut opts = ImportOptions::fixed(FixedImportArgs {
-            db_path: &db,
             assets_dir: &assets,
             asset_root: tmp.path(),
             contacts: None,
@@ -1931,7 +1917,7 @@ mod tests {
             import_id: None,
         });
         opts.contact_name_mode = ContactNameMode::Overwrite;
-        import_jsonl_files(&[path], &opts).unwrap();
+        import_jsonl_files(&db, &[path], &opts).unwrap();
         assert_eq!(participant_name_alias(&db).as_deref(), Some("Vault Alice"));
     }
 
@@ -1951,7 +1937,6 @@ mod tests {
 "#,
         );
         let mut opts = ImportOptions::fixed(FixedImportArgs {
-            db_path: &db,
             assets_dir: &assets,
             asset_root: tmp.path(),
             contacts: None,
@@ -1963,7 +1948,7 @@ mod tests {
             import_id: None,
         });
         opts.contact_name_mode = ContactNameMode::FillMissing;
-        import_jsonl_files(&[path1], &opts).unwrap();
+        import_jsonl_files(&db, &[path1], &opts).unwrap();
         assert_eq!(
             contact_handle_name_alias(&db).as_deref(),
             Some("Backup Bob")
@@ -1976,7 +1961,7 @@ mod tests {
 {"guid":"g-alias2","timestamp_unix_ms":1426183463000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"yo","attachments":[],"imessage":null,"source":null}
 "#,
         );
-        import_jsonl_files(&[path2], &opts).unwrap();
+        import_jsonl_files(&db, &[path2], &opts).unwrap();
         assert_eq!(
             contact_handle_name_alias(&db).as_deref(),
             Some("Backup Bob")
@@ -1998,9 +1983,9 @@ mod tests {
 "#,
         );
         let stats = import_jsonl_files(
+            &db,
             &[path],
             &ImportOptions::fixed(FixedImportArgs {
-                db_path: &db,
                 assets_dir: &assets,
                 asset_root: tmp.path(),
                 contacts: None,
@@ -2056,9 +2041,9 @@ mod tests {
         let path = write_jsonl(tmp.path(), "corrupt-existing.jsonl", &jsonl);
 
         let stats = import_jsonl_files(
+            &db,
             &[path],
             &ImportOptions::fixed(FixedImportArgs {
-                db_path: &db,
                 assets_dir: &assets,
                 asset_root: tmp.path(),
                 contacts: None,
@@ -2101,9 +2086,9 @@ mod tests {
 "#,
         );
         let err = import_jsonl_files(
+            &db,
             &[path],
             &ImportOptions::fixed(FixedImportArgs {
-                db_path: &db,
                 assets_dir: &assets,
                 asset_root: &export_dir,
                 contacts: None,
@@ -2139,9 +2124,9 @@ mod tests {
 "#,
         );
         import_jsonl_files(
+            &db,
             &[first],
             &ImportOptions::fixed(FixedImportArgs {
-                db_path: &db,
                 assets_dir: &assets,
                 asset_root: &export_dir,
                 contacts: None,
@@ -2163,9 +2148,9 @@ mod tests {
 "#,
         );
         let err = import_jsonl_files(
+            &db,
             &[bad],
             &ImportOptions::fixed(FixedImportArgs {
-                db_path: &db,
                 assets_dir: &assets,
                 asset_root: &export_dir,
                 contacts: None,

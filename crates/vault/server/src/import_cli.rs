@@ -136,7 +136,6 @@ pub fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats> {
     )?;
 
     let import_opts = ImportOptions {
-        db_path: &db_path,
         assets_dir: &placeholder_assets,
         asset_root: input,
         contacts: opts.contacts.as_deref(),
