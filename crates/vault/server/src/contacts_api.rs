@@ -18,7 +18,7 @@ pub const MAX_LIST_LIMIT: usize = 500;
 /// Cap expensive OFFSET skips on contact list pages.
 pub const MAX_LIST_OFFSET: usize = 50_000;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactListPage {
     pub contacts: Vec<ContactSummary>,
     pub total: u64,
@@ -26,7 +26,7 @@ pub struct ContactListPage {
     pub offset: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactSummary {
     pub id: i64,
     pub name: String,
@@ -41,7 +41,7 @@ pub struct ContactSummary {
     pub groups: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactHandleInfo {
     pub handle: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -58,14 +58,14 @@ pub struct ContactHandleInfo {
     pub group_message_count: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ContactHandlePayload {
     pub handle: String,
     #[serde(default)]
     pub service: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ContactUpdateHandlePayload {
     pub previous_handle: String,
     pub handle: String,
@@ -73,7 +73,7 @@ pub struct ContactUpdateHandlePayload {
     pub service: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ContactRemoveHandlePayload {
     pub handle: String,
     #[serde(default)]
@@ -81,7 +81,7 @@ pub struct ContactRemoveHandlePayload {
 }
 
 /// Body for `POST /v1/export/contacts/{id}`. Exactly one mutation field should be set.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ContactMutationBody {
     #[serde(default)]
     pub name: Option<String>,
@@ -93,7 +93,7 @@ pub struct ContactMutationBody {
     pub remove_handle: Option<ContactRemoveHandlePayload>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactDetail {
     pub id: i64,
     pub name: String,
@@ -109,14 +109,14 @@ pub struct ContactDetail {
 }
 
 /// Body for `POST /v1/export/contacts/summaries`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ContactSummariesBody {
     #[serde(default)]
     pub ids: Vec<i64>,
 }
 
 /// Contact-level first/last seen and message counts for the selection table.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactSelectionSummary {
     pub id: i64,
     pub name: String,
@@ -131,7 +131,7 @@ pub struct ContactSelectionSummary {
 }
 
 /// Response for `POST /v1/export/contacts/summaries`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactSummariesPage {
     pub contacts: Vec<ContactSelectionSummary>,
 }

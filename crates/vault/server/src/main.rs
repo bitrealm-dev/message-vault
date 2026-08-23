@@ -1,3 +1,5 @@
+mod openapi;
+
 mod api_tokens_api;
 mod asset_uploads;
 mod assets;
@@ -146,6 +148,13 @@ enum Commands {
         /// Path to config.toml (must include `[server]` with `bind`)
         #[arg(long, default_value = "config/config.toml")]
         config: PathBuf,
+    },
+
+    /// Write the OpenAPI document (JSON) to stdout or --output. Does not open the database.
+    DumpOpenapi {
+        /// Destination file. Omit to print stdout.
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
 
     /// Convert media under assets/ into browser previews under assets_converted/
@@ -410,6 +419,10 @@ fn main() -> Result<()> {
             let _ = cfg.require_server()?;
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(server::run(cfg))?;
+        }
+
+        Commands::DumpOpenapi { output } => {
+            crate::openapi::write_openapi(output.as_deref())?;
         }
 
         Commands::ProcessAssets {

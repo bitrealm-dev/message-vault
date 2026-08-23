@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- (none yet recorded in this file)
+- Generated OpenAPI reference for the vault HTTP API on the docs site, plus an optional explorer at `/docs` when `[server] openapi_ui` is true
 
 Installable builds and release notes also appear on
 [GitHub Releases](https://github.com/bitrealm-io/message-vault/releases).

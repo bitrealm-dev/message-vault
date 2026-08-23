@@ -13,6 +13,7 @@ Run from the repository root with `cargo run --release -- <command>`.
 | `process-assets` | Generate and register converted media assets |
 | `reset-demo` | Regenerate demo bundle, clear demo account data, import, and process assets |
 | `serve` | HTTP import API (`[server]` required in config) |
+| `dump-openapi` | Write the OpenAPI JSON to stdout or `--output`. Does not open the database |
 
 ## Shared flags
 
@@ -99,6 +100,16 @@ The final summary groups counters so they are easier to read:
 - **Browser previews** — how many media files were converted for the web, left unchanged, or failed conversion
 
 After running `reset-demo`, copy `config/config.toml.example` back (or uncomment `[server]`) before running `serve`.
+
+## `dump-openapi`
+
+Write the HTTP OpenAPI document. Used to refresh `docs/src/assets/openapi.json`.
+
+```bash title="dump-openapi"
+cargo run -p message-vault-server -- dump-openapi --output docs/src/assets/openapi.json
+```
+
+No `--config`. The committed file must match this output; `cargo test -p message-vault-server` checks that.
 
 ## Examples
 

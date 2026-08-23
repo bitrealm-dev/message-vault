@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::db::{account_profile, schema};
 use crate::server::{ApiError, AppState, JoinBlocking, require_full_access, resolve_auth};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AccountProfileResponse {
     pub account_id: String,
     pub username: String,
@@ -50,6 +50,17 @@ fn load_response(conn: &Connection, account_id: &str) -> Result<AccountProfileRe
 ///
 /// Returns an API error when the caller is not a signed-in session or the
 /// profile cannot be loaded.
+#[utoipa::path(
+    get,
+    path = "/v1/account/profile",
+    tag = "Account",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = AccountProfileResponse),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
 pub async fn account_profile_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -67,13 +78,13 @@ pub async fn account_profile_handler(
     Ok(Json(result))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ProfileHandleInput {
     pub handle: String,
     pub service: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct AccountProfileUpdateRequest {
     #[serde(default)]
     pub preferred_name: Option<String>,
@@ -194,6 +205,19 @@ fn parse_profile_service(service: &str) -> Result<ProfileHandleKind> {
 ///
 /// Returns an API error when the caller is not a signed-in session, a handle
 /// service is unsupported, or the update fails.
+#[utoipa::path(
+    post,
+    path = "/v1/account/profile",
+    tag = "Account",
+    security(("bearer" = [])),
+    request_body = AccountProfileUpdateRequest,
+    responses(
+        (status = 200, body = AccountProfileResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
 pub async fn account_profile_update_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -221,12 +245,12 @@ pub async fn account_profile_update_handler(
     Ok(Json(result))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct DeleteMessagesRequest {
     pub confirm: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DeleteMessagesResponse {
     pub ok: bool,
     pub conversations: u64,
@@ -270,6 +294,19 @@ fn remove_account_asset_trees(
 ///
 /// Returns an API error when confirmation is missing, the caller is not a
 /// signed-in session, or the delete fails.
+#[utoipa::path(
+    post,
+    path = "/v1/account/delete-messages",
+    tag = "Account",
+    security(("bearer" = [])),
+    request_body = DeleteMessagesRequest,
+    responses(
+        (status = 200, body = DeleteMessagesResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
 pub async fn delete_messages_handler(
     State(state): State<AppState>,
     headers: HeaderMap,

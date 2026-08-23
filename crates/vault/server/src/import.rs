@@ -148,7 +148,7 @@ impl<'a> ImportOptions<'a> {
     }
 }
 
-#[derive(Debug, Default, Clone, Serialize)]
+#[derive(Debug, Default, Clone, Serialize, utoipa::ToSchema)]
 pub struct ImportStats {
     pub conversations: u64,
     pub participants: u64,

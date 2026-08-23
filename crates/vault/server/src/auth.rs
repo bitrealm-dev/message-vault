@@ -113,7 +113,7 @@ fn reset_auth_rate_limit_bucket_for_test(bucket: &str) {
 // Request / response types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct RegisterRequest {
     pub username: String,
     #[serde(default)]
@@ -124,21 +124,21 @@ pub struct RegisterRequest {
     pub phone: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct LoginRequest {
     pub username: String,
     #[serde(default)]
     pub password: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct HankoSessionRequest {
     /// The raw Hanko session JSON Web Token from the client-side
     /// `onSessionCreated` callback.
     pub hanko_jwt: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AuthTokenResponse {
     pub token: String,
     pub account_id: String,
@@ -336,6 +336,17 @@ fn unique_hanko_username(
 // ---------------------------------------------------------------------------
 
 /// `POST /v1/auth/register` — create an account and return an API token.
+#[utoipa::path(
+    post,
+    path = "/v1/auth/register",
+    tag = "Auth",
+    request_body = RegisterRequest,
+    responses(
+        (status = 200, description = "Session issued", body = AuthTokenResponse),
+        (status = 400, description = "Invalid input", body = crate::server::ErrorBody),
+        (status = 429, description = "Rate limited", body = crate::server::ErrorBody)
+    )
+)]
 pub async fn register_handler(
     State(state): State<AppState>,
     Json(req): Json<RegisterRequest>,
@@ -401,6 +412,18 @@ pub async fn register_handler(
 }
 
 /// `POST /v1/auth/login` — authenticate with username + password, return an API token.
+#[utoipa::path(
+    post,
+    path = "/v1/auth/login",
+    tag = "Auth",
+    request_body = LoginRequest,
+    responses(
+        (status = 200, description = "Session issued", body = AuthTokenResponse),
+        (status = 400, description = "Invalid input", body = crate::server::ErrorBody),
+        (status = 401, description = "Invalid credentials", body = crate::server::ErrorBody),
+        (status = 429, description = "Rate limited", body = crate::server::ErrorBody)
+    )
+)]
 pub async fn login_handler(
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
@@ -453,6 +476,17 @@ pub async fn login_handler(
 
 /// `POST /v1/auth/hanko/session` — check a Hanko session JSON Web Token and
 /// return a vault API token.
+#[utoipa::path(
+    post,
+    path = "/v1/auth/hanko/session",
+    tag = "Auth",
+    request_body = HankoSessionRequest,
+    responses(
+        (status = 200, description = "Session issued", body = AuthTokenResponse),
+        (status = 400, description = "Invalid input", body = crate::server::ErrorBody),
+        (status = 429, description = "Rate limited", body = crate::server::ErrorBody)
+    )
+)]
 pub async fn hanko_session_handler(
     State(state): State<AppState>,
     Json(req): Json<HankoSessionRequest>,
@@ -620,6 +654,16 @@ fn hosted_demo_login_rejected() -> ApiError {
 }
 
 /// `POST /v1/auth/try-demo` — self-hosted demo session, or a private guest copy.
+#[utoipa::path(
+    post,
+    path = "/v1/auth/try-demo",
+    tag = "Auth",
+    responses(
+        (status = 200, description = "Session issued", body = AuthTokenResponse),
+        (status = 429, description = "Rate limited", body = crate::server::ErrorBody),
+        (status = 503, description = "Guest copy unavailable", body = crate::server::ErrorBody)
+    )
+)]
 pub async fn try_demo_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -696,20 +740,20 @@ pub async fn try_demo_handler(
 // Change-password / delete-account request types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ChangePasswordRequest {
     pub current_password: String,
     pub new_password: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ChangePasswordResponse {
     pub ok: bool,
     /// Replacement session token after password change (previous sessions are revoked).
     pub token: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct DeleteAccountRequest {
     pub confirm: bool,
     /// Required when the account has a local password.
@@ -717,12 +761,12 @@ pub struct DeleteAccountRequest {
     pub current_password: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DeleteAccountResponse {
     pub ok: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct LogoutResponse {
     pub ok: bool,
 }
@@ -775,6 +819,16 @@ fn logout_on_conn(conn: &rusqlite::Connection, token: &str, data_dir: &Path) -> 
 }
 
 /// `POST /v1/auth/logout` — revoke the presented session token.
+#[utoipa::path(
+    post,
+    path = "/v1/auth/logout",
+    tag = "Auth",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = LogoutResponse),
+        (status = 401, body = crate::server::ErrorBody)
+    )
+)]
 pub async fn logout_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -793,6 +847,19 @@ pub async fn logout_handler(
 }
 
 /// `POST /v1/auth/change-password` — verify the current password, set a new one.
+#[utoipa::path(
+    post,
+    path = "/v1/auth/change-password",
+    tag = "Auth",
+    security(("bearer" = [])),
+    request_body = ChangePasswordRequest,
+    responses(
+        (status = 200, body = ChangePasswordResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
 pub async fn change_password_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -828,6 +895,19 @@ pub async fn change_password_handler(
 }
 
 /// `POST /v1/auth/delete-account` — permanently delete the account.
+#[utoipa::path(
+    post,
+    path = "/v1/auth/delete-account",
+    tag = "Auth",
+    security(("bearer" = [])),
+    request_body = DeleteAccountRequest,
+    responses(
+        (status = 200, body = DeleteAccountResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
 pub async fn delete_account_handler(
     State(state): State<AppState>,
     headers: HeaderMap,

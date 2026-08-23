@@ -399,7 +399,7 @@ pub fn get_import_detail(
     Ok(ImportDetail { row, issues })
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct ImportSummary {
     pub id: i64,
     pub source: String,
@@ -484,7 +484,7 @@ pub fn account_attachment_count(conn: &Connection, account_id: &str) -> Result<i
     Ok(n)
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
 pub struct TopAttachment {
     pub id: i64,
     pub original_name: Option<String>,

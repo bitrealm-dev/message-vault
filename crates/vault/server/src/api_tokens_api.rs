@@ -12,7 +12,7 @@ use crate::server::{
     ApiError, AppState, JoinBlocking, reject_if_guest_account, require_full_access, resolve_auth,
 };
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ApiTokenItem {
     pub id: String,
     pub label: String,
@@ -52,12 +52,12 @@ fn map_label_error(e: anyhow::Error) -> ApiError {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ListApiTokensResponse {
     pub items: Vec<ApiTokenItem>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateApiTokenRequest {
     pub label: String,
     /// `import`, `export`, or `both` (default `both`).
@@ -78,7 +78,7 @@ fn open_accounts_conn(db: &std::path::Path) -> anyhow::Result<Connection> {
     Ok(conn)
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CreateApiTokenResponse {
     pub id: String,
     pub label: String,
@@ -92,17 +92,17 @@ pub struct CreateApiTokenResponse {
     pub token_hint: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DeleteApiTokenResponse {
     pub ok: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct RenameApiTokenRequest {
     pub label: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RenameApiTokenResponse {
     pub ok: bool,
     pub id: String,
@@ -115,6 +115,17 @@ pub struct RenameApiTokenResponse {
 ///
 /// Returns an API error when the caller is not a signed-in session or the list
 /// cannot be loaded.
+#[utoipa::path(
+    get,
+    path = "/v1/account/api-tokens",
+    tag = "Account",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = ListApiTokensResponse),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
 pub async fn list_api_tokens_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -141,6 +152,19 @@ pub async fn list_api_tokens_handler(
 ///
 /// Returns an API error when the caller is not a signed-in session, the label
 /// is invalid, or the insert fails.
+#[utoipa::path(
+    post,
+    path = "/v1/account/api-tokens",
+    tag = "Account",
+    security(("bearer" = [])),
+    request_body = CreateApiTokenRequest,
+    responses(
+        (status = 200, body = CreateApiTokenResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
 pub async fn create_api_token_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -189,6 +213,19 @@ pub async fn create_api_token_handler(
 ///
 /// Returns an API error when the caller is not a signed-in session or the token
 /// is missing.
+#[utoipa::path(
+    delete,
+    path = "/v1/account/api-tokens/{id}",
+    tag = "Account",
+    security(("bearer" = [])),
+    params(("id" = String, Path, description = "API token id")),
+    responses(
+        (status = 200, body = DeleteApiTokenResponse),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
 pub async fn delete_api_token_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -218,6 +255,21 @@ pub async fn delete_api_token_handler(
 ///
 /// Returns an API error when the caller is not a signed-in session, the label
 /// is invalid, or the token is missing.
+#[utoipa::path(
+    patch,
+    path = "/v1/account/api-tokens/{id}",
+    tag = "Account",
+    security(("bearer" = [])),
+    params(("id" = String, Path, description = "API token id")),
+    request_body = RenameApiTokenRequest,
+    responses(
+        (status = 200, body = RenameApiTokenResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
 pub async fn rename_api_token_handler(
     State(state): State<AppState>,
     headers: HeaderMap,

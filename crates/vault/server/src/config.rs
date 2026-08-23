@@ -36,6 +36,9 @@ pub struct ServerConfig {
     /// Use `["*"]` only for local debugging. Example: `["https://app.example.com"]`.
     #[serde(default)]
     pub cors_origins: Vec<String>,
+    /// Serve Swagger UI at `/docs` and the spec at `/openapi.json`. Default false.
+    #[serde(default = "default_openapi_ui")]
+    pub openapi_ui: bool,
 }
 
 fn default_server_bind() -> String {
@@ -52,6 +55,10 @@ fn default_asset_part_size() -> usize {
 
 fn default_asset_hash_threshold_bytes() -> u64 {
     20 * 1024 * 1024
+}
+
+fn default_openapi_ui() -> bool {
+    false
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -368,5 +375,24 @@ mod tests {
         assert!(s.enabled);
         assert_eq!(s.pool_max, 5);
         assert_eq!(s.session_secs, 86_400);
+    }
+
+    #[test]
+    fn openapi_ui_defaults_false() {
+        let raw = r#"
+bind = "127.0.0.1:8080"
+"#;
+        let cfg: ServerConfig = toml::from_str(raw).unwrap();
+        assert!(!cfg.openapi_ui);
+    }
+
+    #[test]
+    fn openapi_ui_can_enable() {
+        let raw = r#"
+bind = "127.0.0.1:8080"
+openapi_ui = true
+"#;
+        let cfg: ServerConfig = toml::from_str(raw).unwrap();
+        assert!(cfg.openapi_ui);
     }
 }
