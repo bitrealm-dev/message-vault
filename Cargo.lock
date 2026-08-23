@@ -4163,6 +4163,7 @@ name = "message-ir-format"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "contacts",
  "csv",
  "hex",
  "mail",
