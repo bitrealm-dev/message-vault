@@ -3,7 +3,7 @@ title: HTTP API
 description: Tokens, import sessions, search syntax, and JSONL upload for people writing tools against the vault.
 ---
 
-Route schemas, status codes, and JSON fields live in the generated [HTTP API reference](/vault/developer/reference/http/). This page is the prose those tools need that is not a JSON schema.
+Route schemas, status codes, and JSON fields live in the generated [HTTP API reference](/vault/developer/rustdoc/http/). Crate types and functions live in [Rust crate docs](/vault/developer/rustdoc/). This page is the prose those tools need that is not a JSON schema.
 
 `message-vault-server serve` reads `[server]` in `config/config.toml` (`bind`). Day-to-day import still uses the desktop [Import](/vault/user/import-from-a-backup/) screen or **`vault-push`**. Download uses [Export](/vault/user/how-to/export-from-the-vault/) or **`vault-pull`**. Those tools call the HTTP API with [JSONL](/vault/developer/reference/export-structure/) and attachment bytes keyed by SHA-256.
 
