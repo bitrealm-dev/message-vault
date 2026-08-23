@@ -3,10 +3,8 @@
 use anyhow::{Context, Result};
 use chrono::{Local, TimeZone};
 use message_csv::AttachmentCell;
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// Maximum directory depth for attachment discovery. iMazing export trees are
@@ -248,7 +246,7 @@ fn find_and_copy_attachment(
     let Some(src) = index.and_then(|i| find_attachment_on_disk(csv_name, csv_parent, i)) else {
         return Ok(None);
     };
-    let digest_hex = stream_sha256(&src)?;
+    let digest_hex = media::file_sha256(&src)?;
     let digest_prefix = &digest_hex[..16.min(digest_hex.len())];
     let ext = src
         .extension()
@@ -268,23 +266,6 @@ fn find_and_copy_attachment(
         *attachments_saved += 1;
     }
     Ok(Some((format!("attachments/{name}"), digest_hex)))
-}
-
-/// Stream a file through SHA-256 in 64 KB chunks (no full read into memory).
-fn stream_sha256(path: &Path) -> Result<String> {
-    let mut file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
-    let mut hasher = Sha256::new();
-    let mut buf = [0u8; 64 * 1024];
-    loop {
-        let n = file
-            .read(&mut buf)
-            .with_context(|| format!("read {}", path.display()))?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Ok(hex::encode(hasher.finalize()))
 }
 
 fn mime_hint(attachment_type: &str, filename: &str) -> Option<String> {

@@ -8,6 +8,7 @@ mod utc_offset;
 pub use date_range::DateRange;
 pub use utc_offset::parse_utc_offset;
 
+use anyhow::Context;
 use chrono::{Local, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -100,6 +101,23 @@ pub fn json_cell(value: &impl Serialize) -> String {
 /// Standard per-conversation CSV filename (defined in `message-ir`, where the
 /// IR's `filename_stem` shares it; re-exported here for existing callers).
 pub use message_ir::conversation_filename;
+
+/// Index of a required CSV header column.
+///
+/// # Errors
+///
+/// Returns an error naming the missing column and the headers found.
+pub fn col(headers: &[String], name: &str) -> anyhow::Result<usize> {
+    headers
+        .iter()
+        .position(|h| h == name)
+        .with_context(|| format!("missing column {name:?} (have {headers:?})"))
+}
+
+/// Trimmed value of one CSV cell (empty string when missing).
+pub fn field(rec: &csv::StringRecord, idx: usize) -> String {
+    rec.get(idx).unwrap_or("").trim().to_string()
+}
 
 #[cfg(test)]
 mod tests {

@@ -67,20 +67,6 @@ pub(crate) struct SkippedNoPartyDetail {
     pub has_to: bool,
 }
 
-/// MIME type for a common media file extension, if known.
-fn mime_for_ext(ext: &str) -> Option<&'static str> {
-    match ext {
-        ".jpg" | ".jpeg" => Some("image/jpeg"),
-        ".png" => Some("image/png"),
-        ".gif" => Some("image/gif"),
-        ".3gp" => Some("video/3gpp"),
-        ".mp4" => Some("video/mp4"),
-        ".amr" => Some("audio/amr"),
-        ".wav" => Some("audio/wav"),
-        _ => None,
-    }
-}
-
 /// Format as E.164 (the international phone-number format that starts with +)
 /// when the digits are unambiguous for the US-centric crate. Otherwise keep
 /// the digits as-is. Never invent `+0…`.
@@ -248,7 +234,13 @@ fn save_pdu_attachments(
         }
         out.push(PendingAttachment {
             rel_path: format!("attachments/{name}"),
-            content_type: mime_for_ext(&att.ext).unwrap_or("").to_string(),
+            content_type: media::mime_for_ext(&att.ext)
+                .or(match att.ext.as_str() {
+                    ".wav" => Some("audio/wav"),
+                    _ => None,
+                })
+                .unwrap_or("")
+                .to_string(),
             extension: att.ext.trim_start_matches('.').to_string(),
             digest_sha256: Some(digest_hex),
             name_hint: att.smil_name.clone().or(Some(name)),

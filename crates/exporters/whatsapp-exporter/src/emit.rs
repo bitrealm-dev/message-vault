@@ -16,10 +16,8 @@ use message_ir::{
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
 use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
 use serde_json::Map;
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 const EXPORT_SOURCE: &str = "whatsapp";
@@ -310,7 +308,7 @@ fn copy_media(
     }
     fs::copy(&src_path, &dest)
         .with_context(|| format!("copy {} → {}", src_path.display(), dest.display()))?;
-    let digest = file_sha256(&dest)?;
+    let digest = media::file_sha256(&dest)?;
     Ok(Some(PendingAttachment {
         rel_path: rel,
         content_type: msg.mime.clone().unwrap_or_default(),
@@ -425,27 +423,6 @@ fn sanitize_att_stem(chat_id: &str) -> String {
         })
         .collect();
     if s.is_empty() { "chat".into() } else { s }
-}
-
-/// SHA-256 fingerprint of the file bytes (streamed, not loaded whole).
-///
-/// # Errors
-///
-/// Returns an error when the file cannot be read.
-fn file_sha256(path: &Path) -> Result<String> {
-    // Stream in 64KB chunks so large media never loads fully into RAM.
-    let file = fs::File::open(path)?;
-    let mut reader = std::io::BufReader::with_capacity(64 * 1024, file);
-    let mut hasher = Sha256::new();
-    let mut buf = [0u8; 64 * 1024];
-    loop {
-        let n = reader.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Ok(hex::encode(hasher.finalize()))
 }
 
 /// WhatsApp `key_id` as a string (empty when missing).

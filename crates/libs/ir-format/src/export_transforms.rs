@@ -9,10 +9,8 @@ use obfuscate::{
     Obfuscator, classify_attachment, materialize_placeholders, placeholder_rel_path,
     resolve_obfuscator_with_log,
 };
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Read;
 use std::path::Path;
 
 /// Options passed into [`crate::FormatSink`] for media and obfuscation.
@@ -204,27 +202,11 @@ fn refresh_missing_attachment_digests(
                 let meta = fs::metadata(&abs)
                     .with_context(|| format!("stat attachment {}", abs.display()))?;
                 att.size_bytes = Some(meta.len());
-                att.digest_sha256 = Some(hash_file_sha256(&abs)?);
+                att.digest_sha256 = Some(media::file_sha256(&abs)?);
             }
         }
     }
     Ok(())
-}
-
-fn hash_file_sha256(path: &Path) -> Result<String> {
-    let mut file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
-    let mut hasher = Sha256::new();
-    let mut buf = [0u8; 64 * 1024];
-    loop {
-        let n = file
-            .read(&mut buf)
-            .with_context(|| format!("read {}", path.display()))?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Ok(hex::encode(hasher.finalize()))
 }
 
 fn mime_for_rel(rel: &str) -> Option<String> {
@@ -318,6 +300,7 @@ mod tests {
         ConversationMeta, ConversationStats, ExportMeta, IrConversationType, IrMessage,
         IrMessageKind, IrParticipant, IrService, SCHEMA_VERSION,
     };
+    use sha2::{Digest, Sha256};
     use std::fs;
 
     fn doc_with_image_attachment() -> ConversationDocument {

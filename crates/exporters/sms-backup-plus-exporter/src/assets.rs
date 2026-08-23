@@ -81,21 +81,6 @@ fn safe_basename(name: &str) -> String {
     base
 }
 
-fn mime_for_ext(ext: &str) -> Option<&'static str> {
-    match ext {
-        ".jpg" | ".jpeg" => Some("image/jpeg"),
-        ".png" => Some("image/png"),
-        ".gif" => Some("image/gif"),
-        ".webp" => Some("image/webp"),
-        ".mp4" => Some("video/mp4"),
-        ".3gp" => Some("video/3gpp"),
-        ".amr" => Some("audio/amr"),
-        ".mp3" => Some("audio/mpeg"),
-        ".m4a" => Some("audio/mp4"),
-        _ => None,
-    }
-}
-
 fn walk_parts<'a>(mail: &'a ParsedMail<'a>, out: &mut Vec<&'a ParsedMail<'a>>) {
     if mail.subparts.is_empty() {
         out.push(mail);
@@ -163,7 +148,13 @@ pub(crate) fn extract_attachments(
         out.push(AttachmentBlob {
             filename: out_name,
             original_name: original,
-            mime_type: mime_for_ext(&ext)
+            mime_type: media::mime_for_ext(&ext)
+                .or(match ext.as_str() {
+                    ".webp" => Some("image/webp"),
+                    ".mp3" => Some("audio/mpeg"),
+                    ".m4a" => Some("audio/mp4"),
+                    _ => None,
+                })
                 .map(|s| s.to_string())
                 .or(if ctype.is_empty() { None } else { Some(ctype) }),
             digest_hex,
