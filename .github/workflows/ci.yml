@@ -72,7 +72,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev
 
-      - uses: actions/cache@v5
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -87,6 +87,60 @@ jobs:
 
       - name: Test workspace
         run: cargo test --workspace
+
+  # ── Always: cargo-deny advisories ─────────────────────────────────────
+  deny:
+    name: cargo-deny (advisories)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories
+
+  # ── Always: cargo check src-tauri ─────────────────────────────────────
+  # src-tauri is not a workspace member, so the workspace build above skips
+  # it; this is its first compile gate. Same system packages as the release
+  # job's Linux installer build.
+  check-tauri:
+    name: Check (src-tauri)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Install Tauri build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libgtk-3-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libsoup-3.0-dev
+
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-src-tauri-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-src-tauri-
+
+      - name: Check src-tauri
+        run: cargo check --manifest-path src-tauri/Cargo.toml
 
   # ── Always: web Biome (lint + format) + TypeScript ────────────────────
   web-lint:
@@ -131,6 +185,35 @@ jobs:
           npm ci
           npm test
 
+  # ── Always: npm audit (web + docs) ────────────────────────────────────
+  npm-audit:
+    name: Audit npm deps
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            docs/package-lock.json
+
+      - name: Audit web frontend
+        run: |
+          cd web
+          npm ci
+          npm audit --audit-level=high
+
+      - name: Audit docs site
+        run: |
+          cd docs
+          npm ci
+          npm audit --audit-level=high
+
   # ── Always: license consistency ───────────────────────────────────────
   license:
     name: License consistency
@@ -146,24 +229,24 @@ jobs:
   docker:
     name: Docker image
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [fmt, test]
+    needs: [fmt, test, check-tauri]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: bitrealm/message-vault
           tags: |
@@ -179,7 +262,7 @@ jobs:
           echo "build_date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./docker/Dockerfile
@@ -196,7 +279,7 @@ jobs:
   release:
     name: Desktop App (${{ matrix.label }})
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [fmt, test]
+    needs: [fmt, test, check-tauri]
     timeout-minutes: 90
     strategy:
       fail-fast: false
