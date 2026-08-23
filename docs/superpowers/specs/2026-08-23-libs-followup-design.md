@@ -105,16 +105,27 @@ Findings 11, 12, 13.
 - **Shared attachment metadata (finding 11).** New struct in `message-ir`:
   `pub struct AttachmentMeta` with the four common fields taken verbatim from
   `IrAttachment` — `path`, `original_name`, `mime_type`, `digest_sha256`.
-  - `IrAttachment` composes it (a `meta` field) plus its extras
-    (`is_sticker`, `transcription`, `sticker_effect`).
-  - `csv::AttachmentCell` and `mail::MailAttachment` compose the same struct
-    plus their layer-specific extras.
-  - ir-format's hand-written field-by-field mapping (`write.rs:258-270` and
-    the mirrored readers) is replaced by `From` impls on `AttachmentMeta`.
-  - Both writers build output manually (not via serde derives — verified at
-    plan time); serialization keys and output bytes stay identical regardless.
-  - Composition (a `meta` field) is chosen over flattening; consumer edits
-    are compiler-guided.
+  - `IrAttachment` keeps its flat fields (shape unchanged — composing it
+    would ripple through 34 construction sites across the exporters, CLI, and
+    demo-seed, and the audit's suggestion targets only the two duplicating
+    layers). `From<&IrAttachment> for AttachmentMeta` extracts the core.
+  - `csv::AttachmentCell` and `mail::MailAttachment` compose the shared
+    struct (a `meta` field) plus their layer-specific extras;
+    `AttachmentCell`'s `meta` field is `#[serde(flatten)]`ed so the CSV
+    `attachments_json` shape is byte-identical. `mail::MailAttachment`'s
+    `meta.path` is always `None` (mail archives never store an on-disk path).
+  - ir-format's hand-written field-by-field mappings (`write.rs:258-270` and
+    the mirrored readers in `read_csv.rs` / `read_mail.rs`) are replaced by
+    `From` impls (`From<AttachmentCell> for IrAttachment` in `message-ir`,
+    `From<&MailAttachment> for IrAttachment` in `message-ir-format` — mail
+    cannot depend on ir without a cycle).
+  - The CSV writer and the mail layers build output manually (not via serde
+    derives on `AttachmentCell`'s consumers); serialization keys and output
+    bytes stay identical regardless.
+  - Composition (a `meta` field) is chosen over flattening except where the
+    JSON shape requires it; consumer edits are compiler-guided (the imazing
+    and imessage-ir exporters construct these types and are updated in the
+    same task).
 - **Test fixtures (finding 12).** `message-ir` gains a `testutil` feature
   exposing one `sample_document()` builder. `message-ir-format` and
   `message-reexport` dev-depend on it
