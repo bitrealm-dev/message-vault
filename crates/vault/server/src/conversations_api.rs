@@ -14,6 +14,7 @@ pub const MAX_LIST_LIMIT: usize = 100;
 /// Cap expensive OFFSET skips on conversation list pages.
 pub const MAX_LIST_OFFSET: usize = 50_000;
 
+/// One page of the conversation list.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ConversationListPage {
     pub conversations: Vec<ConversationSummary>,
@@ -22,6 +23,7 @@ pub struct ConversationListPage {
     pub offset: usize,
 }
 
+/// One participant with display name and handle.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ConversationParticipant {
     pub name: Option<String>,
@@ -34,6 +36,7 @@ pub struct ConversationParticipant {
     pub contact_id: Option<String>,
 }
 
+/// Conversation row for the list: participants, counts, tags.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ConversationSummary {
     /// Numeric `conversations.id`, serialized as a string for `in:<id>` queries.
@@ -712,6 +715,7 @@ fn load_conversation_sources(
     })
 }
 
+/// One backup source with message counts and share.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ConversationSourceInfo {
     pub backup_name: String,
@@ -720,6 +724,7 @@ pub struct ConversationSourceInfo {
     pub percentage: f64,
 }
 
+/// Per-source counts for one conversation.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ConversationSourcesPage {
     pub sources: Vec<ConversationSourceInfo>,

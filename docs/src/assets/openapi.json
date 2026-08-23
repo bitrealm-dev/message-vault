@@ -3522,6 +3522,7 @@
     "schemas": {
       "AccountProfileResponse": {
         "type": "object",
+        "description": "The signed-in account's profile.",
         "required": [
           "account_id",
           "username",
@@ -3571,6 +3572,7 @@
       },
       "AccountProfileUpdateRequest": {
         "type": "object",
+        "description": "Display name and handle changes.",
         "properties": {
           "handles": {
             "type": "array",
@@ -3596,6 +3598,7 @@
       },
       "AccountStorageResponse": {
         "type": "object",
+        "description": "Attachment usage and the largest files.",
         "required": [
           "total_bytes",
           "attachment_count",
@@ -3620,6 +3623,7 @@
       },
       "ApiTokenItem": {
         "type": "object",
+        "description": "One named API token as shown in Settings: label, scopes, and masked secret.",
         "required": [
           "id",
           "label",
@@ -3664,6 +3668,7 @@
       },
       "AssetPutResponse": {
         "type": "object",
+        "description": "Stored asset fingerprint and path.",
         "required": [
           "ok",
           "sha256",
@@ -3687,6 +3692,7 @@
       },
       "AssetUploadAbortResponse": {
         "type": "object",
+        "description": "Abort acknowledgement.",
         "required": [
           "ok"
         ],
@@ -3698,6 +3704,7 @@
       },
       "AssetUploadPartResponse": {
         "type": "object",
+        "description": "Bytes written for one part.",
         "required": [
           "ok",
           "part",
@@ -3721,6 +3728,7 @@
       },
       "AssetUploadStartBody": {
         "type": "object",
+        "description": "Total bytes and optional MIME type for a chunked upload.",
         "required": [
           "bytes"
         ],
@@ -3740,6 +3748,7 @@
       },
       "AssetUploadStartResponse": {
         "type": "object",
+        "description": "Upload id and part size, or the already-stored asset.",
         "required": [
           "ok"
         ],
@@ -3779,6 +3788,7 @@
       },
       "AuthCheckResponse": {
         "type": "object",
+        "description": "Token check result: account, username, sources.",
         "required": [
           "ok",
           "sources"
@@ -3821,6 +3831,7 @@
       },
       "AuthModeResponse": {
         "type": "object",
+        "description": "Sign-in mode and Hanko URL so clients can render the right login form.",
         "required": [
           "mode",
           "try_demo"
@@ -3842,6 +3853,7 @@
       },
       "AuthTokenResponse": {
         "type": "object",
+        "description": "Session token plus the account id and username it belongs to.",
         "required": [
           "token",
           "account_id",
@@ -3861,6 +3873,7 @@
       },
       "ChangePasswordRequest": {
         "type": "object",
+        "description": "Current and new password.",
         "required": [
           "current_password",
           "new_password"
@@ -3876,6 +3889,7 @@
       },
       "ChangePasswordResponse": {
         "type": "object",
+        "description": "Fresh session token issued after the password change.",
         "required": [
           "ok",
           "token"
@@ -3892,6 +3906,7 @@
       },
       "CompleteImportBody": {
         "type": "object",
+        "description": "Final stats and issues for a finished import session.",
         "properties": {
           "attachment_count": {
             "type": [
@@ -3956,6 +3971,7 @@
       },
       "CompleteImportIssueBody": {
         "type": "object",
+        "description": "One parse/convert/upload issue from the import.",
         "required": [
           "kind",
           "step",
@@ -3979,6 +3995,7 @@
       },
       "CompleteImportResponse": {
         "type": "object",
+        "description": "Stored session status after completion.",
         "required": [
           "ok",
           "id",
@@ -4014,6 +4031,7 @@
       },
       "ContactDetail": {
         "type": "object",
+        "description": "Full contact view: every handle with stats, plus totals across them.",
         "required": [
           "id",
           "name",
@@ -4067,6 +4085,7 @@
       },
       "ContactGroupDeleteResponse": {
         "type": "object",
+        "description": "The updated list after deletion.",
         "required": [
           "ok",
           "groups"
@@ -4085,6 +4104,7 @@
       },
       "ContactGroupMembersResponse": {
         "type": "object",
+        "description": "Contact ids in the named group.",
         "required": [
           "name",
           "memberContactIds"
@@ -4104,6 +4124,7 @@
       },
       "ContactGroupMembershipBody": {
         "type": "object",
+        "description": "Contact ids, group name, and enable flag.",
         "required": [
           "ids",
           "name",
@@ -4127,6 +4148,7 @@
       },
       "ContactGroupNameBody": {
         "type": "object",
+        "description": "A group name.",
         "required": [
           "name"
         ],
@@ -4138,6 +4160,7 @@
       },
       "ContactGroupNamedListResponse": {
         "type": "object",
+        "description": "The affected group plus the updated list.",
         "required": [
           "name",
           "groups"
@@ -4156,6 +4179,7 @@
       },
       "ContactGroupRenameBody": {
         "type": "object",
+        "description": "Old and new group names.",
         "required": [
           "from",
           "to"
@@ -4171,6 +4195,7 @@
       },
       "ContactGroupsListResponse": {
         "type": "object",
+        "description": "The account's group names.",
         "required": [
           "groups"
         ],
@@ -4185,6 +4210,7 @@
       },
       "ContactHandleInfo": {
         "type": "object",
+        "description": "One handle on a contact with service and message stats.",
         "required": [
           "handle",
           "individual_conversations",
@@ -4244,6 +4270,7 @@
       },
       "ContactHandlePayload": {
         "type": "object",
+        "description": "A handle value plus optional platform service.",
         "required": [
           "handle"
         ],
@@ -4261,6 +4288,7 @@
       },
       "ContactListPage": {
         "type": "object",
+        "description": "One page of the contact list.",
         "required": [
           "contacts",
           "total",
@@ -4333,6 +4361,7 @@
       },
       "ContactRemoveHandlePayload": {
         "type": "object",
+        "description": "The handle to unlink.",
         "required": [
           "handle"
         ],
@@ -4431,6 +4460,7 @@
       },
       "ContactSummary": {
         "type": "object",
+        "description": "Contact row for the list: name, handles, groups.",
         "required": [
           "id",
           "name",
@@ -4472,6 +4502,7 @@
       },
       "ContactUpdateHandlePayload": {
         "type": "object",
+        "description": "The previous and new handle values for a link change.",
         "required": [
           "previous_handle",
           "handle"
@@ -4493,6 +4524,7 @@
       },
       "ConversationListPage": {
         "type": "object",
+        "description": "One page of the conversation list.",
         "required": [
           "conversations",
           "total",
@@ -4523,6 +4555,7 @@
       },
       "ConversationParticipant": {
         "type": "object",
+        "description": "One participant with display name and handle.",
         "required": [
           "handle",
           "service"
@@ -4557,6 +4590,7 @@
       },
       "ConversationSourceInfo": {
         "type": "object",
+        "description": "One backup source with message counts and share.",
         "required": [
           "backup_name",
           "message_count",
@@ -4585,6 +4619,7 @@
       },
       "ConversationSourcesPage": {
         "type": "object",
+        "description": "Per-source counts for one conversation.",
         "required": [
           "sources"
         ],
@@ -4599,6 +4634,7 @@
       },
       "ConversationSummary": {
         "type": "object",
+        "description": "Conversation row for the list: participants, counts, tags.",
         "required": [
           "id",
           "participants",
@@ -4662,6 +4698,7 @@
       },
       "CreateApiTokenRequest": {
         "type": "object",
+        "description": "Body for creating a token: label, scopes, optional expiry.",
         "required": [
           "label"
         ],
@@ -4686,6 +4723,7 @@
       },
       "CreateApiTokenResponse": {
         "type": "object",
+        "description": "The created token, including its plaintext secret (returned once).",
         "required": [
           "id",
           "label",
@@ -4725,6 +4763,7 @@
       },
       "CreateImportBody": {
         "type": "object",
+        "description": "Source, mode, tool, and optional account for a new import session.",
         "required": [
           "source"
         ],
@@ -4751,6 +4790,7 @@
       },
       "CreateImportResponse": {
         "type": "object",
+        "description": "The new import session id.",
         "required": [
           "ok",
           "id"
@@ -4767,6 +4807,7 @@
       },
       "DedupeResponse": {
         "type": "object",
+        "description": "Cross-source dedupe outcome.",
         "required": [
           "keys_filled",
           "exact_groups",
@@ -4798,6 +4839,7 @@
       },
       "DeleteAccountRequest": {
         "type": "object",
+        "description": "Confirmation flag and the current password when one is set.",
         "required": [
           "confirm"
         ],
@@ -4816,6 +4858,7 @@
       },
       "DeleteAccountResponse": {
         "type": "object",
+        "description": "Deletion acknowledgement.",
         "required": [
           "ok"
         ],
@@ -4827,6 +4870,7 @@
       },
       "DeleteApiTokenResponse": {
         "type": "object",
+        "description": "Deletion acknowledgement.",
         "required": [
           "ok"
         ],
@@ -4838,6 +4882,7 @@
       },
       "DeleteMessagesRequest": {
         "type": "object",
+        "description": "Confirmation flag for deleting all messages.",
         "required": [
           "confirm"
         ],
@@ -4849,6 +4894,7 @@
       },
       "DeleteMessagesResponse": {
         "type": "object",
+        "description": "Counts of deleted conversations and attachment rows.",
         "required": [
           "ok",
           "conversations",
@@ -4872,6 +4918,7 @@
       },
       "ErrorBody": {
         "type": "object",
+        "description": "API error envelope returned for non-200 responses.",
         "required": [
           "ok",
           "error"
@@ -4887,6 +4934,7 @@
       },
       "ExportAttachment": {
         "type": "object",
+        "description": "One attachment of an exported message.",
         "properties": {
           "is_sticker": {
             "type": "boolean"
@@ -4931,6 +4979,7 @@
       },
       "ExportConversation": {
         "type": "object",
+        "description": "The conversation a message belongs to.",
         "required": [
           "id",
           "chat_identifier",
@@ -4964,6 +5013,7 @@
       },
       "ExportCountResponse": {
         "type": "object",
+        "description": "Match counts for an export query.",
         "required": [
           "ok",
           "query",
@@ -5006,6 +5056,7 @@
       },
       "ExportMessage": {
         "type": "object",
+        "description": "One exported message.",
         "required": [
           "id",
           "source",
@@ -5115,6 +5166,7 @@
       },
       "ExportMessagesResponse": {
         "type": "object",
+        "description": "One page of exported messages.",
         "required": [
           "ok",
           "query",
@@ -5149,6 +5201,7 @@
       },
       "ExportParticipant": {
         "type": "object",
+        "description": "One participant of an exported conversation.",
         "required": [
           "handle"
         ],
@@ -5185,6 +5238,7 @@
       },
       "ExportTapback": {
         "type": "object",
+        "description": "One tapback reaction on an exported message.",
         "required": [
           "part_index",
           "kind",
@@ -5217,6 +5271,7 @@
       },
       "HankoSessionRequest": {
         "type": "object",
+        "description": "A raw Hanko session JWT from the client's onSessionCreated callback.",
         "required": [
           "hanko_jwt"
         ],
@@ -5229,6 +5284,7 @@
       },
       "ImportDetailIssueResponse": {
         "type": "object",
+        "description": "One stored import issue.",
         "required": [
           "kind",
           "step",
@@ -5252,6 +5308,7 @@
       },
       "ImportDetailResponse": {
         "type": "object",
+        "description": "Full import session record.",
         "required": [
           "id",
           "source",
@@ -5376,10 +5433,12 @@
               }
             }
           }
-        ]
+        ],
+        "description": "Import result: stats plus optional dedupe counts."
       },
       "ImportStats": {
         "type": "object",
+        "description": "Counters for one import run (staging and promote results).",
         "required": [
           "conversations",
           "participants",
@@ -5548,6 +5607,7 @@
       },
       "ImportsListResponse": {
         "type": "object",
+        "description": "Past import sessions.",
         "required": [
           "imports"
         ],
@@ -5562,6 +5622,7 @@
       },
       "ListApiTokensResponse": {
         "type": "object",
+        "description": "The account's named API tokens.",
         "required": [
           "items"
         ],
@@ -5576,6 +5637,7 @@
       },
       "LoginRequest": {
         "type": "object",
+        "description": "Username and password.",
         "required": [
           "username"
         ],
@@ -5590,6 +5652,7 @@
       },
       "LogoutResponse": {
         "type": "object",
+        "description": "Revocation acknowledgement.",
         "required": [
           "ok"
         ],
@@ -5601,6 +5664,7 @@
       },
       "MembershipChangedResponse": {
         "type": "object",
+        "description": "Number of memberships changed.",
         "required": [
           "changed"
         ],
@@ -5614,6 +5678,7 @@
       },
       "ProfileHandleInput": {
         "type": "object",
+        "description": "One handle to link or unlink, with its platform service.",
         "required": [
           "handle",
           "service"
@@ -5629,6 +5694,7 @@
       },
       "RegisterRequest": {
         "type": "object",
+        "description": "Body for local account registration.",
         "required": [
           "username"
         ],
@@ -5658,6 +5724,7 @@
       },
       "RenameApiTokenRequest": {
         "type": "object",
+        "description": "Body for renaming a token.",
         "required": [
           "label"
         ],
@@ -5669,6 +5736,7 @@
       },
       "RenameApiTokenResponse": {
         "type": "object",
+        "description": "The renamed token's id and stored label.",
         "required": [
           "ok",
           "id",
@@ -5688,6 +5756,7 @@
       },
       "ThreadTagDeleteResponse": {
         "type": "object",
+        "description": "The updated list after deletion.",
         "required": [
           "ok",
           "tags"
@@ -5706,6 +5775,7 @@
       },
       "ThreadTagMembersResponse": {
         "type": "object",
+        "description": "Conversation ids carrying the named tag.",
         "required": [
           "name",
           "memberConversationIds"
@@ -5725,6 +5795,7 @@
       },
       "ThreadTagMembershipBody": {
         "type": "object",
+        "description": "Conversation ids, tag name, and enable flag.",
         "required": [
           "ids",
           "name",
@@ -5748,6 +5819,7 @@
       },
       "ThreadTagNameBody": {
         "type": "object",
+        "description": "A tag name.",
         "required": [
           "name"
         ],
@@ -5759,6 +5831,7 @@
       },
       "ThreadTagNamedListResponse": {
         "type": "object",
+        "description": "The affected tag plus the updated list.",
         "required": [
           "name",
           "tags"
@@ -5777,6 +5850,7 @@
       },
       "ThreadTagRenameBody": {
         "type": "object",
+        "description": "Old and new tag names.",
         "required": [
           "from",
           "to"
@@ -5792,6 +5866,7 @@
       },
       "ThreadTagsListResponse": {
         "type": "object",
+        "description": "The account's tag names.",
         "required": [
           "tags"
         ],

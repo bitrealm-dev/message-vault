@@ -202,6 +202,7 @@ fn default_import_mode() -> String {
     "append".to_string()
 }
 
+/// Import result: stats plus optional dedupe counts.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct ImportResponse {
     ok: bool,
@@ -213,6 +214,7 @@ pub(crate) struct ImportResponse {
     dedupe: Option<DedupeResponse>,
 }
 
+/// Cross-source dedupe outcome.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct DedupeResponse {
     keys_filled: u64,
@@ -221,6 +223,7 @@ pub(crate) struct DedupeResponse {
     near_flagged: u64,
 }
 
+/// API error envelope returned for non-200 responses.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct ErrorBody {
     pub ok: bool,
@@ -636,6 +639,7 @@ pub(crate) async fn health() -> (StatusCode, &'static str) {
     (StatusCode::OK, "ok\n")
 }
 
+/// Sign-in mode and Hanko URL so clients can render the right login form.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct AuthModeResponse {
     pub mode: String,
@@ -673,6 +677,7 @@ pub(crate) struct AuthCheckQuery {
     account: Option<String>,
 }
 
+/// Token check result: account, username, sources.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct AuthCheckResponse {
     ok: bool,
@@ -887,6 +892,7 @@ fn safe_rel_path(name: &str) -> Result<PathBuf, ApiError> {
     crate::config::safe_rel_path(name).map_err(|e| ApiError::BadRequest(e.to_string()))
 }
 
+/// Source, mode, tool, and optional account for a new import session.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct CreateImportBody {
     source: String,
@@ -898,12 +904,14 @@ pub(crate) struct CreateImportBody {
     account: Option<String>,
 }
 
+/// The new import session id.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct CreateImportResponse {
     ok: bool,
     id: i64,
 }
 
+/// Final stats and issues for a finished import session.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct CompleteImportBody {
     #[serde(default = "default_true")]
@@ -932,6 +940,7 @@ fn default_true() -> bool {
     true
 }
 
+/// One parse/convert/upload issue from the import.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct CompleteImportIssueBody {
     kind: String,
@@ -954,6 +963,7 @@ fn validate_complete_import_issues(issues: &[CompleteImportIssueBody]) -> Result
     Ok(())
 }
 
+/// Stored session status after completion.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct CompleteImportResponse {
     ok: bool,
@@ -1222,11 +1232,13 @@ where
     .join_map(task, |e| e)
 }
 
+/// A group name.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct ContactGroupNameBody {
     name: String,
 }
 
+/// Old and new group names.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct ContactGroupRenameBody {
     from: String,
@@ -1238,6 +1250,7 @@ pub(crate) struct ContactGroupMembersQuery {
     name: String,
 }
 
+/// Contact ids, group name, and enable flag.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct ContactGroupMembershipBody {
     ids: Vec<i64>,
@@ -1245,23 +1258,27 @@ pub(crate) struct ContactGroupMembershipBody {
     enable: bool,
 }
 
+/// The account's group names.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct ContactGroupsListResponse {
     groups: Vec<String>,
 }
 
+/// The affected group plus the updated list.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct ContactGroupNamedListResponse {
     name: String,
     groups: Vec<String>,
 }
 
+/// The updated list after deletion.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct ContactGroupDeleteResponse {
     ok: bool,
     groups: Vec<String>,
 }
 
+/// Contact ids in the named group.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct ContactGroupMembersResponse {
     name: String,
@@ -1269,6 +1286,7 @@ pub(crate) struct ContactGroupMembersResponse {
     member_contact_ids: Vec<i64>,
 }
 
+/// Number of memberships changed.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct MembershipChangedResponse {
     changed: u64,
@@ -1497,11 +1515,13 @@ where
     .join_map(task, |e| e)
 }
 
+/// A tag name.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct ThreadTagNameBody {
     name: String,
 }
 
+/// Old and new tag names.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct ThreadTagRenameBody {
     from: String,
@@ -1513,6 +1533,7 @@ pub(crate) struct ThreadTagMembersQuery {
     name: String,
 }
 
+/// Conversation ids, tag name, and enable flag.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct ThreadTagMembershipBody {
     ids: Vec<i64>,
@@ -1520,23 +1541,27 @@ pub(crate) struct ThreadTagMembershipBody {
     enable: bool,
 }
 
+/// The account's tag names.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct ThreadTagsListResponse {
     tags: Vec<String>,
 }
 
+/// The affected tag plus the updated list.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct ThreadTagNamedListResponse {
     name: String,
     tags: Vec<String>,
 }
 
+/// The updated list after deletion.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct ThreadTagDeleteResponse {
     ok: bool,
     tags: Vec<String>,
 }
 
+/// Conversation ids carrying the named tag.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct ThreadTagMembersResponse {
     name: String,
@@ -1746,11 +1771,13 @@ pub(crate) struct ListImportsQuery {
     account: Option<String>,
 }
 
+/// Past import sessions.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct ImportsListResponse {
     imports: Vec<crate::db::vault_imports::ImportSummary>,
 }
 
+/// One stored import issue.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct ImportDetailIssueResponse {
     kind: String,
@@ -1759,6 +1786,7 @@ pub(crate) struct ImportDetailIssueResponse {
     reason: String,
 }
 
+/// Full import session record.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct ImportDetailResponse {
     id: i64,
@@ -1843,6 +1871,7 @@ pub(crate) async fn imports_get_handler(
     Ok(Json(import_detail_response(detail)))
 }
 
+/// Attachment usage and the largest files.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct AccountStorageResponse {
     pub total_bytes: i64,
@@ -2141,6 +2170,7 @@ pub(crate) struct AssetPutQuery {
     account: Option<String>,
 }
 
+/// Stored asset fingerprint and path.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct AssetPutResponse {
     ok: bool,
@@ -2548,6 +2578,7 @@ pub(crate) async fn asset_put_handler(
     Ok(AssetPutResponse::stored(stored, already_present))
 }
 
+/// Total bytes and optional MIME type for a chunked upload.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct AssetUploadStartBody {
     bytes: u64,
@@ -2555,6 +2586,7 @@ pub(crate) struct AssetUploadStartBody {
     mime: Option<String>,
 }
 
+/// Upload id and part size, or the already-stored asset.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct AssetUploadStartResponse {
     ok: bool,
@@ -2570,6 +2602,7 @@ pub(crate) struct AssetUploadStartResponse {
     already_present: bool,
 }
 
+/// Bytes written for one part.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct AssetUploadPartResponse {
     ok: bool,
@@ -2577,6 +2610,7 @@ pub(crate) struct AssetUploadPartResponse {
     bytes: u64,
 }
 
+/// Abort acknowledgement.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct AssetUploadAbortResponse {
     ok: bool,

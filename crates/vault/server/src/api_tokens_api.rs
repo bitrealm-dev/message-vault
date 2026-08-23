@@ -12,6 +12,7 @@ use crate::server::{
     ApiError, AppState, JoinBlocking, reject_if_guest_account, require_full_access, resolve_auth,
 };
 
+/// One named API token as shown in Settings: label, scopes, and masked secret.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ApiTokenItem {
     pub id: String,
@@ -52,11 +53,13 @@ fn map_label_error(e: anyhow::Error) -> ApiError {
     }
 }
 
+/// The account's named API tokens.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ListApiTokensResponse {
     pub items: Vec<ApiTokenItem>,
 }
 
+/// Body for creating a token: label, scopes, optional expiry.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateApiTokenRequest {
     pub label: String,
@@ -78,6 +81,7 @@ fn open_accounts_conn(db: &std::path::Path) -> anyhow::Result<Connection> {
     Ok(conn)
 }
 
+/// The created token, including its plaintext secret (returned once).
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CreateApiTokenResponse {
     pub id: String,
@@ -92,16 +96,19 @@ pub struct CreateApiTokenResponse {
     pub token_hint: String,
 }
 
+/// Deletion acknowledgement.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DeleteApiTokenResponse {
     pub ok: bool,
 }
 
+/// Body for renaming a token.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct RenameApiTokenRequest {
     pub label: String,
 }
 
+/// The renamed token's id and stored label.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RenameApiTokenResponse {
     pub ok: bool,

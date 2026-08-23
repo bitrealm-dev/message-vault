@@ -113,6 +113,7 @@ fn reset_auth_rate_limit_bucket_for_test(bucket: &str) {
 // Request / response types
 // ---------------------------------------------------------------------------
 
+/// Body for local account registration.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct RegisterRequest {
     pub username: String,
@@ -124,6 +125,7 @@ pub struct RegisterRequest {
     pub phone: Option<String>,
 }
 
+/// Username and password.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct LoginRequest {
     pub username: String,
@@ -131,6 +133,7 @@ pub struct LoginRequest {
     pub password: String,
 }
 
+/// A raw Hanko session JWT from the client's onSessionCreated callback.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct HankoSessionRequest {
     /// The raw Hanko session JSON Web Token from the client-side
@@ -138,6 +141,7 @@ pub struct HankoSessionRequest {
     pub hanko_jwt: String,
 }
 
+/// Session token plus the account id and username it belongs to.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AuthTokenResponse {
     pub token: String,
@@ -741,12 +745,14 @@ pub async fn try_demo_handler(
 // Change-password / delete-account request types
 // ---------------------------------------------------------------------------
 
+/// Current and new password.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ChangePasswordRequest {
     pub current_password: String,
     pub new_password: String,
 }
 
+/// Fresh session token issued after the password change.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ChangePasswordResponse {
     pub ok: bool,
@@ -754,6 +760,7 @@ pub struct ChangePasswordResponse {
     pub token: String,
 }
 
+/// Confirmation flag and the current password when one is set.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct DeleteAccountRequest {
     pub confirm: bool,
@@ -762,11 +769,13 @@ pub struct DeleteAccountRequest {
     pub current_password: Option<String>,
 }
 
+/// Deletion acknowledgement.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DeleteAccountResponse {
     pub ok: bool,
 }
 
+/// Revocation acknowledgement.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct LogoutResponse {
     pub ok: bool,

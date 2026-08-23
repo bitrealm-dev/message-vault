@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::db::{account_profile, schema};
 use crate::server::{ApiError, AppState, JoinBlocking, require_full_access, resolve_auth};
 
+/// The signed-in account's profile.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AccountProfileResponse {
     pub account_id: String,
@@ -74,12 +75,14 @@ pub async fn account_profile_handler(
     Ok(Json(result))
 }
 
+/// One handle to link or unlink, with its platform service.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ProfileHandleInput {
     pub handle: String,
     pub service: String,
 }
 
+/// Display name and handle changes.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct AccountProfileUpdateRequest {
     #[serde(default)]
@@ -237,11 +240,13 @@ pub async fn account_profile_update_handler(
     Ok(Json(result))
 }
 
+/// Confirmation flag for deleting all messages.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct DeleteMessagesRequest {
     pub confirm: bool,
 }
 
+/// Counts of deleted conversations and attachment rows.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DeleteMessagesResponse {
     pub ok: bool,

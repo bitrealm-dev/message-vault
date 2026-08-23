@@ -30,6 +30,7 @@ pub struct ExportCountOpts<'a> {
     pub source_override: Option<&'a str>,
 }
 
+/// One page of exported messages.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ExportMessagesResponse {
     pub ok: bool,
@@ -41,6 +42,7 @@ pub struct ExportMessagesResponse {
     pub truncated: Option<bool>,
 }
 
+/// Match counts for an export query.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ExportCountResponse {
     pub ok: bool,
@@ -54,6 +56,7 @@ pub struct ExportCountResponse {
     pub total_bytes: u64,
 }
 
+/// One exported message.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ExportMessage {
     pub id: i64,
@@ -78,6 +81,7 @@ pub struct ExportMessage {
     pub tapbacks: Vec<ExportTapback>,
 }
 
+/// The conversation a message belongs to.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ExportConversation {
     pub id: i64,
@@ -87,6 +91,7 @@ pub struct ExportConversation {
     pub participants: Vec<ExportParticipant>,
 }
 
+/// One participant of an exported conversation.
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct ExportParticipant {
     pub handle: String,
@@ -99,6 +104,7 @@ pub struct ExportParticipant {
     pub handle_type: Option<String>,
 }
 
+/// One attachment of an exported message.
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct ExportAttachment {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -117,6 +123,7 @@ pub struct ExportAttachment {
     pub missing_reason: Option<String>,
 }
 
+/// One tapback reaction on an exported message.
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct ExportTapback {
     pub part_index: i64,

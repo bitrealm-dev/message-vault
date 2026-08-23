@@ -18,6 +18,7 @@ pub const MAX_LIST_LIMIT: usize = 500;
 /// Cap expensive OFFSET skips on contact list pages.
 pub const MAX_LIST_OFFSET: usize = 50_000;
 
+/// One page of the contact list.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactListPage {
     pub contacts: Vec<ContactSummary>,
@@ -26,6 +27,7 @@ pub struct ContactListPage {
     pub offset: usize,
 }
 
+/// Contact row for the list: name, handles, groups.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactSummary {
     pub id: i64,
@@ -41,6 +43,7 @@ pub struct ContactSummary {
     pub groups: Vec<String>,
 }
 
+/// One handle on a contact with service and message stats.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactHandleInfo {
     pub handle: String,
@@ -58,6 +61,7 @@ pub struct ContactHandleInfo {
     pub group_message_count: u64,
 }
 
+/// A handle value plus optional platform service.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ContactHandlePayload {
     pub handle: String,
@@ -65,6 +69,7 @@ pub struct ContactHandlePayload {
     pub service: Option<String>,
 }
 
+/// The previous and new handle values for a link change.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ContactUpdateHandlePayload {
     pub previous_handle: String,
@@ -73,6 +78,7 @@ pub struct ContactUpdateHandlePayload {
     pub service: Option<String>,
 }
 
+/// The handle to unlink.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ContactRemoveHandlePayload {
     pub handle: String,
@@ -93,6 +99,7 @@ pub struct ContactMutationBody {
     pub remove_handle: Option<ContactRemoveHandlePayload>,
 }
 
+/// Full contact view: every handle with stats, plus totals across them.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactDetail {
     pub id: i64,

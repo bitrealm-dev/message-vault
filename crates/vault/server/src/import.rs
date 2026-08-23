@@ -156,6 +156,7 @@ impl<'a> ImportOptions<'a> {
     }
 }
 
+/// Counters for one import run (staging and promote results).
 #[derive(Debug, Default, Clone, Serialize, utoipa::ToSchema)]
 pub struct ImportStats {
     pub conversations: u64,
