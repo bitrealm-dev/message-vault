@@ -401,6 +401,7 @@ enum TzMode {
     Fixed(FixedOffset),
 }
 
+/// Parse a timezone string into local time or a fixed UTC offset.
 fn resolve_tz(timezone: Option<&str>) -> Result<TzMode> {
     match timezone.map(str::trim).filter(|s| !s.is_empty()) {
         None => Ok(TzMode::Local),
@@ -411,6 +412,8 @@ fn resolve_tz(timezone: Option<&str>) -> Result<TzMode> {
     }
 }
 
+/// Parse an iMazing date string into `(unix_secs, date_ms)`; DST-ambiguous
+/// times resolve to the earliest occurrence.
 fn parse_message_date(raw: &str, tz: &TzMode) -> Option<(i64, String)> {
     let raw = raw.trim();
     if raw.is_empty() {
@@ -436,6 +439,7 @@ fn parse_message_date(raw: &str, tz: &TzMode) -> Option<(i64, String)> {
     Some((secs, (secs * 1000).to_string()))
 }
 
+/// True for rows the exporter treats as sent (`outgoing`/`sent` types).
 fn is_outgoing(msg_type: &str) -> bool {
     matches!(
         msg_type.trim().to_ascii_lowercase().as_str(),
@@ -475,7 +479,10 @@ fn phones_in_text(text: &str) -> Vec<String> {
     out
 }
 
-/// Returns `(chat_identifier, contact_name, unresolved_phone)`.
+/// Resolve a session into `(chat_identifier, contact_name, unresolved_phone)`.
+///
+/// The third value is `true` only when the chat id could not be resolved
+/// and callers should record the raw phone as unresolved.
 fn resolve_chat_identifier(
     book: &ContactsBook,
     session: &str,
