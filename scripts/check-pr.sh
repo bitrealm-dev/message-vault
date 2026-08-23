@@ -35,6 +35,8 @@ echo "==> web lint"
 (cd web && npm run lint)
 echo "==> web test"
 (cd web && npm test)
+echo "==> web audit"
+(cd web && npm audit --audit-level=high)
 echo "==> web build (type-check + bundle)"
 (cd web && npm run build)
 
@@ -46,5 +48,7 @@ echo "==> docs check"
 (cd docs && npm run check)
 echo "==> docs build"
 (cd docs && npm run build)
+echo "==> docs audit"
+(cd docs && npm audit --audit-level=high)
 
 echo "All pre-PR checks passed."

@@ -143,6 +143,35 @@ jobs:
           npm ci
           npm test
 
+  # ── Always: npm audit (web + docs) ────────────────────────────────────
+  npm-audit:
+    name: Audit npm deps
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            docs/package-lock.json
+
+      - name: Audit web frontend
+        run: |
+          cd web
+          npm ci
+          npm audit --audit-level=high
+
+      - name: Audit docs site
+        run: |
+          cd docs
+          npm ci
+          npm audit --audit-level=high
+
   # ── Always: license consistency ───────────────────────────────────────
   license:
     name: License consistency
