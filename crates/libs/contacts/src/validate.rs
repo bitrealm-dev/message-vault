@@ -9,6 +9,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+/// Check-only or write-updates mode for the contacts-validate tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ValidateMode {
     /// Analyze only; do not write corrected files or a log file.
@@ -18,10 +19,14 @@ pub enum ValidateMode {
     Update,
 }
 
+/// Full result of a validate run.
 #[derive(Debug, Default)]
 pub struct ValidateReport {
+    /// Count of phones rewritten to a certain E.164.
     pub rewritten: u64,
+    /// Count of phones left unchanged as uncertain.
     pub uncertain: u64,
+    /// Count of E.164 values shared by more than one contact.
     pub duplicate_groups: u64,
     /// Planned or written primary output path.
     pub output_path: PathBuf,
@@ -51,9 +56,12 @@ struct UnableEntry {
 }
 
 /// Formats accepted by contacts-validate and by [`crate::ContactsBook::load_contacts_file`].
+/// Recognized contacts input formats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContactsFormat {
+    /// vCard `.vcf`/`.vcard` input.
     Vcf,
+    /// First/Last Name plus phone-column CSV input.
     VcardCsv,
 }
 
@@ -61,9 +69,12 @@ pub enum ContactsFormat {
 const UNRECOGNIZED_CONTACTS_FORMAT: &str = "Unrecognized contacts format.";
 
 /// Probe failure for GUI preflight (short `message` + optional log `details`).
+/// Short UI message plus optional log details for probe failures.
 #[derive(Debug, Clone)]
 pub struct ContactsInputError {
+    /// Short human-readable error (e.g. `"Unrecognized contacts format."`).
     pub message: String,
+    /// Optional verbose detail lines for logs.
     pub details: Vec<String>,
 }
 
@@ -285,6 +296,11 @@ fn is_phone_header(h: &str) -> bool {
 }
 
 /// Detect VCF or vCard CSV (First Name, Last Name, phone columns).
+///
+/// # Errors
+///
+/// Returns a `ContactsInputError` when the path is missing, the extension is
+/// unknown, or the content is not a recognized contacts format.
 pub fn detect_contacts_format(path: &Path) -> Result<ContactsFormat, ContactsInputError> {
     detect_format(path)
 }

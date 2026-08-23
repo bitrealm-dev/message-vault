@@ -18,8 +18,11 @@ pub const VCARD_CSV_PHONE_COLUMNS: &[&str] = &[
 /// One contact row from a vCard CSV (raw phone strings).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ContactCsvRow {
+    /// First-name cell.
     pub first: String,
+    /// Middle-name cell.
     pub middle: String,
+    /// Last-name cell.
     pub last: String,
     /// Phone values from phone/fax columns, `;`-split, not normalized.
     pub phones: Vec<String>,
@@ -41,12 +44,18 @@ pub fn is_phone_header(h: &str) -> bool {
 }
 
 /// Column indexes for a vCard CSV header row.
+/// Resolved column indexes for a vCard CSV header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VcardCsvColumns {
+    /// Index of the first-name column, if present.
     pub first: Option<usize>,
+    /// Index of the middle-name column, if present.
     pub middle: Option<usize>,
+    /// Index of the last-name column, if present.
     pub last: Option<usize>,
+    /// Index of the notes column, if present.
     pub notes: Option<usize>,
+    /// Indexes of phone/fax columns.
     pub phones: Vec<usize>,
 }
 
@@ -94,6 +103,11 @@ impl VcardCsvColumns {
 ///
 /// Does not require a display name; skips rows with no phone cells.
 /// Phone values are raw (caller normalizes with the `phone` crate).
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be opened or parsed, or when the
+/// header does not look like a vCard CSV.
 pub fn read_vcard_csv_rows(path: &Path) -> Result<Vec<ContactCsvRow>> {
     let file = File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut rdr = csv::ReaderBuilder::new()

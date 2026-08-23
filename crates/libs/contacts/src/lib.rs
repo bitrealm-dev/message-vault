@@ -11,6 +11,8 @@
 //!
 //! Accepted inputs: VCF, or vCard CSV.
 
+#![warn(missing_docs)]
+
 mod book;
 mod mapping;
 mod name;

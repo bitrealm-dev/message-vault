@@ -4,19 +4,30 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
 
+/// One parsed vCard.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct VcfCard {
+    /// Unescaped `FN` value.
     pub fn_raw: String,
+    /// `N` family (last) name component.
     pub n_family: String,
+    /// `N` given (first) name component.
     pub n_given: String,
+    /// `N` middle name component.
     pub n_middle: String,
+    /// Deduplicated raw `TEL` values.
     pub phones: Vec<String>,
+    /// First `EMAIL` value, if any.
     pub email: Option<String>,
     /// Values from `CATEGORIES` (and repeated CATEGORIES lines), already unescaped.
     pub categories: Vec<String>,
 }
 
 /// Parse a VCF file into cards (unfolded lines).
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read.
 pub fn parse_vcf(path: &Path) -> Result<Vec<VcfCard>> {
     let text = fs::read_to_string(path)
         .with_context(|| format!("failed to read VCF {}", path.display()))?;
@@ -24,6 +35,10 @@ pub fn parse_vcf(path: &Path) -> Result<Vec<VcfCard>> {
 }
 
 /// Parse VCF text into cards (unfolded lines).
+///
+/// # Errors
+///
+/// The `Result` is for a stable API; parsing text currently always returns `Ok`.
 pub fn parse_vcf_str(text: &str) -> Result<Vec<VcfCard>> {
     let lines = unfold_lines(text);
     let mut cards = Vec::new();
