@@ -100,12 +100,24 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(crate::contacts_api::contact_summaries_handler))
         .routes(routes!(crate::contacts_api::contact_detail_handler))
         .routes(routes!(crate::contacts_api::contact_mutate_handler))
-        .routes(routes!(crate::server::contact_groups_list_handler))
-        .routes(routes!(crate::server::contact_groups_create_handler))
-        .routes(routes!(crate::server::contact_groups_rename_handler))
-        .routes(routes!(crate::server::contact_groups_delete_handler))
-        .routes(routes!(crate::server::contact_groups_members_handler))
-        .routes(routes!(crate::server::contact_groups_membership_handler))
+        .routes(routes!(
+            crate::contact_groups_api::contact_groups_list_handler
+        ))
+        .routes(routes!(
+            crate::contact_groups_api::contact_groups_create_handler
+        ))
+        .routes(routes!(
+            crate::contact_groups_api::contact_groups_rename_handler
+        ))
+        .routes(routes!(
+            crate::contact_groups_api::contact_groups_delete_handler
+        ))
+        .routes(routes!(
+            crate::contact_groups_api::contact_groups_members_handler
+        ))
+        .routes(routes!(
+            crate::contact_groups_api::contact_groups_membership_handler
+        ))
         .routes(routes!(crate::server::thread_tags_list_handler))
         .routes(routes!(crate::server::thread_tags_create_handler))
         .routes(routes!(crate::server::thread_tags_rename_handler))

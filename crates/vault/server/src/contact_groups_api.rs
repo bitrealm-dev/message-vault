@@ -1,9 +1,19 @@
 //! Contact groups stored in `contact_groups` / `contact_group_members`.
 
+use std::sync::{Arc, Mutex as StdMutex};
+
 use anyhow::Result as AnyResult;
+use axum::Json;
+use axum::extract::{Query, State};
+use axum::http::HeaderMap;
 use rusqlite::{Connection, OptionalExtension, params};
+use serde::{Deserialize, Serialize};
 
 use crate::db::contacts::touch_contact;
+use crate::server::{
+    ApiError, AppState, JoinBlocking, MembershipChangedResponse, lock_conn, require_full_access,
+    resolve_auth,
+};
 
 /// Longest allowed group name (characters).
 pub const MAX_GROUP_NAME_LEN: usize = 80;
@@ -328,6 +338,275 @@ pub fn set_contacts_group_membership(
         }
     }
     Ok(changed)
+}
+
+fn map_group_error(err: GroupError) -> ApiError {
+    match err {
+        GroupError::BadRequest(m) => ApiError::BadRequest(m),
+        GroupError::NotFound(m) => ApiError::NotFound(m),
+        GroupError::Conflict(m) => ApiError::Conflict(m),
+        GroupError::Internal(m) => ApiError::Internal(m),
+    }
+}
+
+async fn with_group_conn<T, F>(
+    db: Arc<StdMutex<Connection>>,
+    task: &'static str,
+    f: F,
+) -> Result<T, ApiError>
+where
+    T: Send + 'static,
+    F: FnOnce(&Connection) -> Result<T, GroupError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || -> Result<T, ApiError> {
+        let conn = lock_conn(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
+        f(&conn).map_err(map_group_error)
+    })
+    .await
+    .join_map(task, |e| e)
+}
+
+/// A group name.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct ContactGroupNameBody {
+    name: String,
+}
+
+/// Old and new group names.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct ContactGroupRenameBody {
+    from: String,
+    to: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ContactGroupMembersQuery {
+    name: String,
+}
+
+/// Contact ids, group name, and enable flag.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct ContactGroupMembershipBody {
+    ids: Vec<i64>,
+    name: String,
+    enable: bool,
+}
+
+/// The account's group names.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ContactGroupsListResponse {
+    groups: Vec<String>,
+}
+
+/// The affected group plus the updated list.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ContactGroupNamedListResponse {
+    name: String,
+    groups: Vec<String>,
+}
+
+/// The updated list after deletion.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ContactGroupDeleteResponse {
+    ok: bool,
+    groups: Vec<String>,
+}
+
+/// Contact ids in the named group.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ContactGroupMembersResponse {
+    name: String,
+    #[serde(rename = "memberContactIds")]
+    member_contact_ids: Vec<i64>,
+}
+
+/// List the account's contact groups (A–Z, reserved names hidden).
+#[utoipa::path(
+    get,
+    path = "/v1/contact-groups",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = ContactGroupsListResponse),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_groups_list_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ContactGroupsListResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let groups = with_group_conn(db, "contact groups list", move |conn| {
+        list_groups(conn, &auth.account_id)
+    })
+    .await?;
+    Ok(Json(ContactGroupsListResponse { groups }))
+}
+
+/// Create a contact group and return the updated list.
+#[utoipa::path(
+    post,
+    path = "/v1/contact-groups",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    request_body = ContactGroupNameBody,
+    responses(
+        (status = 200, body = ContactGroupNamedListResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 409, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_groups_create_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ContactGroupNameBody>,
+) -> Result<Json<ContactGroupNamedListResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let name = body.name;
+    let (created, groups) = with_group_conn(db, "contact groups create", move |conn| {
+        let created = create_group(conn, &auth.account_id, &name)?;
+        let groups = list_groups(conn, &auth.account_id)?;
+        Ok((created, groups))
+    })
+    .await?;
+    Ok(Json(ContactGroupNamedListResponse {
+        name: created,
+        groups,
+    }))
+}
+
+/// Rename a contact group and return the updated list.
+#[utoipa::path(
+    patch,
+    path = "/v1/contact-groups",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    request_body = ContactGroupRenameBody,
+    responses(
+        (status = 200, body = ContactGroupNamedListResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody),
+        (status = 409, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_groups_rename_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ContactGroupRenameBody>,
+) -> Result<Json<ContactGroupNamedListResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let (name, groups) = with_group_conn(db, "contact groups rename", move |conn| {
+        let name = rename_group(conn, &auth.account_id, &body.from, &body.to)?;
+        let groups = list_groups(conn, &auth.account_id)?;
+        Ok((name, groups))
+    })
+    .await?;
+    Ok(Json(ContactGroupNamedListResponse { name, groups }))
+}
+
+/// Delete a contact group and return the updated list.
+#[utoipa::path(
+    delete,
+    path = "/v1/contact-groups",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    request_body = ContactGroupNameBody,
+    responses(
+        (status = 200, body = ContactGroupDeleteResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_groups_delete_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ContactGroupNameBody>,
+) -> Result<Json<ContactGroupDeleteResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let groups = with_group_conn(db, "contact groups delete", move |conn| {
+        delete_group(conn, &auth.account_id, &body.name)?;
+        list_groups(conn, &auth.account_id)
+    })
+    .await?;
+    Ok(Json(ContactGroupDeleteResponse { ok: true, groups }))
+}
+
+/// Contact ids that belong to a named group.
+#[utoipa::path(
+    get,
+    path = "/v1/contact-groups/members",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    params(("name" = String, Query, description = "Group name")),
+    responses(
+        (status = 200, body = ContactGroupMembersResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_groups_members_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ContactGroupMembersQuery>,
+) -> Result<Json<ContactGroupMembersResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let name = query.name.clone();
+    let member_contact_ids = with_group_conn(db, "contact groups members", move |conn| {
+        list_group_member_ids(conn, &auth.account_id, &name)
+    })
+    .await?;
+    Ok(Json(ContactGroupMembersResponse {
+        name: query.name,
+        member_contact_ids,
+    }))
+}
+
+/// Add or remove contacts in a group.
+#[utoipa::path(
+    post,
+    path = "/v1/contacts/groups",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    request_body = ContactGroupMembershipBody,
+    responses(
+        (status = 200, body = MembershipChangedResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_groups_membership_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ContactGroupMembershipBody>,
+) -> Result<Json<MembershipChangedResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let changed = with_group_conn(db, "contact groups membership", move |conn| {
+        set_contacts_group_membership(conn, &auth.account_id, &body.ids, &body.name, body.enable)
+    })
+    .await?;
+    Ok(Json(MembershipChangedResponse { changed }))
 }
 
 #[cfg(test)]
