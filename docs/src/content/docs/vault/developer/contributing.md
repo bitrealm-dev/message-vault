@@ -173,6 +173,8 @@ After edits under `crates/vault/server/`, restart terminal 1. After edits under 
 
 ## Making Code Changes
 
+Rust doc comments and utoipa annotations follow the [Rust doc style](/vault/developer/rustdoc-style/) guide.
+
 Open a GitHub issue before starting the work, so the later pull request can link to it. Use the bug report or feature request form. Do not wait for a reply before coding. If the issue has no reply after 5 business days, comment on that same issue.
 
 ### Branch
