@@ -12,8 +12,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 
-use anyhow::Context;
-use axum::extract::{FromRequest, Multipart, Path as AxumPath, Query, Request, State};
+use axum::extract::{Path as AxumPath, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
@@ -34,10 +33,8 @@ use crate::db::account_profile;
 use crate::db::api_tokens;
 use crate::db::schema;
 use crate::db::session_tokens;
-use crate::dedupe;
 use crate::export_api::ExportQueryError;
 use crate::guest_pool::{self, GuestPoolState};
-use crate::import::{self, FixedImportArgs, ImportMode, ImportOptions, ImportStats};
 
 /// What a Bearer credential is allowed to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,68 +158,20 @@ pub struct AppState {
     /// rows (the temporary import area) for that tenant are not wiped mid-run.
     /// Different accounts may overlap at the lock layer; SQLite write-ahead
     /// logging plus busy_timeout serialize writers.
-    account_import_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    pub(crate) account_import_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     /// Serialize multipart complete per (account, sha256) so two clients cannot
     /// race `store_verified` on the same SHA-256 fingerprint.
     asset_complete_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     /// Multipart / asset size limits from `[server]` (env may override part size).
     upload_limits: asset_uploads::UploadLimits,
     /// Axum request body cap (single PUT or one part); equals `asset_max_bytes`.
-    max_body_bytes: usize,
+    pub(crate) max_body_bytes: usize,
     /// Hosted guest-demo pool. Off on self-hosted (`GuestDemoSettings::disabled`).
     pub guest: GuestDemoSettings,
     /// One on-demand template clone at a time (empty-pool Try it).
     pub guest_clone_lock: Arc<Mutex<()>>,
     /// Hosted Try it assignments in the last 15 minutes (refill demand).
     pub guest_demand: Arc<StdMutex<GuestPoolState>>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct ImportQuery {
-    source: String,
-    /// Username or UUID. Optional; when set must match the Bearer token's account.
-    #[serde(default)]
-    account: Option<String>,
-    #[serde(default = "default_import_mode")]
-    mode: String,
-    /// Run cross-source soft-dedupe after import.
-    #[serde(default)]
-    dedupe: bool,
-    /// Optional vault import session id from POST /v1/imports.
-    #[serde(default)]
-    import_id: Option<i64>,
-    /// How vault contacts supply participant names (`fill_missing`, `overwrite`, or `as_is`).
-    #[serde(default = "default_contact_name_mode")]
-    contact_name_mode: String,
-}
-
-fn default_contact_name_mode() -> String {
-    "fill_missing".to_string()
-}
-
-fn default_import_mode() -> String {
-    "append".to_string()
-}
-
-/// Import result: stats plus optional dedupe counts.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ImportResponse {
-    ok: bool,
-    source: String,
-    account: String,
-    #[serde(flatten)]
-    stats: ImportStats,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    dedupe: Option<DedupeResponse>,
-}
-
-/// Cross-source dedupe outcome.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct DedupeResponse {
-    keys_filled: u64,
-    exact_groups: u64,
-    exact_flagged: u64,
-    near_flagged: u64,
 }
 
 /// API error envelope returned for non-200 responses.
@@ -331,7 +280,7 @@ pub(crate) fn lock_conn(
     lock_named(db, "database")
 }
 
-fn lock_import_conn(
+pub(crate) fn lock_import_conn(
     db: &StdMutex<Connection>,
 ) -> anyhow::Result<std::sync::MutexGuard<'_, Connection>> {
     lock_named(db, "import database")
@@ -752,12 +701,12 @@ pub(crate) fn nonempty_query_account(value: Option<&str>) -> Option<&str> {
     }
 }
 
-fn content_type_base(headers: &HeaderMap) -> Option<&str> {
+pub(crate) fn content_type_base(headers: &HeaderMap) -> Option<&str> {
     let ct = headers.get(header::CONTENT_TYPE)?.to_str().ok()?;
     Some(ct.split(';').next().unwrap_or(ct).trim())
 }
 
-fn upload_content_type(headers: &HeaderMap) -> Option<String> {
+pub(crate) fn upload_content_type(headers: &HeaderMap) -> Option<String> {
     let base = content_type_base(headers)?;
     if base.is_empty() || base.eq_ignore_ascii_case("application/octet-stream") {
         None
@@ -767,100 +716,18 @@ fn upload_content_type(headers: &HeaderMap) -> Option<String> {
 }
 
 /// True when the request body is JSON Lines (one JSON object per line).
-fn is_jsonl_content_type(base: &str) -> bool {
+pub(crate) fn is_jsonl_content_type(base: &str) -> bool {
     base.eq_ignore_ascii_case("application/jsonl")
         || base.eq_ignore_ascii_case("application/x-ndjson")
 }
 
-fn is_multipart_content_type(base: &str) -> bool {
+pub(crate) fn is_multipart_content_type(base: &str) -> bool {
     base.eq_ignore_ascii_case("multipart/form-data")
 }
 
 /// Reject path traversal; allow only relative Normal/CurDir components.
-fn safe_rel_path(name: &str) -> Result<PathBuf, ApiError> {
+pub(crate) fn safe_rel_path(name: &str) -> Result<PathBuf, ApiError> {
     crate::config::safe_rel_path(name).map_err(|e| ApiError::BadRequest(e.to_string()))
-}
-
-/// Source, mode, tool, and optional account for a new import session.
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub(crate) struct CreateImportBody {
-    source: String,
-    #[serde(default = "default_import_mode")]
-    mode: String,
-    #[serde(default)]
-    tool: Option<String>,
-    #[serde(default)]
-    account: Option<String>,
-}
-
-/// The new import session id.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct CreateImportResponse {
-    ok: bool,
-    id: i64,
-}
-
-/// Final stats and issues for a finished import session.
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub(crate) struct CompleteImportBody {
-    #[serde(default = "default_true")]
-    ok: bool,
-    #[serde(default)]
-    message_count: Option<i64>,
-    #[serde(default)]
-    attachment_count: Option<i64>,
-    #[serde(default)]
-    bytes_uploaded: Option<i64>,
-    #[serde(default)]
-    duration_ms: Option<i64>,
-    #[serde(default)]
-    parse_ms: Option<i64>,
-    #[serde(default)]
-    convert_ms: Option<i64>,
-    #[serde(default)]
-    upload_ms: Option<i64>,
-    #[serde(default)]
-    summary: Option<serde_json::Value>,
-    #[serde(default)]
-    issues: Vec<CompleteImportIssueBody>,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-/// One parse/convert/upload issue from the import.
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub(crate) struct CompleteImportIssueBody {
-    kind: String,
-    step: String,
-    item: String,
-    reason: String,
-}
-
-fn validate_complete_import_issues(issues: &[CompleteImportIssueBody]) -> Result<(), ApiError> {
-    for issue in issues {
-        match issue.kind.as_str() {
-            "error" | "skip" => {}
-            other => {
-                return Err(ApiError::BadRequest(format!(
-                    "invalid import issue kind '{other}'; expected 'error' or 'skip'"
-                )));
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Stored session status after completion.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct CompleteImportResponse {
-    ok: bool,
-    id: i64,
-    status: String,
-    message_count: i64,
-    attachment_count: i64,
-    bytes_uploaded: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1434,358 +1301,6 @@ pub(crate) async fn thread_tags_membership_handler(
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct ListImportsQuery {
-    #[serde(default)]
-    account: Option<String>,
-}
-
-/// Past import sessions.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ImportsListResponse {
-    imports: Vec<crate::db::vault_imports::ImportSummary>,
-}
-
-/// One stored import issue.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ImportDetailIssueResponse {
-    kind: String,
-    step: String,
-    item: String,
-    reason: String,
-}
-
-/// Full import session record.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ImportDetailResponse {
-    id: i64,
-    source: String,
-    tool: Option<String>,
-    mode: String,
-    status: String,
-    started_at: String,
-    finished_at: Option<String>,
-    message_count: i64,
-    attachment_count: i64,
-    bytes_uploaded: i64,
-    duration_ms: Option<i64>,
-    parse_ms: Option<i64>,
-    convert_ms: Option<i64>,
-    upload_ms: Option<i64>,
-    summary: serde_json::Value,
-    issues: Vec<ImportDetailIssueResponse>,
-}
-
-/// List past import sessions for the account with their stats.
-#[utoipa::path(
-    get,
-    path = "/v1/imports",
-    tag = "Import",
-    security(("bearer" = [])),
-    params(("account" = Option<String>, Query)),
-    responses(
-        (status = 200, body = ImportsListResponse),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn imports_list_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(query): Query<ListImportsQuery>,
-) -> Result<Json<ImportsListResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_import_access(&auth)?;
-    let account =
-        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
-
-    let db = Arc::clone(&state.db);
-    let imports = with_locked_conn(db, "list imports task", move |conn| {
-        crate::db::vault_imports::list_imports(conn, &account)
-    })
-    .await?;
-
-    Ok(Json(ImportsListResponse { imports }))
-}
-
-/// Status, timings, and issues for one import session.
-#[utoipa::path(
-    get,
-    path = "/v1/imports/{id}",
-    tag = "Import",
-    security(("bearer" = [])),
-    params(("id" = i64, Path, description = "Import session id")),
-    responses(
-        (status = 200, body = ImportDetailResponse),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn imports_get_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    AxumPath(import_id): AxumPath<i64>,
-) -> Result<Json<ImportDetailResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_import_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let detail = tokio::task::spawn_blocking(move || {
-        let conn = lock_conn(&db)?;
-        crate::db::vault_imports::get_import_detail(&conn, &auth.account_id, import_id)
-    })
-    .await
-    .join_map("import detail task", ApiError::from)?;
-
-    Ok(Json(import_detail_response(detail)))
-}
-
-/// Start an import session and return its id (see POST /v1/import and
-/// complete).
-#[utoipa::path(
-    post,
-    path = "/v1/imports",
-    tag = "Import",
-    security(("bearer" = [])),
-    request_body = CreateImportBody,
-    responses(
-        (status = 200, body = CreateImportResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn imports_create_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<CreateImportBody>,
-) -> Result<Json<CreateImportResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_import_access(&auth)?;
-    reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
-    if body.source.trim().is_empty() {
-        return Err(ApiError::BadRequest("body field source is required".into()));
-    }
-    validate_source_id(&body.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    ImportMode::parse(&body.mode).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    let account =
-        resolve_import_account(&auth, body.account.as_deref(), &state.cfg.paths.db).await?;
-
-    let db = Arc::clone(&state.db);
-    let source = body.source.clone();
-    let mode = body.mode.clone();
-    let tool = body.tool.clone();
-    let id = tokio::task::spawn_blocking(move || {
-        let conn = lock_import_conn(&db)?;
-        crate::db::account_profile::ensure_account_row(&conn, &account)?;
-        crate::db::vault_imports::start_import(&conn, &account, &source, &mode, tool.as_deref())
-    })
-    .await
-    .join_blocking("create import task failed")?;
-
-    Ok(Json(CreateImportResponse { ok: true, id }))
-}
-
-/// Record the outcome of an import session started with POST /v1/imports.
-#[utoipa::path(
-    post,
-    path = "/v1/imports/{id}/complete",
-    tag = "Import",
-    security(("bearer" = [])),
-    params(("id" = i64, Path, description = "Import session id")),
-    request_body = CompleteImportBody,
-    responses(
-        (status = 200, body = CompleteImportResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn imports_complete_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    AxumPath(import_id): AxumPath<i64>,
-    Json(body): Json<CompleteImportBody>,
-) -> Result<Json<CompleteImportResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_import_access(&auth)?;
-    reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
-    let account = resolve_import_account(&auth, None, &state.cfg.paths.db).await?;
-    validate_complete_import_issues(&body.issues)?;
-    let db = Arc::clone(&state.db);
-    let summary_json = match body.summary {
-        Some(summary) => Some(
-            serde_json::to_string(&summary)
-                .map_err(|e| ApiError::Internal(format!("serialize import summary: {e}")))?,
-        ),
-        None => None,
-    };
-    let args = crate::db::vault_imports::CompleteImportArgs {
-        ok: body.ok,
-        message_count: body.message_count,
-        attachment_count: body.attachment_count,
-        bytes_uploaded: body.bytes_uploaded,
-        duration_ms: body.duration_ms,
-        parse_ms: body.parse_ms,
-        convert_ms: body.convert_ms,
-        upload_ms: body.upload_ms,
-        summary_json,
-        issues: body
-            .issues
-            .into_iter()
-            .map(|issue| crate::db::vault_imports::ImportIssueInput {
-                kind: issue.kind,
-                step: issue.step,
-                item: issue.item,
-                reason: issue.reason,
-            })
-            .collect(),
-    };
-    let row = tokio::task::spawn_blocking(move || {
-        let conn = lock_import_conn(&db)?;
-        crate::db::vault_imports::complete_import(&conn, &account, import_id, &args)
-    })
-    .await
-    .join_map("complete import task failed", |e| {
-        match e.downcast::<crate::db::vault_imports::ImportLookupError>() {
-            Ok(lookup) => ApiError::from(lookup),
-            Err(other) => ApiError::Internal(other.to_string()),
-        }
-    })?;
-
-    Ok(Json(CompleteImportResponse {
-        ok: true,
-        id: row.id,
-        status: row.status,
-        message_count: row.message_count,
-        attachment_count: row.attachment_count,
-        bytes_uploaded: row.bytes_uploaded,
-    }))
-}
-
-fn parse_summary_json(summary_json: Option<String>) -> serde_json::Value {
-    match summary_json {
-        Some(raw) => serde_json::from_str(&raw).unwrap_or(serde_json::Value::String(raw)),
-        None => serde_json::Value::Null,
-    }
-}
-
-fn import_detail_response(detail: crate::db::vault_imports::ImportDetail) -> ImportDetailResponse {
-    let row = detail.row;
-    let issues = detail
-        .issues
-        .into_iter()
-        .map(|issue| ImportDetailIssueResponse {
-            kind: issue.kind,
-            step: issue.step,
-            item: issue.item,
-            reason: issue.reason,
-        })
-        .collect();
-
-    ImportDetailResponse {
-        id: row.id,
-        source: row.source,
-        tool: row.tool,
-        mode: row.mode,
-        status: row.status,
-        started_at: row.started_at,
-        finished_at: row.finished_at,
-        message_count: row.message_count,
-        attachment_count: row.attachment_count,
-        bytes_uploaded: row.bytes_uploaded,
-        duration_ms: row.duration_ms,
-        parse_ms: row.parse_ms,
-        convert_ms: row.convert_ms,
-        upload_ms: row.upload_ms,
-        summary: parse_summary_json(row.summary_json),
-        issues,
-    }
-}
-
-/// Import one message-ir JSONL body (raw or multipart) into the vault.
-#[utoipa::path(
-    post,
-    path = "/v1/import",
-    tag = "Import",
-    security(("bearer" = [])),
-    params(
-        ("source" = String, Query),
-        ("account" = Option<String>, Query),
-        ("mode" = Option<String>, Query, description = "Default append"),
-        ("dedupe" = Option<bool>, Query),
-        ("import_id" = Option<i64>, Query),
-        ("contact_name_mode" = Option<String>, Query)
-    ),
-    request_body(
-        content(
-            ("application/x-ndjson"),
-            ("application/jsonl"),
-            ("multipart/form-data")
-        ),
-        description = "message-ir JSONL. application/x-ndjson, application/jsonl, and multipart/form-data (field jsonl plus file parts) are accepted."
-    ),
-    responses(
-        (status = 200, body = ImportResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn import_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(mut query): Query<ImportQuery>,
-    request: Request,
-) -> Result<Json<ImportResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_import_access(&auth)?;
-    reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
-
-    let Some(ct) = content_type_base(&headers) else {
-        return Err(ApiError::BadRequest(
-            "Content-Type required (application/x-ndjson, application/jsonl, or multipart/form-data)"
-                .into(),
-        ));
-    };
-
-    if query.source.trim().is_empty() {
-        return Err(ApiError::BadRequest(
-            "query param source is required".into(),
-        ));
-    }
-    validate_source_id(&query.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    let account =
-        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
-    query.account = Some(account);
-
-    if is_multipart_content_type(ct) {
-        let multipart = Multipart::from_request(request, &state)
-            .await
-            .map_err(|e| ApiError::BadRequest(format!("invalid multipart body: {e}")))?;
-        return import_multipart(state, query, multipart).await;
-    }
-
-    if is_jsonl_content_type(ct) {
-        let temp = tempfile::tempdir().map_err(|e| ApiError::Internal(format!("temp dir: {e}")))?;
-        let jsonl_path = temp.path().join("_import.jsonl");
-        let n = stream_body_to_file(request.into_body(), &jsonl_path, state.max_body_bytes).await?;
-        if n == 0 {
-            return Err(ApiError::BadRequest("request body is empty".into()));
-        }
-        let response = run_import_path(state, query, jsonl_path, None).await;
-        drop(temp);
-        return response;
-    }
-
-    Err(ApiError::BadRequest(
-        "Content-Type must be application/x-ndjson, application/jsonl, or multipart/form-data"
-            .into(),
-    ))
-}
-
-#[derive(Debug, Deserialize)]
 pub(crate) struct AssetPutQuery {
     source: String,
     #[serde(default)]
@@ -2355,7 +1870,7 @@ async fn discard_body(body: axum::body::Body, max_body_bytes: usize) -> Result<(
     Ok(())
 }
 
-async fn create_dest_file(dest: &Path) -> Result<tokio::fs::File, ApiError> {
+pub(crate) async fn create_dest_file(dest: &Path) -> Result<tokio::fs::File, ApiError> {
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent)
             .await
@@ -2366,7 +1881,7 @@ async fn create_dest_file(dest: &Path) -> Result<tokio::fs::File, ApiError> {
         .map_err(|e| ApiError::Internal(format!("create {}: {e}", dest.display())))
 }
 
-async fn stream_body_to_file(
+pub(crate) async fn stream_body_to_file(
     body: axum::body::Body,
     dest: &Path,
     max_body_bytes: usize,
@@ -2390,7 +1905,7 @@ async fn stream_body_to_file(
     Ok(written)
 }
 
-async fn stream_field_to_file(
+pub(crate) async fn stream_field_to_file(
     mut field: axum::extract::multipart::Field<'_>,
     dest: &Path,
 ) -> Result<u64, ApiError> {
@@ -2412,219 +1927,13 @@ async fn stream_field_to_file(
     Ok(written)
 }
 
-async fn import_multipart(
-    state: AppState,
-    query: ImportQuery,
-    mut multipart: Multipart,
-) -> Result<Json<ImportResponse>, ApiError> {
-    let temp = tempfile::tempdir().map_err(|e| ApiError::Internal(format!("temp dir: {e}")))?;
-    let asset_root = temp.path().to_path_buf();
-    let jsonl_path = asset_root.join("_import.jsonl");
-    let mut have_jsonl = false;
-    let mut file_count = 0u64;
-
-    while let Some(mut field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| ApiError::BadRequest(format!("multipart field error: {e}")))?
-    {
-        let name = field.name().unwrap_or("").to_string();
-        match name.as_str() {
-            "jsonl" => {
-                let n = stream_field_to_file(field, &jsonl_path).await?;
-                if n == 0 {
-                    return Err(ApiError::BadRequest("jsonl part is empty".into()));
-                }
-                have_jsonl = true;
-            }
-            "file" => {
-                let filename = match field.file_name() {
-                    Some(name) if !name.is_empty() => name.to_string(),
-                    _ => {
-                        return Err(ApiError::BadRequest(
-                            "file part missing filename (use relative path e.g. attachments/a.jpg)"
-                                .into(),
-                        ));
-                    }
-                };
-                let rel = safe_rel_path(&filename)?;
-                let dest = asset_root.join(&rel);
-                stream_field_to_file(field, &dest).await?;
-                file_count += 1;
-            }
-            other => {
-                while let Some(chunk) = field
-                    .chunk()
-                    .await
-                    .map_err(|e| ApiError::BadRequest(format!("multipart chunk: {e}")))?
-                {
-                    let _ = chunk;
-                }
-                eprintln!("import: ignoring unknown multipart field {other:?}");
-            }
-        }
-    }
-
-    if !have_jsonl {
-        return Err(ApiError::BadRequest(
-            "multipart missing required field 'jsonl'".into(),
-        ));
-    }
-    eprintln!("import: multipart jsonl + {file_count} file(s)");
-
-    let response = run_import_path(state, query, jsonl_path, Some(asset_root)).await;
-    drop(temp);
-    response
-}
-
-async fn run_import_path(
-    state: AppState,
-    query: ImportQuery,
-    jsonl_path: PathBuf,
-    asset_root_override: Option<PathBuf>,
-) -> Result<Json<ImportResponse>, ApiError> {
-    let mode = ImportMode::parse(&query.mode).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    validate_source_id(&query.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    let contact_name_mode = import::ContactNameMode::parse(&query.contact_name_mode)
-        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
-
-    let cfg = Arc::clone(&state.cfg);
-    let db = Arc::clone(&state.db);
-    let account = query
-        .account
-        .clone()
-        .ok_or_else(|| ApiError::BadRequest("account is required".into()))?;
-    let source_id = query.source.clone();
-    let do_dedupe = query.dedupe;
-    let query_import_id = query.import_id;
-
-    let account_lock = {
-        let mut map = state.account_import_locks.lock().await;
-        map.entry(account.clone())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone()
-    };
-    let _guard = account_lock.lock().await;
-
-    // Validate client-owned sessions before staging work so bad ids return 400.
-    if let Some(id) = query_import_id {
-        let db = Arc::clone(&db);
-        let account_check = account.clone();
-        let source_check = source_id.clone();
-        let mode_check = mode.as_str().to_string();
-        tokio::task::spawn_blocking(move || {
-            let conn = lock_import_conn(&db)?;
-            crate::db::vault_imports::require_reusable_import(
-                &conn,
-                &account_check,
-                id,
-                &source_check,
-                &mode_check,
-            )
-            .map_err(anyhow::Error::new)?;
-            Ok::<_, anyhow::Error>(())
-        })
-        .await
-        .join_map("import session check", |e| {
-            let msg = e.to_string();
-            if msg.contains("not found") {
-                ApiError::NotFound(msg)
-            } else if msg.contains("not running") || msg.contains("mismatch") {
-                ApiError::BadRequest(msg)
-            } else {
-                ApiError::Internal(msg)
-            }
-        })?;
-    }
-
-    let result = tokio::task::spawn_blocking(move || {
-        let assets_dir = cfg.paths.assets_dir_for_account(&account, &source_id);
-        // Raw body imports resolve attachment paths only via pre-uploaded sha256 assets.
-        // Multipart supplies a temp asset_root for relative file parts.
-        let asset_root_owned = asset_root_override.unwrap_or_else(|| assets_dir.clone());
-
-        // Client session (vault-push): ownership/status already checked above.
-        // Otherwise start a one-shot vault_imports row so Storage history works for curl / single POSTs.
-        let (import_id, owns_session) = if let Some(id) = query_import_id {
-            (Some(id), false)
-        } else {
-            let conn = lock_import_conn(&db)?;
-            crate::db::account_profile::ensure_account_row(&conn, &account)?;
-            let id = crate::db::vault_imports::start_import(
-                &conn,
-                &account,
-                &source_id,
-                mode.as_str(),
-                Some("http"),
-            )?;
-            drop(conn);
-            (Some(id), true)
-        };
-
-        let mut opts = ImportOptions::fixed(FixedImportArgs {
-            db_path: &cfg.paths.db,
-            assets_dir: &assets_dir,
-            asset_root: &asset_root_owned,
-            contacts: None,
-            overwrite_contacts: false,
-            mode,
-            source: &source_id,
-            account_id: &account,
-            fill_content_keys: do_dedupe,
-            import_id,
-        });
-        opts.contact_name_mode = contact_name_mode;
-        // Dedicated connection for the long import so we do not hold `state.db`
-        // across JSONL / asset IO / promote (export and session SQL stay free).
-        let mut conn = schema::open_configured(&cfg.paths.db)
-            .with_context(|| format!("open import database {}", cfg.paths.db.display()))?;
-        let import_result = import::import_jsonl_files_on_conn(
-            &mut conn,
-            &[jsonl_path],
-            &opts,
-            import::ImportSchemaMode::AssumeReady,
-        );
-
-        if owns_session && let Some(id) = import_id {
-            let complete_args = match &import_result {
-                Ok(stats) => crate::db::vault_imports::CompleteImportArgs::succeeded(
-                    stats.messages,
-                    stats.attachments,
-                ),
-                Err(_) => crate::db::vault_imports::CompleteImportArgs::failed(),
-            };
-            crate::db::vault_imports::complete_import_or_warn(&conn, &account, id, &complete_args);
-        }
-        let stats = import_result?;
-        drop(conn);
-        let dedupe_stats = if do_dedupe {
-            Some(dedupe::run_dedupe(&cfg.paths.db, &account, 2)?)
-        } else {
-            None
-        };
-        Ok::<_, anyhow::Error>((stats, dedupe_stats, source_id, account))
-    })
-    .await
-    .join_blocking("import task failed")?;
-
-    let (stats, dedupe_stats, source_id, account) = result;
-    Ok(Json(ImportResponse {
-        ok: true,
-        source: source_id,
-        account,
-        stats,
-        dedupe: dedupe_stats.map(|d| DedupeResponse {
-            keys_filled: d.keys_filled,
-            exact_groups: d.exact_groups,
-            exact_flagged: d.exact_flagged,
-            near_flagged: d.near_flagged,
-        }),
-    }))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::import::{
+        CompleteImportBody, CompleteImportIssueBody, CreateImportBody, imports_complete_handler,
+        imports_create_handler, imports_get_handler,
+    };
     use rusqlite::params;
     use std::sync::{Arc, Mutex as StdMutex};
     use tempfile::TempDir;

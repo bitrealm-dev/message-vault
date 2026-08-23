@@ -118,11 +118,11 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(
             crate::conversations_api::conversation_sources_handler
         ))
-        .routes(routes!(crate::server::imports_list_handler))
-        .routes(routes!(crate::server::imports_create_handler))
-        .routes(routes!(crate::server::imports_get_handler))
-        .routes(routes!(crate::server::imports_complete_handler))
-        .routes(routes!(crate::server::import_handler))
+        .routes(routes!(crate::import::imports_list_handler))
+        .routes(routes!(crate::import::imports_create_handler))
+        .routes(routes!(crate::import::imports_get_handler))
+        .routes(routes!(crate::import::imports_complete_handler))
+        .routes(routes!(crate::import::import_handler))
         .routes(routes!(crate::server::asset_head_handler))
         .routes(routes!(crate::server::asset_get_handler))
         .routes(routes!(crate::server::asset_put_handler))
