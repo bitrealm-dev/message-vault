@@ -6,6 +6,7 @@
 //! JSON, CSV, EML, MBOX, or XML).
 
 mod attachments;
+mod attachments_emit;
 mod backup;
 mod body;
 mod contacts;
