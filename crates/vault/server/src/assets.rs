@@ -1,3 +1,10 @@
+//! Content-addressed asset storage under each account's `assets/` directory.
+//!
+//! Files are stored by SHA-256 fingerprint (`aa/aaaa…ext`) and every reuse
+//! re-checks the bytes against the claimed fingerprint. The HTTP handlers for
+//! `HEAD` / `GET` / `PUT /v1/assets/{sha256}` and the multipart upload routes
+//! also live here; multipart staging itself is in `asset_uploads`.
+
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};

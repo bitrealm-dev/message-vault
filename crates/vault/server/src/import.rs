@@ -1,3 +1,11 @@
+//! Import message-ir JSONL into the vault.
+//!
+//! The pipeline runs in three stages: `staging` parses JSONL files and writes
+//! staging rows, `promote` copies staging rows into the production tables, and
+//! `contact_name` links handles to vault contacts and merges display names.
+//! The HTTP handlers for `POST /v1/import` and the `/v1/imports` session
+//! routes live at the end of this module.
+
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};

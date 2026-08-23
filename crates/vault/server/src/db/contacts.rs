@@ -1,3 +1,5 @@
+//! Address book loading (VCF or vCard CSV) and contact/group/handle links.
+
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 

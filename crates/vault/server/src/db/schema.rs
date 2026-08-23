@@ -1,3 +1,10 @@
+//! Schema management for the vault and accounts databases.
+//!
+//! Serve and import open their SQLite connections through `open_configured`
+//! (shared pragmas) and ensure the schema with `ensure_vault_schema` /
+//! `ensure_accounts_schema`. DDL lives in the SQL files embedded at compile
+//! time; the functions here apply and evolve it.
+
 use std::path::Path;
 
 use anyhow::Result;

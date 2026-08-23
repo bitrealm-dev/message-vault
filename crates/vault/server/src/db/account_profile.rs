@@ -1,3 +1,5 @@
+//! Account rows, profile fields, guest status, and message deletion.
+
 use anyhow::{Context, Result, bail};
 use message_ir::HandleType;
 use rusqlite::{Connection, OptionalExtension, params};

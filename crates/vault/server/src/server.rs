@@ -1,3 +1,13 @@
+//! Router assembly, shared state, auth resolution, and HTTP plumbing.
+//!
+//! Domain handlers live in their own modules: `auth` (login and session),
+//! `profile` (account settings), `contacts_api`, `conversations_api`,
+//! `export_api` (messages and counts), `import` (JSONL ingest and import
+//! sessions), and `assets` (asset bytes and multipart uploads). This module
+//! keeps the pieces they share: [`AppState`], [`ApiError`], Bearer token
+//! resolution, body-streaming helpers, and `http_app`, which assembles the
+//! router.
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};

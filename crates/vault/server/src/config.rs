@@ -1,3 +1,6 @@
+//! Config file model ([`Config`]) plus path/source validation and the
+//! environment-driven settings ([`AuthMode`], [`GuestDemoSettings`]).
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
