@@ -6,7 +6,6 @@ use anyhow::Context;
 use axum::extract::{FromRequest, Multipart, Path as AxumPath, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -167,7 +166,7 @@ pub struct AppState {
 }
 
 #[derive(Debug, Deserialize)]
-struct ImportQuery {
+pub(crate) struct ImportQuery {
     source: String,
     /// Username or UUID. Optional; when set must match the Bearer token's account.
     #[serde(default)]
@@ -193,8 +192,8 @@ fn default_import_mode() -> String {
     "append".to_string()
 }
 
-#[derive(Debug, Serialize)]
-struct ImportResponse {
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ImportResponse {
     ok: bool,
     source: String,
     account: String,
@@ -204,8 +203,8 @@ struct ImportResponse {
     dedupe: Option<DedupeResponse>,
 }
 
-#[derive(Debug, Serialize)]
-struct DedupeResponse {
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct DedupeResponse {
     keys_filled: u64,
     exact_groups: u64,
     exact_flagged: u64,
@@ -386,33 +385,6 @@ pub(crate) fn http_app(state: AppState) -> Router {
             auth_small
                 // Auth JSON is tiny; keep a tight limit so Argon2/JWKS abuse cannot ship 512 MiB bodies.
                 .layer(RequestBodyLimitLayer::new(32 * 1024)),
-        )
-        .route("/v1/imports", get(imports_list_handler))
-        .route("/v1/imports", post(imports_create_handler))
-        .route("/v1/imports/{id}", get(imports_get_handler))
-        .route("/v1/imports/{id}/complete", post(imports_complete_handler))
-        .route("/v1/import", post(import_handler))
-        .route(
-            "/v1/assets/{sha256}",
-            get(asset_get_handler)
-                .put(asset_put_handler)
-                .head(asset_head_handler),
-        )
-        .route(
-            "/v1/assets/{sha256}/uploads",
-            post(asset_upload_start_handler),
-        )
-        .route(
-            "/v1/assets/{sha256}/uploads/{upload_id}/parts/{part}",
-            put(asset_upload_part_handler),
-        )
-        .route(
-            "/v1/assets/{sha256}/uploads/{upload_id}/complete",
-            post(asset_upload_complete_handler),
-        )
-        .route(
-            "/v1/assets/{sha256}/uploads/{upload_id}",
-            delete(asset_upload_abort_handler),
         )
         .fallback_service(ServeDir::new("static"))
         .layer(build_cors_layer(&cors_origins))
@@ -903,8 +875,8 @@ fn safe_rel_path(name: &str) -> Result<PathBuf, ApiError> {
     crate::config::safe_rel_path(name).map_err(|e| ApiError::BadRequest(e.to_string()))
 }
 
-#[derive(Debug, Deserialize)]
-struct CreateImportBody {
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct CreateImportBody {
     source: String,
     #[serde(default = "default_import_mode")]
     mode: String,
@@ -914,14 +886,14 @@ struct CreateImportBody {
     account: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct CreateImportResponse {
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct CreateImportResponse {
     ok: bool,
     id: i64,
 }
 
-#[derive(Debug, Deserialize)]
-struct CompleteImportBody {
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct CompleteImportBody {
     #[serde(default = "default_true")]
     ok: bool,
     #[serde(default)]
@@ -948,8 +920,8 @@ fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Deserialize)]
-struct CompleteImportIssueBody {
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct CompleteImportIssueBody {
     kind: String,
     step: String,
     item: String,
@@ -970,8 +942,8 @@ fn validate_complete_import_issues(issues: &[CompleteImportIssueBody]) -> Result
     Ok(())
 }
 
-#[derive(Debug, Serialize)]
-struct CompleteImportResponse {
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct CompleteImportResponse {
     ok: bool,
     id: i64,
     status: String,
@@ -1737,16 +1709,61 @@ pub(crate) async fn thread_tags_membership_handler(
 }
 
 #[derive(Debug, Deserialize)]
-struct ListImportsQuery {
+pub(crate) struct ListImportsQuery {
     #[serde(default)]
     account: Option<String>,
 }
 
-async fn imports_list_handler(
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ImportsListResponse {
+    imports: Vec<crate::db::vault_imports::ImportSummary>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ImportDetailIssueResponse {
+    kind: String,
+    step: String,
+    item: String,
+    reason: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ImportDetailResponse {
+    id: i64,
+    source: String,
+    tool: Option<String>,
+    mode: String,
+    status: String,
+    started_at: String,
+    finished_at: Option<String>,
+    message_count: i64,
+    attachment_count: i64,
+    bytes_uploaded: i64,
+    duration_ms: Option<i64>,
+    parse_ms: Option<i64>,
+    convert_ms: Option<i64>,
+    upload_ms: Option<i64>,
+    summary: serde_json::Value,
+    issues: Vec<ImportDetailIssueResponse>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/imports",
+    tag = "Import",
+    security(("bearer" = [])),
+    params(("account" = Option<String>, Query)),
+    responses(
+        (status = 200, body = ImportsListResponse),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn imports_list_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<ListImportsQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<ImportsListResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_import_access(&auth)?;
     let account =
@@ -1758,14 +1775,27 @@ async fn imports_list_handler(
     })
     .await?;
 
-    Ok(Json(serde_json::json!({ "imports": imports })))
+    Ok(Json(ImportsListResponse { imports }))
 }
 
-async fn imports_get_handler(
+#[utoipa::path(
+    get,
+    path = "/v1/imports/{id}",
+    tag = "Import",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Import session id")),
+    responses(
+        (status = 200, body = ImportDetailResponse),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn imports_get_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     AxumPath(import_id): AxumPath<i64>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<ImportDetailResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_import_access(&auth)?;
     let db = Arc::clone(&state.db);
@@ -1823,7 +1853,20 @@ pub(crate) async fn account_storage_handler(
     Ok(Json(result))
 }
 
-async fn imports_create_handler(
+#[utoipa::path(
+    post,
+    path = "/v1/imports",
+    tag = "Import",
+    security(("bearer" = [])),
+    request_body = CreateImportBody,
+    responses(
+        (status = 200, body = CreateImportResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn imports_create_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<CreateImportBody>,
@@ -1854,7 +1897,22 @@ async fn imports_create_handler(
     Ok(Json(CreateImportResponse { ok: true, id }))
 }
 
-async fn imports_complete_handler(
+#[utoipa::path(
+    post,
+    path = "/v1/imports/{id}/complete",
+    tag = "Import",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Import session id")),
+    request_body = CompleteImportBody,
+    responses(
+        (status = 200, body = CompleteImportResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn imports_complete_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     AxumPath(import_id): AxumPath<i64>,
@@ -1923,42 +1981,65 @@ fn parse_summary_json(summary_json: Option<String>) -> serde_json::Value {
     }
 }
 
-fn import_detail_response(detail: crate::db::vault_imports::ImportDetail) -> serde_json::Value {
+fn import_detail_response(detail: crate::db::vault_imports::ImportDetail) -> ImportDetailResponse {
     let row = detail.row;
     let issues = detail
         .issues
         .into_iter()
-        .map(|issue| {
-            serde_json::json!({
-                "kind": issue.kind,
-                "step": issue.step,
-                "item": issue.item,
-                "reason": issue.reason,
-            })
+        .map(|issue| ImportDetailIssueResponse {
+            kind: issue.kind,
+            step: issue.step,
+            item: issue.item,
+            reason: issue.reason,
         })
-        .collect::<Vec<_>>();
+        .collect();
 
-    serde_json::json!({
-        "id": row.id,
-        "source": row.source,
-        "tool": row.tool,
-        "mode": row.mode,
-        "status": row.status,
-        "started_at": row.started_at,
-        "finished_at": row.finished_at,
-        "message_count": row.message_count,
-        "attachment_count": row.attachment_count,
-        "bytes_uploaded": row.bytes_uploaded,
-        "duration_ms": row.duration_ms,
-        "parse_ms": row.parse_ms,
-        "convert_ms": row.convert_ms,
-        "upload_ms": row.upload_ms,
-        "summary": parse_summary_json(row.summary_json),
-        "issues": issues,
-    })
+    ImportDetailResponse {
+        id: row.id,
+        source: row.source,
+        tool: row.tool,
+        mode: row.mode,
+        status: row.status,
+        started_at: row.started_at,
+        finished_at: row.finished_at,
+        message_count: row.message_count,
+        attachment_count: row.attachment_count,
+        bytes_uploaded: row.bytes_uploaded,
+        duration_ms: row.duration_ms,
+        parse_ms: row.parse_ms,
+        convert_ms: row.convert_ms,
+        upload_ms: row.upload_ms,
+        summary: parse_summary_json(row.summary_json),
+        issues,
+    }
 }
 
-async fn import_handler(
+#[utoipa::path(
+    post,
+    path = "/v1/import",
+    tag = "Import",
+    security(("bearer" = [])),
+    params(
+        ("source" = String, Query),
+        ("account" = Option<String>, Query),
+        ("mode" = Option<String>, Query, description = "Default append"),
+        ("dedupe" = Option<bool>, Query),
+        ("import_id" = Option<i64>, Query),
+        ("contact_name_mode" = Option<String>, Query)
+    ),
+    request_body(
+        content_type = "application/x-ndjson",
+        description = "message-ir JSONL. application/jsonl and multipart/form-data (field jsonl plus file parts) are also accepted."
+    ),
+    responses(
+        (status = 200, body = ImportResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn import_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(mut query): Query<ImportQuery>,
@@ -2009,14 +2090,14 @@ async fn import_handler(
 }
 
 #[derive(Debug, Deserialize)]
-struct AssetPutQuery {
+pub(crate) struct AssetPutQuery {
     source: String,
     #[serde(default)]
     account: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct AssetPutResponse {
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct AssetPutResponse {
     ok: bool,
     sha256: String,
     assets_path: String,
@@ -2098,7 +2179,25 @@ async fn resolve_asset_lookup(
 }
 
 /// Probe whether a content-addressed asset is already stored (no body).
-async fn asset_head_handler(
+#[utoipa::path(
+    head,
+    path = "/v1/assets/{sha256}",
+    tag = "Assets",
+    security(("bearer" = [])),
+    params(
+        ("sha256" = String, Path, description = "Content SHA-256 hex"),
+        ("source" = String, Query),
+        ("account" = Option<String>, Query)
+    ),
+    responses(
+        (status = 200, body = AssetPutResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn asset_head_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     AxumPath(sha256): AxumPath<String>,
@@ -2113,7 +2212,25 @@ async fn asset_head_handler(
 }
 
 /// Download a previously stored content-addressed asset (read-only).
-async fn asset_get_handler(
+#[utoipa::path(
+    get,
+    path = "/v1/assets/{sha256}",
+    tag = "Assets",
+    security(("bearer" = [])),
+    params(
+        ("sha256" = String, Path, description = "Content SHA-256 hex"),
+        ("source" = String, Query),
+        ("account" = Option<String>, Query)
+    ),
+    responses(
+        (status = 200, description = "Raw asset bytes", content_type = "application/octet-stream"),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn asset_get_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     AxumPath(sha256): AxumPath<String>,
@@ -2294,7 +2411,25 @@ pub(crate) async fn export_messages_handler(
     Ok(Json(body))
 }
 
-async fn asset_put_handler(
+#[utoipa::path(
+    put,
+    path = "/v1/assets/{sha256}",
+    tag = "Assets",
+    security(("bearer" = [])),
+    params(
+        ("sha256" = String, Path, description = "Content SHA-256 hex"),
+        ("source" = String, Query),
+        ("account" = Option<String>, Query)
+    ),
+    request_body(content_type = "application/octet-stream", description = "Raw asset bytes"),
+    responses(
+        (status = 200, body = AssetPutResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn asset_put_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     AxumPath(sha256): AxumPath<String>,
@@ -2360,15 +2495,15 @@ async fn asset_put_handler(
     Ok(AssetPutResponse::stored(stored, already_present))
 }
 
-#[derive(Debug, Deserialize)]
-struct AssetUploadStartBody {
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct AssetUploadStartBody {
     bytes: u64,
     #[serde(default)]
     mime: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct AssetUploadStartResponse {
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct AssetUploadStartResponse {
     ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     upload_id: Option<String>,
@@ -2382,19 +2517,37 @@ struct AssetUploadStartResponse {
     already_present: bool,
 }
 
-#[derive(Debug, Serialize)]
-struct AssetUploadPartResponse {
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct AssetUploadPartResponse {
     ok: bool,
     part: u32,
     bytes: u64,
 }
 
-#[derive(Debug, Serialize)]
-struct AssetUploadAbortResponse {
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct AssetUploadAbortResponse {
     ok: bool,
 }
 
-async fn asset_upload_start_handler(
+#[utoipa::path(
+    post,
+    path = "/v1/assets/{sha256}/uploads",
+    tag = "Assets",
+    security(("bearer" = [])),
+    params(
+        ("sha256" = String, Path, description = "Content SHA-256 hex"),
+        ("source" = String, Query),
+        ("account" = Option<String>, Query)
+    ),
+    request_body = AssetUploadStartBody,
+    responses(
+        (status = 200, body = AssetUploadStartResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn asset_upload_start_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     AxumPath(sha256): AxumPath<String>,
@@ -2438,7 +2591,27 @@ async fn asset_upload_start_handler(
     }
 }
 
-async fn asset_upload_part_handler(
+#[utoipa::path(
+    put,
+    path = "/v1/assets/{sha256}/uploads/{upload_id}/parts/{part}",
+    tag = "Assets",
+    security(("bearer" = [])),
+    params(
+        ("sha256" = String, Path, description = "Content SHA-256 hex"),
+        ("upload_id" = String, Path),
+        ("part" = u32, Path),
+        ("source" = String, Query),
+        ("account" = Option<String>, Query)
+    ),
+    request_body(content_type = "application/octet-stream", description = "Raw part bytes"),
+    responses(
+        (status = 200, body = AssetUploadPartResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn asset_upload_part_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     AxumPath((sha256, upload_id, part)): AxumPath<(String, String, u32)>,
@@ -2467,7 +2640,25 @@ async fn asset_upload_part_handler(
     }))
 }
 
-async fn asset_upload_complete_handler(
+#[utoipa::path(
+    post,
+    path = "/v1/assets/{sha256}/uploads/{upload_id}/complete",
+    tag = "Assets",
+    security(("bearer" = [])),
+    params(
+        ("sha256" = String, Path, description = "Content SHA-256 hex"),
+        ("upload_id" = String, Path),
+        ("source" = String, Query),
+        ("account" = Option<String>, Query)
+    ),
+    responses(
+        (status = 200, body = AssetPutResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn asset_upload_complete_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     AxumPath((sha256, upload_id)): AxumPath<(String, String)>,
@@ -2512,7 +2703,25 @@ async fn asset_upload_complete_handler(
     Ok(AssetPutResponse::stored(stored, already_present))
 }
 
-async fn asset_upload_abort_handler(
+#[utoipa::path(
+    delete,
+    path = "/v1/assets/{sha256}/uploads/{upload_id}",
+    tag = "Assets",
+    security(("bearer" = [])),
+    params(
+        ("sha256" = String, Path, description = "Content SHA-256 hex"),
+        ("upload_id" = String, Path),
+        ("source" = String, Query),
+        ("account" = Option<String>, Query)
+    ),
+    responses(
+        (status = 200, body = AssetUploadAbortResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn asset_upload_abort_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     AxumPath((sha256, upload_id)): AxumPath<(String, String)>,
@@ -3144,17 +3353,17 @@ mod tests {
             .await
             .unwrap();
         let value = detail.0;
-        assert_eq!(value["id"], import_id);
-        assert_eq!(value["duration_ms"], 48_000);
-        assert_eq!(value["parse_ms"], 18_000);
-        assert_eq!(value["convert_ms"], 22_000);
-        assert_eq!(value["upload_ms"], 8_000);
-        assert_eq!(value["summary"]["parse"]["messages"], 10);
-        assert_eq!(value["issues"].as_array().unwrap().len(), 2);
-        assert_eq!(value["issues"][0]["kind"], "skip");
-        assert_eq!(value["issues"][0]["step"], "convert");
-        assert_eq!(value["issues"][1]["kind"], "error");
-        assert_eq!(value["issues"][1]["step"], "upload");
+        assert_eq!(value.id, import_id);
+        assert_eq!(value.duration_ms, Some(48_000));
+        assert_eq!(value.parse_ms, Some(18_000));
+        assert_eq!(value.convert_ms, Some(22_000));
+        assert_eq!(value.upload_ms, Some(8_000));
+        assert_eq!(value.summary["parse"]["messages"], 10);
+        assert_eq!(value.issues.len(), 2);
+        assert_eq!(value.issues[0].kind, "skip");
+        assert_eq!(value.issues[0].step, "convert");
+        assert_eq!(value.issues[1].kind, "error");
+        assert_eq!(value.issues[1].step, "upload");
     }
 
     #[tokio::test]

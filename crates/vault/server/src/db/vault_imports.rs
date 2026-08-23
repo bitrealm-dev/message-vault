@@ -399,7 +399,7 @@ pub fn get_import_detail(
     Ok(ImportDetail { row, issues })
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct ImportSummary {
     pub id: i64,
     pub source: String,

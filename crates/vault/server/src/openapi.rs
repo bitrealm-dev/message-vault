@@ -108,6 +108,18 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(crate::server::thread_tags_membership_handler))
         .routes(routes!(crate::server::conversations_list_handler))
         .routes(routes!(crate::server::conversation_sources_handler))
+        .routes(routes!(crate::server::imports_list_handler))
+        .routes(routes!(crate::server::imports_create_handler))
+        .routes(routes!(crate::server::imports_get_handler))
+        .routes(routes!(crate::server::imports_complete_handler))
+        .routes(routes!(crate::server::import_handler))
+        .routes(routes!(crate::server::asset_head_handler))
+        .routes(routes!(crate::server::asset_get_handler))
+        .routes(routes!(crate::server::asset_put_handler))
+        .routes(routes!(crate::server::asset_upload_start_handler))
+        .routes(routes!(crate::server::asset_upload_part_handler))
+        .routes(routes!(crate::server::asset_upload_complete_handler))
+        .routes(routes!(crate::server::asset_upload_abort_handler))
 }
 
 pub fn openapi_router(auth: SpecAuth) -> OpenApiRouter<AppState> {
@@ -232,6 +244,36 @@ mod tests {
         ] {
             assert!(paths.contains_key(p), "missing {p}");
         }
+    }
+
+    #[test]
+    fn dump_includes_import_and_asset_paths() {
+        let v: serde_json::Value = serde_json::from_str(&dump_openapi_json()).unwrap();
+        let paths = v["paths"].as_object().unwrap();
+        for p in [
+            "/v1/imports",
+            "/v1/imports/{id}",
+            "/v1/imports/{id}/complete",
+            "/v1/import",
+            "/v1/assets/{sha256}",
+            "/v1/assets/{sha256}/uploads",
+            "/v1/assets/{sha256}/uploads/{upload_id}/parts/{part}",
+            "/v1/assets/{sha256}/uploads/{upload_id}/complete",
+            "/v1/assets/{sha256}/uploads/{upload_id}",
+        ] {
+            assert!(paths.contains_key(p), "missing {p}");
+        }
+        let import = &paths["/v1/import"]["post"]["requestBody"]["content"];
+        assert!(
+            import.get("application/x-ndjson").is_some()
+                || import.get("application/jsonl").is_some(),
+            "POST /v1/import must document JSONL, not a fake JSON object"
+        );
+        let put = &paths["/v1/assets/{sha256}"]["put"]["requestBody"]["content"];
+        assert!(
+            put.get("application/octet-stream").is_some(),
+            "PUT asset must be raw bytes"
+        );
     }
 
     #[test]
