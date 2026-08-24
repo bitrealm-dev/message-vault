@@ -319,17 +319,16 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
               onContactNameModeChange={props.onContactNameModeChange}
             />
 
-            <StackedField label="Backup Device Phone Number">
+            <StackedField label="Backup Device Phone Numbers">
               <PhoneTokenField
                 ref={phoneFieldRef}
                 value={props.ownerPhones}
                 onChange={props.onOwnerPhonesChange}
                 onDraftChange={setPhoneDraft}
-                aria-label="Backup Device Phone Number"
+                aria-label="Backup Device Phone Numbers"
               />
               <p className={hintStyle}>
-                Your phone numbers on this backup (outgoing messages). Prefills from your vault
-                account; add more if you used several SIMs.
+                Pre-filled from your profile. Add numbers from other SIMs, if needed.
               </p>
               {props.showMissingAccountPhoneWarning ? (
                 <div
