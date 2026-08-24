@@ -24,3 +24,27 @@ export function removePhoneToken(current: readonly string[], phone: string): str
   if (index < 0) return [...current];
   return [...current.slice(0, index), ...current.slice(index + 1)];
 }
+
+/** Digits only for comparison (`+1 555-123-4567` → `15551234567`). */
+export function normalizePhoneDigits(phone: string): string {
+  return phone.replace(/\D/g, "");
+}
+
+/**
+ * True when at least one owner phone digit-matches a profile phone.
+ * Empty owner list or empty profile → false (nothing can match).
+ */
+export function ownerPhonesMatchProfile(
+  ownerPhones: readonly string[],
+  profilePhones: readonly string[],
+): boolean {
+  if (ownerPhones.length === 0 || profilePhones.length === 0) return false;
+  const profileDigits = new Set(
+    profilePhones.map(normalizePhoneDigits).filter((d) => d.length > 0),
+  );
+  if (profileDigits.size === 0) return false;
+  return ownerPhones.some((phone) => {
+    const digits = normalizePhoneDigits(phone);
+    return digits.length > 0 && profileDigits.has(digits);
+  });
+}

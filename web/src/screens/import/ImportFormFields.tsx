@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import Button from "../../components/Button";
 import PasswordField from "../../components/PasswordField";
@@ -6,6 +6,7 @@ import PathPicker from "../../components/PathPicker";
 import PhoneTokenField, { type PhoneTokenFieldHandle } from "../../components/PhoneTokenField";
 import Select, { ListBoxItem, selectItemClassName } from "../../components/Select";
 import { EXPORT_SOURCES } from "../../lib/exportSources";
+import { ownerPhonesMatchProfile } from "../../lib/phoneTokens";
 import { parseSelectKey } from "../../lib/selectKey";
 import type { AttachmentMediaMode, ContactNameMode } from "../../lib/types";
 import { accentLink } from "../../lib/uiStyles";
@@ -40,6 +41,9 @@ export type ImportFormFieldsProps = {
   onContactNameModeChange: (mode: ContactNameMode) => void;
   ownerPhones: string[];
   onOwnerPhonesChange: (phones: string[]) => void;
+  /** Vault account phones for SBR mismatch checks (empty until loaded). */
+  profilePhones: string[];
+  profilePhonesReady: boolean;
   showMissingAccountPhoneWarning: boolean;
   formatOpen: boolean;
   onToggleFormat: () => void;
@@ -170,16 +174,43 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
   const isSbr = props.source === "sms-backup-restore";
   const showCompress = (isIos || isSbr) && props.attachmentMedia === "compress";
   const phoneFieldRef = useRef<PhoneTokenFieldHandle>(null);
-  const [phoneDraftPending, setPhoneDraftPending] = useState(false);
+  const [phoneDraft, setPhoneDraft] = useState("");
+  const [mismatchAck, setMismatchAck] = useState(false);
+  const phoneDraftPending = phoneDraft.trim().length > 0;
+  const phonesForMatch = phoneDraftPending
+    ? [...props.ownerPhones, phoneDraft.trim()]
+    : props.ownerPhones;
+  // Empty profile cannot match; otherwise require at least one owner phone with no digit overlap.
+  const profileEmpty = props.profilePhonesReady && props.profilePhones.length === 0;
+  const noDigitMatch =
+    phonesForMatch.length > 0 && !ownerPhonesMatchProfile(phonesForMatch, props.profilePhones);
+  const phonesMismatch = isSbr && props.profilePhonesReady && (profileEmpty || noDigitMatch);
+
+  useEffect(() => {
+    if (!phonesMismatch) setMismatchAck(false);
+  }, [phonesMismatch]);
+
+  useEffect(() => {
+    if (!isSbr) {
+      setPhoneDraft("");
+      setMismatchAck(false);
+    }
+  }, [isSbr]);
+
   const canImport =
     Boolean(props.backupPath) &&
     !props.running &&
-    (!isSbr || props.ownerPhones.length > 0 || phoneDraftPending);
+    (!isSbr || props.ownerPhones.length > 0 || phoneDraftPending) &&
+    (!phonesMismatch || mismatchAck);
 
   function handleImport(): void {
     if (isSbr) {
       const phones = phoneFieldRef.current?.flush() ?? props.ownerPhones;
       if (phones.length === 0) return;
+      const mismatch =
+        props.profilePhonesReady &&
+        (props.profilePhones.length === 0 || !ownerPhonesMatchProfile(phones, props.profilePhones));
+      if (mismatch && !mismatchAck) return;
       props.onImport(phones);
       return;
     }
@@ -287,7 +318,7 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
                 ref={phoneFieldRef}
                 value={props.ownerPhones}
                 onChange={props.onOwnerPhonesChange}
-                onDraftPendingChange={setPhoneDraftPending}
+                onDraftChange={setPhoneDraft}
                 aria-label="Backup Device Phone Number"
               />
               <p className={hintStyle}>
@@ -305,7 +336,27 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
                   </Link>{" "}
                   so import can tell which messages you sent.
                 </div>
+              ) : phonesMismatch ? (
+                <div
+                  role="status"
+                  className="mt-2 rounded-lg border border-warn-soft-border bg-warn-soft-bg px-3 py-2 text-[0.8125rem] text-warn-soft-text"
+                >
+                  None of the phone numbers you entered match any phone on your user profile, so
+                  messages will not be linked to your user.
+                </div>
               ) : null}
+              <label className="mt-2 flex cursor-pointer items-start gap-2 text-[0.8125rem] text-text">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 shrink-0"
+                  checked={mismatchAck}
+                  onChange={(e) => setMismatchAck(e.target.checked)}
+                />
+                <span>
+                  I know none of these numbers match my profile phones. Messages will not be linked
+                  to my user, and I am okay with that.
+                </span>
+              </label>
             </StackedField>
           </>
         ) : (

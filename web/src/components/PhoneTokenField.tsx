@@ -11,8 +11,8 @@ export type PhoneTokenFieldHandle = {
 export type PhoneTokenFieldProps = {
   value: string[];
   onChange: (phones: string[]) => void;
-  /** Fired when the uncommitted draft becomes empty or non-empty. */
-  onDraftPendingChange?: (pending: boolean) => void;
+  /** Fired when the uncommitted draft text changes. */
+  onDraftChange?: (draft: string) => void;
   "aria-label"?: string;
   placeholder?: string;
 };
@@ -27,7 +27,7 @@ const PhoneTokenField = forwardRef<PhoneTokenFieldHandle, PhoneTokenFieldProps>(
     {
       value,
       onChange,
-      onDraftPendingChange,
+      onDraftChange,
       "aria-label": ariaLabel = "Backup Device Phone Number",
       placeholder = "+1 555-123-4567",
     },
@@ -42,7 +42,7 @@ const PhoneTokenField = forwardRef<PhoneTokenFieldHandle, PhoneTokenFieldProps>(
     function setDraftValue(next: string): void {
       draftRef.current = next;
       setDraft(next);
-      onDraftPendingChange?.(next.trim().length > 0);
+      onDraftChange?.(next);
     }
 
     function commitRaw(raw: string, phones: string[]): string[] {
