@@ -15,6 +15,7 @@ pub mod ffmpeg;
 pub mod format;
 pub mod jobs;
 pub mod paths;
+pub mod progress;
 pub mod pull;
 pub mod push;
 
