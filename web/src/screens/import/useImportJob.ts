@@ -47,11 +47,44 @@ const EMPTY_TIMING: StageTiming = {
   convertEndedAt: null,
 };
 
+type AttachmentStepCopy = {
+  label: string;
+  verb: string;
+  doneDetail: string;
+};
+
+/** Step title / progress verb / done detail for the Attachments setting. */
+function attachmentStepCopy(mode: AttachmentMediaMode): AttachmentStepCopy {
+  if (mode === "skip") {
+    return {
+      label: "Skip attachments",
+      verb: "Skipping",
+      doneDetail: "Message attachments skipped",
+    };
+  }
+  if (mode === "copy") {
+    return {
+      label: "Copy attachments",
+      verb: "Copying",
+      doneDetail: "Copied attachments",
+    };
+  }
+  return {
+    label: "Convert attachments",
+    verb: "Converting",
+    doneDetail: "Attachments processed",
+  };
+}
+
 /** Three import steps shown in the progress view. */
-function initialSteps(status: ImportStep["status"] = "pending"): ImportStep[] {
+function initialSteps(
+  status: ImportStep["status"] = "pending",
+  attachmentMedia: AttachmentMediaMode = "copy",
+): ImportStep[] {
+  const attachments = attachmentStepCopy(attachmentMedia);
   return [
     { label: "Parse backup", status, detail: status === "active" ? "Parsing backup…" : undefined },
-    { label: "Convert attachments", status: "pending" },
+    { label: attachments.label, status: "pending" },
     { label: "Upload to vault", status: "pending" },
   ];
 }
@@ -64,9 +97,12 @@ function stepIndexFor(step: ImportProgressEvent["step"]): number {
 }
 
 /** Present-tense verb shown while a step is running. */
-function progressVerb(step: ImportProgressEvent["step"]): string {
+function progressVerb(
+  step: ImportProgressEvent["step"],
+  attachmentMedia: AttachmentMediaMode,
+): string {
   if (step === "upload") return "Uploading";
-  if (step === "convert") return "Converting";
+  if (step === "convert") return attachmentStepCopy(attachmentMedia).verb;
   return "Parsing";
 }
 
@@ -120,6 +156,7 @@ export function useImportJob() {
     messagesParsed?: number;
   }>({});
   const timingRef = useRef({ ...EMPTY_TIMING });
+  const attachmentModeRef = useRef<AttachmentMediaMode>("copy");
 
   function returnToForm(): void {
     setPhase("form");
@@ -151,8 +188,10 @@ export function useImportJob() {
     const detail =
       event.status === "included_in_extract" && event.step === "convert"
         ? rawDetail
-        : `${progressVerb(event.step)} ${rawDetail}`;
+        : `${progressVerb(event.step, attachmentModeRef.current)} ${rawDetail}`;
     const done = event.total > 0 && event.done >= event.total;
+    const attachmentLabel =
+      event.step === "convert" ? attachmentStepCopy(attachmentModeRef.current).label : undefined;
 
     setSteps((current) =>
       current.map((step, index) => {
@@ -162,6 +201,7 @@ export function useImportJob() {
         if (index > stepIndex) return step;
         return {
           ...step,
+          ...(attachmentLabel ? { label: attachmentLabel } : {}),
           status: done ? "done" : "active",
           detail,
         };
@@ -180,11 +220,12 @@ export function useImportJob() {
     issuesRef.current = [];
     countsRef.current = {};
     timingRef.current = { ...EMPTY_TIMING };
+    attachmentModeRef.current = form.attachmentMedia;
     setRunning(true);
     setPhase("progress");
     setSummaryView(null);
     setStagingDir(null);
-    setSteps(initialSteps("active"));
+    setSteps(initialSteps("active", form.attachmentMedia));
 
     let importSessionId: number | null = null;
     let importCompleted = false;
@@ -250,6 +291,7 @@ export function useImportJob() {
       const extractFinishedAt = performance.now();
       timingRef.current.convertEndedAt = extractFinishedAt;
       ({ parseMs, convertMs } = stageDurations(timingRef.current, extractFinishedAt));
+      const attachments = attachmentStepCopy(form.attachmentMedia);
 
       setSteps([
         {
@@ -260,9 +302,9 @@ export function useImportJob() {
           durationMs: parseMs,
         },
         {
-          label: "Convert attachments",
+          label: attachments.label,
           status: "done",
-          detail: "Attachments processed",
+          detail: attachments.doneDetail,
           durationMs: convertMs,
         },
         {
