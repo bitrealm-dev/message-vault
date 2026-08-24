@@ -126,9 +126,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      # Job runs on the Ubuntu VM, not in a job container. GitHub publishes
+      # service ports on localhost. The hostname `postgres` only resolves when
+      # the job itself is a container on the same Docker network.
       - name: Test message-vault-server against Postgres
         env:
-          MV_TEST_POSTGRES_URL: postgres://vault:vault@postgres:5432/vault
+          MV_TEST_POSTGRES_URL: postgres://vault:vault@127.0.0.1:5432/vault
         run: cargo test -p message-vault-server
 
   # ── Always: cargo-deny advisories ─────────────────────────────────────
