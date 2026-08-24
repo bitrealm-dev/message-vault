@@ -5,10 +5,11 @@ use std::io::{self, Write};
 use std::time::Instant;
 
 use anyhow::{Result, bail};
-use rusqlite::{Connection, Transaction, params, params_from_iter};
+use sqlx::AnyConnection;
+use sqlx::Connection;
 
 use crate::db::schema;
-use crate::db::sql::{SQLITE_IN_CHUNK, pair_placeholders};
+use crate::db::sql::SQLITE_IN_CHUNK;
 
 use super::ImportMode;
 
@@ -23,8 +24,8 @@ pub(super) struct PromoteStats {
     pub(super) messages_appended: u64,
 }
 
-pub(super) fn promote_append(
-    conn: &mut Connection,
+pub(super) async fn promote_append(
+    conn: &mut AnyConnection,
     mode: ImportMode,
     account_id: &str,
     fill_content_keys: bool,
@@ -33,13 +34,13 @@ pub(super) fn promote_append(
     let mut stats = PromoteStats::default();
     let started = Instant::now();
 
-    let tx = conn.transaction()?;
+    let mut tx = conn.begin().await?;
 
     if mode == ImportMode::Replace {
         for source in wipe_sources {
             println!("  sql:      deleting existing messages for source '{source}'…");
             let _ = io::stdout().flush();
-            schema::delete_messages_for_source(&tx, account_id, source)?;
+            schema::delete_messages_for_source(&mut *tx, account_id, source).await?;
         }
         if !wipe_sources.is_empty() {
             println!("  sql:      wipe complete (inside promote transaction)");
@@ -48,7 +49,7 @@ pub(super) fn promote_append(
     }
 
     // Staging→prod conversation id map for set-based inserts.
-    tx.execute_batch(
+    for stmt in schema::split_ddl(
         r#"
         CREATE TEMP TABLE IF NOT EXISTS _promote_conv_map (
             staging_id INTEGER PRIMARY KEY,
@@ -56,22 +57,23 @@ pub(super) fn promote_append(
         );
         DELETE FROM _promote_conv_map;
         "#,
-    )?;
+    ) {
+        sqlx::query(&stmt).execute(&mut *tx).await?;
+    }
 
-    let staging_conv_count: i64 = tx.query_row(
-        "SELECT COUNT(*) FROM staging_conversations WHERE account_id = ?1",
-        params![account_id],
-        |r| r.get(0),
-    )?;
+    let staging_conv_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM staging_conversations WHERE account_id = $1")
+            .bind(account_id)
+            .fetch_one(&mut *tx)
+            .await?;
     promote_log(format_args!(
         "{staging_conv_count} staging conversations → production…"
     ));
 
-    let max_conv_before: i64 =
-        tx.query_row("SELECT IFNULL(MAX(id), 0) FROM conversations", [], |r| {
-            r.get(0)
-        })?;
-    tx.execute(
+    let max_conv_before: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM conversations")
+        .fetch_one(&mut *tx)
+        .await?;
+    sqlx::query(
         r#"
         INSERT INTO conversations (
             account_id, chat_handle_id, conversation_type,
@@ -81,16 +83,18 @@ pub(super) fn promote_append(
             account_id, chat_handle_id, conversation_type,
             group_title, exported_at, source_file
         FROM staging_conversations
-        WHERE account_id = ?1
+        WHERE account_id = $1
         ON CONFLICT(account_id, chat_handle_id) DO UPDATE SET
             conversation_type = excluded.conversation_type,
             group_title = COALESCE(excluded.group_title, conversations.group_title),
             exported_at = COALESCE(excluded.exported_at, conversations.exported_at),
             source_file = excluded.source_file
         "#,
-        params![account_id],
-    )?;
-    tx.execute(
+    )
+    .bind(account_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
         r#"
         INSERT INTO _promote_conv_map (staging_id, prod_id)
         SELECT sc.id, c.id
@@ -98,15 +102,17 @@ pub(super) fn promote_append(
         JOIN conversations c
           ON c.account_id = sc.account_id
          AND c.chat_handle_id = sc.chat_handle_id
-        WHERE sc.account_id = ?1
+        WHERE sc.account_id = $1
         "#,
-        params![account_id],
-    )?;
-    let new_conversations: i64 = tx.query_row(
-        "SELECT COUNT(*) FROM _promote_conv_map WHERE prod_id > ?1",
-        params![max_conv_before],
-        |r| r.get(0),
-    )?;
+    )
+    .bind(account_id)
+    .execute(&mut *tx)
+    .await?;
+    let new_conversations: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM _promote_conv_map WHERE prod_id > $1")
+            .bind(max_conv_before)
+            .fetch_one(&mut *tx)
+            .await?;
     stats.conversations = u64::try_from(new_conversations).unwrap_or(0);
     promote_log(format_args!(
         "conversations done (new={})  ({:.1}s)",
@@ -114,45 +120,49 @@ pub(super) fn promote_append(
         started.elapsed().as_secs_f64()
     ));
 
-    let staging_part_count: i64 = tx.query_row(
+    let staging_part_count: i64 = sqlx::query_scalar(
         r#"
         SELECT COUNT(*) FROM staging_participants
         WHERE conversation_id IN (
-            SELECT id FROM staging_conversations WHERE account_id = ?1
+            SELECT id FROM staging_conversations WHERE account_id = $1
         )
         "#,
-        params![account_id],
-        |r| r.get(0),
-    )?;
+    )
+    .bind(account_id)
+    .fetch_one(&mut *tx)
+    .await?;
     promote_log(format_args!(
         "{staging_part_count} staging participants → production…"
     ));
-    stats.participants = u64::try_from(tx.execute(
+    stats.participants = sqlx::query(
         r#"
-        INSERT OR IGNORE INTO participants (conversation_id, handle_id, contact_id, name_alias)
+        INSERT INTO participants (conversation_id, handle_id, contact_id, name_alias)
         SELECT cm.prod_id, sp.handle_id, sp.contact_id, sp.name_alias
         FROM staging_participants sp
         JOIN _promote_conv_map cm ON cm.staging_id = sp.conversation_id
+        ON CONFLICT DO NOTHING
         "#,
-        [],
-    )?)
-    .unwrap_or(0);
+    )
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
     promote_log(format_args!(
         "participants done (new={})  ({:.1}s)",
         stats.participants,
         started.elapsed().as_secs_f64()
     ));
 
-    let total_msgs: i64 = tx.query_row(
+    let total_msgs: i64 = sqlx::query_scalar(
         r#"
         SELECT COUNT(*) FROM staging_messages
         WHERE conversation_id IN (
-            SELECT id FROM staging_conversations WHERE account_id = ?1
+            SELECT id FROM staging_conversations WHERE account_id = $1
         )
         "#,
-        params![account_id],
-        |r| r.get(0),
-    )?;
+    )
+    .bind(account_id)
+    .fetch_one(&mut *tx)
+    .await?;
     promote_log(format_args!(
         "{total_msgs} staging messages → production ({})…",
         mode.as_str()
@@ -162,17 +172,19 @@ pub(super) fn promote_append(
     // inserts; index once after.
     let phase = Instant::now();
     promote_log("pausing FTS triggers…");
-    schema::drop_messages_fts_triggers(&tx)?;
+    schema::drop_messages_fts_triggers(&mut *tx).await?;
     promote_phase_done(started, phase, "FTS triggers paused");
 
-    let existing_msgs: i64 = tx.query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))?;
+    let existing_msgs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages")
+        .fetch_one(&mut *tx)
+        .await?;
     let drop_secondary = should_drop_messages_secondary_indexes(total_msgs, existing_msgs);
     if drop_secondary {
         let phase = Instant::now();
         promote_log(format_args!(
             "dropping secondary message indexes (staging={total_msgs} existing={existing_msgs})…"
         ));
-        schema::drop_messages_secondary_indexes(&tx)?;
+        schema::drop_messages_secondary_indexes(&mut *tx).await?;
         promote_phase_done(started, phase, "secondary indexes dropped");
     } else {
         promote_log(format_args!(
@@ -185,14 +197,18 @@ pub(super) fn promote_append(
     // which is how full-text search indexing tells new rows apart from the already indexed
     // rows that `_promote_msg_map` also targets for attachments and tapbacks.
     let max_msg_id_before_promote: i64 =
-        tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?;
+        sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM messages")
+            .fetch_one(&mut *tx)
+            .await?;
 
-    let msg_map = promote_messages_chunked(&tx, mode, account_id, total_msgs, &mut stats, started)?;
+    let msg_map =
+        promote_messages_chunked(&mut *tx, mode, account_id, total_msgs, &mut stats, started)
+            .await?;
 
     if drop_secondary {
         let phase = Instant::now();
         promote_log("rebuilding secondary message indexes…");
-        schema::create_messages_secondary_indexes(&tx)?;
+        schema::create_messages_secondary_indexes(&mut *tx).await?;
         promote_phase_done(
             started,
             phase,
@@ -215,12 +231,12 @@ pub(super) fn promote_append(
         "writing message id map ({} pairs)…",
         msg_map.len()
     ));
-    fill_promote_msg_map(&tx, account_id, &msg_map)?;
+    fill_promote_msg_map(&mut *tx, account_id, &msg_map).await?;
     promote_phase_done(started, phase, "message id map written");
 
     let phase = Instant::now();
     promote_log("bulk-inserting attachments…");
-    let att_inserted = tx.execute(
+    stats.attachments = sqlx::query(
         r#"
         INSERT INTO attachments (
             message_id, path, original_name, mime_type, is_sticker, transcription,
@@ -246,9 +262,10 @@ pub(super) fn promote_append(
               AND a.missing_reason IS sa.missing_reason
         )
         "#,
-        [],
-    )?;
-    stats.attachments = att_inserted as u64;
+    )
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
     promote_phase_done(
         started,
         phase,
@@ -257,7 +274,7 @@ pub(super) fn promote_append(
 
     let phase = Instant::now();
     promote_log("bulk-inserting tapbacks…");
-    let tap_inserted = tx.execute(
+    stats.tapbacks = sqlx::query(
         r#"
         INSERT INTO tapbacks (
             message_id, part_index, kind, emoji, is_from_me, sender_handle_id
@@ -277,9 +294,10 @@ pub(super) fn promote_append(
               AND t.sender_handle_id IS st.sender_handle_id
         )
         "#,
-        [],
-    )?;
-    stats.tapbacks = tap_inserted as u64;
+    )
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
     promote_phase_done(
         started,
         phase,
@@ -288,8 +306,9 @@ pub(super) fn promote_append(
 
     let phase = Instant::now();
     promote_log("bulk-indexing FTS for new messages…");
-    let fts_indexed = schema::index_messages_fts_from_promote_map(&tx, max_msg_id_before_promote)?;
-    schema::install_messages_fts_triggers(&tx)?;
+    let fts_indexed =
+        schema::index_messages_fts_from_promote_map(&mut *tx, max_msg_id_before_promote).await?;
+    schema::install_messages_fts_triggers(&mut *tx).await?;
     promote_phase_done(
         started,
         phase,
@@ -299,13 +318,13 @@ pub(super) fn promote_append(
     if fill_content_keys {
         let phase = Instant::now();
         promote_log("filling content keys…");
-        let keys = crate::dedupe::fill_missing_content_keys(&tx, account_id)?;
+        let keys = crate::dedupe::fill_missing_content_keys(&mut *tx, account_id).await?;
         promote_phase_done(started, phase, format!("content keys filled={keys}"));
     }
 
     let phase = Instant::now();
     promote_log("committing transaction…");
-    tx.commit()?;
+    tx.commit().await?;
     promote_phase_done(
         started,
         phase,
@@ -348,24 +367,25 @@ fn should_drop_messages_secondary_indexes(staging_count: i64, existing_count: i6
         && staging_count.saturating_mul(5) >= existing_count.max(1)
 }
 
-fn promote_messages_chunked(
-    tx: &Transaction<'_>,
+async fn promote_messages_chunked(
+    tx: &mut AnyConnection,
     mode: ImportMode,
     account_id: &str,
     total_msgs: i64,
     stats: &mut PromoteStats,
     started: Instant,
 ) -> Result<HashMap<i64, i64>> {
-    let bounds: (Option<i64>, Option<i64>) = tx.query_row(
+    let bounds: (Option<i64>, Option<i64>) = sqlx::query_as(
         r#"
         SELECT MIN(sm.id), MAX(sm.id)
         FROM staging_messages sm
         JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-        WHERE sm.account_id = ?1
+        WHERE sm.account_id = $1
         "#,
-        params![account_id],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )?;
+    )
+    .bind(account_id)
+    .fetch_one(&mut *tx)
+    .await?;
     let (Some(min_id), Some(max_id)) = bounds else {
         stats.messages = 0;
         stats.messages_appended = 0;
@@ -375,13 +395,15 @@ fn promote_messages_chunked(
 
     if mode == ImportMode::Replace {
         promote_messages_replace_chunked(tx, account_id, min_id, max_id, total_msgs, stats, started)
+            .await
     } else {
         promote_messages_append_chunked(tx, account_id, min_id, max_id, total_msgs, stats, started)
+            .await
     }
 }
 
-fn promote_messages_replace_chunked(
-    tx: &Transaction<'_>,
+async fn promote_messages_replace_chunked(
+    tx: &mut AnyConnection,
     account_id: &str,
     min_id: i64,
     max_id: i64,
@@ -390,8 +412,9 @@ fn promote_messages_replace_chunked(
     started: Instant,
 ) -> Result<HashMap<i64, i64>> {
     let mut msg_map = HashMap::new();
-    let mut max_before: i64 =
-        tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?;
+    let mut max_before: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM messages")
+        .fetch_one(&mut *tx)
+        .await?;
     let mut inserted_total = 0u64;
     let mut lo = min_id - 1;
     let mut chunk_idx = 0u32;
@@ -406,7 +429,7 @@ fn promote_messages_replace_chunked(
             hi
         ));
 
-        let inserted = tx.execute(
+        let inserted = sqlx::query(
             r#"
             INSERT INTO messages (
                 conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
@@ -420,29 +443,36 @@ fn promote_messages_replace_chunked(
                 sm.import_id
             FROM staging_messages sm
             JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-            WHERE sm.account_id = ?1
-              AND sm.id > ?2
-              AND sm.id <= ?3
+            WHERE sm.account_id = $1
+              AND sm.id > $2
+              AND sm.id <= $3
             ORDER BY sm.id
             "#,
-            params![account_id, lo, hi],
-        )?;
-        inserted_total += inserted as u64;
+        )
+        .bind(account_id)
+        .bind(lo)
+        .bind(hi)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        inserted_total += inserted;
 
-        let staging_ids: Vec<i64> = tx
-            .prepare(
-                r#"
-                SELECT sm.id
-                FROM staging_messages sm
-                JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-                WHERE sm.account_id = ?1
-                  AND sm.id > ?2
-                  AND sm.id <= ?3
-                ORDER BY sm.id
-                "#,
-            )?
-            .query_map(params![account_id, lo, hi], |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?;
+        let staging_ids: Vec<i64> = sqlx::query_scalar(
+            r#"
+            SELECT sm.id
+            FROM staging_messages sm
+            JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
+            WHERE sm.account_id = $1
+              AND sm.id > $2
+              AND sm.id <= $3
+            ORDER BY sm.id
+            "#,
+        )
+        .bind(account_id)
+        .bind(lo)
+        .bind(hi)
+        .fetch_all(&mut *tx)
+        .await?;
         max_before = zip_new_message_ids(
             tx,
             &mut msg_map,
@@ -455,7 +485,8 @@ fn promote_messages_replace_chunked(
                     lo + 1
                 )
             },
-        )?;
+        )
+        .await?;
 
         promote_phase_done(
             started,
@@ -470,8 +501,8 @@ fn promote_messages_replace_chunked(
     Ok(msg_map)
 }
 
-fn promote_messages_append_chunked(
-    tx: &Transaction<'_>,
+async fn promote_messages_append_chunked(
+    tx: &mut AnyConnection,
     account_id: &str,
     min_id: i64,
     max_id: i64,
@@ -497,9 +528,9 @@ fn promote_messages_append_chunked(
             hi
         ));
 
-        let inserted = tx.execute(
+        let inserted = sqlx::query(
             r#"
-            INSERT OR IGNORE INTO messages (
+            INSERT INTO messages (
                 conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
                 sender_handle_id, service, subject, body, is_announcement, is_reply,
                 thread_originator_guid, thread_originator_part, num_replies, sort_order, import_id
@@ -511,16 +542,22 @@ fn promote_messages_append_chunked(
                 sm.import_id
             FROM staging_messages sm
             JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-            WHERE sm.account_id = ?1
+            WHERE sm.account_id = $1
               AND sm.guid IS NOT NULL
               AND sm.guid != ''
-              AND sm.id > ?2
-              AND sm.id <= ?3
+              AND sm.id > $2
+              AND sm.id <= $3
             ORDER BY sm.id
+            ON CONFLICT DO NOTHING
             "#,
-            params![account_id, lo, hi],
-        )?;
-        inserted_total += inserted as u64;
+        )
+        .bind(account_id)
+        .bind(lo)
+        .bind(hi)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        inserted_total += inserted;
 
         promote_phase_done(
             started,
@@ -533,9 +570,10 @@ fn promote_messages_append_chunked(
     // Null/empty guids are outside the partial unique index — always insert.
     let phase = Instant::now();
     promote_log("inserting messages with empty guids…");
-    let empty_max_before: i64 =
-        tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?;
-    let inserted_empty = tx.execute(
+    let empty_max_before: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM messages")
+        .fetch_one(&mut *tx)
+        .await?;
+    let inserted_empty = sqlx::query(
         r#"
         INSERT INTO messages (
             conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
@@ -549,27 +587,30 @@ fn promote_messages_append_chunked(
             sm.import_id
         FROM staging_messages sm
         JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-        WHERE sm.account_id = ?1
+        WHERE sm.account_id = $1
           AND (sm.guid IS NULL OR sm.guid = '')
         ORDER BY sm.id
         "#,
-        params![account_id],
-    )?;
-    inserted_total += inserted_empty as u64;
+    )
+    .bind(account_id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    inserted_total += inserted_empty;
 
-    let empty_staging_ids: Vec<i64> = tx
-        .prepare(
-            r#"
-            SELECT sm.id
-            FROM staging_messages sm
-            JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-            WHERE sm.account_id = ?1
-              AND (sm.guid IS NULL OR sm.guid = '')
-            ORDER BY sm.id
-            "#,
-        )?
-        .query_map(params![account_id], |row| row.get(0))?
-        .collect::<Result<Vec<_>, _>>()?;
+    let empty_staging_ids: Vec<i64> = sqlx::query_scalar(
+        r#"
+        SELECT sm.id
+        FROM staging_messages sm
+        JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
+        WHERE sm.account_id = $1
+          AND (sm.guid IS NULL OR sm.guid = '')
+        ORDER BY sm.id
+        "#,
+    )
+    .bind(account_id)
+    .fetch_all(&mut *tx)
+    .await?;
     zip_new_message_ids(
         tx,
         &mut msg_map,
@@ -577,7 +618,8 @@ fn promote_messages_append_chunked(
         account_id,
         empty_max_before,
         |n, p| format!("promote append empty-guid id map mismatch: staging={n} new_prod={p}"),
-    )?;
+    )
+    .await?;
     promote_phase_done(
         started,
         phase,
@@ -590,33 +632,39 @@ fn promote_messages_append_chunked(
     Ok(msg_map)
 }
 
-fn zip_new_message_ids(
-    tx: &Transaction<'_>,
+async fn zip_new_message_ids(
+    tx: &mut AnyConnection,
     msg_map: &mut HashMap<i64, i64>,
     staging_ids: Vec<i64>,
     account_id: &str,
     max_before: i64,
     mismatch: impl FnOnce(usize, usize) -> String,
 ) -> Result<i64> {
-    let prod_ids: Vec<i64> = tx
-        .prepare("SELECT id FROM messages WHERE id > ?1 AND account_id = ?2 ORDER BY id")?
-        .query_map(params![max_before, account_id], |row| row.get(0))?
-        .collect::<Result<Vec<_>, _>>()?;
+    let prod_ids: Vec<i64> =
+        sqlx::query_scalar("SELECT id FROM messages WHERE id > $1 AND account_id = $2 ORDER BY id")
+            .bind(max_before)
+            .bind(account_id)
+            .fetch_all(&mut *tx)
+            .await?;
     if staging_ids.len() != prod_ids.len() {
         bail!("{}", mismatch(staging_ids.len(), prod_ids.len()));
     }
     for (staging_id, prod_id) in staging_ids.into_iter().zip(prod_ids) {
         msg_map.insert(staging_id, prod_id);
     }
-    Ok(tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?)
+    Ok(
+        sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM messages")
+            .fetch_one(&mut *tx)
+            .await?,
+    )
 }
 
-fn fill_promote_msg_map(
-    tx: &Transaction<'_>,
+async fn fill_promote_msg_map(
+    tx: &mut AnyConnection,
     account_id: &str,
     msg_map: &HashMap<i64, i64>,
 ) -> Result<()> {
-    tx.execute_batch(
+    for stmt in schema::split_ddl(
         r#"
         CREATE TEMP TABLE IF NOT EXISTS _promote_msg_map (
             staging_id INTEGER PRIMARY KEY,
@@ -624,27 +672,32 @@ fn fill_promote_msg_map(
         );
         DELETE FROM _promote_msg_map;
         "#,
-    )?;
+    ) {
+        sqlx::query(&stmt).execute(&mut *tx).await?;
+    }
     if !msg_map.is_empty() {
         let pairs: Vec<(i64, i64)> = msg_map.iter().map(|(&s, &p)| (s, p)).collect();
         for chunk in pairs.chunks(SQLITE_IN_CHUNK) {
-            let sql = format!(
-                "INSERT INTO _promote_msg_map (staging_id, prod_id) VALUES {}",
-                pair_placeholders(chunk.len())
-            );
-            let mut stmt = tx.prepare(&sql)?;
-            let mut vals: Vec<rusqlite::types::Value> = Vec::with_capacity(chunk.len() * 2);
-            for &(staging_id, prod_id) in chunk {
-                vals.push(staging_id.into());
-                vals.push(prod_id.into());
+            // Hand-numbered `$N` pairs — sqlx Any does no placeholder rewriting.
+            let mut sql =
+                String::from("INSERT INTO _promote_msg_map (staging_id, prod_id) VALUES ");
+            for (i, _) in chunk.iter().enumerate() {
+                if i > 0 {
+                    sql.push(',');
+                }
+                sql.push_str(&format!("(${}, ${})", i * 2 + 1, i * 2 + 2));
             }
-            stmt.execute(params_from_iter(vals))?;
+            let mut q = sqlx::query(&sql);
+            for &(staging_id, prod_id) in chunk {
+                q = q.bind(staging_id).bind(prod_id);
+            }
+            q.execute(&mut *tx).await?;
         }
     }
 
-    tx.execute(
+    sqlx::query(
         r#"
-        INSERT OR REPLACE INTO _promote_msg_map (staging_id, prod_id)
+        INSERT INTO _promote_msg_map (staging_id, prod_id)
         SELECT sm.id, m.id
         FROM staging_messages sm
         JOIN messages m
@@ -652,12 +705,15 @@ fn fill_promote_msg_map(
          AND m.source = sm.source
          AND m.guid = sm.guid
         JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-        WHERE sm.account_id = ?1
+        WHERE sm.account_id = $1
           AND sm.guid IS NOT NULL
           AND sm.guid != ''
+        ON CONFLICT(staging_id) DO UPDATE SET prod_id = excluded.prod_id
         "#,
-        params![account_id],
-    )?;
+    )
+    .bind(account_id)
+    .execute(&mut *tx)
+    .await?;
     Ok(())
 }
 
@@ -667,10 +723,11 @@ mod tests {
 
     const TEST_ACCOUNT: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
-    #[test]
-    fn promote_message_map_ignores_other_accounts() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(
+    #[tokio::test]
+    async fn promote_message_map_ignores_other_accounts() {
+        let (pool, _dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
             r#"
             CREATE TABLE messages (
                 id INTEGER PRIMARY KEY,
@@ -681,13 +738,16 @@ mod tests {
                 (2, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
             "#,
         )
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        let tx = conn.transaction().unwrap();
+        let mut tx = conn.begin().await.unwrap();
         let mut map = HashMap::new();
 
-        zip_new_message_ids(&tx, &mut map, vec![101], TEST_ACCOUNT, 0, |n, p| {
+        zip_new_message_ids(&mut tx, &mut map, vec![101], TEST_ACCOUNT, 0, |n, p| {
             format!("unexpected mapping counts: staging={n} production={p}")
         })
+        .await
         .unwrap();
 
         assert_eq!(map, HashMap::from([(101, 1)]));

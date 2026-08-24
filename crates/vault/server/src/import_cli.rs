@@ -7,6 +7,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::config::{Config, validate_source_id};
 use crate::db::account_profile;
+use crate::db::engine;
 use crate::db::schema;
 use crate::db::vault_imports;
 use crate::dedupe::{self, DedupeStats};
@@ -24,6 +25,8 @@ pub struct CliImportOptions {
     pub input_dir: PathBuf,
     /// Database path override; falls back to config when `None`.
     pub db_path: Option<PathBuf>,
+    /// Database URL override (`sqlite:...` / `postgres://...`); wins over `db_path`.
+    pub db_url: Option<String>,
     /// Originals asset store override; per-account default when `None`.
     pub assets_dir: Option<PathBuf>,
     /// When set, force this source for every conversation (ignore IR export.source).
@@ -62,7 +65,7 @@ pub struct CliImportStats {
 ///
 /// Returns an error when the input directory is missing, has no `.jsonl`
 /// files, or import / duplicate detection fails.
-pub fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats> {
+pub async fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats> {
     let input = &opts.input_dir;
     if !input.is_dir() {
         bail!("input directory does not exist: {}", input.display());
@@ -102,7 +105,10 @@ pub fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats> {
     println!("Import");
     println!("  account:      {}", account_id);
     println!("  input:        {}", input.display());
-    println!("  db:           {}", db_path.display());
+    match opts.db_url.as_deref() {
+        Some(url) => println!("  db:           {url}"),
+        None => println!("  db:           {}", db_path.display()),
+    }
     println!("  sources:      {}", sources.join(", "));
     if source_from_jsonl {
         println!("  source mode:  from JSONL export.source");
@@ -122,18 +128,26 @@ pub fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats> {
     });
 
     let session_source = sources.join(",");
-    let mut conn = schema::open_configured(&db_path)
-        .with_context(|| format!("failed to open database {}", db_path.display()))?;
-    schema::ensure_vault_schema(&conn)?;
-    account_profile::ensure_account_row(&conn, &account_id)?;
+    let pool = match opts.db_url.as_deref() {
+        Some(url) => engine::open_pool_from_url(url)
+            .await
+            .with_context(|| format!("failed to open database at {url}"))?,
+        None => engine::open_pool_for_path(&db_path)
+            .await
+            .with_context(|| format!("failed to open database {}", db_path.display()))?,
+    };
+    let mut conn = pool.acquire().await?;
+    schema::ensure_vault_schema(&mut conn).await?;
+    account_profile::ensure_account_row(&mut conn, &account_id).await?;
 
     let import_id = vault_imports::start_import(
-        &conn,
+        &mut conn,
         &account_id,
         &session_source,
         opts.mode.as_str(),
         Some("message-vault-server"),
-    )?;
+    )
+    .await?;
 
     let import_opts = ImportOptions {
         assets_dir: &placeholder_assets,
@@ -157,7 +171,8 @@ pub fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats> {
         &paths,
         &import_opts,
         import::ImportSchemaMode::AssumeReady,
-    );
+    )
+    .await;
 
     let complete_args = match &result {
         Ok(stats) => {
@@ -165,14 +180,14 @@ pub fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats> {
         }
         Err(_) => vault_imports::CompleteImportArgs::failed(),
     };
-    vault_imports::complete_import_or_warn(&conn, &account_id, import_id, &complete_args);
+    vault_imports::complete_import_or_warn(&mut conn, &account_id, import_id, &complete_args).await;
     let import_stats = result?;
-    drop(conn);
 
     let dedupe = if opts.skip_dedupe {
         None
     } else {
-        let dedupe_stats = dedupe::run_dedupe(&db_path, &account_id, opts.window_secs)?;
+        let dedupe_stats =
+            dedupe::dedupe_cross_source(&mut conn, &account_id, None, opts.window_secs).await?;
         println!(
             "  dedupe:       fingerprints_set={} exact_hidden={} near_flagged={} (fingerprints are one per message, not duplicates)",
             dedupe_stats.keys_filled, dedupe_stats.exact_flagged, dedupe_stats.near_flagged

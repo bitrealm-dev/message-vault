@@ -13,8 +13,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
-use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use sqlx::AnyConnection;
+use sqlx::Connection;
 use tempfile::TempDir;
 
 use axum::Json;
@@ -25,6 +26,7 @@ use tokio::sync::Mutex;
 use crate::assets::AssetStats;
 use crate::config::{PathsConfig, validate_source_id};
 use crate::db::contacts;
+use crate::db::engine;
 use crate::db::schema;
 use crate::db::vault_imports::{self, CompleteImportArgs};
 use crate::import_media::MediaMode;
@@ -41,10 +43,9 @@ use staging::StagingInserts;
 use crate::dedupe;
 use crate::import::{self};
 use crate::server::{
-    ApiError, AppState, JoinBlocking, content_type_base, is_jsonl_content_type,
-    is_multipart_content_type, lock_conn, lock_import_conn, reject_if_guest_account,
-    require_import_access, resolve_auth, resolve_import_account, safe_rel_path,
-    stream_body_to_file, stream_field_to_file, with_locked_conn,
+    ApiError, AppState, content_type_base, is_jsonl_content_type, is_multipart_content_type,
+    reject_if_guest_account, require_import_access, resolve_auth, resolve_import_account,
+    safe_rel_path, stream_body_to_file, stream_field_to_file,
 };
 
 /// What happens to a source's messages that were imported before.
@@ -236,7 +237,7 @@ pub struct ImportExportArgs<'a> {
 ///
 /// Returns an error when the export directory is missing, a file cannot be
 /// parsed, or a database write fails.
-pub fn import_export(args: &ImportExportArgs<'_>) -> Result<ImportStats> {
+pub async fn import_export(args: &ImportExportArgs<'_>) -> Result<ImportStats> {
     if !args.export_dir.is_dir() {
         bail!(
             "export directory does not exist: {}",
@@ -246,18 +247,21 @@ pub fn import_export(args: &ImportExportArgs<'_>) -> Result<ImportStats> {
 
     let paths = crate::import_cli::list_jsonl_files(args.export_dir)?;
 
-    let mut conn = schema::open_configured(args.db_path)
+    let pool = engine::open_pool_for_path(args.db_path)
+        .await
         .with_context(|| format!("failed to open database {}", args.db_path.display()))?;
-    schema::ensure_vault_schema(&conn)?;
-    crate::db::account_profile::ensure_account_row(&conn, args.account_id)?;
+    let mut conn = pool.acquire().await?;
+    schema::ensure_vault_schema(&mut conn).await?;
+    crate::db::account_profile::ensure_account_row(&mut conn, args.account_id).await?;
 
     let import_id = vault_imports::start_import(
-        &conn,
+        &mut conn,
         args.account_id,
         args.source,
         args.mode.as_str(),
         Some("message-vault-server"),
-    )?;
+    )
+    .await?;
 
     let result = import_jsonl_files_on_conn(
         &mut conn,
@@ -274,13 +278,15 @@ pub fn import_export(args: &ImportExportArgs<'_>) -> Result<ImportStats> {
             import_id: Some(import_id),
         }),
         ImportSchemaMode::AssumeReady,
-    );
+    )
+    .await;
 
     let complete_args = match &result {
         Ok(stats) => CompleteImportArgs::succeeded(stats.messages, stats.attachments),
         Err(_) => CompleteImportArgs::failed(),
     };
-    vault_imports::complete_import_or_warn(&conn, args.account_id, import_id, &complete_args);
+    vault_imports::complete_import_or_warn(&mut conn, args.account_id, import_id, &complete_args)
+        .await;
 
     result
 }
@@ -299,7 +305,7 @@ pub enum ImportSchemaMode {
 /// Production paths use [`import_jsonl_files_on_conn`] on their own
 /// connection (HTTP serve) or [`import_export`] (CLI directory import).
 #[cfg(test)]
-pub(crate) fn import_jsonl_files(
+pub(crate) async fn import_jsonl_files(
     db_path: &Path,
     paths: &[PathBuf],
     opts: &ImportOptions<'_>,
@@ -313,11 +319,13 @@ pub(crate) fn import_jsonl_files(
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
 
-    let mut conn = schema::open_configured(db_path)
+    let pool = engine::open_pool_for_path(db_path)
+        .await
         .with_context(|| format!("failed to open database {}", db_path.display()))?;
+    let mut conn = pool.acquire().await?;
     println!("  sql:      opened {}", db_path.display());
     let _ = io::stdout().flush();
-    import_jsonl_files_on_conn(&mut conn, paths, opts, ImportSchemaMode::Ensure)
+    import_jsonl_files_on_conn(&mut conn, paths, opts, ImportSchemaMode::Ensure).await
 }
 
 fn validate_import_options(opts: &ImportOptions<'_>) -> Result<()> {
@@ -336,8 +344,8 @@ fn validate_import_options(opts: &ImportOptions<'_>) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error when options are invalid or staging / promote fails.
-pub fn import_jsonl_files_on_conn(
-    conn: &mut Connection,
+pub async fn import_jsonl_files_on_conn(
+    conn: &mut AnyConnection,
     paths: &[PathBuf],
     opts: &ImportOptions<'_>,
     schema_mode: ImportSchemaMode,
@@ -349,9 +357,9 @@ pub fn import_jsonl_files_on_conn(
     }
 
     if schema_mode == ImportSchemaMode::Ensure {
-        schema::ensure_vault_schema(conn)?;
+        schema::ensure_vault_schema(conn).await?;
     }
-    crate::db::account_profile::ensure_account_row(conn, opts.account_id)?;
+    crate::db::account_profile::ensure_account_row(conn, opts.account_id).await?;
 
     if let Some(path) = opts.contacts {
         println!("  sql:      loading contacts from {}…", path.display());
@@ -364,7 +372,8 @@ pub fn import_jsonl_files_on_conn(
         opts.contacts,
         opts.overwrite_contacts,
         opts.account_id,
-    )?;
+    )
+    .await?;
     if contact_stats.skipped {
         println!("  sql:      contacts skipped (already loaded or no address book)");
     } else {
@@ -380,7 +389,7 @@ pub fn import_jsonl_files_on_conn(
         println!("  sql:      resetting staging for account…");
         let _ = io::stdout().flush();
     }
-    schema::reset_staging_for_account(conn, opts.account_id)?;
+    schema::reset_staging_for_account(conn, opts.account_id).await?;
     let wipe_sources: Vec<String> = if opts.mode == ImportMode::Replace {
         if opts.source_from_jsonl {
             opts.wipe_sources.clone().unwrap_or_default()
@@ -427,18 +436,19 @@ pub fn import_jsonl_files_on_conn(
     };
     const STAGING_COMMIT_EVERY: usize = 50;
 
-    let mut tx = conn.transaction()?;
-    let mut stmts = StagingInserts::prepare(&tx, opts.account_id, opts.import_id)?;
+    let mut tx = conn.begin().await?;
+    let mut stmts = StagingInserts::new(opts.account_id, opts.import_id);
 
     for (idx, path) in paths.iter().enumerate() {
         let file_stats = staging::import_file_to_staging(
-            &tx,
+            &mut tx,
             &mut stmts,
             opts,
             path,
             &mut asset_stats,
             media_work.path(),
-        )?;
+        )
+        .await?;
         stats.merge_file(&file_stats);
         stats.files += 1;
 
@@ -458,13 +468,13 @@ pub fn import_jsonl_files_on_conn(
 
         if n % STAGING_COMMIT_EVERY == 0 && n < total_files {
             drop(stmts);
-            tx.commit()?;
-            tx = conn.transaction()?;
-            stmts = StagingInserts::prepare(&tx, opts.account_id, opts.import_id)?;
+            tx.commit().await?;
+            tx = conn.begin().await?;
+            stmts = StagingInserts::new(opts.account_id, opts.import_id);
         }
     }
     drop(stmts);
-    tx.commit()?;
+    tx.commit().await?;
 
     println!(
         "  import:   promoting staging → production ({:.0}s so far)…",
@@ -477,7 +487,8 @@ pub fn import_jsonl_files_on_conn(
         opts.account_id,
         opts.fill_content_keys,
         &wipe_sources,
-    )?;
+    )
+    .await?;
     stats.messages_deduped += promote_stats.messages_deduped;
     stats.messages_appended = promote_stats.messages_appended;
     if opts.mode == ImportMode::Append {
@@ -488,7 +499,7 @@ pub fn import_jsonl_files_on_conn(
         stats.tapbacks = promote_stats.tapbacks;
     }
 
-    schema::reset_staging_for_account(conn, opts.account_id)?;
+    schema::reset_staging_for_account(conn, opts.account_id).await?;
 
     stats.assets_copied = asset_stats.copied;
     stats.assets_deduped = asset_stats.deduped;
@@ -701,11 +712,11 @@ pub(crate) async fn imports_list_handler(
     let account =
         resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
 
-    let db = Arc::clone(&state.db);
-    let imports = with_locked_conn(db, "list imports task", move |conn| {
-        crate::db::vault_imports::list_imports(conn, &account)
-    })
-    .await?;
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    let imports = crate::db::vault_imports::list_imports(&mut conn, &account)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     Ok(Json(ImportsListResponse { imports }))
 }
@@ -731,13 +742,12 @@ pub(crate) async fn imports_get_handler(
 ) -> Result<Json<ImportDetailResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_import_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let detail = tokio::task::spawn_blocking(move || {
-        let conn = lock_conn(&db)?;
-        crate::db::vault_imports::get_import_detail(&conn, &auth.account_id, import_id)
-    })
-    .await
-    .join_map("import detail task", ApiError::from)?;
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    let detail =
+        crate::db::vault_imports::get_import_detail(&mut conn, &auth.account_id, import_id)
+            .await
+            .map_err(ApiError::from)?;
 
     Ok(Json(import_detail_response(detail)))
 }
@@ -773,17 +783,20 @@ pub(crate) async fn imports_create_handler(
     let account =
         resolve_import_account(&auth, body.account.as_deref(), &state.cfg.paths.db).await?;
 
-    let db = Arc::clone(&state.db);
-    let source = body.source.clone();
-    let mode = body.mode.clone();
-    let tool = body.tool.clone();
-    let id = tokio::task::spawn_blocking(move || {
-        let conn = lock_import_conn(&db)?;
-        crate::db::account_profile::ensure_account_row(&conn, &account)?;
-        crate::db::vault_imports::start_import(&conn, &account, &source, &mode, tool.as_deref())
-    })
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    crate::db::account_profile::ensure_account_row(&mut conn, &account)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let id = crate::db::vault_imports::start_import(
+        &mut conn,
+        &account,
+        &body.source,
+        &body.mode,
+        body.tool.as_deref(),
+    )
     .await
-    .join_blocking("create import task failed")?;
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     Ok(Json(CreateImportResponse { ok: true, id }))
 }
@@ -815,7 +828,6 @@ pub(crate) async fn imports_complete_handler(
     reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
     let account = resolve_import_account(&auth, None, &state.cfg.paths.db).await?;
     validate_complete_import_issues(&body.issues)?;
-    let db = Arc::clone(&state.db);
     let summary_json = match body.summary {
         Some(summary) => Some(
             serde_json::to_string(&summary)
@@ -844,17 +856,16 @@ pub(crate) async fn imports_complete_handler(
             })
             .collect(),
     };
-    let row = tokio::task::spawn_blocking(move || {
-        let conn = lock_import_conn(&db)?;
-        crate::db::vault_imports::complete_import(&conn, &account, import_id, &args)
-    })
-    .await
-    .join_map("complete import task failed", |e| {
-        match e.downcast::<crate::db::vault_imports::ImportLookupError>() {
-            Ok(lookup) => ApiError::from(lookup),
-            Err(other) => ApiError::Internal(other.to_string()),
-        }
-    })?;
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    let row = crate::db::vault_imports::complete_import(&mut conn, &account, import_id, &args)
+        .await
+        .map_err(
+            |e| match e.downcast::<crate::db::vault_imports::ImportLookupError>() {
+                Ok(lookup) => ApiError::from(lookup),
+                Err(other) => ApiError::Internal(other.to_string()),
+            },
+        )?;
 
     Ok(Json(CompleteImportResponse {
         ok: true,
@@ -1065,7 +1076,6 @@ async fn run_import_path(
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
     let cfg = Arc::clone(&state.cfg);
-    let db = Arc::clone(&state.db);
     let account = query
         .account
         .clone()
@@ -1084,24 +1094,17 @@ async fn run_import_path(
 
     // Validate client-owned sessions before staging work so bad ids return 400.
     if let Some(id) = query_import_id {
-        let db = Arc::clone(&db);
-        let account_check = account.clone();
-        let source_check = source_id.clone();
-        let mode_check = mode.as_str().to_string();
-        tokio::task::spawn_blocking(move || {
-            let conn = lock_import_conn(&db)?;
-            crate::db::vault_imports::require_reusable_import(
-                &conn,
-                &account_check,
-                id,
-                &source_check,
-                &mode_check,
-            )
-            .map_err(anyhow::Error::new)?;
-            Ok::<_, anyhow::Error>(())
-        })
+        // TODO(#148): pool acquire
+        let mut conn = state.db.acquire().await?;
+        crate::db::vault_imports::require_reusable_import(
+            &mut conn,
+            &account,
+            id,
+            &source_id,
+            mode.as_str(),
+        )
         .await
-        .join_map("import session check", |e| {
+        .map_err(|e| {
             let msg = e.to_string();
             if msg.contains("not found") {
                 ApiError::NotFound(msg)
@@ -1113,76 +1116,79 @@ async fn run_import_path(
         })?;
     }
 
-    let result = tokio::task::spawn_blocking(move || {
-        let assets_dir = cfg.paths.assets_dir_for_account(&account, &source_id);
-        // Raw body imports resolve attachment paths only via pre-uploaded sha256 assets.
-        // Multipart supplies a temp asset_root for relative file parts.
-        let asset_root_owned = asset_root_override.unwrap_or_else(|| assets_dir.clone());
+    let assets_dir = cfg.paths.assets_dir_for_account(&account, &source_id);
+    // Raw body imports resolve attachment paths only via pre-uploaded sha256 assets.
+    // Multipart supplies a temp asset_root for relative file parts.
+    let asset_root_owned = asset_root_override.unwrap_or_else(|| assets_dir.clone());
 
-        // Client session (vault-push): ownership/status already checked above.
-        // Otherwise start a one-shot vault_imports row so Storage history works for curl / single POSTs.
-        let (import_id, owns_session) = if let Some(id) = query_import_id {
-            (Some(id), false)
-        } else {
-            let conn = lock_import_conn(&db)?;
-            crate::db::account_profile::ensure_account_row(&conn, &account)?;
-            let id = crate::db::vault_imports::start_import(
-                &conn,
-                &account,
-                &source_id,
-                mode.as_str(),
-                Some("http"),
-            )?;
-            drop(conn);
-            (Some(id), true)
-        };
-
-        let mut opts = ImportOptions::fixed(FixedImportArgs {
-            assets_dir: &assets_dir,
-            asset_root: &asset_root_owned,
-            contacts: None,
-            overwrite_contacts: false,
-            mode,
-            source: &source_id,
-            account_id: &account,
-            fill_content_keys: do_dedupe,
-            import_id,
-        });
-        opts.contact_name_mode = contact_name_mode;
-        // Dedicated connection for the long import so we do not hold `state.db`
-        // across JSONL / asset IO / promote (export and session SQL stay free).
-        let mut conn = schema::open_configured(&cfg.paths.db)
-            .with_context(|| format!("open import database {}", cfg.paths.db.display()))?;
-        let import_result = import::import_jsonl_files_on_conn(
+    // Client session (vault-push): ownership/status already checked above.
+    // Otherwise start a one-shot vault_imports row so Storage history works for curl / single POSTs.
+    let (import_id, owns_session) = if let Some(id) = query_import_id {
+        (Some(id), false)
+    } else {
+        // TODO(#148): pool acquire
+        let mut conn = state.db.acquire().await?;
+        crate::db::account_profile::ensure_account_row(&mut conn, &account)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        let id = crate::db::vault_imports::start_import(
             &mut conn,
-            &[jsonl_path],
-            &opts,
-            import::ImportSchemaMode::AssumeReady,
-        );
+            &account,
+            &source_id,
+            mode.as_str(),
+            Some("http"),
+        )
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        (Some(id), true)
+    };
 
-        if owns_session && let Some(id) = import_id {
-            let complete_args = match &import_result {
-                Ok(stats) => crate::db::vault_imports::CompleteImportArgs::succeeded(
-                    stats.messages,
-                    stats.attachments,
-                ),
-                Err(_) => crate::db::vault_imports::CompleteImportArgs::failed(),
-            };
-            crate::db::vault_imports::complete_import_or_warn(&conn, &account, id, &complete_args);
-        }
-        let stats = import_result?;
-        drop(conn);
-        let dedupe_stats = if do_dedupe {
-            Some(dedupe::run_dedupe(&cfg.paths.db, &account, 2)?)
-        } else {
-            None
+    let mut opts = ImportOptions::fixed(FixedImportArgs {
+        assets_dir: &assets_dir,
+        asset_root: &asset_root_owned,
+        contacts: None,
+        overwrite_contacts: false,
+        mode,
+        source: &source_id,
+        account_id: &account,
+        fill_content_keys: do_dedupe,
+        import_id,
+    });
+    opts.contact_name_mode = contact_name_mode;
+    // Dedicated connection for the long import so we do not hold `state.db`
+    // across JSONL / asset IO / promote (export and session SQL stay free).
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    let import_result = import::import_jsonl_files_on_conn(
+        &mut conn,
+        &[jsonl_path],
+        &opts,
+        import::ImportSchemaMode::AssumeReady,
+    )
+    .await;
+
+    if owns_session && let Some(id) = import_id {
+        let complete_args = match &import_result {
+            Ok(stats) => crate::db::vault_imports::CompleteImportArgs::succeeded(
+                stats.messages,
+                stats.attachments,
+            ),
+            Err(_) => crate::db::vault_imports::CompleteImportArgs::failed(),
         };
-        Ok::<_, anyhow::Error>((stats, dedupe_stats, source_id, account))
-    })
-    .await
-    .join_blocking("import task failed")?;
+        crate::db::vault_imports::complete_import_or_warn(&mut conn, &account, id, &complete_args)
+            .await;
+    }
+    let stats = import_result.map_err(|e| ApiError::Internal(e.to_string()))?;
+    let dedupe_stats = if do_dedupe {
+        Some(
+            dedupe::dedupe_cross_source(&mut conn, &account, None, 2)
+                .await
+                .map_err(|e| ApiError::Internal(e.to_string()))?,
+        )
+    } else {
+        None
+    };
 
-    let (stats, dedupe_stats, source_id, account) = result;
     Ok(Json(ImportResponse {
         ok: true,
         source: source_id,
@@ -1202,7 +1208,6 @@ mod tests {
     use super::contact_name::trim_nonempty;
     use super::*;
     use crate::assets;
-    use rusqlite::{OptionalExtension, params};
     use tempfile::TempDir;
 
     const TEST_ACCOUNT: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -1213,8 +1218,15 @@ mod tests {
         path
     }
 
-    #[test]
-    fn append_skips_existing_guids_and_keeps_id_map() {
+    /// Open a verify connection to an on-disk test database.
+    async fn open_verify(db: &Path) -> (sqlx::AnyPool, sqlx::pool::PoolConnection<sqlx::Any>) {
+        let pool = engine::open_pool_for_path(db).await.unwrap();
+        let conn = pool.acquire().await.unwrap();
+        (pool, conn)
+    }
+
+    #[tokio::test]
+    async fn append_skips_existing_guids_and_keeps_id_map() {
         let tmp = TempDir::new().unwrap();
         let db = tmp.path().join("vault.db");
         let assets = tmp.path().join("assets");
@@ -1242,6 +1254,7 @@ mod tests {
                 import_id: None,
             }),
         )
+        .await
         .unwrap();
         assert_eq!(first_stats.messages, 2);
 
@@ -1269,52 +1282,49 @@ mod tests {
                 import_id: None,
             }),
         )
+        .await
         .unwrap();
         assert_eq!(second_stats.messages_appended, 2);
         assert_eq!(second_stats.messages_deduped, 1);
 
-        let conn = Connection::open(&db).unwrap();
-        let n: i64 = conn
-            .query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))
+        let (_pool, mut conn) = open_verify(&db).await;
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages")
+            .fetch_one(&mut *conn)
+            .await
             .unwrap();
         assert_eq!(n, 4);
-        let dup_body: String = conn
-            .query_row("SELECT body FROM messages WHERE guid = 'g-dup'", [], |r| {
-                r.get(0)
-            })
+        let dup_body: String = sqlx::query_scalar("SELECT body FROM messages WHERE guid = 'g-dup'")
+            .fetch_one(&mut *conn)
+            .await
             .unwrap();
         assert_eq!(dup_body, "two");
 
         // Deferred full-text search during promote must still index new bodies
         // and restore triggers.
-        let fts_three: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'three'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let fts_three: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'three'",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
         assert_eq!(fts_three, 1);
-        let fts_one: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'one'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let fts_one: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'one'")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
         assert_eq!(fts_one, 1);
-        let triggers: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%_fts_%'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let triggers: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%_fts_%'",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
         assert_eq!(triggers, 6);
     }
 
-    #[test]
-    fn append_existing_guid_adds_missing_children() {
+    #[tokio::test]
+    async fn append_existing_guid_adds_missing_children() {
         let tmp = TempDir::new().unwrap();
         let db = tmp.path().join("vault.db");
         let assets = tmp.path().join("assets");
@@ -1338,7 +1348,7 @@ mod tests {
             fill_content_keys: false,
             import_id: None,
         });
-        import_jsonl_files(&db, &[first], &options).unwrap();
+        import_jsonl_files(&db, &[first], &options).await.unwrap();
 
         let second = write_jsonl(
             tmp.path(),
@@ -1350,31 +1360,32 @@ mod tests {
         );
 
         for _ in 0..2 {
-            import_jsonl_files(&db, std::slice::from_ref(&second), &options).unwrap();
+            import_jsonl_files(&db, std::slice::from_ref(&second), &options)
+                .await
+                .unwrap();
         }
 
-        let conn = Connection::open(&db).unwrap();
-        let (body, attachments, tapbacks): (String, i64, i64) = conn
-            .query_row(
-                r#"
-                SELECT m.body, COUNT(DISTINCT a.id), COUNT(DISTINCT t.id)
-                FROM messages m
-                LEFT JOIN attachments a ON a.message_id = m.id
-                LEFT JOIN tapbacks t ON t.message_id = m.id
-                WHERE m.guid = 'g-children'
-                GROUP BY m.id
-                "#,
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap();
+        let (_pool, mut conn) = open_verify(&db).await;
+        let (body, attachments, tapbacks): (String, i64, i64) = sqlx::query_as(
+            r#"
+            SELECT m.body, COUNT(DISTINCT a.id), COUNT(DISTINCT t.id)
+            FROM messages m
+            LEFT JOIN attachments a ON a.message_id = m.id
+            LEFT JOIN tapbacks t ON t.message_id = m.id
+            WHERE m.guid = 'g-children'
+            GROUP BY m.id
+            "#,
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
         assert_eq!(body, "original body");
         assert_eq!(attachments, 1);
         assert_eq!(tapbacks, 1);
     }
 
-    #[test]
-    fn repeated_append_keeps_one_fts_posting_per_message() {
+    #[tokio::test]
+    async fn repeated_append_keeps_one_fts_posting_per_message() {
         let tmp = TempDir::new().unwrap();
         let db = tmp.path().join("vault.db");
         let assets = tmp.path().join("assets");
@@ -1397,68 +1408,79 @@ mod tests {
             import_id: None,
         });
 
-        import_jsonl_files(&db, std::slice::from_ref(&path), &options).unwrap();
+        import_jsonl_files(&db, std::slice::from_ref(&path), &options)
+            .await
+            .unwrap();
         // Rows of the full-text search index storage: a redundant re-index writes a new
         // segment even when the indexed text is unchanged.
-        let index_rows = || -> i64 {
-            Connection::open(&db)
+        async fn index_rows(db: &Path) -> i64 {
+            let (_pool, mut conn) = open_verify(db).await;
+            sqlx::query_scalar("SELECT COUNT(*) FROM messages_fts_data")
+                .fetch_one(&mut *conn)
+                .await
                 .unwrap()
-                .query_row("SELECT COUNT(*) FROM messages_fts_data", [], |r| r.get(0))
-                .unwrap()
-        };
-        let after_first_import = index_rows();
+        }
+        let after_first_import = index_rows(&db).await;
         for _ in 0..2 {
-            import_jsonl_files(&db, std::slice::from_ref(&path), &options).unwrap();
+            import_jsonl_files(&db, std::slice::from_ref(&path), &options)
+                .await
+                .unwrap();
         }
         assert_eq!(
-            index_rows(),
+            index_rows(&db).await,
             after_first_import,
             "repeated append must not write additional FTS index entries"
         );
 
-        let conn = Connection::open(&db).unwrap();
-        let messages: i64 = conn
-            .query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))
+        let (_pool, mut conn) = open_verify(&db).await;
+        let messages: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages")
+            .fetch_one(&mut *conn)
+            .await
             .unwrap();
         assert_eq!(messages, 1);
 
         // `MATCH` collapses repeated postings for one rowid, so read the index
         // itself: fts5vocab reports how many entries each term really has.
-        conn.execute_batch("CREATE VIRTUAL TABLE fts_vocab USING fts5vocab(messages_fts, row);")
+        sqlx::query("CREATE VIRTUAL TABLE fts_vocab USING fts5vocab(messages_fts, row);")
+            .execute(&mut *conn)
+            .await
             .unwrap();
-        let term_entries = |conn: &Connection| -> (i64, i64) {
-            conn.query_row(
-                "SELECT IFNULL(SUM(doc), 0), IFNULL(SUM(cnt), 0) FROM fts_vocab WHERE term = 'zzuniqueterm'",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+        let term_entries = async |conn: &mut AnyConnection| {
+            let (docs, cnts): (i64, i64) = sqlx::query_as(
+                "SELECT COALESCE(SUM(doc), 0), COALESCE(SUM(cnt), 0)
+                 FROM fts_vocab WHERE term = 'zzuniqueterm'",
             )
-            .unwrap()
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+            (docs, cnts)
         };
         assert_eq!(
-            term_entries(&conn),
+            term_entries(&mut conn).await,
             (1, 1),
             "repeated append must not add extra index entries for an already indexed message"
         );
-        let matches: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'zzuniqueterm'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let matches: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'zzuniqueterm'",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
         assert_eq!(matches, 1);
 
-        conn.execute("DELETE FROM messages WHERE guid = 'g-fts'", [])
+        sqlx::query("DELETE FROM messages WHERE guid = 'g-fts'")
+            .execute(&mut *conn)
+            .await
             .unwrap();
         assert_eq!(
-            term_entries(&conn),
+            term_entries(&mut conn).await,
             (0, 0),
             "deleting the message must not leave stale search terms behind"
         );
     }
 
-    #[test]
-    fn deferred_fts_indexes_attachment_text_after_promote() {
+    #[tokio::test]
+    async fn deferred_fts_indexes_attachment_text_after_promote() {
         let tmp = TempDir::new().unwrap();
         let db = tmp.path().join("vault.db");
         let assets = tmp.path().join("assets");
@@ -1489,24 +1511,24 @@ mod tests {
                 import_id: None,
             }),
         )
+        .await
         .unwrap();
 
-        let conn = Connection::open(&db).unwrap();
-        let hits: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'uniqueinvoice'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let (_pool, mut conn) = open_verify(&db).await;
+        let hits: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'uniqueinvoice'",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
         assert_eq!(
             hits, 1,
             "attachment original_name must be searchable after deferred FTS"
         );
     }
 
-    #[test]
-    fn promote_stamps_messages_with_import_id() {
+    #[tokio::test]
+    async fn promote_stamps_messages_with_import_id() {
         let tmp = TempDir::new().unwrap();
         let db = tmp.path().join("vault.db");
         let assets = tmp.path().join("assets");
@@ -1518,16 +1540,19 @@ mod tests {
 "#,
         );
 
-        let mut conn = Connection::open(&db).unwrap();
-        schema::ensure_vault_schema(&conn).unwrap();
-        crate::db::account_profile::ensure_account_row(&conn, TEST_ACCOUNT).unwrap();
+        let (_pool, mut conn) = open_verify(&db).await;
+        schema::ensure_vault_schema(&mut conn).await.unwrap();
+        crate::db::account_profile::ensure_account_row(&mut conn, TEST_ACCOUNT)
+            .await
+            .unwrap();
         let import_id = crate::db::vault_imports::start_import(
-            &conn,
+            &mut conn,
             TEST_ACCOUNT,
             "imessage",
             "append",
             Some("test"),
         )
+        .await
         .unwrap();
 
         let stats = import_jsonl_files_on_conn(
@@ -1546,20 +1571,19 @@ mod tests {
             }),
             ImportSchemaMode::AssumeReady,
         )
+        .await
         .unwrap();
         assert_eq!(stats.messages, 1);
 
-        let stamped: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM messages WHERE import_id = ?1",
-                params![import_id],
-                |r| r.get(0),
-            )
+        let stamped: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE import_id = $1")
+            .bind(import_id)
+            .fetch_one(&mut *conn)
+            .await
             .unwrap();
         assert_eq!(stamped, 1);
 
         let row = crate::db::vault_imports::complete_import(
-            &conn,
+            &mut conn,
             TEST_ACCOUNT,
             import_id,
             &crate::db::vault_imports::CompleteImportArgs {
@@ -1570,29 +1594,35 @@ mod tests {
                 ..Default::default()
             },
         )
+        .await
         .unwrap();
         assert_eq!(row.status, "completed");
         assert_eq!(row.message_count, 1);
 
         let listed =
-            crate::db::vault_imports::list_imports_for_account(&conn, TEST_ACCOUNT, 10).unwrap();
+            crate::db::vault_imports::list_imports_for_account(&mut conn, TEST_ACCOUNT, 10)
+                .await
+                .unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].source, "imessage");
         assert!(!listed[0].started_at.is_empty());
         assert!(listed[0].finished_at.is_some());
         assert_eq!(
-            crate::db::vault_imports::account_attachment_bytes(&conn, TEST_ACCOUNT).unwrap(),
+            crate::db::vault_imports::account_attachment_bytes(&mut conn, TEST_ACCOUNT)
+                .await
+                .unwrap(),
             0
         );
         assert!(
-            crate::db::vault_imports::top_attachments_by_size(&conn, TEST_ACCOUNT, 5)
+            crate::db::vault_imports::top_attachments_by_size(&mut conn, TEST_ACCOUNT, 5)
+                .await
                 .unwrap()
                 .is_empty()
         );
     }
 
-    #[test]
-    fn trunk_zero_phone_imports_digits_with_review_note() {
+    #[tokio::test]
+    async fn trunk_zero_phone_imports_digits_with_review_note() {
         let tmp = TempDir::new().unwrap();
         let db = tmp.path().join("vault.db");
         let assets = tmp.path().join("assets");
@@ -1604,9 +1634,11 @@ mod tests {
 "#,
         );
 
-        let mut conn = Connection::open(&db).unwrap();
-        schema::ensure_vault_schema(&conn).unwrap();
-        crate::db::account_profile::ensure_account_row(&conn, TEST_ACCOUNT).unwrap();
+        let (_pool, mut conn) = open_verify(&db).await;
+        schema::ensure_vault_schema(&mut conn).await.unwrap();
+        crate::db::account_profile::ensure_account_row(&mut conn, TEST_ACCOUNT)
+            .await
+            .unwrap();
 
         let stats = import_jsonl_files_on_conn(
             &mut conn,
@@ -1624,19 +1656,20 @@ mod tests {
             }),
             ImportSchemaMode::AssumeReady,
         )
+        .await
         .unwrap();
         assert_eq!(stats.phones_needing_review, 1);
 
         // Guarded policy: normalized mirrors the digits (never +02079460000)
         // and the handles row carries a review note.
-        let (normalized, note): (String, Option<String>) = conn
-            .query_row(
-                "SELECT normalized, normalized_note FROM handles
-                 WHERE account_id = ?1 AND handle_type = 'phone'",
-                params![TEST_ACCOUNT],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
+        let (normalized, note): (String, Option<String>) = sqlx::query_as(
+            "SELECT normalized, normalized_note FROM handles
+             WHERE account_id = $1 AND handle_type = 'phone'",
+        )
+        .bind(TEST_ACCOUNT)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
         assert_eq!(normalized, "02079460000");
         assert!(
             note.as_deref().is_some(),
@@ -1644,8 +1677,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn source_from_jsonl_stamps_export_source_and_assets() {
+    #[tokio::test]
+    async fn source_from_jsonl_stamps_export_source_and_assets() {
         use crate::config::PathsConfig;
         use crate::import_media::MediaMode;
 
@@ -1689,23 +1722,23 @@ mod tests {
                 contact_name_mode: ContactNameMode::default(),
             },
         )
+        .await
         .unwrap();
         assert_eq!(stats.messages, 1);
         assert_eq!(stats.assets_copied, 1);
 
-        let conn = Connection::open(&db).unwrap();
-        let source: String = conn
-            .query_row("SELECT source FROM messages WHERE guid = 'g1'", [], |r| {
-                r.get(0)
-            })
+        let (_pool, mut conn) = open_verify(&db).await;
+        let source: String = sqlx::query_scalar("SELECT source FROM messages WHERE guid = 'g1'")
+            .fetch_one(&mut *conn)
+            .await
             .unwrap();
         assert_eq!(source, "go-sms-pro");
         let assets_root = paths.assets_dir_for_account(TEST_ACCOUNT, "go-sms-pro");
         assert!(assets_root.is_dir());
     }
 
-    #[test]
-    fn media_none_skips_attachment_copy() {
+    #[tokio::test]
+    async fn media_none_skips_attachment_copy() {
         use crate::config::PathsConfig;
         use crate::import_media::MediaMode;
 
@@ -1749,68 +1782,75 @@ mod tests {
                 contact_name_mode: ContactNameMode::default(),
             },
         )
+        .await
         .unwrap();
         assert_eq!(stats.messages, 1);
         assert_eq!(stats.attachments, 0);
         assert_eq!(stats.assets_copied, 0);
     }
 
-    fn seed_contact(db: &Path, handle: &str, preferred_name: &str) {
-        let conn = Connection::open(db).unwrap();
-        schema::configure_connection(&conn).unwrap();
-        schema::ensure_vault_schema(&conn).unwrap();
-        crate::db::account_profile::ensure_account_row(&conn, TEST_ACCOUNT).unwrap();
-        conn.execute(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, ?2)",
-            params![TEST_ACCOUNT, preferred_name],
+    async fn seed_contact(db: &Path, handle: &str, preferred_name: &str) {
+        let (_pool, mut conn) = open_verify(db).await;
+        schema::ensure_vault_schema(&mut conn).await.unwrap();
+        crate::db::account_profile::ensure_account_row(&mut conn, TEST_ACCOUNT)
+            .await
+            .unwrap();
+        let contact_id: i64 = sqlx::query_scalar(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, $2) RETURNING id",
         )
+        .bind(TEST_ACCOUNT)
+        .bind(preferred_name)
+        .fetch_one(&mut *conn)
+        .await
         .unwrap();
-        let contact_id = conn.last_insert_rowid();
-        conn.execute(
+        let handle_id: i64 = sqlx::query_scalar(
             "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-             VALUES (?1, ?2, ?2, 'phone', 'phone')",
-            params![TEST_ACCOUNT, handle],
+             VALUES ($1, $2, $2, 'phone', 'phone') RETURNING id",
         )
+        .bind(TEST_ACCOUNT)
+        .bind(handle)
+        .fetch_one(&mut *conn)
+        .await
         .unwrap();
-        let handle_id = conn.last_insert_rowid();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO contact_handles (account_id, handle_id, contact_id)
-             VALUES (?1, ?2, ?3)",
-            params![TEST_ACCOUNT, handle_id, contact_id],
+             VALUES ($1, $2, $3)",
         )
+        .bind(TEST_ACCOUNT)
+        .bind(handle_id)
+        .bind(contact_id)
+        .execute(&mut *conn)
+        .await
         .unwrap();
     }
 
-    fn participant_name_alias(db: &Path) -> Option<String> {
-        let conn = Connection::open(db).unwrap();
-        let raw = conn
-            .query_row("SELECT name_alias FROM participants LIMIT 1", [], |r| {
-                r.get::<_, Option<String>>(0)
-            })
-            .optional()
+    async fn participant_name_alias(db: &Path) -> Option<String> {
+        let (_pool, mut conn) = open_verify(db).await;
+        let raw: Option<String> = sqlx::query_scalar("SELECT name_alias FROM participants LIMIT 1")
+            .fetch_optional(&mut *conn)
+            .await
             .unwrap()
             .flatten();
         trim_nonempty(raw)
     }
 
-    fn contact_handle_name_alias(db: &Path) -> Option<String> {
-        let conn = Connection::open(db).unwrap();
-        let raw = conn
-            .query_row("SELECT name_alias FROM contact_handles LIMIT 1", [], |r| {
-                r.get::<_, Option<String>>(0)
-            })
-            .optional()
-            .unwrap()
-            .flatten();
+    async fn contact_handle_name_alias(db: &Path) -> Option<String> {
+        let (_pool, mut conn) = open_verify(db).await;
+        let raw: Option<String> =
+            sqlx::query_scalar("SELECT name_alias FROM contact_handles LIMIT 1")
+                .fetch_optional(&mut *conn)
+                .await
+                .unwrap()
+                .flatten();
         trim_nonempty(raw)
     }
 
-    #[test]
-    fn contact_name_mode_fill_missing_keeps_import_name() {
+    #[tokio::test]
+    async fn contact_name_mode_fill_missing_keeps_import_name() {
         let tmp = TempDir::new().unwrap();
         let db = tmp.path().join("vault.db");
         let assets = tmp.path().join("assets");
-        seed_contact(&db, "+15555550123", "Vault Alice");
+        seed_contact(&db, "+15555550123", "Vault Alice").await;
         let path = write_jsonl(
             tmp.path(),
             "named.jsonl",
@@ -1830,16 +1870,19 @@ mod tests {
             import_id: None,
         });
         opts.contact_name_mode = ContactNameMode::FillMissing;
-        import_jsonl_files(&db, &[path], &opts).unwrap();
-        assert_eq!(participant_name_alias(&db).as_deref(), Some("Backup Bob"));
+        import_jsonl_files(&db, &[path], &opts).await.unwrap();
+        assert_eq!(
+            participant_name_alias(&db).await.as_deref(),
+            Some("Backup Bob")
+        );
     }
 
-    #[test]
-    fn contact_name_mode_fill_missing_uses_vault_when_empty() {
+    #[tokio::test]
+    async fn contact_name_mode_fill_missing_uses_vault_when_empty() {
         let tmp = TempDir::new().unwrap();
         let db = tmp.path().join("vault.db");
         let assets = tmp.path().join("assets");
-        seed_contact(&db, "+15555550123", "Vault Alice");
+        seed_contact(&db, "+15555550123", "Vault Alice").await;
         let path = write_jsonl(
             tmp.path(),
             "missing.jsonl",
@@ -1859,16 +1902,19 @@ mod tests {
             import_id: None,
         });
         opts.contact_name_mode = ContactNameMode::FillMissing;
-        import_jsonl_files(&db, &[path], &opts).unwrap();
-        assert_eq!(participant_name_alias(&db).as_deref(), Some("Vault Alice"));
+        import_jsonl_files(&db, &[path], &opts).await.unwrap();
+        assert_eq!(
+            participant_name_alias(&db).await.as_deref(),
+            Some("Vault Alice")
+        );
     }
 
-    #[test]
-    fn contact_name_mode_as_is_ignores_vault() {
+    #[tokio::test]
+    async fn contact_name_mode_as_is_ignores_vault() {
         let tmp = TempDir::new().unwrap();
         let db = tmp.path().join("vault.db");
         let assets = tmp.path().join("assets");
-        seed_contact(&db, "+15555550123", "Vault Alice");
+        seed_contact(&db, "+15555550123", "Vault Alice").await;
         let path = write_jsonl(
             tmp.path(),
             "as-is.jsonl",
@@ -1888,16 +1934,16 @@ mod tests {
             import_id: None,
         });
         opts.contact_name_mode = ContactNameMode::AsIs;
-        import_jsonl_files(&db, &[path], &opts).unwrap();
-        assert_eq!(participant_name_alias(&db), None);
+        import_jsonl_files(&db, &[path], &opts).await.unwrap();
+        assert_eq!(participant_name_alias(&db).await, None);
     }
 
-    #[test]
-    fn contact_name_mode_overwrite_prefers_vault() {
+    #[tokio::test]
+    async fn contact_name_mode_overwrite_prefers_vault() {
         let tmp = TempDir::new().unwrap();
         let db = tmp.path().join("vault.db");
         let assets = tmp.path().join("assets");
-        seed_contact(&db, "+15555550123", "Vault Alice");
+        seed_contact(&db, "+15555550123", "Vault Alice").await;
         let path = write_jsonl(
             tmp.path(),
             "overwrite.jsonl",
@@ -1917,17 +1963,20 @@ mod tests {
             import_id: None,
         });
         opts.contact_name_mode = ContactNameMode::Overwrite;
-        import_jsonl_files(&db, &[path], &opts).unwrap();
-        assert_eq!(participant_name_alias(&db).as_deref(), Some("Vault Alice"));
+        import_jsonl_files(&db, &[path], &opts).await.unwrap();
+        assert_eq!(
+            participant_name_alias(&db).await.as_deref(),
+            Some("Vault Alice")
+        );
     }
 
-    #[test]
-    fn contact_handle_alias_seeds_first_wins() {
+    #[tokio::test]
+    async fn contact_handle_alias_seeds_first_wins() {
         let tmp = TempDir::new().unwrap();
         let db = tmp.path().join("vault.db");
         let assets = tmp.path().join("assets");
-        seed_contact(&db, "+15555550123", "Vault Alice");
-        assert!(contact_handle_name_alias(&db).is_none());
+        seed_contact(&db, "+15555550123", "Vault Alice").await;
+        assert!(contact_handle_name_alias(&db).await.is_none());
 
         let path1 = write_jsonl(
             tmp.path(),
@@ -1948,9 +1997,9 @@ mod tests {
             import_id: None,
         });
         opts.contact_name_mode = ContactNameMode::FillMissing;
-        import_jsonl_files(&db, &[path1], &opts).unwrap();
+        import_jsonl_files(&db, &[path1], &opts).await.unwrap();
         assert_eq!(
-            contact_handle_name_alias(&db).as_deref(),
+            contact_handle_name_alias(&db).await.as_deref(),
             Some("Backup Bob")
         );
 
@@ -1961,15 +2010,15 @@ mod tests {
 {"guid":"g-alias2","timestamp_unix_ms":1426183463000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"yo","attachments":[],"imessage":null,"source":null}
 "#,
         );
-        import_jsonl_files(&db, &[path2], &opts).unwrap();
+        import_jsonl_files(&db, &[path2], &opts).await.unwrap();
         assert_eq!(
-            contact_handle_name_alias(&db).as_deref(),
+            contact_handle_name_alias(&db).await.as_deref(),
             Some("Backup Bob")
         );
     }
 
-    #[test]
-    fn persists_missing_reason_with_null_sha256() {
+    #[tokio::test]
+    async fn persists_missing_reason_with_null_sha256() {
         let tmp = TempDir::new().unwrap();
         let db = tmp.path().join("vault.db");
         let assets = tmp.path().join("assets");
@@ -1997,31 +2046,31 @@ mod tests {
                 import_id: None,
             }),
         )
+        .await
         .unwrap();
         assert_eq!(stats.messages, 1);
         assert_eq!(stats.attachments, 1);
 
-        let conn = Connection::open(&db).unwrap();
+        let (_pool, mut conn) = open_verify(&db).await;
         let (sha256, missing_reason, size_bytes, original_name): (
             Option<String>,
             Option<String>,
             Option<i64>,
             Option<String>,
-        ) = conn
-            .query_row(
-                "SELECT sha256, missing_reason, size_bytes, original_name FROM attachments LIMIT 1",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-            )
-            .unwrap();
+        ) = sqlx::query_as(
+            "SELECT sha256, missing_reason, size_bytes, original_name FROM attachments LIMIT 1",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
         assert!(sha256.is_none());
         assert_eq!(missing_reason.as_deref(), Some("too_large"));
         assert_eq!(size_bytes, Some(999));
         assert_eq!(original_name.as_deref(), Some("gone.bin"));
     }
 
-    #[test]
-    fn claimed_import_rejects_corrupt_existing_asset() {
+    #[tokio::test]
+    async fn claimed_import_rejects_corrupt_existing_asset() {
         let tmp = TempDir::new().unwrap();
         let db = tmp.path().join("vault.db");
         let assets = tmp.path().join("assets");
@@ -2055,21 +2104,22 @@ mod tests {
                 import_id: None,
             }),
         )
+        .await
         .unwrap();
 
         assert_eq!(stats.assets_deduped, 0);
         assert_eq!(stats.assets_missing, 1);
-        let conn = Connection::open(&db).unwrap();
-        let assets_path: Option<String> = conn
-            .query_row("SELECT assets_path FROM attachments LIMIT 1", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
+        let (_pool, mut conn) = open_verify(&db).await;
+        let assets_path: Option<String> =
+            sqlx::query_scalar("SELECT assets_path FROM attachments LIMIT 1")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
         assert!(assets_path.is_none());
     }
 
-    #[test]
-    fn rejects_attachment_path_traversal() {
+    #[tokio::test]
+    async fn rejects_attachment_path_traversal() {
         let tmp = TempDir::new().unwrap();
         let db = tmp.path().join("vault.db");
         let assets = tmp.path().join("assets");
@@ -2100,6 +2150,7 @@ mod tests {
                 import_id: None,
             }),
         )
+        .await
         .unwrap_err();
         assert!(
             err.to_string()
@@ -2108,8 +2159,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn failed_replace_keeps_existing_messages() {
+    #[tokio::test]
+    async fn failed_replace_keeps_existing_messages() {
         let tmp = TempDir::new().unwrap();
         let db = tmp.path().join("vault.db");
         let assets = tmp.path().join("assets");
@@ -2139,6 +2190,7 @@ mod tests {
                 import_id: None,
             }),
         )
+        .await
         .unwrap();
 
         let bad = write_jsonl(
@@ -2163,23 +2215,23 @@ mod tests {
                 import_id: None,
             }),
         )
+        .await
         .unwrap_err();
         assert!(
             err.to_string()
                 .contains(message_ir_format::UNSAFE_ATTACHMENT_PATH_PREFIX)
         );
 
-        let conn = Connection::open(&db).unwrap();
-        let body: String = conn
-            .query_row(
-                "SELECT body FROM messages WHERE guid = 'g-keep-replace'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let (_pool, mut conn) = open_verify(&db).await;
+        let body: String =
+            sqlx::query_scalar("SELECT body FROM messages WHERE guid = 'g-keep-replace'")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
         assert_eq!(body, "keep me");
-        let n: i64 = conn
-            .query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages")
+            .fetch_one(&mut *conn)
+            .await
             .unwrap();
         assert_eq!(n, 1);
     }

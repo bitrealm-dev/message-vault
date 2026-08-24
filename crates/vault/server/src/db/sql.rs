@@ -21,11 +21,6 @@ pub fn in_placeholders(start: usize, n: usize) -> String {
         .join(",")
 }
 
-/// Comma-separated `(?, ?)` placeholders for a VALUES list of length `n`.
-pub fn pair_placeholders(n: usize) -> String {
-    vec!["(?, ?)"; n].join(",")
-}
-
 /// Load child rows for a set of parent ids, grouped by the parent id in
 /// column 0 of each row. `build_sql` receives the `$N` placeholder list for
 /// the current chunk of ids (starting at `$1`); `map_row` extracts the parent
