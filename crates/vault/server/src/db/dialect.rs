@@ -2,11 +2,27 @@
 
 use crate::db::engine::DbEngine;
 
-/// Case-insensitive substring match (`%term%` patterns).
+/// Case-insensitive substring match fragment (`%term%` patterns).
+///
+/// The `?` placeholder form is **only** for the renumber-pass fragments
+/// consumed by the Task 5 SqlParam renumberer, which rewrites `?` to the
+/// right `$n`; nothing else may use it. Hand-numbered SQL must use
+/// [`like_ci_numbered`] instead — sqlx Any does no client-side placeholder
+/// rewriting, so a bare `?` is invalid on Postgres.
 pub fn like_ci(engine: DbEngine) -> &'static str {
     match engine {
         DbEngine::Sqlite => "LIKE ? COLLATE NOCASE",
         DbEngine::Postgres => "ILIKE ?",
+    }
+}
+
+/// Case-insensitive substring match with an explicit numbered placeholder
+/// (`%term%` patterns), for SQL that hand-numbers its binds. `n` is the
+/// 1-based index of the pattern argument in the statement.
+pub fn like_ci_numbered(engine: DbEngine, n: usize) -> String {
+    match engine {
+        DbEngine::Sqlite => format!("LIKE ${n} COLLATE NOCASE"),
+        DbEngine::Postgres => format!("ILIKE ${n}"),
     }
 }
 
@@ -25,5 +41,30 @@ pub fn engine_of(conn: &sqlx::AnyConnection) -> DbEngine {
         DbEngine::Postgres
     } else {
         DbEngine::Sqlite
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn like_ci_fragment_is_stable() {
+        assert_eq!(like_ci(DbEngine::Sqlite), "LIKE ? COLLATE NOCASE");
+        assert_eq!(like_ci(DbEngine::Postgres), "ILIKE ?");
+    }
+
+    #[test]
+    fn like_ci_numbered_emits_engine_placeholders() {
+        assert_eq!(
+            like_ci_numbered(DbEngine::Sqlite, 1),
+            "LIKE $1 COLLATE NOCASE"
+        );
+        assert_eq!(like_ci_numbered(DbEngine::Postgres, 1), "ILIKE $1");
+        assert_eq!(
+            like_ci_numbered(DbEngine::Sqlite, 3),
+            "LIKE $3 COLLATE NOCASE"
+        );
+        assert_eq!(like_ci_numbered(DbEngine::Postgres, 3), "ILIKE $3");
     }
 }

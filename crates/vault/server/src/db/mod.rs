@@ -1,4 +1,5 @@
-//! SQLite schema and tenant data helpers (accounts, tokens, contacts).
+//! Schema and tenant data helpers (accounts, tokens, contacts) — SQLite and
+//! Postgres, engine-branched at the query layer.
 
 pub mod account_profile;
 pub mod api_tokens;
