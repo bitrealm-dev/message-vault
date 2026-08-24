@@ -1,0 +1,744 @@
+<title>Message Vault Field Assessment</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+  :root {
+    --ground: #F4F6F7;
+    --surface: #FFFFFF;
+    --surface-2: #EDF1F2;
+    --ink: #15191C;
+    --ink-2: #3D474D;
+    --muted: #626F76;
+    --rule: #D8DFE1;
+    --rule-2: #C3CDD1;
+    --accent: #0E6A64;
+    --accent-ink: #0A4F4A;
+    --accent-wash: #E2EFED;
+    --crit: #A82318;
+    --crit-wash: #F8E7E5;
+    --warn: #8A5200;
+    --warn-wash: #F8EEDF;
+    --ok: #2A6249;
+    --ok-wash: #E3EFE9;
+
+    --f-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --measure: 68ch;
+    --pad: clamp(1.15rem, 4vw, 3.25rem);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #101518;
+      --surface: #171D21;
+      --surface-2: #1E262B;
+      --ink: #E4EAEC;
+      --ink-2: #B4C0C5;
+      --muted: #8B999F;
+      --rule: #2A343A;
+      --rule-2: #3A464D;
+      --accent: #4FB3AA;
+      --accent-ink: #7FCCC4;
+      --accent-wash: #16302E;
+      --crit: #E8776A;
+      --crit-wash: #35201D;
+      --warn: #D9A050;
+      --warn-wash: #332617;
+      --ok: #6FB894;
+      --ok-wash: #1A2E25;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #101518;
+    --surface: #171D21;
+    --surface-2: #1E262B;
+    --ink: #E4EAEC;
+    --ink-2: #B4C0C5;
+    --muted: #8B999F;
+    --rule: #2A343A;
+    --rule-2: #3A464D;
+    --accent: #4FB3AA;
+    --accent-ink: #7FCCC4;
+    --accent-wash: #16302E;
+    --crit: #E8776A;
+    --crit-wash: #35201D;
+    --warn: #D9A050;
+    --warn-wash: #332617;
+    --ok: #6FB894;
+    --ok-wash: #1A2E25;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--f-body);
+    font-size: 16.5px;
+    line-height: 1.62;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 78rem;
+    margin: 0 auto;
+    padding: 0 var(--pad) 6rem;
+  }
+
+  .col { max-width: var(--measure); }
+
+  p { margin: 0 0 1.05em; color: var(--ink-2); }
+  strong { color: var(--ink); font-weight: 600; }
+  a { color: var(--accent); }
+
+  code, .mono {
+    font-family: var(--f-mono);
+    font-size: 0.855em;
+    font-variant-ligatures: none;
+  }
+  p code, li code, td code {
+    background: var(--surface-2);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 0.08em 0.34em;
+    color: var(--ink);
+    white-space: nowrap;
+  }
+
+  /* ---------- masthead ---------- */
+  .mast {
+    border-bottom: 2px solid var(--ink);
+    padding: clamp(2.5rem, 6vw, 4.5rem) 0 1.5rem;
+  }
+  .eyebrow {
+    font-family: var(--f-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 1.15rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem 1.1rem;
+    align-items: center;
+  }
+  .eyebrow span:not(:last-child)::after {
+    content: "";
+    display: inline-block;
+    width: 1px; height: 0.72em;
+    background: var(--rule-2);
+    margin-left: 1.1rem;
+    vertical-align: -0.06em;
+  }
+  h1 {
+    font-family: var(--f-display);
+    font-weight: 700;
+    font-size: clamp(2.1rem, 6vw, 3.9rem);
+    line-height: 1.02;
+    letter-spacing: -0.024em;
+    margin: 0 0 1rem;
+    text-wrap: balance;
+    color: var(--ink);
+  }
+  .standfirst {
+    font-size: clamp(1.03rem, 2vw, 1.24rem);
+    line-height: 1.5;
+    color: var(--ink-2);
+    max-width: 54ch;
+    margin: 0;
+  }
+
+  /* ---------- metric strip ---------- */
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 3.25rem;
+  }
+  .metric { background: var(--ground); padding: 1.05rem 0.35rem 1.15rem; }
+  .metric dt {
+    font-family: var(--f-mono);
+    font-size: 0.655rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 0.3rem;
+  }
+  .metric dd {
+    margin: 0;
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 1.44rem;
+    letter-spacing: -0.015em;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .metric dd small {
+    font-family: var(--f-body);
+    font-weight: 400;
+    font-size: 0.72rem;
+    color: var(--muted);
+    letter-spacing: 0;
+    display: block;
+    margin-top: 0.1rem;
+  }
+
+  /* ---------- sections ---------- */
+  section { margin-bottom: 3.9rem; scroll-margin-top: 1.5rem; }
+
+  h2 {
+    font-family: var(--f-display);
+    font-weight: 700;
+    font-size: clamp(1.32rem, 3vw, 1.72rem);
+    letter-spacing: -0.017em;
+    line-height: 1.16;
+    margin: 0 0 0.35rem;
+    color: var(--ink);
+    text-wrap: balance;
+  }
+  .h2-rule {
+    display: flex;
+    align-items: baseline;
+    gap: 0.85rem;
+    border-top: 1px solid var(--ink);
+    padding-top: 0.85rem;
+    margin-bottom: 1.5rem;
+  }
+  .h2-num {
+    font-family: var(--f-mono);
+    font-size: 0.7rem;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+    padding-top: 0.42rem;
+    flex-shrink: 0;
+  }
+  h3 {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 1.02rem;
+    letter-spacing: -0.008em;
+    margin: 2.1rem 0 0.6rem;
+    color: var(--ink);
+  }
+  .lede { font-size: 1.05rem; color: var(--ink-2); }
+
+  /* ---------- scorecard ---------- */
+  .scorecard {
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    overflow: hidden;
+    background: var(--surface);
+  }
+  .score-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.65rem 1.25rem;
+    align-items: start;
+    padding: 0.92rem 1.1rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  .score-row:last-child { border-bottom: 0; }
+  .score-name {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: var(--ink);
+    margin-bottom: 0.12rem;
+  }
+  .score-note { font-size: 0.87rem; color: var(--muted); line-height: 1.45; }
+  .grade {
+    font-family: var(--f-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    padding: 0.24rem 0.6rem;
+    border-radius: 2px;
+    white-space: nowrap;
+    font-weight: 500;
+    border: 1px solid transparent;
+  }
+  .g-strong { background: var(--ok-wash); color: var(--ok); border-color: color-mix(in srgb, var(--ok) 30%, transparent); }
+  .g-ok     { background: var(--accent-wash); color: var(--accent-ink); border-color: color-mix(in srgb, var(--accent) 28%, transparent); }
+  .g-weak   { background: var(--warn-wash); color: var(--warn); border-color: color-mix(in srgb, var(--warn) 30%, transparent); }
+  .g-crit   { background: var(--crit-wash); color: var(--crit); border-color: color-mix(in srgb, var(--crit) 32%, transparent); }
+
+  /* ---------- finding cards ---------- */
+  .findings { display: flex; flex-direction: column; gap: 1rem; }
+  .finding {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--rule-2);
+    border-radius: 2px;
+    padding: 1.05rem 1.2rem 1.1rem;
+  }
+  .finding.crit { border-left-color: var(--crit); }
+  .finding.warn { border-left-color: var(--warn); }
+  .finding.info { border-left-color: var(--accent); }
+  .f-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+  .f-title {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 1rem;
+    color: var(--ink);
+    letter-spacing: -0.008em;
+    flex: 1 1 22ch;
+    line-height: 1.3;
+  }
+  .tag {
+    font-family: var(--f-mono);
+    font-size: 0.63rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 0.2rem 0.5rem;
+    border-radius: 2px;
+    white-space: nowrap;
+  }
+  .t-crit { background: var(--crit-wash); color: var(--crit); }
+  .t-warn { background: var(--warn-wash); color: var(--warn); }
+  .t-info { background: var(--accent-wash); color: var(--accent-ink); }
+  .finding p { margin: 0 0 0.6rem; font-size: 0.93rem; }
+  .finding p:last-child { margin-bottom: 0; }
+  .ref {
+    font-family: var(--f-mono);
+    font-size: 0.775rem;
+    color: var(--muted);
+    display: block;
+    margin-top: 0.55rem;
+    padding-top: 0.55rem;
+    border-top: 1px dashed var(--rule);
+    word-break: break-word;
+  }
+  .fix {
+    font-size: 0.9rem;
+    background: var(--surface-2);
+    border-radius: 2px;
+    padding: 0.6rem 0.75rem;
+    margin-top: 0.65rem;
+  }
+  .fix b {
+    font-family: var(--f-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    display: block;
+    margin-bottom: 0.2rem;
+    font-weight: 500;
+  }
+
+  /* ---------- tables ---------- */
+  .tw { overflow-x: auto; margin: 1.1rem 0 1.3rem; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 30rem;
+    font-size: 0.9rem;
+  }
+  th {
+    font-family: var(--f-mono);
+    font-size: 0.655rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    text-align: left;
+    font-weight: 500;
+    padding: 0 0.85rem 0.5rem 0;
+    border-bottom: 1px solid var(--ink);
+  }
+  td {
+    padding: 0.62rem 0.85rem 0.62rem 0;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+    color: var(--ink-2);
+  }
+  td:first-child { color: var(--ink); }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* ---------- callout ---------- */
+  .callout {
+    background: var(--accent-wash);
+    border-left: 3px solid var(--accent);
+    border-radius: 2px;
+    padding: 1rem 1.2rem;
+    margin: 1.4rem 0;
+  }
+  .callout p { color: var(--ink); margin-bottom: 0.55rem; }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .k {
+    font-family: var(--f-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    display: block;
+    margin-bottom: 0.35rem;
+    font-weight: 500;
+  }
+
+  /* ---------- lists ---------- */
+  ul.clean { list-style: none; padding: 0; margin: 0 0 1.1rem; }
+  ul.clean li {
+    position: relative;
+    padding-left: 1.35rem;
+    margin-bottom: 0.5rem;
+    color: var(--ink-2);
+    font-size: 0.95rem;
+  }
+  ul.clean li::before {
+    content: "";
+    position: absolute;
+    left: 0.15rem; top: 0.62em;
+    width: 0.42rem; height: 1px;
+    background: var(--accent);
+  }
+  ul.clean li.no::before { background: var(--crit); }
+  ul.clean li.yes::before { background: var(--ok); }
+
+  /* ---------- two-col ---------- */
+  .split {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    gap: 1.6rem 2.4rem;
+  }
+  .panel {
+    border-top: 1px solid var(--rule-2);
+    padding-top: 0.9rem;
+  }
+  .panel h4 {
+    font-family: var(--f-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    margin: 0 0 0.7rem;
+    font-weight: 500;
+  }
+  .panel.keep h4 { color: var(--ok); }
+  .panel.drop h4 { color: var(--crit); }
+
+  footer {
+    border-top: 2px solid var(--ink);
+    padding-top: 1.2rem;
+    margin-top: 4rem;
+    font-size: 0.83rem;
+    color: var(--muted);
+  }
+  footer p { color: var(--muted); font-size: 0.83rem; }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="mast">
+    <div class="eyebrow">
+      <span>Engineering assessment</span>
+      <span>bitrealm-io / message-vault</span>
+      <span>23 Aug 2026</span>
+    </div>
+    <h1>The code is ahead of the pipeline that ships it</h1>
+    <p class="standfirst">Six weeks, one developer, ~98k lines of product code. The Rust is genuinely well-built and the security work is real. What's fragile is everything between a green PR and a shipped release.</p>
+  </header>
+
+  <dl class="metrics">
+    <div class="metric"><dt>Product LOC</dt><dd>97.8k<small>+46k legacy</small></dd></div>
+    <div class="metric"><dt>Commits</dt><dd>903<small>45 days, 1 author</small></dd></div>
+    <div class="metric"><dt>Rust tests</dt><dd>609<small>all passing</small></dd></div>
+    <div class="metric"><dt>Web tests</dt><dd>138<small>30 files</small></dd></div>
+    <div class="metric"><dt>Clippy</dt><dd>0<small>warnings, workspace</small></dd></div>
+    <div class="metric"><dt>API paths</dt><dd>37<small>spec test-guarded</small></dd></div>
+    <div class="metric"><dt>Doc claims</dt><dd>26<small>of 28 verified true</small></dd></div>
+  </dl>
+
+  <section id="verdict">
+    <div class="h2-rule"><span class="h2-num">01</span><h2>The short version</h2></div>
+    <div class="col">
+      <p class="lede">If I didn't know this was six weeks of solo AI-assisted work, I'd guess a small team over six months — and I'd assume they had no release engineer.</p>
+      <p>The Rust is the strongest part and it isn't close. Clippy is clean across the entire workspace, 609 tests pass, and there is not a single <code>TODO</code> or <code>FIXME</code> in the tree. The server has exactly three <code>unwrap</code>/<code>expect</code> calls and all three are provably unreachable. Blocking SQLite work is uniformly wrapped in <code>spawn_blocking</code> — the single most common way AI-written Axum code goes wrong, and it's right here everywhere.</p>
+      <p>The security work is not cargo-culted. Argon2id with per-password salts, a dummy-hash run on unknown usernames so login timing doesn't leak account existence, <code>O_NOFOLLOW</code> opens with symlink rejection on the asset path, digest re-verification on read, parameterized SQL with no injection surface I could find, CORS defaulting to same-origin, and scoped API tokens hashed at rest. Someone thought about attackers.</p>
+      <p>The documentation is also better than it has any right to be — an accuracy pass found 26 of 28 documented claims correct against the source, which is not what six-week docs usually look like.</p>
+      <p>Against that, the delivery pipeline is the weak half of the project, one specific thing is actively broken right now, and your repository currently states two incompatible licenses.</p>
+    </div>
+
+    <div class="callout">
+      <span class="k">Fix this first</span>
+      <p><strong>Your next <code>v*</code> tag push will fail.</strong> <code>web/</code> does not type-check at <code>HEAD</code> — two errors in <code>AttachmentLightbox.tsx:56</code>, introduced 22 Aug by PR&nbsp;#82. No gate anywhere catches it: CI runs Biome and Vitest but never <code>tsc</code>, and your own <code>check-pr.sh</code> builds the <em>docs</em> site while skipping the product build.</p>
+      <p>Because <code>npm run build</code> only runs inside the tag-gated Docker and desktop jobs, the failure surfaces during a release — taking down the image build and all three installer builds at once. Last tag was 13 Aug, so it has been latent for nine days.</p>
+    </div>
+  </section>
+
+  <section id="scorecard">
+    <div class="h2-rule"><span class="h2-num">02</span><h2>Dimension by dimension</h2></div>
+    <div class="scorecard">
+      <div class="score-row">
+        <div><div class="score-name">Rust code quality</div><div class="score-note">Clean clippy, coherent module structure, correct async discipline. Large files (8 over 1,500 lines) are the main wart.</div></div>
+        <span class="grade g-strong">Strong</span>
+      </div>
+      <div class="score-row">
+        <div><div class="score-name">Security posture</div><div class="score-note">Genuinely hardened auth, path handling, and token model. Gaps are rate-limit coverage and the absence of scanning, not the crypto.</div></div>
+        <span class="grade g-strong">Strong</span>
+      </div>
+      <div class="score-row">
+        <div><div class="score-name">Test coverage</div><div class="score-note">609 Rust tests including real HTTP-level route tests and guest-isolation tests. Frontend coverage is thin and there is no E2E.</div></div>
+        <span class="grade g-ok">Adequate</span>
+      </div>
+      <div class="score-row">
+        <div><div class="score-name">Data layer</div><div class="score-note">Multi-tenant schema, good indexes, real FTS5. No versioned migration mechanism is the notable hole.</div></div>
+        <span class="grade g-ok">Adequate</span>
+      </div>
+      <div class="score-row">
+        <div><div class="score-name">Frontend</div><div class="score-note">Zero <code>any</code>, disciplined hooks with abort handling. But no runtime API validation, no error boundary, and unvirtualized message threads.</div></div>
+        <span class="grade g-weak">Mixed</span>
+      </div>
+      <div class="score-row">
+        <div><div class="score-name">CI &amp; release</div><div class="score-note">Good caching and a real 3-OS matrix, but it builds the dead code and skips the shipping code — and nothing is required to merge.</div></div>
+        <span class="grade g-crit">Weak</span>
+      </div>
+      <div class="score-row">
+        <div><div class="score-name">Documentation</div><div class="score-note" id="doc-note">26 of 28 documented claims verified correct against source; OpenAPI drift is test-guarded. Missing: privacy, security, backup, changelog history.</div></div>
+        <span class="grade g-strong" id="doc-grade">Strong</span>
+      </div>
+      <div class="score-row">
+        <div><div class="score-name">SaaS readiness</div><div class="score-note">Multi-tenant schema is a major head start. Single-writer concurrency, local-disk assets, and no observability are the real work.</div></div>
+        <span class="grade g-weak">Mixed</span>
+      </div>
+    </div>
+  </section>
+
+  <section id="blockers">
+    <div class="h2-rule"><span class="h2-num">03</span><h2>Before you take money</h2></div>
+    <div class="col"><p>Seven items, ordered by damage-per-hour-of-fix rather than severity in the abstract. None requires an architectural change. Most are a morning's work each.</p></div>
+
+    <div class="findings">
+
+      <div class="finding crit">
+        <div class="f-head"><span class="f-title">The release pipeline is armed to fail</span><span class="tag t-crit">Blocking</span></div>
+        <p><code>tsc</code> exits 2 on <code>web/</code>. The error is invisible to every gate you have because <code>npm run build</code> appears in CI only inside the two tag-gated jobs. A release tag triggers Docker + Linux + Windows + macOS builds simultaneously; all four fail on the same two lines.</p>
+        <span class="ref">web/src/components/AttachmentLightbox.tsx:56 · .github/workflows/ci.yml:136,186,219 · scripts/check-pr.sh:25</span>
+        <div class="fix"><b>Fix</b>Drop the unsupported <code>onKeyDown</code> off the react-aria <code>Dialog</code> (move the handler to the <code>Modal</code> or use <code>onKeyDownCapture</code> on a wrapper). Then add <code>tsc --noEmit</code> to the <code>web-lint</code> job and <code>(cd web &amp;&amp; npm run build)</code> to <code>check-pr.sh</code>.</div>
+      </div>
+
+      <div class="finding crit">
+        <div class="f-head"><span class="f-title">CI compiles the dead code and skips the shipping code</span><span class="tag t-crit">Blocking</span></div>
+        <p>The legacy Slint GUI — which your own <code>CLAUDE.md</code> calls "not the product path" — is a workspace member, so every PR builds and tests it. Meanwhile <code>src-tauri</code>, the actual desktop app you ship, sits in <code>exclude</code> and is only <em>format</em>-checked. Its first real compile happens inside the 13–19 minute release job.</p>
+        <span class="ref">Cargo.toml:27 (gui member) · Cargo.toml:30 (src-tauri excluded) · .github/workflows/ci.yml:56</span>
+        <div class="fix"><b>Fix</b>Add a <code>cargo check --manifest-path src-tauri/Cargo.toml</code> job on every PR. Separately, drop the Slint crate from workspace members so you stop paying CI time for it.</div>
+      </div>
+
+      <div class="finding crit">
+        <div class="f-head"><span class="f-title">Nothing is required to merge, and <code>.env</code> is tracked</span><span class="tag t-crit">Blocking</span></div>
+        <p><code>main</code> has no branch protection at all — the protection API returns 404, so CI is advisory and a red build can land. Separately, <code>.env</code> is committed and <code>.gitignore</code> has no rule for it. Contents are harmless today (compose flags, UID/GID), but that is precisely where a Hanko key or Stripe secret goes the day you start billing.</p>
+        <span class="ref">.gitignore (no .env rule) · .env tracked in git since 05af0966</span>
+        <div class="fix"><b>Fix</b>Turn on required status checks for <code>main</code> and protect the <code>v*</code> tag pattern. Then <code>git rm --cached .env</code>, add it to <code>.gitignore</code> and <code>.dockerignore</code>, and commit a <code>.env.example</code> instead.</div>
+      </div>
+
+      <div class="finding crit">
+        <div class="f-head"><span class="f-title">Your repo states two mutually exclusive licenses</span><span class="tag t-crit">Blocking</span></div>
+        <p><code>LICENSE.md</code> and the README say <strong>Fair Core License 1.0</strong> (source-available, converting to Apache-2.0 after two years). But all <strong>26</strong> <code>Cargo.toml</code> files and <code>web/package.json</code> declare <code>AGPL-3.0-only</code> — and because utoipa injects <code>CARGO_PKG_LICENSE</code>, your published API spec advertises AGPL to every consumer.</p>
+        <p>These are not compatible stories, and the difference is exactly the one that matters for your business model. FCL exists to stop a competitor from hosting your software; AGPL explicitly permits it provided they publish source. Right now a contributor cannot know what they're signing over, and a customer's lawyer cannot tell what they've bought.</p>
+        <span class="ref">LICENSE.md:1 · README.md:95 · 26 × Cargo.toml <code>license</code> · web/package.json:5 · docs/src/assets/openapi.json <code>info.license</code></span>
+        <div class="fix"><b>Fix</b>Decide which one you mean — for the SaaS path it is almost certainly FCL — then correct the Cargo metadata, <code>package.json</code>, and the regenerated spec together. Add a CI check so they can't diverge again. Do this before accepting your first outside contribution.</div>
+      </div>
+
+      <div class="finding warn">
+        <div class="f-head"><span class="f-title">No vulnerability disclosure path, no dependency scanning</span><span class="tag t-warn">High</span></div>
+        <p>There is no <code>SECURITY.md</code>, so a researcher who finds a bug in a product holding people's private messages has nowhere to send it except a public issue. There is also no Dependabot, no <code>cargo-audit</code>/<code>cargo-deny</code>, no <code>npm audit</code>, and no CodeQL — 837 crates and 278 npm packages with nothing watching them.</p>
+        <span class="ref">repo root (no SECURITY.md) · .github/ (no dependabot.yml, no codeql workflow)</span>
+        <div class="fix"><b>Fix</b>An hour's work total: write <code>SECURITY.md</code> with a contact and a response window, add <code>dependabot.yml</code> for cargo + npm + actions, and wire <code>cargo-deny</code> into the PR gate.</div>
+      </div>
+
+      <div class="finding warn">
+        <div class="f-head"><span class="f-title">No versioned migration mechanism</span><span class="tag t-warn">High</span></div>
+        <p>All DDL is <code>CREATE TABLE IF NOT EXISTS</code> plus four hand-written <code>ensure_column</code> patches covering the accounts tables only. There is no <code>PRAGMA user_version</code>, no ordered migration list, and no data-migration path. Add a column to <code>messages.sql</code> and existing vaults silently never receive it — the <code>IF NOT EXISTS</code> no-ops and nothing backfills.</p>
+        <p>Nothing has broken yet because every change so far has been additive and you remembered. That is a process guarantee, not an engineering one, and it does not survive a hosted fleet you cannot inspect.</p>
+        <span class="ref">crates/vault/server/src/db/schema.rs:299-370 · schema/sql/*.sql</span>
+        <div class="fix"><b>Fix</b>Adopt <code>user_version</code> with an ordered migration list, and add a test that opens a DB created from an older schema snapshot and upgrades it. You already commit a schema fixture — extend it into a version series.</div>
+      </div>
+
+      <div class="finding warn">
+        <div class="f-head"><span class="f-title">Desktop installers ship unsigned</span><span class="tag t-warn">High</span></div>
+        <p>The workflow declares Windows certificate, macOS certificate, and Apple notarization secrets as environment variables — but none of those secrets are set, and no step consumes them. There is no signing or notarization anywhere. Every macOS user meets Gatekeeper and every Windows user meets SmartScreen.</p>
+        <span class="ref">.github/workflows/ci.yml:200-208</span>
+        <div class="fix"><b>Fix</b>Either implement signing properly or delete the misleading env block. Right now it reads as done. For paid desktop distribution, signing is not optional.</div>
+      </div>
+
+    </div>
+  </section>
+
+  <section id="saas">
+    <div class="h2-rule"><span class="h2-num">04</span><h2>What the SaaS pivot actually costs</h2></div>
+    <div class="col">
+      <p>The headline is better than you probably expect. <strong>The schema is already multi-tenant.</strong> Every table carries <code>account_id</code> with <code>ON DELETE CASCADE</code> and composite indexes, and the read paths I traced validate ownership before querying by id. The single most expensive SaaS retrofit — bolting tenancy onto a single-user data model — is a problem you don't have.</p>
+      <p>Tenant isolation is enforced by threading <code>auth.account_id</code> into each query by hand. That's correct in the code I read, and the ownership-check-then-query pattern in <code>list_conversation_source_stats</code> is exactly right. But nothing structural stops one forgotten predicate, and the blast radius is one customer reading another's private messages. That deserves a dedicated test suite, not vigilance.</p>
+    </div>
+
+    <div class="split">
+      <div class="panel keep">
+        <h4>Carries over as-is</h4>
+        <ul class="clean">
+          <li class="yes">Multi-tenant schema with cascade deletes and per-account indexes</li>
+          <li class="yes">Scoped, revocable, hash-at-rest API tokens with expiry</li>
+          <li class="yes">Opaque session tokens — nothing forgeable if the DB leaks</li>
+          <li class="yes">Content-addressed assets, which makes object storage a clean swap</li>
+          <li class="yes">Resumable multipart upload already implemented</li>
+          <li class="yes">Real FTS5 search over body, subject, and attachment transcriptions</li>
+        </ul>
+      </div>
+      <div class="panel drop">
+        <h4>Needs real work</h4>
+        <ul class="clean">
+          <li class="no">All writes serialize through one <code>Mutex&lt;Connection&gt;</code> — a hard concurrency ceiling</li>
+          <li class="no">Every authenticated request runs schema DDL on a fresh connection</li>
+          <li class="no">Rate limits are auth-only, in-memory, and reset on restart</li>
+          <li class="no">Assets are local disk only — single node, needs a volume</li>
+          <li class="no">SIGTERM is unhandled, so <code>docker stop</code> hard-kills mid-import</li>
+          <li class="no">167 <code>eprintln!</code> calls and no <code>tracing</code>, metrics, or error reporting</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="callout">
+      <span class="k">The one that will bite quietly</span>
+      <p><code>resolve_auth</code> opens a new SQLite connection <em>and runs <code>ensure_accounts_schema</code></em> on every authenticated request. It's invisible at single-user scale and becomes your throughput wall under real load. Schema-ensure already runs at startup, so the per-request call is pure waste — dropping it plus adding a connection pool is likely your highest-leverage performance change.</p>
+      <p class="mono" style="font-size:0.78rem;color:var(--muted);">crates/vault/server/src/server.rs:655 · server.rs:154 (write mutex)</p>
+    </div>
+  </section>
+
+  <section id="frontend">
+    <div class="h2-rule"><span class="h2-num">05</span><h2>Frontend: disciplined, with two product-shaped holes</h2></div>
+    <div class="col">
+      <p>The TypeScript hygiene is better than most professional codebases: <strong>zero <code>any</code></strong> in product code, zero <code>@ts-ignore</code>, zero non-null assertions, and hand-rolled fetch hooks that correctly use <code>AbortController</code> and refs to dodge stale closures. Biome runs with <code>useExhaustiveDependencies</code> at error level.</p>
+      <p>Two gaps are about the product rather than the code, and both show up worst on exactly the data this app is for — someone's decade-long thread with their mother.</p>
+    </div>
+
+    <div class="findings">
+      <div class="finding warn">
+        <div class="f-head"><span class="f-title">Message threads render every message to the DOM</span><span class="tag t-warn">High</span></div>
+        <p>The contacts list is properly virtualized, but the message thread isn't — it maps straight over the array. Year mode then loads an entire calendar year in sequential 500-message fetches. A busy year is 10k+ DOM nodes built on the main thread.</p>
+        <span class="ref">web/src/screens/message/MessageThread.tsx:39 · web/src/lib/useConversationMessages.ts:53-75</span>
+        <div class="fix"><b>Fix</b>Reuse the <code>VirtualList</code> you already built and proved for contacts.</div>
+      </div>
+
+      <div class="finding warn">
+        <div class="f-head"><span class="f-title">Opening one conversation costs O(N) requests</span><span class="tag t-warn">High</span></div>
+        <p>There is no <code>GET /v1/export/conversations/{id}</code> endpoint — only the list and a <code>/sources</code> sub-route. So the client pages through the entire conversation list 100 at a time until it finds the id. For a vault with thousands of threads, opening one is dozens of round trips.</p>
+        <span class="ref">web/src/lib/fetchConversationById.ts:15-34 · 45 documented routes, no by-id</span>
+        <div class="fix"><b>Fix</b>Add the by-id endpoint. It's a small server change that removes an entire class of latency.</div>
+      </div>
+
+      <div class="finding info">
+        <div class="f-head"><span class="f-title">API responses are cast, never validated</span><span class="tag t-info">Medium</span></div>
+        <p><code>return res.json() as Promise&lt;T&gt;</code> — every endpoint, no runtime check. Types are hand-written mirrors of the server's. The desktop app and server version independently, so a renamed field doesn't throw; it silently renders wrong. There's also no error boundary anywhere, so a render crash is a white screen.</p>
+        <span class="ref">web/src/lib/api.ts:45 · no ErrorBoundary in tree</span>
+        <div class="fix"><b>Fix</b>Zod at the client edge, starting with conversations and messages. Add one top-level error boundary.</div>
+      </div>
+
+      <div class="finding info">
+        <div class="f-head"><span class="f-title">Session token in localStorage, no 401 handling</span><span class="tag t-info">Medium</span></div>
+        <p>The token persists in <code>localStorage</code> and is validated once at startup. There is no 401 interception anywhere in the codebase — when the 30-day token expires mid-session, the UI degrades into scattered <code>401:</code> error strings rather than redirecting to login.</p>
+        <span class="ref">web/src/lib/auth.tsx:48-92, 130-179</span>
+        <div class="fix"><b>Fix</b>A global 401 → clear-and-redirect in the api client. Worth revisiting httpOnly cookies before hosting.</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="docs">
+    <div class="h2-rule"><span class="h2-num">06</span><h2>Documentation</h2></div>
+    <div class="col" id="docs-body">
+      <p>This is the section where I expected to find AI-generated volume, and I didn't. A dedicated accuracy pass checked <strong>28 documented claims against the source — 26 were correct.</strong> Env-var tables, rate-limit constants, search operators, import defaults, demo credentials, schema version, and every route in the API guide all match the code. Documented commands work as printed.</p>
+      <p>Two structural things deserve credit. The OpenAPI spec is generated by utoipa and <em>guarded by a test</em> — <code>committed_openapi_matches_dump</code> fails the build if the committed spec drifts from the routes. And the docs are willing to admit what doesn't exist: the Trash page says outright that restore and empty-trash routes "are not part of the current vault server. Treat Trash as a placeholder." That kind of honesty is rare and it's worth protecting.</p>
+      <p>The real gaps are <strong>trust-facing content and release history</strong>, not accuracy.</p>
+    </div>
+
+    <div class="findings" id="docs-findings">
+      <div class="finding warn">
+        <div class="f-head"><span class="f-title">Your AI-steering files describe the wrong auth system</span><span class="tag t-warn">High</span></div>
+        <p><code>CLAUDE.md</code> and <code>AGENTS.md</code> both say sessions are JWT. They aren't. Local sessions are opaque <code>mv-user-</code> random tokens, SHA-256 hashed at rest with a 30-day TTL; <code>jsonwebtoken</code> appears only to <em>verify</em> Hanko's RS256 tokens via JWKS. Your actual design is the better one — revocable, no signing secret, nothing forgeable from a DB leak.</p>
+        <p>This matters more than a normal doc bug: these two files prime every AI session on this repo. Two of my own audit passes inherited the error before I checked the source.</p>
+        <span class="ref">CLAUDE.md:9 · AGENTS.md:68 · crates/vault/server/src/db/session_tokens.rs · auth.rs:654-693</span>
+        <div class="fix"><b>Fix</b>One-line correction in both files. Cheapest high-value edit in the repo.</div>
+      </div>
+
+      <div class="finding warn">
+        <div class="f-head"><span class="f-title">Nothing documents privacy, data handling, or backup</span><span class="tag t-warn">High</span></div>
+        <p>This product ingests the most sensitive data a person owns, and there is no privacy policy, no data-retention statement, no telemetry disclosure, no threat model, and no TLS/reverse-proxy guidance for self-hosters. The <code>media-and-privacy</code> page covers import-time obfuscation but not vault-side governance. Backup — for a product whose entire purpose is preservation — is one sentence: "Copy the database and <code>data/</code> directory somewhere safe."</p>
+        <p>Your marketing asserts "Bitrealm does not host your archive." The moment that stops being true, you need a written data-handling contract, not a claim.</p>
+        <span class="ref">docs/src/content/docs/vault/ · update.md (backup, one line) · no SECURITY.md</span>
+        <div class="fix"><b>Fix</b>Three pages: what you store and for how long; how to back up and restore a vault; how to report a vulnerability. Write them before the hosted tier, not after.</div>
+      </div>
+
+      <div class="finding info">
+        <div class="f-head"><span class="f-title">No release has ever been recorded in the changelog</span><span class="tag t-info">Medium</span></div>
+        <p><code>CHANGELOG.md</code> contains only an <code>[Unreleased]</code> section. Across eight shipped tags through 0.7.3, not one has an entry, and the site's changelog page is a stub linking to GitHub Releases. For self-hosters deciding whether to pull <code>latest</code>, there's no way to see what changed.</p>
+        <span class="ref">CHANGELOG.md · docs changelog page (stub)</span>
+        <div class="fix"><b>Fix</b>Backfill 0.7.x from the release notes you already wrote, and render it on the site.</div>
+      </div>
+
+      <div class="finding info">
+        <div class="f-head"><span class="f-title">Rustdoc is 87% covered but zero examples compile</span><span class="tag t-info">Low</span></div>
+        <p>654 of 753 public items are documented — genuinely good, and the descriptions carry contracts rather than restating signatures. But <code>cargo test --doc</code> runs <strong>zero</strong> tests across all 24 suites: there is not a single <code>```rust</code> example in the workspace, while your own <code>rustdoc-style.md</code> mandates "examples when behavior is non-obvious."</p>
+        <span class="ref">cargo test --doc --workspace → 0 tests · docs/.../rustdoc-style.md</span>
+        <div class="fix"><b>Fix</b>One compilable example each for the date normalizer, the search-query parser, and the media modes. Doc examples are the only docs that can't rot.</div>
+      </div>
+
+      <div class="finding info">
+        <div class="f-head"><span class="f-title">The README's first sentence has a typo</span><span class="tag t-info">Low</span></div>
+        <p>"Pry <em>digitial</em> conversations out of apps" sits directly under the logo — the most-read line in the project — and "setup a local development environment and and compile" follows at line 109. Several blocks of unused Best-README-Template scaffolding are still commented into the file.</p>
+        <span class="ref">README.md:35, 109 · README.md:11-22, 124-130, 161-166</span>
+        <div class="fix"><b>Fix</b>Five minutes, disproportionate credibility return on a page you're asking strangers to trust with their messages.</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="debt">
+    <div class="h2-rule"><span class="h2-num">07</span><h2>46,000 lines of dead weight</h2></div>
+    <div class="col">
+      <p>Two legacy trees are still in the repo, and together they're a third of the codebase:</p>
+    </div>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Tree</th><th class="num">LOC</th><th>Status</th><th>Cost</th></tr></thead>
+        <tbody>
+          <tr><td><code>web-next/</code></td><td class="num">42,089</td><td>Legacy Next.js browse UI</td><td>Not in CI, not served, ships its own auth stack (<code>jose</code>, <code>@node-rs/argon2</code>) — an un-audited surface if anyone ever points it at a vault</td></tr>
+          <tr><td><code>crates/message-vault-io-gui/</code></td><td class="num">4,112</td><td>Legacy Slint desktop GUI</td><td>Is a workspace member, so it's compiled and tested on every PR</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="col">
+      <p>Both are already documented as not-the-product-path, so this is bookkeeping rather than a decision. Move them to an archive branch, keep the one <code>searchQuery</code> parser that <code>web-next</code> still supplies to a script, and reclaim the CI time and the cognitive overhead of two dead auth implementations sitting in the tree.</p>
+    </div>
+  </section>
+
+  <section id="calibration">
+    <div class="h2-rule"><span class="h2-num">08</span><h2>Calibration</h2></div>
+    <div class="col">
+      <p>You asked for honesty, so here's the part that matters: <strong>the common failure mode of AI-assisted solo projects is not present here.</strong> That failure mode is impressive-looking breadth over a hollow core — plausible code that doesn't cohere, tests that assert nothing, and docs describing software that was never written. This isn't that.</p>
+      <p>The evidence against it is specific. 609 tests that genuinely exercise the HTTP layer against a real router on an ephemeral port. Zero clippy warnings across 82k lines of Rust. A hand-written FTS query parser with a golden-file corpus. Guest-isolation tests that go auth → handler → database. A generated API spec with a test that fails the build if it drifts. And when an independent pass checked 28 documented claims against the source, 26 were correct — the docs describe software that actually exists, which is precisely the thing that's usually false.</p>
+      <p>You also ran your own 65-finding Rust audit today, and its three "high" items are all documentation issues — no correctness or security findings. My independent pass agrees with that verdict, which is worth stating plainly: two separate audits went looking for something alarming in the Rust and neither found it.</p>
+      <p>The weaknesses cluster tightly, and it's a recognizable cluster: the things a solo developer has no colleague to be annoyed by. Nobody's release got broken by your merge, so nothing forced a build gate. Nobody had to page someone at 3am, so there's no structured logging. Nobody inherited an unfamiliar schema, so migrations stayed manual. Nobody's lawyer asked which license applied, so two answers coexisted. Every one of those is cheap now and expensive once customers exist.</p>
+      <p>Concretely: the seven items in section 03 are roughly two focused days. That work converts this from "impressive personal project" to "defensible commercial foundation," and none of it requires touching the architecture — which is the real compliment here.</p>
+      <p>The one genuine architectural decision still ahead is the write path. A single mutex over one SQLite connection is correct and honest for self-hosting, and it is a ceiling for multi-tenant hosting. You don't have to solve it before launch, but decide deliberately whether the hosted tier is per-tenant SQLite files (which suits your content-addressed, cascade-scoped design remarkably well) or a shared Postgres — because that choice gets much more expensive after the first hundred customers.</p>
+    </div>
+  </section>
+
+  <footer>
+    <p>Read-only audit of <code>bitrealm-io/message-vault</code> at <code>edc22755</code>, 23 Aug 2026. Claims verified against source; <code>tsc</code>, <code>cargo clippy</code>, and <code>cargo test</code> executed locally. No files were modified. Findings that duplicate the existing <code>docs/superpowers/reports/2026-08-23-rust-audit.md</code> are noted rather than restated.</p>
+  </footer>
+
+</div>
