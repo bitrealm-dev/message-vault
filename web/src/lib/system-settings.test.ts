@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { joinImportStagingPath } from "./system-settings";
+import { joinImportStagingPath, resolveImportStagingDir } from "./system-settings";
 
 describe("joinImportStagingPath", () => {
   const now = new Date(2026, 7, 24, 18, 5, 9);
@@ -22,9 +22,23 @@ describe("joinImportStagingPath", () => {
     );
   });
 
+  it("strips a trailing backslash on a Windows home folder", () => {
+    expect(joinImportStagingPath("C:\\Users\\sam\\", "imessage-ios", now)).toBe(
+      "C:\\Users\\sam/message-vault/staging-iphone-ios-260824-180509",
+    );
+  });
+
   it("uses a relative message-vault path when home is empty", () => {
     expect(joinImportStagingPath("", "imessage-ios", now)).toBe(
       "message-vault/staging-iphone-ios-260824-180509",
+    );
+  });
+});
+
+describe("resolveImportStagingDir", () => {
+  it("fails when the user home directory cannot be determined", async () => {
+    await expect(resolveImportStagingDir("/backup", "imessage-ios")).rejects.toThrow(
+      /home directory/i,
     );
   });
 });

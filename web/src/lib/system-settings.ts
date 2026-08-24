@@ -152,7 +152,7 @@ export function joinImportStagingPath(
   now: Date = new Date(),
 ): string {
   const name = stagingDirName(sourceId, now);
-  const home = homeDir.replace(/[/\\]+$/, "");
+  const home = homeDir.trim().replace(/[/\\]+$/, "");
   if (!home) {
     return `${IMPORT_STAGING_PARENT}/${name}`;
   }
@@ -162,10 +162,20 @@ export function joinImportStagingPath(
 /**
  * Full path for a new import staging folder.
  * Always `{home}/message-vault/staging-<importer>-YYMMDD-HHMMSS`.
+ *
+ * @throws If the desktop app cannot determine the user home directory. A
+ * relative `message-vault/…` path would otherwise be created next to the
+ * process working directory (for example the AppImage mount).
  */
 export async function resolveImportStagingDir(
   _backupPath: string,
   sourceId: string,
 ): Promise<string> {
-  return joinImportStagingPath(await getHomeDir(), sourceId);
+  const home = (await getHomeDir()).trim();
+  if (!home) {
+    throw new Error(
+      "Could not determine the user home directory. Import staging needs ~/message-vault/.",
+    );
+  }
+  return joinImportStagingPath(home, sourceId);
 }
