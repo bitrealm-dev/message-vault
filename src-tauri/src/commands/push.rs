@@ -2,12 +2,12 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::thread;
 
 use tauri::Emitter;
 use vault_push::{ProgressEvent, VaultPushConfig, run as run_push};
 
-use super::events::{ExtractErrorEvent, ExtractProgressEvent};
+use super::events::ExtractProgressEvent;
+use super::jobs::{reset_and_clone_cancel, spawn_job};
 use crate::state::AppState;
 
 /// Convert a report count to the `usize` the progress event uses.
@@ -77,20 +77,22 @@ pub struct PushArgs {
 ///
 /// # Errors
 ///
-/// This command always returns `Ok` after the thread starts. Failures during
-/// the upload are sent as `extract:error`.
+/// Returns an error if another thread panicked while holding the shared
+/// state lock. Failures during the upload are sent as `extract:error`.
 #[tauri::command]
 pub async fn push(
-    _state: tauri::State<'_, Arc<Mutex<AppState>>>,
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
     app: tauri::AppHandle,
     args: PushArgs,
 ) -> Result<(), String> {
+    let cancel = reset_and_clone_cancel(&state)?;
+
     let app_handle = app.clone();
     let contact_name_mode = args
         .contact_name_mode
         .unwrap_or_else(|| "fill_missing".into());
 
-    thread::spawn(move || {
+    spawn_job(app, move || {
         let cfg = VaultPushConfig {
             input: PathBuf::from(&args.input_dir),
             base_url: args.base_url,
@@ -110,7 +112,7 @@ pub async fn push(
             report_path: None,
             log_path: None,
             journal_path: None,
-            cancel: None,
+            cancel: Some(cancel),
             contact_name_mode,
             import_id: args.import_id,
         };
@@ -188,16 +190,9 @@ pub async fn push(
 
         match run_push(&cfg, Some(&mut progress)) {
             Ok(_) => {}
-            Err(err) => {
-                let _ = app_handle.emit(
-                    "extract:error",
-                    ExtractErrorEvent {
-                        detail: format!("{err:#}"),
-                        user_message: None,
-                    },
-                );
-            }
+            Err(err) => return Err(err),
         }
+        Ok(())
     });
 
     Ok(())
