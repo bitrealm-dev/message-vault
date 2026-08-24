@@ -343,12 +343,12 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
                   so import can tell which messages you sent.
                 </div>
               ) : null}
-              {phonesMismatch && !mismatchAck ? (
+              {phonesMismatch && !mismatchAck && phonesForMatch.length > 0 ? (
                 <div
                   role="status"
                   className="mt-2 rounded-lg border border-warn-soft-border bg-warn-soft-bg px-3 py-2 text-[0.8125rem] text-warn-soft-text"
                 >
-                  I understand none of entered phone numbers match my profile and that imported
+                  I understand none of the entered phone numbers match my profile and that imported
                   messages will not be linked to my account.
                 </div>
               ) : null}
