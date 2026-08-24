@@ -14,14 +14,12 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
-use std::thread;
 
 use media::MaxResolution;
 use message_vault_io_core::{
-    ApplePlatform, AttachmentMedia, CancelFlag, Exporter, ExporterConfig, Form, GoSmsProConfig,
-    ImazingConfig, LogSink, MediaConfig, ObfuscateConfig, OpenExtractConfig, OutputFormat,
-    SmsBackupPlusConfig, SmsBackupRestoreConfig, SourceConfig, WhatsappConfig, WhatsappPlatform,
-    parse_date_range,
+    ApplePlatform, AttachmentMedia, Exporter, ExporterConfig, Form, GoSmsProConfig, ImazingConfig,
+    LogSink, MediaConfig, ObfuscateConfig, OpenExtractConfig, OutputFormat, SmsBackupPlusConfig,
+    SmsBackupRestoreConfig, SourceConfig, WhatsappConfig, WhatsappPlatform, parse_date_range,
 };
 use tauri::Emitter;
 
@@ -35,6 +33,7 @@ use sms_backup_restore_exporter::run as run_sms_restore;
 use whatsapp_exporter::run as run_whatsapp;
 
 use super::events::ExtractErrorEvent;
+use super::jobs::{reset_and_clone_cancel, spawn_job};
 use super::progress::{ExtractProgressStage, extract_progress_from_log};
 use super::{last_log_line_or, optional_trimmed};
 use crate::state::AppState;
@@ -177,19 +176,7 @@ pub async fn extract(
     let output_dir = args.output_dir;
     let mut config = build_exporter_config(&args.source, &args.path, &output_dir, &options)?;
 
-    // Clear a leftover cancel from a previous job. Otherwise this new export
-    // would stop immediately.
-    {
-        let st = state.lock().map_err(|e| e.to_string())?;
-        st.cancel_flag.store(false, Ordering::SeqCst);
-    }
-
-    // Share the same cancel flag with the background thread. The cancel
-    // command sets it; the exporter reads it.
-    let cancel: CancelFlag = {
-        let st = state.lock().map_err(|e| e.to_string())?;
-        st.cancel_flag.clone()
-    };
+    let cancel = reset_and_clone_cancel(&state)?;
 
     let app_handle = app.clone();
     config.cancel = Some(cancel);
@@ -203,7 +190,7 @@ pub async fn extract(
         }
     }));
 
-    thread::spawn(move || {
+    spawn_job(app, move || {
         let result = run_exporter(&config);
 
         match result {
@@ -237,16 +224,9 @@ pub async fn extract(
                     }
                 }
             }
-            Err(err) => {
-                let _ = app_handle.emit(
-                    "extract:error",
-                    ExtractErrorEvent {
-                        detail: format!("{err:#}"),
-                        user_message: None,
-                    },
-                );
-            }
+            Err(err) => return Err(err),
         }
+        Ok(())
     });
 
     Ok(())
