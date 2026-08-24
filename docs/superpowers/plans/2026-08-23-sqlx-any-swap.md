@@ -317,7 +317,7 @@ This task ports `db/schema.rs` and `db/sql.rs`. It is the first task of the comp
 - `pub fn delete_messages_for_source(conn: &mut AnyConnection, account_id: &str, source: &str) -> Result<u64>` — becomes async (Task 2 keeps the signature above but all db fns are `async`)
 - `pub async fn reset_staging_for_account(conn: &mut AnyConnection, account_id: &str) -> Result<()>`
 - `pub fn table_exists(conn: &mut AnyConnection, name: &str) -> Result<bool>` — async
-- `pub fn like_ci(engine: DbEngine) -> &'static str` and `pub fn now_utc_sql(engine: DbEngine) -> &'static str` in `dialect.rs`
+- `pub fn like_ci(engine: DbEngine) -> &'static str` (fragment form emitting `?` — ONLY for Task 5's renumber-pass fragments), `pub fn like_ci_numbered(engine: DbEngine, n: usize) -> String` (literal form emitting `$N` — for hand-numbered SQL in Tasks 3/4), and `pub fn now_utc_sql(engine: DbEngine) -> &'static str` in `dialect.rs`
 
 **Conversion recipes (normative for Tasks 2–6).** Every db-layer function changes shape in exactly this way:
 
@@ -332,7 +332,7 @@ This task ports `db/schema.rs` and `db/sql.rs`. It is the first task of the comp
 | `INSERT OR IGNORE INTO …` | `INSERT INTO … ON CONFLICT DO NOTHING` |
 | `INSERT OR REPLACE INTO …` | `INSERT INTO … ON CONFLICT(col) DO UPDATE SET …` (target column required) |
 | `IFNULL(a, b)` / `MAX` guards | `COALESCE(a, b)` (portable; rewrite all 8 sites) |
-| `LIKE ? COLLATE NOCASE` | `dialect::like_ci(engine)` returning `"LIKE ? COLLATE NOCASE"` / `"ILIKE ?"`; engine comes from `AppState.db_engine` in API layers and from `conn.backend_name()` inside db modules |
+| `LIKE ? COLLATE NOCASE` | `dialect::like_ci_numbered(engine, n)` in hand-numbered SQL (engine from `AppState.db_engine` in API layers / `conn.backend_name()` in db modules); `dialect::like_ci(engine)` fragment form only inside Task 5's renumber-pass fragments |
 | `datetime('now')` | Rust: `chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()` (matches SQLite's format) or `dialect::now_utc_sql(engine)` inside SQL |
 | `conn.transaction()?` | `let mut tx = conn.begin().await?;` … `tx.commit().await?;` — pass `&mut *tx` where a fn takes `&mut AnyConnection` (`Transaction` derefs to `AnyConnection`) |
 | `conn.execute_batch(batch)` | `for stmt in split_ddl(batch) { sqlx::query(stmt).execute(&mut *conn).await?; }` |
