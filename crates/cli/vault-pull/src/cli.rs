@@ -61,6 +61,7 @@ pub struct Cli {
     pub auth_only: bool,
 }
 
+/// The clap `Command` for embedding --help output into the docs pages and GUI.
 pub fn clap_command() -> Command {
     Cli::command()
 }

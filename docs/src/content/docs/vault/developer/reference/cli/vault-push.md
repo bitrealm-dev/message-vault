@@ -30,7 +30,7 @@ Prefer VAULT_KEY for the vault key. Prefer Message Vault → Vault for a GUI.
   Default value: ``
 * `--key <KEY>` — App password / Vault key (Settings → Account). Prefer VAULT_KEY env
 * `--input <INPUT>` — Export directory containing .jsonl files and attachments/
-* `--mode <MODE>` — Import mode: append (resume-safe) or replace
+* `--mode <MODE>` — Import mode: append: add to existing data (safe to re-run); replace: delete existing messages for this source, then import
 
   Default value: `append`
 * `--continue-on-error` — Continue after a failed conversation
