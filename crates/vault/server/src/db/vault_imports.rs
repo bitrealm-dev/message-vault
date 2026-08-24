@@ -601,21 +601,24 @@ pub struct TopAttachment {
     pub chat_identifier: String,
 }
 
+/// Raw row for [`top_attachments_by_size`] before mapping to [`TopAttachment`].
+type TopAttachmentRow = (
+    i64,
+    Option<String>,
+    Option<String>,
+    i64,
+    i64,
+    Option<String>,
+    String,
+);
+
 /// Largest attachments for an account.
 pub async fn top_attachments_by_size(
     conn: &mut AnyConnection,
     account_id: &str,
     limit: i64,
 ) -> Result<Vec<TopAttachment>> {
-    let rows: Vec<(
-        i64,
-        Option<String>,
-        Option<String>,
-        i64,
-        i64,
-        Option<String>,
-        String,
-    )> = sqlx::query_as(
+    let rows: Vec<TopAttachmentRow> = sqlx::query_as(
         r#"
             SELECT a.id,
                    a.original_name,

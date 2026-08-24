@@ -64,7 +64,8 @@ pub fn pg_test_url() -> Option<String> {
 /// take this lock around their Postgres work. Test-support surface, not
 /// product API.
 #[doc(hidden)]
-pub static PG_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub static PG_TEST_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 /// Clap command definition for the `message-vault-server` CLI; delegates to
 /// [`cli::clap_command`].

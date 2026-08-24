@@ -876,7 +876,7 @@ fn compile_metadata_fts_expr(
                         " OR EXISTS (SELECT 1 FROM messages_fts fts WHERE fts.rowid = m.id AND messages_fts MATCH ?",
                     );
                     params.push(SqlParam::Text(fts_query));
-                    sql.push_str(")");
+                    sql.push(')');
                 }
                 DbEngine::Postgres => {
                     if *prefix == Some(true) {
@@ -893,7 +893,7 @@ fn compile_metadata_fts_expr(
                     sql.push_str("))");
                 }
             }
-            sql.push_str(")");
+            sql.push(')');
             Ok(())
         }
         FtsNode::Phrase { value } => {
@@ -904,7 +904,7 @@ fn compile_metadata_fts_expr(
                         " OR EXISTS (SELECT 1 FROM messages_fts fts WHERE fts.rowid = m.id AND messages_fts MATCH ?",
                     );
                     params.push(SqlParam::Text(fts5_literal_query(value)));
-                    sql.push_str(")");
+                    sql.push(')');
                 }
                 DbEngine::Postgres => {
                     sql.push_str(
@@ -914,7 +914,7 @@ fn compile_metadata_fts_expr(
                     sql.push_str("))");
                 }
             }
-            sql.push_str(")");
+            sql.push(')');
             Ok(())
         }
         FtsNode::And { children } => {
@@ -944,14 +944,14 @@ fn compile_metadata_fts_children(
             "{operator} search expression has no operands"
         )));
     }
-    sql.push_str("(");
+    sql.push('(');
     for (i, child) in children.iter().enumerate() {
         if i > 0 {
             sql.push_str(&format!(" {operator} "));
         }
         compile_metadata_fts_expr(child, engine, sql, params)?;
     }
-    sql.push_str(")");
+    sql.push(')');
     Ok(())
 }
 
@@ -1973,20 +1973,20 @@ mod tests {
 
         // Bind order: leaf 1 (blocked) 8 LIKE patterns, then its FTS bind;
         // leaf 2 (alpha phrase) 8 + FTS; leaf 3 (report*) 8 + FTS; leaf 4 (spam).
-        for i in 0..8 {
-            assert_eq!(params[i], SqlParam::Text("%blocked%".into()));
+        for p in &params[0..8] {
+            assert_eq!(p, &SqlParam::Text("%blocked%".into()));
         }
         assert_eq!(params[8], SqlParam::Text("\"blocked\"".into()));
-        for i in 9..17 {
-            assert_eq!(params[i], SqlParam::Text("%alpha phrase%".into()));
+        for p in &params[9..17] {
+            assert_eq!(p, &SqlParam::Text("%alpha phrase%".into()));
         }
         assert_eq!(params[17], SqlParam::Text("\"alpha phrase\"".into()));
-        for i in 18..26 {
-            assert_eq!(params[i], SqlParam::Text("%report%".into()));
+        for p in &params[18..26] {
+            assert_eq!(p, &SqlParam::Text("%report%".into()));
         }
         assert_eq!(params[26], SqlParam::Text("\"report\"*".into()));
-        for i in 27..35 {
-            assert_eq!(params[i], SqlParam::Text("%spam%".into()));
+        for p in &params[27..35] {
+            assert_eq!(p, &SqlParam::Text("%spam%".into()));
         }
         assert_eq!(params[35], SqlParam::Text("\"spam\"".into()));
 

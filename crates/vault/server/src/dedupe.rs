@@ -174,7 +174,7 @@ pub async fn dedupe_cross_source(
         println!("  dedupe:   recomputing content keys…");
         let _ = io::stdout().flush();
         let mut tx = conn.begin().await?;
-        stats.keys_filled = recompute_all_content_keys(&mut *tx, account_id).await?;
+        stats.keys_filled = recompute_all_content_keys(&mut tx, account_id).await?;
         sqlx::query(
             r#"
             UPDATE messages
@@ -199,7 +199,7 @@ pub async fn dedupe_cross_source(
         println!("  dedupe:   pass A exact content_key…");
         let _ = io::stdout().flush();
         let mut tx = conn.begin().await?;
-        let (groups, flagged) = flag_exact_content_key_dupes(&mut *tx, account_id, &prio).await?;
+        let (groups, flagged) = flag_exact_content_key_dupes(&mut tx, account_id, &prio).await?;
         stats.exact_groups = groups;
         stats.exact_flagged = flagged;
         tx.commit().await?;
@@ -216,7 +216,7 @@ pub async fn dedupe_cross_source(
         let _ = io::stdout().flush();
         let mut tx = conn.begin().await?;
         stats.near_flagged =
-            flag_near_time_dupes(&mut *tx, account_id, &prio, near_window_secs).await?;
+            flag_near_time_dupes(&mut tx, account_id, &prio, near_window_secs).await?;
         tx.commit().await?;
         println!(
             "  dedupe:   near flagged={}  ({:.1}s total)",

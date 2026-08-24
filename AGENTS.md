@@ -65,7 +65,7 @@ The product has two pieces:
 | Piece                  | Stack                                                                                                                             |
 |------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
 | Language (Rust crates) | Rust 1.85+ (edition 2024). CI uses latest stable.                                                                                 |
-| Vault server           | Tokio + Axum 0.8 HTTP API. rusqlite with bundled SQLite. TOML config. Argon2 passwords, JWT sessions.                             |
+| Vault server           | Tokio + Axum 0.8 HTTP API. sqlx Any: SQLite (bundled) by default, Postgres via `[database] url`. TOML config. Argon2 passwords, JWT sessions. |
 | Database               | SQLite file at `data/vault.db`. Table SQL lives in `schema/sql/`. Schema changes bump `SCHEMA_VERSION` in `db/schema.rs`; old vaults are rebuilt empty and need a fresh import. |
 | Desktop app            | Tauri 2 native window. Vite 6 + React 19 + TypeScript SPA in `web/`. React Router 7, React Aria, Tailwind CSS 4. Vitest + ESLint. |
 | Website                | Same `web/` SPA. Dev server on port 5173. Production copy in `static/`, served by the vault on port 8080.                         |
@@ -194,6 +194,15 @@ API: **http://127.0.0.1:8080**. After `--reset-demo`, sign in as username `demo`
 
 Restart terminal 1 after edits under `crates/vault/server/` (debug `cargo run`; no hot reload).
 
+**Run on Postgres (optional)** — the server defaults to SQLite at `data/vault.db`; a `postgres://…` (or `sqlite://…`) URL selects the engine instead, passed with `serve --db-url` or set as `[database] url` in `config/config.toml`.
+
+```bash
+docker compose -f docker-compose.pg.yml up -d   # dev-only Postgres on 127.0.0.1:5432 (vault/vault/vault)
+cargo run -p message-vault-server -- serve --config config/config.toml --db-url postgres://vault:vault@127.0.0.1:5432/vault
+```
+
+`docker compose -f docker-compose.pg.yml down` stops the database. Do not run this and `./scripts/run-vault-dev.sh` at once unless one uses a different `[server] bind` — both serve on 127.0.0.1:8080.
+
 **Terminal 2 — UI** (pick one)
 
 ```bash
@@ -235,6 +244,10 @@ cargo build --workspace
 cargo test --workspace
 cargo test -p sms-backup-restore-exporter   # one crate
 cargo build --manifest-path src-tauri/Cargo.toml
+
+# Postgres engine tests (skip unless a dev Postgres is reachable)
+docker compose -f docker-compose.pg.yml up -d
+MV_TEST_POSTGRES_URL=postgres://vault:vault@127.0.0.1:5432/vault cargo test -p message-vault-server
 ```
 
 #### Frontend

@@ -499,7 +499,7 @@ async fn insert_contact_drafts(
         }
 
         for group_name in &draft.groups {
-            let group_id = ensure_group(&mut *tx, account_id, group_name).await?;
+            let group_id = ensure_group(&mut tx, account_id, group_name).await?;
             sqlx::query(
                 "INSERT INTO contact_group_members (contact_id, group_id) VALUES ($1, $2)
                  ON CONFLICT DO NOTHING",

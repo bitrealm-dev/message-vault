@@ -30,7 +30,7 @@ pub async fn clone_template_to_guest(
 ) -> Result<String> {
     let guest_id = {
         let mut tx = conn.begin().await?;
-        let guest_id = clone_sql(&mut *tx, template_account_id).await?;
+        let guest_id = clone_sql(&mut tx, template_account_id).await?;
         tx.commit().await?;
         guest_id
     };
@@ -56,17 +56,14 @@ pub async fn clone_and_assign_guest(
 ) -> Result<(String, String, String)> {
     let (guest_id, username, token) = {
         let mut tx = conn.begin().await?;
-        let guest_id = clone_sql(&mut *tx, template_account_id).await?;
-        account_profile::set_guest_status(&mut *tx, &guest_id, "assigned").await?;
-        let username = account_profile::username_for_account(&mut *tx, &guest_id)
+        let guest_id = clone_sql(&mut tx, template_account_id).await?;
+        account_profile::set_guest_status(&mut tx, &guest_id, "assigned").await?;
+        let username = account_profile::username_for_account(&mut tx, &guest_id)
             .await?
             .context("guest username missing after clone")?;
-        let token = session_tokens::insert_account_session_token_with_ttl(
-            &mut *tx,
-            &guest_id,
-            session_secs,
-        )
-        .await?;
+        let token =
+            session_tokens::insert_account_session_token_with_ttl(&mut tx, &guest_id, session_secs)
+                .await?;
         tx.commit().await?;
         (guest_id, username, token)
     };

@@ -267,6 +267,19 @@ pub async fn create_api_token(
     Ok((id, label_owned, scopes, created_at, expires_at, token))
 }
 
+/// Raw row for [`list_api_tokens`] before scope parsing and disabled/expiry
+/// mapping into [`ApiTokenRow`].
+type ApiTokenRowRaw = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    i64,
+);
+
 /// List API tokens for an account (no secrets).
 ///
 /// # Errors
@@ -282,16 +295,7 @@ pub async fn list_api_tokens(
     } else {
         "ORDER BY created_at DESC, label COLLATE NOCASE"
     };
-    let rows: Vec<(
-        String,
-        String,
-        String,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-        i64,
-    )> = sqlx::query_as(&format!(
+    let rows: Vec<ApiTokenRowRaw> = sqlx::query_as(&format!(
         "SELECT id, label, scopes, token_hint, created_at, last_accessed_at, expires_at, disabled
          FROM account_api_tokens
          WHERE account_id = $1

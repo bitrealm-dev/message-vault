@@ -26,7 +26,6 @@ pub use crate::page_limits::{DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, MAX_LIST_OFFSET
 /// onto the statement in order at execution time.
 enum Bind {
     Text(String),
-    Int(i64),
 }
 
 /// One page of the contact list.
@@ -703,7 +702,6 @@ pub async fn list_contacts(
     for p in &params {
         match p {
             Bind::Text(v) => count_q = count_q.bind(v.clone()),
-            Bind::Int(v) => count_q = count_q.bind(*v),
         }
     }
     let total: i64 = count_q.fetch_one(&mut *conn).await?;
@@ -752,7 +750,6 @@ pub async fn list_contacts(
     for p in &params {
         match p {
             Bind::Text(v) => page_q = page_q.bind(v.clone()),
-            Bind::Int(v) => page_q = page_q.bind(*v),
         }
     }
     let rows: Vec<ContactRow> = page_q

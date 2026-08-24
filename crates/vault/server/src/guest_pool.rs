@@ -96,9 +96,9 @@ pub async fn assign_ready_guest(
         tx.commit().await?;
         return Ok(None);
     };
-    account_profile::set_guest_status(&mut *tx, &account_id, "assigned").await?;
+    account_profile::set_guest_status(&mut tx, &account_id, "assigned").await?;
     let token =
-        session_tokens::insert_account_session_token_with_ttl(&mut *tx, &account_id, session_secs)
+        session_tokens::insert_account_session_token_with_ttl(&mut tx, &account_id, session_secs)
             .await?;
     tx.commit().await?;
     Ok(Some((account_id, username, token)))

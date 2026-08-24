@@ -42,7 +42,7 @@ pub(super) async fn promote_append(
         for source in wipe_sources {
             println!("  sql:      deleting existing messages for source '{source}'…");
             let _ = io::stdout().flush();
-            schema::delete_messages_for_source(&mut *tx, account_id, source).await?;
+            schema::delete_messages_for_source(&mut tx, account_id, source).await?;
         }
         if !wipe_sources.is_empty() {
             println!("  sql:      wipe complete (inside promote transaction)");
@@ -174,13 +174,13 @@ pub(super) async fn promote_append(
     // inserts; index once after. SQLite drops the sync triggers; Postgres
     // disables every trigger on the message tables (same effect, and the
     // triggers are simply re-enabled instead of reinstalled).
-    let engine = dialect::engine_of(&mut *tx);
+    let engine = dialect::engine_of(&tx);
     let phase = Instant::now();
     promote_log("pausing FTS triggers…");
     if engine == DbEngine::Postgres {
-        schema::disable_fts_triggers_pg(&mut *tx).await?;
+        schema::disable_fts_triggers_pg(&mut tx).await?;
     } else {
-        schema::drop_messages_fts_triggers(&mut *tx).await?;
+        schema::drop_messages_fts_triggers(&mut tx).await?;
     }
     promote_phase_done(started, phase, "FTS triggers paused");
 
@@ -193,7 +193,7 @@ pub(super) async fn promote_append(
         promote_log(format_args!(
             "dropping secondary message indexes (staging={total_msgs} existing={existing_msgs})…"
         ));
-        schema::drop_messages_secondary_indexes(&mut *tx).await?;
+        schema::drop_messages_secondary_indexes(&mut tx).await?;
         promote_phase_done(started, phase, "secondary indexes dropped");
     } else {
         promote_log(format_args!(
@@ -211,13 +211,13 @@ pub(super) async fn promote_append(
             .await?;
 
     let msg_map =
-        promote_messages_chunked(&mut *tx, mode, account_id, total_msgs, &mut stats, started)
+        promote_messages_chunked(&mut tx, mode, account_id, total_msgs, &mut stats, started)
             .await?;
 
     if drop_secondary {
         let phase = Instant::now();
         promote_log("rebuilding secondary message indexes…");
-        schema::create_messages_secondary_indexes(&mut *tx).await?;
+        schema::create_messages_secondary_indexes(&mut tx).await?;
         promote_phase_done(
             started,
             phase,
@@ -240,7 +240,7 @@ pub(super) async fn promote_append(
         "writing message id map ({} pairs)…",
         msg_map.len()
     ));
-    fill_promote_msg_map(&mut *tx, account_id, &msg_map).await?;
+    fill_promote_msg_map(&mut tx, account_id, &msg_map).await?;
     promote_phase_done(started, phase, "message id map written");
 
     let phase = Instant::now();
@@ -316,11 +316,11 @@ pub(super) async fn promote_append(
     let phase = Instant::now();
     promote_log("bulk-indexing FTS for new messages…");
     let fts_indexed =
-        schema::index_messages_fts_from_promote_map(&mut *tx, max_msg_id_before_promote).await?;
+        schema::index_messages_fts_from_promote_map(&mut tx, max_msg_id_before_promote).await?;
     if engine == DbEngine::Postgres {
-        schema::enable_fts_triggers_pg(&mut *tx).await?;
+        schema::enable_fts_triggers_pg(&mut tx).await?;
     } else {
-        schema::install_messages_fts_triggers(&mut *tx).await?;
+        schema::install_messages_fts_triggers(&mut tx).await?;
     }
     promote_phase_done(
         started,
@@ -331,7 +331,7 @@ pub(super) async fn promote_append(
     if fill_content_keys {
         let phase = Instant::now();
         promote_log("filling content keys…");
-        let keys = crate::dedupe::fill_missing_content_keys(&mut *tx, account_id).await?;
+        let keys = crate::dedupe::fill_missing_content_keys(&mut tx, account_id).await?;
         promote_phase_done(started, phase, format!("content keys filled={keys}"));
     }
 
@@ -755,7 +755,7 @@ mod tests {
         let Some(url) = crate::pg_test_url() else {
             return;
         };
-        let _pg_guard = crate::PG_TEST_LOCK.lock().unwrap();
+        let _pg_guard = crate::PG_TEST_LOCK.lock().await;
         sqlx::any::install_default_drivers();
         let pool = sqlx::any::AnyPoolOptions::new()
             .connect(&url)
@@ -830,7 +830,7 @@ mod tests {
         // ── The promote window, driven directly (this is exactly what
         // promote_append does between its staging inserts and the bulk fill):
         // all six by-name ALTERs execute — any wrong trigger name fails here.
-        schema::disable_fts_triggers_pg(&mut *conn).await.unwrap();
+        schema::disable_fts_triggers_pg(&mut conn).await.unwrap();
 
         // FK constraint triggers stay enabled during the window: an
         // attachment pointing at a missing message must fail loudly.
@@ -896,7 +896,7 @@ mod tests {
             .execute(&mut *conn)
             .await
             .unwrap();
-        let indexed = schema::index_messages_fts_from_promote_map(&mut *conn, carriedover_id)
+        let indexed = schema::index_messages_fts_from_promote_map(&mut conn, carriedover_id)
             .await
             .unwrap();
         assert_eq!(
@@ -907,7 +907,7 @@ mod tests {
         assert_eq!(pg_fts_hits(&mut conn, "freshbody").await, 1);
 
         // ── Enable restores the triggers: a post-enable insert is indexed.
-        schema::enable_fts_triggers_pg(&mut *conn).await.unwrap();
+        schema::enable_fts_triggers_pg(&mut conn).await.unwrap();
         sqlx::query(
             r#"
             INSERT INTO messages (

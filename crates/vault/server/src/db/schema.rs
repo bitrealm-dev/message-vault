@@ -536,6 +536,7 @@ pub async fn ensure_accounts_schema(conn: &mut AnyConnection) -> Result<()> {
 }
 
 /// True when `table` exists on this engine.
+#[cfg(test)]
 pub async fn table_exists(conn: &mut AnyConnection, name: &str) -> Result<bool> {
     let found: i64 = if dialect::engine_of(conn) == DbEngine::Postgres {
         sqlx::query_scalar("SELECT COUNT(*) FROM pg_catalog.pg_tables WHERE tablename = $1")
@@ -1244,7 +1245,7 @@ mod tests {
         let Some(url) = crate::pg_test_url() else {
             return;
         };
-        let _pg_guard = crate::PG_TEST_LOCK.lock().unwrap();
+        let _pg_guard = crate::PG_TEST_LOCK.lock().await;
         sqlx::any::install_default_drivers();
         let pool = sqlx::any::AnyPoolOptions::new()
             .connect(&url)

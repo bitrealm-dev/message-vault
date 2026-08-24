@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::AnyConnection;
 use sqlx::Connection;
 
-use crate::db::{account_profile, schema};
+use crate::db::account_profile;
 use crate::server::{ApiError, AppState, require_full_access, resolve_auth};
 
 /// The signed-in account's profile.
@@ -409,7 +409,7 @@ pub(crate) async fn account_storage_handler(
 mod tests {
     use super::*;
 
-    use crate::db::engine;
+    use crate::db::{engine, schema};
 
     async fn setup() -> (sqlx::AnyPool, tempfile::TempDir, String) {
         let (pool, dir) = engine::test_pool().await;

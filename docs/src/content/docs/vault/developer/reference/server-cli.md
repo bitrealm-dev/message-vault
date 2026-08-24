@@ -134,6 +134,7 @@ Run HTTP ingest API (`POST /v1/import` with message-ir JSONL)
 * `--config <CONFIG>` — Path to config.toml (must include `[server]` with `bind`)
 
   Default value: `config/config.toml`
+* `--db-url <DB_URL>` — Connection URL (postgres://… or sqlite://…; overrides `[database]` url)
 
 
 
