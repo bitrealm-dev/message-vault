@@ -2,8 +2,9 @@
 //!
 //! `extract` starts the selected exporter on a background thread and returns
 //! immediately. Progress is sent back as Tauri events:
-//! `extract:log` (one log line), `extract:finished` (a summary string or JSON
-//! object), and `extract:error` ([`ExtractErrorEvent`]).
+//! `extract:log` (one log line), `extract:progress` (bar position),
+//! `extract:finished` (a summary string or JSON object), and `extract:error`
+//! ([`ExtractErrorEvent`]).
 //!
 //! The shared cancel flag lives in [`AppState`]. `cancel` sets it to true.
 //! `extract` turns it off at the start of a job. The exporter checks it
