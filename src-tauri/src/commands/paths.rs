@@ -5,6 +5,7 @@ use serde::Serialize;
 /// The signed-in user's home folder, plus which OS this process is running on.
 #[derive(Debug, Clone, Serialize)]
 pub struct HomeDirInfo {
+    /// Home folder as an absolute path the UI can join onto.
     pub path: String,
     /// Operating system name as Rust reports it, for example `linux`, `macos`,
     /// or `windows`.

@@ -2,12 +2,12 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::thread;
 
 use tauri::Emitter;
 use vault_push::{ProgressEvent, VaultPushConfig, run as run_push};
 
-use super::events::{ExtractErrorEvent, ExtractProgressEvent};
+use super::events::ExtractProgressEvent;
+use super::jobs::{reset_and_clone_cancel, spawn_job};
 use crate::state::AppState;
 
 /// Convert a report count to the `usize` the progress event uses.
@@ -57,16 +57,32 @@ fn finished_push_events(
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PushArgs {
+    /// Base URL of the vault server, for example `http://127.0.0.1:8080`.
     pub base_url: String,
+    /// Vault account name.
     pub username: String,
+    /// API token or account password for the vault.
     pub key: String,
+    /// Folder of conversation files to upload.
     pub input_dir: String,
+    /// Import mode. `append` adds to existing data (safe to re-run);
+    /// `replace` deletes existing messages for this source, then imports.
     pub mode: String,
+    /// When true, ignore the journal and re-upload assets and re-import
+    /// messages.
     pub force: bool,
+    /// When true, continue after a failed conversation.
     pub continue_on_error: bool,
+    /// When true, import messages without uploading attachments.
     pub skip_attachments: bool,
+    /// When true, trust export metadata: skip re-hashing attachments when
+    /// size_bytes matches the file size on disk. Without this flag every
+    /// attachment is re-hashed.
     pub trust_export: bool,
+    /// Server-side import option that controls how missing contact names
+    /// are filled in, for example `fill_missing`.
     pub contact_name_mode: Option<String>,
+    /// Import id of an earlier import to resume, when set.
     pub import_id: Option<i64>,
 }
 
@@ -77,20 +93,22 @@ pub struct PushArgs {
 ///
 /// # Errors
 ///
-/// This command always returns `Ok` after the thread starts. Failures during
-/// the upload are sent as `extract:error`.
+/// Returns an error if another thread panicked while holding the shared
+/// state lock. Failures during the upload are sent as `extract:error`.
 #[tauri::command]
 pub async fn push(
-    _state: tauri::State<'_, Arc<Mutex<AppState>>>,
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
     app: tauri::AppHandle,
     args: PushArgs,
 ) -> Result<(), String> {
+    let cancel = reset_and_clone_cancel(&state)?;
+
     let app_handle = app.clone();
     let contact_name_mode = args
         .contact_name_mode
         .unwrap_or_else(|| "fill_missing".into());
 
-    thread::spawn(move || {
+    spawn_job(app, move || {
         let cfg = VaultPushConfig {
             input: PathBuf::from(&args.input_dir),
             base_url: args.base_url,
@@ -110,7 +128,7 @@ pub async fn push(
             report_path: None,
             log_path: None,
             journal_path: None,
-            cancel: None,
+            cancel: Some(cancel),
             contact_name_mode,
             import_id: args.import_id,
         };
@@ -188,16 +206,9 @@ pub async fn push(
 
         match run_push(&cfg, Some(&mut progress)) {
             Ok(_) => {}
-            Err(err) => {
-                let _ = app_handle.emit(
-                    "extract:error",
-                    ExtractErrorEvent {
-                        detail: format!("{err:#}"),
-                        user_message: None,
-                    },
-                );
-            }
+            Err(err) => return Err(err),
         }
+        Ok(())
     });
 
     Ok(())
