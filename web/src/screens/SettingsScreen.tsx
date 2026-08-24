@@ -45,7 +45,10 @@ export default function SettingsScreen() {
         selectedKey={tab}
         onSelectionChange={(key) => {
           const next = parseSelectKey(key, SETTINGS_TABS);
-          if (next) setSearchParams({ tab: next }, { replace: true });
+          if (!next) return;
+          const params = new URLSearchParams(searchParams);
+          params.set("tab", next);
+          setSearchParams(params, { replace: true });
         }}
       >
         <TabList

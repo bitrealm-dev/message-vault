@@ -1,8 +1,9 @@
+import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import Button from "../../components/Button";
 import PasswordField from "../../components/PasswordField";
 import PathPicker from "../../components/PathPicker";
-import PhoneTokenField from "../../components/PhoneTokenField";
+import PhoneTokenField, { type PhoneTokenFieldHandle } from "../../components/PhoneTokenField";
 import Select, { ListBoxItem, selectItemClassName } from "../../components/Select";
 import { EXPORT_SOURCES } from "../../lib/exportSources";
 import { parseSelectKey } from "../../lib/selectKey";
@@ -49,7 +50,8 @@ export type ImportFormFieldsProps = {
   obfuscate: boolean;
   onObfuscateChange: (value: boolean) => void;
   running: boolean;
-  onImport: () => void;
+  /** Optional flushed owner phones (SBR commits draft before import). */
+  onImport: (ownerPhones?: string[]) => void;
 };
 
 const attachmentHelp: Record<AttachmentMediaMode, string> = {
@@ -167,8 +169,22 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
   const isIos = props.source === "imessage-ios";
   const isSbr = props.source === "sms-backup-restore";
   const showCompress = (isIos || isSbr) && props.attachmentMedia === "compress";
+  const phoneFieldRef = useRef<PhoneTokenFieldHandle>(null);
+  const [phoneDraftPending, setPhoneDraftPending] = useState(false);
   const canImport =
-    Boolean(props.backupPath) && !props.running && (!isSbr || props.ownerPhones.length > 0);
+    Boolean(props.backupPath) &&
+    !props.running &&
+    (!isSbr || props.ownerPhones.length > 0 || phoneDraftPending);
+
+  function handleImport(): void {
+    if (isSbr) {
+      const phones = phoneFieldRef.current?.flush() ?? props.ownerPhones;
+      if (phones.length === 0) return;
+      props.onImport(phones);
+      return;
+    }
+    props.onImport();
+  }
 
   return (
     <>
@@ -268,8 +284,10 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
 
             <StackedField label="Backup Device Phone Number">
               <PhoneTokenField
+                ref={phoneFieldRef}
                 value={props.ownerPhones}
                 onChange={props.onOwnerPhonesChange}
+                onDraftPendingChange={setPhoneDraftPending}
                 aria-label="Backup Device Phone Number"
               />
               <p className={hintStyle}>
@@ -285,7 +303,7 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
                   <Link to="/settings?tab=profile" className={`${accentLink} text-[0.8125rem]`}>
                     Settings → Profile
                   </Link>{" "}
-                  so import can link the incoming messages to your user.
+                  so import can tell which messages you sent.
                 </div>
               ) : null}
             </StackedField>
@@ -325,7 +343,7 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
       <div className="mt-2 flex gap-3">
         <Button
           variant="primary"
-          onClick={props.onImport}
+          onClick={handleImport}
           disabled={!canImport}
           className="!rounded-lg !px-6 !py-[0.55rem]"
         >

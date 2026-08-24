@@ -51,6 +51,7 @@ export default function ImportScreen() {
   useEffect(() => {
     if (source !== SBR_SOURCE) {
       setAccountHasPhones(null);
+      ownerPhonesSeededRef.current = false;
       return;
     }
     let cancelled = false;
@@ -119,7 +120,7 @@ export default function ImportScreen() {
           obfuscate={obfuscate}
           onObfuscateChange={setObfuscate}
           running={running}
-          onImport={() =>
+          onImport={(flushedPhones) =>
             void startImport({
               source,
               backupPath,
@@ -129,7 +130,7 @@ export default function ImportScreen() {
               maxFps,
               minSizeMb,
               contactNameMode,
-              ownerPhones,
+              ownerPhones: flushedPhones ?? ownerPhones,
               force,
               obfuscate,
               isIos,
