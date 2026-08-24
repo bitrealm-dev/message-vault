@@ -50,9 +50,8 @@ use message_vault_io_core::{CancelFlag, check_cancel};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::http::{
-    self, AssetPutRequest, AuthInfo, CompleteImportArgs, HttpSession, PostImportArgs,
-};
+use crate::AuthInfo;
+use crate::http::{self, AssetPutRequest, CompleteImportArgs, HttpSession, PostImportArgs};
 use crate::journal::{self, JournalEvent, JournalMessage, JournalState};
 use crate::project;
 

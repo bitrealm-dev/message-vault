@@ -7723,6 +7723,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "vault-http",
  "vault-push",
 ]
 
@@ -7743,6 +7744,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "vault-http",
 ]
 
 [[package]]

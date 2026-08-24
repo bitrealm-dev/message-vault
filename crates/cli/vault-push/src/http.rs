@@ -10,15 +10,9 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use reqwest::blocking::Client;
 use serde::Deserialize;
+use vault_http::truncate;
 
-use crate::AuthError;
-
-#[derive(Debug, Clone)]
-/// Account id and username returned by a successful `GET /v1/auth/check`.
-pub struct AuthInfo {
-    pub account_id: String,
-    pub username: Option<String>,
-}
+use crate::{AuthError, AuthInfo};
 
 #[derive(Debug, Deserialize)]
 struct AuthCheckResponse {
@@ -134,11 +128,9 @@ impl HttpSession {
     ///
     /// Returns an error when the reqwest client cannot be built.
     pub fn new() -> Result<Self> {
-        let client = Client::builder()
-            .pool_max_idle_per_host(16)
-            .build()
-            .context("build HTTP client")?;
-        Ok(Self { client })
+        Ok(Self {
+            client: vault_http::build_client()?,
+        })
     }
 }
 
@@ -168,15 +160,6 @@ fn payload_too_large_message(kind: &str, bytes: Option<usize>) -> String {
          if this still fails, raise nginx client_max_body_size for /v1 (need ≥100m for 64 MiB parts) \
          or tunnel to vault :8080."
     )
-}
-
-/// Copy `s`, cutting it to `max` bytes and adding an ellipsis when longer.
-fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}…", &s[..max])
-    }
 }
 
 /// Percent-encode a query value so it is safe inside a vault URL.
