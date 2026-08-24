@@ -299,7 +299,7 @@ export function useImportJob() {
             force: form.force,
             continue_on_error: true,
             skip_attachments: false,
-            trust_export: false,
+            trust_export: true,
             contact_name_mode: form.contactNameMode,
             import_id: importSession.id,
           }),
