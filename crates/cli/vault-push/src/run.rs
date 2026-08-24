@@ -2087,7 +2087,7 @@ fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
                     let result = check_cancel(cfg.cancel.as_ref())
                         .map_err(|_| "cancelled".to_string())
                         .and_then(|_| {
-                            http::with_retries(cfg.max_retries, || {
+                            vault_http::with_retries(cfg.max_retries, || {
                                 // Cheap existence check before sending file bytes.
                                 if let Some(existing) =
                                     http.head_asset(url, &cfg.key, username, source, &job.digest)?
@@ -2528,7 +2528,7 @@ fn spawn_import_http(args: SpawnImportHttp) -> InFlightImport {
         let request_started = Instant::now();
         let body_bytes = batch.body.len();
         let message_count = batch.messages.len();
-        let response = http::with_retries(max_retries, || {
+        let response = vault_http::with_retries(max_retries, || {
             http.post_import(PostImportArgs {
                 base_url: &url,
                 key: &key,

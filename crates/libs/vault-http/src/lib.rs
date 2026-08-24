@@ -10,8 +10,10 @@
 #![warn(missing_docs)]
 
 mod auth_error;
+mod retry;
 
 pub use auth_error::AuthError;
+pub use retry::{RetryKind, VaultHttpError, classify_retry, with_retries};
 
 use anyhow::{Context, Result};
 

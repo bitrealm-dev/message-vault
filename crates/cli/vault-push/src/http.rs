@@ -4,13 +4,12 @@
 //! run on worker threads without an async runtime.
 
 use std::path::Path;
-use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use reqwest::blocking::Client;
 use serde::Deserialize;
-use vault_http::truncate;
+use vault_http::{VaultHttpError, truncate};
 
 use crate::{AuthError, AuthInfo};
 
@@ -286,13 +285,19 @@ impl HttpSession {
         let status = response.status();
         match status.as_u16() {
             404 => return Ok(None),
-            401 => bail!("invalid vault key"),
-            403 => bail!("username does not match vault key"),
+            401 => return Err(VaultHttpError::new(401, "invalid vault key").into()),
+            403 => {
+                return Err(VaultHttpError::new(403, "username does not match vault key").into());
+            }
             _ => {}
         }
         if !status.is_success() {
             let text = response.text().unwrap_or_default();
-            bail!("asset HEAD failed (HTTP {status}): {text}");
+            return Err(VaultHttpError::new(
+                status.as_u16(),
+                format!("asset HEAD failed (HTTP {status}): {text}"),
+            )
+            .into());
         }
         // A 2xx without a usable JSON body means the asset is there: plain HEAD
         // responders and proxies often send no body at all.
@@ -354,10 +359,11 @@ impl HttpSession {
         let status = response.status();
         let text = response.text().context("read asset response")?;
         if looks_like_payload_too_large(status, &text) {
-            bail!(
-                "{}",
-                payload_too_large_message("asset upload", Some(file_len as usize))
-            );
+            return Err(VaultHttpError::new(
+                413,
+                payload_too_large_message("asset upload", Some(file_len as usize)),
+            )
+            .into());
         }
         let parsed: AssetPutResponse = serde_json::from_str(&text).unwrap_or(AssetPutResponse {
             ok: false,
@@ -365,12 +371,13 @@ impl HttpSession {
             error: Some(text.clone()),
         });
         if !status.is_success() || !parsed.ok {
-            bail!(
-                "{}",
+            return Err(VaultHttpError::new(
+                status.as_u16(),
                 parsed
                     .error
-                    .unwrap_or_else(|| format!("HTTP {status}: {text}"))
-            );
+                    .unwrap_or_else(|| format!("HTTP {status}: {text}")),
+            )
+            .into());
         }
         Ok(parsed)
     }
@@ -409,7 +416,11 @@ impl HttpSession {
         let start_status = start_resp.status();
         let start_text = start_resp.text().context("read upload start response")?;
         if looks_like_payload_too_large(start_status, &start_text) {
-            bail!("{}", payload_too_large_message("asset upload start", None));
+            return Err(VaultHttpError::new(
+                413,
+                payload_too_large_message("asset upload start", None),
+            )
+            .into());
         }
         let started: UploadStartResponse =
             serde_json::from_str(&start_text).with_context(|| {
@@ -419,12 +430,13 @@ impl HttpSession {
                 )
             })?;
         if !start_status.is_success() || !started.ok {
-            bail!(
-                "{}",
+            return Err(VaultHttpError::new(
+                start_status.as_u16(),
                 started
                     .error
-                    .unwrap_or_else(|| format!("HTTP {start_status}: {start_text}"))
-            );
+                    .unwrap_or_else(|| format!("HTTP {start_status}: {start_text}")),
+            )
+            .into());
         }
         if started.already_present {
             return Ok(AssetPutResponse {
@@ -484,14 +496,19 @@ impl HttpSession {
             let text = response.text().unwrap_or_default();
             if looks_like_payload_too_large(status, &text) {
                 abort(self, &upload_id);
-                bail!(
-                    "{}",
-                    payload_too_large_message("asset upload part", Some(this_len))
-                );
+                return Err(VaultHttpError::new(
+                    413,
+                    payload_too_large_message("asset upload part", Some(this_len)),
+                )
+                .into());
             }
             if !status.is_success() {
                 abort(self, &upload_id);
-                bail!("asset part {part} failed (HTTP {status}): {text}");
+                return Err(VaultHttpError::new(
+                    status.as_u16(),
+                    format!("asset part {part} failed (HTTP {status}): {text}"),
+                )
+                .into());
             }
             remaining -= this_len as u64;
             part += 1;
@@ -518,12 +535,13 @@ impl HttpSession {
         });
         if !status.is_success() || !parsed.ok {
             abort(self, &upload_id);
-            bail!(
-                "{}",
+            return Err(VaultHttpError::new(
+                status.as_u16(),
                 parsed
                     .error
-                    .unwrap_or_else(|| format!("HTTP {status}: {text}"))
-            );
+                    .unwrap_or_else(|| format!("HTTP {status}: {text}")),
+            )
+            .into());
         }
         Ok(parsed)
     }
@@ -549,7 +567,11 @@ impl HttpSession {
         } = args;
         let body_len = ndjson.len();
         if body_len > crate::run::MAX_PROXY_BODY_BYTES {
-            bail!("{}", payload_too_large_message("import", Some(body_len)));
+            return Err(VaultHttpError::new(
+                413,
+                payload_too_large_message("import", Some(body_len)),
+            )
+            .into());
         }
         let base = base_url.trim_end_matches('/');
         let mut url = format!(
@@ -574,7 +596,11 @@ impl HttpSession {
         let status = response.status();
         let text = response.text().context("read import response")?;
         if looks_like_payload_too_large(status, &text) {
-            bail!("{}", payload_too_large_message("import", Some(body_len)));
+            return Err(VaultHttpError::new(
+                413,
+                payload_too_large_message("import", Some(body_len)),
+            )
+            .into());
         }
         let parsed: ImportResponse = serde_json::from_str(&text).unwrap_or(ImportResponse {
             ok: false,
@@ -588,12 +614,13 @@ impl HttpSession {
             assets_missing: 0,
         });
         if !status.is_success() || !parsed.ok {
-            bail!(
-                "{}",
+            return Err(VaultHttpError::new(
+                status.as_u16(),
                 parsed
                     .error
-                    .unwrap_or_else(|| format!("HTTP {status}: {text}"))
-            );
+                    .unwrap_or_else(|| format!("HTTP {status}: {text}")),
+            )
+            .into());
         }
         Ok(parsed)
     }
@@ -776,70 +803,6 @@ pub fn auth_check(
         detail: format!("{error:#}"),
     })?;
     session.auth_check(base_url, key, username)
-}
-
-/// Returns true when an error is likely to succeed on retry (network, timeout, 5xx).
-/// Permanent errors (4xx auth, 413, malformed input) should not be retried.
-fn is_transient_error(error: &anyhow::Error) -> bool {
-    let msg = error.to_string().to_ascii_lowercase();
-    // Never retry auth failures.
-    if msg.contains("invalid vault key")
-        || msg.contains("username does not match")
-        || msg.contains("401")
-        || msg.contains("403")
-    {
-        return false;
-    }
-    // Never retry payload-too-large (413) — it will never succeed.
-    if msg.contains("413") || msg.contains("payload too large") {
-        return false;
-    }
-    // Never retry path-not-found or missing-file errors.
-    if msg.contains("no such file") || (msg.contains("not found") && msg.contains("404")) {
-        return false;
-    }
-    // Everything else is worth retrying: connection resets, timeouts, server
-    // errors (5xx), and failures this code does not recognize.
-    true
-}
-
-/// Run `op` again on transient failures, with backoff, up to `max_retries` extra tries.
-///
-/// # Errors
-///
-/// Returns the last error from `op` when retries are exhausted or the error is
-/// permanent (auth, 413, missing file).
-pub fn with_retries<T, F>(max_retries: u32, mut op: F) -> Result<T>
-where
-    F: FnMut() -> Result<T>,
-{
-    let mut attempt = 0u32;
-    loop {
-        attempt += 1;
-        match op() {
-            Ok(v) => return Ok(v),
-            Err(e) => {
-                if attempt > max_retries || !is_transient_error(&e) {
-                    return Err(e);
-                }
-                // Exponential backoff with jitter.
-                let base_ms = 500u64 * 2u64.saturating_pow(attempt.saturating_sub(1));
-                let jitter_ms = (base_ms / 4).min(5000);
-                let wait_ms = base_ms + (jitter_ms / 2) + (jitter_ms as f64 * rand_factor()) as u64;
-                thread::sleep(Duration::from_millis(wait_ms.min(30_000)));
-            }
-        }
-    }
-}
-
-/// Deterministic pseudo-random factor in [0.0, 1.0) for retry jitter.
-fn rand_factor() -> f64 {
-    use std::time::SystemTime;
-    let nanos = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(0);
-    (nanos % 1000) as f64 / 1000.0
 }
 
 #[cfg(test)]
