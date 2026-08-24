@@ -18,13 +18,18 @@
 - CI gates: rustfmt, workspace build + test, Biome, Vitest. Clippy is not gated; run `./scripts/lint-all.sh` locally in Task 10.
 - Tests use committed fixtures under `tests/fixtures/`; never commit real message data. All new db tests use the `test_pool()` helper from Task 1.
 - `rusqlite` remains in `imessage-ir-exporter` (vendor backup reader) — only the server crate drops it.
+- `vendor/sqlx-sqlite/` is a byte-identical copy of upstream sqlx-sqlite 0.8.6 with one manifest line changed (libsqlite3-sys `0.30.1` → `0.38.0`) so the whole workspace unifies on one native SQLite bindings version (cargo's `links` rule allows only one per graph; rusqlite 0.40/crabapple 0.4.7 need 0.38, released sqlx caps below it). Wired via `[patch.crates-io]` in the workspace root. Never edit fork source beyond that manifest line; re-vendor per `VENDORING.md` on sqlx upgrades. Upstream license: MIT OR Apache-2.0.
 - Timestamps stay `TEXT` columns read as `String`; do not introduce chrono decoding types.
 
 ---
 
-### Task 1: Foundation — sqlx dependency, engine detection, pool opening, test helper
+### Task 1: Foundation — vendored sqlx-sqlite fork, sqlx dependency, engine detection, pool opening, test helper
 
 **Files:**
+- Create: `vendor/sqlx-sqlite/` (all source files copied verbatim from the sqlx-sqlite 0.8.6 crates.io release; keep `LICENSE-MIT`, `LICENSE-APACHE`)
+- Modify: `vendor/sqlx-sqlite/Cargo.toml` (materialize workspace-inherited keys + the one-line libsqlite3-sys bump)
+- Create: `VENDORING.md`
+- Modify: `Cargo.toml` (workspace root — `[patch.crates-io]` entry)
 - Modify: `crates/vault/server/Cargo.toml`
 - Create: `crates/vault/server/src/db/engine.rs`
 - Modify: `crates/vault/server/src/db/mod.rs` (add `pub mod engine;`)
@@ -37,7 +42,89 @@
   - `pub async fn open_pool_from_url(url: &str) -> anyhow::Result<sqlx::AnyPool>`
   - `#[cfg(test)] pub(crate) async fn test_pool() -> (sqlx::AnyPool, tempfile::TempDir)` — file-backed SQLite pool; the `TempDir` must be held by the test for the pool's lifetime.
 
-- [ ] **Step 1: Add the sqlx dependency**
+- [ ] **Step 1: Vendor the sqlx-sqlite fork**
+
+1. Download `https://static.crates.io/crates/sqlx-sqlite/sqlx-sqlite-0.8.6.crate`, unpack, and copy its contents into `vendor/sqlx-sqlite/` (keep `LICENSE-MIT`, `LICENSE-APACHE`, `.cargo_vcs_info.json`).
+2. Edit `vendor/sqlx-sqlite/Cargo.toml` so the diff against the upstream manifest is exactly this (no other changes, no source edits):
+
+```diff
+5,9c5,9
+< version.workspace = true
+< license.workspace = true
+< edition.workspace = true
+< authors.workspace = true
+< repository.workspace = true
+---
+> version = "0.8.6"
+> license = "MIT OR Apache-2.0"
+> edition = "2021"
+> # authors removed in vendored copy
+> # repository removed in vendored copy
+39,41c39,41
+< chrono = { workspace = true, optional = true }
+< time = { workspace = true, optional = true }
+< uuid = { workspace = true, optional = true }
+---
+> chrono = { version = "0.4", optional = true }
+> time = { version = "0.3", optional = true }
+> uuid = { version = "1", optional = true }
+59c59
+< version = "0.30.1"
+---
+> version = "0.38.0"
+68c68
+< workspace = true
+---
+> version = "0.8.6"
+71,74c71
+< sqlx = { workspace = true, default-features = false, features = ["macros", "runtime-tokio", "tls-none", "sqlite"] }
+<
+< [lints]
+< workspace = true
+---
+> sqlx = { version = "0.8", default-features = false, features = ["macros", "runtime-tokio", "tls-none", "sqlite"] }
+```
+
+   (Line 59 is the `[dependencies.libsqlite3-sys]` entry — the one substantive change. Line 68 is `sqlx-core`'s version.)
+3. Create `VENDORING.md` at the repo root:
+
+```markdown
+# Vendored sqlx-sqlite fork
+
+`vendor/sqlx-sqlite/` is a byte-identical copy of the `sqlx-sqlite` 0.8.6
+source from crates.io, with one change: `libsqlite3-sys` is bumped from
+`0.30.1` to `0.38.0` so the workspace unifies on a single native SQLite
+bindings version (rusqlite 0.40 / crabapple 0.4.7 use 0.38). Cargo's
+`links` rule permits only one libsqlite3-sys per dependency graph; without
+this bump, sqlx 0.8 (0.30) and rusqlite 0.40 (0.38) cannot coexist.
+Released sqlx 0.9 does not help either (its range caps below 0.38).
+
+## Re-vendoring on sqlx upgrades
+
+1. Note the new `sqlx-sqlite` version from the lockfile after the sqlx
+   bump, then download that version's `.crate` tarball from crates.io.
+2. Unpack it over `vendor/sqlx-sqlite/`, then re-apply the manifest
+   changes: materialize the workspace-inherited keys (version, license,
+   edition), set `libsqlite3-sys` to the rusqlite-matched release
+   (`0.38.0` unless rusqlite moved), pin `sqlx-core` to the matching
+   version, and drop the `[lints] workspace = true` block.
+3. Run the full verification suite — the dual-engine tests are the gate
+   for this combination (upstream tests sqlx-sqlite only against its own
+   libsqlite3-sys pin).
+4. Never edit fork source beyond the manifest. Upstream license:
+   MIT OR Apache-2.0 (both license files stay in the vendor dir).
+```
+
+4. Add to the workspace root `Cargo.toml` (under `[workspace]` members):
+
+```toml
+[patch.crates-io]
+sqlx-sqlite = { path = "vendor/sqlx-sqlite" }
+```
+
+5. Run `cargo check -p message-vault-server` — expected: resolves on one libsqlite3-sys (0.38) with rusqlite 0.40 still present; no `links` error. Also run `cargo test -p imessage-ir-exporter` — expected: 8/8 pass (baseline unchanged by the patch).
+
+- [ ] **Step 2: Add the sqlx dependency**
 
 In `crates/vault/server/Cargo.toml`, add to `[dependencies]` (keep `rusqlite` for now — Tasks 2–6 remove it):
 
@@ -47,9 +134,9 @@ sqlx = { version = "0.8", features = ["runtime-tokio", "any", "sqlite", "postgre
 
 Run `cargo check -p message-vault-server` — expected: builds (new dep resolves, nothing uses it yet).
 
-- [ ] **Step 2: Write failing tests for engine detection**
+- [ ] **Step 3: Write failing tests for engine detection**
 
-Create `src/db/engine.rs` with just the module doc and empty test module, add the module to `db/mod.rs`, then write these tests (they fail to compile/run until Step 3):
+Create `src/db/engine.rs` with just the module doc and empty test module, add the module to `db/mod.rs`, then write these tests (they fail to compile/run until Step 5):
 
 ```rust
 #[cfg(test)]
@@ -84,23 +171,25 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [ ] **Step 4: Run tests to verify they fail**
 
 Run: `cargo test -p message-vault-server db::engine`
 Expected: FAIL (missing functions).
 
-- [ ] **Step 4: Implement engine detection and pool opening**
+- [ ] **Step 5: Implement engine detection and pool opening**
+
+Use this module verbatim — it is the validated implementation (2/2 tests pass; the `AnyConnectOptions::from(SqliteConnectOptions)` conversion used by earlier drafts does not exist in any sqlx release, which is why the pragma set rides an `after_connect` hook and SQLite options become a URL via `to_url_lossy`):
 
 ```rust
 //! Database engine detection and pool construction.
 
 use std::path::Path;
 use std::str::FromStr;
-use std::time::Duration;
 
 use anyhow::{Result, bail};
-use sqlx::any::{AnyConnectOptions, AnyPool, AnyPoolOptions};
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
+use sqlx::any::{AnyConnectOptions, AnyPoolOptions};
+use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::{AnyPool, ConnectOptions};
 
 /// Which database engine a connection URL selects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,18 +208,32 @@ pub fn detect_engine(url: &str) -> Result<DbEngine> {
     }
 }
 
-/// SQLite connect options carrying the vault's historical pragma set:
+/// The vault's historical pragma set, applied to each new connection:
 /// busy timeout first (overlapping auth and UI writes wait), foreign keys on,
 /// synchronous NORMAL, temp_store MEMORY, cache_size -200000.
-fn sqlite_options(path: &Path) -> SqliteConnectOptions {
+fn with_vault_pragmas(pool: AnyPoolOptions) -> AnyPoolOptions {
+    pool.after_connect(|conn, _meta| {
+        Box::pin(async move {
+            sqlx::query("PRAGMA busy_timeout = 15000").execute(&mut *conn).await?;
+            sqlx::query("PRAGMA foreign_keys = ON").execute(&mut *conn).await?;
+            sqlx::query("PRAGMA synchronous = NORMAL").execute(&mut *conn).await?;
+            sqlx::query("PRAGMA temp_store = MEMORY").execute(&mut *conn).await?;
+            sqlx::query("PRAGMA cache_size = -200000").execute(&mut *conn).await?;
+            Ok(())
+        })
+    })
+}
+
+fn sqlite_url_from_path(path: &Path) -> String {
     SqliteConnectOptions::new()
         .filename(path)
         .create_if_missing(true)
-        .busy_timeout(Duration::from_secs(15))
-        .foreign_keys(true)
-        .pragma("synchronous", "NORMAL")
-        .pragma("temp_store", "MEMORY")
-        .pragma("cache_size", "-200000")
+        .to_url_lossy()
+        .to_string()
+}
+
+fn sqlite_pool_options() -> AnyPoolOptions {
+    with_vault_pragmas(AnyPoolOptions::new().max_connections(4))
 }
 
 /// Open the configured pool for a SQLite file. WAL is best-effort, exactly
@@ -138,21 +241,16 @@ fn sqlite_options(path: &Path) -> SqliteConnectOptions {
 /// process holding the database can make it fail, and callers still get a
 /// usable pool.
 pub async fn open_pool_for_path(path: &Path) -> Result<AnyPool> {
-    let base = sqlite_options(path);
-    match AnyPoolOptions::new()
-        .max_connections(4)
-        .connect_with(AnyConnectOptions::from(base.clone().journal_mode(SqliteJournalMode::Wal)))
-        .await
-    {
-        Ok(pool) => Ok(pool),
+    let pool = sqlite_pool_options()
+        .connect_with(AnyConnectOptions::from_str(&sqlite_url_from_path(path))?)
+        .await?;
+    match sqlx::query("PRAGMA journal_mode = WAL").execute(&pool).await {
+        Ok(_) => {}
         Err(err) => {
             eprintln!("warning: could not enable write-ahead logging ({err}); continuing without it");
-            Ok(AnyPoolOptions::new()
-                .max_connections(4)
-                .connect_with(AnyConnectOptions::from(base.journal_mode(SqliteJournalMode::Delete)))
-                .await?)
         }
     }
+    Ok(pool)
 }
 
 /// Open a pool from a user-supplied connection URL (`sqlite://…` or
@@ -160,11 +258,10 @@ pub async fn open_pool_for_path(path: &Path) -> Result<AnyPool> {
 pub async fn open_pool_from_url(url: &str) -> Result<AnyPool> {
     let engine = detect_engine(url)?;
     if engine == DbEngine::Sqlite {
-        let opts = SqliteConnectOptions::from_str(url)?.create_if_missing(true);
-        return Ok(AnyPoolOptions::new()
-            .max_connections(4)
-            .connect_with(AnyConnectOptions::from(opts))
-            .await?);
+        return sqlite_pool_options()
+            .connect_with(AnyConnectOptions::from_str(url)?)
+            .await
+            .map_err(Into::into);
     }
     Ok(AnyPoolOptions::new().max_connections(4).connect(url).await?)
 }
@@ -172,32 +269,27 @@ pub async fn open_pool_from_url(url: &str) -> Result<AnyPool> {
 /// Shared test pool: file-backed SQLite in a fresh temp dir.
 #[cfg(test)]
 pub(crate) async fn test_pool() -> (AnyPool, tempfile::TempDir) {
+    sqlx::any::install_default_drivers();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("vault.db");
-    let pool = AnyPoolOptions::new()
-        .max_connections(4)
-        .connect_with(AnyConnectOptions::from(
-            SqliteConnectOptions::new()
-                .filename(&path)
-                .create_if_missing(true)
-                .foreign_keys(true),
-        ))
+    let pool = sqlite_pool_options()
+        .connect_with(AnyConnectOptions::from_str(&sqlite_url_from_path(&path)).unwrap())
         .await
         .unwrap();
     (pool, dir)
 }
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **Step 6: Run tests to verify they pass**
 
 Run: `cargo test -p message-vault-server db::engine`
 Expected: PASS (2 tests).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add crates/vault/server/Cargo.toml crates/vault/server/src/db/engine.rs crates/vault/server/src/db/mod.rs
-git commit -m "feat(server): add sqlx Any dependency and engine/pool plumbing (#148)"
+git add vendor/ VENDORING.md Cargo.toml Cargo.lock crates/vault/server/Cargo.toml crates/vault/server/src/db/engine.rs crates/vault/server/src/db/mod.rs
+git commit -m "feat: vendor sqlx-sqlite fork and add engine/pool plumbing (#148)"
 ```
 
 ---
@@ -1028,7 +1120,7 @@ git commit -m "feat(server): Postgres FTS twin (search_tsv + GIN + triggers) (#1
 - Modify: `.github/workflows/ci.yml` (Postgres service + second test matrix entry)
 
 **Interfaces:**
-- Consumes: `pg_test_url`, `test_pool` (make it visible to integration tests by re-exporting or duplicating the 8-line helper in the test file — duplicating is fine and keeps `test_pool` `#[cfg(test)]`-only), Task 5 compiler.
+- Consumes: `pg_test_url`, and a duplicate of Task 1's validated `test_pool` helper in the test file (duplicate it — it keeps `install_default_drivers()` + the URL-based pool opening; `test_pool` stays `#[cfg(test)]`-only), Task 5 compiler.
 
 - [ ] **Step 1: Write the committed corpus**
 
