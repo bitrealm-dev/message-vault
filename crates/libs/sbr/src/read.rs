@@ -249,18 +249,21 @@ fn content_keys(part: &MmsPart) -> BTreeSet<String> {
 static TEXT_SRC: OnceLock<Regex> = OnceLock::new();
 static IMG_SRC: OnceLock<Regex> = OnceLock::new();
 
-fn smil_refs(parts: &[MmsPart]) -> (Vec<String>, Vec<String>) {
+fn smil_refs(parts: &[MmsPart], decoded: &[DecodedPartData]) -> (Vec<String>, Vec<String>) {
     let smil = parts
         .iter()
-        .find(|p| p.ct.eq_ignore_ascii_case("application/smil"))
-        .map(|p| {
+        .zip(decoded.iter())
+        .find(|(p, _)| p.ct.eq_ignore_ascii_case("application/smil"))
+        .map(|(p, payload)| {
             if !p.text.trim().is_empty() {
                 html_escape::decode_html_entities(p.text.trim()).into_owned()
             } else {
-                base64::engine::general_purpose::STANDARD
-                    .decode(p.data.trim())
-                    .map(|v| String::from_utf8_lossy(&v).into_owned())
-                    .unwrap_or_default()
+                match payload {
+                    DecodedPartData::Ok { bytes, .. } => {
+                        String::from_utf8_lossy(bytes).into_owned()
+                    }
+                    _ => String::new(),
+                }
             }
         })
         .unwrap_or_default();
@@ -319,24 +322,65 @@ fn extension(part: &MmsPart) -> String {
     }
 }
 
-fn attachments(parts: &[MmsPart], refs: &[String], stats: &mut ParseStats) -> Vec<AttachmentBlob> {
+/// One base64 decode + SHA-256 of a part's `data` attribute.
+///
+/// Shared by attachment staging and source-field write-back so each part is
+/// decoded once.
+enum DecodedPartData {
+    /// Empty or `"null"` — no payload.
+    Absent,
+    /// Successfully decoded payload.
+    Ok {
+        bytes: Arc<[u8]>,
+        digest_hex: String,
+    },
+    /// Non-empty data that is not valid base64.
+    Err { raw_len: usize, raw_sha256: String },
+}
+
+fn decode_part_data(raw: &str) -> DecodedPartData {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("null") {
+        return DecodedPartData::Absent;
+    }
+    match base64::engine::general_purpose::STANDARD.decode(trimmed) {
+        Ok(bytes) => {
+            let digest_hex = hex::encode(Sha256::digest(&bytes));
+            DecodedPartData::Ok {
+                bytes: Arc::from(bytes),
+                digest_hex,
+            }
+        }
+        Err(_) => DecodedPartData::Err {
+            raw_len: raw.len(),
+            raw_sha256: hex::encode(Sha256::digest(raw.as_bytes())),
+        },
+    }
+}
+
+fn attachments(
+    parts: &[MmsPart],
+    decoded: &[DecodedPartData],
+    refs: &[String],
+    stats: &mut ParseStats,
+) -> Vec<AttachmentBlob> {
     let mut by_key = HashMap::new();
     let mut order = Vec::new();
-    for part in parts {
+    for (part, payload) in parts.iter().zip(decoded.iter()) {
         let ct = part.ct.to_ascii_lowercase();
         if ct.starts_with("text/") || ct == "application/smil" {
             continue;
         }
-        let Ok(payload) = base64::engine::general_purpose::STANDARD.decode(part.data.trim()) else {
-            if !part.data.trim().is_empty() && !part.data.trim().eq_ignore_ascii_case("null") {
-                stats.skipped_bad_attachment += 1;
+        let (bytes, digest) = match payload {
+            DecodedPartData::Ok { bytes, digest_hex } if !bytes.is_empty() => {
+                (Arc::clone(bytes), digest_hex.clone())
             }
-            continue;
+            DecodedPartData::Err { .. } => {
+                stats.skipped_bad_attachment += 1;
+                continue;
+            }
+            DecodedPartData::Absent | DecodedPartData::Ok { .. } => continue,
         };
-        if payload.is_empty() {
-            continue;
-        }
-        let digest = hex::encode(Sha256::digest(&payload));
         let original = valid_filename(&part.name)
             .or_else(|| valid_filename(&part.cl))
             .or_else(|| valid_filename(&part.filename_attr));
@@ -350,7 +394,7 @@ fn attachments(parts: &[MmsPart], refs: &[String], stats: &mut ParseStats) -> Ve
             } else {
                 part.ct.clone()
             }),
-            data: Arc::from(payload),
+            data: bytes,
             digest_hex: digest,
         };
         let keys = content_keys(part);
@@ -376,25 +420,26 @@ fn attachments(parts: &[MmsPart], refs: &[String], stats: &mut ParseStats) -> Ve
         .collect()
 }
 
-fn part_fields(part: &MmsPart) -> BTreeMap<String, String> {
+fn part_fields(part: &MmsPart, decoded: &DecodedPartData) -> BTreeMap<String, String> {
     let mut attrs = part.attrs.clone();
-    if let Some(data) = attrs
+    if attrs
         .remove("data")
-        .filter(|d| !d.trim().is_empty() && !d.eq_ignore_ascii_case("null"))
+        .is_some_and(|d| !d.trim().is_empty() && !d.eq_ignore_ascii_case("null"))
     {
-        match base64::engine::general_purpose::STANDARD.decode(data.trim()) {
-            Ok(bytes) => {
+        match decoded {
+            DecodedPartData::Ok { bytes, digest_hex } => {
                 attrs.insert("data_len".into(), bytes.len().to_string());
-                attrs.insert("data_sha256".into(), hex::encode(Sha256::digest(bytes)));
+                attrs.insert("data_sha256".into(), digest_hex.clone());
             }
-            Err(_) => {
-                attrs.insert("data_len".into(), data.len().to_string());
-                attrs.insert(
-                    "data_sha256".into(),
-                    hex::encode(Sha256::digest(data.as_bytes())),
-                );
+            DecodedPartData::Err {
+                raw_len,
+                raw_sha256,
+            } => {
+                attrs.insert("data_len".into(), raw_len.to_string());
+                attrs.insert("data_sha256".into(), raw_sha256.clone());
                 attrs.insert("data_decode_error".into(), "true".into());
             }
+            DecodedPartData::Absent => {}
         }
     }
     attrs
@@ -521,7 +566,8 @@ fn parse_mms(
         stats.skipped_unknown_address += 1;
         return None;
     }
-    let (text_refs, image_refs) = smil_refs(parts);
+    let decoded: Vec<DecodedPartData> = parts.iter().map(|p| decode_part_data(&p.data)).collect();
+    let (text_refs, image_refs) = smil_refs(parts, &decoded);
     let mut text_by_key = HashMap::new();
     for part in parts
         .iter()
@@ -547,11 +593,15 @@ fn parse_mms(
             .collect::<Vec<_>>()
             .join("\n")
     };
-    let blobs = attachments(parts, &image_refs, stats);
+    let blobs = attachments(parts, &decoded, &image_refs, stats);
     let hint = name_alias(attrs);
     let source_fields = SourceFields::Mms {
         attrs: btree(attrs),
-        parts: parts.iter().map(part_fields).collect(),
+        parts: parts
+            .iter()
+            .zip(decoded.iter())
+            .map(|(p, d)| part_fields(p, d))
+            .collect(),
         addrs: addrs.iter().map(|a| a.attrs.clone()).collect(),
     };
     if peers.len() == 1 {
@@ -629,31 +679,66 @@ fn parse_mms(
     })
 }
 
-/// Parse one XML file into records.
+/// Parse one XML file into records, collecting every message in memory.
 ///
-/// Memory note: every record — including fully decoded attachment payloads
-/// held as `Arc<[u8]>` — is buffered in the returned `Vec` before callers
-/// stage the blobs to disk, so peak usage is roughly the sum of all
-/// attachment bytes in the file. The base64 `data` strings are already dropped
-/// from `source_fields` (see `part_fields`), so the decoded blobs dominate.
-/// A future refactor should stream decode → stage per message so each blob can
-/// be dropped as soon as it is written.
+/// Prefer [`parse_file_with`] when the caller can stage attachment bytes
+/// per message: that drops each payload as soon as it is written instead of
+/// holding every decoded blob until the file ends.
 ///
 /// # Errors
 ///
 /// Returns an error when the file cannot be opened or the XML cannot be parsed.
 pub fn parse_file(path: &Path, owners: &HashSet<String>) -> Result<(Vec<Record>, ParseStats)> {
-    let file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
-    parse_reader(std::io::BufReader::new(file), owners)
+    let mut records = Vec::new();
+    let mut stats = ParseStats::default();
+    parse_file_with(path, owners, &mut stats, |record| {
+        records.push(record);
+        Ok(())
+    })?;
+    Ok((records, stats))
 }
 
-fn parse_reader<R: BufRead>(
+/// Parse one XML file, calling `on_record` for each message as soon as it is
+/// complete.
+///
+/// The callback owns the record (including decoded attachment bytes). Staging
+/// those bytes and dropping the record frees the payload before the next
+/// message is parsed.
+///
+/// `stats` is updated as messages are seen, including when this function later
+/// returns an error. Callers that keep records from the callback can merge
+/// those counters even if the XML is truncated.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be opened, the XML cannot be parsed,
+/// or `on_record` returns an error.
+pub fn parse_file_with<F>(
+    path: &Path,
+    owners: &HashSet<String>,
+    stats: &mut ParseStats,
+    on_record: F,
+) -> Result<()>
+where
+    F: FnMut(Record) -> Result<()>,
+{
+    let file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    parse_reader_with(std::io::BufReader::new(file), owners, stats, on_record)
+}
+
+fn parse_reader_with<R, F>(
     reader: R,
     owners: &HashSet<String>,
-) -> Result<(Vec<Record>, ParseStats)> {
+    stats: &mut ParseStats,
+    mut on_record: F,
+) -> Result<()>
+where
+    R: BufRead,
+    F: FnMut(Record) -> Result<()>,
+{
     let mut xml = Reader::from_reader(reader);
     xml.config_mut().trim_text(true);
-    let (mut stats, mut records, mut buf) = (ParseStats::default(), Vec::new(), Vec::new());
+    let mut buf = Vec::new();
     let (mut sms, mut mms, mut parts, mut addrs) =
         (HashMap::new(), HashMap::new(), Vec::new(), Vec::new());
     loop {
@@ -671,28 +756,34 @@ fn parse_reader<R: BufRead>(
             },
             Ok(Event::Empty(e)) => match e.name().as_ref().to_ascii_lowercase().as_slice() {
                 b"sms" => {
-                    if let Some(r) = parse_sms(&attrs(&e), &mut stats) {
-                        records.push(r)
+                    if let Some(r) = parse_sms(&attrs(&e), stats) {
+                        on_record(r)?;
                     }
                 }
                 b"part" => parts.push(part(&attrs(&e))),
                 b"addr" => addrs.push(addr(&attrs(&e))),
                 b"mms" => {
-                    if let Some(r) = parse_mms(&attrs(&e), &[], &[], owners, &mut stats) {
-                        records.push(r)
+                    if let Some(r) = parse_mms(&attrs(&e), &[], &[], owners, stats) {
+                        on_record(r)?;
                     }
                 }
                 _ => {}
             },
             Ok(Event::End(e)) => match e.name().as_ref().to_ascii_lowercase().as_slice() {
                 b"sms" => {
-                    if let Some(r) = parse_sms(&sms, &mut stats) {
-                        records.push(r)
+                    if let Some(r) = parse_sms(&sms, stats) {
+                        on_record(r)?;
                     }
                 }
                 b"mms" => {
-                    if let Some(r) = parse_mms(&mms, &parts, &addrs, owners, &mut stats) {
-                        records.push(r)
+                    let record = parse_mms(&mms, &parts, &addrs, owners, stats);
+                    // Drop the base64 `data` strings before the callback stages
+                    // decoded bytes, so peak RAM is one payload, not payload plus
+                    // the still-resident encoding.
+                    parts.clear();
+                    addrs.clear();
+                    if let Some(r) = record {
+                        on_record(r)?;
                     }
                 }
                 _ => {}
@@ -703,6 +794,20 @@ fn parse_reader<R: BufRead>(
         }
         buf.clear();
     }
+    Ok(())
+}
+
+#[cfg(test)]
+fn parse_reader<R: BufRead>(
+    reader: R,
+    owners: &HashSet<String>,
+) -> Result<(Vec<Record>, ParseStats)> {
+    let mut records = Vec::new();
+    let mut stats = ParseStats::default();
+    parse_reader_with(reader, owners, &mut stats, |record| {
+        records.push(record);
+        Ok(())
+    })?;
     Ok((records, stats))
 }
 
@@ -792,5 +897,59 @@ mod tests {
         let attachment = &records[0].attachments[0];
         assert!(attachment.filename.starts_with(&attachment.digest_hex));
         assert_eq!(attachment.digest_hex.len(), 64);
+    }
+
+    #[test]
+    fn parse_file_with_calls_back_per_message() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("smses.xml");
+        std::fs::write(
+            &path,
+            r#"<smses>
+            <sms protocol="0" address="+15555550101" date="1400773261000" type="1" body="hi"/>
+            <mms date="1400773400000" msg_box="1" address="+15555550101">
+                <parts><part seq="0" ct="text/plain" text="mms"/></parts>
+                <addrs><addr address="+15555550101" type="137"/></addrs>
+            </mms>
+        </smses>"#,
+        )
+        .unwrap();
+        let mut n = 0u32;
+        let mut stats = ParseStats::default();
+        parse_file_with(&path, &HashSet::new(), &mut stats, |_| {
+            n += 1;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(stats.sms_seen, 1);
+        assert_eq!(stats.mms_seen, 1);
+    }
+
+    #[test]
+    fn skipped_bad_attachment_records_decode_error() {
+        let xml = br#"<smses><mms date="1" msg_box="1" address="+15555550101"><parts><part ct="image/jpeg" name="pic.jpg" data="@@@not-base64@@@"/></parts><addrs><addr address="+15555550101" type="137"/></addrs></mms></smses>"#;
+        let (records, stats) = parse_reader(xml.as_slice(), &HashSet::new()).unwrap();
+        assert_eq!(stats.skipped_bad_attachment, 1);
+        assert!(records[0].attachments.is_empty());
+        let SourceFields::Mms { parts, .. } = &records[0].source_fields else {
+            panic!("mms")
+        };
+        assert_eq!(
+            parts[0].get("data_decode_error").map(String::as_str),
+            Some("true")
+        );
+    }
+
+    #[test]
+    fn smil_src_orders_attachment_from_decoded_payload() {
+        let smil = "PHNtaWw+PGJvZHk+PGltZyBzcmM9InBpYy5qcGciLz48L2JvZHk+PC9zbWlsPg==";
+        let xml = format!(
+            r#"<smses><mms date="1" msg_box="1" address="+15555550101"><parts><part ct="application/smil" data="{smil}"/><part ct="image/jpeg" name="pic.jpg" data="aGVsbG8="/></parts><addrs><addr address="+15555550101" type="137"/></addrs></mms></smses>"#
+        );
+        let (records, stats) = parse_reader(xml.as_bytes(), &HashSet::new()).unwrap();
+        assert_eq!(stats.mms_seen, 1);
+        assert_eq!(records[0].attachments.len(), 1);
+        assert_eq!(records[0].attachments[0].data.as_ref(), b"hello");
     }
 }

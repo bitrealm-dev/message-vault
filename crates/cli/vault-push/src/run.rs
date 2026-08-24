@@ -2800,6 +2800,74 @@ mod tests {
     }
 
     #[test]
+    fn trust_export_skips_hash_when_size_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pic.bin");
+        std::fs::write(&path, b"hello").unwrap();
+        let claimed = "a".repeat(64);
+        let cache: DigestCache = Mutex::new(HashMap::new());
+        let mut warnings = Vec::new();
+
+        let trusted = resolve_attachment_digest(ResolveAttachmentDigestArgs {
+            abs: &path,
+            claimed_raw: Some(&claimed),
+            claimed_size: Some(5),
+            verify_digests: false,
+            trust_export: true,
+            cache: &cache,
+            name: "chat.jsonl",
+            rel: "attachments/pic.bin",
+            warn: &mut |msg| warnings.push(msg),
+        })
+        .unwrap();
+        assert_eq!(
+            trusted, claimed,
+            "matching size_bytes must skip hashing and keep the export digest"
+        );
+        assert!(warnings.is_empty());
+
+        let cache2: DigestCache = Mutex::new(HashMap::new());
+        let mut warnings2 = Vec::new();
+        let disk = resolve_attachment_digest(ResolveAttachmentDigestArgs {
+            abs: &path,
+            claimed_raw: Some(&claimed),
+            claimed_size: Some(5),
+            verify_digests: false,
+            trust_export: false,
+            cache: &cache2,
+            name: "chat.jsonl",
+            rel: "attachments/pic.bin",
+            warn: &mut |msg| warnings2.push(msg),
+        })
+        .unwrap();
+        let expected_disk = hex::encode(Sha256::digest(b"hello"));
+        assert_eq!(disk, expected_disk);
+        assert_ne!(disk, claimed);
+        assert_eq!(warnings2.len(), 1);
+
+        let cache3: DigestCache = Mutex::new(HashMap::new());
+        let mut warnings3 = Vec::new();
+        let size_mismatch = resolve_attachment_digest(ResolveAttachmentDigestArgs {
+            abs: &path,
+            claimed_raw: Some(&claimed),
+            claimed_size: Some(4),
+            verify_digests: false,
+            trust_export: true,
+            cache: &cache3,
+            name: "chat.jsonl",
+            rel: "attachments/pic.bin",
+            warn: &mut |msg| warnings3.push(msg),
+        })
+        .unwrap();
+        assert_eq!(
+            size_mismatch, expected_disk,
+            "trust_export must still hash when size_bytes does not match the file"
+        );
+        assert_ne!(size_mismatch, claimed);
+        assert_eq!(warnings3.len(), 1);
+    }
+
+    #[test]
     fn progress_batcher_emits_every_ten_and_on_completion() {
         let mut batcher = ProgressBatcher::new(25);
         let profile = UploadProfile {

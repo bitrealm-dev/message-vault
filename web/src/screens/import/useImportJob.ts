@@ -299,7 +299,12 @@ export function useImportJob() {
             force: form.force,
             continue_on_error: true,
             skip_attachments: false,
-            trust_export: false,
+            // Extract just wrote these files. Matching size_bytes lets
+            // vault-push skip a second full-file hash. Media remaps clear
+            // digest and size, so a transcoded file is hashed during extract
+            // and then trusted here. Applies to every desktop source, not
+            // only SMS Backup & Restore.
+            trust_export: true,
             contact_name_mode: form.contactNameMode,
             import_id: importSession.id,
           }),
