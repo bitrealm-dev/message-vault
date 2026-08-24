@@ -171,6 +171,17 @@ mod tests {
             }
         ))));
         assert!(classified(classify_retry(&anyhow::Error::from(
+            AuthError::ApiNotFound {
+                status: 404,
+                body: "missing".into(),
+            }
+        ))));
+        assert!(classified(classify_retry(&anyhow::Error::from(
+            AuthError::Rejected {
+                message: "bad token".into(),
+            }
+        ))));
+        assert!(classified(classify_retry(&anyhow::Error::from(
             AuthError::HttpStatus {
                 status: 418,
                 body: "teapot".into(),
@@ -188,6 +199,12 @@ mod tests {
         ))));
         assert!(!classified(classify_retry(&anyhow::Error::from(
             AuthError::ServerError {
+                status: 503,
+                body: "busy".into(),
+            }
+        ))));
+        assert!(!classified(classify_retry(&anyhow::Error::from(
+            AuthError::HttpStatus {
                 status: 503,
                 body: "busy".into(),
             }
@@ -213,6 +230,32 @@ mod tests {
         let result = with_retries(3, || -> Result<u32> {
             calls += 1;
             Err(anyhow::Error::from(VaultHttpError::new(404, "gone")))
+        });
+        assert!(result.is_err());
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn with_retries_retries_transient_then_succeeds() {
+        let mut calls = 0;
+        let result = with_retries(2, || -> Result<u32> {
+            calls += 1;
+            if calls < 2 {
+                Err(anyhow::Error::from(io::Error::other("flaky")))
+            } else {
+                Ok(42)
+            }
+        });
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn with_retries_gives_up_when_exhausted() {
+        let mut calls = 0;
+        let result = with_retries(0, || -> Result<u32> {
+            calls += 1;
+            Err(anyhow::Error::from(io::Error::other("flaky")))
         });
         assert!(result.is_err());
         assert_eq!(calls, 1);

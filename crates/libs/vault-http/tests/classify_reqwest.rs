@@ -1,5 +1,6 @@
 //! reqwest-status classification needs a real response: build an error via
-//! `error_for_status()` against a local mock server.
+//! `error_for_status()` against a local mock server — or a refused connection
+//! for a statusless transport error.
 
 use httpmock::prelude::*;
 use vault_http::{RetryKind, classify_retry};
@@ -39,4 +40,15 @@ fn reqwest_4xx_status_is_permanent_5xx_is_transient() {
 
     mock_404.assert();
     mock_500.assert();
+}
+
+#[test]
+fn statusless_connect_error_is_transient() {
+    // Port 1 refuses connections, so the send fails with a transport error
+    // that carries no HTTP status — the statusless reqwest path, which
+    // classify_retry treats as transient.
+    let client = reqwest::blocking::Client::new();
+    let e = client.get("http://127.0.0.1:1/").send().unwrap_err();
+    assert!(e.status().is_none());
+    assert_eq!(classify_retry(&anyhow::Error::new(e)), RetryKind::Transient);
 }

@@ -34,7 +34,7 @@ Include a concrete example or quantified rationale whenever a field, constant, o
 Never write self-contradictory filler, invented terms, or unexplained jargon in doc comments or `--help` text.
 
 - `crates/libs/ir/src/lib.rs:296` — "Why bytes were not imported (`too_large`, `file_missing`). Absent when present." — Bad: "Absent when present" is self-contradictory and explains nothing about when the field is `None`.
-- `crates/cli/vault-push/src/cli.rs:34` — "Import mode: append (resume-safe) or replace" — Bad: "resume-safe" is an invented term and hides the destructive replace behavior.
+- `crates/cli/vault-push/src/cli.rs:34` — "Import mode: append: add to existing data (safe to re-run); replace: delete existing messages for this source, then import" — Good: replaces the invented term "resume-safe" with a plain statement of what each mode does.
 - `crates/exporters/go-sms-pro-exporter/src/cli.rs:11` — "about = `Convert GO SMS Pro XML+PDU backups via common message to JSON/CSV/EML/MBOX/JSONL/XML`" — Bad: "via common message" is internal jargon that `--help` users cannot decode.
 - `crates/cli/vault-pull/src/http.rs:143` — "Fastmail-style search query. Sent even when empty." — Bad: "Fastmail-style" is unexplained jargon; readers must already know Fastmail's syntax to know what queries are valid.
 

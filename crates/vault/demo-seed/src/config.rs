@@ -230,6 +230,19 @@ impl SeedConfig {
                 self.labels.names.len()
             );
         }
+        if self.contacts.first_only + self.contacts.first_middle_last + self.contacts.first_last
+            > 1.0
+        {
+            anyhow::bail!(
+                "contacts name-shape shares must sum to at most 1.0 (first_only {} + first_middle_last {} + first_last {} = {})",
+                self.contacts.first_only,
+                self.contacts.first_middle_last,
+                self.contacts.first_last,
+                self.contacts.first_only
+                    + self.contacts.first_middle_last
+                    + self.contacts.first_last
+            );
+        }
         let g = &self.groups;
         if g.large_min_count == 0 {
             return Ok(());
@@ -287,6 +300,13 @@ mod tests {
     fn rejects_labels_names_without_four_entries() {
         let mut cfg = SeedConfig::load(&SeedConfig::default_path()).expect("load");
         cfg.labels.names = vec!["Family".into(), "Work".into()];
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_name_shape_shares_above_one() {
+        let mut cfg = SeedConfig::load(&SeedConfig::default_path()).expect("load");
+        cfg.contacts.first_last = 1.0;
         assert!(cfg.validate().is_err());
     }
 }

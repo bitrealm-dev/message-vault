@@ -251,4 +251,47 @@ mod tests {
         assert_eq!(loaded[1].key, "new");
         assert!(!path.with_extension("jsonl.tmp").exists());
     }
+
+    #[test]
+    fn appends_concurrent_with_compact_are_never_lost() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = std::sync::Arc::new(dir.path().join("state.jsonl"));
+        let mut handles = Vec::new();
+        for i in 0..4 {
+            let path = std::sync::Arc::clone(&path);
+            handles.push(std::thread::spawn(move || {
+                for j in 0..25 {
+                    append(
+                        "journal",
+                        &path,
+                        &TestEvent {
+                            url: "http://vault".into(),
+                            user: "alice".into(),
+                            key: format!("c-{i}-{j}"),
+                        },
+                    )
+                    .unwrap();
+                }
+            }));
+        }
+        for _ in 0..3 {
+            compact_with::<TestEvent, _>("journal", &path, |events| events).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        let loaded: Vec<TestEvent> = load_events("journal", &path, &mut |_, _| {}).unwrap();
+        assert_eq!(loaded.len(), 4 * 25);
+        let text = fs::read_to_string(&*path).unwrap();
+        let mut lines = 0usize;
+        for line in text.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            serde_json::from_str::<TestEvent>(line).expect("torn line");
+            lines += 1;
+        }
+        assert_eq!(lines, 4 * 25);
+    }
 }
