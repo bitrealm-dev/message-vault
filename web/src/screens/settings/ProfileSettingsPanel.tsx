@@ -8,6 +8,7 @@ import {
   HANDLE_SERVICES,
   type HandleService,
 } from "../../lib/handleService";
+import { phonesMatch } from "../../lib/phoneTokens";
 import { parseSelectKey } from "../../lib/selectKey";
 import { useAccountProfile } from "../../lib/useAccountProfile";
 import { inputClassName, sectionTitleClass } from "./profileStyles";
@@ -56,12 +57,8 @@ export function ProfileSettingsPanel() {
     if (service === "email") {
       return p.emails.some((e) => e.toLowerCase() === needle);
     }
-    // The server stores phones in a standard format. Match by the digit suffix.
-    const digits = handle.replace(/\D/g, "");
-    return p.phones.some((phone) => {
-      const phoneDigits = phone.replace(/\D/g, "");
-      return phoneDigits === digits || phone.toLowerCase() === needle;
-    });
+    // Phone and WhatsApp both come back in profile.phones (E.164 when unambiguous).
+    return p.phones.some((phone) => phonesMatch(handle, phone));
   };
 
   const handleAddHandle = async () => {
@@ -74,9 +71,7 @@ export function ProfileSettingsPanel() {
         handles: [{ handle: value, service: newHandleService }],
       });
       if (!handleListIncludes(updated, value, newHandleService)) {
-        throw new Error(
-          "Server did not save the handle. Restart the vault server (docker compose restart vault) and try again.",
-        );
+        throw new Error("The vault did not add that handle.");
       }
       setProfile(updated);
       setNewHandle("");
@@ -95,9 +90,7 @@ export function ProfileSettingsPanel() {
         remove_handles: [{ handle, service }],
       });
       if (handleListIncludes(updated, handle, service)) {
-        throw new Error(
-          "Server did not remove the handle. Restart the vault server (docker compose restart vault) and try again.",
-        );
+        throw new Error("The vault did not remove that handle.");
       }
       setProfile(updated);
     } catch (e) {

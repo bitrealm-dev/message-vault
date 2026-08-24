@@ -4,6 +4,7 @@ import {
   normalizePhoneDigits,
   ownerPhonesMatchProfile,
   ownerPhonesNeedMismatchAck,
+  phonesMatch,
   removePhoneToken,
   splitPhoneTokenInput,
 } from "./phoneTokens";
@@ -39,9 +40,31 @@ describe("normalizePhoneDigits", () => {
   });
 });
 
+describe("phonesMatch", () => {
+  it("matches a 10-digit US number to E.164 with country code", () => {
+    expect(phonesMatch("9412660605", "+19412660605")).toBe(true);
+  });
+
+  it("matches formatted US national to E.164", () => {
+    expect(phonesMatch("(941) 266-0605", "+19412660605")).toBe(true);
+  });
+
+  it("does not match a different number", () => {
+    expect(phonesMatch("9412660606", "+19412660605")).toBe(false);
+  });
+
+  it("does not treat a short code as a suffix of a longer number", () => {
+    expect(phonesMatch("60605", "+19412660605")).toBe(false);
+  });
+});
+
 describe("ownerPhonesMatchProfile", () => {
   it("matches when digits overlap despite formatting", () => {
     expect(ownerPhonesMatchProfile(["+1 555-123-4567"], ["15551234567"])).toBe(true);
+  });
+
+  it("matches a 10-digit owner phone to an E.164 profile phone", () => {
+    expect(ownerPhonesMatchProfile(["9412660605"], ["+19412660605"])).toBe(true);
   });
 
   it("returns false when no overlap", () => {
