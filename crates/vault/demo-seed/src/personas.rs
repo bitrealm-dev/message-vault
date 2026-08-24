@@ -4,6 +4,7 @@ use std::collections::HashSet;
 
 use anyhow::{Result, bail};
 use rand::Rng;
+use rand::RngExt;
 use rand::seq::SliceRandom;
 use rand_distr::{Distribution, Normal, Poisson};
 

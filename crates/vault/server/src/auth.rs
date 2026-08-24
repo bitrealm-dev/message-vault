@@ -17,6 +17,7 @@ use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_ha
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
+use rand::TryRng;
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
@@ -190,7 +191,12 @@ impl AuthTokenResponse {
 ///
 /// Returns an error when the password cannot be hashed.
 fn hash_password(password: &str) -> Result<String> {
-    let salt = SaltString::generate(&mut rand::thread_rng());
+    let mut salt_bytes = [0u8; 16];
+    rand::rngs::SysRng
+        .try_fill_bytes(&mut salt_bytes)
+        .context("fill password salt from system RNG")?;
+    let salt = SaltString::encode_b64(&salt_bytes)
+        .map_err(|e| anyhow::anyhow!("password salt encode failed: {e}"))?;
     let hash = Argon2::default()
         .hash_password(password.as_bytes(), &salt)
         .map_err(|e| anyhow::anyhow!("password hash failed: {e}"))?;

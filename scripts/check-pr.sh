@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Local pre-PR check: format Rust and web, then license consistency, workspace
-# build/test, web lint/test, docs check/build.
+# build/test, src-tauri check, web lint/test/build, docs check/build.
 #
 #   ./scripts/check-pr.sh
 #
@@ -18,16 +18,30 @@ cd "${REPO_ROOT}"
 echo "==> license consistency"
 "${SCRIPT_DIR}/check-license.sh"
 
+echo "==> cargo deny check advisories"
+if cargo deny --version >/dev/null 2>&1; then
+  cargo deny check advisories
+else
+  echo "cargo-deny not installed; skipping advisory check (CI enforces it)" >&2
+fi
+
 echo "==> cargo build --workspace"
 cargo build --workspace
 
 echo "==> cargo test --workspace"
 cargo test --workspace
 
+echo "==> cargo check src-tauri"
+cargo check --manifest-path src-tauri/Cargo.toml
+
 echo "==> web lint"
 (cd web && npm run lint)
 echo "==> web test"
 (cd web && npm test)
+echo "==> web audit"
+(cd web && npm audit --audit-level=high)
+echo "==> web build (type-check + bundle)"
+(cd web && npm run build)
 
 if [[ ! -d docs/node_modules ]]; then
   echo "==> npm ci (docs)"
@@ -37,5 +51,7 @@ echo "==> docs check"
 (cd docs && npm run check)
 echo "==> docs build"
 (cd docs && npm run build)
+echo "==> docs audit"
+(cd docs && npm audit --audit-level=high)
 
 echo "All pre-PR checks passed."

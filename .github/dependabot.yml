@@ -1,0 +1,35 @@
+version: 2
+updates:
+  # Rust workspace (all crates in Cargo.toml members)
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Tauri desktop app — excluded from the workspace, has its own Cargo.lock
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+
+  # Product web frontend
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+
+  # Documentation site
+  - package-ecosystem: npm
+    directory: /docs
+    schedule:
+      interval: weekly
+
+  # web-next/ is intentionally excluded: legacy Next.js browse UI, not in CI
+  # and not served (see docs/superpowers/reports/2026-08-23-full-stack-assessment.md).
+  # Re-add it here if that tree is ever revived.
+
+  # CI workflows
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
