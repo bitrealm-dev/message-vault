@@ -1013,6 +1013,24 @@ git commit -m "refactor(server): switch AppState to sqlx AnyPool and drop rusqli
 - Consumes: Task 7 `AppState.db_engine`, Task 5 `compile_metadata_fts_expr` (already references `m_fts.search_tsv @@ …` on Postgres).
 - Produces: Postgres schema parity for FTS — the Task 5 compiler's Postgres branch becomes executable.
 
+- [ ] **Step 0: Engine-branch the remaining SQLite-only transaction statement**
+
+`db/vault_imports.rs` uses `conn.begin_with("BEGIN IMMEDIATE TRANSACTION")` (SQLite-only — a syntax error on Postgres). Add to `dialect.rs`:
+
+```rust
+/// The transaction-begin statement for each engine. SQLite uses IMMEDIATE so
+/// overlapping writers fail fast instead of deadlocking; Postgres has no
+/// equivalent statement-level mode and uses a plain BEGIN.
+pub fn begin_immediate_sql(engine: DbEngine) -> &'static str {
+    match engine {
+        DbEngine::Sqlite => "BEGIN IMMEDIATE TRANSACTION",
+        DbEngine::Postgres => "BEGIN",
+    }
+}
+```
+
+with an exact-string unit test for both engines (like the `like_ci_numbered` tests), and branch the `begin_with` call site on `dialect::engine_of(conn)`.
+
 - [ ] **Step 1: Write the failing Postgres FTS sync test (SQLite twin first)**
 
 In `db/schema.rs` tests, port `messages_fts_stays_in_sync` (Task 2 did the port) and add its assertion twin that runs against Postgres when available:
