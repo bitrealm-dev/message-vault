@@ -7706,6 +7706,7 @@ dependencies = [
  "clap",
  "hex",
  "httpmock",
+ "journal",
  "message-ir",
  "message-vault-io-core",
  "reqwest",
