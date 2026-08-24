@@ -4,35 +4,43 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use chrono::Utc;
 use contacts::{
     ContactsFormat, detect_contacts_format, extract_tags, parse_vcf, read_vcard_csv_rows,
     strip_tags,
 };
-use rusqlite::{Connection, OptionalExtension, params};
+use sqlx::{AnyConnection, Connection};
 
 /// Bump `contacts.last_modified` after an address-book shape change.
-pub fn touch_contact(conn: &Connection, account_id: &str, contact_id: i64) -> Result<()> {
-    conn.execute(
-        "UPDATE contacts SET last_modified = datetime('now')
-         WHERE id = ?1 AND account_id = ?2",
-        params![contact_id, account_id],
-    )?;
+pub async fn touch_contact(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    contact_id: i64,
+) -> Result<()> {
+    let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    sqlx::query("UPDATE contacts SET last_modified = $1 WHERE id = $2 AND account_id = $3")
+        .bind(now)
+        .bind(contact_id)
+        .bind(account_id)
+        .execute(&mut *conn)
+        .await?;
     Ok(())
 }
 
 /// Contact linked to a handle via `contact_handles`, if any.
-pub fn contact_id_for_handle(
-    conn: &Connection,
+pub async fn contact_id_for_handle(
+    conn: &mut AnyConnection,
     account_id: &str,
     handle_id: i64,
 ) -> Result<Option<i64>> {
-    Ok(conn
-        .query_row(
-            "SELECT contact_id FROM contact_handles WHERE account_id = ?1 AND handle_id = ?2",
-            params![account_id, handle_id],
-            |row| row.get(0),
-        )
-        .optional()?)
+    let found: Option<i64> = sqlx::query_scalar(
+        "SELECT contact_id FROM contact_handles WHERE account_id = $1 AND handle_id = $2",
+    )
+    .bind(account_id)
+    .bind(handle_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(found)
 }
 
 /// Counts from loading an address book into the vault.
@@ -118,27 +126,23 @@ struct EmailSnapshot {
     entries: Vec<ContactPhonesAndEmails>,
 }
 
-fn snapshot_email_handles(conn: &Connection, account_id: &str) -> Result<EmailSnapshot> {
+async fn snapshot_email_handles(
+    conn: &mut AnyConnection,
+    account_id: &str,
+) -> Result<EmailSnapshot> {
     let mut by_contact: HashMap<i64, ContactPhonesAndEmails> = HashMap::new();
 
-    let mut stmt = conn.prepare(
+    let rows: Vec<(i64, i64, String, String, String)> = sqlx::query_as(
         "SELECT ch.contact_id, h.id, h.raw, h.normalized, h.handle_type
          FROM contact_handles ch
          JOIN handles h ON h.id = ch.handle_id
-         WHERE ch.account_id = ?1
+         WHERE ch.account_id = $1
          ORDER BY ch.contact_id, h.handle_type, h.raw",
-    )?;
-    let rows = stmt.query_map(params![account_id], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, i64>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, String>(4)?,
-        ))
-    })?;
-    for row in rows {
-        let (contact_id, handle_id, raw, normalized, handle_type) = row?;
+    )
+    .bind(account_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    for (contact_id, handle_id, raw, normalized, handle_type) in rows {
         let entry = by_contact.entry(contact_id).or_default();
         if handle_type == "email" {
             entry.1.push((handle_id, raw));
@@ -154,8 +158,8 @@ fn snapshot_email_handles(conn: &Connection, account_id: &str) -> Result<EmailSn
     })
 }
 
-fn restore_email_handles(
-    conn: &Connection,
+async fn restore_email_handles(
+    conn: &mut AnyConnection,
     account_id: &str,
     snapshot: &EmailSnapshot,
 ) -> Result<u64> {
@@ -167,16 +171,16 @@ fn restore_email_handles(
     for (phones, emails) in &snapshot.entries {
         let mut contact_id: Option<i64> = None;
         for phone in phones {
-            let found: Option<i64> = conn
-                .query_row(
-                    "SELECT ch.contact_id
-                     FROM contact_handles ch
-                     JOIN handles h ON h.id = ch.handle_id
-                     WHERE ch.account_id = ?1 AND h.handle_type = 'phone' AND h.normalized = ?2",
-                    params![account_id, phone],
-                    |row| row.get(0),
-                )
-                .optional()?;
+            let found: Option<i64> = sqlx::query_scalar(
+                "SELECT ch.contact_id
+                 FROM contact_handles ch
+                 JOIN handles h ON h.id = ch.handle_id
+                 WHERE ch.account_id = $1 AND h.handle_type = 'phone' AND h.normalized = $2",
+            )
+            .bind(account_id)
+            .bind(phone)
+            .fetch_optional(&mut *conn)
+            .await?;
             if let Some(id) = found {
                 contact_id = Some(id);
                 break;
@@ -186,7 +190,7 @@ fn restore_email_handles(
             continue;
         };
         for (handle_id, email) in emails {
-            let owner = contact_id_for_handle(conn, account_id, *handle_id)?;
+            let owner = contact_id_for_handle(conn, account_id, *handle_id).await?;
             if let Some(existing) = owner {
                 if existing != id {
                     eprintln!(
@@ -195,10 +199,14 @@ fn restore_email_handles(
                 }
                 continue;
             }
-            conn.execute(
-                "INSERT INTO contact_handles (account_id, handle_id, contact_id) VALUES (?1, ?2, ?3)",
-                params![account_id, handle_id, id],
-            )?;
+            sqlx::query(
+                "INSERT INTO contact_handles (account_id, handle_id, contact_id) VALUES ($1, $2, $3)",
+            )
+            .bind(account_id)
+            .bind(handle_id)
+            .bind(id)
+            .execute(&mut *conn)
+            .await?;
             restored += 1;
         }
     }
@@ -214,14 +222,14 @@ fn restore_email_handles(
 /// Pass `None` to skip address-book load (keep existing SQLite contacts).
 /// On overwrite, email handles already in SQLite are snapshotted by phone set
 /// and reattached after reload (address-book files are phone-oriented).
-pub fn load_contacts_if_needed(
-    conn: &mut Connection,
+pub async fn load_contacts_if_needed(
+    conn: &mut AnyConnection,
     contacts_path: Option<&Path>,
     overwrite: bool,
     account_id: &str,
 ) -> Result<ContactLoadStats> {
-    crate::db::schema::ensure_vault_schema(conn)?;
-    crate::db::account_profile::ensure_account_row(conn, account_id)?;
+    crate::db::schema::ensure_vault_schema(conn).await?;
+    crate::db::account_profile::ensure_account_row(conn, account_id).await?;
 
     let Some(path) = contacts_path else {
         return Ok(ContactLoadStats {
@@ -230,12 +238,10 @@ pub fn load_contacts_if_needed(
         });
     };
 
-    let count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM contacts WHERE account_id = ?1",
-            params![account_id],
-            |row| row.get(0),
-        )
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM contacts WHERE account_id = $1")
+        .bind(account_id)
+        .fetch_one(&mut *conn)
+        .await
         .unwrap_or(0);
 
     if count > 0 && !overwrite {
@@ -251,25 +257,25 @@ pub fn load_contacts_if_needed(
             path.display()
         );
         if count > 0 && overwrite {
-            delete_account_contacts(conn, account_id)?;
+            delete_account_contacts(conn, account_id).await?;
         }
         return Ok(ContactLoadStats::default());
     }
 
     let email_snapshot = if count > 0 && overwrite {
-        snapshot_email_handles(conn, account_id)?
+        snapshot_email_handles(conn, account_id).await?
     } else {
         EmailSnapshot::default()
     };
 
-    delete_account_contacts(conn, account_id)?;
+    delete_account_contacts(conn, account_id).await?;
 
     let format = contacts_file_format(path)?;
     let mut stats = match format {
-        ContactsFormat::VcardCsv => load_from_vcard_csv(conn, path, account_id)?,
-        ContactsFormat::Vcf => load_from_vcf(conn, path, account_id)?,
+        ContactsFormat::VcardCsv => load_from_vcard_csv(conn, path, account_id).await?,
+        ContactsFormat::Vcf => load_from_vcf(conn, path, account_id).await?,
     };
-    stats.emails_restored = restore_email_handles(conn, account_id, &email_snapshot)?;
+    stats.emails_restored = restore_email_handles(conn, account_id, &email_snapshot).await?;
     if stats.emails_restored > 0 {
         eprintln!(
             "contacts: restored {} email handle(s) from previous DB (address book is phone-only)",
@@ -279,28 +285,30 @@ pub fn load_contacts_if_needed(
     Ok(stats)
 }
 
-fn delete_account_contacts(conn: &Connection, account_id: &str) -> Result<()> {
-    conn.execute(
-        "DELETE FROM contact_group_members WHERE contact_id IN (SELECT id FROM contacts WHERE account_id = ?1)",
-        params![account_id],
-    )?;
-    conn.execute(
-        "DELETE FROM contact_handles WHERE account_id = ?1",
-        params![account_id],
-    )?;
-    conn.execute(
-        "DELETE FROM contact_groups WHERE account_id = ?1",
-        params![account_id],
-    )?;
-    conn.execute(
-        "DELETE FROM contacts WHERE account_id = ?1",
-        params![account_id],
-    )?;
+async fn delete_account_contacts(conn: &mut AnyConnection, account_id: &str) -> Result<()> {
+    sqlx::query(
+        "DELETE FROM contact_group_members WHERE contact_id IN (SELECT id FROM contacts WHERE account_id = $1)",
+    )
+    .bind(account_id)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query("DELETE FROM contact_handles WHERE account_id = $1")
+        .bind(account_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("DELETE FROM contact_groups WHERE account_id = $1")
+        .bind(account_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("DELETE FROM contacts WHERE account_id = $1")
+        .bind(account_id)
+        .execute(&mut *conn)
+        .await?;
     Ok(())
 }
 
-fn load_from_vcard_csv(
-    conn: &mut Connection,
+async fn load_from_vcard_csv(
+    conn: &mut AnyConnection,
     csv_path: &Path,
     account_id: &str,
 ) -> Result<ContactLoadStats> {
@@ -341,11 +349,11 @@ fn load_from_vcard_csv(
         });
     }
 
-    insert_contact_drafts(conn, account_id, drafts)
+    insert_contact_drafts(conn, account_id, drafts).await
 }
 
-fn load_from_vcf(
-    conn: &mut Connection,
+async fn load_from_vcf(
+    conn: &mut AnyConnection,
     vcf_path: &Path,
     account_id: &str,
 ) -> Result<ContactLoadStats> {
@@ -423,52 +431,67 @@ fn load_from_vcf(
         });
     }
 
-    insert_contact_drafts(conn, account_id, drafts)
+    insert_contact_drafts(conn, account_id, drafts).await
 }
 
 fn collapse_inner_whitespace(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn insert_contact_drafts(
-    conn: &mut Connection,
+async fn insert_contact_drafts(
+    conn: &mut AnyConnection,
     account_id: &str,
     drafts: Vec<ContactDraft>,
 ) -> Result<ContactLoadStats> {
     let mut stats = ContactLoadStats::default();
     let drafts = merge_duplicate_phone_drafts(drafts);
-    let tx = conn.transaction()?;
+    let mut tx = conn.begin().await?;
 
     for draft in drafts {
         // Insert contact
         let preferred_name = draft.preferred_name.as_deref().unwrap_or("Unknown");
-        tx.execute(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, ?2)",
-            params![account_id, preferred_name],
-        )?;
-        let contact_id = tx.last_insert_rowid();
+        let contact_id: i64 = sqlx::query_scalar(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, $2) RETURNING id",
+        )
+        .bind(account_id)
+        .bind(preferred_name)
+        .fetch_one(&mut *tx)
+        .await?;
         stats.contacts += 1;
 
         for (phone, note) in &draft.phones {
             // Ensure handle exists; the note flags ambiguous values for review.
-            tx.execute(
-                "INSERT OR IGNORE INTO handles (account_id, raw, normalized, normalized_note, handle_type, service)
-                 VALUES (?1, ?2, ?3, ?4, 'phone', 'phone')",
-                params![account_id, phone, phone, note],
-            )?;
-            let handle_id: i64 = tx.query_row(
+            sqlx::query(
+                "INSERT INTO handles (account_id, raw, normalized, normalized_note, handle_type, service)
+                 VALUES ($1, $2, $3, $4, 'phone', 'phone')
+                 ON CONFLICT DO NOTHING",
+            )
+            .bind(account_id)
+            .bind(phone)
+            .bind(phone)
+            .bind(note.as_deref())
+            .execute(&mut *tx)
+            .await?;
+            let handle_id: i64 = sqlx::query_scalar(
                 "SELECT id FROM handles
-                 WHERE account_id = ?1 AND normalized = ?2 AND handle_type = 'phone' AND service = 'phone'",
-                params![account_id, phone],
-                |row| row.get(0),
-            )?;
+                 WHERE account_id = $1 AND normalized = $2 AND handle_type = 'phone' AND service = 'phone'",
+            )
+            .bind(account_id)
+            .bind(phone)
+            .fetch_one(&mut *tx)
+            .await?;
 
             // Link contact to handle
-            tx.execute(
-                "INSERT OR IGNORE INTO contact_handles (account_id, handle_id, contact_id)
-                 VALUES (?1, ?2, ?3)",
-                params![account_id, handle_id, contact_id],
-            )?;
+            sqlx::query(
+                "INSERT INTO contact_handles (account_id, handle_id, contact_id)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT DO NOTHING",
+            )
+            .bind(account_id)
+            .bind(handle_id)
+            .bind(contact_id)
+            .execute(&mut *tx)
+            .await?;
             stats.phones += 1;
             if note.is_some() {
                 stats.phones_needing_review += 1;
@@ -476,16 +499,20 @@ fn insert_contact_drafts(
         }
 
         for group_name in &draft.groups {
-            let group_id = ensure_group(&tx, account_id, group_name)?;
-            tx.execute(
-                "INSERT OR IGNORE INTO contact_group_members (contact_id, group_id) VALUES (?1, ?2)",
-                params![contact_id, group_id],
-            )?;
+            let group_id = ensure_group(&mut *tx, account_id, group_name).await?;
+            sqlx::query(
+                "INSERT INTO contact_group_members (contact_id, group_id) VALUES ($1, $2)
+                 ON CONFLICT DO NOTHING",
+            )
+            .bind(contact_id)
+            .bind(group_id)
+            .execute(&mut *tx)
+            .await?;
             stats.groups += 1;
         }
     }
 
-    tx.commit()?;
+    tx.commit().await?;
     Ok(stats)
 }
 
@@ -540,16 +567,21 @@ fn merge_contact_draft(into: &mut ContactDraft, from: ContactDraft) {
     }
 }
 
-fn ensure_group(conn: &Connection, account_id: &str, name: &str) -> Result<i64> {
-    conn.execute(
-        "INSERT OR IGNORE INTO contact_groups (account_id, name) VALUES (?1, ?2)",
-        params![account_id, name],
-    )?;
-    let id: i64 = conn.query_row(
-        "SELECT id FROM contact_groups WHERE account_id = ?1 AND name = ?2",
-        params![account_id, name],
-        |row| row.get(0),
-    )?;
+async fn ensure_group(conn: &mut AnyConnection, account_id: &str, name: &str) -> Result<i64> {
+    sqlx::query(
+        "INSERT INTO contact_groups (account_id, name) VALUES ($1, $2)
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(account_id)
+    .bind(name)
+    .execute(&mut *conn)
+    .await?;
+    let id: i64 =
+        sqlx::query_scalar("SELECT id FROM contact_groups WHERE account_id = $1 AND name = $2")
+            .bind(account_id)
+            .bind(name)
+            .fetch_one(&mut *conn)
+            .await?;
     Ok(id)
 }
 
@@ -559,6 +591,8 @@ fn ensure_group(conn: &Connection, account_id: &str, name: &str) -> Result<i64> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TEST_ACCOUNT_ID: &str = "00000000-0000-0000-0000-000000000042";
 
     #[test]
     fn email_detection() {
@@ -577,60 +611,50 @@ mod tests {
         );
     }
 
-    #[test]
-    fn trunk_zero_phone_is_flagged_with_note() {
-        let dir = std::env::temp_dir().join(format!(
-            "mv-contacts-trunk-zero-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let db_path = dir.join("vault.db");
-        let vcf_path = dir.join("contacts.vcf");
+    #[tokio::test]
+    async fn trunk_zero_phone_is_flagged_with_note() {
+        let (pool, dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        crate::db::schema::ensure_vault_schema(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO accounts (id, username, read_only, preferred_name)
+             VALUES ($1, 't', 0, 'T')",
+        )
+        .bind(TEST_ACCOUNT_ID)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let vcf_path = dir.path().join("contacts.vcf");
         std::fs::write(
             &vcf_path,
             "BEGIN:VCARD\nVERSION:3.0\nFN:UK Peer\nN:Peer;UK;;;\nTEL:020 7946 0000\nEND:VCARD\n",
         )
         .unwrap();
 
-        let mut conn = Connection::open(&db_path).unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        crate::db::schema::ensure_vault_schema(&conn).unwrap();
-        conn.execute(
-            "INSERT INTO accounts (id, username, read_only, preferred_name)
-             VALUES (?1, 't', 0, 'T')",
-            params![TEST_ACCOUNT_ID],
-        )
-        .unwrap();
-
-        let stats =
-            load_contacts_if_needed(&mut conn, Some(&vcf_path), true, TEST_ACCOUNT_ID).unwrap();
+        let stats = load_contacts_if_needed(&mut conn, Some(&vcf_path), true, TEST_ACCOUNT_ID)
+            .await
+            .unwrap();
         assert_eq!(stats.phones, 1);
         assert_eq!(stats.phones_needing_review, 1);
 
         // Guarded policy: normalized mirrors the digits (no fabricated
         // +02079460000) and the handles row carries a review note.
-        let (normalized, note): (String, Option<String>) = conn
-            .query_row(
-                "SELECT normalized, normalized_note FROM handles
-                 WHERE account_id = ?1 AND handle_type = 'phone'",
-                params![TEST_ACCOUNT_ID],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
+        let (normalized, note): (String, Option<String>) = sqlx::query_as(
+            "SELECT normalized, normalized_note FROM handles
+             WHERE account_id = $1 AND handle_type = 'phone'",
+        )
+        .bind(TEST_ACCOUNT_ID)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
         assert_eq!(normalized, "02079460000");
         assert!(
             note.as_deref().is_some(),
             "trunk-zero phone must carry a review note"
         );
-
-        drop(conn);
-        std::fs::remove_dir_all(&dir).ok();
     }
-
-    const TEST_ACCOUNT_ID: &str = "00000000-0000-0000-0000-000000000042";
 
     #[test]
     fn accepts_vcard_csv_and_vcf_but_rejects_vault_csv() {
@@ -673,18 +697,22 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    #[test]
-    fn loads_vcard_csv_into_sqlite() {
-        let dir = std::env::temp_dir().join(format!(
-            "mv-contacts-vcard-csv-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let db_path = dir.join("vault.db");
-        let csv_path = dir.join("contacts.csv");
+    #[tokio::test]
+    async fn loads_vcard_csv_into_sqlite() {
+        let (pool, dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        crate::db::schema::ensure_vault_schema(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO accounts (id, username, read_only, preferred_name)
+             VALUES ($1, 't', 0, 'T')",
+        )
+        .bind(TEST_ACCOUNT_ID)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let csv_path = dir.path().join("contacts.csv");
         std::fs::write(
             &csv_path,
             "First Name,Middle Name,Last Name,Mobile Phone,Home Phone\n\
@@ -693,46 +721,37 @@ mod tests {
         )
         .unwrap();
 
-        let mut conn = Connection::open(&db_path).unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        crate::db::schema::ensure_vault_schema(&conn).unwrap();
-        conn.execute(
-            "INSERT INTO accounts (id, username, read_only, preferred_name)
-             VALUES (?1, 't', 0, 'T')",
-            params![TEST_ACCOUNT_ID],
-        )
-        .unwrap();
-
-        let stats =
-            load_contacts_if_needed(&mut conn, Some(&csv_path), true, TEST_ACCOUNT_ID).unwrap();
+        let stats = load_contacts_if_needed(&mut conn, Some(&csv_path), true, TEST_ACCOUNT_ID)
+            .await
+            .unwrap();
         assert_eq!(stats.contacts, 1);
         assert_eq!(stats.phones, 2);
 
-        let name: String = conn
-            .query_row(
-                "SELECT preferred_name FROM contacts WHERE account_id = ?1",
-                params![TEST_ACCOUNT_ID],
-                |row| row.get(0),
-            )
-            .unwrap();
+        let name: String =
+            sqlx::query_scalar("SELECT preferred_name FROM contacts WHERE account_id = $1")
+                .bind(TEST_ACCOUNT_ID)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
         assert_eq!(name, "Ada Augusta Lovelace");
-
-        drop(conn);
-        std::fs::remove_dir_all(&dir).ok();
     }
 
-    #[test]
-    fn loads_vcf_into_sqlite() {
-        let dir = std::env::temp_dir().join(format!(
-            "mv-contacts-vcf-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let db_path = dir.join("vault.db");
-        let vcf_path = dir.join("contacts.vcf");
+    #[tokio::test]
+    async fn loads_vcf_into_sqlite() {
+        let (pool, dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        crate::db::schema::ensure_vault_schema(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO accounts (id, username, read_only, preferred_name)
+             VALUES ($1, 't', 0, 'T')",
+        )
+        .bind(TEST_ACCOUNT_ID)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let vcf_path = dir.path().join("contacts.vcf");
         std::fs::write(
             &vcf_path,
             "BEGIN:VCARD\nVERSION:3.0\nFN:Ada Augusta Lovelace\nN:Lovelace;Ada;Augusta;;\nTEL:+15551234567\nCATEGORIES:Family\nEND:VCARD\n\
@@ -741,45 +760,34 @@ mod tests {
         )
         .unwrap();
 
-        let mut conn = Connection::open(&db_path).unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        crate::db::schema::ensure_vault_schema(&conn).unwrap();
-        conn.execute(
-            "INSERT INTO accounts (id, username, read_only, preferred_name)
-             VALUES (?1, 't', 0, 'T')",
-            params![TEST_ACCOUNT_ID],
-        )
-        .unwrap();
-
-        let stats =
-            load_contacts_if_needed(&mut conn, Some(&vcf_path), true, TEST_ACCOUNT_ID).unwrap();
+        let stats = load_contacts_if_needed(&mut conn, Some(&vcf_path), true, TEST_ACCOUNT_ID)
+            .await
+            .unwrap();
         assert_eq!(stats.contacts, 2);
         assert_eq!(stats.phones, 3);
         assert_eq!(stats.groups, 3);
 
-        let preferred_name: String = conn
-            .query_row(
-                "SELECT c.preferred_name FROM contacts c
-                 JOIN contact_handles ch ON ch.contact_id = c.id
-                 JOIN handles h ON h.id = ch.handle_id
-                 WHERE c.account_id = ?1 AND h.normalized = '+15551234567'",
-                params![TEST_ACCOUNT_ID],
-                |row| row.get(0),
-            )
-            .unwrap();
+        let preferred_name: String = sqlx::query_scalar(
+            "SELECT c.preferred_name FROM contacts c
+             JOIN contact_handles ch ON ch.contact_id = c.id
+             JOIN handles h ON h.id = ch.handle_id
+             WHERE c.account_id = $1 AND h.normalized = '+15551234567'",
+        )
+        .bind(TEST_ACCOUNT_ID)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
         assert_eq!(preferred_name, "Ada Augusta Lovelace");
 
-        let groups: Vec<String> = conn
-            .prepare(
-                "SELECT cg.name FROM contact_groups cg
-                 JOIN contact_group_members m ON m.group_id = cg.id
-                 WHERE cg.account_id = ?1 ORDER BY cg.name",
-            )
-            .unwrap()
-            .query_map(params![TEST_ACCOUNT_ID], |row| row.get(0))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
+        let groups: Vec<String> = sqlx::query_scalar(
+            "SELECT cg.name FROM contact_groups cg
+             JOIN contact_group_members m ON m.group_id = cg.id
+             WHERE cg.account_id = $1 ORDER BY cg.name",
+        )
+        .bind(TEST_ACCOUNT_ID)
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap();
         assert_eq!(
             groups,
             vec![
@@ -788,8 +796,5 @@ mod tests {
                 "Work".to_string()
             ]
         );
-
-        drop(conn);
-        std::fs::remove_dir_all(&dir).ok();
     }
 }
