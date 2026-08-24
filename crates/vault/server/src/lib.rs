@@ -37,6 +37,13 @@ pub use server::{ApiError, AppState, AuthCapability, AuthIdentity, ErrorBody, re
 
 use clap::Command;
 
+/// Postgres test URL when the gated suite should run (CI sets this).
+pub fn pg_test_url() -> Option<String> {
+    std::env::var("MV_TEST_POSTGRES_URL")
+        .ok()
+        .filter(|u| !u.is_empty())
+}
+
 /// Clap command definition for the `message-vault-server` CLI; delegates to
 /// [`cli::clap_command`].
 pub fn clap_command() -> Command {

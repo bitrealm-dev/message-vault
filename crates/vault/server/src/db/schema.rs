@@ -30,9 +30,16 @@ const DROP_MESSAGES_FTS_TRIGGERS_SQL: &str =
     include_str!("../../../../../schema/sql/fts_triggers_drop.sql");
 const CREATE_MESSAGES_FTS_TRIGGERS_SQL: &str =
     include_str!("../../../../../schema/sql/fts_triggers_create.sql");
+/// Postgres FTS twin of `FTS_VIRTUAL_DDL` + `CREATE_MESSAGES_FTS_TRIGGERS_SQL`:
+/// the `search_tsv` column, GIN index, sync functions, and triggers (all
+/// idempotent).
+const FTS_POSTGRES_DDL: &str = include_str!("../../../../../schema/sql/fts_postgres.sql");
+const DROP_MESSAGES_FTS_TRIGGERS_PG_SQL: &str =
+    include_str!("../../../../../schema/sql/fts_postgres_drop.sql");
 
-/// Postgres DDL variants; the FTS index and its sync triggers are SQLite-only
-/// (the Postgres full-text twin is a separate concern).
+/// Postgres DDL variants; the FTS index and its sync triggers live in
+/// `FTS_POSTGRES_DDL` / `DROP_MESSAGES_FTS_TRIGGERS_PG_SQL` (see
+/// [`ensure_messages_fts`]).
 const PG_ACCOUNTS_DDL: &str = include_str!("../../../../../schema/sql/pg_accounts.sql");
 const PG_MESSAGE_TABLES_DDL: &str = include_str!("../../../../../schema/sql/pg_messages.sql");
 const PG_STAGING_TABLES_DDL: &str = include_str!("../../../../../schema/sql/pg_staging.sql");
@@ -148,9 +155,8 @@ async fn apply_vault_ddl(conn: &mut AnyConnection) -> Result<()> {
     Ok(())
 }
 
-/// Apply the Postgres DDL variants. FTS is not part of the Postgres schema
-/// yet; the DDL is idempotent (`IF NOT EXISTS`), so applying it again is a
-/// no-op.
+/// Apply the Postgres DDL variants. The DDL is idempotent (`IF NOT EXISTS`),
+/// so applying it again is a no-op.
 async fn apply_postgres_vault_ddl(conn: &mut AnyConnection) -> Result<()> {
     execute_batch(conn, PG_ACCOUNTS_DDL).await?;
     // Same ordering as the SQLite variant: contacts before messages.
@@ -160,6 +166,9 @@ async fn apply_postgres_vault_ddl(conn: &mut AnyConnection) -> Result<()> {
     // Post-hoc FKs last: they reference tables from both the accounts and
     // contacts DDL sets.
     execute_batch(conn, PG_FKS_DDL).await?;
+    // FTS last, same as the SQLite variant: the tsvector column, GIN index,
+    // and sync triggers all target tables created above.
+    ensure_messages_fts(conn).await?;
     Ok(())
 }
 
@@ -181,12 +190,17 @@ pub async fn ensure_vault_schema(conn: &mut AnyConnection) -> Result<()> {
 /// Marker that current full-text search (FTS) sync trigger definitions are installed.
 pub const MESSAGES_FTS_TRIGGERS_META_KEY: &str = "messages_fts_triggers_v1";
 
-/// Contentless full-text search index over message body/subject plus attachment text.
-///
-/// SQLite-only for now: the Postgres full-text search index is a separate
-/// concern.
+/// Full-text search index over message body/subject plus attachment text:
+/// contentless FTS5 virtual table with sync triggers on SQLite, a `search_tsv`
+/// tsvector column with GIN index and sync triggers on Postgres.
 async fn ensure_messages_fts(conn: &mut AnyConnection) -> Result<()> {
     if dialect::engine_of(conn) == DbEngine::Postgres {
+        // Postgres has no `CREATE TRIGGER IF NOT EXISTS`, so the batch must
+        // drop the triggers first — running it directly here would fail on a
+        // vault that already has them (every server restart against an
+        // existing Postgres vault). install_messages_fts_triggers applies the
+        // drop file, then the full DDL, and stamps the schema_meta marker.
+        install_messages_fts_triggers(conn).await?;
         return Ok(());
     }
     execute_batch(conn, FTS_VIRTUAL_DDL).await?;
@@ -203,13 +217,19 @@ async fn ensure_messages_fts(conn: &mut AnyConnection) -> Result<()> {
 }
 
 /// Drop full-text search sync triggers (used during bulk promote so inserts skip
-/// per-row indexing).
+/// per-row indexing). On Postgres this is the drop half of the trigger install
+/// (the promote path disables triggers instead — see
+/// [`disable_fts_triggers_pg`]).
 ///
 /// # Errors
 ///
 /// Returns an error when the drop statements fail.
 pub(crate) async fn drop_messages_fts_triggers(conn: &mut AnyConnection) -> Result<()> {
-    execute_batch(conn, DROP_MESSAGES_FTS_TRIGGERS_SQL).await?;
+    if dialect::engine_of(conn) == DbEngine::Postgres {
+        execute_batch(conn, DROP_MESSAGES_FTS_TRIGGERS_PG_SQL).await?;
+    } else {
+        execute_batch(conn, DROP_MESSAGES_FTS_TRIGGERS_SQL).await?;
+    }
     sqlx::query("DELETE FROM schema_meta WHERE key = $1")
         .bind(MESSAGES_FTS_TRIGGERS_META_KEY)
         .execute(&mut *conn)
@@ -218,13 +238,20 @@ pub(crate) async fn drop_messages_fts_triggers(conn: &mut AnyConnection) -> Resu
 }
 
 /// Install full-text search sync triggers and mark them ready in `schema_meta`.
+/// On Postgres the trigger statements are made idempotent by dropping first,
+/// exactly like the SQLite path.
 ///
 /// # Errors
 ///
 /// Returns an error when the trigger SQL or metadata write fails.
 pub(crate) async fn install_messages_fts_triggers(conn: &mut AnyConnection) -> Result<()> {
-    execute_batch(conn, DROP_MESSAGES_FTS_TRIGGERS_SQL).await?;
-    execute_batch(conn, CREATE_MESSAGES_FTS_TRIGGERS_SQL).await?;
+    if dialect::engine_of(conn) == DbEngine::Postgres {
+        execute_batch(conn, DROP_MESSAGES_FTS_TRIGGERS_PG_SQL).await?;
+        execute_batch(conn, FTS_POSTGRES_DDL).await?;
+    } else {
+        execute_batch(conn, DROP_MESSAGES_FTS_TRIGGERS_SQL).await?;
+        execute_batch(conn, CREATE_MESSAGES_FTS_TRIGGERS_SQL).await?;
+    }
     sqlx::query(
         "INSERT INTO schema_meta (key, value) VALUES ($1, '1')
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -287,9 +314,45 @@ pub(crate) async fn create_messages_secondary_indexes(conn: &mut AnyConnection) 
     Ok(())
 }
 
-/// Bulk-index promoted messages (joined via temp `_promote_msg_map`) into the
-/// full-text search table `messages_fts`.
+/// Disable every Postgres trigger on the message tables during bulk promote,
+/// so per-row FTS sync work is skipped (Postgres has no per-statement
+/// "don't run triggers" mode; SQLite drops its FTS triggers instead — see
+/// [`drop_messages_fts_triggers`]). The bulk vector fill runs afterwards via
+/// [`index_messages_fts_from_promote_map`], then
+/// [`enable_fts_triggers_pg`] restores the triggers.
+///
+/// # Errors
+///
+/// Returns an error when a disable statement fails.
+pub(crate) async fn disable_fts_triggers_pg(conn: &mut AnyConnection) -> Result<()> {
+    sqlx::query("ALTER TABLE messages DISABLE TRIGGER ALL")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("ALTER TABLE attachments DISABLE TRIGGER ALL")
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// Re-enable the Postgres triggers disabled by [`disable_fts_triggers_pg`].
+///
+/// # Errors
+///
+/// Returns an error when an enable statement fails.
+pub(crate) async fn enable_fts_triggers_pg(conn: &mut AnyConnection) -> Result<()> {
+    sqlx::query("ALTER TABLE messages ENABLE TRIGGER ALL")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("ALTER TABLE attachments ENABLE TRIGGER ALL")
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// Bulk-index promoted messages (joined via temp `_promote_msg_map`).
 /// Call after attachment rows exist so `attachment_text` is complete.
+/// SQLite inserts into the contentless `messages_fts` table; Postgres fills
+/// the `messages.search_tsv` tsvector instead.
 ///
 /// `_promote_msg_map` also targets messages that already existed before this
 /// promotion (so attachments and tapbacks can attach to them), and several
@@ -303,6 +366,31 @@ pub(crate) async fn index_messages_fts_from_promote_map(
     conn: &mut AnyConnection,
     min_new_message_id: i64,
 ) -> Result<u64> {
+    if dialect::engine_of(conn) == DbEngine::Postgres {
+        let n = sqlx::query(
+            r#"
+            UPDATE messages SET search_tsv = fts.vec
+            FROM (
+                SELECT mm.prod_id,
+                       to_tsvector('simple',
+                           coalesce(m.body, '') || ' ' || coalesce(m.subject, '') || ' ' || coalesce(a.attachment_text, '')) AS vec
+                FROM (SELECT DISTINCT prod_id FROM _promote_msg_map WHERE prod_id > $1) mm
+                JOIN messages m ON m.id = mm.prod_id
+                LEFT JOIN (
+                    SELECT message_id,
+                           string_agg(trim(coalesce(original_name, '') || ' ' || coalesce(transcription, '')), ' ') AS attachment_text
+                    FROM attachments
+                    GROUP BY message_id
+                ) a ON a.message_id = mm.prod_id
+            ) fts
+            WHERE messages.id = fts.prod_id
+            "#,
+        )
+        .bind(min_new_message_id)
+        .execute(&mut *conn)
+        .await?;
+        return Ok(n.rows_affected());
+    }
     let n = sqlx::query(
         r#"
         INSERT INTO messages_fts(rowid, body, subject, attachment_text)
@@ -494,28 +582,39 @@ async fn trigger_exists(conn: &mut AnyConnection, name: &str) -> Result<bool> {
 ///
 /// The schema files follow a fixed format: comments are whole `--` lines,
 /// ordinary statements end with `;` at end of line, and the only multi-line
-/// statements are trigger bodies (ending in a line ending with `END;`) and
-/// Postgres `DO $$` blocks (ending in a line ending with `$$;`).
+/// statements are trigger bodies (ending in a line ending with `END;`, or
+/// ending on the same line they start), Postgres `DO $$` blocks (ending in a
+/// line ending with `$$;`), and Postgres `CREATE OR REPLACE FUNCTION … AS $$`
+/// blocks (ending in a line that starts with `$$`).
 pub fn split_ddl(batch: &str) -> Vec<String> {
     let mut statements = Vec::new();
     let mut current = String::new();
     let mut in_trigger = false;
     let mut in_do_block = false;
+    let mut in_function = false;
     for line in batch.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with("--") {
             continue;
         }
-        if trimmed.starts_with("CREATE TRIGGER") {
+        let starts_trigger = trimmed.starts_with("CREATE TRIGGER");
+        let starts_do_block = trimmed.starts_with("DO $$");
+        let starts_function = trimmed.starts_with("CREATE OR REPLACE FUNCTION");
+        if starts_trigger {
             in_trigger = true;
         }
-        if trimmed.starts_with("DO $$") {
+        if starts_do_block {
             in_do_block = true;
+        }
+        if starts_function {
+            in_function = true;
         }
         current.push_str(line);
         current.push('\n');
         if in_trigger {
-            if trimmed.ends_with("END;") {
+            // Multi-line trigger bodies end with `END;`; a one-line trigger
+            // (e.g. `EXECUTE FUNCTION`) ends with `;` on its own line.
+            if trimmed.ends_with("END;") || (starts_trigger && trimmed.ends_with(';')) {
                 statements.push(current.trim_end().to_string());
                 current.clear();
                 in_trigger = false;
@@ -525,6 +624,14 @@ pub fn split_ddl(batch: &str) -> Vec<String> {
                 statements.push(current.trim_end().to_string());
                 current.clear();
                 in_do_block = false;
+            }
+        } else if in_function {
+            // The body's closing delimiter is its own `$$` line, e.g.
+            // `$$ LANGUAGE plpgsql;`.
+            if trimmed.starts_with("$$") && trimmed.ends_with(';') {
+                statements.push(current.trim_end().to_string());
+                current.clear();
+                in_function = false;
             }
         } else if trimmed.ends_with(';') {
             statements.push(current.trim_end().to_string());
@@ -588,6 +695,18 @@ mod tests {
     async fn fts_hits(conn: &mut AnyConnection, term: &str) -> i64 {
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH $1",
+        )
+        .bind(term)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap()
+    }
+
+    /// Search hits via the Postgres `search_tsv` vector (`messages_fts` has no
+    /// Postgres twin — the tsvector lives on `messages`).
+    async fn pg_fts_hits(conn: &mut AnyConnection, term: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM messages WHERE search_tsv @@ plainto_tsquery('simple', $1)",
         )
         .bind(term)
         .fetch_one(&mut *conn)
@@ -1088,6 +1207,105 @@ mod tests {
         assert_eq!(fts_hits(&mut conn, "goodbye").await, 0);
     }
 
+    /// The `messages_fts_stays_in_sync` twin for Postgres: the sync triggers
+    /// keep `search_tsv` in step with message and attachment edits. Skips
+    /// unless `MV_TEST_POSTGRES_URL` is set.
+    #[tokio::test]
+    async fn messages_fts_stays_in_sync_pg() {
+        let Some(url) = crate::pg_test_url() else {
+            return;
+        };
+        sqlx::any::install_default_drivers();
+        let pool = sqlx::any::AnyPoolOptions::new()
+            .connect(&url)
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        ensure_vault_schema(&mut conn).await.unwrap();
+        // The Postgres test database is shared across runs, so clear anything
+        // a previous run left behind (the account FKs cascade to handles,
+        // conversations, messages, attachments, and tapbacks).
+        sqlx::query("DELETE FROM accounts WHERE id = $1")
+            .bind(A1)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        // One account + conversation, mirroring the SQLite test's setup.
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'alice')")
+            .bind(A1)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let handle_id: i64 = sqlx::query_scalar(
+            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+             VALUES ($1, '+15555550100', '+15555550100', 'phone', 'phone')
+             RETURNING id",
+        )
+        .bind(A1)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let conversation_id: i64 = sqlx::query_scalar(
+            r#"
+            INSERT INTO conversations (
+                account_id, chat_handle_id, conversation_type,
+                group_title, exported_at, source_file
+            ) VALUES ($1, $2, 'individual', NULL, NULL, 't.json')
+            RETURNING id
+            "#,
+        )
+        .bind(A1)
+        .bind(handle_id)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let message_id: i64 = sqlx::query_scalar(
+            r#"
+            INSERT INTO messages (
+                conversation_id, account_id, source, guid, timestamp,
+                is_from_me, sort_order, body, subject
+            ) VALUES ($1, $2, 'sms', 'g1', '2020-01-01T00:00:00Z', 0, 0, 'hello vault', NULL)
+            RETURNING id
+            "#,
+        )
+        .bind(conversation_id)
+        .bind(A1)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO attachments (message_id, original_name, transcription) VALUES ($1, 'voice.m4a', 'secret phrase')",
+        )
+        .bind(message_id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        assert_eq!(pg_fts_hits(&mut conn, "vault").await, 1);
+        assert_eq!(pg_fts_hits(&mut conn, "secret").await, 1);
+
+        sqlx::query("UPDATE messages SET body = 'goodbye' WHERE id = $1")
+            .bind(message_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(pg_fts_hits(&mut conn, "vault").await, 0);
+        assert_eq!(pg_fts_hits(&mut conn, "goodbye").await, 1);
+
+        sqlx::query("DELETE FROM attachments WHERE message_id = $1")
+            .bind(message_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM messages WHERE id = $1")
+            .bind(message_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(pg_fts_hits(&mut conn, "goodbye").await, 0);
+    }
+
     #[test]
     fn split_ddl_keeps_trigger_bodies_intact() {
         let create = include_str!("../../../../../schema/sql/fts_triggers_create.sql");
@@ -1129,5 +1347,45 @@ mod tests {
             stmts[0]
         );
         assert!(stmts[0].ends_with("$$;"), "DO block must end in $$;");
+    }
+
+    #[test]
+    fn split_ddl_keeps_pg_function_bodies_intact() {
+        let ddl = include_str!("../../../../../schema/sql/fts_postgres.sql");
+        let stmts = split_ddl(ddl);
+        // Column + GIN index + two sync functions + six one-line triggers.
+        assert_eq!(stmts.len(), 10, "unexpected split of fts_postgres.sql");
+        let mut functions = 0;
+        let mut triggers = 0;
+        for stmt in &stmts {
+            if stmt.starts_with("CREATE OR REPLACE FUNCTION") {
+                functions += 1;
+                assert!(
+                    stmt.ends_with("$$ LANGUAGE plpgsql;"),
+                    "function must end in $$ LANGUAGE plpgsql;: {stmt}"
+                );
+            } else if stmt.starts_with("CREATE TRIGGER") {
+                triggers += 1;
+                assert!(
+                    stmt.ends_with("EXECUTE FUNCTION messages_fts_sync();")
+                        || stmt.ends_with("EXECUTE FUNCTION attachments_fts_sync();"),
+                    "unexpected split: {stmt}"
+                );
+            } else {
+                assert!(stmt.ends_with(';'), "statement must end with ;: {stmt}");
+            }
+        }
+        assert_eq!(functions, 2);
+        assert_eq!(triggers, 6);
+        let drop = split_ddl(include_str!(
+            "../../../../../schema/sql/fts_postgres_drop.sql"
+        ));
+        assert_eq!(drop.len(), 6, "six sync triggers to drop");
+        for stmt in drop {
+            assert!(
+                stmt.starts_with("DROP TRIGGER IF EXISTS"),
+                "unexpected split: {stmt}"
+            );
+        }
     }
 }

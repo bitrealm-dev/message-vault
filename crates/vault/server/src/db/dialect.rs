@@ -44,6 +44,16 @@ pub fn engine_of(conn: &sqlx::AnyConnection) -> DbEngine {
     }
 }
 
+/// The transaction-begin statement for each engine. SQLite uses IMMEDIATE so
+/// overlapping writers fail fast instead of deadlocking; Postgres has no
+/// equivalent statement-level mode and uses a plain BEGIN.
+pub fn begin_immediate_sql(engine: DbEngine) -> &'static str {
+    match engine {
+        DbEngine::Sqlite => "BEGIN IMMEDIATE TRANSACTION",
+        DbEngine::Postgres => "BEGIN",
+    }
+}
+
 /// Aggregate many values into one column with U+001F separators (the format
 /// the export pipeline expects). SQLite uses GROUP_CONCAT, Postgres string_agg.
 pub fn group_concat_unit_separator(engine: DbEngine, col: &str) -> String {
@@ -75,6 +85,15 @@ mod tests {
             "LIKE $3 COLLATE NOCASE"
         );
         assert_eq!(like_ci_numbered(DbEngine::Postgres, 3), "ILIKE $3");
+    }
+
+    #[test]
+    fn begin_immediate_sql_emits_engine_statements() {
+        assert_eq!(
+            begin_immediate_sql(DbEngine::Sqlite),
+            "BEGIN IMMEDIATE TRANSACTION"
+        );
+        assert_eq!(begin_immediate_sql(DbEngine::Postgres), "BEGIN");
     }
 
     #[test]

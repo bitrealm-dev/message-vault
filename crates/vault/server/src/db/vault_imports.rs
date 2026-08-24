@@ -8,6 +8,8 @@ use chrono::Utc;
 use serde::Serialize;
 use sqlx::{AnyConnection, Connection};
 
+use crate::db::dialect;
+
 #[derive(Debug, Clone, Serialize)]
 /// One row of `vault_imports`: a per-account import session record.
 #[allow(dead_code)]
@@ -368,10 +370,13 @@ pub async fn complete_import(
     };
     let bytes_uploaded = args.bytes_uploaded.unwrap_or(existing.bytes_uploaded);
 
-    // `BEGIN IMMEDIATE` matches today's write lock: the update and the issue
-    // inserts land as one unit, and a failed commit rolls back (sqlx drops the
-    // transaction).
-    let mut tx = conn.begin_with("BEGIN IMMEDIATE TRANSACTION").await?;
+    // `BEGIN IMMEDIATE` on SQLite matches today's write lock; Postgres uses a
+    // plain BEGIN (no statement-level equivalent). Either way the update and
+    // the issue inserts land as one unit, and a failed commit rolls back
+    // (sqlx drops the transaction).
+    let mut tx = conn
+        .begin_with(dialect::begin_immediate_sql(dialect::engine_of(conn)))
+        .await?;
     sqlx::query(
         r#"
         UPDATE vault_imports

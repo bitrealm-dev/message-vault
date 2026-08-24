@@ -8,6 +8,8 @@ use anyhow::{Result, bail};
 use sqlx::AnyConnection;
 use sqlx::Connection;
 
+use crate::db::dialect;
+use crate::db::engine::DbEngine;
 use crate::db::schema;
 use crate::db::sql::SQLITE_IN_CHUNK;
 
@@ -169,10 +171,17 @@ pub(super) async fn promote_append(
     ));
 
     // Skip per-row full-text search trigger work during bulk message/attachment
-    // inserts; index once after.
+    // inserts; index once after. SQLite drops the sync triggers; Postgres
+    // disables every trigger on the message tables (same effect, and the
+    // triggers are simply re-enabled instead of reinstalled).
+    let engine = dialect::engine_of(&mut *tx);
     let phase = Instant::now();
     promote_log("pausing FTS triggers…");
-    schema::drop_messages_fts_triggers(&mut *tx).await?;
+    if engine == DbEngine::Postgres {
+        schema::disable_fts_triggers_pg(&mut *tx).await?;
+    } else {
+        schema::drop_messages_fts_triggers(&mut *tx).await?;
+    }
     promote_phase_done(started, phase, "FTS triggers paused");
 
     let existing_msgs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages")
@@ -308,7 +317,11 @@ pub(super) async fn promote_append(
     promote_log("bulk-indexing FTS for new messages…");
     let fts_indexed =
         schema::index_messages_fts_from_promote_map(&mut *tx, max_msg_id_before_promote).await?;
-    schema::install_messages_fts_triggers(&mut *tx).await?;
+    if engine == DbEngine::Postgres {
+        schema::enable_fts_triggers_pg(&mut *tx).await?;
+    } else {
+        schema::install_messages_fts_triggers(&mut *tx).await?;
+    }
     promote_phase_done(
         started,
         phase,
