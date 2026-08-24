@@ -195,12 +195,21 @@ pub const MESSAGES_FTS_TRIGGERS_META_KEY: &str = "messages_fts_triggers_v1";
 /// tsvector column with GIN index and sync triggers on Postgres.
 async fn ensure_messages_fts(conn: &mut AnyConnection) -> Result<()> {
     if dialect::engine_of(conn) == DbEngine::Postgres {
-        // Postgres has no `CREATE TRIGGER IF NOT EXISTS`, so the batch must
-        // drop the triggers first — running it directly here would fail on a
-        // vault that already has them (every server restart against an
-        // existing Postgres vault). install_messages_fts_triggers applies the
-        // drop file, then the full DDL, and stamps the schema_meta marker.
-        install_messages_fts_triggers(conn).await?;
+        // Postgres has no `CREATE TRIGGER IF NOT EXISTS`, so installing means
+        // dropping the six sync triggers and recreating them. That may only
+        // run when the marker says they are missing: every schema ensure
+        // (each import's reset_staging_for_account) would otherwise drop and
+        // recreate the triggers behind a concurrent writer, a silent desync
+        // window for rows written in between. install_messages_fts_triggers
+        // writes the marker, drop_messages_fts_triggers deletes it.
+        let triggers_ready: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM schema_meta WHERE key = $1")
+                .bind(MESSAGES_FTS_TRIGGERS_META_KEY)
+                .fetch_one(&mut *conn)
+                .await?;
+        if triggers_ready == 0 {
+            install_messages_fts_triggers(conn).await?;
+        }
         return Ok(());
     }
     execute_batch(conn, FTS_VIRTUAL_DDL).await?;
@@ -536,7 +545,10 @@ pub async fn ensure_accounts_schema(conn: &mut AnyConnection) -> Result<()> {
 }
 
 /// True when `table` exists on this engine.
-#[cfg(test)]
+///
+/// Branches on the engine: `pg_catalog.pg_tables` for Postgres, `sqlite_master`
+/// for SQLite. Used by [`crate::process_assets::run`] to skip the account
+/// sweep on a database that has no vault schema yet.
 pub async fn table_exists(conn: &mut AnyConnection, name: &str) -> Result<bool> {
     let found: i64 = if dialect::engine_of(conn) == DbEngine::Postgres {
         sqlx::query_scalar("SELECT COUNT(*) FROM pg_catalog.pg_tables WHERE tablename = $1")

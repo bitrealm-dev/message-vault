@@ -213,7 +213,7 @@ pub async fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats
 /// instance — can defeat the splits and leak credentials into the error
 /// context. sqlx rejects such URLs before any output is produced, so this
 /// only ever prints URLs that failed to open for other reasons.
-fn redact_db_url(url: &str) -> String {
+pub(crate) fn redact_db_url(url: &str) -> String {
     let Some((scheme, rest)) = url.split_once("://") else {
         return "<db url>".to_string();
     };

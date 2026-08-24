@@ -40,6 +40,10 @@ pub enum Commands {
         #[arg(long)]
         db: Option<PathBuf>,
 
+        /// Connection URL (postgres://… or sqlite://…; overrides `[database]` url)
+        #[arg(long)]
+        db_url: Option<String>,
+
         /// Originals asset store directory (overrides account/source default; fixed-source only)
         #[arg(long)]
         assets_dir: Option<PathBuf>,
@@ -82,6 +86,10 @@ pub enum Commands {
         /// Output SQLite database path (overrides config)
         #[arg(long)]
         db: Option<PathBuf>,
+
+        /// Connection URL (postgres://… or sqlite://…; overrides `[database]` url)
+        #[arg(long)]
+        db_url: Option<String>,
 
         /// Near-time window in seconds for Pass B (default 2)
         #[arg(long, default_value_t = 2)]
@@ -190,6 +198,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             config,
             input,
             db,
+            db_url,
             assets_dir,
             contacts,
             overwrite_contacts,
@@ -217,7 +226,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                     account_id: account,
                     input_dir: input,
                     db_path: db,
-                    db_url: None,
+                    db_url,
                     assets_dir,
                     source_override: source,
                     mode,
@@ -291,6 +300,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Commands::DedupeCrossSource {
             config,
             db,
+            db_url,
             window_secs,
             account,
         } => {
@@ -302,12 +312,21 @@ pub async fn run(cli: Cli) -> Result<()> {
             }
 
             let priority = {
-                let pool = crate::db::engine::open_pool_for_path(&db).await?;
+                let pool = match db_url.as_deref() {
+                    Some(url) => crate::db::engine::open_pool_from_url(url).await?,
+                    None => crate::db::engine::open_pool_for_path(&db).await?,
+                };
                 let mut conn = pool.acquire().await?;
                 crate::dedupe::source_priority_from_db(&mut conn, &account).await?
             };
 
-            println!("Cross-source dedupe on {}", db.display());
+            match db_url.as_deref() {
+                Some(url) => println!(
+                    "Cross-source dedupe on {}",
+                    crate::import_cli::redact_db_url(url)
+                ),
+                None => println!("Cross-source dedupe on {}", db.display()),
+            }
             println!("  config:       {}", config.display());
             println!("  account:      {}", account);
             println!("  window_secs:  {}", window_secs);
@@ -320,7 +339,8 @@ pub async fn run(cli: Cli) -> Result<()> {
                 }
             );
 
-            let stats = crate::dedupe::run_dedupe(&db, &account, window_secs).await?;
+            let stats =
+                crate::dedupe::run_dedupe(&db, &account, window_secs, db_url.as_deref()).await?;
             println!(
                 "  fingerprints set:   {} (one per message; not a duplicate count)",
                 stats.keys_filled

@@ -28,7 +28,11 @@ fi
 # metadata cannot silently drift back to another license. The workspace-root
 # manifest has no [package] section and therefore no license field. The
 # vendored `vendor/sqlx-sqlite/` fork is third-party code and keeps upstream's
-# own license (MIT OR Apache-2.0), so it is excluded from the FCL check.
+# own license (MIT OR Apache-2.0), so it is excluded from the FCL check. The
+# AGPL sweep in the loop below skips vendor/ the same way: a future vendored
+# crate whose text mentions AGPL would pass silently. That is intentional —
+# vendor/ is third-party code, and its license is not the repo's — but keep
+# the exclusion in mind when the sweep seems to miss a manifest.
 while IFS= read -r manifest; do
   if grep -q '^\[package\]' "${manifest}"; then
     if ! grep -q "^license = \"${EXPECTED_CARGO_LICENSE}\"$" "${manifest}"; then

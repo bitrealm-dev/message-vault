@@ -87,6 +87,12 @@ pub async fn open_pool_for_path(path: &Path) -> Result<AnyPool> {
 
 /// Open a pool from a user-supplied connection URL (`sqlite://…` or
 /// `postgres://…`). The scheme selects the engine.
+///
+/// The `sqlite://` path applies the same pragma set as
+/// [`open_pool_for_path`] but skips the WAL journal-mode attempt: only the
+/// file-based path enables WAL, so `serve --db-url sqlite://…` (and other
+/// URL-open callers) runs on the rollback journal unless the URL itself
+/// enables WAL. Postgres has no equivalent.
 pub async fn open_pool_from_url(url: &str) -> Result<AnyPool> {
     let engine = detect_engine(url)?;
     if engine == DbEngine::Sqlite {
@@ -143,12 +149,33 @@ mod tests {
     #[tokio::test]
     async fn opens_sqlite_pool_and_applies_pragmas() {
         let (pool, _dir) = test_pool().await;
-        // foreign_keys must be ON (was PRAGMA foreign_keys = ON today)
+        // All five vault pragmas, read back through their pragma table
+        // functions (values must match with_vault_pragmas).
+        let busy_timeout: i64 = sqlx::query_scalar("SELECT timeout FROM pragma_busy_timeout")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(busy_timeout, 15000, "busy_timeout");
         let on: i64 = sqlx::query_scalar("SELECT foreign_keys FROM pragma_foreign_keys")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(on, 1);
+        assert_eq!(on, 1, "foreign_keys");
+        let synchronous: i64 = sqlx::query_scalar("SELECT synchronous FROM pragma_synchronous")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(synchronous, 1, "synchronous must be NORMAL");
+        let temp_store: i64 = sqlx::query_scalar("SELECT temp_store FROM pragma_temp_store")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(temp_store, 2, "temp_store must be MEMORY");
+        let cache_size: i64 = sqlx::query_scalar("SELECT cache_size FROM pragma_cache_size")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(cache_size, -200000, "cache_size");
         // The pool is usable for real work.
         sqlx::query("CREATE TABLE t1 (id INTEGER PRIMARY KEY, v TEXT)")
             .execute(&pool)

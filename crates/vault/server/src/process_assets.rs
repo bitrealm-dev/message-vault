@@ -319,13 +319,9 @@ async fn process_one(args: ProcessOneArgs<'_>) -> Result<Outcome> {
 }
 
 async fn list_account_ids(conn: &mut AnyConnection, data_dir: &Path) -> Result<Vec<String>> {
-    let has_accounts: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'accounts'",
-    )
-    .fetch_one(&mut *conn)
-    .await?;
+    // Engine-branched: sqlite_master does not exist on Postgres.
     let mut ids = Vec::new();
-    if has_accounts > 0 {
+    if schema::table_exists(conn, "accounts").await? {
         let rows = sqlx::query_scalar::<_, String>("SELECT id FROM accounts ORDER BY id")
             .fetch_all(&mut *conn)
             .await?;

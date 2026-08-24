@@ -57,12 +57,15 @@ pub fn pg_test_url() -> Option<String> {
 
 /// Serializes the Postgres-gated tests against their shared test database.
 /// Concurrent `ensure_vault_schema` calls race on Postgres's composite-type
-/// creation (`CREATE TABLE IF NOT EXISTS` is not race-safe there), and cargo
-/// runs the lib and integration test binaries concurrently — so the crate's
-/// gated unit tests (`messages_fts_stays_in_sync_pg`,
-/// `promote_fts_cycle_pg`) and the search-parity integration test must all
-/// take this lock around their Postgres work. Test-support surface, not
-/// product API.
+/// creation (`CREATE TABLE IF NOT EXISTS` is not race-safe there). cargo runs
+/// each test binary sequentially, so the races live inside one binary: the
+/// gated unit tests (`messages_fts_stays_in_sync_pg`, `promote_fts_cycle_pg`)
+/// run on the lib binary's thread pool, and the search-parity integration
+/// test runs its own threads — both also clear the shared id range (keys
+/// 1..=15), so everything takes this lock around its Postgres work. A
+/// parallel test runner (e.g. nextest) would need a cross-process lock;
+/// upgrade to a Postgres `pg_advisory_lock` on a dedicated connection if one
+/// is ever adopted. Test-support surface, not product API.
 #[doc(hidden)]
 pub static PG_TEST_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));

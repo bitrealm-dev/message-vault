@@ -308,7 +308,7 @@ async fn reset_prepared_bundle(
     .await?;
     merge_import_stats(&mut import_stats, &whatsapp_stats);
 
-    let dedupe_stats = dedupe::run_dedupe(&prepared_db, account_id, 2).await?;
+    let dedupe_stats = dedupe::run_dedupe(&prepared_db, account_id, 2, None).await?;
     println!("Reset demo — processing prepared assets");
     let process_stats = process_assets::run(
         &temporary_cfg,

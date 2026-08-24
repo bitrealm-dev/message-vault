@@ -11,7 +11,7 @@ use sqlx::{Connection, Row};
 
 use crate::config::{Config, GuestDemoSettings};
 use crate::db::account_profile::{self, DEMO_ACCOUNT_ID};
-use crate::db::session_tokens;
+use crate::db::{dialect, session_tokens};
 use crate::guest_clone::clone_template_to_guest;
 
 /// How far back refill demand looks when counting recent Try it assignments.
@@ -79,7 +79,9 @@ pub async fn assign_ready_guest(
     conn: &mut AnyConnection,
     session_secs: u64,
 ) -> Result<Option<(String, String, String)>> {
-    let mut tx = conn.begin_with("BEGIN IMMEDIATE TRANSACTION").await?;
+    let mut tx = conn
+        .begin_with(dialect::begin_immediate_sql(dialect::engine_of(conn)))
+        .await?;
     let picked: Option<(String, String)> = sqlx::query(
         r#"
         SELECT id, username FROM accounts

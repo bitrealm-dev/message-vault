@@ -751,8 +751,9 @@ async fn apply_duplicate_flags(
         sqlx::query(&stmt).execute(&mut *conn).await?;
     }
     {
+        let insert_sql = format!("INSERT INTO {table} (id, winner) VALUES ($1, $2)");
         for (id, winner) in flags {
-            sqlx::query(&format!("INSERT INTO {table} (id, winner) VALUES ($1, $2)"))
+            sqlx::query(&insert_sql)
                 .bind(id)
                 .bind(winner)
                 .execute(&mut *conn)
@@ -773,15 +774,28 @@ async fn apply_duplicate_flags(
     Ok(())
 }
 
-/// Open DB helpers used by CLI.
+/// Open DB helpers used by CLI. `db_url` (`postgres://…` or `sqlite://…`)
+/// selects the engine and wins over `db_path`, mirroring
+/// [`crate::import_cli`]'s pool choice.
 pub async fn run_dedupe(
     db_path: &std::path::Path,
     account_id: &str,
     near_window_secs: i64,
+    db_url: Option<&str>,
 ) -> Result<DedupeStats> {
-    let pool = crate::db::engine::open_pool_for_path(db_path)
-        .await
-        .with_context(|| format!("failed to open database {}", db_path.display()))?;
+    let pool = match db_url {
+        Some(url) => crate::db::engine::open_pool_from_url(url)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to open database at {}",
+                    crate::import_cli::redact_db_url(url)
+                )
+            })?,
+        None => crate::db::engine::open_pool_for_path(db_path)
+            .await
+            .with_context(|| format!("failed to open database {}", db_path.display()))?,
+    };
     let mut conn = pool.acquire().await?;
     crate::db::schema::ensure_vault_schema(&mut conn).await?;
     dedupe_cross_source(&mut conn, account_id, None, near_window_secs).await
