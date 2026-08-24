@@ -1,5 +1,5 @@
-import { useState } from "react";
 import { SelectionIndicator, Tab, TabList, TabPanel, Tabs } from "react-aria-components";
+import { useSearchParams } from "react-router-dom";
 import { parseSelectKey } from "../lib/selectKey";
 import { AccountSettingsPanel } from "./settings/AccountSettingsPanel";
 import { AppearanceSection } from "./settings/AppearanceSection";
@@ -7,7 +7,8 @@ import { ProfileSettingsPanel } from "./settings/ProfileSettingsPanel";
 import { StorageSection } from "./settings/StorageSection";
 import { SystemSection } from "./settings/SystemSection";
 
-type SettingsTab = "account" | "profile" | "storage" | "system" | "appearance";
+const SETTINGS_TABS = ["account", "profile", "storage", "system", "appearance"] as const;
+type SettingsTab = (typeof SETTINGS_TABS)[number];
 
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: "account", label: "Account" },
@@ -17,6 +18,10 @@ const TABS: { id: SettingsTab; label: string }[] = [
   { id: "appearance", label: "Appearance" },
 ];
 
+function tabFromSearchParam(raw: string | null): SettingsTab {
+  return parseSelectKey(raw, SETTINGS_TABS) ?? "account";
+}
+
 function tabClassName({ isSelected }: { isSelected: boolean }) {
   return `relative -mb-px cursor-pointer border-none bg-transparent px-3 py-2 text-[0.813rem] font-medium outline-none transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-accent ${
     isSelected ? "text-text" : "text-muted hover:text-text"
@@ -24,7 +29,8 @@ function tabClassName({ isSelected }: { isSelected: boolean }) {
 }
 
 export default function SettingsScreen() {
-  const [tab, setTab] = useState<SettingsTab>("account");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = tabFromSearchParam(searchParams.get("tab"));
 
   return (
     <div className="max-w-[820px] p-6 text-text">
@@ -38,14 +44,8 @@ export default function SettingsScreen() {
       <Tabs
         selectedKey={tab}
         onSelectionChange={(key) => {
-          const next = parseSelectKey(key, [
-            "account",
-            "profile",
-            "storage",
-            "system",
-            "appearance",
-          ] as const);
-          if (next) setTab(next);
+          const next = parseSelectKey(key, SETTINGS_TABS);
+          if (next) setSearchParams({ tab: next }, { replace: true });
         }}
       >
         <TabList

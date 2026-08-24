@@ -23,6 +23,7 @@ export async function invokeExtract(config: ExtractConfig): Promise<void> {
       startDate: config.start_date ?? null,
       endDate: config.end_date ?? null,
       obfuscate: config.obfuscate ?? null,
+      ownerPhones: config.owner_phones ?? null,
     },
   });
 }

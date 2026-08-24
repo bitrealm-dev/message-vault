@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { AccountProfile } from "../lib/account";
+import { apiClient } from "../lib/api";
 import { getImporterPath, getRememberImporterPaths, setImporterPath } from "../lib/system-settings";
 import type { AttachmentMediaMode, ContactNameMode } from "../lib/types";
 import ImportFormFields from "./import/ImportFormFields";
@@ -6,6 +8,7 @@ import ImportProgressView from "./import/ImportProgressView";
 import { useImportJob } from "./import/useImportJob";
 
 const DEFAULT_SOURCE = "imessage-ios";
+const SBR_SOURCE = "sms-backup-restore";
 
 export default function ImportScreen() {
   const {
@@ -31,14 +34,44 @@ export default function ImportScreen() {
   const [maxFps, setMaxFps] = useState("30");
   const [minSizeMb, setMinSizeMb] = useState("20");
   const [contactNameMode, setContactNameMode] = useState<ContactNameMode>("fill_missing");
+  const [ownerPhones, setOwnerPhones] = useState<string[]>([]);
   const [formatOpen, setFormatOpen] = useState(true);
   const [processingOpen, setProcessingOpen] = useState(false);
   const [force, setForce] = useState(false);
   const [obfuscate, setObfuscate] = useState(false);
+  /** null = not SBR / not loaded; true/false after profile fetch for SBR. */
+  const [accountHasPhones, setAccountHasPhones] = useState<boolean | null>(null);
+  const ownerPhonesSeededRef = useRef(false);
 
   useEffect(() => {
     if (!getRememberImporterPaths()) return;
     setBackupPath(getImporterPath(source));
+  }, [source]);
+
+  useEffect(() => {
+    if (source !== SBR_SOURCE) {
+      setAccountHasPhones(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const profile = await apiClient.get<AccountProfile>("/v1/account/profile");
+        if (cancelled) return;
+        setAccountHasPhones(profile.phones.length > 0);
+        if (profile.phones.length === 0 || ownerPhonesSeededRef.current) return;
+        setOwnerPhones((current) => {
+          if (current.length > 0) return current;
+          ownerPhonesSeededRef.current = true;
+          return [...profile.phones];
+        });
+      } catch {
+        if (!cancelled) setAccountHasPhones(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [source]);
 
   const updateBackupPath = (path: string) => {
@@ -47,6 +80,7 @@ export default function ImportScreen() {
   };
 
   const isIos = source === "imessage-ios";
+  const isSbr = source === SBR_SOURCE;
 
   return (
     <div className={`min-w-0 p-6 ${phase === "form" ? "max-w-[640px]" : "max-w-5xl"}`}>
@@ -70,6 +104,12 @@ export default function ImportScreen() {
           onMinSizeMbChange={setMinSizeMb}
           contactNameMode={contactNameMode}
           onContactNameModeChange={setContactNameMode}
+          ownerPhones={ownerPhones}
+          onOwnerPhonesChange={(phones) => {
+            ownerPhonesSeededRef.current = true;
+            setOwnerPhones(phones);
+          }}
+          showMissingAccountPhoneWarning={accountHasPhones === false}
           formatOpen={formatOpen}
           onToggleFormat={() => setFormatOpen((o) => !o)}
           processingOpen={processingOpen}
@@ -89,9 +129,11 @@ export default function ImportScreen() {
               maxFps,
               minSizeMb,
               contactNameMode,
+              ownerPhones,
               force,
               obfuscate,
               isIos,
+              isSbr,
             })
           }
         />

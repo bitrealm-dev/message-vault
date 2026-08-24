@@ -124,6 +124,8 @@ export interface ExtractConfig {
   start_date?: string;
   end_date?: string;
   obfuscate?: boolean;
+  /** Owner phone numbers for Android SMS exporters (repeatable). */
+  owner_phones?: string[];
 }
 
 export interface ExtractErrorEvent {

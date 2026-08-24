@@ -8,6 +8,7 @@ import { useTauriJob } from "../../hooks/useTauriJob";
 import { apiClient, getBaseUrl } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { saveImportSavedGroup } from "../../lib/savedGroups";
+import { sbrExtractFields } from "../../lib/sbrExtractFields";
 import { resolveImportStagingDir } from "../../lib/system-settings";
 import { invokeExtract, invokePush, type TauriJobResult } from "../../lib/tauri";
 import { isTauri } from "../../lib/tauri-check";
@@ -96,9 +97,11 @@ export type ImportJobFormValues = {
   maxFps: string;
   minSizeMb: string;
   contactNameMode: ContactNameMode;
+  ownerPhones: string[];
   force: boolean;
   obfuscate: boolean;
   isIos: boolean;
+  isSbr: boolean;
 };
 
 /** Run extract then upload for one import, and keep step progress for the UI. */
@@ -225,6 +228,16 @@ export function useImportJob() {
                   media_min_size: `${form.minSizeMb.trim() || "20"}M`,
                   obfuscate: form.obfuscate,
                 }
+              : {}),
+            ...(form.isSbr
+              ? sbrExtractFields({
+                  attachmentMedia: form.attachmentMedia,
+                  maxResolution: form.maxResolution,
+                  maxFps: form.maxFps,
+                  minSizeMb: form.minSizeMb,
+                  ownerPhones: form.ownerPhones,
+                  obfuscate: form.obfuscate,
+                })
               : {}),
           }),
         { onProgress: applyProgress, onIssue: recordIssue },
