@@ -166,9 +166,9 @@ export function SystemSection() {
         />
       </FormRow>
       <p className="mt-1 text-[0.75rem] text-muted">
-        Import creates a timestamped staging folder under this directory (for example
-        staging-iphone-ios-260809-143022), matching the Slint GUI. Defaults to your user home
-        directory. Clear the field and save to restore that default.
+        Import staging is written under message-vault in your home directory (for example
+        ~/message-vault/staging-iphone-ios-260809-143022). This working directory is not used to
+        choose that path.
       </p>
 
       <label className="mt-5 flex cursor-pointer items-start gap-2 text-[0.875rem]">

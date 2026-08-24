@@ -10,6 +10,9 @@ const IMPORTER_PATHS_KEY = "mv-importer-paths";
 let cachedHomeDir: string | null = null;
 let homeDirPromise: Promise<string> | null = null;
 
+/** Parent folder under the user home directory that holds import staging folders. */
+const IMPORT_STAGING_PARENT = "message-vault";
+
 /** Folder chosen in Settings as the vault working directory. Empty when unset. */
 export function getVaultWorkingDir(): string {
   try {
@@ -48,13 +51,6 @@ export async function getHomeDir(): Promise<string> {
       });
   }
   return homeDirPromise;
-}
-
-/** Saved working folder, or the user home folder when none is saved. */
-async function getEffectiveVaultWorkingDir(): Promise<string> {
-  const stored = getVaultWorkingDir();
-  if (stored) return stored;
-  return getHomeDir();
 }
 
 /** True when Import should reuse the last backup folder for each source. */
@@ -147,17 +143,39 @@ function stagingDirName(sourceId: string, now: Date = new Date()): string {
 }
 
 /**
+ * Join the user home folder with `message-vault/staging-<importer>-YYMMDD-HHMMSS`.
+ * When home is empty (browser builds, failed lookup), the path is relative.
+ */
+export function joinImportStagingPath(
+  homeDir: string,
+  sourceId: string,
+  now: Date = new Date(),
+): string {
+  const name = stagingDirName(sourceId, now);
+  const home = homeDir.trim().replace(/[/\\]+$/, "");
+  if (!home) {
+    return `${IMPORT_STAGING_PARENT}/${name}`;
+  }
+  return `${home}/${IMPORT_STAGING_PARENT}/${name}`;
+}
+
+/**
  * Full path for a new import staging folder.
- * Uses the saved working directory, or the user home folder when none is saved.
+ * Always `{home}/message-vault/staging-<importer>-YYMMDD-HHMMSS`.
+ *
+ * @throws If the desktop app cannot determine the user home directory. A
+ * relative `message-vault/…` path would otherwise be created next to the
+ * process working directory (for example the AppImage mount).
  */
 export async function resolveImportStagingDir(
   _backupPath: string,
   sourceId: string,
 ): Promise<string> {
-  const working = (await getEffectiveVaultWorkingDir()).replace(/[/\\]+$/, "");
-  if (!working) {
-    // Browser builds and failed home lookups get a relative folder name.
-    return stagingDirName(sourceId);
+  const home = (await getHomeDir()).trim();
+  if (!home) {
+    throw new Error(
+      "Could not determine the user home directory. Import staging needs ~/message-vault/.",
+    );
   }
-  return `${working}/${stagingDirName(sourceId)}`;
+  return joinImportStagingPath(home, sourceId);
 }
