@@ -337,7 +337,9 @@ This task ports `db/schema.rs` and `db/sql.rs`. It is the first task of the comp
 | `conn.transaction()?` | `let mut tx = conn.begin().await?;` … `tx.commit().await?;` — pass `&mut *tx` where a fn takes `&mut AnyConnection` (`Transaction` derefs to `AnyConnection`) |
 | `conn.execute_batch(batch)` | `for stmt in split_ddl(batch) { sqlx::query(stmt).execute(&mut *conn).await?; }` |
 | `prepare()` + loop `ins.execute(params![…])` | `sqlx::query(sql).bind(…).execute(&mut *conn).await?` inside the loop (no prepared-statement caching) |
-| `params_from_iter` / dynamic bind lists | `sqlx::QueryBuilder::<sqlx::Any>::new(sql)` + `push_bind` in a loop + `.build()` |
+| `params_from_iter` / dynamic bind lists | hand-number `$N` placeholders (counter in the loop) + chain `.bind()` calls in order; see the placeholder-discipline note below |
+
+**Placeholder discipline (verified against sqlx-core 0.8.6 source — normative for Tasks 2–6):** sqlx's Any driver performs no placeholder rewriting and `?` is invalid on Postgres (it is the JSONB operator); sqlx-sqlite 0.8.6 parses `$NNN`, so **`$N` is the only portable placeholder**. Fixed-shape SQL literals use hand-numbered `$1, $2, …`. `sqlx::QueryBuilder::<Any>` is unusable (its `push_bind` emits `?` via the Arguments trait default with no Any override). Dynamic fragment builders (Task 5's export compiler) instead keep `?` inside fragments and run one shared `renumber_placeholders()` pass over the final joined SQL before execution, binding heterogeneous values through a small `SqlParam` enum (`Text(String) | Int(i64) | Bool(bool) | Null`) chained onto the query in order — `sqlx::any::AnyValue` is not user-constructible, so this enum is the dynamic-bind carrier. `in_placeholders`/`pair_placeholders` in `db/sql.rs` become `$N`-aware (emit numbered ranges from a starting index) or are replaced by loop counters at call sites.
 
 - [ ] **Step 1: Write failing tests for `split_ddl`**
 
@@ -581,7 +583,7 @@ pub fn touch_contact(conn: &Connection, account_id: &str, contact_id: i64) -> Re
 // AFTER
 pub async fn touch_contact(conn: &mut AnyConnection, account_id: &str, contact_id: i64) -> Result<()> {
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    sqlx::query("UPDATE contacts SET last_modified = ?1 WHERE id = ?2 AND account_id = ?3")
+    sqlx::query("UPDATE contacts SET last_modified = $1 WHERE id = $2 AND account_id = $3")
         .bind(now)
         .bind(contact_id)
         .bind(account_id)
@@ -597,7 +599,7 @@ let found: Option<i64> = conn.query_row(sql, params![account_id, handle_id], |ro
 ```
 
 ```rust
-// AFTER
+// AFTER ($N placeholders — hand-numbered per the placeholder discipline)
 let found: Option<i64> = sqlx::query_scalar::<_, i64>(sql)
     .bind(account_id)
     .bind(handle_id)
@@ -614,7 +616,7 @@ let contact_id = tx.last_insert_rowid();
 ```rust
 // AFTER
 let contact_id: i64 = sqlx::query_scalar(
-    "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, ?2) RETURNING id",
+    "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, $2) RETURNING id",
 )
 .bind(account_id)
 .bind(preferred_name)
@@ -698,13 +700,63 @@ git commit -m "refactor(server): port API modules to sqlx Any (#148)"
 - Consumes: `like_ci`, `group_concat_unit_separator`, `DbEngine`.
 - Produces (used by Tasks 8–9): `fn compile_metadata_fts_expr(node: &FtsNode, engine: DbEngine, qb: &mut sqlx::QueryBuilder<'_, sqlx::Any>) -> Result<(), ExportQueryError>` — the engine branch lives here.
 
-- [ ] **Step 1: Convert the params plumbing to `QueryBuilder`**
+- [ ] **Step 1: Convert the params plumbing to fragment strings + `SqlParam` binds**
 
-Current shape: `append_metadata_text_filters(parsed, &mut where_parts: Vec<String>, &mut params: Vec<rusqlite::types::Value>)` and `compile_metadata_fts_expr(node, &mut params) -> String`. New shape: both take `&mut sqlx::QueryBuilder<'_, sqlx::Any>`; each leaf does `qb.push(sql_fragment_with_?_placeholders); qb.push_bind(value);` in order. The caller then does `qb.build()` and executes.
+Current shape: `append_metadata_text_filters(parsed, &mut where_parts: Vec<String>, &mut params: Vec<rusqlite::types::Value>)` and `compile_metadata_fts_expr(node, &mut params) -> String`. New shape: the same functions but `params` becomes `Vec<SqlParam>`; fragments keep `?` placeholders exactly as today; the caller joins the fragments, renumbers placeholders to `$N`, and chains the binds. `QueryBuilder::<Any>` is NOT usable here (its `push_bind` emits `?`, invalid on Postgres; verified in sqlx-core source), and `sqlx::any::AnyValue` is not user-constructible, so this task defines three small helpers:
+
+```rust
+/// One bound parameter in a dynamic export query. sqlx's Any driver exposes
+/// no user-constructible dynamic value, so heterogeneous binds ride this enum.
+pub(crate) enum SqlParam {
+    Text(String),
+    Int(i64),
+    Bool(bool),
+    Null,
+}
+
+/// Chain all params onto a query in order. Placeholders in the SQL must
+/// match this order after `renumber_placeholders`.
+pub(crate) fn bind_all<'q>(
+    mut q: sqlx::Query<'q, sqlx::Any>,
+    params: &[SqlParam],
+) -> sqlx::Query<'q, sqlx::Any> {
+    for p in params {
+        q = match p {
+            SqlParam::Text(v) => q.bind(v.clone()),
+            SqlParam::Int(v) => q.bind(*v),
+            SqlParam::Bool(v) => q.bind(*v),
+            SqlParam::Null => q.bind(Option::<String>::None),
+        };
+    }
+    q
+}
+
+/// Rewrite `?` placeholders to `$1..$N` in order. The Any driver performs no
+/// placeholder rewriting and `?` is invalid on Postgres; SQLite accepts `$N`.
+/// Valid because no SQL fragment in this crate contains `?` inside a string
+/// literal — keep it that way, and unit-test this against the committed
+/// fragment set.
+pub(crate) fn renumber_placeholders(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    let mut n = 0usize;
+    for ch in sql.chars() {
+        if ch == '?' {
+            n += 1;
+            out.push('$');
+            out.push_str(&n.to_string());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+```
+
+Execution at the call site: `let sql = renumber_placeholders(&joined); let q = bind_all(sqlx::query(&sql), &params);` then `fetch_all(&mut *conn)`.
 
 - [ ] **Step 2: Rewrite the FTS compiler with the engine branch**
 
-Full replacement for `compile_metadata_fts_expr` / `compile_metadata_fts_children` / `metadata_term_matches_sql` (current code at `export_api.rs:786-888`):
+Full replacement for `compile_metadata_fts_expr` / `compile_metadata_fts_children` / `metadata_term_matches_sql` (current code at `export_api.rs:786-888`). The code below is written in `QueryBuilder` form; translate it mechanically to the Step 1 shape: every `qb.push(x)` becomes `sql.push_str(x)`, every `qb.push_bind(v)` becomes `params.push(SqlParam::Text(v))`, and the `qb: &mut sqlx::QueryBuilder<'_, sqlx::Any>` parameters become `sql: &mut String, params: &mut Vec<SqlParam>`. The compiler's logic (engine branch, phrase/prefix handling, chain structure) is unchanged:
 
 ```rust
 fn compile_metadata_fts_expr(
