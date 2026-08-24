@@ -1,16 +1,14 @@
 //! `format` command — convert an existing extract folder to another format.
 
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
-use std::thread;
 
 use message_vault_io_core::{
-    CancelFlag, ExporterConfig, FormatConfig, LogSink, MediaConfig, OutputFormat, SourceConfig,
+    ExporterConfig, FormatConfig, LogSink, MediaConfig, OutputFormat, SourceConfig,
 };
 use tauri::Emitter;
 
-use super::events::ExtractErrorEvent;
+use super::jobs::{reset_and_clone_cancel, spawn_job};
 use super::last_log_line_or;
 use crate::state::AppState;
 
@@ -43,20 +41,10 @@ pub async fn format(
         _ => return Err(format!("unsupported output format '{output_format}'")),
     };
 
-    // Clear a leftover cancel from a previous job so this conversion can run.
-    {
-        let st = state.lock().map_err(|e| e.to_string())?;
-        st.cancel_flag.store(false, Ordering::SeqCst);
-    }
-
-    let cancel: CancelFlag = {
-        let st = state.lock().map_err(|e| e.to_string())?;
-        st.cancel_flag.clone()
-    };
+    let cancel = reset_and_clone_cancel(&state)?;
 
     let app_handle = app.clone();
-
-    thread::spawn(move || {
+    spawn_job(app, move || {
         let log_app = app_handle.clone();
         let config = ExporterConfig {
             inputs: vec![PathBuf::from(&input_dir)],
@@ -82,16 +70,9 @@ pub async fn format(
                 }
                 let _ = app_handle.emit("extract:finished", summary);
             }
-            Err(err) => {
-                let _ = app_handle.emit(
-                    "extract:error",
-                    ExtractErrorEvent {
-                        detail: format!("{err:#}"),
-                        user_message: None,
-                    },
-                );
-            }
+            Err(err) => return Err(err),
         }
+        Ok(())
     });
 
     Ok(())

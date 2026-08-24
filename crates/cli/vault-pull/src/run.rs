@@ -19,6 +19,7 @@ use vault_push::authenticate;
 use crate::http::{ExportMessage, ExportMessagesArgs, HttpSession};
 use crate::project::{build_document, conversation_key, to_ir_message};
 
+/// Default page size for GET /v1/export/messages.
 pub const DEFAULT_PAGE_LIMIT: usize = 100;
 /// Default number of parallel asset download workers.
 pub const DEFAULT_ASSET_DOWNLOAD_WORKERS: usize = 8;

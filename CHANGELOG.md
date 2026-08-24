@@ -31,6 +31,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wire imessage-ir's previously ignored media flags. CLI help text and
   exported output are unchanged; imessage-ir now honors `--media-mode`
   convert/compress when passed.
+- **CLI tools:** extract the duplicated JSONL journal and vault HTTP client
+  into two shared lib crates, replace substring retry classification with a
+  typed classifier (all 4xx failures are permanent), wire demo-seed's
+  name-shape and label-name config into the generator, and document the
+  dump-cli-docs surface. Retry and truncation edge cases fixed; journal
+  files, error text, and the demo dataset unchanged.
+- **Desktop host:** share the cancel/spawn/error scaffolding across the four
+  job commands, wire the shared cancel flag into push, drop the runtime
+  `MESSAGE_VAULT_IO_BIN` environment writes (sound env access), split the
+  extract progress parser into its own module, document the IPC DTO wire
+  contract, and gate src-tauri with clippy and tests in CI. Push now honors
+  Cancel; the only other product delta is that a KnugiHK binary placed in a
+  custom tools folder is no longer found by WhatsApp-Android export.
 
 Installable builds and release notes also appear on
 [GitHub Releases](https://github.com/bitrealm-io/message-vault/releases).

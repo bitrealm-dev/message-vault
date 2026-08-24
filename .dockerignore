@@ -19,6 +19,7 @@ data
 config/config.toml
 config/contacts.csv
 config/contacts.vcf
+.env
 
 # Build artifacts
 target

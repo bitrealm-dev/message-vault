@@ -2164,6 +2164,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "journal"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "js-sys"
 version = "0.3.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5089,6 +5098,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "vault-http"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "reqwest 0.12.28",
+]
+
+[[package]]
 name = "vault-pull"
 version = "0.1.0"
 dependencies = [
@@ -5096,12 +5113,13 @@ dependencies = [
  "chrono",
  "clap",
  "hex",
+ "journal",
  "message-ir",
  "message-vault-io-core",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "vault-http",
  "vault-push",
 ]
 
@@ -5112,6 +5130,7 @@ dependencies = [
  "anyhow",
  "clap",
  "hex",
+ "journal",
  "message-ir",
  "message-ir-format",
  "message-vault-io-core",
@@ -5119,6 +5138,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "vault-http",
 ]
 
 [[package]]

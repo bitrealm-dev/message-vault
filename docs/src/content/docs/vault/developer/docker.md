@@ -18,7 +18,7 @@ Run from the **repository root**. `docker/compose.release.yml` builds `docker/Do
 docker compose -f docker/compose.release.yml up --build
 ```
 
-A committed `.env` sets `COMPOSE_FILE=docker/compose.release.yml`, so bare `docker compose up --build` from a clone uses that file. Override with `-f`.
+Copy [`.env.example`](https://github.com/bitrealm-io/message-vault/blob/main/.env.example) to `.env` — it sets `COMPOSE_FILE=docker/compose.release.yml`, so bare `docker compose up --build` from a clone uses that file. Override with `-f`.
 
 Blank vault (no demo seed): `DEMO_DATA=false docker compose -f docker/compose.release.yml up --build`.
 
@@ -57,7 +57,7 @@ docker run -d --name message-vault \
   bitrealm/message-vault:latest
 ```
 
-Or save [`docker/compose.yml`](https://github.com/bitrealm-io/message-vault/blob/main/docker/compose.yml) and run `docker compose up -d`. Both commands seed sample data on first boot when `DEMO_DATA=true` and the volume is empty. Changing `DEMO_DATA` on an existing volume does not add or remove accounts.
+Or save [`docker/compose.yml`](https://github.com/bitrealm-io/message-vault/blob/main/docker/compose.yml) and run `docker compose up -d`. Save [`.env.example`](https://github.com/bitrealm-io/message-vault/blob/main/.env.example) next to it as `.env` — Compose reads `UID` and `GID` from it for the container user. Both commands seed sample data on first boot when `DEMO_DATA=true` and the volume is empty. Changing `DEMO_DATA` on an existing volume does not add or remove accounts.
 
 The `message-vault-data` volume keeps the database between restarts. To make the sample account your own, create a second account as described on [Use your own messages](/vault/user/get-started/your-own-messages/). Upgrades are on [Update](/vault/user/how-to/update/).
 

@@ -1,25 +1,29 @@
 //! `pull` command — download messages from a Message Vault server.
 
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
-use std::thread;
 
 use tauri::Emitter;
 use vault_pull::{ProgressEvent, VaultPullConfig, run as run_pull};
 
-use super::events::ExtractErrorEvent;
+use super::jobs::{reset_and_clone_cancel, spawn_job};
 use crate::state::AppState;
 
 /// User-facing parameters for the `pull` command.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PullArgs {
+    /// Base URL of the vault server, for example `http://127.0.0.1:8080`.
     pub base_url: String,
+    /// Vault account name.
     pub username: String,
+    /// API token or account password for the vault.
     pub key: String,
+    /// Folder the pulled conversation files are written into.
     pub out_dir: String,
+    /// Vault search query selecting which conversations to pull.
     pub query: String,
+    /// When true, skip attachments and download messages only.
     pub skip_attachments: bool,
 }
 
@@ -39,19 +43,10 @@ pub async fn pull(
     app: tauri::AppHandle,
     args: PullArgs,
 ) -> Result<(), String> {
-    {
-        let st = state.lock().map_err(|e| e.to_string())?;
-        st.cancel_flag.store(false, Ordering::SeqCst);
-    }
-
-    let cancel = {
-        let st = state.lock().map_err(|e| e.to_string())?;
-        st.cancel_flag.clone()
-    };
+    let cancel = reset_and_clone_cancel(&state)?;
 
     let app_handle = app.clone();
-
-    thread::spawn(move || {
+    spawn_job(app, move || {
         let cfg = VaultPullConfig {
             out_dir: PathBuf::from(&args.out_dir),
             base_url: args.base_url,
@@ -95,16 +90,9 @@ pub async fn pull(
                 );
                 let _ = app_handle.emit("extract:finished", summary);
             }
-            Err(err) => {
-                let _ = app_handle.emit(
-                    "extract:error",
-                    ExtractErrorEvent {
-                        detail: format!("{err:#}"),
-                        user_message: None,
-                    },
-                );
-            }
+            Err(err) => return Err(err),
         }
+        Ok(())
     });
 
     Ok(())

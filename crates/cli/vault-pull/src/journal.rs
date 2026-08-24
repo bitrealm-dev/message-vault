@@ -4,11 +4,11 @@
 //! line. A later download can skip attachments that are already on disk.
 
 use std::collections::HashSet;
-use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+#[cfg(test)]
+use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 /// Filename of the local download log, written in the output folder.
@@ -58,19 +58,9 @@ pub fn journal_path(out_dir: &Path) -> PathBuf {
 /// Returns an error when the file cannot be opened or a line cannot be read.
 pub fn load(path: &Path, url: &str, username: &str) -> Result<PullJournalState> {
     let mut state = PullJournalState::default();
-    if !path.is_file() {
-        return Ok(state);
-    }
-    let file = File::open(path).with_context(|| format!("open pull journal {}", path.display()))?;
-    for (i, line) in BufReader::new(file).lines().enumerate() {
-        let line = line.with_context(|| format!("read pull journal line {}", i + 1))?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        let event: PullJournalEvent = match serde_json::from_str(&line) {
-            Ok(e) => e,
-            Err(_) => continue, // skip lines this version cannot parse
-        };
+    let events: Vec<PullJournalEvent> =
+        jsonl_journal::load_events("pull journal", path, &mut |_, _| {})?;
+    for event in events {
         match event {
             PullJournalEvent::AssetOk {
                 url: u,
@@ -100,18 +90,7 @@ pub fn load(path: &Path, url: &str, username: &str) -> Result<PullJournalState> 
 /// Returns an error when the parent folder cannot be created, the file cannot
 /// be opened, or the write fails.
 pub fn append(path: &Path, event: &PullJournalEvent) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .with_context(|| format!("open pull journal for append {}", path.display()))?;
-    serde_json::to_writer(&mut file, event)?;
-    file.write_all(b"\n")?;
-    file.flush()?;
-    Ok(())
+    jsonl_journal::append("pull journal", path, event)
 }
 
 /// Rewrite the journal from in-memory `state` for one vault URL and username.
@@ -120,38 +99,31 @@ pub fn append(path: &Path, event: &PullJournalEvent) -> Result<()> {
 ///
 /// Returns an error when the temporary file cannot be written or the rename fails.
 pub fn compact(path: &Path, url: &str, username: &str, state: &PullJournalState) -> Result<()> {
-    let mut events: Vec<PullJournalEvent> = Vec::new();
-    let mut assets: Vec<_> = state.assets.iter().collect();
-    assets.sort_unstable();
-    for sha in assets {
-        events.push(PullJournalEvent::AssetOk {
-            url: url.to_string(),
-            username: username.to_string(),
-            sha256: sha.clone(),
-            path: String::new(), // resume looks up attachments/{sha}, not this path
-            size_bytes: 0,       // size is unused when skipping already-downloaded files
-        });
-    }
-    if state.backup_complete {
-        // Counts are unused on resume; a `backup_complete` row only means the last run finished.
-        events.push(PullJournalEvent::BackupComplete {
-            url: url.to_string(),
-            username: username.to_string(),
-            conversations: 0,
-            messages: 0,
-            assets: 0,
-        });
-    }
-    let tmp = path.with_extension("jsonl.tmp");
-    {
-        let mut out = File::create(&tmp)?;
-        for event in &events {
-            serde_json::to_writer(&mut out, event)?;
-            out.write_all(b"\n")?;
+    jsonl_journal::compact_with::<PullJournalEvent, _>("pull journal", path, |_events| {
+        let mut events: Vec<PullJournalEvent> = Vec::new();
+        let mut assets: Vec<_> = state.assets.iter().collect();
+        assets.sort_unstable();
+        for sha in assets {
+            events.push(PullJournalEvent::AssetOk {
+                url: url.to_string(),
+                username: username.to_string(),
+                sha256: sha.clone(),
+                path: String::new(), // resume looks up attachments/{sha}, not this path
+                size_bytes: 0,       // size is unused when skipping already-downloaded files
+            });
         }
-    }
-    fs::rename(&tmp, path)?;
-    Ok(())
+        if state.backup_complete {
+            // Counts are unused on resume; a `backup_complete` row only means the last run finished.
+            events.push(PullJournalEvent::BackupComplete {
+                url: url.to_string(),
+                username: username.to_string(),
+                conversations: 0,
+                messages: 0,
+                assets: 0,
+            });
+        }
+        events
+    })
 }
 
 #[cfg(test)]

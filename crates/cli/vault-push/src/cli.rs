@@ -31,7 +31,7 @@ pub struct Cli {
     #[arg(long)]
     pub input: PathBuf,
 
-    /// Import mode: append (resume-safe) or replace
+    /// Import mode: append: add to existing data (safe to re-run); replace: delete existing messages for this source, then import
     #[arg(long, default_value = "append")]
     pub mode: String,
 
@@ -89,6 +89,7 @@ pub struct Cli {
     pub journal: Option<PathBuf>,
 }
 
+/// The clap `Command` for embedding --help output into the docs pages and GUI.
 pub fn clap_command() -> Command {
     Cli::command()
 }

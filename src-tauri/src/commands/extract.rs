@@ -2,8 +2,9 @@
 //!
 //! `extract` starts the selected exporter on a background thread and returns
 //! immediately. Progress is sent back as Tauri events:
-//! `extract:log` (one log line), `extract:finished` (a summary string or JSON
-//! object), and `extract:error` ([`ExtractErrorEvent`]).
+//! `extract:log` (one log line), `extract:progress` (bar position),
+//! `extract:finished` (a summary string or JSON object), and `extract:error`
+//! ([`ExtractErrorEvent`]).
 //!
 //! The shared cancel flag lives in [`AppState`]. `cancel` sets it to true.
 //! `extract` turns it off at the start of a job. The exporter checks it
@@ -14,14 +15,12 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
-use std::thread;
 
 use media::MaxResolution;
 use message_vault_io_core::{
-    ApplePlatform, AttachmentMedia, CancelFlag, Exporter, ExporterConfig, Form, GoSmsProConfig,
-    ImazingConfig, LogSink, MediaConfig, ObfuscateConfig, OpenExtractConfig, OutputFormat,
-    SmsBackupPlusConfig, SmsBackupRestoreConfig, SourceConfig, WhatsappConfig, WhatsappPlatform,
-    parse_date_range,
+    ApplePlatform, AttachmentMedia, Exporter, ExporterConfig, Form, GoSmsProConfig, ImazingConfig,
+    LogSink, MediaConfig, ObfuscateConfig, OpenExtractConfig, OutputFormat, SmsBackupPlusConfig,
+    SmsBackupRestoreConfig, SourceConfig, WhatsappConfig, WhatsappPlatform, parse_date_range,
 };
 use tauri::Emitter;
 
@@ -34,7 +33,9 @@ use sms_backup_plus_exporter::run as run_sms_plus;
 use sms_backup_restore_exporter::run as run_sms_restore;
 use whatsapp_exporter::run as run_whatsapp;
 
-use super::events::{ExtractErrorEvent, ExtractProgressEvent};
+use super::events::ExtractErrorEvent;
+use super::jobs::{reset_and_clone_cancel, spawn_job};
+use super::progress::{ExtractProgressStage, extract_progress_from_log};
 use super::{last_log_line_or, optional_trimmed};
 use crate::state::AppState;
 
@@ -129,17 +130,29 @@ fn count_jsonl_output(root: &Path) -> anyhow::Result<JsonlOutputCounts> {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtractArgs {
+    /// Backup source key, for example `imessage-ios` or `whatsapp-android`.
     pub source: String,
+    /// Path to the phone backup (a folder, database file, or XML file).
     pub path: String,
+    /// Folder the exporter writes conversation files into.
     pub output_dir: String,
+    /// Password for encrypted backups, when the source needs one.
     pub backup_password: Option<String>,
+    /// Attachment handling choice: `copy`, `convert`, `compress`, or `skip`.
     pub attachment_media: Option<String>,
+    /// Video/image size cap for convert and compress: `720p`, `1080p`, or `4k`.
     pub media_max_resolution: Option<String>,
+    /// Frame-rate cap for compressed video, for example `30`.
     pub media_max_fps: Option<String>,
+    /// Smallest media file size that still counts as an attachment, for example `20M`.
     pub media_min_size: Option<String>,
+    /// Conversation filter string passed to the exporter.
     pub conversation_filter: Option<String>,
+    /// Export start date, inclusive, in `YYYY-MM-DD` form.
     pub start_date: Option<String>,
+    /// Export end date, inclusive, in `YYYY-MM-DD` form.
     pub end_date: Option<String>,
+    /// When true, replace names and phone numbers with fake ones.
     pub obfuscate: Option<bool>,
 }
 
@@ -176,19 +189,7 @@ pub async fn extract(
     let output_dir = args.output_dir;
     let mut config = build_exporter_config(&args.source, &args.path, &output_dir, &options)?;
 
-    // Clear a leftover cancel from a previous job. Otherwise this new export
-    // would stop immediately.
-    {
-        let st = state.lock().map_err(|e| e.to_string())?;
-        st.cancel_flag.store(false, Ordering::SeqCst);
-    }
-
-    // Share the same cancel flag with the background thread. The cancel
-    // command sets it; the exporter reads it.
-    let cancel: CancelFlag = {
-        let st = state.lock().map_err(|e| e.to_string())?;
-        st.cancel_flag.clone()
-    };
+    let cancel = reset_and_clone_cancel(&state)?;
 
     let app_handle = app.clone();
     config.cancel = Some(cancel);
@@ -202,7 +203,7 @@ pub async fn extract(
         }
     }));
 
-    thread::spawn(move || {
+    spawn_job(app, move || {
         let result = run_exporter(&config);
 
         match result {
@@ -236,16 +237,9 @@ pub async fn extract(
                     }
                 }
             }
-            Err(err) => {
-                let _ = app_handle.emit(
-                    "extract:error",
-                    ExtractErrorEvent {
-                        detail: format!("{err:#}"),
-                        user_message: None,
-                    },
-                );
-            }
+            Err(err) => return Err(err),
         }
+        Ok(())
     });
 
     Ok(())
@@ -438,128 +432,6 @@ fn run_exporter(config: &ExporterConfig) -> anyhow::Result<message_vault_io_core
     }
 }
 
-/// Whether log lines are still about reading the backup, or already about
-/// writing conversation files.
-#[derive(Copy, Clone, Eq, PartialEq)]
-enum ExtractProgressStage {
-    Parse,
-    Convert,
-}
-
-/// Turn an exporter log line into a progress event, if the line has counts.
-fn extract_progress_from_log(
-    line: &str,
-    stage: &Arc<Mutex<ExtractProgressStage>>,
-) -> Option<ExtractProgressEvent> {
-    if is_writing_conversation_files_banner(line) {
-        if let Ok(mut current_stage) = stage.lock() {
-            *current_stage = ExtractProgressStage::Convert;
-        }
-        return Some(ExtractProgressEvent {
-            step: "convert".into(),
-            done: 0,
-            total: 0,
-            status: Some("included_in_extract".into()),
-        });
-    }
-
-    let (done, total) = extract_progress_ratio(line)?;
-
-    let current_stage = match stage.lock() {
-        Ok(guard) => *guard,
-        Err(_) => ExtractProgressStage::Parse,
-    };
-    let step = match current_stage {
-        ExtractProgressStage::Parse => "parse",
-        ExtractProgressStage::Convert => "convert",
-    };
-
-    Some(ExtractProgressEvent {
-        step: step.into(),
-        done,
-        total,
-        status: None,
-    })
-}
-
-/// True for the log line that means "finished reading, now writing files".
-fn is_writing_conversation_files_banner(line: &str) -> bool {
-    line.contains("Writing ") && line.contains("conversation file(s)")
-}
-
-/// True for backup-setup lines like `[1/5] Deriving backup keys...`.
-///
-/// Those counts are setup steps, not message progress, so they must not
-/// move the progress bar.
-fn has_bracketed_step_ratio(line: &str) -> bool {
-    let mut rest = line;
-    while let Some(open) = rest.find('[') {
-        rest = &rest[open + 1..];
-        let Some((left, after_left)) = rest.split_once('/') else {
-            continue;
-        };
-        if left.is_empty() || !left.chars().all(|c| c.is_ascii_digit()) {
-            continue;
-        }
-        let Some((right, after_right)) = after_left.split_once(']') else {
-            continue;
-        };
-        if !right.is_empty() && right.chars().all(|c| c.is_ascii_digit()) {
-            return true;
-        }
-        rest = after_right;
-    }
-    false
-}
-
-/// Read `done/total` from a message-progress log line.
-fn extract_progress_ratio(line: &str) -> Option<(usize, usize)> {
-    if has_bracketed_step_ratio(line) {
-        return None;
-    }
-
-    let looks_like_message_progress = line.contains('…') || line.contains("wrote");
-    if !looks_like_message_progress {
-        return None;
-    }
-
-    let (left, right) = line.split_once('/')?;
-    let done = trailing_usize(left)?;
-    let total = leading_usize(right)?;
-    Some((done, total))
-}
-
-/// Parse the integer at the end of `text`, if any.
-fn trailing_usize(text: &str) -> Option<usize> {
-    let mut reversed_digits = String::new();
-    for ch in text.chars().rev() {
-        if !ch.is_ascii_digit() {
-            break;
-        }
-        reversed_digits.push(ch);
-    }
-    if reversed_digits.is_empty() {
-        return None;
-    }
-    let digits: String = reversed_digits.chars().rev().collect();
-    digits.parse().ok()
-}
-
-/// Parse the integer at the start of `text`, if any.
-fn leading_usize(text: &str) -> Option<usize> {
-    let mut digits = String::new();
-    for ch in text.chars() {
-        if !ch.is_ascii_digit() {
-            break;
-        }
-        digits.push(ch);
-    }
-    if digits.is_empty() {
-        return None;
-    }
-    digits.parse().ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -591,35 +463,5 @@ mod tests {
         assert_eq!(counts.files, 2);
         assert_eq!(counts.messages, 3);
         fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn extract_progress_parser_tracks_parse_and_convert() {
-        let stage = Arc::new(Mutex::new(ExtractProgressStage::Parse));
-
-        let parse = extract_progress_from_log("  …500/12345 messages", &stage).unwrap();
-        assert_eq!(parse.step, "parse");
-        assert_eq!(parse.done, 500);
-        assert_eq!(parse.total, 12345);
-        assert_eq!(parse.status, None);
-
-        let banner =
-            extract_progress_from_log("Writing 3 conversation file(s)...", &stage).unwrap();
-        assert_eq!(banner.step, "convert");
-        assert_eq!(banner.done, 0);
-        assert_eq!(banner.total, 0);
-        assert_eq!(banner.status.as_deref(), Some("included_in_extract"));
-
-        let ignored = extract_progress_from_log("[1/5] Deriving backup keys...", &stage);
-        assert!(ignored.is_none());
-
-        let backup_step = extract_progress_from_log("[2/5] Resolving messages database...", &stage);
-        assert!(backup_step.is_none());
-
-        let convert = extract_progress_from_log("  wrote 2/3 messages", &stage).unwrap();
-        assert_eq!(convert.step, "convert");
-        assert_eq!(convert.done, 2);
-        assert_eq!(convert.total, 3);
-        assert_eq!(convert.status, None);
     }
 }
