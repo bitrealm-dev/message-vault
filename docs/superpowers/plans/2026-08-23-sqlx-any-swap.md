@@ -1166,7 +1166,7 @@ if pg {
 
 - [ ] **Step 4: Promote branch**
 
-In `import/promote.rs`, the "pausing FTS triggers" phase branches on engine: SQLite keeps `drop_messages_fts_triggers` (per-row trigger skip); Postgres instead runs `ALTER TABLE messages DISABLE TRIGGER ALL; ALTER TABLE attachments DISABLE TRIGGER ALL;` before the bulk inserts and `ENABLE TRIGGER ALL` on both after `index_messages_fts_from_promote_map` (which performs the bulk vector fill). Add these two statements as `split_ddl`-compatible helper fns in `db/schema.rs` (`pub(crate) async fn disable_fts_triggers_pg(conn) / enable_fts_triggers_pg(conn)`), each a single `sqlx::query` call.
+In `import/promote.rs`, the "pausing FTS triggers" phase branches on engine: SQLite keeps `drop_messages_fts_triggers` (per-row trigger skip); Postgres instead disables and later re-enables **the six FTS triggers by name** (`ALTER TABLE messages DISABLE TRIGGER messages_fts_ai` … `attachments_fts_au`; `ENABLE` in reverse) around the bulk inserts, with the bulk vector fill in `index_messages_fts_from_promote_map` between them — FK constraint triggers stay enforced (a corrupt staging row must fail loudly, as it does on SQLite). Add these two as `split_ddl`-compatible helper fns in `db/schema.rs` (`pub(crate) async fn disable_fts_triggers_pg(conn) / enable_fts_triggers_pg(conn)`), each a small statement batch.
 
 - [ ] **Step 5: Run the FTS tests**
 
