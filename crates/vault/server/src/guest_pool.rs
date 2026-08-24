@@ -11,6 +11,7 @@ use sqlx::{Connection, Row};
 
 use crate::config::{Config, GuestDemoSettings};
 use crate::db::account_profile::{self, DEMO_ACCOUNT_ID};
+use crate::db::engine::DbEngine;
 use crate::db::{dialect, session_tokens};
 use crate::guest_clone::clone_template_to_guest;
 
@@ -69,8 +70,10 @@ pub async fn count_ready(conn: &mut AnyConnection) -> Result<u32> {
 
 /// Take one ready guest, mark it assigned, and issue a session token.
 ///
-/// Uses `BEGIN IMMEDIATE` so two concurrent assigns cannot pick the same row.
-/// Returns `Ok(None)` when the pool is empty.
+/// Uses `BEGIN IMMEDIATE` on SQLite (write lock up front) and
+/// `SELECT … FOR UPDATE` on Postgres (plain BEGIN has no IMMEDIATE
+/// equivalent) so two concurrent assigns cannot pick the same row. Returns
+/// `Ok(None)` when the pool is empty.
 ///
 /// # Errors
 ///
@@ -79,17 +82,24 @@ pub async fn assign_ready_guest(
     conn: &mut AnyConnection,
     session_secs: u64,
 ) -> Result<Option<(String, String, String)>> {
+    let engine = dialect::engine_of(conn);
     let mut tx = conn
-        .begin_with(dialect::begin_immediate_sql(dialect::engine_of(conn)))
+        .begin_with(dialect::begin_immediate_sql(engine))
         .await?;
-    let picked: Option<(String, String)> = sqlx::query(
-        r#"
-        SELECT id, username FROM accounts
-        WHERE guest_status = 'ready'
-        ORDER BY id
-        LIMIT 1
-        "#,
-    )
+    // Row lock on Postgres: a second assign blocks here, re-reads the row as
+    // 'assigned' under READ COMMITTED, and takes the next ready guest
+    // instead of racing this one. SQLite's IMMEDIATE begin already excludes
+    // concurrent writers.
+    let lock_row = match engine {
+        DbEngine::Postgres => " FOR UPDATE",
+        DbEngine::Sqlite => "",
+    };
+    let picked: Option<(String, String)> = sqlx::query(&format!(
+        "SELECT id, username FROM accounts
+         WHERE guest_status = 'ready'
+         ORDER BY id
+         LIMIT 1{lock_row}"
+    ))
     .fetch_optional(&mut *tx)
     .await?
     .map(|row| Ok::<_, sqlx::Error>((row.try_get::<String, _>(0)?, row.try_get::<String, _>(1)?)))
@@ -252,7 +262,7 @@ async fn list_expired_assigned(conn: &mut AnyConnection, now_secs: u64) -> Resul
         WHERE a.guest_status = 'assigned'
           AND (
             t.account_id IS NULL
-            OR CAST(t.expires_at AS INTEGER) <= $1
+            OR CAST(t.expires_at AS BIGINT) <= $1
           )
         "#,
     )

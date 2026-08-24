@@ -9,6 +9,7 @@ use sqlx::any::AnyRow;
 use sqlx::{AnyConnection, Connection, Row};
 
 use crate::config::Config;
+use crate::db::dialect;
 use crate::db::{account_profile, session_tokens};
 
 /// Copy the template account's rows and files into a new guest account.
@@ -29,7 +30,9 @@ pub async fn clone_template_to_guest(
     template_account_id: &str,
 ) -> Result<String> {
     let guest_id = {
-        let mut tx = conn.begin().await?;
+        let mut tx = conn
+            .begin_with(dialect::begin_immediate_sql(dialect::engine_of(conn)))
+            .await?;
         let guest_id = clone_sql(&mut tx, template_account_id).await?;
         tx.commit().await?;
         guest_id
@@ -41,8 +44,11 @@ pub async fn clone_template_to_guest(
 /// Clone the template and mark that guest assigned in the same SQL transaction.
 ///
 /// Used by on-demand Try it so another request cannot take the new `ready` row
-/// before this request issues a session. A plain transaction is enough: the
-/// vault operation lock already serializes clone work against other writers.
+/// before this request issues a session. On SQLite the transaction begins
+/// IMMEDIATE so the clone holds the write lock from its first write instead
+/// of racing other writers into SQLITE_BUSY at the INSERT (the vault
+/// operation lock only excludes whole-reset work, not in-process writers);
+/// Postgres uses a plain BEGIN.
 ///
 /// # Errors
 ///
@@ -55,7 +61,9 @@ pub async fn clone_and_assign_guest(
     session_secs: u64,
 ) -> Result<(String, String, String)> {
     let (guest_id, username, token) = {
-        let mut tx = conn.begin().await?;
+        let mut tx = conn
+            .begin_with(dialect::begin_immediate_sql(dialect::engine_of(conn)))
+            .await?;
         let guest_id = clone_sql(&mut tx, template_account_id).await?;
         account_profile::set_guest_status(&mut tx, &guest_id, "assigned").await?;
         let username = account_profile::username_for_account(&mut tx, &guest_id)

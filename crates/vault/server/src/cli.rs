@@ -218,7 +218,11 @@ pub async fn run(cli: Cli) -> Result<()> {
             let mode = crate::import::ImportMode::parse(&mode)?;
             let media = crate::import_media::MediaMode::parse(&media)?;
             let db_path = db.clone().unwrap_or_else(|| cfg.paths.db.clone());
-            let account = account_profile::resolve_account_ref_at(&db_path, &account).await?;
+            let account = if let Some(url) = db_url.as_deref() {
+                account_profile::resolve_account_ref_at_url(url, &account).await?
+            } else {
+                account_profile::resolve_account_ref_at(&db_path, &account).await?
+            };
 
             let stats = crate::import_cli::run(
                 &cfg,
@@ -306,7 +310,11 @@ pub async fn run(cli: Cli) -> Result<()> {
         } => {
             let cfg = Config::load(&config)?;
             let db = db.unwrap_or_else(|| cfg.paths.db.clone());
-            let account = account_profile::resolve_account_ref_at(&db, &account).await?;
+            let account = if let Some(url) = db_url.as_deref() {
+                account_profile::resolve_account_ref_at_url(url, &account).await?
+            } else {
+                account_profile::resolve_account_ref_at(&db, &account).await?
+            };
             if window_secs < 0 {
                 bail!("--window-secs must be >= 0");
             }

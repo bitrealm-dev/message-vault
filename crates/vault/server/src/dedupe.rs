@@ -373,7 +373,7 @@ async fn recompute_content_keys(
     for stmt in schema::split_ddl(
         r#"
         CREATE TEMP TABLE IF NOT EXISTS _content_keys (
-            id INTEGER PRIMARY KEY,
+            id BIGINT PRIMARY KEY,
             content_key TEXT NOT NULL
         );
         DELETE FROM _content_keys;
@@ -743,8 +743,8 @@ async fn apply_duplicate_flags(
 ) -> Result<()> {
     for stmt in schema::split_ddl(&format!(
         "CREATE TEMP TABLE IF NOT EXISTS {table} (
-            id INTEGER PRIMARY KEY,
-            winner INTEGER NOT NULL
+            id BIGINT PRIMARY KEY,
+            winner BIGINT NOT NULL
         );
         DELETE FROM {table};"
     )) {

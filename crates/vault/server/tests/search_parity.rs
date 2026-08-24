@@ -275,10 +275,11 @@ async fn search_parity_across_engines() {
     let Some(url) = message_vault_server::pg_test_url() else {
         return;
     };
-    // Cargo runs the lib and integration test binaries concurrently; the
-    // shared Postgres test database (same account id and username as the
-    // crate's gated unit tests) is only race-safe while this lock is held.
-    let _pg_guard = message_vault_server::PG_TEST_LOCK.lock().await;
+    // Cargo runs the lib and integration test binaries as separate
+    // processes; the shared Postgres test database (same account id and
+    // username as the crate's gated unit tests) is only race-safe while the
+    // in-process mutex and the cross-process file lock are both held.
+    let _pg_guard = message_vault_server::acquire_pg_test_lock().await;
     sqlx::any::install_default_drivers();
     let pool = sqlx::any::AnyPoolOptions::new()
         .connect(&url)

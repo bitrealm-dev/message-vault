@@ -214,6 +214,16 @@ async fn prepare_config_and_reset(
         )
     })?;
     let cfg = Config::load(temporary_config.path())?;
+    // reset-demo replaces the on-disk vault file and account tree, so a
+    // URL-served database (Postgres, or SQLite via `[database] url`) would
+    // be silently left untouched by the reset below. Refuse instead of
+    // reporting a reset that never touched the real database.
+    if let Some(url) = cfg.database.url.as_deref() {
+        bail!(
+            "reset-demo replaces the on-disk vault at paths.db, but this config serves the database from {}; URL-served databases cannot be reset this way — run reset-demo on the host that owns the database file",
+            crate::import_cli::redact_db_url(url)
+        );
+    }
     let temporary_config = temporary_config.into_temp_path();
     reset_prepared_bundle(
         &cfg,

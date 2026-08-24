@@ -11,11 +11,12 @@
 //! [`SCHEMA_VERSION`]). The rule is: any schema change requires a fresh
 //! reload of data, so an out-of-date database is rebuilt empty from the
 //! embedded DDL instead of being patched in place. Postgres has no
-//! user_version pragma; its DDL is idempotent (`IF NOT EXISTS`) and is
-//! applied directly.
+//! user_version pragma; its idempotent DDL (`IF NOT EXISTS`) runs once
+//! behind a `schema_meta` marker gate (see [`VAULT_SCHEMA_META_KEY`]).
 
 use anyhow::Result;
 use sqlx::AnyConnection;
+use sqlx::Connection;
 
 use crate::db::dialect;
 use crate::db::engine::DbEngine;
@@ -158,24 +159,62 @@ async fn apply_vault_ddl(conn: &mut AnyConnection) -> Result<()> {
 /// Apply the Postgres DDL variants. The DDL is idempotent (`IF NOT EXISTS`),
 /// so applying it again is a no-op.
 async fn apply_postgres_vault_ddl(conn: &mut AnyConnection) -> Result<()> {
-    execute_batch(conn, PG_ACCOUNTS_DDL).await?;
-    // Same ordering as the SQLite variant: contacts before messages.
-    execute_batch(conn, PG_CONTACTS_TABLES_DDL).await?;
-    execute_batch(conn, PG_MESSAGE_TABLES_DDL).await?;
-    execute_batch(conn, PG_STAGING_TABLES_DDL).await?;
-    // Post-hoc FKs last: they reference tables from both the accounts and
-    // contacts DDL sets.
-    execute_batch(conn, PG_FKS_DDL).await?;
-    // FTS last, same as the SQLite variant: the tsvector column, GIN index,
-    // and sync triggers all target tables created above.
-    ensure_messages_fts(conn).await?;
+    // Installed vaults skip straight past this (one marker lookup per
+    // request instead of re-running the DDL batch).
+    if pg_vault_schema_ready(&mut *conn).await? {
+        return Ok(());
+    }
+    // One-time install: the advisory lock serializes concurrent
+    // first-touches (the trigger drop/create pair is not race-safe), and
+    // the re-check under the lock turns a waiter into a no-op.
+    let mut tx = conn.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(VAULT_SCHEMA_LOCK_ID)
+        .execute(&mut *tx)
+        .await?;
+    if !pg_vault_schema_ready(&mut tx).await? {
+        execute_batch(&mut tx, PG_ACCOUNTS_DDL).await?;
+        // Same ordering as the SQLite variant: contacts before messages.
+        execute_batch(&mut tx, PG_CONTACTS_TABLES_DDL).await?;
+        execute_batch(&mut tx, PG_MESSAGE_TABLES_DDL).await?;
+        execute_batch(&mut tx, PG_STAGING_TABLES_DDL).await?;
+        // Post-hoc FKs last: they reference tables from both the accounts
+        // and contacts DDL sets.
+        execute_batch(&mut tx, PG_FKS_DDL).await?;
+        // FTS last, same as the SQLite variant: the tsvector column, GIN
+        // index, and sync triggers all target tables created above.
+        ensure_messages_fts(&mut tx).await?;
+        sqlx::query(
+            "INSERT INTO schema_meta (key, value) VALUES ($1, '1')
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .bind(VAULT_SCHEMA_META_KEY)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
     Ok(())
+}
+
+/// True when the one-time Postgres DDL marker is present. Also false when
+/// `schema_meta` itself does not exist yet (pre-install).
+async fn pg_vault_schema_ready(conn: &mut AnyConnection) -> Result<bool> {
+    if !table_exists(&mut *conn, "schema_meta").await? {
+        return Ok(false);
+    }
+    let ready: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM schema_meta WHERE key = $1")
+        .bind(VAULT_SCHEMA_META_KEY)
+        .fetch_one(&mut *conn)
+        .await?;
+    Ok(ready > 0)
 }
 
 /// Create every table and index required by a current vault.
 ///
 /// SQLite is versioned with `PRAGMA user_version` and rebuilt when the stamp
-/// does not match; Postgres DDL is idempotent and applied directly.
+/// does not match; Postgres gates its one-time idempotent install behind a
+/// `schema_meta` marker (see [`VAULT_SCHEMA_META_KEY`]) so repeated ensures
+/// cost one marker lookup instead of re-running the DDL.
 ///
 /// # Errors
 ///
@@ -189,6 +228,14 @@ pub async fn ensure_vault_schema(conn: &mut AnyConnection) -> Result<()> {
 
 /// Marker that current full-text search (FTS) sync trigger definitions are installed.
 pub const MESSAGES_FTS_TRIGGERS_META_KEY: &str = "messages_fts_triggers_v1";
+
+/// Marker that the one-time Postgres vault DDL install has completed.
+pub const VAULT_SCHEMA_META_KEY: &str = "vault_schema_v1";
+
+/// Advisory lock id serializing the one-time Postgres DDL install so two
+/// concurrent first-touches cannot interleave the trigger drop/create pair
+/// (arbitrary but unique within this database).
+const VAULT_SCHEMA_LOCK_ID: i64 = 0x4D56_0001;
 
 /// Full-text search index over message body/subject plus attachment text:
 /// contentless FTS5 virtual table with sync triggers on SQLite, a `search_tsv`
@@ -529,7 +576,8 @@ pub async fn reset_staging_for_account(conn: &mut AnyConnection, account_id: &st
 /// Account tables live in the same database file as the rest of the vault, so
 /// the one `user_version` stamp covers them on SQLite. A stamped database
 /// needs nothing; anything else gets the full vault schema (with the rebuild
-/// that implies). On Postgres the idempotent DDL is applied directly.
+/// that implies). On Postgres the one-time DDL install is gated by the
+/// [`VAULT_SCHEMA_META_KEY`] marker.
 ///
 /// # Errors
 ///
@@ -1257,7 +1305,7 @@ mod tests {
         let Some(url) = crate::pg_test_url() else {
             return;
         };
-        let _pg_guard = crate::PG_TEST_LOCK.lock().await;
+        let _pg_guard = crate::acquire_pg_test_lock().await;
         sqlx::any::install_default_drivers();
         let pool = sqlx::any::AnyPoolOptions::new()
             .connect(&url)

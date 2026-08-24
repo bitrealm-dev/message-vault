@@ -63,18 +63,11 @@ fn sqlite_pool_options() -> AnyPoolOptions {
     with_vault_pragmas(AnyPoolOptions::new().max_connections(4))
 }
 
-/// Open the configured pool for a SQLite file. WAL is best-effort, exactly
-/// like today's `configure_connection`: a hot rollback journal or another
-/// process holding the database can make it fail, and callers still get a
-/// usable pool.
-pub async fn open_pool_for_path(path: &Path) -> Result<AnyPool> {
-    let pool = sqlite_pool_options()
-        .connect_with(AnyConnectOptions::from_str(&sqlite_url_from_path(path))?)
-        .await?;
-    match sqlx::query("PRAGMA journal_mode = WAL")
-        .execute(&pool)
-        .await
-    {
+/// Best-effort WAL enablement shared by the path- and URL-based SQLite
+/// pools: a hot rollback journal or another process holding the database
+/// can make it fail, and callers still get a usable pool.
+async fn try_enable_wal(pool: &AnyPool) {
+    match sqlx::query("PRAGMA journal_mode = WAL").execute(pool).await {
         Ok(_) => {}
         Err(err) => {
             eprintln!(
@@ -82,24 +75,39 @@ pub async fn open_pool_for_path(path: &Path) -> Result<AnyPool> {
             );
         }
     }
+}
+
+/// Open the configured pool for a SQLite file.
+pub async fn open_pool_for_path(path: &Path) -> Result<AnyPool> {
+    let pool = sqlite_pool_options()
+        .connect_with(AnyConnectOptions::from_str(&sqlite_url_from_path(path))?)
+        .await?;
+    try_enable_wal(&pool).await;
     Ok(pool)
 }
 
 /// Open a pool from a user-supplied connection URL (`sqlite://…` or
 /// `postgres://…`). The scheme selects the engine.
 ///
-/// The `sqlite://` path applies the same pragma set as
-/// [`open_pool_for_path`] but skips the WAL journal-mode attempt: only the
-/// file-based path enables WAL, so `serve --db-url sqlite://…` (and other
-/// URL-open callers) runs on the rollback journal unless the URL itself
-/// enables WAL. Postgres has no equivalent.
+/// The `sqlite://` path matches [`open_pool_for_path`]: the file is created
+/// when missing and WAL is enabled best-effort. A `mode=` in the URL is
+/// overridden on purpose — the vault always reads and writes its database.
+/// Postgres has no equivalent.
 pub async fn open_pool_from_url(url: &str) -> Result<AnyPool> {
     let engine = detect_engine(url)?;
     if engine == DbEngine::Sqlite {
-        return sqlite_pool_options()
-            .connect_with(AnyConnectOptions::from_str(url)?)
-            .await
-            .map_err(Into::into);
+        let options: SqliteConnectOptions =
+            SqliteConnectOptions::from_str(url)?.create_if_missing(true);
+        // Round-trip through the URL form: that is the conversion path
+        // `open_pool_for_path` uses, and it preserves create_if_missing
+        // (mode=rwc).
+        let pool = sqlite_pool_options()
+            .connect_with(AnyConnectOptions::from_str(
+                options.to_url_lossy().as_ref(),
+            )?)
+            .await?;
+        try_enable_wal(&pool).await;
+        return Ok(pool);
     }
     Ok(AnyPoolOptions::new()
         .max_connections(4)

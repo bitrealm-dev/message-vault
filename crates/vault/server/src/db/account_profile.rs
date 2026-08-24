@@ -499,6 +499,17 @@ pub async fn resolve_account_ref_at(
     resolve_account_ref(&mut conn, account_ref).await
 }
 
+/// Open the vault by connection URL (`--db-url`) and resolve `account_ref`
+/// to a UUID. Mirrors [`resolve_account_ref_at`] for URL-based deployments;
+/// the URL is redacted in error context so credentials never leak.
+pub async fn resolve_account_ref_at_url(db_url: &str, account_ref: &str) -> Result<String> {
+    let pool = crate::db::engine::open_pool_from_url(db_url)
+        .await
+        .with_context(|| format!("open database {}", crate::import_cli::redact_db_url(db_url)))?;
+    let mut conn = pool.acquire().await?;
+    resolve_account_ref(&mut conn, account_ref).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

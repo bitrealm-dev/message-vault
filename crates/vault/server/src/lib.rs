@@ -57,18 +57,40 @@ pub fn pg_test_url() -> Option<String> {
 
 /// Serializes the Postgres-gated tests against their shared test database.
 /// Concurrent `ensure_vault_schema` calls race on Postgres's composite-type
-/// creation (`CREATE TABLE IF NOT EXISTS` is not race-safe there). cargo runs
-/// each test binary sequentially, so the races live inside one binary: the
-/// gated unit tests (`messages_fts_stays_in_sync_pg`, `promote_fts_cycle_pg`)
-/// run on the lib binary's thread pool, and the search-parity integration
-/// test runs its own threads — both also clear the shared id range (keys
-/// 1..=15), so everything takes this lock around its Postgres work. A
-/// parallel test runner (e.g. nextest) would need a cross-process lock;
-/// upgrade to a Postgres `pg_advisory_lock` on a dedicated connection if one
-/// is ever adopted. Test-support surface, not product API.
+/// creation (`CREATE TABLE IF NOT EXISTS` is not race-safe there), and the
+/// gated unit tests (`messages_fts_stays_in_sync_pg`,
+/// `promote_fts_cycle_pg`) and the search-parity integration test clear and
+/// reuse the same message-id range. Cargo runs the lib and integration test
+/// binaries as separate processes against the same database, so threads
+/// within one binary take [`PG_TEST_LOCK`] and the binaries exclude each
+/// other with an fs2 file lock — both via [`acquire_pg_test_lock`].
+/// Test-support surface, not product API.
 #[doc(hidden)]
 pub static PG_TEST_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+/// Take the in-process Postgres test mutex and the cross-process test
+/// database lock together (blocking until both are held). The returned file
+/// must be kept alive for as long as the database is in use — dropping it
+/// releases the cross-process lock.
+#[doc(hidden)]
+pub async fn acquire_pg_test_lock() -> (tokio::sync::MutexGuard<'static, ()>, std::fs::File) {
+    let guard = PG_TEST_LOCK.lock().await;
+    let lock_path = std::env::temp_dir().join("message-vault-pg-tests.lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)
+        .expect("open the Postgres test lock file");
+    let to_lock = file.try_clone().expect("clone the Postgres test lock file");
+    tokio::task::spawn_blocking(move || {
+        fs2::FileExt::lock_exclusive(&to_lock).expect("lock the Postgres test lock file");
+    })
+    .await
+    .expect("Postgres test lock task");
+    (guard, file)
+}
 
 /// Clap command definition for the `message-vault-server` CLI; delegates to
 /// [`cli::clap_command`].

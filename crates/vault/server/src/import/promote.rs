@@ -36,7 +36,12 @@ pub(super) async fn promote_append(
     let mut stats = PromoteStats::default();
     let started = Instant::now();
 
-    let mut tx = conn.begin().await?;
+    // Promote writes need the write lock up front on SQLite (IMMEDIATE) so
+    // two imports for different accounts cannot race into SQLITE_BUSY at the
+    // first write; Postgres has no statement-level equivalent.
+    let mut tx = conn
+        .begin_with(dialect::begin_immediate_sql(dialect::engine_of(conn)))
+        .await?;
 
     if mode == ImportMode::Replace {
         for source in wipe_sources {
@@ -54,8 +59,8 @@ pub(super) async fn promote_append(
     for stmt in schema::split_ddl(
         r#"
         CREATE TEMP TABLE IF NOT EXISTS _promote_conv_map (
-            staging_id INTEGER PRIMARY KEY,
-            prod_id INTEGER NOT NULL
+            staging_id BIGINT PRIMARY KEY,
+            prod_id BIGINT NOT NULL
         );
         DELETE FROM _promote_conv_map;
         "#,
@@ -680,8 +685,8 @@ async fn fill_promote_msg_map(
     for stmt in schema::split_ddl(
         r#"
         CREATE TEMP TABLE IF NOT EXISTS _promote_msg_map (
-            staging_id INTEGER PRIMARY KEY,
-            prod_id INTEGER NOT NULL
+            staging_id BIGINT PRIMARY KEY,
+            prod_id BIGINT NOT NULL
         );
         DELETE FROM _promote_msg_map;
         "#,
@@ -755,7 +760,7 @@ mod tests {
         let Some(url) = crate::pg_test_url() else {
             return;
         };
-        let _pg_guard = crate::PG_TEST_LOCK.lock().await;
+        let _pg_guard = crate::acquire_pg_test_lock().await;
         sqlx::any::install_default_drivers();
         let pool = sqlx::any::AnyPoolOptions::new()
             .connect(&url)
@@ -877,8 +882,8 @@ mod tests {
         // watermark (the temp map as promote fills it: staging id → prod id).
         sqlx::query(
             "CREATE TEMP TABLE IF NOT EXISTS _promote_msg_map (
-                 staging_id INTEGER PRIMARY KEY,
-                 prod_id INTEGER NOT NULL
+                 staging_id BIGINT PRIMARY KEY,
+                 prod_id BIGINT NOT NULL
              )",
         )
         .execute(&mut *conn)

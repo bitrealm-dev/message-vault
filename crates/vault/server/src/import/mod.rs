@@ -26,6 +26,7 @@ use tokio::sync::Mutex;
 use crate::assets::AssetStats;
 use crate::config::{PathsConfig, validate_source_id};
 use crate::db::contacts;
+use crate::db::dialect;
 use crate::db::engine;
 use crate::db::schema;
 use crate::db::vault_imports::{self, CompleteImportArgs};
@@ -436,7 +437,14 @@ pub async fn import_jsonl_files_on_conn(
     };
     const STAGING_COMMIT_EVERY: usize = 50;
 
-    let mut tx = conn.begin().await?;
+    // Staging writes need the write lock up front on SQLite (IMMEDIATE) so
+    // two imports for different accounts cannot race into SQLITE_BUSY at the
+    // first INSERT; Postgres has no statement-level equivalent and uses a
+    // plain BEGIN.
+    let engine = dialect::engine_of(conn);
+    let mut tx = conn
+        .begin_with(dialect::begin_immediate_sql(engine))
+        .await?;
     let mut stmts = StagingInserts::new(opts.account_id, opts.import_id);
 
     for (idx, path) in paths.iter().enumerate() {
@@ -469,7 +477,9 @@ pub async fn import_jsonl_files_on_conn(
         if n % STAGING_COMMIT_EVERY == 0 && n < total_files {
             drop(stmts);
             tx.commit().await?;
-            tx = conn.begin().await?;
+            tx = conn
+                .begin_with(dialect::begin_immediate_sql(engine))
+                .await?;
             stmts = StagingInserts::new(opts.account_id, opts.import_id);
         }
     }
@@ -985,7 +995,15 @@ pub(crate) async fn import_handler(
         if n == 0 {
             return Err(ApiError::BadRequest("request body is empty".into()));
         }
-        let response = run_import_path(state, query, jsonl_path, None).await;
+        // The import pipeline does blocking file IO (JSONL parse, asset
+        // hashing and copies) — run it off the async workers so a large
+        // import cannot stall unrelated requests.
+        let handle = tokio::runtime::Handle::current();
+        let response = tokio::task::spawn_blocking(move || {
+            handle.block_on(run_import_path(state, query, jsonl_path, None))
+        })
+        .await
+        .map_err(|e| ApiError::Internal(format!("import task failed: {e}")))?;
         drop(temp);
         return response;
     }
@@ -1056,9 +1074,24 @@ async fn import_multipart(
     }
     eprintln!("import: multipart jsonl + {file_count} file(s)");
 
-    let response = run_import_path(state, query, jsonl_path, Some(asset_root)).await;
+    let handle = tokio::runtime::Handle::current();
+    let response = tokio::task::spawn_blocking(move || {
+        handle.block_on(run_import_path(state, query, jsonl_path, Some(asset_root)))
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("import task failed: {e}")))?;
     drop(temp);
     response
+}
+
+/// Bound on concurrent HTTP imports: each import holds one pooled connection
+/// for its whole run, so at most this many may overlap and the remaining
+/// connections stay available for auth, search, and export.
+const MAX_CONCURRENT_IMPORTS: usize = 2;
+
+fn import_semaphore() -> &'static tokio::sync::Semaphore {
+    static SEMAPHORE: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+    SEMAPHORE.get_or_init(|| tokio::sync::Semaphore::new(MAX_CONCURRENT_IMPORTS))
 }
 
 async fn run_import_path(
@@ -1067,6 +1100,14 @@ async fn run_import_path(
     jsonl_path: PathBuf,
     asset_root_override: Option<PathBuf>,
 ) -> Result<Json<ImportResponse>, ApiError> {
+    // An import holds one pooled connection for its whole run (JSONL parse,
+    // asset IO, promote). Bound concurrent imports here so they can never
+    // drain the pool; the semaphore is taken before the per-account lock so
+    // lock order (semaphore → account → pool) is consistent everywhere.
+    let _import_permit = import_semaphore()
+        .acquire()
+        .await
+        .map_err(|_| ApiError::Internal("vault is shutting down".into()))?;
     let mode = ImportMode::parse(&query.mode).map_err(|e| ApiError::BadRequest(e.to_string()))?;
     validate_source_id(&query.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
     let contact_name_mode = import::ContactNameMode::parse(&query.contact_name_mode)
@@ -1152,9 +1193,8 @@ async fn run_import_path(
         import_id,
     });
     opts.contact_name_mode = contact_name_mode;
-    // Dedicated connection for the long import so we do not hold `state.db`
-    // across JSONL / asset IO / promote (export and session SQL stay free).
-    // TODO(#148): pool acquire
+    // One pooled connection held for the whole import; the import semaphore
+    // taken above keeps enough of the pool free for other requests.
     let mut conn = state.db.acquire().await?;
     let import_result = import::import_jsonl_files_on_conn(
         &mut conn,

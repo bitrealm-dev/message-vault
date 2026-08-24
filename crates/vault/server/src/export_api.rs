@@ -658,20 +658,21 @@ fn conversation_join_sql() -> String {
 fn push_participant_handle_or_alias_like(
     where_parts: &mut Vec<String>,
     params: &mut Vec<SqlParam>,
+    engine: DbEngine,
     needle: &str,
 ) {
-    where_parts.push(
+    let like = like_ci(engine);
+    where_parts.push(format!(
         "EXISTS (
                  SELECT 1 FROM participants p
                  JOIN handles ph ON ph.id = p.handle_id
                  WHERE p.conversation_id = c.id
-                   AND (ph.raw LIKE ? OR coalesce(p.name_alias, '') LIKE ?)
+                   AND (ph.raw {like} OR coalesce(p.name_alias, '') {like})
                )"
-        .into(),
-    );
-    let like = format!("%{needle}%");
-    params.push(SqlParam::Text(like.clone()));
-    params.push(SqlParam::Text(like));
+    ));
+    let pattern = format!("%{needle}%");
+    params.push(SqlParam::Text(pattern.clone()));
+    params.push(SqlParam::Text(pattern));
 }
 
 fn reject_unimplemented_message_filters(
@@ -739,26 +740,26 @@ async fn build_message_filters(
     }
 
     if let Some(from) = &parsed.from {
-        where_parts.push(
-            "(m.is_from_me = 0 AND (hs.raw LIKE ? OR EXISTS (
+        let like = like_ci(engine);
+        where_parts.push(format!(
+            "(m.is_from_me = 0 AND (hs.raw {like} OR EXISTS (
                  SELECT 1 FROM participants p
                  JOIN handles ph ON ph.id = p.handle_id
                  WHERE p.conversation_id = c.id
-                   AND (ph.raw LIKE ? OR coalesce(p.name_alias, '') LIKE ?)
+                   AND (ph.raw {like} OR coalesce(p.name_alias, '') {like})
                )))"
-            .into(),
-        );
-        let like = format!("%{from}%");
-        params.push(SqlParam::Text(like.clone()));
-        params.push(SqlParam::Text(like.clone()));
-        params.push(SqlParam::Text(like));
+        ));
+        let pattern = format!("%{from}%");
+        params.push(SqlParam::Text(pattern.clone()));
+        params.push(SqlParam::Text(pattern.clone()));
+        params.push(SqlParam::Text(pattern));
     }
 
     if let Some(to) = &parsed.to {
-        push_participant_handle_or_alias_like(&mut where_parts, &mut params, to);
+        push_participant_handle_or_alias_like(&mut where_parts, &mut params, engine, to);
     }
     if let Some(with_person) = &parsed.with_person {
-        push_participant_handle_or_alias_like(&mut where_parts, &mut params, with_person);
+        push_participant_handle_or_alias_like(&mut where_parts, &mut params, engine, with_person);
     }
 
     if let Some(subject) = &parsed.subject {
@@ -879,17 +880,22 @@ fn compile_metadata_fts_expr(
                     sql.push(')');
                 }
                 DbEngine::Postgres => {
-                    if *prefix == Some(true) {
-                        sql.push_str(
-                            " OR EXISTS (SELECT 1 FROM messages m_fts WHERE m_fts.id = m.id AND m_fts.search_tsv @@ to_tsquery('simple', ?",
-                        );
-                        params.push(SqlParam::Text(pg_prefix_tsquery(value)));
+                    // Prefix terms go through to_tsquery inside a quoted
+                    // literal; when the term has no queryable characters
+                    // (only quotes/backslashes), plainto_tsquery handles the
+                    // raw text instead of erroring on tsquery syntax.
+                    let (fn_name, arg) = if *prefix == Some(true) {
+                        match pg_prefix_tsquery(value) {
+                            Some(query) => ("to_tsquery", query),
+                            None => ("plainto_tsquery", value.clone()),
+                        }
                     } else {
-                        sql.push_str(
-                            " OR EXISTS (SELECT 1 FROM messages m_fts WHERE m_fts.id = m.id AND m_fts.search_tsv @@ plainto_tsquery('simple', ?",
-                        );
-                        params.push(SqlParam::Text(value.clone()));
-                    }
+                        ("plainto_tsquery", value.clone())
+                    };
+                    sql.push_str(&format!(
+                        " OR EXISTS (SELECT 1 FROM messages m_fts WHERE m_fts.id = m.id AND m_fts.search_tsv @@ {fn_name}('simple', ?"
+                    ));
+                    params.push(SqlParam::Text(arg));
                     sql.push_str("))");
                 }
             }
@@ -1000,10 +1006,16 @@ fn fts5_literal_query(term: &str) -> String {
 }
 
 /// Quote a term for a Postgres prefix query under the 'simple' config:
-/// `'term':*`. Single quotes are stripped (FTS5 treats them as literal text,
-/// 'simple' cannot carry them either).
-fn pg_prefix_tsquery(term: &str) -> String {
-    format!("'{}':*", term.replace('\'', ""))
+/// `'term':*`. Tsquery quoted literals cannot carry single quotes or
+/// backslashes (verified on Postgres 16: the lexer splits the token instead
+/// of honoring an escape), so terms containing either return `None`; the
+/// caller falls back to `plainto_tsquery`, which treats its input as raw
+/// text.
+fn pg_prefix_tsquery(term: &str) -> Option<String> {
+    if term.is_empty() || term.contains(['\\', '\'']) {
+        return None;
+    }
+    Some(format!("'{}':*", term))
 }
 
 /// Case-insensitive equality fragment on the aliased `name` column (`?`
@@ -1380,6 +1392,16 @@ pub(crate) async fn export_messages_handler(
 mod tests {
     use super::*;
     use crate::db::{engine, schema};
+
+    #[test]
+    fn pg_prefix_tsquery_falls_back_on_unescapable_terms() {
+        assert_eq!(pg_prefix_tsquery("foo"), Some("'foo':*".to_string()));
+        // Quotes and backslashes cannot live inside a tsquery quoted
+        // literal; the caller falls back to plainto_tsquery for them.
+        assert_eq!(pg_prefix_tsquery("it's"), None);
+        assert_eq!(pg_prefix_tsquery(r"a\b"), None);
+        assert_eq!(pg_prefix_tsquery(""), None);
+    }
 
     async fn setup() -> (sqlx::AnyPool, tempfile::TempDir) {
         let (pool, dir) = engine::test_pool().await;
