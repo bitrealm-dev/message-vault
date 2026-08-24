@@ -49,9 +49,6 @@ where
 pub struct ContactsConfig {
     pub count: usize,
     pub no_name: f64,
-    // The config file still has this field, so it must load. Names are chosen
-    // using first_only and first_middle_last. This value is unused.
-    #[allow(dead_code)]
     pub first_last: f64,
     pub first_middle_last: f64,
     pub first_only: f64,
@@ -63,7 +60,6 @@ pub struct ContactsConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct LabelsConfig {
-    #[allow(dead_code)]
     pub names: Vec<String>,
     pub family: f64,
     pub work: f64,
@@ -228,6 +224,12 @@ impl SeedConfig {
     /// Returns an error if the minimum is larger than the maximum, or if the
     /// large-group range sticks out past the overall min or max.
     pub fn validate(&self) -> Result<()> {
+        if self.labels.names.len() != 4 {
+            anyhow::bail!(
+                "labels.names must have exactly 4 entries (family, work, college, inactive), found {}",
+                self.labels.names.len()
+            );
+        }
         let g = &self.groups;
         if g.large_min_count == 0 {
             return Ok(());
@@ -278,6 +280,13 @@ mod tests {
         let mut cfg = SeedConfig::load(&SeedConfig::default_path()).expect("load");
         cfg.groups.large_participants_min = 15;
         cfg.groups.large_participants_max = 10;
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_labels_names_without_four_entries() {
+        let mut cfg = SeedConfig::load(&SeedConfig::default_path()).expect("load");
+        cfg.labels.names = vec!["Family".into(), "Work".into()];
         assert!(cfg.validate().is_err());
     }
 }
