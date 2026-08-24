@@ -70,10 +70,10 @@ export function ProfileSettingsPanel() {
       const updated = await apiClient.post<AccountProfile>("/v1/account/profile", {
         handles: [{ handle: value, service: newHandleService }],
       });
+      setProfile(updated);
       if (!handleListIncludes(updated, value, newHandleService)) {
         throw new Error("The vault did not add that handle.");
       }
-      setProfile(updated);
       setNewHandle("");
     } catch (e) {
       setHandleError(e instanceof Error ? e.message : String(e));
@@ -89,10 +89,10 @@ export function ProfileSettingsPanel() {
       const updated = await apiClient.post<AccountProfile>("/v1/account/profile", {
         remove_handles: [{ handle, service }],
       });
+      setProfile(updated);
       if (handleListIncludes(updated, handle, service)) {
         throw new Error("The vault did not remove that handle.");
       }
-      setProfile(updated);
     } catch (e) {
       setHandleError(e instanceof Error ? e.message : String(e));
     } finally {

@@ -61,9 +61,7 @@ export function ownerPhonesMatchProfile(
   profilePhones: readonly string[],
 ): boolean {
   if (ownerPhones.length === 0 || profilePhones.length === 0) return false;
-  return ownerPhones.some((owner) =>
-    profilePhones.some((profile) => phonesMatch(owner, profile)),
-  );
+  return ownerPhones.some((owner) => profilePhones.some((profile) => phonesMatch(owner, profile)));
 }
 
 /**
