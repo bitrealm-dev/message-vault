@@ -37,6 +37,9 @@ const PG_ACCOUNTS_DDL: &str = include_str!("../../../../../schema/sql/pg_account
 const PG_MESSAGE_TABLES_DDL: &str = include_str!("../../../../../schema/sql/pg_messages.sql");
 const PG_STAGING_TABLES_DDL: &str = include_str!("../../../../../schema/sql/pg_staging.sql");
 const PG_CONTACTS_TABLES_DDL: &str = include_str!("../../../../../schema/sql/pg_contacts.sql");
+/// Postgres FKs that reference tables created by a later DDL file (applied
+/// last, see `schema/sql/pg_fks.sql`).
+const PG_FKS_DDL: &str = include_str!("../../../../../schema/sql/pg_fks.sql");
 
 /// Current vault schema version, stamped into each SQLite database with
 /// `PRAGMA user_version`. Bump this whenever any `schema/sql/*.sql` file
@@ -154,6 +157,9 @@ async fn apply_postgres_vault_ddl(conn: &mut AnyConnection) -> Result<()> {
     execute_batch(conn, PG_CONTACTS_TABLES_DDL).await?;
     execute_batch(conn, PG_MESSAGE_TABLES_DDL).await?;
     execute_batch(conn, PG_STAGING_TABLES_DDL).await?;
+    // Post-hoc FKs last: they reference tables from both the accounts and
+    // contacts DDL sets.
+    execute_batch(conn, PG_FKS_DDL).await?;
     Ok(())
 }
 
@@ -487,12 +493,14 @@ async fn trigger_exists(conn: &mut AnyConnection, name: &str) -> Result<bool> {
 /// Split a multi-statement DDL batch into individual statements.
 ///
 /// The schema files follow a fixed format: comments are whole `--` lines,
-/// ordinary statements end with `;` at end of line, and trigger bodies are
-/// the only multi-line statements (each ends with a line ending in `END;`).
+/// ordinary statements end with `;` at end of line, and the only multi-line
+/// statements are trigger bodies (ending in a line ending with `END;`) and
+/// Postgres `DO $$` blocks (ending in a line ending with `$$;`).
 pub fn split_ddl(batch: &str) -> Vec<String> {
     let mut statements = Vec::new();
     let mut current = String::new();
     let mut in_trigger = false;
+    let mut in_do_block = false;
     for line in batch.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with("--") {
@@ -501,6 +509,9 @@ pub fn split_ddl(batch: &str) -> Vec<String> {
         if trimmed.starts_with("CREATE TRIGGER") {
             in_trigger = true;
         }
+        if trimmed.starts_with("DO $$") {
+            in_do_block = true;
+        }
         current.push_str(line);
         current.push('\n');
         if in_trigger {
@@ -508,6 +519,12 @@ pub fn split_ddl(batch: &str) -> Vec<String> {
                 statements.push(current.trim_end().to_string());
                 current.clear();
                 in_trigger = false;
+            }
+        } else if in_do_block {
+            if trimmed.ends_with("$$;") {
+                statements.push(current.trim_end().to_string());
+                current.clear();
+                in_do_block = false;
             }
         } else if trimmed.ends_with(';') {
             statements.push(current.trim_end().to_string());
@@ -1100,5 +1117,17 @@ mod tests {
             out,
             vec!["CREATE TABLE a (x INTEGER);", "CREATE TABLE b (y INTEGER);"]
         );
+    }
+
+    #[test]
+    fn split_ddl_keeps_do_blocks_intact() {
+        let stmts = split_ddl(include_str!("../../../../../schema/sql/pg_fks.sql"));
+        assert_eq!(stmts.len(), 1, "pg_fks.sql must be one DO block");
+        assert!(
+            stmts[0].starts_with("DO $$"),
+            "unexpected split: {}",
+            stmts[0]
+        );
+        assert!(stmts[0].ends_with("$$;"), "DO block must end in $$;");
     }
 }

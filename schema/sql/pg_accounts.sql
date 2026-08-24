@@ -44,9 +44,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS ix_account_emails_one_primary
 CREATE TABLE IF NOT EXISTS account_handles (
     -- Owning vault account (`accounts.id`).
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    -- Self identity (`handles.id`); no FK — `handles` is created by
+    -- Self identity (`handles.id`); no inline FK — `handles` is created by
     -- pg_contacts.sql after this file, and Postgres validates FK targets at
-    -- DDL time (unlike SQLite), so the reference cannot be declared here.
+    -- DDL time (unlike SQLite). pg_fks.sql adds the FK post-hoc, once
+    -- `handles` exists.
     handle_id INTEGER NOT NULL,
     PRIMARY KEY (account_id, handle_id)
 );
