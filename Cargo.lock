@@ -7698,6 +7698,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "068e763e8279de7ab94b6afebded2cb701678af094feb1c12ccb061b4783c1be"
 
 [[package]]
+name = "vault-http"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "httpmock",
+ "reqwest",
+]
+
+[[package]]
 name = "vault-pull"
 version = "0.1.0"
 dependencies = [
