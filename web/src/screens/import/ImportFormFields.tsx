@@ -342,13 +342,14 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
                   </Link>{" "}
                   so import can tell which messages you sent.
                 </div>
-              ) : phonesMismatch ? (
+              ) : null}
+              {phonesMismatch && !mismatchAck ? (
                 <div
                   role="status"
                   className="mt-2 rounded-lg border border-warn-soft-border bg-warn-soft-bg px-3 py-2 text-[0.8125rem] text-warn-soft-text"
                 >
-                  None of the phone numbers you entered match any phone on your user profile, so
-                  messages will not be linked to your user.
+                  I understand none of entered phone numbers match my profile and that imported
+                  messages will not be linked to my account.
                 </div>
               ) : null}
               <label className="mt-2 flex cursor-pointer items-start gap-2 text-[0.8125rem] text-text">
@@ -358,10 +359,7 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
                   checked={mismatchAck}
                   onChange={(e) => setMismatchAck(e.target.checked)}
                 />
-                <span>
-                  I know none of these numbers match my profile phones. Messages will not be linked
-                  to my user, and I am okay with that.
-                </span>
+                <span>Allow import from phone numbers not on my profile.</span>
               </label>
             </StackedField>
           </>
