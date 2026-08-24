@@ -6,6 +6,7 @@ import {
 } from "../../components/import/ImportSummaryPanel";
 import { useTauriJob } from "../../hooks/useTauriJob";
 import { apiClient, getBaseUrl } from "../../lib/api";
+import { attachmentStepCopy } from "../../lib/attachmentStepCopy";
 import { useAuth } from "../../lib/auth";
 import { saveImportSavedGroup } from "../../lib/savedGroups";
 import { sbrExtractFields } from "../../lib/sbrExtractFields";
@@ -48,10 +49,14 @@ const EMPTY_TIMING: StageTiming = {
 };
 
 /** Three import steps shown in the progress view. */
-function initialSteps(status: ImportStep["status"] = "pending"): ImportStep[] {
+function initialSteps(
+  status: ImportStep["status"] = "pending",
+  attachmentMedia: AttachmentMediaMode = "copy",
+): ImportStep[] {
+  const attachments = attachmentStepCopy(attachmentMedia);
   return [
     { label: "Parse backup", status, detail: status === "active" ? "Parsing backup…" : undefined },
-    { label: "Convert attachments", status: "pending" },
+    { label: attachments.label, status: "pending" },
     { label: "Upload to vault", status: "pending" },
   ];
 }
@@ -63,10 +68,13 @@ function stepIndexFor(step: ImportProgressEvent["step"]): number {
   return 2;
 }
 
-/** Present-tense verb shown while a step is running. */
+/**
+ * Present-tense verb shown while a step is running.
+ * Convert-stage ratios are conversation writes (`wrote N/M`), not attachment ops.
+ */
 function progressVerb(step: ImportProgressEvent["step"]): string {
   if (step === "upload") return "Uploading";
-  if (step === "convert") return "Converting";
+  if (step === "convert") return "Writing";
   return "Parsing";
 }
 
@@ -120,6 +128,7 @@ export function useImportJob() {
     messagesParsed?: number;
   }>({});
   const timingRef = useRef({ ...EMPTY_TIMING });
+  const attachmentModeRef = useRef<AttachmentMediaMode>("copy");
 
   function returnToForm(): void {
     setPhase("form");
@@ -148,11 +157,13 @@ export function useImportJob() {
       rawDetail = `${event.done}/${event.total} (${event.status})`;
     }
 
+    const attachments = attachmentStepCopy(attachmentModeRef.current);
     const detail =
       event.status === "included_in_extract" && event.step === "convert"
         ? rawDetail
         : `${progressVerb(event.step)} ${rawDetail}`;
     const done = event.total > 0 && event.done >= event.total;
+    const attachmentLabel = event.step === "convert" ? attachments.label : undefined;
 
     setSteps((current) =>
       current.map((step, index) => {
@@ -162,6 +173,7 @@ export function useImportJob() {
         if (index > stepIndex) return step;
         return {
           ...step,
+          ...(attachmentLabel ? { label: attachmentLabel } : {}),
           status: done ? "done" : "active",
           detail,
         };
@@ -180,11 +192,12 @@ export function useImportJob() {
     issuesRef.current = [];
     countsRef.current = {};
     timingRef.current = { ...EMPTY_TIMING };
+    attachmentModeRef.current = form.attachmentMedia;
     setRunning(true);
     setPhase("progress");
     setSummaryView(null);
     setStagingDir(null);
-    setSteps(initialSteps("active"));
+    setSteps(initialSteps("active", form.attachmentMedia));
 
     let importSessionId: number | null = null;
     let importCompleted = false;
@@ -250,6 +263,7 @@ export function useImportJob() {
       const extractFinishedAt = performance.now();
       timingRef.current.convertEndedAt = extractFinishedAt;
       ({ parseMs, convertMs } = stageDurations(timingRef.current, extractFinishedAt));
+      const attachments = attachmentStepCopy(form.attachmentMedia);
 
       setSteps([
         {
@@ -260,9 +274,9 @@ export function useImportJob() {
           durationMs: parseMs,
         },
         {
-          label: "Convert attachments",
+          label: attachments.label,
           status: "done",
-          detail: "Attachments processed",
+          detail: attachments.doneDetail,
           durationMs: convertMs,
         },
         {
