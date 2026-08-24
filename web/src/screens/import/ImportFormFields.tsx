@@ -6,7 +6,7 @@ import PathPicker from "../../components/PathPicker";
 import PhoneTokenField, { type PhoneTokenFieldHandle } from "../../components/PhoneTokenField";
 import Select, { ListBoxItem, selectItemClassName } from "../../components/Select";
 import { EXPORT_SOURCES } from "../../lib/exportSources";
-import { ownerPhonesMatchProfile } from "../../lib/phoneTokens";
+import { ownerPhonesNeedMismatchAck } from "../../lib/phoneTokens";
 import { parseSelectKey } from "../../lib/selectKey";
 import type { AttachmentMediaMode, ContactNameMode } from "../../lib/types";
 import { accentLink } from "../../lib/uiStyles";
@@ -44,6 +44,8 @@ export type ImportFormFieldsProps = {
   /** Vault account phones for SBR mismatch checks (empty until loaded). */
   profilePhones: string[];
   profilePhonesReady: boolean;
+  /** True when the profile request failed (fail open on mismatch gate). */
+  profilePhonesError: boolean;
   showMissingAccountPhoneWarning: boolean;
   formatOpen: boolean;
   onToggleFormat: () => void;
@@ -180,11 +182,12 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
   const phonesForMatch = phoneDraftPending
     ? [...props.ownerPhones, phoneDraft.trim()]
     : props.ownerPhones;
-  // Empty profile cannot match; otherwise require at least one owner phone with no digit overlap.
-  const profileEmpty = props.profilePhonesReady && props.profilePhones.length === 0;
-  const noDigitMatch =
-    phonesForMatch.length > 0 && !ownerPhonesMatchProfile(phonesForMatch, props.profilePhones);
-  const phonesMismatch = isSbr && props.profilePhonesReady && (profileEmpty || noDigitMatch);
+  const phonesMismatch =
+    isSbr &&
+    ownerPhonesNeedMismatchAck(phonesForMatch, props.profilePhones, {
+      ready: props.profilePhonesReady,
+      fetchFailed: props.profilePhonesError,
+    });
 
   useEffect(() => {
     if (!phonesMismatch) setMismatchAck(false);
@@ -200,16 +203,19 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
   const canImport =
     Boolean(props.backupPath) &&
     !props.running &&
+    (!isSbr || props.profilePhonesReady) &&
     (!isSbr || props.ownerPhones.length > 0 || phoneDraftPending) &&
     (!phonesMismatch || mismatchAck);
 
   function handleImport(): void {
     if (isSbr) {
+      if (!props.profilePhonesReady) return;
       const phones = phoneFieldRef.current?.flush() ?? props.ownerPhones;
       if (phones.length === 0) return;
-      const mismatch =
-        props.profilePhonesReady &&
-        (props.profilePhones.length === 0 || !ownerPhonesMatchProfile(phones, props.profilePhones));
+      const mismatch = ownerPhonesNeedMismatchAck(phones, props.profilePhones, {
+        ready: props.profilePhonesReady,
+        fetchFailed: props.profilePhonesError,
+      });
       if (mismatch && !mismatchAck) return;
       props.onImport(phones);
       return;

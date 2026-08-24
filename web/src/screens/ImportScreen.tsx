@@ -39,9 +39,10 @@ export default function ImportScreen() {
   const [processingOpen, setProcessingOpen] = useState(false);
   const [force, setForce] = useState(false);
   const [obfuscate, setObfuscate] = useState(false);
-  /** null/empty until SBR profile fetch finishes. */
+  /** Profile phones after SBR fetch; empty until ready (or after a failed fetch). */
   const [profilePhones, setProfilePhones] = useState<string[]>([]);
   const [profilePhonesReady, setProfilePhonesReady] = useState(false);
+  const [profilePhonesError, setProfilePhonesError] = useState(false);
   const ownerPhonesSeededRef = useRef(false);
 
   useEffect(() => {
@@ -53,15 +54,19 @@ export default function ImportScreen() {
     if (source !== SBR_SOURCE) {
       setProfilePhones([]);
       setProfilePhonesReady(false);
+      setProfilePhonesError(false);
       ownerPhonesSeededRef.current = false;
       return;
     }
     let cancelled = false;
+    setProfilePhonesReady(false);
+    setProfilePhonesError(false);
     void (async () => {
       try {
         const profile = await apiClient.get<AccountProfile>("/v1/account/profile");
         if (cancelled) return;
         setProfilePhones([...profile.phones]);
+        setProfilePhonesError(false);
         setProfilePhonesReady(true);
         if (profile.phones.length === 0 || ownerPhonesSeededRef.current) return;
         setOwnerPhones((current) => {
@@ -72,6 +77,7 @@ export default function ImportScreen() {
       } catch {
         if (!cancelled) {
           setProfilePhones([]);
+          setProfilePhonesError(true);
           setProfilePhonesReady(true);
         }
       }
@@ -118,7 +124,10 @@ export default function ImportScreen() {
           }}
           profilePhones={profilePhones}
           profilePhonesReady={profilePhonesReady}
-          showMissingAccountPhoneWarning={profilePhonesReady && profilePhones.length === 0}
+          profilePhonesError={profilePhonesError}
+          showMissingAccountPhoneWarning={
+            profilePhonesReady && !profilePhonesError && profilePhones.length === 0
+          }
           formatOpen={formatOpen}
           onToggleFormat={() => setFormatOpen((o) => !o)}
           processingOpen={processingOpen}

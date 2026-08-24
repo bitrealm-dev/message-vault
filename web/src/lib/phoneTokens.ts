@@ -48,3 +48,19 @@ export function ownerPhonesMatchProfile(
     return digits.length > 0 && profileDigits.has(digits);
   });
 }
+
+/**
+ * Whether SBR Import should require the mismatch acknowledgment checkbox.
+ * Empty profile always needs ack once the profile has loaded successfully.
+ * Fetch failure → false (fail open; caller still waits for ready).
+ */
+export function ownerPhonesNeedMismatchAck(
+  ownerPhones: readonly string[],
+  profilePhones: readonly string[],
+  opts: { ready: boolean; fetchFailed: boolean },
+): boolean {
+  if (!opts.ready || opts.fetchFailed) return false;
+  if (profilePhones.length === 0) return true;
+  if (ownerPhones.length === 0) return false;
+  return !ownerPhonesMatchProfile(ownerPhones, profilePhones);
+}
