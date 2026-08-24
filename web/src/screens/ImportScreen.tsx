@@ -32,11 +32,7 @@ export default function ImportScreen() {
   const [minSizeMb, setMinSizeMb] = useState("20");
   const [contactNameMode, setContactNameMode] = useState<ContactNameMode>("fill_missing");
   const [formatOpen, setFormatOpen] = useState(true);
-  const [filteringOpen, setFilteringOpen] = useState(false);
   const [processingOpen, setProcessingOpen] = useState(false);
-  const [conversationFilter, setConversationFilter] = useState("");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
   const [force, setForce] = useState(false);
   const [obfuscate, setObfuscate] = useState(false);
 
@@ -76,16 +72,8 @@ export default function ImportScreen() {
           onContactNameModeChange={setContactNameMode}
           formatOpen={formatOpen}
           onToggleFormat={() => setFormatOpen((o) => !o)}
-          filteringOpen={filteringOpen}
-          onToggleFiltering={() => setFilteringOpen((o) => !o)}
           processingOpen={processingOpen}
           onToggleProcessing={() => setProcessingOpen((o) => !o)}
-          conversationFilter={conversationFilter}
-          onConversationFilterChange={setConversationFilter}
-          startDate={startDate}
-          onStartDateChange={setStartDate}
-          endDate={endDate}
-          onEndDateChange={setEndDate}
           force={force}
           onForceChange={setForce}
           obfuscate={obfuscate}
@@ -101,9 +89,6 @@ export default function ImportScreen() {
               maxFps,
               minSizeMb,
               contactNameMode,
-              conversationFilter,
-              startDate,
-              endDate,
               force,
               obfuscate,
               isIos,
