@@ -895,6 +895,74 @@ mod tests {
         response
     }
 
+    fn with_cors(mut state: AppState, origins: &[&str]) -> AppState {
+        let mut cfg = (*state.cfg).clone();
+        cfg.server.as_mut().unwrap().cors_origins =
+            origins.iter().map(|s| (*s).to_string()).collect();
+        state.cfg = Arc::new(cfg);
+        state
+    }
+
+    async fn cors_preflight(state: AppState, origin: &str) -> reqwest::Response {
+        let app = http_app(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let response = reqwest::Client::new()
+            .request(
+                reqwest::Method::OPTIONS,
+                format!("http://{address}/v1/auth/mode"),
+            )
+            .header("Origin", origin)
+            .header("Access-Control-Request-Method", "GET")
+            .header("Access-Control-Request-Headers", "content-type")
+            .send()
+            .await
+            .unwrap();
+        server.abort();
+        response
+    }
+
+    fn allow_origin(response: &reqwest::Response) -> Option<&str> {
+        response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .and_then(|value| value.to_str().ok())
+    }
+
+    #[tokio::test]
+    async fn cors_preflight_allows_packaged_desktop_and_vite_origins() {
+        let (_tmp, state, _token, _import_id) = test_state().await;
+        let origins = [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "https://tauri.localhost",
+            "http://tauri.localhost",
+            "tauri://localhost",
+        ];
+        for origin in origins {
+            let response = cors_preflight(with_cors(state.clone(), &origins), origin).await;
+            assert_eq!(
+                allow_origin(&response),
+                Some(origin),
+                "preflight Origin {origin}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn cors_preflight_rejects_unknown_origin() {
+        let (_tmp, state, _token, _import_id) = test_state().await;
+        let response = cors_preflight(
+            with_cors(state, &["tauri://localhost"]),
+            "https://evil.example",
+        )
+        .await;
+        assert_eq!(allow_origin(&response), None);
+    }
+
     #[tokio::test]
     async fn health_still_ok() {
         let (_tmp, state, _token, _import_id) = test_state().await;

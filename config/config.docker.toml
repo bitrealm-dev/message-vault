@@ -21,7 +21,8 @@ asset_hash_threshold_bytes = 20971520
 # UI origins that call this API on a different host/port. Without this list the
 # desktop app reports it cannot reach the server even when curl to :8080 works.
 # - Vite / `cargo tauri dev`: :5173
-# - Packaged desktop (AppImage / installers): https://tauri.localhost (and variants)
+# - Packaged desktop: tauri://localhost (Linux AppImage / macOS),
+#   http://tauri.localhost (Windows), https://tauri.localhost (Windows HTTPS scheme)
 cors_origins = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",

@@ -435,4 +435,86 @@ openapi_ui = true
         let cfg: ServerConfig = toml::from_str(raw).unwrap();
         assert!(cfg.openapi_ui);
     }
+
+    const PACKAGED_ORIGINS: &[&str] = &[
+        "https://tauri.localhost",
+        "http://tauri.localhost",
+        "tauri://localhost",
+    ];
+
+    /// `scripts/run-vault-dev.sh` only uncomments the `# cors_origins =` line.
+    /// That line must be a complete array or first-run / `--reset-demo` configs
+    /// are invalid TOML.
+    #[test]
+    fn example_cors_origins_uncomments_to_a_complete_array() {
+        let example = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../config/config.toml.example"
+        ));
+        let cors_lines: Vec<&str> = example
+            .lines()
+            .filter(|line| {
+                line.starts_with("# cors_origins =") || line.starts_with("cors_origins =")
+            })
+            .collect();
+        assert_eq!(
+            cors_lines.len(),
+            1,
+            "run-vault-dev.sh uncomments one cors_origins line"
+        );
+        assert!(
+            cors_lines[0].contains('[') && cors_lines[0].contains(']'),
+            "cors_origins must stay on one line so sed yields a closed array, got {}",
+            cors_lines[0]
+        );
+
+        let uncommented: String = example
+            .lines()
+            .map(|line| {
+                line.strip_prefix("# cors_origins =")
+                    .map(|rest| format!("cors_origins ={rest}"))
+                    .unwrap_or_else(|| line.to_string())
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let cfg: Config =
+            toml::from_str(&uncommented).expect("example after run-vault-dev.sh sed must parse");
+        let origins = &cfg
+            .server
+            .as_ref()
+            .expect("[server] in example")
+            .cors_origins;
+        for origin in [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            PACKAGED_ORIGINS[0],
+            PACKAGED_ORIGINS[1],
+            PACKAGED_ORIGINS[2],
+        ] {
+            assert!(
+                origins.iter().any(|item| item == origin),
+                "missing {origin} in {origins:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn docker_config_includes_packaged_desktop_origins() {
+        let docker = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../config/config.docker.toml"
+        ));
+        let cfg: Config = toml::from_str(docker).expect("config.docker.toml must parse");
+        let origins = &cfg
+            .server
+            .as_ref()
+            .expect("[server] in docker config")
+            .cors_origins;
+        for origin in PACKAGED_ORIGINS {
+            assert!(
+                origins.iter().any(|item| item == origin),
+                "missing {origin} in {origins:?}"
+            );
+        }
+    }
 }

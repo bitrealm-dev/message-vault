@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Document and ship CORS origins for packaged desktop builds (`https://tauri.localhost` and variants). Release AppImages were blocked from Connect when the vault only allowed Vite `:5173` origins.
+- Document and ship CORS origins for packaged desktop builds (`tauri://localhost`, `http://tauri.localhost`, `https://tauri.localhost`). Release AppImages were blocked from Connect when the vault only allowed Vite `:5173` origins.
 
 ### Added
 
