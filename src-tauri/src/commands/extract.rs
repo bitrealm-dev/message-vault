@@ -154,6 +154,8 @@ pub struct ExtractArgs {
     pub end_date: Option<String>,
     /// When true, replace names and phone numbers with fake ones.
     pub obfuscate: Option<bool>,
+    /// Owner phone numbers for Android SMS exporters (SMS Backup & Restore).
+    pub owner_phones: Option<Vec<String>>,
 }
 
 /// Ask this process to parse a phone backup and write conversation files.
@@ -184,6 +186,13 @@ pub async fn extract(
         start_date: args.start_date.unwrap_or_default(),
         end_date: args.end_date.unwrap_or_default(),
         obfuscate: args.obfuscate.unwrap_or(false),
+        owner_phones: args
+            .owner_phones
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty())
+            .collect(),
     };
 
     let output_dir = args.output_dir;
@@ -256,6 +265,7 @@ struct ExtractOptions {
     start_date: String,
     end_date: String,
     obfuscate: bool,
+    owner_phones: Vec<String>,
 }
 
 /// Parse the attachment handling choice from the Extract form.
@@ -339,14 +349,22 @@ fn build_exporter_config(
         }
         other => {
             let source_config = match other {
-                "sms-backup-restore" => SourceConfig::SmsBackupRestore(SmsBackupRestoreConfig {
-                    owner_phones: Vec::new(),
-                }),
+                "sms-backup-restore" => {
+                    if options.owner_phones.is_empty() {
+                        return Err(
+                            "SMS Backup & Restore requires at least one backup device phone number"
+                                .into(),
+                        );
+                    }
+                    SourceConfig::SmsBackupRestore(SmsBackupRestoreConfig {
+                        owner_phones: options.owner_phones.clone(),
+                    })
+                }
                 "go-sms-pro" => SourceConfig::GoSmsPro(GoSmsProConfig {
-                    owner_phones: Vec::new(),
+                    owner_phones: options.owner_phones.clone(),
                 }),
                 "sms-backup-plus" => SourceConfig::SmsBackupPlus(SmsBackupPlusConfig {
-                    owner_phones: Vec::new(),
+                    owner_phones: options.owner_phones.clone(),
                     owner_emails: Vec::new(),
                     name_mapping: None,
                     verbose: false,
@@ -438,6 +456,21 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    fn test_options(owner_phones: Vec<String>) -> ExtractOptions {
+        ExtractOptions {
+            backup_password: String::new(),
+            attachment_media: AttachmentMedia::default(),
+            media_max_resolution: MaxResolution::default(),
+            media_max_fps: "30".into(),
+            media_min_size: "20M".into(),
+            conversation_filter: String::new(),
+            start_date: String::new(),
+            end_date: String::new(),
+            obfuscate: false,
+            owner_phones,
+        }
+    }
+
     #[test]
     fn counts_exact_messages_written_to_jsonl_output() {
         let unique = SystemTime::now()
@@ -463,5 +496,37 @@ mod tests {
         assert_eq!(counts.files, 2);
         assert_eq!(counts.messages, 3);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn sms_backup_restore_requires_owner_phones() {
+        let err = build_exporter_config(
+            "sms-backup-restore",
+            "/tmp/backup",
+            "/tmp/out",
+            &test_options(Vec::new()),
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("phone number"),
+            "expected phone requirement error, got {err}"
+        );
+    }
+
+    #[test]
+    fn sms_backup_restore_passes_owner_phones() {
+        let config = build_exporter_config(
+            "sms-backup-restore",
+            "/tmp/backup",
+            "/tmp/out",
+            &test_options(vec!["+15551111".into(), "+15552222".into()]),
+        )
+        .unwrap();
+        match config.source {
+            SourceConfig::SmsBackupRestore(s) => {
+                assert_eq!(s.owner_phones, vec!["+15551111", "+15552222"]);
+            }
+            other => panic!("expected SmsBackupRestore, got {other:?}"),
+        }
     }
 }
