@@ -1227,7 +1227,7 @@ const CASES: &[(&str, &[i64])] = &[
     ("vault", &[1]),
     ("hello", &[1, 2]),                      // case-insensitive on both engines
     ("report*", &[3]),                       // prefix
-    ("\"two words\"", &[4]),                 // phrase (exact adjacency)
+    ("\"two words\"", &[4, 5]),              // phrase — exact adjacency (4) plus the metadata LIKE chain's substring match (5), matching pre-port behavior on both engines
     ("red AND apple", &[6]),
     ("red apple", &[6]),                     // implicit AND
     ("red OR green", &[6, 7, 8]),
