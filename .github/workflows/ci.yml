@@ -105,7 +105,7 @@ jobs:
   # it; this is its compile, lint, and test gate. Same system packages as
   # the release job's Linux installer build.
   check-tauri:
-    name: Check (src-tauri)
+    name: Check, lint, and test (src-tauri)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
