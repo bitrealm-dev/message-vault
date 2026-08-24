@@ -31,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wire imessage-ir's previously ignored media flags. CLI help text and
   exported output are unchanged; imessage-ir now honors `--media-mode`
   convert/compress when passed.
+- **CLI tools:** extract the duplicated JSONL journal and vault HTTP client
+  into two shared lib crates, replace substring retry classification with a
+  typed classifier (all 4xx failures are permanent), wire demo-seed's
+  name-shape and label-name config into the generator, and document the
+  dump-cli-docs surface. Retry and truncation edge cases fixed; journal
+  files, error text, and the demo dataset unchanged.
 
 Installable builds and release notes also appear on
 [GitHub Releases](https://github.com/bitrealm-io/message-vault/releases).

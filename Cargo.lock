@@ -3654,6 +3654,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "journal"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "js-sys"
 version = "0.3.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7688,6 +7698,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "068e763e8279de7ab94b6afebded2cb701678af094feb1c12ccb061b4783c1be"
 
 [[package]]
+name = "vault-http"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "httpmock",
+ "reqwest",
+]
+
+[[package]]
 name = "vault-pull"
 version = "0.1.0"
 dependencies = [
@@ -7696,13 +7715,14 @@ dependencies = [
  "clap",
  "hex",
  "httpmock",
+ "journal",
  "message-ir",
  "message-vault-io-core",
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
  "tempfile",
+ "vault-http",
  "vault-push",
 ]
 
@@ -7714,6 +7734,7 @@ dependencies = [
  "clap",
  "hex",
  "httpmock",
+ "journal",
  "message-ir",
  "message-ir-format",
  "message-vault-io-core",
@@ -7722,6 +7743,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "vault-http",
 ]
 
 [[package]]

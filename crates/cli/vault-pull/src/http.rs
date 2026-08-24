@@ -10,6 +10,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use reqwest::blocking::Client;
 use serde::Deserialize;
+use vault_http::truncate;
 
 #[derive(Debug, Deserialize)]
 /// One page from `GET /v1/export/messages`.
@@ -196,11 +197,9 @@ impl HttpSession {
     ///
     /// Returns an error when the reqwest client cannot be built.
     pub fn new() -> Result<Self> {
-        let client = Client::builder()
-            .pool_max_idle_per_host(16)
-            .build()
-            .context("build HTTP client")?;
-        Ok(Self { client })
+        Ok(Self {
+            client: vault_http::build_client()?,
+        })
     }
 
     /// Fetch one page of messages from `GET /v1/export/messages`.
@@ -388,14 +387,5 @@ impl HttpSession {
         std::fs::rename(&tmp, dest)
             .with_context(|| format!("rename {} -> {}", tmp.display(), dest.display()))?;
         Ok(())
-    }
-}
-
-/// Copy `s`, cutting it to `max` bytes and adding an ellipsis when longer.
-fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}…", &s[..max])
     }
 }

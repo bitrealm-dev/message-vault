@@ -154,16 +154,16 @@ fn make_contact(
 
     let mut groups = Vec::new();
     if inactive {
-        groups.push("Inactive".into());
+        groups.push(cfg.labels.names[3].clone());
     } else {
         if rng.random_bool(cfg.labels.family) {
-            groups.push("Family".into());
+            groups.push(cfg.labels.names[0].clone());
         }
         if rng.random_bool(cfg.labels.work) {
-            groups.push("Work".into());
+            groups.push(cfg.labels.names[1].clone());
         }
         if rng.random_bool(cfg.labels.college) {
-            groups.push("College".into());
+            groups.push(cfg.labels.names[2].clone());
         }
     }
 
@@ -200,6 +200,9 @@ fn make_contact(
 }
 
 /// Pick first-only, first-middle-last, or first-last from the configured shares.
+// The final `else` intentionally mirrors the first-last branch as a defensive
+// fallthrough for configs whose shares sum to less than 1.0.
+#[allow(clippy::if_same_then_else)]
 fn sample_name_shape(
     cfg: &SeedConfig,
     names: &NameBank,
@@ -215,6 +218,10 @@ fn sample_name_shape(
             names.pick_middle(rng).to_string(),
             names.pick_last(rng).to_string(),
         )
+    } else if roll
+        < cfg.contacts.first_only + cfg.contacts.first_middle_last + cfg.contacts.first_last
+    {
+        (first, String::new(), names.pick_last(rng).to_string())
     } else {
         (first, String::new(), names.pick_last(rng).to_string())
     }
@@ -645,5 +652,54 @@ mod tests {
             "expected >= {} groups sized {lo}..={hi}, got {large}",
             cfg.groups.large_min_count
         );
+    }
+
+    #[test]
+    fn sample_name_shape_respects_configured_shares() {
+        let mut cfg = SeedConfig::load(&SeedConfig::default_path()).expect("load demo_seed.toml");
+        let names = NameBank::load_default().expect("names");
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        cfg.contacts.first_only = 1.0;
+        cfg.contacts.first_middle_last = 0.0;
+        cfg.contacts.first_last = 0.0;
+        for _ in 0..50 {
+            let (first, middle, last) = sample_name_shape(&cfg, &names, &mut rng);
+            assert!(!first.is_empty());
+            assert!(middle.is_empty());
+            assert!(last.is_empty());
+        }
+        cfg.contacts.first_only = 0.0;
+        cfg.contacts.first_middle_last = 1.0;
+        cfg.contacts.first_last = 0.0;
+        for _ in 0..50 {
+            let (first, middle, last) = sample_name_shape(&cfg, &names, &mut rng);
+            assert!(!first.is_empty());
+            assert!(!middle.is_empty());
+            assert!(!last.is_empty());
+        }
+        cfg.contacts.first_middle_last = 0.0;
+        cfg.contacts.first_last = 1.0;
+        for _ in 0..50 {
+            let (first, middle, last) = sample_name_shape(&cfg, &names, &mut rng);
+            assert!(!first.is_empty());
+            assert!(middle.is_empty());
+            assert!(!last.is_empty());
+        }
+    }
+
+    #[test]
+    fn group_labels_come_from_config_names() {
+        let cfg = SeedConfig::load(&SeedConfig::default_path()).expect("load demo_seed.toml");
+        let names = NameBank::load_default().expect("names");
+        let mut rng = ChaCha8Rng::seed_from_u64(cfg.seed);
+        let roster = build_roster(&cfg, &names, &mut rng).expect("roster");
+        for contact in &roster.contacts {
+            for group in &contact.groups {
+                assert!(
+                    cfg.labels.names.iter().any(|n| n == group),
+                    "group label not from config: {group}"
+                );
+            }
+        }
     }
 }

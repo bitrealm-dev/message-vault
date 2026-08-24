@@ -1,12 +1,27 @@
+//! Generates the CLI reference pages on the docs site from each command's
+//! clap definition.
+//!
+//! The pages live in `docs/src/content/docs/vault/developer/reference/cli/`
+//! and are regenerated with
+//! `cargo run -p dump-cli-docs -- --output-dir docs/src/content/docs/vault/developer/reference`.
+
+#![warn(missing_docs)]
+
 use clap::Command;
 
+/// One generated CLI reference page.
 pub struct PageSpec {
+    /// Stable id used by [`command_for`] and [`page_markdown`] to look the page up.
     pub id: &'static str,
+    /// Page title (Starlight frontmatter `title`).
     pub title: &'static str,
+    /// Page description (Starlight frontmatter `description`).
     pub description: &'static str,
+    /// Output path relative to the docs reference directory.
     pub rel_path: &'static str,
 }
 
+/// Every CLI reference page, in site order.
 pub const PAGE_SPECS: &[PageSpec] = &[
     PageSpec {
         id: "imessage-ir-exporter",
@@ -76,6 +91,7 @@ pub const PAGE_SPECS: &[PageSpec] = &[
     },
 ];
 
+/// Render one page: Starlight frontmatter plus the clap-generated markdown body.
 pub fn render_page(spec: &PageSpec, command: &Command) -> String {
     let body = clap_markdown::help_markdown_command(command);
     format!(
@@ -86,6 +102,11 @@ pub fn render_page(spec: &PageSpec, command: &Command) -> String {
     )
 }
 
+/// The clap `Command` for a page id.
+///
+/// # Errors
+///
+/// Returns an error when `id` is not one of the commands known here.
 pub fn command_for(id: &str) -> anyhow::Result<clap::Command> {
     Ok(match id {
         "imessage-ir-exporter" => imessage_ir_exporter::clap_command(),
@@ -103,6 +124,12 @@ pub fn command_for(id: &str) -> anyhow::Result<clap::Command> {
     })
 }
 
+/// The full markdown source of one page.
+///
+/// # Errors
+///
+/// Returns an error when `id` is not in [`PAGE_SPECS`] or the command cannot
+/// be built.
 pub fn page_markdown(id: &str) -> anyhow::Result<String> {
     let spec = PAGE_SPECS
         .iter()
@@ -111,6 +138,11 @@ pub fn page_markdown(id: &str) -> anyhow::Result<String> {
     Ok(render_page(spec, &command_for(id)?))
 }
 
+/// Write every page in [`PAGE_SPECS`] under `output_dir`.
+///
+/// # Errors
+///
+/// Returns an error when a page cannot be rendered or written.
 pub fn write_pages(output_dir: &std::path::Path) -> anyhow::Result<()> {
     for spec in PAGE_SPECS {
         let path = output_dir.join(spec.rel_path);

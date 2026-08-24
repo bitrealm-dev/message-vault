@@ -8,61 +8,101 @@ use std::fmt;
 /// Failure from `GET /v1/auth/check`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthError {
+    /// The vault URL could not be parsed as a valid HTTP URL.
     InvalidUrl {
+        /// The vault URL that failed to parse.
         url: String,
+        /// Why the URL was rejected.
         detail: String,
     },
+    /// The HTTP client could not be built (for example, TLS setup failed).
     Client {
+        /// The underlying client-build error.
         detail: String,
     },
+    /// The vault could not be reached over the network.
     Network {
+        /// The endpoint that could not be reached.
         url: String,
+        /// The underlying network error.
         detail: String,
     },
+    /// The vault did not respond within the request timeout.
     Timeout {
+        /// The endpoint that timed out.
         url: String,
+        /// The underlying timeout error.
         detail: String,
     },
+    /// Connected, but the response body could not be read.
     ReadResponse {
+        /// The underlying read error.
         detail: String,
     },
+    /// The endpoint returned HTML instead of the vault API.
     WrongHostHtml {
+        /// The endpoint that returned HTML.
         url: String,
+        /// The HTTP status code returned.
         status: u16,
     },
     /// Requested `http://…` but the vault redirected to `https://…` (auth header dropped).
     HttpsRequired {
+        /// The `http://` URL that the vault redirected to `https://`.
         url: String,
     },
+    /// The API key was rejected as invalid.
     InvalidKey,
+    /// The API key does not have permission for this vault.
     Forbidden {
+        /// The HTTP status code returned.
         status: u16,
+        /// The response body from the vault.
         body: String,
     },
+    /// The vault API was not found at this URL.
     ApiNotFound {
+        /// The HTTP status code returned.
         status: u16,
+        /// The response body from the vault.
         body: String,
     },
+    /// The vault rejected the request because it was rate limited.
     RateLimited {
+        /// The HTTP status code returned.
         status: u16,
+        /// The response body from the vault.
         body: String,
     },
+    /// The vault failed while verifying the credentials.
     ServerError {
+        /// The HTTP status code returned.
         status: u16,
+        /// The response body from the vault.
         body: String,
     },
+    /// The vault returned an unexpected HTTP status.
     HttpStatus {
+        /// The HTTP status code returned.
         status: u16,
+        /// The response body from the vault.
         body: String,
     },
+    /// The response body was not recognizable JSON.
     BadJson {
+        /// The endpoint whose response could not be parsed.
         url: String,
+        /// The HTTP status code returned.
         status: u16,
+        /// A short excerpt of the unparseable response body.
         snippet: String,
     },
+    /// The vault rejected the supplied credentials.
     Rejected {
+        /// The rejection message from the vault.
         message: String,
     },
+    /// The vault did not return an account id.
     MissingAccountId,
 }
 
