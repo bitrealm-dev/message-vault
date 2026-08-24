@@ -28,6 +28,9 @@ config/export-to-vault.sh
 config/config.toml
 **/export.ini
 
+# Local machine config (copy .env.example to .env)
+.env
+
 # Converter output trees (directory kept via .gitkeep)
 /data/*
 !/data/.gitkeep
