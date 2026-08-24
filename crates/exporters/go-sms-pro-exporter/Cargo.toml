@@ -7,7 +7,7 @@ autotests = false
 
 [features]
 default = ["cli"]
-cli = ["dep:clap", "message-vault-io-core/cli"]
+cli = ["dep:clap"]
 
 [[bin]]
 name = "go-sms-pro-exporter"
@@ -24,7 +24,7 @@ obfuscate = { path = "../../libs/obfuscate" }
 contacts = { path = "../../libs/contacts" }
 go-sms-mms = { path = "../../libs/go-sms-mms" }
 message-csv = { path = "../../libs/csv" }
-message-vault-io-core = { path = "../../core/message-vault-io-core" }
+message-vault-io-core = { path = "../../core/message-vault-io-core", features = ["cli"] }
 message-ir = { path = "../../libs/ir" }
 message-ir-format = { path = "../../libs/ir-format" }
 media = { path = "../../libs/media" }
@@ -36,4 +36,5 @@ serde_json = "1.0.150"
 sha2 = "0.11.0"
 
 [dev-dependencies]
+message-vault-io-core = { path = "../../core/message-vault-io-core", features = ["testutil"] }
 tempfile = "3.27.0"

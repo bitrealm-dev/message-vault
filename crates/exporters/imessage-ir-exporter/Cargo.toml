@@ -12,7 +12,7 @@ path = "src/lib.rs"
 
 [features]
 default = ["cli"]
-cli = ["dep:clap", "message-vault-io-core/cli"]
+cli = ["dep:clap"]
 
 [[bin]]
 name = "imessage-ir-exporter"
@@ -27,9 +27,10 @@ crabapple = { version = "=0.4.7" }
 hex = "0.4.3"
 imessage-database = "4.2.0"
 message-csv = { path = "../../libs/csv" }
-message-vault-io-core = { path = "../../core/message-vault-io-core" }
+message-vault-io-core = { path = "../../core/message-vault-io-core", features = ["cli"] }
 message-ir = { path = "../../libs/ir" }
 message-ir-format = { path = "../../libs/ir-format" }
+media = { path = "../../libs/media" }
 mail = { path = "../../libs/mail" }
 rpassword = "=7.5.4"
 rusqlite = { version = "=0.40.0", features = ["blob", "bundled"] }

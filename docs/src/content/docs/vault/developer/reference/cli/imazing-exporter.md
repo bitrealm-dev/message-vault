@@ -26,7 +26,7 @@ Use with `#[command(flatten)]` in the exporter's `Cli` struct.
 
 * `--input <INPUT>` — Messages/WhatsApp export directory (or a single CSV for CLI convenience)
 * `--timezone <TIMEZONE>` — UTC offset for naive Message Date values (e.g. UTC-05:00). Default: host local
-* `--output <OUTPUT>` — Output directory for packaging + attachments/
+* `--output <OUTPUT>` — Output directory for packaging + `attachments/`
 * `--format <FORMAT>` — Output format: `json` (default), `jsonl`, `csv`, `eml`, `mbox`, or `xml`
 
   Default value: `json`

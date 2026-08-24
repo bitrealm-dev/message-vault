@@ -3400,7 +3400,6 @@ dependencies = [
  "clap",
  "contacts",
  "csv",
- "hex",
  "media",
  "message-csv",
  "message-ir",
@@ -3409,7 +3408,6 @@ dependencies = [
  "obfuscate",
  "phone",
  "serde_json",
- "sha2",
  "tempfile",
 ]
 
@@ -3441,6 +3439,7 @@ dependencies = [
  "hex",
  "imessage-database",
  "mail",
+ "media",
  "message-csv",
  "message-ir",
  "message-ir-format",
@@ -4044,7 +4043,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "csv",
+ "hex",
  "serde_json",
+ "sha2",
  "tempfile",
 ]
 
@@ -4078,6 +4079,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "csv",
  "hex",
  "message-ir",
  "serde",
@@ -4100,6 +4102,7 @@ name = "message-ir-format"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "contacts",
  "csv",
  "hex",
  "mail",
@@ -4135,9 +4138,13 @@ dependencies = [
 name = "message-vault-io-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "chrono",
  "clap",
+ "contacts",
  "media",
  "message-csv",
+ "message-ir",
  "rust-ini",
  "tempfile",
 ]
@@ -8043,7 +8050,6 @@ dependencies = [
  "phone",
  "serde",
  "serde_json",
- "sha2",
  "tempfile",
 ]
 

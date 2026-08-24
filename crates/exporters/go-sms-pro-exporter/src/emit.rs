@@ -2,9 +2,10 @@
 //! ([`ConversationDocument`]) every exporter writes, then write the chosen
 //! output format via [`FormatSink`].
 
+use crate::attachments_emit::{pending_attachment_to_ir, save_pdu_attachments};
+use crate::chat_id::{chat_id_group, chat_id_individual, guarded_phone};
 use crate::xml::{SkippedBadAddrDetail, XmlMessage, parse_xml_file};
 use anyhow::{Context, Result, bail};
-use chrono::{Local, TimeZone};
 use contacts::ContactsBook;
 use go_sms_mms::{ParsedPdu, parse_pdu_file};
 use message_csv::{DateRange, format_local_ts, stable_guid};
@@ -15,9 +16,8 @@ use message_ir::{
     owner_sender, parse_android_type,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
-use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat, prepare_outputs};
 use phone::OwnerHandleSet;
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
@@ -51,11 +51,6 @@ struct SkipDetails {
     no_party_more: u64,
 }
 
-/// Bump a per-exporter counter in the report's `extra` map.
-fn bump(report: &mut ExportReport, key: &str, by: u64) {
-    *report.extra.entry(key.to_string()).or_insert(0) += by;
-}
-
 /// Diagnostic row for an empty/stub PDU file.
 #[derive(Debug, Clone)]
 pub(crate) struct SkippedEmptyPduDetail {
@@ -70,88 +65,6 @@ pub(crate) struct SkippedNoPartyDetail {
     pub is_sent: bool,
     pub has_from: bool,
     pub has_to: bool,
-}
-
-/// MIME type for a common media file extension, if known.
-fn mime_for_ext(ext: &str) -> Option<&'static str> {
-    match ext {
-        ".jpg" | ".jpeg" => Some("image/jpeg"),
-        ".png" => Some("image/png"),
-        ".gif" => Some("image/gif"),
-        ".3gp" => Some("video/3gpp"),
-        ".mp4" => Some("video/mp4"),
-        ".amr" => Some("audio/amr"),
-        ".wav" => Some("audio/wav"),
-        _ => None,
-    }
-}
-
-/// Format as E.164 (the international phone-number format that starts with +)
-/// when the digits are unambiguous for the US-centric crate. Otherwise keep
-/// the digits as-is. Never invent `+0…`.
-fn guarded_phone(digits: &str) -> String {
-    phone::normalize_guarded(digits, phone::PhoneRegion::Usa).normalized
-}
-
-/// Format digit strings as E.164 (the international phone-number format that
-/// starts with +) when unambiguous, then join with `", "`.
-fn join_guarded_phones(digits: &[String]) -> String {
-    digits
-        .iter()
-        .map(|d| guarded_phone(d))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// Length-prefix each number so `["12","34"]` and `["123","4"]` cannot both
-/// become `12_34`.
-fn group_id_slug(digits: &[String]) -> String {
-    digits
-        .iter()
-        .map(|d| format!("{}:{}", d.len(), d))
-        .collect::<Vec<_>>()
-        .join("_")
-}
-
-/// Chat id for a 1:1 conversation: E.164 when unambiguous.
-fn chat_id_individual(digits: &str) -> String {
-    guarded_phone(digits)
-}
-
-/// Group chat id and display title from participant digits (owner excluded).
-fn chat_id_group(participant_digits: &[String], owners: &OwnerHandleSet) -> (String, String) {
-    let mut others: Vec<String> = participant_digits
-        .iter()
-        .filter(|d| !d.is_empty() && !owners.is_owner(d, HandleType::Phone))
-        .cloned()
-        .collect();
-    others.sort();
-    others.dedup();
-    let title = if others.is_empty() {
-        "Group".to_string()
-    } else if others.len() <= 4 {
-        format!("Group: {}", join_guarded_phones(&others))
-    } else {
-        format!(
-            "Group: {}, and {} others",
-            join_guarded_phones(&others[..4]),
-            others.len() - 4
-        )
-    };
-    let slug = group_id_slug(&others);
-    let id = if slug.is_empty() {
-        "chat-group-unknown".to_string()
-    } else {
-        format!("chat-group-{slug}")
-    };
-    // Keep filesystem-safe length.
-    let id = if id.len() > 180 {
-        let digest = hex::encode(Sha256::digest(id.as_bytes()));
-        format!("chat-group-{}", &digest[..16])
-    } else {
-        id
-    };
-    (id, title)
 }
 
 /// Get or create the pending conversation for `chat_id`.
@@ -212,56 +125,6 @@ fn add_xml_messages(
     }
 }
 
-/// Write PDU (binary SMS/MMS) attachment parts under `attachments_dir`.
-///
-/// # Errors
-///
-/// Returns an error when an attachment file cannot be written.
-fn save_pdu_attachments(
-    parsed: &ParsedPdu,
-    attachments_dir: &Path,
-    report: &mut ExportReport,
-    copy_attachments: bool,
-) -> Result<Vec<PendingAttachment>> {
-    if !copy_attachments {
-        return Ok(Vec::new());
-    }
-    fs::create_dir_all(attachments_dir)?;
-    let date_prefix = Local
-        .timestamp_opt(parsed.timestamp, 0)
-        .single()
-        .map(|t| t.format("%Y%m%d_%H%M%S").to_string())
-        .unwrap_or_else(|| parsed.timestamp.to_string());
-
-    let mut out = Vec::new();
-    for (idx, att) in parsed.attachments.iter().enumerate() {
-        let digest_hex = hex::encode(Sha256::digest(&att.data));
-        let digest_prefix = &digest_hex[..16.min(digest_hex.len())];
-        let name = format!(
-            "{}-I_{}_{}_{}{}",
-            date_prefix,
-            parsed.timestamp,
-            digest_prefix,
-            idx + 1,
-            att.ext
-        );
-        let path = attachments_dir.join(&name);
-        // Content-addressed name: rewrite only when missing (same bytes → same path).
-        if !path.exists() {
-            fs::write(&path, &att.data)?;
-            report.attachments_saved += 1;
-        }
-        out.push(PendingAttachment {
-            rel_path: format!("attachments/{name}"),
-            content_type: mime_for_ext(&att.ext).unwrap_or("").to_string(),
-            extension: att.ext.trim_start_matches('.').to_string(),
-            digest_sha256: Some(digest_hex),
-            name_hint: att.smil_name.clone().or(Some(name)),
-        });
-    }
-    Ok(out)
-}
-
 /// File name of the PDU on disk (for skip-detail rows).
 fn pdu_basename(parsed: &ParsedPdu) -> String {
     parsed
@@ -291,7 +154,7 @@ fn add_pdu_message(
     skips: &mut SkipDetails,
 ) {
     if is_empty_pdu(&parsed) {
-        bump(report, "skipped_empty_pdu", 1);
+        report.bump("skipped_empty_pdu", 1);
         push_skip_detail(
             &mut skips.empty_pdu,
             &mut skips.empty_pdu_more,
@@ -310,7 +173,7 @@ fn add_pdu_message(
             .cloned()
             .collect();
         if others.is_empty() {
-            bump(report, "skipped_no_other_party", 1);
+            report.bump("skipped_no_other_party", 1);
             push_skip_detail(
                 &mut skips.no_party,
                 &mut skips.no_party_more,
@@ -335,9 +198,9 @@ fn add_pdu_message(
         }
     };
 
-    bump(report, "pdu_messages", 1);
+    report.bump("pdu_messages", 1);
     if targets.iter().any(|(_, is_group, _, _)| *is_group) {
-        bump(report, "pdu_group_messages", 1);
+        report.bump("pdu_group_messages", 1);
     }
 
     let att_names: Vec<String> = attachments.iter().map(|a| a.rel_path.clone()).collect();
@@ -440,19 +303,10 @@ fn dedupe_messages(messages: &mut Vec<PendingMessage>) {
     *messages = out;
 }
 
-/// Sort, drop invalid dates, and return false when nothing remains.
+/// Dedupe, drop invalid dates, and return false when nothing remains.
 fn prepare_conversation(convo: &mut PendingConversation, report: &mut ExportReport) -> bool {
     dedupe_messages(&mut convo.messages);
-    convo.messages.retain(|m| {
-        if format_local_ts(m.sort_key).is_some() {
-            true
-        } else {
-            report.skipped_invalid_date += 1;
-            false
-        }
-    });
-    convo.has_attachments = convo.messages.iter().any(|m| !m.attachments.is_empty());
-    !convo.messages.is_empty()
+    message_vault_io_core::prune_and_finish_conversation(convo, report, |k| k)
 }
 
 /// Map of handle → display name from message extras and sender fields.
@@ -492,22 +346,6 @@ fn first_contact_name(convo: &PendingConversation) -> Option<String> {
         .map(|m| m.extra_str("contact_name").trim())
         .find(|n| !n.is_empty())
         .map(str::to_string)
-}
-
-/// Map a staged attachment onto the shared [`IrAttachment`] shape.
-fn pending_attachment_to_ir(a: &PendingAttachment) -> IrAttachment {
-    IrAttachment {
-        path: Some(a.rel_path.clone()),
-        original_name: a.name_hint.clone(),
-        mime_type: a.mime_type(),
-        digest_sha256: a.digest_sha256.clone(),
-        is_sticker: false,
-        transcription: None,
-        sticker_effect: None,
-        size_bytes: None,
-        missing_reason: None,
-        bytes: None,
-    }
 }
 
 /// True when the path has a `.xml` extension (any case).
@@ -556,13 +394,19 @@ fn pending_to_document(
         });
     }
 
-    let export = ExportMeta {
-        source: EXPORT_SOURCE.into(),
-        tool: EXPORT_TOOL.into(),
-        tool_version: EXPORT_TOOL_VERSION.into(),
+    let owner_meta = ExportMeta {
+        source: String::new(),
+        tool: String::new(),
+        tool_version: String::new(),
         owner_handle: Some(owner_handle.to_string()),
         owner_display_name: None,
     };
+    let export = message_vault_io_core::export_meta(
+        EXPORT_SOURCE,
+        EXPORT_TOOL,
+        EXPORT_TOOL_VERSION,
+        &owner_meta,
+    );
     let (owner_sender_handle, owner_sender_display) = owner_sender(&export);
 
     let mut messages = Vec::with_capacity(convo.messages.len());
@@ -751,22 +595,8 @@ pub(crate) fn convert_export(
         bail!("input is not a directory: {}", input_dir.display());
     }
 
-    fs::create_dir_all(output_dir)?;
-    // Resolve to absolute paths so relative inputs work and so the output/input
-    // overlap check uses the same path form. Cleaning the output before reading
-    // the input would otherwise delete the backup itself when both paths are
-    // the same.
-    let input_dir =
-        fs::canonicalize(input_dir).with_context(|| format!("resolve {}", input_dir.display()))?;
-    let output_dir = fs::canonicalize(output_dir)
-        .with_context(|| format!("resolve {}", output_dir.display()))?;
-    if output_dir == input_dir || input_dir.starts_with(&output_dir) {
-        bail!(
-            "output {} must not be the same as, or contain, the input {}",
-            output_dir.display(),
-            input_dir.display()
-        );
-    }
+    let (inputs, output_dir) = prepare_outputs(&[input_dir.to_path_buf()], output_dir)?;
+    let input_dir = &inputs[0];
 
     let owners = OwnerHandleSet::from_phones(owner_phones)?;
     let owner_handle = guarded_phone(
@@ -783,25 +613,17 @@ pub(crate) fn convert_export(
     let (mut sink, attachments_dir) =
         FormatSink::open_prepared(&output_dir, output_format, transforms)?;
 
-    let mut xml_paths = message_vault_io_core::discover_files(&input_dir, &is_xml_file)?;
+    let mut xml_paths = message_vault_io_core::discover_files(input_dir, &is_xml_file)?;
     xml_paths.sort();
 
     for xml_path in xml_paths {
         message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
         match parse_xml_file(&xml_path) {
             Ok((msgs, stats)) => {
-                bump(&mut report, "xml_messages_seen", stats.messages);
+                report.bump("xml_messages_seen", stats.messages);
                 report.skipped_invalid_date += stats.skipped_invalid_date;
-                bump(
-                    &mut report,
-                    "skipped_unknown_type",
-                    stats.skipped_unknown_type,
-                );
-                bump(
-                    &mut report,
-                    "skipped_unknown_address",
-                    stats.skipped_unknown_address,
-                );
+                report.bump("skipped_unknown_type", stats.skipped_unknown_type);
+                report.bump("skipped_unknown_address", stats.skipped_unknown_address);
                 skips.invalid_address_more += stats.skipped_unknown_address_details_more;
                 for d in stats.skipped_unknown_address_details {
                     push_skip_detail(
@@ -829,7 +651,7 @@ pub(crate) fn convert_export(
         }
     }
 
-    let mut pdu_paths = message_vault_io_core::discover_files(&input_dir, &is_pdu_file)?;
+    let mut pdu_paths = message_vault_io_core::discover_files(input_dir, &is_pdu_file)?;
     pdu_paths.sort();
 
     for pdu_path in pdu_paths {
@@ -841,7 +663,7 @@ pub(crate) fn convert_export(
             owners.primary_phone_digit().unwrap_or(""),
         ) {
             Ok(None) => {
-                bump(&mut report, "skipped_unparseable_pdu", 1);
+                report.bump("skipped_unparseable_pdu", 1);
                 if report.errors.len() < 20 {
                     report
                         .errors

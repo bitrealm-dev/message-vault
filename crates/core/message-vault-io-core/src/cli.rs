@@ -5,16 +5,21 @@
 
 use std::path::PathBuf;
 
-use media::{MaxResolution, MediaMode};
+use media::{CompressOptions, MaxResolution, MediaMode, compress_options_from_cli};
+use message_csv::DateRange;
 
-use crate::{ContactsConfig, ContactsKind, ObfuscateConfig, contacts_kind_from_path};
+use crate::pipeline::{RunResult, print_result};
+use crate::{
+    ContactsConfig, ContactsKind, ExporterConfig, ObfuscateConfig, OutputFormat,
+    contacts_kind_from_path,
+};
 
 /// CLI arguments common to (nearly) every exporter.
 ///
 /// Use with `#[command(flatten)]` in the exporter's `Cli` struct.
 #[derive(Debug, Clone, clap::Args)]
 pub struct CommonCli {
-    /// Output directory for packaging + attachments/
+    /// Output directory for packaging + `attachments/`
     #[arg(long)]
     pub output: PathBuf,
 
@@ -102,4 +107,61 @@ impl CommonCli {
             seed: self.obfuscate_seed.clone(),
         }
     }
+}
+
+/// The clap `Command` for an exporter binary (for embedding `--help` output
+/// into GUI docs).
+pub fn clap_command<C: clap::CommandFactory>() -> clap::Command {
+    C::command()
+}
+
+/// The shared exporter main: parse the common CLI flags, build the source
+/// config, run, and print the result with the standard stdout/stderr split.
+///
+/// `parse_dates` supplies the exporter's date parsing (local or
+/// timezone-aware); `build` builds the exporter's `ExporterConfig` from the
+/// parsed common values; `run` is the exporter's run function.
+///
+/// # Errors
+///
+/// Returns an error when a flag value cannot be parsed or the run fails.
+pub fn run_cli(
+    common: &CommonCli,
+    parse_dates: impl FnOnce(&CommonCli) -> Result<DateRange, String>,
+    build: impl FnOnce(DateRange, OutputFormat, CompressOptions) -> ExporterConfig,
+    run: impl FnOnce(&ExporterConfig) -> anyhow::Result<RunResult>,
+) -> anyhow::Result<()> {
+    let date_range = parse_dates(common).map_err(anyhow::Error::msg)?;
+    let output_format = OutputFormat::parse(&common.format).map_err(anyhow::Error::msg)?;
+    let compress = compress_options_from_cli(
+        common.media_max_resolution,
+        common.media_max_fps,
+        &common.media_min_size,
+        common.media_skip_efficient,
+    )?;
+    let result = run(&build(date_range, output_format, compress))?;
+    print_result(&result);
+    Ok(())
+}
+
+/// Declare the standard test that a crate's `clap_command()` reports its
+/// binary name.
+///
+/// Usage: `message_vault_io_core::clap_command_uses_binary_name_test!("go-sms-pro-exporter");`
+#[cfg(feature = "cli")]
+// `crate` here is deliberate: it resolves to the exporter crate that invokes
+// this macro, whose own `cli::clap_command()` is what the test asserts on.
+#[allow(clippy::crate_in_macro_def)]
+#[macro_export]
+macro_rules! clap_command_uses_binary_name_test {
+    ($bin:literal) => {
+        #[cfg(test)]
+        mod clap_command_tests {
+            #[test]
+            fn clap_command_uses_binary_name() {
+                let cmd = crate::cli::clap_command();
+                assert_eq!(cmd.get_name(), $bin);
+            }
+        }
+    };
 }

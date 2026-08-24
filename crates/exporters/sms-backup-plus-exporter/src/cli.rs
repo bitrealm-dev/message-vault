@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use clap::{Command, CommandFactory, Parser, Subcommand};
+use clap::{Command, Parser, Subcommand};
 use message_vault_io_core::CommonCli;
 
 #[derive(Parser, Debug)]
@@ -54,14 +54,7 @@ pub enum Commands {
 }
 
 pub fn clap_command() -> Command {
-    Cli::command()
+    message_vault_io_core::clap_command::<Cli>()
 }
 
-#[cfg(test)]
-mod clap_command_tests {
-    #[test]
-    fn clap_command_uses_binary_name() {
-        let cmd = super::clap_command();
-        assert_eq!(cmd.get_name(), "sms-backup-plus-exporter");
-    }
-}
+message_vault_io_core::clap_command_uses_binary_name_test!("sms-backup-plus-exporter");

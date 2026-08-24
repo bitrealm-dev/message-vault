@@ -19,6 +19,8 @@ pub use process::{MediaReport, process_attachments_dir, process_attachments_dir_
 use size::parse_size;
 pub use tools::{FfmpegToolsProbe, ffmpeg_available, probe_ffmpeg_tools, set_tools_dir, tools_dir};
 
+use anyhow::Context;
+use sha2::Digest;
 use std::fmt;
 use std::str::FromStr;
 
@@ -183,6 +185,46 @@ impl Default for CompressOptions {
             min_size_bytes: 20 * 1024 * 1024,
             skip_efficient: true,
         }
+    }
+}
+
+/// Stream a file through SHA-256 in 64 KB chunks (no full read into memory).
+///
+/// Returns 64 lowercase hex digits.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be opened or read.
+pub fn file_sha256(path: &std::path::Path) -> anyhow::Result<String> {
+    let mut file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let mut hasher = sha2::Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        use std::io::Read;
+        let n = file
+            .read(&mut buf)
+            .with_context(|| format!("read {}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// MIME type for a common media file extension, if known.
+///
+/// Exporters that recognize extra extensions chain their own match after
+/// this table (e.g. go-sms-pro's `.wav`, sms-backup-plus's `.webp`).
+pub fn mime_for_ext(ext: &str) -> Option<&'static str> {
+    match ext {
+        ".jpg" | ".jpeg" => Some("image/jpeg"),
+        ".png" => Some("image/png"),
+        ".gif" => Some("image/gif"),
+        ".mp4" => Some("video/mp4"),
+        ".3gp" => Some("video/3gpp"),
+        ".amr" => Some("audio/amr"),
+        _ => None,
     }
 }
 

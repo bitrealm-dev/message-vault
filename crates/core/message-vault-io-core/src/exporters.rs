@@ -30,13 +30,20 @@ pub const EXPORTERS: [Exporter; 7] = [
 /// Which backup type the user selected (iMessage, WhatsApp, SMS Backup & Restore, …).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Exporter {
+    /// GO SMS Pro backup type.
     GoSmsPro,
+    /// iMazing backup type.
     Imazing,
     #[default]
+    /// iMessage / iPhone backup type.
     Imessage,
+    /// OpenExtract backup type.
     OpenExtract,
+    /// SMS Backup & Restore backup type.
     SmsBackupRestore,
+    /// SMS Backup+ backup type.
     SmsBackupPlus,
+    /// WhatsApp backup type.
     Whatsapp,
 }
 
@@ -144,7 +151,9 @@ impl Exporter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WhatsappPlatform {
     #[default]
+    /// Android WhatsApp backup layout.
     Android,
+    /// iOS WhatsApp backup layout.
     Ios,
 }
 
@@ -181,6 +190,7 @@ impl WhatsappPlatform {
     }
 }
 
+/// The WhatsApp platforms in GUI dropdown order.
 pub const WHATSAPP_PLATFORMS: [WhatsappPlatform; 2] =
     [WhatsappPlatform::Android, WhatsappPlatform::Ios];
 
@@ -208,8 +218,11 @@ impl fmt::Display for Exporter {
 /// How a contacts file is parsed: none, CSV, or vCard (VCF).
 pub enum ContactsKind {
     #[default]
+    /// No contacts file.
     None,
+    /// CSV contacts file.
     Csv,
+    /// vCard (VCF) contacts file.
     Vcf,
 }
 
@@ -241,9 +254,13 @@ impl fmt::Display for ContactsKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AttachmentMedia {
     #[default]
+    /// Copy attachments without re-encoding.
     Clone,
+    /// Re-encode attachments to a standard format.
     Convert,
+    /// Re-encode and compress videos (720p/1080p/4k).
     Compress,
+    /// Do not copy attachments.
     Disabled,
 }
 
@@ -259,7 +276,8 @@ impl fmt::Display for AttachmentMedia {
 }
 
 impl AttachmentMedia {
-    /// Matching `message-media` mode used by FormatSink.
+    /// The `media::MediaMode` this GUI choice maps to (the same mode the
+    /// `--media-mode` CLI flag selects).
     pub fn media_mode(self) -> MediaMode {
         match self {
             Self::Clone => MediaMode::Clone,
@@ -290,6 +308,7 @@ impl AttachmentMedia {
     }
 }
 
+/// The attachment-media choices in GUI dropdown order.
 pub const ATTACHMENT_MEDIA: [AttachmentMedia; 4] = [
     AttachmentMedia::Clone,
     AttachmentMedia::Convert,
@@ -297,6 +316,7 @@ pub const ATTACHMENT_MEDIA: [AttachmentMedia; 4] = [
     AttachmentMedia::Disabled,
 ];
 
+/// The video resolution choices for compress mode.
 pub const MAX_RESOLUTIONS: [MaxResolution; 3] = [
     MaxResolution::P720,
     MaxResolution::P1080,
@@ -307,8 +327,11 @@ pub const MAX_RESOLUTIONS: [MaxResolution; 3] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ApplePlatform {
     #[default]
+    /// Auto-detect the backup layout.
     Auto,
+    /// macOS backup layout.
     MacOs,
+    /// iOS backup layout.
     Ios,
 }
 
@@ -343,6 +366,7 @@ impl ApplePlatform {
     }
 }
 
+/// The Apple platform choices in GUI dropdown order.
 pub const APPLE_PLATFORMS: [ApplePlatform; 3] = [
     ApplePlatform::Auto,
     ApplePlatform::MacOs,
@@ -352,38 +376,69 @@ pub const APPLE_PLATFORMS: [ApplePlatform; 3] = [
 /// GUI field set for one backup type, plus shared output and media options.
 #[derive(Debug, Clone)]
 pub struct Form {
+    /// Primary input path (source backup file or directory).
     pub input: String,
+    /// Output directory for the export.
     pub output: String,
+    /// Contacts file path (CSV or VCF) for phone→name resolution.
     pub contacts: String,
+    /// How the contacts file is parsed.
     pub contacts_kind: ContactsKind,
+    /// Comma-separated owner phone numbers (marks outgoing messages).
     pub owner_phones: String,
+    /// Comma-separated owner email addresses (marks outgoing messages).
     pub owner_emails: String,
+    /// Optional incorrect-name mapping file path.
     pub name_mapping: String,
+    /// Optional fixed UTC offset (e.g. `UTC-05:00`) for naive timestamps.
     pub timezone: String,
+    /// Whether to rewrite output with stable fake identities.
     pub obfuscate: bool,
+    /// Optional hex seed for reproducible obfuscation.
     pub obfuscate_seed: String,
+    /// Whether the advanced section of the GUI form is shown.
     pub advanced: bool,
+    /// iMessage chat database path (Apple sources).
     pub db_path: String,
+    /// Apple backup attachment root directory.
     pub attachment_root: String,
+    /// Start-date filter (`YYYY-MM-DD`).
     pub start_date: String,
+    /// End-date filter (`YYYY-MM-DD`, exclusive).
     pub end_date: String,
+    /// iMessage conversation filter (chat id).
     pub conversation_filter: String,
+    /// macOS AddressBook path (Apple sources).
     pub apple_contacts: String,
+    /// Apple backup decryption password (never written to `export.ini`).
     pub backup_password: String,
     /// Packaging format projected from the common message (`json` default).
     pub output_format: OutputFormat,
+    /// Attachment handling choice for the export.
     pub attachment_media: AttachmentMedia,
+    /// Compress-only long-edge cap (720p/1080p/4k).
     pub media_max_resolution: MaxResolution,
+    /// Compress-only max frame rate.
     pub media_max_fps: String,
+    /// Compress-only minimum video size (e.g. `20M`).
     pub media_min_size: String,
+    /// Compress-only: skip already-efficient HEVC videos.
     pub media_skip_efficient: bool,
+    /// iPhone vs Mac backup layout.
     pub apple_platform: ApplePlatform,
+    /// Android vs iOS WhatsApp layout.
     pub whatsapp_platform: WhatsappPlatform,
+    /// WhatsApp backup encryption key (never written to `export.ini`).
     pub whatsapp_key: String,
+    /// WhatsApp backup file path.
     pub whatsapp_backup: String,
+    /// WhatsApp Web session/wa path.
     pub whatsapp_wa: String,
+    /// WhatsApp media folder path.
     pub whatsapp_media: String,
+    /// WhatsApp message database path.
     pub whatsapp_db: String,
+    /// Whether the backup is a WhatsApp Business backup.
     pub whatsapp_business: bool,
 }
 

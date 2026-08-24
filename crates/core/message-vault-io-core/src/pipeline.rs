@@ -1,9 +1,13 @@
 //! Helpers shared by exporter command-line tools and in-process runners.
 //!
-//! This module avoids `anyhow` so the desktop app stays lightweight. Callers
-//! map `String` errors at the edge when needed.
+//! This module keeps its dependency surface small (only `anyhow` for
+//! context-rich path errors) so the desktop app stays lightweight. Callers map
+//! `String` errors at the edge when needed.
 
+use anyhow::{Context, bail};
 use message_csv::DateRange;
+use message_ir::PendingConversation;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Recursively walk `root`, collecting files that match `predicate`.
@@ -49,9 +53,10 @@ fn discover_files_into(
     Ok(())
 }
 
-/// Result of a successful exporter [`crate`]-style `run`: human-readable log lines.
+/// Result of a successful exporter `run`: human-readable log lines.
 #[derive(Debug, Default)]
 pub struct RunResult {
+    /// Human-readable log lines (summary lines plus mid-run notes).
     pub messages: Vec<String>,
 }
 
@@ -59,13 +64,21 @@ pub struct RunResult {
 /// dedupe counts, etc.) are stored in the `extra` map.
 #[derive(Debug, Default, Clone)]
 pub struct ExportReport {
+    /// Conversations exported.
     pub conversations: u64,
+    /// Messages exported.
     pub messages: u64,
+    /// Outgoing messages exported.
     pub sent: u64,
+    /// Incoming messages exported.
     pub received: u64,
+    /// Rows skipped because their date could not be parsed.
     pub skipped_invalid_date: u64,
+    /// Rows skipped because they fell outside the date range.
     pub skipped_out_of_range: u64,
+    /// Duplicate rows dropped during dedupe.
     pub duplicates_dropped: u64,
+    /// Attachment files saved to the output.
     pub attachments_saved: u64,
     /// Human-readable error/warning lines (capped by each exporter).
     pub errors: Vec<String>,
@@ -108,6 +121,11 @@ impl ExportReport {
         for err in &self.errors {
             out.push(format!("  error: {err}"));
         }
+    }
+
+    /// Bump a per-exporter extension counter in the `extra` map.
+    pub fn bump(&mut self, key: &str, by: u64) {
+        *self.extra.entry(key.to_string()).or_insert(0) += by;
     }
 }
 
@@ -167,6 +185,76 @@ pub fn name_stem(value: &str) -> String {
         "unknown".to_string()
     } else {
         raw
+    }
+}
+
+/// Create and canonicalize the output directory, canonicalize every input,
+/// and bail when the output is the same as, or contains, an input.
+///
+/// Returns the canonicalized `(inputs, output)` paths.
+///
+/// # Errors
+///
+/// Returns an error when the output directory cannot be created, a path
+/// cannot be resolved, or the output overlaps an input.
+pub fn prepare_outputs(
+    inputs: &[std::path::PathBuf],
+    output: &std::path::Path,
+) -> anyhow::Result<(Vec<std::path::PathBuf>, std::path::PathBuf)> {
+    fs::create_dir_all(output).with_context(|| format!("create {}", output.display()))?;
+    let output =
+        fs::canonicalize(output).with_context(|| format!("resolve {}", output.display()))?;
+    let mut resolved = Vec::with_capacity(inputs.len());
+    for input in inputs {
+        let input =
+            fs::canonicalize(input).with_context(|| format!("resolve {}", input.display()))?;
+        if output == input || input.starts_with(&output) {
+            bail!(
+                "output {} must not be the same as, or contain, the input {}",
+                output.display(),
+                input.display()
+            );
+        }
+        resolved.push(input);
+    }
+    Ok((resolved, output))
+}
+
+/// Drop messages with unrepresentable timestamps and finalize a pending
+/// conversation. Returns whether any message remains.
+///
+/// `to_secs` converts a message sort key to Unix seconds (exporters that
+/// store milliseconds pass `|k| k / 1000`).
+pub fn prune_and_finish_conversation(
+    convo: &mut PendingConversation,
+    report: &mut ExportReport,
+    to_secs: impl Fn(i64) -> i64,
+) -> bool {
+    convo.messages.retain(|m| {
+        if message_csv::format_local_ts(to_secs(m.sort_key)).is_some() {
+            true
+        } else {
+            report.skipped_invalid_date += 1;
+            false
+        }
+    });
+    convo.has_attachments = convo.messages.iter().any(|m| !m.attachments.is_empty());
+    !convo.messages.is_empty()
+}
+
+/// Standard export metadata from a pending conversation's provenance.
+pub fn export_meta(
+    source: &str,
+    tool: &str,
+    tool_version: &str,
+    owner: &message_ir::ExportMeta,
+) -> message_ir::ExportMeta {
+    message_ir::ExportMeta {
+        source: source.to_string(),
+        tool: tool.to_string(),
+        tool_version: tool_version.to_string(),
+        owner_handle: owner.owner_handle.clone(),
+        owner_display_name: owner.owner_display_name.clone(),
     }
 }
 

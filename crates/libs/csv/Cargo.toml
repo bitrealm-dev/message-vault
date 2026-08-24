@@ -7,6 +7,7 @@ license = "LicenseRef-FCL-1.0-ALv2"
 [dependencies]
 anyhow = "1.0.103"
 chrono = "0.4.44"
+csv = "1.4.0"
 hex = "0.4.3"
 message-ir = { path = "../ir" }
 serde = { version = "1.0.228", features = ["derive"] }

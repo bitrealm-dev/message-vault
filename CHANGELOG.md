@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unsafe-attachment-path message as a const, share one test fixture, and
   split the go-sms-mms unit decoders into their own module. No API behavior
   change.
+- **Exporters:** hoist the duplicated exporter pipeline, CLI driver, output
+  preamble, attachment naming, and mechanical helpers into
+  `message-vault-io-core` and the shared lib crates, document and gate the
+  core config/form surfaces, split the four oversized emit.rs files, and
+  wire imessage-ir's previously ignored media flags. CLI help text and
+  exported output are unchanged; imessage-ir now honors `--media-mode`
+  convert/compress when passed.
 
 Installable builds and release notes also appear on
 [GitHub Releases](https://github.com/bitrealm-io/message-vault/releases).

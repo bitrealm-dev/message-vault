@@ -44,7 +44,7 @@ Convert EML tree via common message to the chosen packaging format
 * `--owner-phone <OWNER_PHONES>` — Owner phone (E.164 or digits). Repeat for multiple owner numbers. Default: `phones` in config/owner.toml
 * `--owner-email <EMAIL>` — Owner email addresses used to detect sent messages when X-smssync-type is missing. Default: `emails` in config/owner.toml
 * `--name-mapping <NAME_MAPPING>` — Name mapping CSV (`Phone,Incorrect Name`) for EML export aliases. Default: config/name-mapping.csv when that file exists
-* `--output <OUTPUT>` — Output directory for packaging + attachments/
+* `--output <OUTPUT>` — Output directory for packaging + `attachments/`
 * `--format <FORMAT>` — Output format: `json` (default), `jsonl`, `csv`, `eml`, `mbox`, or `xml`
 
   Default value: `json`

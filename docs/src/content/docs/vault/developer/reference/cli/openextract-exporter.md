@@ -25,7 +25,7 @@ Use with `#[command(flatten)]` in the exporter's `Cli` struct.
 ###### **Options:**
 
 * `--input <INPUT>` — OpenExtract CSV file or directory of conversation_*.csv / all_conversations.csv
-* `--output <OUTPUT>` — Output directory for packaging + attachments/
+* `--output <OUTPUT>` — Output directory for packaging + `attachments/`
 * `--format <FORMAT>` — Output format: `json` (default), `jsonl`, `csv`, `eml`, `mbox`, or `xml`
 
   Default value: `json`

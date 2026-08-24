@@ -32,23 +32,32 @@ const EXPORT_INI_NAME: &str = "export.ini";
 /// Fields for the Format top-level tab (`message-reexporter`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FormatSection {
+    /// Input directory (existing Message Vault export).
     pub input: String,
+    /// Output directory for the converted export.
     pub output: String,
+    /// Target output format for the conversion.
     pub output_format: OutputFormat,
 }
 
 /// Fields for the Vault top-level tab (`vault-push`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VaultSection {
+    /// Vault server base URL (e.g. http://127.0.0.1:8080).
     pub url: String,
+    /// Vault account username (optional; resolved from the vault key).
     pub username: String,
     /// Import API token (persisted in `[vault] key`; treat `export.ini` as secret).
     pub key: String,
+    /// Input export directory (`.jsonl` files plus attachments/).
     pub input: String,
     /// Guided Import format: `ios` | `macos` | `existing-archive` (empty = derive from platform).
     pub import_format: String,
+    /// Continue after a failed conversation.
     pub continue_on_error: bool,
+    /// Ignore the journal; re-upload assets and re-import messages.
     pub force: bool,
+    /// Import messages without uploading attachments.
     pub skip_attachments: bool,
 }
 
@@ -115,12 +124,18 @@ struct ExporterSection {
 /// In-memory export.ini plus the path used for load/save.
 #[derive(Debug, Clone)]
 pub struct ExportIniState {
+    /// Path the INI was loaded from or will be saved to.
     pub path: PathBuf,
+    /// Currently selected backup type.
     pub exporter: Exporter,
     sections: [ExporterSection; 7],
+    /// Format-tab section (`[format]`).
     pub format: FormatSection,
+    /// Vault-tab section (`[vault]`).
     pub vault: VaultSection,
+    /// Backup Account section (`[backup]`).
     pub backup: BackupSection,
+    /// Appearance section (`[appearance]`).
     pub appearance: AppearanceSection,
 }
 

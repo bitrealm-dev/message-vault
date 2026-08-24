@@ -6,10 +6,12 @@
 
 mod archive;
 mod assets;
+mod attachments_emit;
 mod contacts;
 mod emit;
 mod flat_eml;
 mod identity;
+mod parse_emit;
 mod run;
 mod types;
 
