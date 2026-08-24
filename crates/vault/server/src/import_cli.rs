@@ -208,6 +208,11 @@ pub async fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats
 /// `postgres://host:5432/db`. Query parameters (which can carry secrets of
 /// their own) are dropped too. Inputs that are not `scheme://…` URLs print
 /// as a placeholder instead of being echoed raw.
+///
+/// Best effort: a malformed URL — a `/` or `#` inside the password, for
+/// instance — can defeat the splits and leak credentials into the error
+/// context. sqlx rejects such URLs before any output is produced, so this
+/// only ever prints URLs that failed to open for other reasons.
 fn redact_db_url(url: &str) -> String {
     let Some((scheme, rest)) = url.split_once("://") else {
         return "<db url>".to_string();

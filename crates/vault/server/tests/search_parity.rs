@@ -111,6 +111,14 @@ async fn setup_vault(conn: &mut AnyConnection) {
         .execute(&mut *conn)
         .await
         .unwrap();
+    // The corpus owns message ids 1..=15, and the shared identity sequence
+    // may have handed those ids to the other gated tests' rows, so clear the
+    // range before inserting explicit keys (the PG_TEST_LOCK serializes us
+    // against those tests, so nothing is mid-flight here).
+    sqlx::query("DELETE FROM messages WHERE id BETWEEN 1 AND 15")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
     sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'alice')")
         .bind(ACCOUNT_ID)
         .execute(&mut *conn)
@@ -267,6 +275,10 @@ async fn search_parity_across_engines() {
     let Some(url) = message_vault_server::pg_test_url() else {
         return;
     };
+    // Cargo runs the lib and integration test binaries concurrently; the
+    // shared Postgres test database (same account id and username as the
+    // crate's gated unit tests) is only race-safe while this lock is held.
+    let _pg_guard = message_vault_server::PG_TEST_LOCK.lock().unwrap();
     sqlx::any::install_default_drivers();
     let pool = sqlx::any::AnyPoolOptions::new()
         .connect(&url)

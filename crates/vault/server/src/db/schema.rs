@@ -1244,7 +1244,7 @@ mod tests {
         let Some(url) = crate::pg_test_url() else {
             return;
         };
-        let _pg_guard = crate::PG_TEST_LOCK.lock().await;
+        let _pg_guard = crate::PG_TEST_LOCK.lock().unwrap();
         sqlx::any::install_default_drivers();
         let pool = sqlx::any::AnyPoolOptions::new()
             .connect(&url)
@@ -1257,6 +1257,14 @@ mod tests {
         // conversations, messages, attachments, and tapbacks).
         sqlx::query("DELETE FROM accounts WHERE id = $1")
             .bind(A1)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        // The shared identity sequence may hand out message ids inside the
+        // search-parity corpus range (keys 1..=15): that test binds its keys
+        // as explicit ids, so clear the range (the PG_TEST_LOCK above
+        // serializes us against the other gated tests).
+        sqlx::query("DELETE FROM messages WHERE id BETWEEN 1 AND 15")
             .execute(&mut *conn)
             .await
             .unwrap();

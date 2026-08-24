@@ -37,9 +37,13 @@ pub use server::{ApiError, AppState, AuthCapability, AuthIdentity, ErrorBody, re
 
 // Integration tests (crates/vault/server/tests) cannot see `pub(crate)`
 // modules, so the search-parity suite reaches the schema, export, and query
-// parser entry points through these re-exports.
+// parser entry points through these re-exports. Test-support surface, not
+// product API.
+#[doc(hidden)]
 pub use db::schema::ensure_vault_schema;
+#[doc(hidden)]
 pub use export_api::{ExportPageOpts, export_messages};
+#[doc(hidden)]
 pub use search_query::parse_search_query;
 
 use clap::Command;
@@ -51,14 +55,16 @@ pub fn pg_test_url() -> Option<String> {
         .filter(|u| !u.is_empty())
 }
 
-/// Serializes the Postgres-gated tests: they share one database, and two of
-/// them (`messages_fts_stays_in_sync_pg` and `promote_fts_cycle_pg`) run in
-/// the same test binary, where concurrent `ensure_vault_schema` calls race on
-/// Postgres's composite-type creation (`CREATE TABLE IF NOT EXISTS` is not
-/// race-safe there). The integration-test binary runs after the lib binary,
-/// so it needs no lock.
-#[cfg(test)]
-pub(crate) static PG_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+/// Serializes the Postgres-gated tests against their shared test database.
+/// Concurrent `ensure_vault_schema` calls race on Postgres's composite-type
+/// creation (`CREATE TABLE IF NOT EXISTS` is not race-safe there), and cargo
+/// runs the lib and integration test binaries concurrently — so the crate's
+/// gated unit tests (`messages_fts_stays_in_sync_pg`,
+/// `promote_fts_cycle_pg`) and the search-parity integration test must all
+/// take this lock around their Postgres work. Test-support surface, not
+/// product API.
+#[doc(hidden)]
+pub static PG_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Clap command definition for the `message-vault-server` CLI; delegates to
 /// [`cli::clap_command`].
