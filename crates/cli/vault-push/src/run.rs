@@ -2844,6 +2844,27 @@ mod tests {
         assert_eq!(disk, expected_disk);
         assert_ne!(disk, claimed);
         assert_eq!(warnings2.len(), 1);
+
+        let cache3: DigestCache = Mutex::new(HashMap::new());
+        let mut warnings3 = Vec::new();
+        let size_mismatch = resolve_attachment_digest(ResolveAttachmentDigestArgs {
+            abs: &path,
+            claimed_raw: Some(&claimed),
+            claimed_size: Some(4),
+            verify_digests: false,
+            trust_export: true,
+            cache: &cache3,
+            name: "chat.jsonl",
+            rel: "attachments/pic.bin",
+            warn: &mut |msg| warnings3.push(msg),
+        })
+        .unwrap();
+        assert_eq!(
+            size_mismatch, expected_disk,
+            "trust_export must still hash when size_bytes does not match the file"
+        );
+        assert_ne!(size_mismatch, claimed);
+        assert_eq!(warnings3.len(), 1);
     }
 
     #[test]

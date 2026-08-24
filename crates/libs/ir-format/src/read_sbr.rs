@@ -7,7 +7,7 @@ use message_ir::{
     IrAttachment, IrConversationType, IrDirection, IrMessage, IrMessageKind, IrParticipant,
     IrService, IrSource, SCHEMA_VERSION, owner_sender,
 };
-use message_vault_io_core::{CancelFlag, check_cancel, discover_files};
+use message_vault_io_core::{CancelFlag, check_cancel, discover_files, is_cancelled};
 use phone::OwnerHandleSet;
 use sbr::{
     AttachmentBlob, ConversationKind, ParseStats, Record, infer_owner_phones, parse_file_with,
@@ -460,8 +460,11 @@ pub fn read_sbr_documents(
         check_cancel(options.cancel).map_err(anyhow::Error::msg)?;
         // Stage each message as it is parsed so decoded attachment bytes can
         // be dropped before the next MMS is read. Peak RAM is one message's
-        // payloads, not the whole backup.
-        match parse_file_with(&path, &owners, |record| {
+        // payloads, not the whole backup. Messages that parse before an XML
+        // error are kept; stats are merged even when the file is truncated.
+        let mut stats = ParseStats::default();
+        let parse_result = parse_file_with(&path, &owners, &mut stats, |record| {
+            check_cancel(options.cancel).map_err(anyhow::Error::msg)?;
             if !options.date_range.contains_secs_f64(record.timestamp_secs) {
                 report.skipped_out_of_range += 1;
                 return Ok(());
@@ -477,9 +480,13 @@ pub fn read_sbr_documents(
                     Ok(())
                 }
             }
-        }) {
-            Ok(stats) => merge_stats(&mut report, stats),
-            Err(error) => report.errors.push(format!("{}: {error:#}", path.display())),
+        });
+        merge_stats(&mut report, stats);
+        if let Err(error) = parse_result {
+            if is_cancelled(options.cancel) || error.to_string() == "cancelled" {
+                return Err(error);
+            }
+            report.errors.push(format!("{}: {error:#}", path.display()));
         }
     }
     check_cancel(options.cancel).map_err(anyhow::Error::msg)?;
@@ -532,6 +539,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(report.attachments_saved, 1);
+        let staged: Vec<_> = fs::read_dir(&stage)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert_eq!(staged.len(), 1);
+        assert_eq!(fs::metadata(&staged[0]).unwrap().len(), 5);
         assert_eq!(docs[0].export.owner_handle.as_deref(), Some("+15555550100"));
         assert_eq!(
             docs[0].messages[0].attachments[0].size_bytes,
@@ -607,6 +620,37 @@ mod tests {
         )
         .unwrap();
         assert_eq!(docs[0].export.owner_handle.as_deref(), Some("+15555550100"));
+        assert_eq!(report.errors.len(), 1);
+    }
+
+    #[test]
+    fn truncated_xml_keeps_messages_parsed_before_the_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("input.xml");
+        fs::write(
+            &input,
+            r#"<smses><sms protocol="0" address="+15555550101" date="1400773261000" type="1" body="kept"/><sms date=""#,
+        )
+        .unwrap();
+        let (docs, report) = read_sbr_documents(
+            &input,
+            SbrReadOptions {
+                owner_phones: &["+15555550100".into()],
+                date_range: &DateRange::default(),
+                attachments_dir: None,
+                copy_attachments: false,
+                keep_attachment_bytes: false,
+                cancel: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].messages.len(), 1);
+        assert_eq!(docs[0].messages[0].text, "kept");
+        assert_eq!(
+            report.sms_seen, 1,
+            "stats from the completed message must survive the XML error"
+        );
         assert_eq!(report.errors.len(), 1);
     }
 }
