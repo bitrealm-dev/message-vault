@@ -314,36 +314,65 @@ pub(crate) async fn create_messages_secondary_indexes(conn: &mut AnyConnection) 
     Ok(())
 }
 
-/// Disable every Postgres trigger on the message tables during bulk promote,
-/// so per-row FTS sync work is skipped (Postgres has no per-statement
-/// "don't run triggers" mode; SQLite drops its FTS triggers instead — see
-/// [`drop_messages_fts_triggers`]). The bulk vector fill runs afterwards via
+/// Disable the six Postgres FTS sync triggers by name during bulk promote, so
+/// per-row FTS sync work is skipped (Postgres has no per-statement "don't run
+/// triggers" mode; SQLite drops its FTS triggers instead — see
+/// [`drop_messages_fts_triggers`]). Only the FTS triggers are touched: FK
+/// constraint triggers stay enabled, so a staging row that violates a foreign
+/// key still fails loudly, and the statements need only table ownership (no
+/// superuser). The bulk vector fill runs afterwards via
 /// [`index_messages_fts_from_promote_map`], then
-/// [`enable_fts_triggers_pg`] restores the triggers.
+/// [`enable_fts_triggers_pg`] restores the triggers. Disabling and re-enabling
+/// are transactional, so a failed promote rolls the disable back.
 ///
 /// # Errors
 ///
 /// Returns an error when a disable statement fails.
 pub(crate) async fn disable_fts_triggers_pg(conn: &mut AnyConnection) -> Result<()> {
-    sqlx::query("ALTER TABLE messages DISABLE TRIGGER ALL")
+    sqlx::query("ALTER TABLE messages DISABLE TRIGGER messages_fts_ai")
         .execute(&mut *conn)
         .await?;
-    sqlx::query("ALTER TABLE attachments DISABLE TRIGGER ALL")
+    sqlx::query("ALTER TABLE messages DISABLE TRIGGER messages_fts_au")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("ALTER TABLE messages DISABLE TRIGGER messages_fts_ad")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("ALTER TABLE attachments DISABLE TRIGGER attachments_fts_ai")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("ALTER TABLE attachments DISABLE TRIGGER attachments_fts_ad")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("ALTER TABLE attachments DISABLE TRIGGER attachments_fts_au")
         .execute(&mut *conn)
         .await?;
     Ok(())
 }
 
-/// Re-enable the Postgres triggers disabled by [`disable_fts_triggers_pg`].
+/// Re-enable the six Postgres FTS sync triggers disabled by
+/// [`disable_fts_triggers_pg`], by the same names.
 ///
 /// # Errors
 ///
 /// Returns an error when an enable statement fails.
 pub(crate) async fn enable_fts_triggers_pg(conn: &mut AnyConnection) -> Result<()> {
-    sqlx::query("ALTER TABLE messages ENABLE TRIGGER ALL")
+    sqlx::query("ALTER TABLE messages ENABLE TRIGGER messages_fts_ai")
         .execute(&mut *conn)
         .await?;
-    sqlx::query("ALTER TABLE attachments ENABLE TRIGGER ALL")
+    sqlx::query("ALTER TABLE messages ENABLE TRIGGER messages_fts_au")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("ALTER TABLE messages ENABLE TRIGGER messages_fts_ad")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("ALTER TABLE attachments ENABLE TRIGGER attachments_fts_ai")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("ALTER TABLE attachments ENABLE TRIGGER attachments_fts_ad")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("ALTER TABLE attachments ENABLE TRIGGER attachments_fts_au")
         .execute(&mut *conn)
         .await?;
     Ok(())
