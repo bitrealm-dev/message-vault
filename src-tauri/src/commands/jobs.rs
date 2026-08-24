@@ -6,6 +6,11 @@
 //! as an `extract:error` event. These helpers hold that repeated part. What
 //! differs per command — building the config, mapping progress events, and
 //! shaping the finished summary — stays in the command.
+//!
+//! One job runs at a time in this process. Every job command clears the
+//! shared cancel flag before it starts, which is what stops a leftover
+//! cancel from the previous job leaking into the next one — a concurrent-job
+//! design would need its own flag per job.
 
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
