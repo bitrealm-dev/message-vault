@@ -4,8 +4,6 @@ import FormField from "../../components/FormField";
 import { textInputClassName } from "../../components/TextField";
 import type { AttachmentMediaMode } from "../../lib/types";
 
-export { default as DateField } from "../../components/DateField";
-
 export const ATTACHMENT_OPTIONS: { id: AttachmentMediaMode; label: string }[] = [
   { id: "copy", label: "Copy" },
   { id: "convert", label: "Convert" },

@@ -8,7 +8,6 @@ import type { AttachmentMediaMode, ContactNameMode } from "../../lib/types";
 import {
   ATTACHMENT_OPTIONS,
   CollapsibleSection,
-  DateField,
   fieldStyle,
   hintStyle,
   RESOLUTION_OPTIONS,
@@ -37,16 +36,8 @@ export type ImportFormFieldsProps = {
   onContactNameModeChange: (mode: ContactNameMode) => void;
   formatOpen: boolean;
   onToggleFormat: () => void;
-  filteringOpen: boolean;
-  onToggleFiltering: () => void;
   processingOpen: boolean;
   onToggleProcessing: () => void;
-  conversationFilter: string;
-  onConversationFilterChange: (value: string) => void;
-  startDate: string;
-  onStartDateChange: (value: string) => void;
-  endDate: string;
-  onEndDateChange: (value: string) => void;
   force: boolean;
   onForceChange: (value: boolean) => void;
   obfuscate: boolean;
@@ -200,40 +191,6 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
           </StackedField>
         )}
       </CollapsibleSection>
-
-      {isIos && (
-        <CollapsibleSection
-          title="Message Filtering"
-          open={props.filteringOpen}
-          onToggle={props.onToggleFiltering}
-        >
-          <StackedField label="Participant Filtering">
-            <input
-              type="text"
-              value={props.conversationFilter}
-              onChange={(e) => props.onConversationFilterChange(e.target.value)}
-              placeholder="Comma separate list of names and number"
-              className={fieldStyle}
-            />
-            <p className={hintStyle}>
-              Only conversations with the specified participants are imported, including group
-              conversations.
-            </p>
-          </StackedField>
-          <div className="mb-[1.1rem] flex flex-wrap gap-3">
-            <DateField
-              label="Start Date"
-              value={props.startDate}
-              onChange={props.onStartDateChange}
-            />
-            <DateField
-              label="End Date (exclusive)"
-              value={props.endDate}
-              onChange={props.onEndDateChange}
-            />
-          </div>
-        </CollapsibleSection>
-      )}
 
       <CollapsibleSection
         title="Processing Options (Advanced)"

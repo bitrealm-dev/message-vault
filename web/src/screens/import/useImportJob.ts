@@ -96,9 +96,6 @@ export type ImportJobFormValues = {
   maxFps: string;
   minSizeMb: string;
   contactNameMode: ContactNameMode;
-  conversationFilter: string;
-  startDate: string;
-  endDate: string;
   force: boolean;
   obfuscate: boolean;
   isIos: boolean;
@@ -226,9 +223,6 @@ export function useImportJob() {
                   media_max_resolution: form.maxResolution,
                   media_max_fps: form.maxFps,
                   media_min_size: `${form.minSizeMb.trim() || "20"}M`,
-                  conversation_filter: form.conversationFilter || undefined,
-                  start_date: form.startDate || undefined,
-                  end_date: form.endDate || undefined,
                   obfuscate: form.obfuscate,
                 }
               : {}),
