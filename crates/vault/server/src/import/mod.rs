@@ -709,8 +709,7 @@ pub(crate) async fn imports_list_handler(
 ) -> Result<Json<ImportsListResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_import_access(&auth)?;
-    let account =
-        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
+    let account = resolve_import_account(&auth, query.account.as_deref(), &state.db).await?;
 
     // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
@@ -774,14 +773,13 @@ pub(crate) async fn imports_create_handler(
 ) -> Result<Json<CreateImportResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_import_access(&auth)?;
-    reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
+    reject_if_guest_account(&state.db, &auth.account_id).await?;
     if body.source.trim().is_empty() {
         return Err(ApiError::BadRequest("body field source is required".into()));
     }
     validate_source_id(&body.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
     ImportMode::parse(&body.mode).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    let account =
-        resolve_import_account(&auth, body.account.as_deref(), &state.cfg.paths.db).await?;
+    let account = resolve_import_account(&auth, body.account.as_deref(), &state.db).await?;
 
     // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
@@ -825,8 +823,8 @@ pub(crate) async fn imports_complete_handler(
 ) -> Result<Json<CompleteImportResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_import_access(&auth)?;
-    reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
-    let account = resolve_import_account(&auth, None, &state.cfg.paths.db).await?;
+    reject_if_guest_account(&state.db, &auth.account_id).await?;
+    let account = resolve_import_account(&auth, None, &state.db).await?;
     validate_complete_import_issues(&body.issues)?;
     let summary_json = match body.summary {
         Some(summary) => Some(
@@ -955,7 +953,7 @@ pub(crate) async fn import_handler(
 ) -> Result<Json<ImportResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_import_access(&auth)?;
-    reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
+    reject_if_guest_account(&state.db, &auth.account_id).await?;
 
     let Some(ct) = content_type_base(&headers) else {
         return Err(ApiError::BadRequest(
@@ -970,8 +968,7 @@ pub(crate) async fn import_handler(
         ));
     }
     validate_source_id(&query.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    let account =
-        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
+    let account = resolve_import_account(&auth, query.account.as_deref(), &state.db).await?;
     query.account = Some(account);
 
     if is_multipart_content_type(ct) {

@@ -185,7 +185,7 @@ pub async fn create_api_token_handler(
 ) -> Result<Json<CreateApiTokenResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
-    reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
+    reject_if_guest_account(&state.db, &auth.account_id).await?;
     let account_id = auth.account_id;
     let label = req.label;
     let scopes =
@@ -281,7 +281,7 @@ pub async fn rename_api_token_handler(
 ) -> Result<Json<RenameApiTokenResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
-    reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
+    reject_if_guest_account(&state.db, &auth.account_id).await?;
     let account_id = auth.account_id;
     let label = req.label;
     let id_for_resp = id.clone();

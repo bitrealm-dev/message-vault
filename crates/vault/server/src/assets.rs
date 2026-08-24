@@ -695,8 +695,7 @@ async fn resolve_asset_lookup(
         ));
     }
     validate_source_id(&query.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    let account =
-        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
+    let account = resolve_import_account(&auth, query.account.as_deref(), &state.db).await?;
     let source_id = query.source.clone();
 
     let cfg = Arc::clone(&state.cfg);
@@ -862,7 +861,7 @@ pub(crate) async fn asset_put_handler(
 ) -> Result<Json<AssetPutResponse>, ApiError> {
     let (account, source_id, existing) =
         resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
-    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
+    reject_if_guest_account(&state.db, &account).await?;
 
     let mime = upload_content_type(&headers);
 
@@ -986,7 +985,7 @@ pub(crate) async fn asset_upload_start_handler(
 ) -> Result<Json<AssetUploadStartResponse>, ApiError> {
     let (account, source_id, _existing) =
         resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
-    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
+    reject_if_guest_account(&state.db, &account).await?;
     let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
     let mime = body.mime.clone();
     let bytes = body.bytes;
@@ -1052,7 +1051,7 @@ pub(crate) async fn asset_upload_part_handler(
 ) -> Result<Json<AssetUploadPartResponse>, ApiError> {
     let (account, source_id, _existing) =
         resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
-    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
+    reject_if_guest_account(&state.db, &account).await?;
     if part == 0 {
         return Err(ApiError::BadRequest("part number must be >= 1".into()));
     }
@@ -1101,7 +1100,7 @@ pub(crate) async fn asset_upload_complete_handler(
 ) -> Result<Json<AssetPutResponse>, ApiError> {
     let (account, source_id, existing) =
         resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
-    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
+    reject_if_guest_account(&state.db, &account).await?;
     if let Some(stored) = existing {
         // Drop staging if a concurrent single-PUT won the race.
         let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);

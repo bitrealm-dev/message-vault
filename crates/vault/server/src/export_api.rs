@@ -1306,8 +1306,7 @@ pub(crate) async fn export_messages_count_handler(
 ) -> Result<Json<export_api::ExportCountResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_export_access(&auth)?;
-    let account =
-        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
+    let account = resolve_import_account(&auth, query.account.as_deref(), &state.db).await?;
     let q = query.q.clone();
     let source = query.source.clone();
 
@@ -1353,8 +1352,7 @@ pub(crate) async fn export_messages_handler(
 ) -> Result<Json<export_api::ExportMessagesResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_export_access(&auth)?;
-    let account =
-        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
+    let account = resolve_import_account(&auth, query.account.as_deref(), &state.db).await?;
     let limit = query.limit.unwrap_or(DEFAULT_EXPORT_LIMIT);
     let offset = query.offset;
     let q = query.q.clone();

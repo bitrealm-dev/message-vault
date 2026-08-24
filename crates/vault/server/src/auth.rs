@@ -1017,7 +1017,10 @@ async fn logout_on_conn(conn: &mut AnyConnection, token: &str, data_dir: &Path) 
         account_profile::delete_account(conn, &account_id).await?;
         let dir = data_dir.join(&account_id);
         if dir.exists() {
-            std::fs::remove_dir_all(&dir)
+            let dir_owned = dir.clone();
+            tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&dir_owned))
+                .await
+                .map_err(|e| anyhow::anyhow!("remove guest data dir task: {e}"))?
                 .with_context(|| format!("remove guest data dir {}", dir.display()))?;
         }
     }
@@ -1083,7 +1086,7 @@ pub async fn change_password_handler(
     }
     let auth = crate::server::resolve_auth(&headers, &state).await?;
     crate::server::require_full_access(&auth)?;
-    crate::server::reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
+    crate::server::reject_if_guest_account(&state.db, &auth.account_id).await?;
     let account_id = auth.account_id;
     let current_password = req.current_password.clone();
     let new_hash = hash_password(new_password).map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1164,7 +1167,10 @@ pub async fn delete_account_handler(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     if account_root.exists() {
-        std::fs::remove_dir_all(&account_root)
+        let root = account_root.clone();
+        tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&root))
+            .await
+            .map_err(|e| ApiError::Internal(format!("remove account data dir task: {e}")))?
             .with_context(|| format!("remove account data dir {}", account_root.display()))?;
     }
 

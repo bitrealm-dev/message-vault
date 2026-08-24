@@ -1559,7 +1559,7 @@ mod tests {
             .await
             .expect("checkpoint prepared reset test database");
 
-        let mut conn = test_db_conn(path).await;
+        let (pool, mut conn) = test_db(path).await;
         let demo_username: String =
             sqlx::query_scalar("SELECT username FROM accounts WHERE id = $1")
                 .bind(DEMO_ACCOUNT_ID)
@@ -1580,6 +1580,7 @@ mod tests {
         assert_eq!(demo_username, "prepared-demo");
         assert_eq!(demo_messages, 0);
         assert_eq!(non_demo_accounts, 0);
+        close_test_db(pool, conn).await;
     }
 
     async fn seed_reset_test_account(conn: &mut AnyConnection, account_id: &str, guid: &str) {
@@ -1624,7 +1625,7 @@ mod tests {
     }
 
     async fn assert_reset_test_database(path: &Path) {
-        let mut conn = test_db_conn(path).await;
+        let (pool, mut conn) = test_db(path).await;
         for (account_id, guid) in [
             (DEMO_ACCOUNT_ID, "demo-existing"),
             ("non-demo-account", "non-demo-existing"),
@@ -1655,5 +1656,6 @@ mod tests {
             assert_eq!(message_count, 1, "message {guid}");
             assert_eq!(body, "keep me", "message body {guid}");
         }
+        close_test_db(pool, conn).await;
     }
 }

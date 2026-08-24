@@ -125,6 +125,10 @@ pub enum Commands {
         /// Path to config.toml (must include `[server]` with `bind`)
         #[arg(long, default_value = "config/config.toml")]
         config: PathBuf,
+
+        /// Connection URL (postgres://… or sqlite://…; overrides `[database]` url)
+        #[arg(long)]
+        db_url: Option<String>,
     },
 
     /// Write the OpenAPI document (JSON) to stdout or --output. Does not open the database.
@@ -403,8 +407,11 @@ pub async fn run(cli: Cli) -> Result<()> {
             println!("  conversion failures:   {}", stats.process_assets.errors);
         }
 
-        Commands::Serve { config } => {
-            let cfg = Config::load(&config)?;
+        Commands::Serve { config, db_url } => {
+            let mut cfg = Config::load(&config)?;
+            if let Some(url) = db_url {
+                cfg.database.url = Some(url);
+            }
             let _ = cfg.require_server()?;
             crate::server::run(cfg).await?;
         }

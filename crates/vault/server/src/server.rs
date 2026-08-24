@@ -85,11 +85,11 @@ pub async fn reject_if_guest(conn: &mut AnyConnection, account_id: &str) -> Resu
     Ok(())
 }
 
-/// Open the configured database and reject the account when it is a guest.
-pub(crate) async fn reject_if_guest_account(db: &Path, account_id: &str) -> Result<(), ApiError> {
-    let pool = engine::open_pool_for_path(db)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+/// Reject the account when it is a guest, acquiring from the shared pool.
+pub(crate) async fn reject_if_guest_account(
+    pool: &sqlx::AnyPool,
+    account_id: &str,
+) -> Result<(), ApiError> {
     let mut conn = pool
         .acquire()
         .await
@@ -382,7 +382,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     };
     {
         let mut conn = pool.acquire().await?;
-        let _: i64 = sqlx::query_scalar("SELECT 1").fetch_one(&mut *conn).await?; // warmup
+        let _: i32 = sqlx::query_scalar("SELECT 1").fetch_one(&mut *conn).await?; // warmup (i32: INT4 on Postgres, INTEGER on SQLite)
         schema::ensure_vault_schema(&mut conn).await?;
     }
     if engine == DbEngine::Sqlite {
@@ -540,10 +540,10 @@ pub(crate) async fn health() -> (StatusCode, &'static str) {
     (StatusCode::OK, "ok\n")
 }
 
-async fn resolve_account_ref_async(db_path: &Path, account_ref: &str) -> Result<String, ApiError> {
-    let pool = engine::open_pool_for_path(db_path)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+async fn resolve_account_ref_async(
+    pool: &sqlx::AnyPool,
+    account_ref: &str,
+) -> Result<String, ApiError> {
     let mut conn = pool
         .acquire()
         .await
@@ -625,11 +625,11 @@ pub async fn resolve_auth(headers: &HeaderMap, state: &AppState) -> Result<AuthI
 pub(crate) async fn resolve_import_account(
     auth: &AuthIdentity,
     query_account: Option<&str>,
-    db_path: &Path,
+    pool: &sqlx::AnyPool,
 ) -> Result<String, ApiError> {
     let query = nonempty_query_account(query_account);
     if let Some(q) = query {
-        let resolved = resolve_account_ref_async(db_path, q).await?;
+        let resolved = resolve_account_ref_async(pool, q).await?;
         if resolved != auth.account_id {
             return Err(ApiError::Forbidden(
                 "account query does not match token's account".into(),
