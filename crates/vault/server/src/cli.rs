@@ -177,7 +177,9 @@ pub fn clap_command() -> Command {
 
 /// Execute a parsed [`Cli`], dispatching to the matching subcommand
 /// implementation.
-pub fn run(cli: Cli) -> Result<()> {
+pub async fn run(cli: Cli) -> Result<()> {
+    // Register the sqlx Any drivers once before any pool connects.
+    sqlx::any::install_default_drivers();
     match cli.command {
         Commands::Import {
             source,
@@ -203,7 +205,7 @@ pub fn run(cli: Cli) -> Result<()> {
             let mode = crate::import::ImportMode::parse(&mode)?;
             let media = crate::import_media::MediaMode::parse(&media)?;
             let db_path = db.clone().unwrap_or_else(|| cfg.paths.db.clone());
-            let account = account_profile::resolve_account_ref_at(&db_path, &account)?;
+            let account = account_profile::resolve_account_ref_at(&db_path, &account).await?;
 
             let stats = crate::import_cli::run(
                 &cfg,
@@ -211,6 +213,7 @@ pub fn run(cli: Cli) -> Result<()> {
                     account_id: account,
                     input_dir: input,
                     db_path: db,
+                    db_url: None,
                     assets_dir,
                     source_override: source,
                     mode,
@@ -220,7 +223,8 @@ pub fn run(cli: Cli) -> Result<()> {
                     skip_dedupe,
                     window_secs,
                 },
-            )?;
+            )
+            .await?;
 
             println!();
             println!("Import into {}", db_path.display());
@@ -288,14 +292,15 @@ pub fn run(cli: Cli) -> Result<()> {
         } => {
             let cfg = Config::load(&config)?;
             let db = db.unwrap_or_else(|| cfg.paths.db.clone());
-            let account = account_profile::resolve_account_ref_at(&db, &account)?;
+            let account = account_profile::resolve_account_ref_at(&db, &account).await?;
             if window_secs < 0 {
                 bail!("--window-secs must be >= 0");
             }
 
             let priority = {
-                let conn = crate::db::schema::open_configured(&db)?;
-                crate::dedupe::source_priority_from_db(&conn, &account)?
+                let pool = crate::db::engine::open_pool_for_path(&db).await?;
+                let mut conn = pool.acquire().await?;
+                crate::dedupe::source_priority_from_db(&mut conn, &account).await?
             };
 
             println!("Cross-source dedupe on {}", db.display());
@@ -311,7 +316,7 @@ pub fn run(cli: Cli) -> Result<()> {
                 }
             );
 
-            let stats = crate::dedupe::run_dedupe(&db, &account, window_secs)?;
+            let stats = crate::dedupe::run_dedupe(&db, &account, window_secs).await?;
             println!(
                 "  fingerprints set:   {} (one per message; not a duplicate count)",
                 stats.keys_filled
@@ -329,7 +334,7 @@ pub fn run(cli: Cli) -> Result<()> {
         } => {
             let cfg = Config::load(&config)?;
             let db = db.unwrap_or_else(|| cfg.paths.db.clone());
-            let account = account_profile::resolve_account_ref_at(&db, &account)?;
+            let account = account_profile::resolve_account_ref_at(&db, &account).await?;
 
             if let Some(parent) = db.parent()
                 && !parent.as_os_str().is_empty()
@@ -337,9 +342,11 @@ pub fn run(cli: Cli) -> Result<()> {
                 std::fs::create_dir_all(parent)?;
             }
 
-            let mut conn = crate::db::schema::open_configured(&db)?;
+            let pool = crate::db::engine::open_pool_for_path(&db).await?;
+            let mut conn = pool.acquire().await?;
             let stats =
-                contacts_db::load_contacts_if_needed(&mut conn, Some(&contacts), true, &account)?;
+                contacts_db::load_contacts_if_needed(&mut conn, Some(&contacts), true, &account)
+                    .await?;
 
             println!("Imported contacts into {}", db.display());
             println!("  config:       {}", config.display());
@@ -351,7 +358,7 @@ pub fn run(cli: Cli) -> Result<()> {
         }
 
         Commands::ResetDemo { bundle, config } => {
-            let stats = crate::reset_demo::run_reset_demo(&bundle, &config)?;
+            let stats = crate::reset_demo::run_reset_demo(&bundle, &config).await?;
             println!();
             println!("Demo reset complete");
             if stats.seed.messages > 0 {
@@ -399,8 +406,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Commands::Serve { config } => {
             let cfg = Config::load(&config)?;
             let _ = cfg.require_server()?;
-            let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(crate::server::run(cfg))?;
+            crate::server::run(cfg).await?;
         }
 
         Commands::DumpOpenapi { output } => {
@@ -432,7 +438,8 @@ pub fn run(cli: Cli) -> Result<()> {
                     db,
                     source,
                 },
-            )?;
+            )
+            .await?;
         }
     }
 

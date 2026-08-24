@@ -8,11 +8,12 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use message_ir::HandleType;
-use rusqlite::params;
 use serde::Deserialize;
+use sqlx::Row;
 
 use crate::config::{Config, GuestDemoSettings};
 use crate::db::account_profile;
+use crate::db::engine;
 use crate::db::schema;
 use crate::dedupe;
 use crate::guest_pool;
@@ -158,11 +159,11 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
 ///
 /// Returns an error when the bundle is incomplete, the database cannot be
 /// replaced, or import / media processing fails.
-pub fn run_reset_demo(bundle: &Path, config_dest: &Path) -> Result<ResetDemoStats> {
-    run_reset_demo_for_account(bundle, config_dest, DEMO_ACCOUNT_ID)
+pub async fn run_reset_demo(bundle: &Path, config_dest: &Path) -> Result<ResetDemoStats> {
+    run_reset_demo_for_account(bundle, config_dest, DEMO_ACCOUNT_ID).await
 }
 
-fn run_reset_demo_for_account(
+async fn run_reset_demo_for_account(
     bundle: &Path,
     config_dest: &Path,
     account_id: &str,
@@ -175,7 +176,7 @@ fn run_reset_demo_for_account(
 
     println!("  bundle:       {}", bundle.display());
     let seed_stats = maybe_regenerate_bundle(&bundle)?;
-    let reset_stats = prepare_config_and_reset(&bundle, config_dest, account_id)?;
+    let reset_stats = prepare_config_and_reset(&bundle, config_dest, account_id).await?;
 
     Ok(ResetDemoStats {
         seed: seed_stats,
@@ -185,7 +186,7 @@ fn run_reset_demo_for_account(
     })
 }
 
-fn prepare_config_and_reset(
+async fn prepare_config_and_reset(
     bundle: &Path,
     config_dest: &Path,
     account_id: &str,
@@ -221,9 +222,10 @@ fn prepare_config_and_reset(
         config_dest,
         temporary_config.as_ref(),
     )
+    .await
 }
 
-fn reset_prepared_bundle(
+async fn reset_prepared_bundle(
     cfg: &Config,
     bundle: &Path,
     account_id: &str,
@@ -245,13 +247,13 @@ fn reset_prepared_bundle(
     // another mount (tmp, a nested bind, a named volume) fails with EXDEV.
     let data_work = reset_account_work_dir(&cfg.paths.data_dir)?;
     let prepared_db = db_work.path().join("vault.db");
-    checkpoint_and_clean_sidecars(&cfg.paths.db, "before creating the reset snapshot")?;
-    prepare_database_snapshot(&cfg.paths.db, &prepared_db)?;
+    checkpoint_and_clean_sidecars(&cfg.paths.db, "before creating the reset snapshot").await?;
+    prepare_database_snapshot(&cfg.paths.db, &prepared_db).await?;
 
     let mut temporary_cfg = cfg.clone();
     temporary_cfg.paths.db = prepared_db.clone();
     temporary_cfg.paths.data_dir = data_work.path().to_path_buf();
-    wipe_demo_account(&temporary_cfg, account_id)?;
+    wipe_demo_account(&temporary_cfg, account_id).await?;
 
     println!("Reset demo — preparing replacement");
     println!("  account:      {account_id}");
@@ -260,7 +262,7 @@ fn reset_prepared_bundle(
     println!("  whatsapp:     {}", prepared.whatsapp_dir.display());
     println!("  db:           {}", cfg.paths.db.display());
 
-    seed_demo_account(&prepared_db, account_id, &prepared.seed)?;
+    seed_demo_account(&prepared_db, account_id, &prepared.seed).await?;
     let imessage_assets = temporary_cfg
         .paths
         .assets_dir_for_account(account_id, IMESSAGE_SOURCE);
@@ -279,7 +281,8 @@ fn reset_prepared_bundle(
         mode: ImportMode::Replace,
         source: IMESSAGE_SOURCE,
         account_id,
-    })?;
+    })
+    .await?;
     let sbr_stats = import::import_export(&ImportExportArgs {
         export_dir: &prepared.sbr_dir,
         db_path: &prepared_db,
@@ -289,7 +292,8 @@ fn reset_prepared_bundle(
         mode: ImportMode::Append,
         source: SBR_SOURCE,
         account_id,
-    })?;
+    })
+    .await?;
     merge_import_stats(&mut import_stats, &sbr_stats);
     let whatsapp_stats = import::import_export(&ImportExportArgs {
         export_dir: &prepared.whatsapp_dir,
@@ -300,10 +304,11 @@ fn reset_prepared_bundle(
         mode: ImportMode::Append,
         source: WHATSAPP_SOURCE,
         account_id,
-    })?;
+    })
+    .await?;
     merge_import_stats(&mut import_stats, &whatsapp_stats);
 
-    let dedupe_stats = dedupe::run_dedupe(&prepared_db, account_id, 2)?;
+    let dedupe_stats = dedupe::run_dedupe(&prepared_db, account_id, 2).await?;
     println!("Reset demo — processing prepared assets");
     let process_stats = process_assets::run(
         &temporary_cfg,
@@ -317,6 +322,7 @@ fn reset_prepared_bundle(
             source: None,
         },
     )
+    .await
     .context("process-assets after prepared demo import")?;
     if process_stats.errors > 0 {
         eprintln!(
@@ -325,7 +331,7 @@ fn reset_prepared_bundle(
         );
     }
 
-    verify_non_demo_state_preserved(&cfg.paths.db, &prepared_db, account_id)?;
+    verify_non_demo_state_preserved(&cfg.paths.db, &prepared_db, account_id).await?;
     let active_account = cfg.paths.data_dir.join(account_id);
     let prepared_account = temporary_cfg.paths.data_dir.join(account_id);
     let replacement = install_reset_state(&ResetPaths {
@@ -335,7 +341,8 @@ fn reset_prepared_bundle(
         prepared_account: &prepared_account,
         active_config: config_dest,
         prepared_config,
-    });
+    })
+    .await;
     if let Err(error) = replacement {
         let config_backup = sqlite_sidecar(prepared_config, ".previous-active");
         let previous_state_still_in_work = db_work.path().join("previous-vault.db").exists()
@@ -354,7 +361,7 @@ fn reset_prepared_bundle(
     }
 
     crate::operation_lock::mark_ready(&cfg.paths.db)?;
-    after_reset_refresh_guest_pool(cfg, GuestDemoSettings::from_env())?;
+    after_reset_refresh_guest_pool(cfg, GuestDemoSettings::from_env()).await?;
 
     Ok(ResetPreparedStats {
         import: import_stats,
@@ -372,13 +379,22 @@ fn reset_prepared_bundle(
 ///
 /// Returns an error when the live database cannot be opened, unused ready
 /// guests cannot be deleted, or a refill clone fails.
-pub fn after_reset_refresh_guest_pool(cfg: &Config, settings: GuestDemoSettings) -> Result<()> {
+pub async fn after_reset_refresh_guest_pool(
+    cfg: &Config,
+    settings: GuestDemoSettings,
+) -> Result<()> {
     if !settings.enabled {
         return Ok(());
     }
-    let mut conn = schema::open_configured(&cfg.paths.db)?;
-    guest_pool::drop_ready_guests(&conn, &cfg.paths.data_dir)?;
-    guest_pool::refill_pool(&mut conn, cfg, settings, 0)?;
+    let pool = engine::open_pool_for_path(&cfg.paths.db).await?;
+    let mut conn = pool.acquire().await?;
+    guest_pool::drop_ready_guests(&mut conn, &cfg.paths.data_dir).await?;
+    guest_pool::refill_pool(&mut conn, cfg, settings, 0).await?;
+    // Close deterministically: the sqlx worker thread closes a returned
+    // connection asynchronously, and a close that lands after a later
+    // `wal_checkpoint(TRUNCATE)` reads the truncated -shm mapping and crashes.
+    conn.close().await?;
+    pool.close().await;
     Ok(())
 }
 
@@ -409,25 +425,39 @@ fn validate_prepared_bundle(bundle: &Path) -> Result<PreparedBundle> {
     })
 }
 
-fn prepare_database_snapshot(active: &Path, prepared: &Path) -> Result<()> {
+async fn prepare_database_snapshot(active: &Path, prepared: &Path) -> Result<()> {
     if active.is_file() {
-        let conn = rusqlite::Connection::open(active)
+        let pool = engine::open_pool_for_path(active)
+            .await
             .with_context(|| format!("open {} for reset snapshot", active.display()))?;
-        conn.execute(
-            "VACUUM INTO ?1",
-            params![prepared.to_string_lossy().as_ref()],
-        )
-        .with_context(|| {
-            format!(
-                "copy database snapshot {} to {}",
-                active.display(),
-                prepared.display()
-            )
-        })?;
+        let mut conn = pool
+            .acquire()
+            .await
+            .with_context(|| format!("open {} for reset snapshot", active.display()))?;
+        sqlx::query("VACUUM INTO $1")
+            .bind(prepared.to_string_lossy().as_ref())
+            .execute(&mut *conn)
+            .await
+            .with_context(|| {
+                format!(
+                    "copy database snapshot {} to {}",
+                    active.display(),
+                    prepared.display()
+                )
+            })?;
+        conn.close().await?;
+        pool.close().await;
     } else {
-        let conn = schema::open_configured(prepared)
+        let pool = engine::open_pool_for_path(prepared)
+            .await
             .with_context(|| format!("create prepared database {}", prepared.display()))?;
-        schema::ensure_vault_schema(&conn)?;
+        let mut conn = pool
+            .acquire()
+            .await
+            .with_context(|| format!("create prepared database {}", prepared.display()))?;
+        schema::ensure_vault_schema(&mut conn).await?;
+        conn.close().await?;
+        pool.close().await;
     }
     Ok(())
 }
@@ -435,25 +465,37 @@ fn prepare_database_snapshot(active: &Path, prepared: &Path) -> Result<()> {
 /// Copy pending SQLite writes into the main database file, then remove the
 /// write-ahead log (`-wal`) and shared-memory (`-shm`) sidecar files so the
 /// database can be renamed safely.
-fn checkpoint_and_clean_sidecars(db: &Path, operation: &str) -> Result<()> {
+async fn checkpoint_and_clean_sidecars(db: &Path, operation: &str) -> Result<()> {
     if !db.is_file() {
         return Ok(());
     }
-    let conn = rusqlite::Connection::open(db)
+    let pool = engine::open_pool_for_path(db)
+        .await
         .with_context(|| format!("open {} {operation}", db.display()))?;
-    let (busy, _, _): (i64, i64, i64) = conn
-        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })
+    let mut conn = pool
+        .acquire()
+        .await
+        .with_context(|| format!("open {} {operation}", db.display()))?;
+    let row = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .fetch_one(&mut *conn)
+        .await
         .with_context(|| {
             format!(
                 "checkpoint SQLite write-ahead log for {} {operation}",
                 db.display()
             )
         })?;
-    conn.close()
-        .map_err(|(_, error)| error)
-        .with_context(|| format!("close {} {operation}", db.display()))?;
+    let busy: i64 = row.try_get(0)?;
+    let _log: i64 = row.try_get(1)?;
+    let _checkpointed: i64 = row.try_get(2)?;
+    // Close the connection deterministically: `pool.close()` only waits for
+    // checked-out connections to be *returned*, and the sqlx worker thread
+    // runs `sqlite3_close` later. A close that lands after the TRUNCATE
+    // checkpoint can read the truncated `-shm` mapping and crash the process.
+    conn.close().await?;
+    // Close the pool so no connection stays attached to the database while
+    // reset-demo replaces or renames it.
+    pool.close().await;
     if busy != 0 {
         bail!(
             "cannot replace {} because its WAL could not be checkpointed; stop every process using the vault and run reset-demo offline",
@@ -498,12 +540,16 @@ fn sqlite_sidecar(db: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
-fn verify_non_demo_state_preserved(active: &Path, prepared: &Path, demo_id: &str) -> Result<()> {
+async fn verify_non_demo_state_preserved(
+    active: &Path,
+    prepared: &Path,
+    demo_id: &str,
+) -> Result<()> {
     if !active.is_file() {
         return Ok(());
     }
-    let active_state = non_demo_state(active, demo_id)?;
-    let prepared_state = non_demo_state(prepared, demo_id)?;
+    let active_state = non_demo_state(active, demo_id).await?;
+    let prepared_state = non_demo_state(prepared, demo_id).await?;
     if active_state != prepared_state {
         bail!(
             "prepared reset database changed non-demo account state; active={active_state:?}, prepared={prepared_state:?}"
@@ -512,35 +558,44 @@ fn verify_non_demo_state_preserved(active: &Path, prepared: &Path, demo_id: &str
     Ok(())
 }
 
-fn non_demo_state(db: &Path, demo_id: &str) -> Result<BTreeMap<String, i64>> {
-    let conn = rusqlite::Connection::open(db)
+async fn non_demo_state(db: &Path, demo_id: &str) -> Result<BTreeMap<String, i64>> {
+    let pool = engine::open_pool_for_path(db)
+        .await
         .with_context(|| format!("open {} to verify non-demo accounts", db.display()))?;
-    let has_accounts: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'accounts'",
-            [],
-            |row| row.get(0),
-        )
-        .with_context(|| format!("check accounts table in {}", db.display()))?;
+    let mut conn = pool
+        .acquire()
+        .await
+        .with_context(|| format!("open {} to verify non-demo accounts", db.display()))?;
+    let has_accounts: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'accounts'",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .with_context(|| format!("check accounts table in {}", db.display()))?;
     if has_accounts == 0 {
+        conn.close().await?;
+        pool.close().await;
         return Ok(BTreeMap::new());
     }
-    let mut statement = conn.prepare(
+    let rows = sqlx::query(
         "SELECT a.id, COUNT(m.id)
          FROM accounts a
          LEFT JOIN messages m ON m.account_id = a.id
-         WHERE a.id != ?1
+         WHERE a.id != $1
          GROUP BY a.id
          ORDER BY a.id",
-    )?;
-    let rows = statement.query_map(params![demo_id], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-    })?;
+    )
+    .bind(demo_id)
+    .fetch_all(&mut *conn)
+    .await?;
     let mut state = BTreeMap::new();
     for row in rows {
-        let (account_id, message_count) = row?;
+        let account_id: String = row.try_get(0)?;
+        let message_count: i64 = row.try_get(1)?;
         state.insert(account_id, message_count);
     }
+    conn.close().await?;
+    pool.close().await;
     Ok(state)
 }
 
@@ -554,19 +609,21 @@ struct ResetPaths<'a> {
     prepared_config: &'a Path,
 }
 
-fn install_reset_state(paths: &ResetPaths<'_>) -> Result<()> {
-    install_reset_state_with(paths, rename_prepared_path)
+async fn install_reset_state(paths: &ResetPaths<'_>) -> Result<()> {
+    install_reset_state_with(paths, rename_prepared_path).await
 }
 
-fn install_reset_state_with<F>(paths: &ResetPaths<'_>, rename: F) -> Result<()>
+async fn install_reset_state_with<F>(paths: &ResetPaths<'_>, rename: F) -> Result<()>
 where
     F: FnMut(&Path, &Path) -> Result<()>,
 {
-    checkpoint_and_clean_sidecars(paths.prepared_db, "before installing the prepared database")?;
+    checkpoint_and_clean_sidecars(paths.prepared_db, "before installing the prepared database")
+        .await?;
     checkpoint_and_clean_sidecars(
         paths.active_db,
         "immediately before replacing the active database",
-    )?;
+    )
+    .await?;
     replace_reset_state_with(paths, rename)
 }
 
@@ -805,72 +862,88 @@ fn load_demo_seed(path: &Path) -> Result<DemoSeed> {
     toml::from_str(&text).with_context(|| format!("failed to parse demo seed {}", path.display()))
 }
 
-fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) -> Result<()> {
-    let conn = schema::open_configured(db_path)?;
-    schema::ensure_vault_schema(&conn)?;
-    account_profile::ensure_account_row(&conn, account_id)?;
+async fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) -> Result<()> {
+    let pool = engine::open_pool_for_path(db_path).await?;
+    let mut conn = pool.acquire().await?;
+    schema::ensure_vault_schema(&mut conn).await?;
+    account_profile::ensure_account_row(&mut conn, account_id).await?;
 
-    conn.execute(
+    sqlx::query(
         r#"
         INSERT INTO accounts (
             id, username, read_only, password_hash, preferred_name
         )
-        VALUES (?1, ?2, ?3, NULL, ?4)
+        VALUES ($1, $2, $3, NULL, $4)
         ON CONFLICT(id) DO UPDATE SET
             username = excluded.username,
             read_only = excluded.read_only,
             password_hash = NULL,
             preferred_name = excluded.preferred_name
         "#,
-        params![
-            account_id,
-            seed.account.username,
-            seed.account.read_only as i64,
-            seed.owner.display_name
-        ],
-    )?;
+    )
+    .bind(account_id)
+    .bind(&seed.account.username)
+    .bind(seed.account.read_only as i64)
+    .bind(&seed.owner.display_name)
+    .execute(&mut *conn)
+    .await?;
     // Extra email addresses used only to recognize "you" in messages, not for login.
-    conn.execute(
-        "DELETE FROM account_emails WHERE account_id = ?1",
-        params![account_id],
-    )?;
+    sqlx::query("DELETE FROM account_emails WHERE account_id = $1")
+        .bind(account_id)
+        .execute(&mut *conn)
+        .await?;
     for email in &seed.owner.emails {
-        conn.execute(
+        sqlx::query(
             r#"
-            INSERT OR IGNORE INTO account_emails (account_id, email, is_primary)
-            VALUES (?1, ?2, 0)
+            INSERT INTO account_emails (account_id, email, is_primary)
+            VALUES ($1, $2, 0)
+            ON CONFLICT DO NOTHING
             "#,
-            params![account_id, email],
-        )?;
+        )
+        .bind(account_id)
+        .bind(email)
+        .execute(&mut *conn)
+        .await?;
     }
     // Demo has no Import API token until the user generates one in Settings.
 
     // Phone and email identities that mark messages as from "you" live in
     // `handles`, linked through `account_handles`.
-    conn.execute(
-        "DELETE FROM account_handles WHERE account_id = ?1",
-        params![account_id],
-    )?;
+    sqlx::query("DELETE FROM account_handles WHERE account_id = $1")
+        .bind(account_id)
+        .execute(&mut *conn)
+        .await?;
     for (raw, handle_type) in &seed.owner.handle_specs {
-        account_profile::link_account_handle(&conn, account_id, raw, *handle_type)?;
+        account_profile::link_account_handle(&mut conn, account_id, raw, *handle_type).await?;
     }
-
+    conn.close().await?;
+    pool.close().await;
     Ok(())
 }
 
 /// Delete the demo account's vault rows (child rows follow via CASCADE) and
 /// on-disk attachments. Leaves `vault.db` and other accounts intact.
-fn wipe_demo_account(cfg: &Config, account_id: &str) -> Result<()> {
+async fn wipe_demo_account(cfg: &Config, account_id: &str) -> Result<()> {
     let db = &cfg.paths.db;
     if db.is_file() {
         println!("Reset demo — clearing account data in {}", db.display());
-        let conn = schema::open_configured(db)
+        let pool = engine::open_pool_for_path(db)
+            .await
             .with_context(|| format!("open {} for demo account wipe", db.display()))?;
-        schema::ensure_vault_schema(&conn)?;
-        let deleted = conn
-            .execute("DELETE FROM accounts WHERE id = ?1", params![account_id])
-            .with_context(|| format!("delete account {account_id}"))?;
+        let mut conn = pool
+            .acquire()
+            .await
+            .with_context(|| format!("open {} for demo account wipe", db.display()))?;
+        schema::ensure_vault_schema(&mut conn).await?;
+        let deleted = sqlx::query("DELETE FROM accounts WHERE id = $1")
+            .bind(account_id)
+            .execute(&mut *conn)
+            .await
+            .with_context(|| format!("delete account {account_id}"))?
+            .rows_affected();
         println!("  sql:      demo account rows removed (accounts matched={deleted})");
+        conn.close().await?;
+        pool.close().await;
     } else {
         println!(
             "Reset demo — no existing db at {}; will create on import",
@@ -895,13 +968,43 @@ mod tests {
     use super::*;
     use crate::config::{GuestDemoSettings, PathsConfig};
     use crate::guest_pool;
+    use sqlx::AnyConnection;
+
+    /// Open `db` with the vault schema applied and one connection checked out.
+    async fn test_db_conn(db: &Path) -> sqlx::pool::PoolConnection<sqlx::Any> {
+        let (_pool, conn) = test_db(db).await;
+        conn
+    }
+
+    /// Open `db` with the vault schema applied; returns the pool alongside the
+    /// connection so the caller can close the pool deterministically before
+    /// copying or replacing the database file.
+    async fn test_db(db: &Path) -> (sqlx::AnyPool, sqlx::pool::PoolConnection<sqlx::Any>) {
+        let pool = engine::open_pool_for_path(db)
+            .await
+            .expect("open test database");
+        let mut conn = pool.acquire().await.expect("acquire test connection");
+        schema::ensure_vault_schema(&mut conn)
+            .await
+            .expect("create vault schema");
+        (pool, conn)
+    }
+
+    /// Close the pool so no connection stays attached to the database file.
+    async fn close_test_db(pool: sqlx::AnyPool, conn: sqlx::pool::PoolConnection<sqlx::Any>) {
+        // Await the real close: `pool.close()` alone only waits for the
+        // connection to be returned, and the sqlx worker thread closes it
+        // later — racing the checkpoint/copy that follows can SIGBUS.
+        conn.close().await.expect("close test connection");
+        pool.close().await;
+    }
 
     /// A template refresh must delete unused ready guests (they still point at
     /// the old sample set) and grow the pool back to `pool_min` from the new
     /// template. Assigned guests keep the snapshot they already received.
-    #[test]
-    fn after_reset_refresh_guest_pool_drops_ready_and_refills_to_min() {
-        let (_temp, cfg, stale_id, assigned_id) = guest_pool_refresh_fixture();
+    #[tokio::test]
+    async fn after_reset_refresh_guest_pool_drops_ready_and_refills_to_min() {
+        let (_temp, cfg, stale_id, assigned_id) = guest_pool_refresh_fixture().await;
         let settings = GuestDemoSettings {
             enabled: true,
             pool_min: 2,
@@ -909,30 +1012,37 @@ mod tests {
             session_secs: 60,
         };
 
-        after_reset_refresh_guest_pool(&cfg, settings).expect("refresh guest pool");
+        after_reset_refresh_guest_pool(&cfg, settings)
+            .await
+            .expect("refresh guest pool");
 
-        let conn = schema::open_configured(&cfg.paths.db).expect("reopen");
+        let mut conn = test_db_conn(&cfg.paths.db).await;
         assert!(
-            account_profile::username_for_account(&conn, &stale_id)
+            account_profile::username_for_account(&mut conn, &stale_id)
+                .await
                 .unwrap()
                 .is_none(),
             "unused ready guest must be deleted so it cannot hand out the old dataset"
         );
         assert_eq!(
-            account_profile::guest_status(&conn, &assigned_id)
+            account_profile::guest_status(&mut conn, &assigned_id)
+                .await
                 .unwrap()
                 .as_deref(),
             Some("assigned"),
             "assigned guests stay after a template refresh"
         );
-        assert_eq!(guest_pool::count_ready(&conn).unwrap(), settings.pool_min);
+        assert_eq!(
+            guest_pool::count_ready(&mut conn).await.unwrap(),
+            settings.pool_min
+        );
         assert!(!cfg.paths.data_dir.join(&stale_id).exists());
         assert!(cfg.paths.data_dir.join(&assigned_id).is_dir());
     }
 
-    #[test]
-    fn after_reset_refresh_guest_pool_skips_when_disabled() {
-        let (_temp, cfg, stale_id, assigned_id) = guest_pool_refresh_fixture();
+    #[tokio::test]
+    async fn after_reset_refresh_guest_pool_skips_when_disabled() {
+        let (_temp, cfg, stale_id, assigned_id) = guest_pool_refresh_fixture().await;
         let settings = GuestDemoSettings {
             enabled: false,
             pool_min: 2,
@@ -940,72 +1050,90 @@ mod tests {
             session_secs: 60,
         };
 
-        after_reset_refresh_guest_pool(&cfg, settings).expect("disabled refresh is a no-op");
+        after_reset_refresh_guest_pool(&cfg, settings)
+            .await
+            .expect("disabled refresh is a no-op");
 
-        let conn = schema::open_configured(&cfg.paths.db).expect("reopen");
+        let mut conn = test_db_conn(&cfg.paths.db).await;
         assert_eq!(
-            account_profile::guest_status(&conn, &stale_id)
+            account_profile::guest_status(&mut conn, &stale_id)
+                .await
                 .unwrap()
                 .as_deref(),
             Some("ready")
         );
         assert_eq!(
-            account_profile::guest_status(&conn, &assigned_id)
+            account_profile::guest_status(&mut conn, &assigned_id)
+                .await
                 .unwrap()
                 .as_deref(),
             Some("assigned")
         );
-        assert_eq!(guest_pool::count_ready(&conn).unwrap(), 1);
+        assert_eq!(guest_pool::count_ready(&mut conn).await.unwrap(), 1);
     }
 
-    fn guest_pool_refresh_fixture() -> (tempfile::TempDir, Config, String, String) {
+    async fn guest_pool_refresh_fixture() -> (tempfile::TempDir, Config, String, String) {
         let temp = tempfile::tempdir().expect("create test directory");
         let db = temp.path().join("vault.db");
         let data_dir = temp.path().join("data");
         fs::create_dir_all(&data_dir).expect("create data dir");
 
-        let conn = schema::open_configured(&db).expect("open test database");
-        schema::ensure_vault_schema(&conn).expect("create vault schema");
-        conn.execute(
+        let mut conn = test_db_conn(&db).await;
+        sqlx::query(
             "INSERT INTO accounts (id, username, read_only, preferred_name)
-             VALUES (?1, 'demo', 1, 'Alex Demo')",
-            params![DEMO_ACCOUNT_ID],
+             VALUES ($1, 'demo', 1, 'Alex Demo')",
         )
+        .bind(DEMO_ACCOUNT_ID)
+        .execute(&mut *conn)
+        .await
         .expect("insert template account");
-        conn.execute(
+        let hid: i64 = sqlx::query_scalar(
             "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-             VALUES (?1, '+15555550100', '+15555550100', 'phone', 'phone')",
-            params![DEMO_ACCOUNT_ID],
+             VALUES ($1, '+15555550100', '+15555550100', 'phone', 'phone')
+             RETURNING id",
         )
+        .bind(DEMO_ACCOUNT_ID)
+        .fetch_one(&mut *conn)
+        .await
         .expect("insert template handle");
-        let hid = conn.last_insert_rowid();
-        conn.execute(
-            "INSERT INTO account_handles (account_id, handle_id) VALUES (?1, ?2)",
-            params![DEMO_ACCOUNT_ID, hid],
-        )
-        .expect("link template handle");
-        conn.execute(
+        sqlx::query("INSERT INTO account_handles (account_id, handle_id) VALUES ($1, $2)")
+            .bind(DEMO_ACCOUNT_ID)
+            .bind(hid)
+            .execute(&mut *conn)
+            .await
+            .expect("link template handle");
+        let cid: i64 = sqlx::query_scalar(
             "INSERT INTO conversations (account_id, chat_handle_id, conversation_type, source_file)
-             VALUES (?1, ?2, 'individual', 'a.jsonl')",
-            params![DEMO_ACCOUNT_ID, hid],
+             VALUES ($1, $2, 'individual', 'a.jsonl')
+             RETURNING id",
         )
+        .bind(DEMO_ACCOUNT_ID)
+        .bind(hid)
+        .fetch_one(&mut *conn)
+        .await
         .expect("insert template conversation");
-        let cid = conn.last_insert_rowid();
-        conn.execute(
+        sqlx::query(
             r#"INSERT INTO messages (
                 conversation_id, account_id, source, guid, timestamp, is_from_me, sort_order, body
-            ) VALUES (?1, ?2, 'imessage', 'g1', '2020-01-01T00:00:00Z', 1, 0, 'hello')"#,
-            params![cid, DEMO_ACCOUNT_ID],
+            ) VALUES ($1, $2, 'imessage', 'g1', '2020-01-01T00:00:00Z', 1, 0, 'hello')"#,
         )
+        .bind(cid)
+        .bind(DEMO_ACCOUNT_ID)
+        .execute(&mut *conn)
+        .await
         .expect("insert template message");
 
         let stale_id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1".to_string();
         let assigned_id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2".to_string();
-        account_profile::insert_guest_account(&conn, &stale_id, "guest-stale", Some("Guest"))
+        account_profile::insert_guest_account(&mut conn, &stale_id, "guest-stale", Some("Guest"))
+            .await
             .expect("insert stale ready guest");
-        account_profile::insert_guest_account(&conn, &assigned_id, "guest-keep", Some("Guest"))
+        account_profile::insert_guest_account(&mut conn, &assigned_id, "guest-keep", Some("Guest"))
+            .await
             .expect("insert assigned guest");
-        account_profile::set_guest_status(&conn, &assigned_id, "assigned").expect("mark assigned");
+        account_profile::set_guest_status(&mut conn, &assigned_id, "assigned")
+            .await
+            .expect("mark assigned");
         fs::create_dir_all(data_dir.join(&stale_id)).expect("stale guest dir");
         fs::create_dir_all(data_dir.join(&assigned_id)).expect("assigned guest dir");
         drop(conn);
@@ -1018,6 +1146,7 @@ mod tests {
                 assets_converted_dir: "assets_converted".into(),
             },
             server: None,
+            database: crate::config::DatabaseConfig::default(),
         };
         (temp, cfg, stale_id, assigned_id)
     }
@@ -1039,8 +1168,8 @@ mod tests {
         assert!(seed.account.read_only);
     }
 
-    #[test]
-    fn failed_reset_preserves_existing_demo_account() {
+    #[tokio::test]
+    async fn failed_reset_preserves_existing_demo_account() {
         let temp = tempfile::tempdir().expect("create test directory");
         let db = temp.path().join("vault.db");
         let data_dir = temp.path().join("data");
@@ -1050,35 +1179,46 @@ mod tests {
         let original_data = b"existing account data\n";
         fs::write(&sentinel, original_data).expect("write account data sentinel");
 
-        let conn = schema::open_configured(&db).expect("open test database");
-        schema::ensure_vault_schema(&conn).expect("create vault schema");
-        account_profile::ensure_account_row(&conn, DEMO_ACCOUNT_ID).expect("seed account");
-        conn.execute(
-            "INSERT INTO handles (
-                account_id, raw, normalized, handle_type, service
-             ) VALUES (?1, '+15555550100', '+15555550100', 'phone', 'phone')",
-            params![DEMO_ACCOUNT_ID],
-        )
-        .expect("insert handle");
-        let handle_id = conn.last_insert_rowid();
-        conn.execute(
-            "INSERT INTO conversations (
-                account_id, chat_handle_id, conversation_type, source_file
-             ) VALUES (?1, ?2, 'individual', 'existing.jsonl')",
-            params![DEMO_ACCOUNT_ID, handle_id],
-        )
-        .expect("insert conversation");
-        let conversation_id = conn.last_insert_rowid();
-        conn.execute(
-            "INSERT INTO messages (
-                conversation_id, account_id, source, guid, timestamp,
-                is_from_me, body, sort_order
-             ) VALUES (?1, ?2, 'imessage', 'existing-message',
-                       '2026-01-01T00:00:00Z', 0, 'keep me', 0)",
-            params![conversation_id, DEMO_ACCOUNT_ID],
-        )
-        .expect("insert message");
-        drop(conn);
+        {
+            let (pool, mut conn) = test_db(&db).await;
+            account_profile::ensure_account_row(&mut conn, DEMO_ACCOUNT_ID)
+                .await
+                .expect("seed account");
+            let handle_id: i64 = sqlx::query_scalar(
+                "INSERT INTO handles (
+                    account_id, raw, normalized, handle_type, service
+                 ) VALUES ($1, '+15555550100', '+15555550100', 'phone', 'phone')
+                 RETURNING id",
+            )
+            .bind(DEMO_ACCOUNT_ID)
+            .fetch_one(&mut *conn)
+            .await
+            .expect("insert handle");
+            let conversation_id: i64 = sqlx::query_scalar(
+                "INSERT INTO conversations (
+                    account_id, chat_handle_id, conversation_type, source_file
+                 ) VALUES ($1, $2, 'individual', 'existing.jsonl')
+                 RETURNING id",
+            )
+            .bind(DEMO_ACCOUNT_ID)
+            .bind(handle_id)
+            .fetch_one(&mut *conn)
+            .await
+            .expect("insert conversation");
+            sqlx::query(
+                "INSERT INTO messages (
+                    conversation_id, account_id, source, guid, timestamp,
+                    is_from_me, body, sort_order
+                 ) VALUES ($1, $2, 'imessage', 'existing-message',
+                           '2026-01-01T00:00:00Z', 0, 'keep me', 0)",
+            )
+            .bind(conversation_id)
+            .bind(DEMO_ACCOUNT_ID)
+            .execute(&mut *conn)
+            .await
+            .expect("insert message");
+            close_test_db(pool, conn).await;
+        }
 
         let cfg = Config {
             paths: PathsConfig {
@@ -1088,6 +1228,7 @@ mod tests {
                 assets_converted_dir: "assets_converted".into(),
             },
             server: None,
+            database: crate::config::DatabaseConfig::default(),
         };
         let invalid_bundle = temp.path().join("invalid-bundle");
         fs::create_dir_all(invalid_bundle.join("staging").join(IMESSAGE_SOURCE))
@@ -1101,24 +1242,21 @@ mod tests {
             DEMO_ACCOUNT_ID,
             &temp.path().join("config/config.toml"),
             &temp.path().join("prepared-config.toml"),
-        );
+        )
+        .await;
 
         assert!(result.is_err());
-        let conn = schema::open_configured(&db).expect("reopen test database");
-        let account_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM accounts WHERE id = ?1",
-                params![DEMO_ACCOUNT_ID],
-                |row| row.get(0),
-            )
+        let mut conn = test_db_conn(&db).await;
+        let account_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE id = $1")
+            .bind(DEMO_ACCOUNT_ID)
+            .fetch_one(&mut *conn)
+            .await
             .expect("count account");
-        let message_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM messages WHERE guid = 'existing-message'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("count message");
+        let message_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE guid = 'existing-message'")
+                .fetch_one(&mut *conn)
+                .await
+                .expect("count message");
         assert_eq!(account_count, 1);
         assert_eq!(message_count, 1);
         assert_eq!(
@@ -1127,8 +1265,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn failed_preparation_preserves_active_config() {
+    #[tokio::test]
+    async fn failed_preparation_preserves_active_config() {
         let temp = tempfile::tempdir().expect("create test directory");
         let config_dest = temp.path().join("config/config.toml");
         fs::create_dir_all(config_dest.parent().expect("config parent"))
@@ -1138,7 +1276,7 @@ mod tests {
         let invalid_bundle = temp.path().join("invalid-bundle");
         fs::create_dir_all(&invalid_bundle).expect("create invalid bundle");
 
-        let result = prepare_config_and_reset(&invalid_bundle, &config_dest, DEMO_ACCOUNT_ID);
+        let result = prepare_config_and_reset(&invalid_bundle, &config_dest, DEMO_ACCOUNT_ID).await;
 
         assert!(result.is_err());
         assert_eq!(
@@ -1147,17 +1285,16 @@ mod tests {
         );
     }
 
-    #[test]
-    fn vault_db_without_accounts_table_does_not_block_reset_check() {
+    #[tokio::test]
+    async fn vault_db_without_accounts_table_does_not_block_reset_check() {
         let temp = tempfile::tempdir().expect("create test directory");
         let active = temp.path().join("vault.db");
-        rusqlite::Connection::open(&active).expect("create empty sqlite file");
+        fs::write(&active, []).expect("create empty sqlite file");
         let prepared = temp.path().join("prepared.db");
-        let conn = schema::open_configured(&prepared).expect("open prepared database");
-        schema::ensure_vault_schema(&conn).expect("create prepared schema");
-        drop(conn);
+        drop(test_db_conn(&prepared).await);
 
         verify_non_demo_state_preserved(&active, &prepared, DEMO_ACCOUNT_ID)
+            .await
             .expect("a vault.db with no accounts table must not block reset-demo");
     }
 
@@ -1176,8 +1313,8 @@ mod tests {
         assert!(error.contains("offline"), "{error}");
     }
 
-    #[test]
-    fn failures_after_database_and_account_install_restore_all_active_state() {
+    #[tokio::test]
+    async fn failures_after_database_and_account_install_restore_all_active_state() {
         for failure_point in [
             ResetInstallFailure::AfterDatabase,
             ResetInstallFailure::AfterAccount,
@@ -1186,12 +1323,12 @@ mod tests {
             let active_db = temp.path().join("active/vault.db");
             fs::create_dir_all(active_db.parent().expect("database parent"))
                 .expect("create database parent");
-            seed_reset_test_database(&active_db);
+            seed_reset_test_database(&active_db).await;
             let prepared_db = temp.path().join("prepared/vault.db");
             fs::create_dir_all(prepared_db.parent().expect("prepared database parent"))
                 .expect("create prepared database parent");
             fs::copy(&active_db, &prepared_db).expect("copy prepared database");
-            make_prepared_reset_database_observably_different(&prepared_db);
+            make_prepared_reset_database_observably_different(&prepared_db).await;
 
             let active_account = temp.path().join("data").join(DEMO_ACCOUNT_ID);
             let prepared_account = temp.path().join("prepared-data").join(DEMO_ACCOUNT_ID);
@@ -1234,7 +1371,7 @@ mod tests {
             );
 
             assert!(result.is_err());
-            assert_reset_test_database(&active_db);
+            assert_reset_test_database(&active_db).await;
             assert_eq!(
                 fs::read(active_account.join("sentinel")).expect("read data sentinel"),
                 b"old data"
@@ -1246,13 +1383,13 @@ mod tests {
         }
     }
 
-    #[test]
-    fn active_sidecars_are_cleaned_immediately_before_database_rename() {
+    #[tokio::test]
+    async fn active_sidecars_are_cleaned_immediately_before_database_rename() {
         let temp = tempfile::tempdir().expect("create test directory");
         let active_db = temp.path().join("active/vault.db");
         fs::create_dir_all(active_db.parent().expect("database parent"))
             .expect("create database parent");
-        seed_reset_test_database(&active_db);
+        seed_reset_test_database(&active_db).await;
         let prepared_db = temp.path().join("prepared/vault.db");
         fs::create_dir_all(prepared_db.parent().expect("prepared database parent"))
             .expect("create prepared database parent");
@@ -1272,12 +1409,13 @@ mod tests {
         fs::write(&prepared_config, b"new config").expect("write prepared config");
 
         {
-            let conn = schema::open_configured(&active_db).expect("reopen active database");
-            conn.execute(
-                "UPDATE accounts SET preferred_name = 'reopened' WHERE id = ?1",
-                params![DEMO_ACCOUNT_ID],
-            )
-            .expect("write through reopened active database");
+            let (pool, mut conn) = test_db(&active_db).await;
+            sqlx::query("UPDATE accounts SET preferred_name = 'reopened' WHERE id = $1")
+                .bind(DEMO_ACCOUNT_ID)
+                .execute(&mut *conn)
+                .await
+                .expect("write through reopened active database");
+            close_test_db(pool, conn).await;
         }
         let active_wal = sqlite_sidecar(&active_db, "-wal");
         let active_shm = sqlite_sidecar(&active_db, "-shm");
@@ -1303,7 +1441,8 @@ mod tests {
                 }
                 fs::rename(source, destination).map_err(Into::into)
             },
-        );
+        )
+        .await;
 
         assert!(result.is_err());
         assert!(
@@ -1383,115 +1522,134 @@ mod tests {
         AfterAccount,
     }
 
-    fn seed_reset_test_database(path: &Path) {
-        let conn = schema::open_configured(path).expect("open reset test database");
-        schema::ensure_vault_schema(&conn).expect("create reset test schema");
-        seed_reset_test_account(&conn, DEMO_ACCOUNT_ID, "demo-existing");
-        seed_reset_test_account(&conn, "non-demo-account", "non-demo-existing");
+    async fn seed_reset_test_database(path: &Path) {
+        let (pool, mut conn) = test_db(path).await;
+        schema::ensure_vault_schema(&mut conn)
+            .await
+            .expect("create reset test schema");
+        seed_reset_test_account(&mut conn, DEMO_ACCOUNT_ID, "demo-existing").await;
+        seed_reset_test_account(&mut conn, "non-demo-account", "non-demo-existing").await;
+        close_test_db(pool, conn).await;
+        // Pool close does not reliably checkpoint WAL sidecars, so an
+        // fs::copy of this file would miss everything written to the -wal.
+        // Checkpoint explicitly so copies see the seeded rows.
+        checkpoint_and_clean_sidecars(path, "while seeding reset test database")
+            .await
+            .expect("checkpoint seeded reset test database");
     }
 
-    fn make_prepared_reset_database_observably_different(path: &Path) {
-        let conn = schema::open_configured(path).expect("open prepared reset test database");
-        conn.execute(
-            "UPDATE accounts SET username = 'prepared-demo' WHERE id = ?1",
-            params![DEMO_ACCOUNT_ID],
-        )
-        .expect("change prepared demo account");
-        conn.execute(
-            "DELETE FROM messages WHERE account_id = ?1",
-            params![DEMO_ACCOUNT_ID],
-        )
-        .expect("delete prepared demo message");
-        conn.execute("DELETE FROM accounts WHERE id = 'non-demo-account'", [])
+    async fn make_prepared_reset_database_observably_different(path: &Path) {
+        let (pool, mut conn) = test_db(path).await;
+        sqlx::query("UPDATE accounts SET username = 'prepared-demo' WHERE id = $1")
+            .bind(DEMO_ACCOUNT_ID)
+            .execute(&mut *conn)
+            .await
+            .expect("change prepared demo account");
+        sqlx::query("DELETE FROM messages WHERE account_id = $1")
+            .bind(DEMO_ACCOUNT_ID)
+            .execute(&mut *conn)
+            .await
+            .expect("delete prepared demo message");
+        sqlx::query("DELETE FROM accounts WHERE id = 'non-demo-account'")
+            .execute(&mut *conn)
+            .await
             .expect("delete prepared non-demo marker");
-        drop(conn);
+        close_test_db(pool, conn).await;
         checkpoint_and_clean_sidecars(path, "while preparing reset test database")
+            .await
             .expect("checkpoint prepared reset test database");
 
-        let conn = schema::open_configured(path).expect("verify prepared reset test database");
-        let demo_username: String = conn
-            .query_row(
-                "SELECT username FROM accounts WHERE id = ?1",
-                params![DEMO_ACCOUNT_ID],
-                |row| row.get(0),
-            )
-            .expect("read changed prepared demo account");
-        let demo_messages: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM messages WHERE account_id = ?1",
-                params![DEMO_ACCOUNT_ID],
-                |row| row.get(0),
-            )
-            .expect("count prepared demo messages");
-        let non_demo_accounts: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM accounts WHERE id = 'non-demo-account'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("count prepared non-demo marker");
+        let mut conn = test_db_conn(path).await;
+        let demo_username: String =
+            sqlx::query_scalar("SELECT username FROM accounts WHERE id = $1")
+                .bind(DEMO_ACCOUNT_ID)
+                .fetch_one(&mut *conn)
+                .await
+                .expect("read changed prepared demo account");
+        let demo_messages: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE account_id = $1")
+                .bind(DEMO_ACCOUNT_ID)
+                .fetch_one(&mut *conn)
+                .await
+                .expect("count prepared demo messages");
+        let non_demo_accounts: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE id = 'non-demo-account'")
+                .fetch_one(&mut *conn)
+                .await
+                .expect("count prepared non-demo marker");
         assert_eq!(demo_username, "prepared-demo");
         assert_eq!(demo_messages, 0);
         assert_eq!(non_demo_accounts, 0);
     }
 
-    fn seed_reset_test_account(conn: &rusqlite::Connection, account_id: &str, guid: &str) {
-        account_profile::ensure_account_row(conn, account_id).expect("seed reset test account");
-        conn.execute(
+    async fn seed_reset_test_account(conn: &mut AnyConnection, account_id: &str, guid: &str) {
+        account_profile::ensure_account_row(conn, account_id)
+            .await
+            .expect("seed reset test account");
+        let handle_id: i64 = sqlx::query_scalar(
             "INSERT INTO handles (
                 account_id, raw, normalized, handle_type, service
-             ) VALUES (?1, ?2, ?2, 'username', 'phone')",
-            params![account_id, format!("{account_id}-handle")],
+             ) VALUES ($1, $2, $2, 'username', 'phone')
+             RETURNING id",
         )
+        .bind(account_id)
+        .bind(format!("{account_id}-handle"))
+        .fetch_one(&mut *conn)
+        .await
         .expect("insert reset test handle");
-        let handle_id = conn.last_insert_rowid();
-        conn.execute(
+        let conversation_id: i64 = sqlx::query_scalar(
             "INSERT INTO conversations (
                 account_id, chat_handle_id, conversation_type, source_file
-             ) VALUES (?1, ?2, 'individual', 'existing.jsonl')",
-            params![account_id, handle_id],
+             ) VALUES ($1, $2, 'individual', 'existing.jsonl')
+             RETURNING id",
         )
+        .bind(account_id)
+        .bind(handle_id)
+        .fetch_one(&mut *conn)
+        .await
         .expect("insert reset test conversation");
-        let conversation_id = conn.last_insert_rowid();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO messages (
                 conversation_id, account_id, source, guid, timestamp,
                 is_from_me, body, sort_order
-             ) VALUES (?1, ?2, 'imessage', ?3,
+             ) VALUES ($1, $2, 'imessage', $3,
                        '2026-01-01T00:00:00Z', 0, 'keep me', 0)",
-            params![conversation_id, account_id, guid],
         )
+        .bind(conversation_id)
+        .bind(account_id)
+        .bind(guid)
+        .execute(&mut *conn)
+        .await
         .expect("insert reset test message");
     }
 
-    fn assert_reset_test_database(path: &Path) {
-        let conn = schema::open_configured(path).expect("open restored reset test database");
+    async fn assert_reset_test_database(path: &Path) {
+        let mut conn = test_db_conn(path).await;
         for (account_id, guid) in [
             (DEMO_ACCOUNT_ID, "demo-existing"),
             ("non-demo-account", "non-demo-existing"),
         ] {
-            let account_count: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM accounts WHERE id = ?1",
-                    params![account_id],
-                    |row| row.get(0),
-                )
-                .expect("count restored account");
-            let username: String = conn
-                .query_row(
-                    "SELECT username FROM accounts WHERE id = ?1",
-                    params![account_id],
-                    |row| row.get(0),
-                )
-                .expect("read restored username");
-            let (message_count, body): (i64, String) = conn
-                .query_row(
-                    "SELECT COUNT(*), MIN(body)
-                     FROM messages WHERE account_id = ?1 AND guid = ?2",
-                    params![account_id, guid],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .expect("count restored message");
+            let account_count: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE id = $1")
+                    .bind(account_id)
+                    .fetch_one(&mut *conn)
+                    .await
+                    .expect("count restored account");
+            let username: String =
+                sqlx::query_scalar("SELECT username FROM accounts WHERE id = $1")
+                    .bind(account_id)
+                    .fetch_one(&mut *conn)
+                    .await
+                    .expect("read restored username");
+            let (message_count, body): (i64, String) = sqlx::query_as(
+                "SELECT COUNT(*), MIN(body)
+                 FROM messages WHERE account_id = $1 AND guid = $2",
+            )
+            .bind(account_id)
+            .bind(guid)
+            .fetch_one(&mut *conn)
+            .await
+            .expect("count restored message");
             assert_eq!(account_count, 1, "account {account_id}");
             assert_eq!(username, account_id, "username {account_id}");
             assert_eq!(message_count, 1, "message {guid}");

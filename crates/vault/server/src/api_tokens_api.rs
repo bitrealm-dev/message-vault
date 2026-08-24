@@ -3,13 +3,12 @@
 use axum::Json;
 use axum::extract::{Path as AxumPath, State};
 use axum::http::HeaderMap;
-use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::db::api_tokens::{self, ApiTokenScopes};
 use crate::db::schema;
 use crate::server::{
-    ApiError, AppState, JoinBlocking, reject_if_guest_account, require_full_access, resolve_auth,
+    ApiError, AppState, reject_if_guest_account, require_full_access, resolve_auth,
 };
 
 /// One named API token as shown in Settings: label, scopes, and masked secret.
@@ -83,12 +82,6 @@ fn default_scopes() -> String {
     "both".into()
 }
 
-fn open_accounts_conn(db: &std::path::Path) -> anyhow::Result<Connection> {
-    let conn = schema::open_configured(db)?;
-    schema::ensure_accounts_schema(&conn)?;
-    Ok(conn)
-}
-
 /// The created token, including its plaintext secret (returned once).
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CreateApiTokenResponse {
@@ -153,15 +146,19 @@ pub async fn list_api_tokens_handler(
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let account_id = auth.account_id;
-    let db = state.cfg.paths.db.clone();
 
-    let items = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<ApiTokenItem>> {
-        let conn = open_accounts_conn(&db)?;
-        let rows = api_tokens::list_api_tokens(&conn, &account_id)?;
-        Ok(rows.into_iter().map(ApiTokenItem::from).collect())
-    })
-    .await
-    .join_blocking("list API tokens task")?;
+    let mut conn = state
+        .db
+        .acquire()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    schema::ensure_accounts_schema(&mut conn)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let rows = api_tokens::list_api_tokens(&mut conn, &account_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let items = rows.into_iter().map(ApiTokenItem::from).collect();
 
     Ok(Json(ListApiTokensResponse { items }))
 }
@@ -194,24 +191,19 @@ pub async fn create_api_token_handler(
     let scopes =
         ApiTokenScopes::parse(&req.scopes).map_err(|e| ApiError::BadRequest(e.to_string()))?;
     let expires_in_days = req.expires_in_days;
-    let db = state.cfg.paths.db.clone();
 
-    let created = tokio::task::spawn_blocking(
-        #[allow(clippy::type_complexity)]
-        move || -> Result<(
-            String,
-            String,
-            ApiTokenScopes,
-            String,
-            Option<String>,
-            String,
-        ), crate::db::api_tokens::ApiTokenMutationError> {
-            let conn = open_accounts_conn(&db)?;
-            api_tokens::create_api_token(&conn, &account_id, &label, scopes, expires_in_days)
-        },
-    )
-    .await
-    .join_map("create API token task", map_label_error)?;
+    let mut conn = state
+        .db
+        .acquire()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    schema::ensure_accounts_schema(&mut conn)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let created =
+        api_tokens::create_api_token(&mut conn, &account_id, &label, scopes, expires_in_days)
+            .await
+            .map_err(map_label_error)?;
 
     Ok(Json(CreateApiTokenResponse {
         id: created.0,
@@ -246,14 +238,18 @@ pub async fn delete_api_token_handler(
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let account_id = auth.account_id;
-    let db = state.cfg.paths.db.clone();
 
-    let deleted = tokio::task::spawn_blocking(move || -> anyhow::Result<bool> {
-        let conn = open_accounts_conn(&db)?;
-        api_tokens::delete_api_token(&conn, &account_id, &id)
-    })
-    .await
-    .join_blocking("delete API token task")?;
+    let mut conn = state
+        .db
+        .acquire()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    schema::ensure_accounts_schema(&mut conn)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let deleted = api_tokens::delete_api_token(&mut conn, &account_id, &id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     if !deleted {
         return Err(ApiError::NotFound("API token not found".into()));
@@ -288,27 +284,28 @@ pub async fn rename_api_token_handler(
     reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
     let account_id = auth.account_id;
     let label = req.label;
-    let db = state.cfg.paths.db.clone();
     let id_for_resp = id.clone();
 
-    let updated = tokio::task::spawn_blocking(
-        move || -> Result<(bool, String), crate::db::api_tokens::ApiTokenMutationError> {
-            let conn = open_accounts_conn(&db)?;
-            let trimmed = label.trim().to_string();
-            let ok = api_tokens::update_api_token_label(&conn, &account_id, &id, &trimmed)?;
-            Ok((ok, trimmed))
-        },
-    )
-    .await
-    .join_map("rename API token task", map_label_error)?;
+    let mut conn = state
+        .db
+        .acquire()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    schema::ensure_accounts_schema(&mut conn)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let trimmed = label.trim().to_string();
+    let ok = api_tokens::update_api_token_label(&mut conn, &account_id, &id, &trimmed)
+        .await
+        .map_err(map_label_error)?;
 
-    if !updated.0 {
+    if !ok {
         return Err(ApiError::NotFound("API token not found".into()));
     }
     Ok(Json(RenameApiTokenResponse {
         ok: true,
         id: id_for_resp,
-        label: updated.1,
+        label: trimmed,
     }))
 }
 

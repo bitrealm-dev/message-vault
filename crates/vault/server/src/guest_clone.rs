@@ -5,7 +5,8 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
+use sqlx::any::AnyRow;
+use sqlx::{AnyConnection, Connection, Row};
 
 use crate::config::Config;
 use crate::db::{account_profile, session_tokens};
@@ -22,53 +23,59 @@ use crate::db::{account_profile, session_tokens};
 ///
 /// Returns an error when the template is missing, a SQL statement fails, or
 /// files cannot be copied.
-pub fn clone_template_to_guest(
-    conn: &mut Connection,
+pub async fn clone_template_to_guest(
+    conn: &mut AnyConnection,
     cfg: &Config,
     template_account_id: &str,
 ) -> Result<String> {
     let guest_id = {
-        let tx = conn.transaction()?;
-        let guest_id = clone_sql(&tx, template_account_id)?;
-        tx.commit()?;
+        let mut tx = conn.begin().await?;
+        let guest_id = clone_sql(&mut *tx, template_account_id).await?;
+        tx.commit().await?;
         guest_id
     };
-    finish_file_clone(conn, cfg, template_account_id, &guest_id)?;
+    finish_file_clone(conn, cfg, template_account_id, &guest_id).await?;
     Ok(guest_id)
 }
 
 /// Clone the template and mark that guest assigned in the same SQL transaction.
 ///
 /// Used by on-demand Try it so another request cannot take the new `ready` row
-/// before this request issues a session.
+/// before this request issues a session. A plain transaction is enough: the
+/// vault operation lock already serializes clone work against other writers.
 ///
 /// # Errors
 ///
 /// Returns an error when the template is missing, a SQL statement fails, or
 /// files cannot be copied.
-pub fn clone_and_assign_guest(
-    conn: &mut Connection,
+pub async fn clone_and_assign_guest(
+    conn: &mut AnyConnection,
     cfg: &Config,
     template_account_id: &str,
     session_secs: u64,
 ) -> Result<(String, String, String)> {
     let (guest_id, username, token) = {
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let guest_id = clone_sql(&tx, template_account_id)?;
-        account_profile::set_guest_status(&tx, &guest_id, "assigned")?;
-        let username = account_profile::username_for_account(&tx, &guest_id)?
+        let mut tx = conn.begin().await?;
+        let guest_id = clone_sql(&mut *tx, template_account_id).await?;
+        account_profile::set_guest_status(&mut *tx, &guest_id, "assigned").await?;
+        let username = account_profile::username_for_account(&mut *tx, &guest_id)
+            .await?
             .context("guest username missing after clone")?;
-        let token =
-            session_tokens::insert_account_session_token_with_ttl(&tx, &guest_id, session_secs)?;
-        tx.commit()?;
+        let token = session_tokens::insert_account_session_token_with_ttl(
+            &mut *tx,
+            &guest_id,
+            session_secs,
+        )
+        .await?;
+        tx.commit().await?;
         (guest_id, username, token)
     };
-    finish_file_clone(conn, cfg, template_account_id, &guest_id)?;
+    finish_file_clone(conn, cfg, template_account_id, &guest_id).await?;
     Ok((guest_id, username, token))
 }
 
-fn finish_file_clone(
-    conn: &mut Connection,
+async fn finish_file_clone(
+    conn: &mut AnyConnection,
     cfg: &Config,
     template_account_id: &str,
     guest_id: &str,
@@ -76,7 +83,7 @@ fn finish_file_clone(
     let src_root = cfg.paths.data_dir.join(template_account_id);
     let dest_root = cfg.paths.data_dir.join(guest_id);
     if let Err(err) = copy_tree(&src_root, &dest_root) {
-        let cleanup = account_profile::delete_account(conn, guest_id);
+        let cleanup = account_profile::delete_account(conn, guest_id).await;
         let _ = fs::remove_dir_all(&dest_root);
         if let Err(cleanup_err) = cleanup {
             return Err(err.context(format!(
@@ -88,14 +95,11 @@ fn finish_file_clone(
     Ok(())
 }
 
-fn clone_sql(tx: &Transaction<'_>, template: &str) -> Result<String> {
-    let exists: Option<String> = tx
-        .query_row(
-            "SELECT id FROM accounts WHERE id = ?1",
-            params![template],
-            |row| row.get(0),
-        )
-        .optional()?;
+async fn clone_sql(tx: &mut AnyConnection, template: &str) -> Result<String> {
+    let exists: Option<String> = sqlx::query_scalar("SELECT id FROM accounts WHERE id = $1")
+        .bind(template)
+        .fetch_optional(&mut *tx)
+        .await?;
     if exists.is_none() {
         bail!("template account {template} not found");
     }
@@ -103,26 +107,26 @@ fn clone_sql(tx: &Transaction<'_>, template: &str) -> Result<String> {
     let guest_id = uuid::Uuid::new_v4().to_string();
     let hex = guest_id.replace('-', "");
     let username = format!("guest-{}", &hex[..8]);
-    let preferred = account_profile::load_preferred_name(tx, template)?;
-    account_profile::insert_guest_account(tx, &guest_id, &username, preferred.as_deref())?;
+    let preferred = account_profile::load_preferred_name(tx, template).await?;
+    account_profile::insert_guest_account(tx, &guest_id, &username, preferred.as_deref()).await?;
 
-    let handle_map = copy_handles(tx, template, &guest_id)?;
-    let contact_map = copy_contacts(tx, template, &guest_id)?;
-    copy_contact_handles(tx, template, &guest_id, &handle_map, &contact_map)?;
-    copy_account_handles(tx, template, &guest_id, &handle_map)?;
-    let group_map = copy_contact_groups(tx, template, &guest_id)?;
-    copy_contact_group_members(tx, template, &contact_map, &group_map)?;
-    copy_trashed_handles(tx, template, &guest_id, &handle_map)?;
-    copy_trashed_contacts(tx, template, &guest_id, &contact_map)?;
+    let handle_map = copy_handles(tx, template, &guest_id).await?;
+    let contact_map = copy_contacts(tx, template, &guest_id).await?;
+    copy_contact_handles(tx, template, &guest_id, &handle_map, &contact_map).await?;
+    copy_account_handles(tx, template, &guest_id, &handle_map).await?;
+    let group_map = copy_contact_groups(tx, template, &guest_id).await?;
+    copy_contact_group_members(tx, template, &contact_map, &group_map).await?;
+    copy_trashed_handles(tx, template, &guest_id, &handle_map).await?;
+    copy_trashed_contacts(tx, template, &guest_id, &contact_map).await?;
 
-    let import_map = copy_vault_imports(tx, template, &guest_id)?;
-    copy_vault_import_issues(tx, &import_map)?;
+    let import_map = copy_vault_imports(tx, template, &guest_id).await?;
+    copy_vault_import_issues(tx, &import_map).await?;
 
-    let conversation_map = copy_conversations(tx, template, &guest_id, &handle_map)?;
-    let tag_map = copy_conversation_tags(tx, template, &guest_id)?;
-    copy_conversation_tag_members(tx, template, &conversation_map, &tag_map)?;
-    copy_trashed_conversations(tx, template, &guest_id, &conversation_map)?;
-    copy_participants(tx, template, &conversation_map, &handle_map, &contact_map)?;
+    let conversation_map = copy_conversations(tx, template, &guest_id, &handle_map).await?;
+    let tag_map = copy_conversation_tags(tx, template, &guest_id).await?;
+    copy_conversation_tag_members(tx, template, &conversation_map, &tag_map).await?;
+    copy_trashed_conversations(tx, template, &guest_id, &conversation_map).await?;
+    copy_participants(tx, template, &conversation_map, &handle_map, &contact_map).await?;
 
     let message_map = copy_messages(
         tx,
@@ -131,12 +135,13 @@ fn clone_sql(tx: &Transaction<'_>, template: &str) -> Result<String> {
         &conversation_map,
         &handle_map,
         &import_map,
-    )?;
-    copy_attachments(tx, template, &message_map)?;
-    copy_tapbacks(tx, template, &message_map, &handle_map)?;
+    )
+    .await?;
+    copy_attachments(tx, template, &message_map).await?;
+    copy_tapbacks(tx, template, &message_map, &handle_map).await?;
 
-    let staging_conv_map = copy_staging_conversations(tx, template, &guest_id, &handle_map)?;
-    copy_staging_participants(tx, template, &staging_conv_map, &handle_map, &contact_map)?;
+    let staging_conv_map = copy_staging_conversations(tx, template, &guest_id, &handle_map).await?;
+    copy_staging_participants(tx, template, &staging_conv_map, &handle_map, &contact_map).await?;
     let staging_msg_map = copy_staging_messages(
         tx,
         template,
@@ -144,25 +149,30 @@ fn clone_sql(tx: &Transaction<'_>, template: &str) -> Result<String> {
         &staging_conv_map,
         &handle_map,
         &import_map,
-    )?;
-    copy_staging_attachments(tx, template, &staging_msg_map)?;
-    copy_staging_tapbacks(tx, template, &staging_msg_map, &handle_map)?;
+    )
+    .await?;
+    copy_staging_attachments(tx, template, &staging_msg_map).await?;
+    copy_staging_tapbacks(tx, template, &staging_msg_map, &handle_map).await?;
 
-    copy_account_prefs(tx, template, &guest_id)?;
+    copy_account_prefs(tx, template, &guest_id).await?;
     Ok(guest_id)
 }
 
-fn collect_rows<T>(
-    tx: &Transaction<'_>,
+async fn collect_rows<T>(
+    tx: &mut AnyConnection,
     sql: &str,
     account_id: &str,
-    f: impl FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+    f: impl Fn(&AnyRow) -> Result<T>,
 ) -> Result<Vec<T>> {
-    let mut stmt = tx.prepare(sql)?;
-    let rows = stmt
-        .query_map(params![account_id], f)?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(rows)
+    let rows = sqlx::query(sql)
+        .bind(account_id)
+        .fetch_all(&mut *tx)
+        .await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in &rows {
+        out.push(f(row)?);
+    }
+    Ok(out)
 }
 
 fn mapped(map: &HashMap<i64, i64>, old: i64) -> Option<i64> {
@@ -173,66 +183,88 @@ fn mapped_opt(map: &HashMap<i64, i64>, old: Option<i64>) -> Option<i64> {
     old.and_then(|id| map.get(&id).copied())
 }
 
-fn copy_handles(tx: &Transaction<'_>, template: &str, guest: &str) -> Result<HashMap<i64, i64>> {
+async fn copy_handles(
+    tx: &mut AnyConnection,
+    template: &str,
+    guest: &str,
+) -> Result<HashMap<i64, i64>> {
     let rows = collect_rows(
         tx,
         r#"
         SELECT id, raw, normalized, normalized_note, handle_type, service
-        FROM handles WHERE account_id = ?1
+        FROM handles WHERE account_id = $1
         "#,
         template,
         |row| {
             Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, String>(5)?,
+                row.try_get::<i64, _>(0)?,
+                row.try_get::<String, _>(1)?,
+                row.try_get::<String, _>(2)?,
+                row.try_get::<Option<String>, _>(3)?,
+                row.try_get::<String, _>(4)?,
+                row.try_get::<String, _>(5)?,
             ))
         },
-    )?;
+    )
+    .await?;
     let mut map = HashMap::with_capacity(rows.len());
     for (old_id, raw, normalized, note, handle_type, service) in rows {
-        tx.execute(
+        let new_id: i64 = sqlx::query_scalar(
             r#"
             INSERT INTO handles (
                 account_id, raw, normalized, normalized_note, handle_type, service
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ) VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id
             "#,
-            params![guest, raw, normalized, note, handle_type, service],
-        )?;
-        map.insert(old_id, tx.last_insert_rowid());
+        )
+        .bind(guest)
+        .bind(raw)
+        .bind(normalized)
+        .bind(note)
+        .bind(handle_type)
+        .bind(service)
+        .fetch_one(&mut *tx)
+        .await?;
+        map.insert(old_id, new_id);
     }
     Ok(map)
 }
 
-fn copy_contacts(tx: &Transaction<'_>, template: &str, guest: &str) -> Result<HashMap<i64, i64>> {
+async fn copy_contacts(
+    tx: &mut AnyConnection,
+    template: &str,
+    guest: &str,
+) -> Result<HashMap<i64, i64>> {
     let rows = collect_rows(
         tx,
-        "SELECT id, preferred_name, last_modified FROM contacts WHERE account_id = ?1",
+        "SELECT id, preferred_name, last_modified FROM contacts WHERE account_id = $1",
         template,
         |row| {
             Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
+                row.try_get::<i64, _>(0)?,
+                row.try_get::<String, _>(1)?,
+                row.try_get::<String, _>(2)?,
             ))
         },
-    )?;
+    )
+    .await?;
     let mut map = HashMap::with_capacity(rows.len());
     for (old_id, preferred_name, last_modified) in rows {
-        tx.execute(
-            "INSERT INTO contacts (account_id, preferred_name, last_modified) VALUES (?1, ?2, ?3)",
-            params![guest, preferred_name, last_modified],
-        )?;
-        map.insert(old_id, tx.last_insert_rowid());
+        let new_id: i64 = sqlx::query_scalar(
+            "INSERT INTO contacts (account_id, preferred_name, last_modified) VALUES ($1, $2, $3) RETURNING id",
+        )
+        .bind(guest)
+        .bind(preferred_name)
+        .bind(last_modified)
+        .fetch_one(&mut *tx)
+        .await?;
+        map.insert(old_id, new_id);
     }
     Ok(map)
 }
 
-fn copy_contact_handles(
-    tx: &Transaction<'_>,
+async fn copy_contact_handles(
+    tx: &mut AnyConnection,
     template: &str,
     guest: &str,
     handles: &HashMap<i64, i64>,
@@ -240,16 +272,17 @@ fn copy_contact_handles(
 ) -> Result<()> {
     let rows = collect_rows(
         tx,
-        "SELECT handle_id, contact_id, name_alias FROM contact_handles WHERE account_id = ?1",
+        "SELECT handle_id, contact_id, name_alias FROM contact_handles WHERE account_id = $1",
         template,
         |row| {
             Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, Option<String>>(2)?,
+                row.try_get::<i64, _>(0)?,
+                row.try_get::<i64, _>(1)?,
+                row.try_get::<Option<String>, _>(2)?,
             ))
         },
-    )?;
+    )
+    .await?;
     for (handle_id, contact_id, name_alias) in rows {
         let Some(new_handle) = mapped(handles, handle_id) else {
             continue;
@@ -257,65 +290,76 @@ fn copy_contact_handles(
         let Some(new_contact) = mapped(contacts, contact_id) else {
             continue;
         };
-        tx.execute(
+        sqlx::query(
             r#"
             INSERT INTO contact_handles (account_id, handle_id, contact_id, name_alias)
-            VALUES (?1, ?2, ?3, ?4)
+            VALUES ($1, $2, $3, $4)
             "#,
-            params![guest, new_handle, new_contact, name_alias],
-        )?;
+        )
+        .bind(guest)
+        .bind(new_handle)
+        .bind(new_contact)
+        .bind(name_alias)
+        .execute(&mut *tx)
+        .await?;
     }
     Ok(())
 }
 
-fn copy_account_handles(
-    tx: &Transaction<'_>,
+async fn copy_account_handles(
+    tx: &mut AnyConnection,
     template: &str,
     guest: &str,
     handles: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = collect_rows(
         tx,
-        "SELECT handle_id FROM account_handles WHERE account_id = ?1",
+        "SELECT handle_id FROM account_handles WHERE account_id = $1",
         template,
-        |row| row.get::<_, i64>(0),
-    )?;
+        |row| Ok(row.try_get::<i64, _>(0)?),
+    )
+    .await?;
     for handle_id in rows {
         let Some(new_handle) = mapped(handles, handle_id) else {
             continue;
         };
-        tx.execute(
-            "INSERT INTO account_handles (account_id, handle_id) VALUES (?1, ?2)",
-            params![guest, new_handle],
-        )?;
+        sqlx::query("INSERT INTO account_handles (account_id, handle_id) VALUES ($1, $2)")
+            .bind(guest)
+            .bind(new_handle)
+            .execute(&mut *tx)
+            .await?;
     }
     Ok(())
 }
 
-fn copy_contact_groups(
-    tx: &Transaction<'_>,
+async fn copy_contact_groups(
+    tx: &mut AnyConnection,
     template: &str,
     guest: &str,
 ) -> Result<HashMap<i64, i64>> {
     let rows = collect_rows(
         tx,
-        "SELECT id, name FROM contact_groups WHERE account_id = ?1",
+        "SELECT id, name FROM contact_groups WHERE account_id = $1",
         template,
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
-    )?;
+        |row| Ok((row.try_get::<i64, _>(0)?, row.try_get::<String, _>(1)?)),
+    )
+    .await?;
     let mut map = HashMap::with_capacity(rows.len());
     for (old_id, name) in rows {
-        tx.execute(
-            "INSERT INTO contact_groups (account_id, name) VALUES (?1, ?2)",
-            params![guest, name],
-        )?;
-        map.insert(old_id, tx.last_insert_rowid());
+        let new_id: i64 = sqlx::query_scalar(
+            "INSERT INTO contact_groups (account_id, name) VALUES ($1, $2) RETURNING id",
+        )
+        .bind(guest)
+        .bind(name)
+        .fetch_one(&mut *tx)
+        .await?;
+        map.insert(old_id, new_id);
     }
     Ok(map)
 }
 
-fn copy_contact_group_members(
-    tx: &Transaction<'_>,
+async fn copy_contact_group_members(
+    tx: &mut AnyConnection,
     template: &str,
     contacts: &HashMap<i64, i64>,
     groups: &HashMap<i64, i64>,
@@ -326,11 +370,12 @@ fn copy_contact_group_members(
         SELECT cgm.contact_id, cgm.group_id
         FROM contact_group_members cgm
         JOIN contacts c ON c.id = cgm.contact_id
-        WHERE c.account_id = ?1
+        WHERE c.account_id = $1
         "#,
         template,
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-    )?;
+        |row| Ok((row.try_get::<i64, _>(0)?, row.try_get::<i64, _>(1)?)),
+    )
+    .await?;
     for (contact_id, group_id) in rows {
         let Some(new_contact) = mapped(contacts, contact_id) else {
             continue;
@@ -338,38 +383,43 @@ fn copy_contact_group_members(
         let Some(new_group) = mapped(groups, group_id) else {
             continue;
         };
-        tx.execute(
-            "INSERT INTO contact_group_members (contact_id, group_id) VALUES (?1, ?2)",
-            params![new_contact, new_group],
-        )?;
+        sqlx::query("INSERT INTO contact_group_members (contact_id, group_id) VALUES ($1, $2)")
+            .bind(new_contact)
+            .bind(new_group)
+            .execute(&mut *tx)
+            .await?;
     }
     Ok(())
 }
 
-fn copy_conversation_tags(
-    tx: &Transaction<'_>,
+async fn copy_conversation_tags(
+    tx: &mut AnyConnection,
     template: &str,
     guest: &str,
 ) -> Result<HashMap<i64, i64>> {
     let rows = collect_rows(
         tx,
-        "SELECT id, name FROM conversation_tags WHERE account_id = ?1",
+        "SELECT id, name FROM conversation_tags WHERE account_id = $1",
         template,
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
-    )?;
+        |row| Ok((row.try_get::<i64, _>(0)?, row.try_get::<String, _>(1)?)),
+    )
+    .await?;
     let mut map = HashMap::with_capacity(rows.len());
     for (old_id, name) in rows {
-        tx.execute(
-            "INSERT INTO conversation_tags (account_id, name) VALUES (?1, ?2)",
-            params![guest, name],
-        )?;
-        map.insert(old_id, tx.last_insert_rowid());
+        let new_id: i64 = sqlx::query_scalar(
+            "INSERT INTO conversation_tags (account_id, name) VALUES ($1, $2) RETURNING id",
+        )
+        .bind(guest)
+        .bind(name)
+        .fetch_one(&mut *tx)
+        .await?;
+        map.insert(old_id, new_id);
     }
     Ok(map)
 }
 
-fn copy_conversation_tag_members(
-    tx: &Transaction<'_>,
+async fn copy_conversation_tag_members(
+    tx: &mut AnyConnection,
     template: &str,
     conversations: &HashMap<i64, i64>,
     tags: &HashMap<i64, i64>,
@@ -380,11 +430,12 @@ fn copy_conversation_tag_members(
         SELECT ctm.conversation_id, ctm.tag_id
         FROM conversation_tag_members ctm
         JOIN conversations c ON c.id = ctm.conversation_id
-        WHERE c.account_id = ?1
+        WHERE c.account_id = $1
         "#,
         template,
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-    )?;
+        |row| Ok((row.try_get::<i64, _>(0)?, row.try_get::<i64, _>(1)?)),
+    )
+    .await?;
     for (conversation_id, tag_id) in rows {
         let Some(new_conversation) = mapped(conversations, conversation_id) else {
             continue;
@@ -392,64 +443,77 @@ fn copy_conversation_tag_members(
         let Some(new_tag) = mapped(tags, tag_id) else {
             continue;
         };
-        tx.execute(
-            "INSERT INTO conversation_tag_members (conversation_id, tag_id) VALUES (?1, ?2)",
-            params![new_conversation, new_tag],
-        )?;
+        sqlx::query(
+            "INSERT INTO conversation_tag_members (conversation_id, tag_id) VALUES ($1, $2)",
+        )
+        .bind(new_conversation)
+        .bind(new_tag)
+        .execute(&mut *tx)
+        .await?;
     }
     Ok(())
 }
 
-fn copy_trashed_handles(
-    tx: &Transaction<'_>,
+async fn copy_trashed_handles(
+    tx: &mut AnyConnection,
     template: &str,
     guest: &str,
     handles: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = collect_rows(
         tx,
-        "SELECT handle_id, trashed_at FROM trashed_handles WHERE account_id = ?1",
+        "SELECT handle_id, trashed_at FROM trashed_handles WHERE account_id = $1",
         template,
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
-    )?;
+        |row| Ok((row.try_get::<i64, _>(0)?, row.try_get::<String, _>(1)?)),
+    )
+    .await?;
     for (handle_id, trashed_at) in rows {
         let Some(new_handle) = mapped(handles, handle_id) else {
             continue;
         };
-        tx.execute(
-            "INSERT INTO trashed_handles (account_id, handle_id, trashed_at) VALUES (?1, ?2, ?3)",
-            params![guest, new_handle, trashed_at],
-        )?;
+        sqlx::query(
+            "INSERT INTO trashed_handles (account_id, handle_id, trashed_at) VALUES ($1, $2, $3)",
+        )
+        .bind(guest)
+        .bind(new_handle)
+        .bind(trashed_at)
+        .execute(&mut *tx)
+        .await?;
     }
     Ok(())
 }
 
-fn copy_trashed_contacts(
-    tx: &Transaction<'_>,
+async fn copy_trashed_contacts(
+    tx: &mut AnyConnection,
     template: &str,
     guest: &str,
     contacts: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = collect_rows(
         tx,
-        "SELECT contact_id, trashed_at FROM trashed_contacts WHERE account_id = ?1",
+        "SELECT contact_id, trashed_at FROM trashed_contacts WHERE account_id = $1",
         template,
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
-    )?;
+        |row| Ok((row.try_get::<i64, _>(0)?, row.try_get::<String, _>(1)?)),
+    )
+    .await?;
     for (contact_id, trashed_at) in rows {
         let Some(new_contact) = mapped(contacts, contact_id) else {
             continue;
         };
-        tx.execute(
-            "INSERT INTO trashed_contacts (account_id, contact_id, trashed_at) VALUES (?1, ?2, ?3)",
-            params![guest, new_contact, trashed_at],
-        )?;
+        sqlx::query(
+            "INSERT INTO trashed_contacts (account_id, contact_id, trashed_at) VALUES ($1, $2, $3)",
+        )
+        .bind(guest)
+        .bind(new_contact)
+        .bind(trashed_at)
+        .execute(&mut *tx)
+        .await?;
     }
     Ok(())
 }
 
-fn copy_vault_imports(
-    tx: &Transaction<'_>,
+async fn copy_vault_imports(
+    tx: &mut AnyConnection,
     template: &str,
     guest: &str,
 ) -> Result<HashMap<i64, i64>> {
@@ -459,29 +523,30 @@ fn copy_vault_imports(
         SELECT id, source, tool, mode, status, started_at, finished_at,
                message_count, attachment_count, bytes_uploaded,
                duration_ms, parse_ms, convert_ms, upload_ms, summary_json
-        FROM vault_imports WHERE account_id = ?1
+        FROM vault_imports WHERE account_id = $1
         "#,
         template,
         |row| {
             Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, String>(5)?,
-                row.get::<_, Option<String>>(6)?,
-                row.get::<_, i64>(7)?,
-                row.get::<_, i64>(8)?,
-                row.get::<_, i64>(9)?,
-                row.get::<_, Option<i64>>(10)?,
-                row.get::<_, Option<i64>>(11)?,
-                row.get::<_, Option<i64>>(12)?,
-                row.get::<_, Option<i64>>(13)?,
-                row.get::<_, Option<String>>(14)?,
+                row.try_get::<i64, _>(0)?,
+                row.try_get::<String, _>(1)?,
+                row.try_get::<Option<String>, _>(2)?,
+                row.try_get::<String, _>(3)?,
+                row.try_get::<String, _>(4)?,
+                row.try_get::<String, _>(5)?,
+                row.try_get::<Option<String>, _>(6)?,
+                row.try_get::<i64, _>(7)?,
+                row.try_get::<i64, _>(8)?,
+                row.try_get::<i64, _>(9)?,
+                row.try_get::<Option<i64>, _>(10)?,
+                row.try_get::<Option<i64>, _>(11)?,
+                row.try_get::<Option<i64>, _>(12)?,
+                row.try_get::<Option<i64>, _>(13)?,
+                row.try_get::<Option<String>, _>(14)?,
             ))
         },
-    )?;
+    )
+    .await?;
     let mut map = HashMap::with_capacity(rows.len());
     for (
         old_id,
@@ -501,82 +566,92 @@ fn copy_vault_imports(
         summary_json,
     ) in rows
     {
-        tx.execute(
+        let new_id: i64 = sqlx::query_scalar(
             r#"
             INSERT INTO vault_imports (
                 account_id, source, tool, mode, status, started_at, finished_at,
                 message_count, attachment_count, bytes_uploaded,
                 duration_ms, parse_ms, convert_ms, upload_ms, summary_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            RETURNING id
             "#,
-            params![
-                guest,
-                source,
-                tool,
-                mode,
-                status,
-                started_at,
-                finished_at,
-                message_count,
-                attachment_count,
-                bytes_uploaded,
-                duration_ms,
-                parse_ms,
-                convert_ms,
-                upload_ms,
-                summary_json
-            ],
-        )?;
-        map.insert(old_id, tx.last_insert_rowid());
+        )
+        .bind(guest)
+        .bind(source)
+        .bind(tool)
+        .bind(mode)
+        .bind(status)
+        .bind(started_at)
+        .bind(finished_at)
+        .bind(message_count)
+        .bind(attachment_count)
+        .bind(bytes_uploaded)
+        .bind(duration_ms)
+        .bind(parse_ms)
+        .bind(convert_ms)
+        .bind(upload_ms)
+        .bind(summary_json)
+        .fetch_one(&mut *tx)
+        .await?;
+        map.insert(old_id, new_id);
     }
     Ok(map)
 }
 
-fn copy_vault_import_issues(tx: &Transaction<'_>, imports: &HashMap<i64, i64>) -> Result<()> {
+async fn copy_vault_import_issues(
+    tx: &mut AnyConnection,
+    imports: &HashMap<i64, i64>,
+) -> Result<()> {
     if imports.is_empty() {
         return Ok(());
     }
-    let mut stmt = tx.prepare(
-        r#"
-        SELECT import_id, kind, step, item, reason, created_at
-        FROM vault_import_issues
-        WHERE import_id = ?1
-        "#,
-    )?;
     let mut pending = Vec::new();
     for &old_import in imports.keys() {
-        let rows = stmt
-            .query_map(params![old_import], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, String>(5)?,
-                ))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        pending.extend(rows);
+        let rows = sqlx::query(
+            r#"
+            SELECT import_id, kind, step, item, reason, created_at
+            FROM vault_import_issues
+            WHERE import_id = $1
+            "#,
+        )
+        .bind(old_import)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in &rows {
+            pending.push((
+                row.try_get::<i64, _>(0)?,
+                row.try_get::<String, _>(1)?,
+                row.try_get::<String, _>(2)?,
+                row.try_get::<String, _>(3)?,
+                row.try_get::<String, _>(4)?,
+                row.try_get::<String, _>(5)?,
+            ));
+        }
     }
-    drop(stmt);
     for (old_import, kind, step, item, reason, created_at) in pending {
         let Some(new_import) = mapped(imports, old_import) else {
             continue;
         };
-        tx.execute(
+        sqlx::query(
             r#"
             INSERT INTO vault_import_issues (import_id, kind, step, item, reason, created_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            VALUES ($1, $2, $3, $4, $5, $6)
             "#,
-            params![new_import, kind, step, item, reason, created_at],
-        )?;
+        )
+        .bind(new_import)
+        .bind(kind)
+        .bind(step)
+        .bind(item)
+        .bind(reason)
+        .bind(created_at)
+        .execute(&mut *tx)
+        .await?;
     }
     Ok(())
 }
 
-fn copy_conversations(
-    tx: &Transaction<'_>,
+async fn copy_conversations(
+    tx: &mut AnyConnection,
     template: &str,
     guest: &str,
     handles: &HashMap<i64, i64>,
@@ -585,74 +660,81 @@ fn copy_conversations(
         tx,
         r#"
         SELECT id, chat_handle_id, conversation_type, group_title, exported_at, source_file
-        FROM conversations WHERE account_id = ?1
+        FROM conversations WHERE account_id = $1
         "#,
         template,
         |row| {
             Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, Option<String>>(4)?,
-                row.get::<_, String>(5)?,
+                row.try_get::<i64, _>(0)?,
+                row.try_get::<i64, _>(1)?,
+                row.try_get::<String, _>(2)?,
+                row.try_get::<Option<String>, _>(3)?,
+                row.try_get::<Option<String>, _>(4)?,
+                row.try_get::<String, _>(5)?,
             ))
         },
-    )?;
+    )
+    .await?;
     let mut map = HashMap::with_capacity(rows.len());
     for (old_id, chat_handle_id, conversation_type, group_title, exported_at, source_file) in rows {
         let Some(new_handle) = mapped(handles, chat_handle_id) else {
             continue;
         };
-        tx.execute(
+        let new_id: i64 = sqlx::query_scalar(
             r#"
             INSERT INTO conversations (
                 account_id, chat_handle_id, conversation_type, group_title, exported_at, source_file
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ) VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id
             "#,
-            params![
-                guest,
-                new_handle,
-                conversation_type,
-                group_title,
-                exported_at,
-                source_file
-            ],
-        )?;
-        map.insert(old_id, tx.last_insert_rowid());
+        )
+        .bind(guest)
+        .bind(new_handle)
+        .bind(conversation_type)
+        .bind(group_title)
+        .bind(exported_at)
+        .bind(source_file)
+        .fetch_one(&mut *tx)
+        .await?;
+        map.insert(old_id, new_id);
     }
     Ok(map)
 }
 
-fn copy_trashed_conversations(
-    tx: &Transaction<'_>,
+async fn copy_trashed_conversations(
+    tx: &mut AnyConnection,
     template: &str,
     guest: &str,
     conversations: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = collect_rows(
         tx,
-        "SELECT conversation_id, trashed_at FROM trashed_conversations WHERE account_id = ?1",
+        "SELECT conversation_id, trashed_at FROM trashed_conversations WHERE account_id = $1",
         template,
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
-    )?;
+        |row| Ok((row.try_get::<i64, _>(0)?, row.try_get::<String, _>(1)?)),
+    )
+    .await?;
     for (conversation_id, trashed_at) in rows {
         let Some(new_conv) = mapped(conversations, conversation_id) else {
             continue;
         };
-        tx.execute(
+        sqlx::query(
             r#"
             INSERT INTO trashed_conversations (account_id, conversation_id, trashed_at)
-            VALUES (?1, ?2, ?3)
+            VALUES ($1, $2, $3)
             "#,
-            params![guest, new_conv, trashed_at],
-        )?;
+        )
+        .bind(guest)
+        .bind(new_conv)
+        .bind(trashed_at)
+        .execute(&mut *tx)
+        .await?;
     }
     Ok(())
 }
 
-fn copy_participants(
-    tx: &Transaction<'_>,
+async fn copy_participants(
+    tx: &mut AnyConnection,
     template: &str,
     conversations: &HashMap<i64, i64>,
     handles: &HashMap<i64, i64>,
@@ -664,18 +746,19 @@ fn copy_participants(
         SELECT p.conversation_id, p.handle_id, p.contact_id, p.name_alias
         FROM participants p
         JOIN conversations c ON c.id = p.conversation_id
-        WHERE c.account_id = ?1
+        WHERE c.account_id = $1
         "#,
         template,
         |row| {
             Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, Option<i64>>(2)?,
-                row.get::<_, Option<String>>(3)?,
+                row.try_get::<i64, _>(0)?,
+                row.try_get::<i64, _>(1)?,
+                row.try_get::<Option<i64>, _>(2)?,
+                row.try_get::<Option<String>, _>(3)?,
             ))
         },
-    )?;
+    )
+    .await?;
     for (conversation_id, handle_id, contact_id, name_alias) in rows {
         let Some(new_conv) = mapped(conversations, conversation_id) else {
             continue;
@@ -684,13 +767,18 @@ fn copy_participants(
             continue;
         };
         let new_contact = mapped_opt(contacts, contact_id);
-        tx.execute(
+        sqlx::query(
             r#"
             INSERT INTO participants (conversation_id, handle_id, contact_id, name_alias)
-            VALUES (?1, ?2, ?3, ?4)
+            VALUES ($1, $2, $3, $4)
             "#,
-            params![new_conv, new_handle, new_contact, name_alias],
-        )?;
+        )
+        .bind(new_conv)
+        .bind(new_handle)
+        .bind(new_contact)
+        .bind(name_alias)
+        .execute(&mut *tx)
+        .await?;
     }
     Ok(())
 }
@@ -718,8 +806,8 @@ struct MessageRow {
     import_id: Option<i64>,
 }
 
-fn copy_messages(
-    tx: &Transaction<'_>,
+async fn copy_messages(
+    tx: &mut AnyConnection,
     template: &str,
     guest: &str,
     conversations: &HashMap<i64, i64>,
@@ -734,34 +822,35 @@ fn copy_messages(
                is_announcement, is_reply, thread_originator_guid,
                thread_originator_part, num_replies, sort_order, content_key,
                duplicate_of, import_id
-        FROM messages WHERE account_id = ?1
+        FROM messages WHERE account_id = $1
         "#,
         template,
         |row| {
             Ok(MessageRow {
-                id: row.get(0)?,
-                conversation_id: row.get(1)?,
-                source: row.get(2)?,
-                guid: row.get(3)?,
-                timestamp: row.get(4)?,
-                timestamp_utc: row.get(5)?,
-                is_from_me: row.get(6)?,
-                sender_handle_id: row.get(7)?,
-                service: row.get(8)?,
-                subject: row.get(9)?,
-                body: row.get(10)?,
-                is_announcement: row.get(11)?,
-                is_reply: row.get(12)?,
-                thread_originator_guid: row.get(13)?,
-                thread_originator_part: row.get(14)?,
-                num_replies: row.get(15)?,
-                sort_order: row.get(16)?,
-                content_key: row.get(17)?,
-                duplicate_of: row.get(18)?,
-                import_id: row.get(19)?,
+                id: row.try_get(0)?,
+                conversation_id: row.try_get(1)?,
+                source: row.try_get(2)?,
+                guid: row.try_get(3)?,
+                timestamp: row.try_get(4)?,
+                timestamp_utc: row.try_get(5)?,
+                is_from_me: row.try_get(6)?,
+                sender_handle_id: row.try_get(7)?,
+                service: row.try_get(8)?,
+                subject: row.try_get(9)?,
+                body: row.try_get(10)?,
+                is_announcement: row.try_get(11)?,
+                is_reply: row.try_get(12)?,
+                thread_originator_guid: row.try_get(13)?,
+                thread_originator_part: row.try_get(14)?,
+                num_replies: row.try_get(15)?,
+                sort_order: row.try_get(16)?,
+                content_key: row.try_get(17)?,
+                duplicate_of: row.try_get(18)?,
+                import_id: row.try_get(19)?,
             })
         },
-    )?;
+    )
+    .await?;
     let mut map = HashMap::with_capacity(rows.len());
     let mut pending_fks = Vec::new();
     for row in rows {
@@ -769,7 +858,7 @@ fn copy_messages(
             continue;
         };
         let sender = mapped_opt(handles, row.sender_handle_id);
-        tx.execute(
+        let new_id: i64 = sqlx::query_scalar(
             r#"
             INSERT INTO messages (
                 conversation_id, account_id, source, guid, timestamp, timestamp_utc,
@@ -778,32 +867,32 @@ fn copy_messages(
                 thread_originator_part, num_replies, sort_order, content_key,
                 duplicate_of, import_id
             ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                ?15, ?16, ?17, ?18, NULL, NULL
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+                $15, $16, $17, $18, NULL, NULL
             )
+            RETURNING id
             "#,
-            params![
-                new_conv,
-                guest,
-                row.source,
-                row.guid,
-                row.timestamp,
-                row.timestamp_utc,
-                row.is_from_me,
-                sender,
-                row.service,
-                row.subject,
-                row.body,
-                row.is_announcement,
-                row.is_reply,
-                row.thread_originator_guid,
-                row.thread_originator_part,
-                row.num_replies,
-                row.sort_order,
-                row.content_key
-            ],
-        )?;
-        let new_id = tx.last_insert_rowid();
+        )
+        .bind(new_conv)
+        .bind(guest)
+        .bind(row.source)
+        .bind(row.guid)
+        .bind(row.timestamp)
+        .bind(row.timestamp_utc)
+        .bind(row.is_from_me)
+        .bind(sender)
+        .bind(row.service)
+        .bind(row.subject)
+        .bind(row.body)
+        .bind(row.is_announcement)
+        .bind(row.is_reply)
+        .bind(row.thread_originator_guid)
+        .bind(row.thread_originator_part)
+        .bind(row.num_replies)
+        .bind(row.sort_order)
+        .bind(row.content_key)
+        .fetch_one(&mut *tx)
+        .await?;
         map.insert(row.id, new_id);
         pending_fks.push((new_id, row.duplicate_of, row.import_id));
     }
@@ -813,16 +902,18 @@ fn copy_messages(
         if dup.is_none() && import.is_none() {
             continue;
         }
-        tx.execute(
-            "UPDATE messages SET duplicate_of = ?1, import_id = ?2 WHERE id = ?3",
-            params![dup, import, new_id],
-        )?;
+        sqlx::query("UPDATE messages SET duplicate_of = $1, import_id = $2 WHERE id = $3")
+            .bind(dup)
+            .bind(import)
+            .bind(new_id)
+            .execute(&mut *tx)
+            .await?;
     }
     Ok(map)
 }
 
-fn copy_attachments(
-    tx: &Transaction<'_>,
+async fn copy_attachments(
+    tx: &mut AnyConnection,
     template: &str,
     messages: &HashMap<i64, i64>,
 ) -> Result<()> {
@@ -834,27 +925,28 @@ fn copy_attachments(
                a.derived_sha256, a.derived_assets_path, a.derived_mime_type
         FROM attachments a
         JOIN messages m ON m.id = a.message_id
-        WHERE m.account_id = ?1
+        WHERE m.account_id = $1
         "#,
         template,
         |row| {
             Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, Option<String>>(1)?,
-                row.get::<_, Option<String>>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, i64>(4)?,
-                row.get::<_, Option<String>>(5)?,
-                row.get::<_, Option<String>>(6)?,
-                row.get::<_, Option<String>>(7)?,
-                row.get::<_, Option<i64>>(8)?,
-                row.get::<_, Option<String>>(9)?,
-                row.get::<_, Option<String>>(10)?,
-                row.get::<_, Option<String>>(11)?,
-                row.get::<_, Option<String>>(12)?,
+                row.try_get::<i64, _>(0)?,
+                row.try_get::<Option<String>, _>(1)?,
+                row.try_get::<Option<String>, _>(2)?,
+                row.try_get::<Option<String>, _>(3)?,
+                row.try_get::<i64, _>(4)?,
+                row.try_get::<Option<String>, _>(5)?,
+                row.try_get::<Option<String>, _>(6)?,
+                row.try_get::<Option<String>, _>(7)?,
+                row.try_get::<Option<i64>, _>(8)?,
+                row.try_get::<Option<String>, _>(9)?,
+                row.try_get::<Option<String>, _>(10)?,
+                row.try_get::<Option<String>, _>(11)?,
+                row.try_get::<Option<String>, _>(12)?,
             ))
         },
-    )?;
+    )
+    .await?;
     for (
         message_id,
         path,
@@ -874,36 +966,36 @@ fn copy_attachments(
         let Some(new_msg) = mapped(messages, message_id) else {
             continue;
         };
-        tx.execute(
+        sqlx::query(
             r#"
             INSERT INTO attachments (
                 message_id, path, original_name, mime_type, is_sticker, transcription,
                 sha256, assets_path, size_bytes, missing_reason,
                 derived_sha256, derived_assets_path, derived_mime_type
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             "#,
-            params![
-                new_msg,
-                path,
-                original_name,
-                mime_type,
-                is_sticker,
-                transcription,
-                sha256,
-                assets_path,
-                size_bytes,
-                missing_reason,
-                derived_sha256,
-                derived_assets_path,
-                derived_mime_type
-            ],
-        )?;
+        )
+        .bind(new_msg)
+        .bind(path)
+        .bind(original_name)
+        .bind(mime_type)
+        .bind(is_sticker)
+        .bind(transcription)
+        .bind(sha256)
+        .bind(assets_path)
+        .bind(size_bytes)
+        .bind(missing_reason)
+        .bind(derived_sha256)
+        .bind(derived_assets_path)
+        .bind(derived_mime_type)
+        .execute(&mut *tx)
+        .await?;
     }
     Ok(())
 }
 
-fn copy_tapbacks(
-    tx: &Transaction<'_>,
+async fn copy_tapbacks(
+    tx: &mut AnyConnection,
     template: &str,
     messages: &HashMap<i64, i64>,
     handles: &HashMap<i64, i64>,
@@ -914,39 +1006,47 @@ fn copy_tapbacks(
         SELECT t.message_id, t.part_index, t.kind, t.emoji, t.is_from_me, t.sender_handle_id
         FROM tapbacks t
         JOIN messages m ON m.id = t.message_id
-        WHERE m.account_id = ?1
+        WHERE m.account_id = $1
         "#,
         template,
         |row| {
             Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, i64>(4)?,
-                row.get::<_, Option<i64>>(5)?,
+                row.try_get::<i64, _>(0)?,
+                row.try_get::<i64, _>(1)?,
+                row.try_get::<String, _>(2)?,
+                row.try_get::<Option<String>, _>(3)?,
+                row.try_get::<i64, _>(4)?,
+                row.try_get::<Option<i64>, _>(5)?,
             ))
         },
-    )?;
+    )
+    .await?;
     for (message_id, part_index, kind, emoji, is_from_me, sender_handle_id) in rows {
         let Some(new_msg) = mapped(messages, message_id) else {
             continue;
         };
         let sender = mapped_opt(handles, sender_handle_id);
-        tx.execute(
+        sqlx::query(
             r#"
             INSERT INTO tapbacks (
                 message_id, part_index, kind, emoji, is_from_me, sender_handle_id
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ) VALUES ($1, $2, $3, $4, $5, $6)
             "#,
-            params![new_msg, part_index, kind, emoji, is_from_me, sender],
-        )?;
+        )
+        .bind(new_msg)
+        .bind(part_index)
+        .bind(kind)
+        .bind(emoji)
+        .bind(is_from_me)
+        .bind(sender)
+        .execute(&mut *tx)
+        .await?;
     }
     Ok(())
 }
 
-fn copy_staging_conversations(
-    tx: &Transaction<'_>,
+async fn copy_staging_conversations(
+    tx: &mut AnyConnection,
     template: &str,
     guest: &str,
     handles: &HashMap<i64, i64>,
@@ -955,47 +1055,49 @@ fn copy_staging_conversations(
         tx,
         r#"
         SELECT id, chat_handle_id, conversation_type, group_title, exported_at, source_file
-        FROM staging_conversations WHERE account_id = ?1
+        FROM staging_conversations WHERE account_id = $1
         "#,
         template,
         |row| {
             Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, Option<String>>(4)?,
-                row.get::<_, String>(5)?,
+                row.try_get::<i64, _>(0)?,
+                row.try_get::<i64, _>(1)?,
+                row.try_get::<String, _>(2)?,
+                row.try_get::<Option<String>, _>(3)?,
+                row.try_get::<Option<String>, _>(4)?,
+                row.try_get::<String, _>(5)?,
             ))
         },
-    )?;
+    )
+    .await?;
     let mut map = HashMap::with_capacity(rows.len());
     for (old_id, chat_handle_id, conversation_type, group_title, exported_at, source_file) in rows {
         let Some(new_handle) = mapped(handles, chat_handle_id) else {
             continue;
         };
-        tx.execute(
+        let new_id: i64 = sqlx::query_scalar(
             r#"
             INSERT INTO staging_conversations (
                 account_id, chat_handle_id, conversation_type, group_title, exported_at, source_file
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ) VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id
             "#,
-            params![
-                guest,
-                new_handle,
-                conversation_type,
-                group_title,
-                exported_at,
-                source_file
-            ],
-        )?;
-        map.insert(old_id, tx.last_insert_rowid());
+        )
+        .bind(guest)
+        .bind(new_handle)
+        .bind(conversation_type)
+        .bind(group_title)
+        .bind(exported_at)
+        .bind(source_file)
+        .fetch_one(&mut *tx)
+        .await?;
+        map.insert(old_id, new_id);
     }
     Ok(map)
 }
 
-fn copy_staging_participants(
-    tx: &Transaction<'_>,
+async fn copy_staging_participants(
+    tx: &mut AnyConnection,
     template: &str,
     conversations: &HashMap<i64, i64>,
     handles: &HashMap<i64, i64>,
@@ -1007,18 +1109,19 @@ fn copy_staging_participants(
         SELECT p.conversation_id, p.handle_id, p.contact_id, p.name_alias
         FROM staging_participants p
         JOIN staging_conversations c ON c.id = p.conversation_id
-        WHERE c.account_id = ?1
+        WHERE c.account_id = $1
         "#,
         template,
         |row| {
             Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, Option<i64>>(2)?,
-                row.get::<_, Option<String>>(3)?,
+                row.try_get::<i64, _>(0)?,
+                row.try_get::<i64, _>(1)?,
+                row.try_get::<Option<i64>, _>(2)?,
+                row.try_get::<Option<String>, _>(3)?,
             ))
         },
-    )?;
+    )
+    .await?;
     for (conversation_id, handle_id, contact_id, name_alias) in rows {
         let Some(new_conv) = mapped(conversations, conversation_id) else {
             continue;
@@ -1027,19 +1130,24 @@ fn copy_staging_participants(
             continue;
         };
         let new_contact = mapped_opt(contacts, contact_id);
-        tx.execute(
+        sqlx::query(
             r#"
             INSERT INTO staging_participants (conversation_id, handle_id, contact_id, name_alias)
-            VALUES (?1, ?2, ?3, ?4)
+            VALUES ($1, $2, $3, $4)
             "#,
-            params![new_conv, new_handle, new_contact, name_alias],
-        )?;
+        )
+        .bind(new_conv)
+        .bind(new_handle)
+        .bind(new_contact)
+        .bind(name_alias)
+        .execute(&mut *tx)
+        .await?;
     }
     Ok(())
 }
 
-fn copy_staging_messages(
-    tx: &Transaction<'_>,
+async fn copy_staging_messages(
+    tx: &mut AnyConnection,
     template: &str,
     guest: &str,
     conversations: &HashMap<i64, i64>,
@@ -1053,32 +1161,33 @@ fn copy_staging_messages(
                is_from_me, sender_handle_id, service, subject, body,
                is_announcement, is_reply, thread_originator_guid,
                thread_originator_part, num_replies, sort_order, import_id
-        FROM staging_messages WHERE account_id = ?1
+        FROM staging_messages WHERE account_id = $1
         "#,
         template,
         |row| {
             Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, Option<String>>(5)?,
-                row.get::<_, i64>(6)?,
-                row.get::<_, Option<i64>>(7)?,
-                row.get::<_, Option<String>>(8)?,
-                row.get::<_, Option<String>>(9)?,
-                row.get::<_, Option<String>>(10)?,
-                row.get::<_, i64>(11)?,
-                row.get::<_, i64>(12)?,
-                row.get::<_, Option<String>>(13)?,
-                row.get::<_, Option<i64>>(14)?,
-                row.get::<_, i64>(15)?,
-                row.get::<_, i64>(16)?,
-                row.get::<_, Option<i64>>(17)?,
+                row.try_get::<i64, _>(0)?,
+                row.try_get::<i64, _>(1)?,
+                row.try_get::<String, _>(2)?,
+                row.try_get::<Option<String>, _>(3)?,
+                row.try_get::<String, _>(4)?,
+                row.try_get::<Option<String>, _>(5)?,
+                row.try_get::<i64, _>(6)?,
+                row.try_get::<Option<i64>, _>(7)?,
+                row.try_get::<Option<String>, _>(8)?,
+                row.try_get::<Option<String>, _>(9)?,
+                row.try_get::<Option<String>, _>(10)?,
+                row.try_get::<i64, _>(11)?,
+                row.try_get::<i64, _>(12)?,
+                row.try_get::<Option<String>, _>(13)?,
+                row.try_get::<Option<i64>, _>(14)?,
+                row.try_get::<i64, _>(15)?,
+                row.try_get::<i64, _>(16)?,
+                row.try_get::<Option<i64>, _>(17)?,
             ))
         },
-    )?;
+    )
+    .await?;
     let mut map = HashMap::with_capacity(rows.len());
     for (
         old_id,
@@ -1106,7 +1215,7 @@ fn copy_staging_messages(
         };
         let sender = mapped_opt(handles, sender_handle_id);
         let import = mapped_opt(imports, import_id);
-        tx.execute(
+        let new_id: i64 = sqlx::query_scalar(
             r#"
             INSERT INTO staging_messages (
                 conversation_id, account_id, source, guid, timestamp, timestamp_utc,
@@ -1114,38 +1223,39 @@ fn copy_staging_messages(
                 is_announcement, is_reply, thread_originator_guid,
                 thread_originator_part, num_replies, sort_order, import_id
             ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                ?15, ?16, ?17, ?18
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+                $15, $16, $17, $18
             )
+            RETURNING id
             "#,
-            params![
-                new_conv,
-                guest,
-                source,
-                guid,
-                timestamp,
-                timestamp_utc,
-                is_from_me,
-                sender,
-                service,
-                subject,
-                body,
-                is_announcement,
-                is_reply,
-                thread_originator_guid,
-                thread_originator_part,
-                num_replies,
-                sort_order,
-                import
-            ],
-        )?;
-        map.insert(old_id, tx.last_insert_rowid());
+        )
+        .bind(new_conv)
+        .bind(guest)
+        .bind(source)
+        .bind(guid)
+        .bind(timestamp)
+        .bind(timestamp_utc)
+        .bind(is_from_me)
+        .bind(sender)
+        .bind(service)
+        .bind(subject)
+        .bind(body)
+        .bind(is_announcement)
+        .bind(is_reply)
+        .bind(thread_originator_guid)
+        .bind(thread_originator_part)
+        .bind(num_replies)
+        .bind(sort_order)
+        .bind(import)
+        .fetch_one(&mut *tx)
+        .await?;
+        map.insert(old_id, new_id);
     }
     Ok(map)
 }
 
-fn copy_staging_attachments(
-    tx: &Transaction<'_>,
+async fn copy_staging_attachments(
+    tx: &mut AnyConnection,
     template: &str,
     messages: &HashMap<i64, i64>,
 ) -> Result<()> {
@@ -1157,27 +1267,28 @@ fn copy_staging_attachments(
                a.derived_sha256, a.derived_assets_path, a.derived_mime_type
         FROM staging_attachments a
         JOIN staging_messages m ON m.id = a.message_id
-        WHERE m.account_id = ?1
+        WHERE m.account_id = $1
         "#,
         template,
         |row| {
             Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, Option<String>>(1)?,
-                row.get::<_, Option<String>>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, i64>(4)?,
-                row.get::<_, Option<String>>(5)?,
-                row.get::<_, Option<String>>(6)?,
-                row.get::<_, Option<String>>(7)?,
-                row.get::<_, Option<i64>>(8)?,
-                row.get::<_, Option<String>>(9)?,
-                row.get::<_, Option<String>>(10)?,
-                row.get::<_, Option<String>>(11)?,
-                row.get::<_, Option<String>>(12)?,
+                row.try_get::<i64, _>(0)?,
+                row.try_get::<Option<String>, _>(1)?,
+                row.try_get::<Option<String>, _>(2)?,
+                row.try_get::<Option<String>, _>(3)?,
+                row.try_get::<i64, _>(4)?,
+                row.try_get::<Option<String>, _>(5)?,
+                row.try_get::<Option<String>, _>(6)?,
+                row.try_get::<Option<String>, _>(7)?,
+                row.try_get::<Option<i64>, _>(8)?,
+                row.try_get::<Option<String>, _>(9)?,
+                row.try_get::<Option<String>, _>(10)?,
+                row.try_get::<Option<String>, _>(11)?,
+                row.try_get::<Option<String>, _>(12)?,
             ))
         },
-    )?;
+    )
+    .await?;
     for (
         message_id,
         path,
@@ -1197,36 +1308,36 @@ fn copy_staging_attachments(
         let Some(new_msg) = mapped(messages, message_id) else {
             continue;
         };
-        tx.execute(
+        sqlx::query(
             r#"
             INSERT INTO staging_attachments (
                 message_id, path, original_name, mime_type, is_sticker, transcription,
                 sha256, assets_path, size_bytes, missing_reason,
                 derived_sha256, derived_assets_path, derived_mime_type
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             "#,
-            params![
-                new_msg,
-                path,
-                original_name,
-                mime_type,
-                is_sticker,
-                transcription,
-                sha256,
-                assets_path,
-                size_bytes,
-                missing_reason,
-                derived_sha256,
-                derived_assets_path,
-                derived_mime_type
-            ],
-        )?;
+        )
+        .bind(new_msg)
+        .bind(path)
+        .bind(original_name)
+        .bind(mime_type)
+        .bind(is_sticker)
+        .bind(transcription)
+        .bind(sha256)
+        .bind(assets_path)
+        .bind(size_bytes)
+        .bind(missing_reason)
+        .bind(derived_sha256)
+        .bind(derived_assets_path)
+        .bind(derived_mime_type)
+        .execute(&mut *tx)
+        .await?;
     }
     Ok(())
 }
 
-fn copy_staging_tapbacks(
-    tx: &Transaction<'_>,
+async fn copy_staging_tapbacks(
+    tx: &mut AnyConnection,
     template: &str,
     messages: &HashMap<i64, i64>,
     handles: &HashMap<i64, i64>,
@@ -1237,49 +1348,60 @@ fn copy_staging_tapbacks(
         SELECT t.message_id, t.part_index, t.kind, t.emoji, t.is_from_me, t.sender_handle_id
         FROM staging_tapbacks t
         JOIN staging_messages m ON m.id = t.message_id
-        WHERE m.account_id = ?1
+        WHERE m.account_id = $1
         "#,
         template,
         |row| {
             Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, i64>(4)?,
-                row.get::<_, Option<i64>>(5)?,
+                row.try_get::<i64, _>(0)?,
+                row.try_get::<i64, _>(1)?,
+                row.try_get::<String, _>(2)?,
+                row.try_get::<Option<String>, _>(3)?,
+                row.try_get::<i64, _>(4)?,
+                row.try_get::<Option<i64>, _>(5)?,
             ))
         },
-    )?;
+    )
+    .await?;
     for (message_id, part_index, kind, emoji, is_from_me, sender_handle_id) in rows {
         let Some(new_msg) = mapped(messages, message_id) else {
             continue;
         };
         let sender = mapped_opt(handles, sender_handle_id);
-        tx.execute(
+        sqlx::query(
             r#"
             INSERT INTO staging_tapbacks (
                 message_id, part_index, kind, emoji, is_from_me, sender_handle_id
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ) VALUES ($1, $2, $3, $4, $5, $6)
             "#,
-            params![new_msg, part_index, kind, emoji, is_from_me, sender],
-        )?;
+        )
+        .bind(new_msg)
+        .bind(part_index)
+        .bind(kind)
+        .bind(emoji)
+        .bind(is_from_me)
+        .bind(sender)
+        .execute(&mut *tx)
+        .await?;
     }
     Ok(())
 }
 
-fn copy_account_prefs(tx: &Transaction<'_>, template: &str, guest: &str) -> Result<()> {
+async fn copy_account_prefs(tx: &mut AnyConnection, template: &str, guest: &str) -> Result<()> {
     let rows = collect_rows(
         tx,
-        "SELECT key, value FROM account_prefs WHERE account_id = ?1",
+        "SELECT key, value FROM account_prefs WHERE account_id = $1",
         template,
-        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-    )?;
+        |row| Ok((row.try_get::<String, _>(0)?, row.try_get::<String, _>(1)?)),
+    )
+    .await?;
     for (key, value) in rows {
-        tx.execute(
-            "INSERT INTO account_prefs (account_id, key, value) VALUES (?1, ?2, ?3)",
-            params![guest, key, value],
-        )?;
+        sqlx::query("INSERT INTO account_prefs (account_id, key, value) VALUES ($1, $2, $3)")
+            .bind(guest)
+            .bind(key)
+            .bind(value)
+            .execute(&mut *tx)
+            .await?;
     }
     Ok(())
 }
@@ -1318,44 +1440,57 @@ fn copy_tree_inner(src: &Path, dest: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::engine;
     use crate::db::schema;
-    use rusqlite::{Connection, params};
+    use sqlx::AnyPool;
 
     const T: &str = "00000000-0000-0000-0000-00000000d001";
 
-    fn tiny_template(conn: &Connection) {
-        schema::ensure_vault_schema(conn).unwrap();
-        conn.execute(
+    async fn tiny_template(pool: &AnyPool) {
+        let mut conn = pool.acquire().await.unwrap();
+        schema::ensure_vault_schema(&mut conn).await.unwrap();
+        sqlx::query(
             "INSERT INTO accounts (id, username, read_only, preferred_name)
-             VALUES (?1, 'demo', 1, 'Alex Demo')",
-            params![T],
+             VALUES ($1, 'demo', 1, 'Alex Demo')",
         )
+        .bind(T)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        let hid: i64 = sqlx::query_scalar(
             "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-             VALUES (?1, '+15555550100', '+15555550100', 'phone', 'phone')",
-            params![T],
+             VALUES ($1, '+15555550100', '+15555550100', 'phone', 'phone')
+             RETURNING id",
         )
+        .bind(T)
+        .fetch_one(&mut *conn)
+        .await
         .unwrap();
-        let hid = conn.last_insert_rowid();
-        conn.execute(
-            "INSERT INTO account_handles (account_id, handle_id) VALUES (?1, ?2)",
-            params![T, hid],
-        )
-        .unwrap();
-        conn.execute(
+        sqlx::query("INSERT INTO account_handles (account_id, handle_id) VALUES ($1, $2)")
+            .bind(T)
+            .bind(hid)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let cid: i64 = sqlx::query_scalar(
             "INSERT INTO conversations (account_id, chat_handle_id, conversation_type, source_file)
-             VALUES (?1, ?2, 'individual', 'a.jsonl')",
-            params![T, hid],
+             VALUES ($1, $2, 'individual', 'a.jsonl')
+             RETURNING id",
         )
+        .bind(T)
+        .bind(hid)
+        .fetch_one(&mut *conn)
+        .await
         .unwrap();
-        let cid = conn.last_insert_rowid();
-        conn.execute(
+        sqlx::query(
             r#"INSERT INTO messages (
                 conversation_id, account_id, source, guid, timestamp, is_from_me, sort_order, body
-            ) VALUES (?1, ?2, 'imessage', 'g1', '2020-01-01T00:00:00Z', 1, 0, 'hello')"#,
-            params![cid, T],
+            ) VALUES ($1, $2, 'imessage', 'g1', '2020-01-01T00:00:00Z', 1, 0, 'hello')"#,
         )
+        .bind(cid)
+        .bind(T)
+        .execute(&mut *conn)
+        .await
         .unwrap();
     }
 
@@ -1383,69 +1518,62 @@ mod tests {
                     assets_converted_dir: "assets_converted".into(),
                 },
                 server: None,
+                database: crate::config::DatabaseConfig::default(),
             },
             _tmp: tmp,
         }
     }
 
-    #[test]
-    fn clone_copies_rows_and_leaves_template() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        tiny_template(&conn);
+    #[tokio::test]
+    async fn clone_copies_rows_and_leaves_template() {
+        let (pool, _dir) = engine::test_pool().await;
+        tiny_template(&pool).await;
         let cfg = test_config(); // temp data_dir
-        let guest = clone_template_to_guest(&mut conn, &cfg, T).unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let guest = clone_template_to_guest(&mut conn, &cfg, T).await.unwrap();
         assert_ne!(guest, T);
-        let t_msgs: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM messages WHERE account_id = ?1",
-                params![T],
-                |r| r.get(0),
-            )
+        let t_msgs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE account_id = $1")
+            .bind(T)
+            .fetch_one(&mut *conn)
+            .await
             .unwrap();
-        let g_msgs: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM messages WHERE account_id = ?1",
-                params![guest],
-                |r| r.get(0),
-            )
+        let g_msgs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE account_id = $1")
+            .bind(&guest)
+            .fetch_one(&mut *conn)
+            .await
             .unwrap();
         assert_eq!(t_msgs, 1);
         assert_eq!(g_msgs, 1);
-        let emails: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM account_emails WHERE account_id = ?1",
-                params![guest],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let emails: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM account_emails WHERE account_id = $1")
+                .bind(&guest)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
         assert_eq!(emails, 0);
-        let status: String = conn
-            .query_row(
-                "SELECT guest_status FROM accounts WHERE id = ?1",
-                params![guest],
-                |r| r.get(0),
-            )
+        let status: String = sqlx::query_scalar("SELECT guest_status FROM accounts WHERE id = $1")
+            .bind(&guest)
+            .fetch_one(&mut *conn)
+            .await
             .unwrap();
         assert_eq!(status, "ready");
     }
 
-    #[test]
-    fn second_clone_does_not_collide() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        tiny_template(&conn);
+    #[tokio::test]
+    async fn second_clone_does_not_collide() {
+        let (pool, _dir) = engine::test_pool().await;
+        tiny_template(&pool).await;
         let cfg = test_config();
-        let a = clone_template_to_guest(&mut conn, &cfg, T).unwrap();
-        let b = clone_template_to_guest(&mut conn, &cfg, T).unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let a = clone_template_to_guest(&mut conn, &cfg, T).await.unwrap();
+        let b = clone_template_to_guest(&mut conn, &cfg, T).await.unwrap();
         assert_ne!(a, b);
     }
 
-    #[test]
-    fn clone_copies_asset_files_without_sharing_inode() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        tiny_template(&conn);
+    #[tokio::test]
+    async fn clone_copies_asset_files_without_sharing_inode() {
+        let (pool, _dir) = engine::test_pool().await;
+        tiny_template(&pool).await;
         let cfg = test_config();
         let src = cfg
             .paths
@@ -1453,7 +1581,8 @@ mod tests {
             .join("photo.jpg");
         std::fs::create_dir_all(src.parent().expect("parent")).unwrap();
         std::fs::write(&src, b"asset-bytes").unwrap();
-        let guest = clone_template_to_guest(&mut conn, &cfg, T).unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let guest = clone_template_to_guest(&mut conn, &cfg, T).await.unwrap();
         let dest = cfg
             .paths
             .assets_dir_for_account(&guest, "imessage")
@@ -1479,98 +1608,108 @@ mod tests {
         );
     }
 
-    #[test]
-    fn clone_and_assign_leaves_no_ready_row_to_steal() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        tiny_template(&conn);
+    #[tokio::test]
+    async fn clone_and_assign_leaves_no_ready_row_to_steal() {
+        let (pool, _dir) = engine::test_pool().await;
+        tiny_template(&pool).await;
         let cfg = test_config();
-        let (guest_id, username, token) = clone_and_assign_guest(&mut conn, &cfg, T, 120).unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let (guest_id, username, token) = clone_and_assign_guest(&mut conn, &cfg, T, 120)
+            .await
+            .unwrap();
         assert!(username.starts_with("guest-"));
         assert!(token.starts_with("mv-user-"));
         assert_eq!(
-            account_profile::guest_status(&conn, &guest_id)
+            account_profile::guest_status(&mut conn, &guest_id)
+                .await
                 .unwrap()
                 .as_deref(),
             Some("assigned")
         );
-        let ready: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM accounts WHERE guest_status = 'ready'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let ready: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE guest_status = 'ready'")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
         assert_eq!(
             ready, 0,
             "on-demand clone left a ready row another Try it could take"
         );
     }
 
-    #[test]
-    fn clone_skips_staging_rows_with_unmapped_handles() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        tiny_template(&conn);
+    #[tokio::test]
+    async fn clone_skips_staging_rows_with_unmapped_handles() {
+        let (pool, _dir) = engine::test_pool().await;
+        tiny_template(&pool).await;
+        let mut conn = pool.acquire().await.unwrap();
 
-        let template_handle: i64 = conn
-            .query_row(
-                "SELECT id FROM handles WHERE account_id = ?1",
-                params![T],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let template_handle: i64 =
+            sqlx::query_scalar("SELECT id FROM handles WHERE account_id = $1")
+                .bind(T)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
 
         const DANGLING_CONV_HANDLE: i64 = 9_000_001;
         const DANGLING_PART_HANDLE: i64 = 9_000_002;
 
-        conn.execute(
+        sqlx::query(
             "INSERT INTO staging_conversations (
                 account_id, chat_handle_id, conversation_type, source_file
-             ) VALUES (?1, ?2, 'individual', 'orphan.jsonl')",
-            params![T, DANGLING_CONV_HANDLE],
+             ) VALUES ($1, $2, 'individual', 'orphan.jsonl')",
         )
+        .bind(T)
+        .bind(DANGLING_CONV_HANDLE)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        let ok_staging_cid: i64 = sqlx::query_scalar(
             "INSERT INTO staging_conversations (
                 account_id, chat_handle_id, conversation_type, source_file
-             ) VALUES (?1, ?2, 'individual', 'ok.jsonl')",
-            params![T, template_handle],
+             ) VALUES ($1, $2, 'individual', 'ok.jsonl')
+             RETURNING id",
         )
+        .bind(T)
+        .bind(template_handle)
+        .fetch_one(&mut *conn)
+        .await
         .unwrap();
-        let ok_staging_cid = conn.last_insert_rowid();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO staging_participants (conversation_id, handle_id, name_alias)
-             VALUES (?1, ?2, 'orphan-part')",
-            params![ok_staging_cid, DANGLING_PART_HANDLE],
+             VALUES ($1, $2, 'orphan-part')",
         )
+        .bind(ok_staging_cid)
+        .bind(DANGLING_PART_HANDLE)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO staging_participants (conversation_id, handle_id, name_alias)
-             VALUES (?1, ?2, 'mapped-part')",
-            params![ok_staging_cid, template_handle],
+             VALUES ($1, $2, 'mapped-part')",
         )
+        .bind(ok_staging_cid)
+        .bind(template_handle)
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
         let cfg = test_config();
-        let guest = clone_template_to_guest(&mut conn, &cfg, T).unwrap();
+        let guest = clone_template_to_guest(&mut conn, &cfg, T).await.unwrap();
 
-        let guest_handle: i64 = conn
-            .query_row(
-                "SELECT id FROM handles WHERE account_id = ?1",
-                params![guest],
-                |r| r.get(0),
-            )
+        let guest_handle: i64 = sqlx::query_scalar("SELECT id FROM handles WHERE account_id = $1")
+            .bind(&guest)
+            .fetch_one(&mut *conn)
+            .await
             .unwrap();
         assert_ne!(guest_handle, template_handle);
 
-        let guest_staging_handles: Vec<i64> = conn
-            .prepare("SELECT chat_handle_id FROM staging_conversations WHERE account_id = ?1")
-            .unwrap()
-            .query_map(params![guest], |r| r.get(0))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
+        let guest_staging_handles: Vec<i64> = sqlx::query_scalar(
+            "SELECT chat_handle_id FROM staging_conversations WHERE account_id = $1",
+        )
+        .bind(&guest)
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap();
         assert!(
             !guest_staging_handles.contains(&DANGLING_CONV_HANDLE),
             "guest staging conversation kept the template handle id {DANGLING_CONV_HANDLE}"
@@ -1581,17 +1720,15 @@ mod tests {
         );
         assert_eq!(guest_staging_handles, vec![guest_handle]);
 
-        let guest_part_handles: Vec<i64> = conn
-            .prepare(
-                "SELECT p.handle_id FROM staging_participants p
-                 JOIN staging_conversations c ON c.id = p.conversation_id
-                 WHERE c.account_id = ?1",
-            )
-            .unwrap()
-            .query_map(params![guest], |r| r.get(0))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
+        let guest_part_handles: Vec<i64> = sqlx::query_scalar(
+            "SELECT p.handle_id FROM staging_participants p
+             JOIN staging_conversations c ON c.id = p.conversation_id
+             WHERE c.account_id = $1",
+        )
+        .bind(&guest)
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap();
         assert!(
             !guest_part_handles.contains(&DANGLING_PART_HANDLE),
             "guest staging participant kept the template handle id {DANGLING_PART_HANDLE}"

@@ -19,13 +19,13 @@ use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use rand::TryRng;
 use serde::{Deserialize, Serialize};
+use sqlx::Connection;
+use sqlx::{AnyConnection, AnyPool};
 
 use crate::config::Config;
 use crate::db::{account_profile, api_tokens, schema, session_tokens};
 use crate::dedupe;
-use crate::server::{
-    ApiError, AppState, JoinBlocking, nonempty_query_account, resolve_auth, with_configured_db,
-};
+use crate::server::{ApiError, AppState, nonempty_query_account, resolve_auth};
 
 /// How long Try it waits for an on-demand guest clone when the ready pool is empty.
 const TRY_DEMO_CLONE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -166,12 +166,13 @@ pub struct AuthTokenResponse {
 impl AuthTokenResponse {
     /// Issue (or reuse) the session token for an existing account. Uses the
     /// account id when the row has no username.
-    fn for_existing_account(
-        conn: &rusqlite::Connection,
+    async fn for_existing_account(
+        conn: &mut AnyConnection,
         account_id: String,
     ) -> Result<AuthTokenResponse> {
-        let token = session_tokens::get_or_create_session_token(conn, &account_id)?;
-        let username = account_profile::username_for_account(conn, &account_id)?
+        let token = session_tokens::get_or_create_session_token(conn, &account_id).await?;
+        let username = account_profile::username_for_account(conn, &account_id)
+            .await?
             .unwrap_or_else(|| account_id.clone());
         Ok(AuthTokenResponse {
             token,
@@ -342,12 +343,15 @@ fn username_from_hanko_email_or_id(email: Option<&str>, hanko_user_id: &str) -> 
     format!("user_{short_id}")
 }
 
-fn unique_hanko_username(
-    conn: &rusqlite::Connection,
+async fn unique_hanko_username(
+    conn: &mut AnyConnection,
     username: String,
     account_id: &str,
 ) -> Result<String> {
-    if account_profile::lookup_account_ref(conn, &username)?.is_some() {
+    if account_profile::lookup_account_ref(conn, &username)
+        .await?
+        .is_some()
+    {
         Ok(format!("{}_{}", username, &account_id[..8]))
     } else {
         Ok(username)
@@ -428,10 +432,10 @@ pub(crate) async fn auth_check(
 ) -> Result<Json<AuthCheckResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     let account_id = auth.account_id;
-    let username = load_username(&state.cfg.paths.db, &account_id).await?;
+    let username = load_username(&state.db, &account_id).await?;
 
     if let Some(q) = nonempty_query_account(query.account.as_deref()) {
-        let resolved = lookup_or_resolve_query(&state.cfg.paths.db, q).await?;
+        let resolved = lookup_or_resolve_query(&state.db, q).await?;
         let matches = match resolved {
             Some(resolved) => resolved == account_id,
             None => q == account_id,
@@ -443,7 +447,7 @@ pub(crate) async fn auth_check(
             )));
         }
     }
-    let sources = list_account_sources(&state.cfg.paths.db, &account_id).await?;
+    let sources = list_account_sources(&state.db, &account_id).await?;
     Ok(Json(AuthCheckResponse {
         ok: true,
         sources,
@@ -454,32 +458,41 @@ pub(crate) async fn auth_check(
     }))
 }
 
-async fn list_account_sources(db_path: &Path, account_id: &str) -> Result<Vec<String>, ApiError> {
+async fn list_account_sources(pool: &AnyPool, account_id: &str) -> Result<Vec<String>, ApiError> {
     let account_id = account_id.to_string();
     // Read-only: do not run ensure_vault_schema (avoids write locks on auth).
-    with_configured_db(db_path, "sources list task", move |conn| {
-        dedupe::source_priority_from_db(conn, &account_id)
-    })
-    .await
+    let mut conn = pool
+        .acquire()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    dedupe::source_priority_from_db(&mut conn, &account_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))
 }
 
 async fn lookup_or_resolve_query(
-    db_path: &Path,
+    pool: &AnyPool,
     account_ref: &str,
 ) -> Result<Option<String>, ApiError> {
     let account_ref = account_ref.to_string();
-    with_configured_db(db_path, "account lookup task", move |conn| {
-        account_profile::lookup_account_ref(conn, &account_ref)
-    })
-    .await
+    let mut conn = pool
+        .acquire()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    account_profile::lookup_account_ref(&mut conn, &account_ref)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))
 }
 
-async fn load_username(db_path: &Path, account_id: &str) -> Result<Option<String>, ApiError> {
+async fn load_username(pool: &AnyPool, account_id: &str) -> Result<Option<String>, ApiError> {
     let account_id = account_id.to_string();
-    with_configured_db(db_path, "username lookup task", move |conn| {
-        account_profile::username_for_account(conn, &account_id)
-    })
-    .await
+    let mut conn = pool
+        .acquire()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    account_profile::username_for_account(&mut conn, &account_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))
 }
 
 // ---------------------------------------------------------------------------
@@ -525,41 +538,55 @@ pub async fn register_handler(
 
     let account_id = uuid::Uuid::new_v4().to_string();
 
-    let db = state.cfg.paths.db.clone();
-    let result = tokio::task::spawn_blocking(move || -> Result<AuthTokenResponse> {
-        let mut conn = schema::open_configured(&db)?;
-        let tx = conn.transaction()?;
+    let mut conn = state
+        .db
+        .acquire()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let mut tx = conn
+        .begin()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-        if account_profile::lookup_account_ref(&tx, &username)?.is_some() {
-            bail!("username already taken: {username}");
-        }
+    if account_profile::lookup_account_ref(&mut tx, &username)
+        .await
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?
+        .is_some()
+    {
+        return Err(ApiError::BadRequest(format!(
+            "username already taken: {username}"
+        )));
+    }
 
-        account_profile::insert_account(
-            &tx,
-            &account_id,
-            &username,
-            password_hash.as_deref(),
-            preferred_name.as_deref(),
-            None,  // hanko_user_id
-            false, // read_only
-        )?;
-
-        if let Some(ref phone) = phone {
-            account_profile::upsert_account_phone(&tx, &account_id, phone)?;
-        }
-
-        let token = session_tokens::insert_account_session_token(&tx, &account_id)?;
-        tx.commit()?;
-        Ok(AuthTokenResponse {
-            token,
-            account_id,
-            username,
-        })
-    })
+    account_profile::insert_account(
+        &mut tx,
+        &account_id,
+        &username,
+        password_hash.as_deref(),
+        preferred_name.as_deref(),
+        None,  // hanko_user_id
+        false, // read_only
+    )
     .await
-    .join_map("register task", |e| ApiError::BadRequest(e.to_string()))?;
+    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
-    Ok(Json(result))
+    if let Some(ref phone) = phone {
+        account_profile::upsert_account_phone(&mut tx, &account_id, phone)
+            .await
+            .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    }
+
+    let token = session_tokens::insert_account_session_token(&mut tx, &account_id)
+        .await
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    Ok(Json(AuthTokenResponse {
+        token,
+        account_id,
+        username,
+    }))
 }
 
 /// Verify a local username and password and return a session token.
@@ -589,40 +616,41 @@ pub async fn login_handler(
     }
 
     let password = req.password.clone();
-    let db = state.cfg.paths.db.clone();
     let guest_enabled = state.guest.enabled;
 
-    let result = tokio::task::spawn_blocking(move || -> Result<AuthTokenResponse, ApiError> {
-        let conn = schema::open_configured(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
+    let mut conn = state
+        .db
+        .acquire()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let Some(account_id) = account_profile::lookup_account_ref(&mut conn, &username)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+    else {
+        let _ = verify_password(dummy_password_hash(), &password);
+        return Err(ApiError::Unauthorized(
+            "invalid username or password".into(),
+        ));
+    };
 
-        let Some(account_id) = account_profile::lookup_account_ref(&conn, &username)
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-        else {
-            let _ = verify_password(dummy_password_hash(), &password);
-            return Err(ApiError::Unauthorized(
-                "invalid username or password".into(),
-            ));
-        };
+    if reject_demo_password_login(guest_enabled, &username) {
+        return Err(hosted_demo_login_rejected());
+    }
 
-        if reject_demo_password_login(guest_enabled, &username) {
-            return Err(hosted_demo_login_rejected());
-        }
+    let password_hash = account_profile::load_password_hash(&mut conn, &account_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if !verify_login_password(password_hash.as_deref(), &password) {
+        return Err(ApiError::Unauthorized(
+            "invalid username or password".into(),
+        ));
+    }
 
-        let password_hash = account_profile::load_password_hash(&conn, &account_id)
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
-        if !verify_login_password(password_hash.as_deref(), &password) {
-            return Err(ApiError::Unauthorized(
-                "invalid username or password".into(),
-            ));
-        }
+    let response = AuthTokenResponse::for_existing_account(&mut conn, account_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-        AuthTokenResponse::for_existing_account(&conn, account_id)
-            .map_err(|e| ApiError::Internal(e.to_string()))
-    })
-    .await
-    .join_map("login task", |e| e)?;
-
-    Ok(Json(result))
+    Ok(Json(response))
 }
 
 /// Verify a Hanko session JSON Web Token and exchange it for a vault session
@@ -660,92 +688,109 @@ pub async fn hanko_session_handler(
         "{}/.well-known/jwks.json",
         hanko_api_url.trim_end_matches('/')
     );
-    let db = state.cfg.paths.db.clone();
     let jtw = req.hanko_jwt.clone();
     let hanko_issuer = hanko_api_url.trim_end_matches('/').to_string();
 
-    let result = tokio::task::spawn_blocking(move || -> Result<AuthTokenResponse> {
-        let jwks_json = fetch_jwks_cached(&jwk_url)?;
+    // JWKS fetch and JWT verification are blocking (HTTP + crypto); keep them
+    // off the async runtime. DB work below runs on the sqlx pool.
+    let (hanko_user_id, email) =
+        tokio::task::spawn_blocking(move || -> Result<(String, Option<String>)> {
+            let jwks_json = fetch_jwks_cached(&jwk_url)?;
 
-        let header = jsonwebtoken::decode_header(&jtw)
-            .map_err(|e| anyhow::anyhow!("JWT header decode: {e}"))?;
-        let kid = header.kid.as_deref().unwrap_or("");
+            let header = jsonwebtoken::decode_header(&jtw)
+                .map_err(|e| anyhow::anyhow!("JWT header decode: {e}"))?;
+            let kid = header.kid.as_deref().unwrap_or("");
 
-        let keys = jwks_json["keys"]
-            .as_array()
-            .ok_or_else(|| anyhow::anyhow!("JWKS has no keys array"))?;
-        let key = jwk_matching_kid(keys, kid)?;
+            let keys = jwks_json["keys"]
+                .as_array()
+                .ok_or_else(|| anyhow::anyhow!("JWKS has no keys array"))?;
+            let key = jwk_matching_kid(keys, kid)?;
 
-        let n_b64 = key["n"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("JWK missing n"))?;
-        let e_b64 = key["e"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("JWK missing e"))?;
-        let decoding_key = jsonwebtoken::DecodingKey::from_rsa_components(n_b64, e_b64)
-            .map_err(|e| anyhow::anyhow!("decoding key: {e}"))?;
+            let n_b64 = key["n"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("JWK missing n"))?;
+            let e_b64 = key["e"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("JWK missing e"))?;
+            let decoding_key = jsonwebtoken::DecodingKey::from_rsa_components(n_b64, e_b64)
+                .map_err(|e| anyhow::anyhow!("decoding key: {e}"))?;
 
-        let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
-        validation.set_required_spec_claims(&["exp", "sub"]);
-        validation.set_issuer(&[hanko_issuer.as_str()]);
+            let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
+            validation.set_required_spec_claims(&["exp", "sub"]);
+            validation.set_issuer(&[hanko_issuer.as_str()]);
 
-        #[derive(Debug, Deserialize)]
-        struct HankoClaims {
-            sub: String,
-            #[serde(default)]
-            email: Option<String>,
-        }
-
-        let token_data = jsonwebtoken::decode::<HankoClaims>(&jtw, &decoding_key, &validation)
-            .map_err(|e| anyhow::anyhow!("JWT verification: {e}"))?;
-
-        let hanko_user_id = token_data.claims.sub.trim().to_string();
-        if hanko_user_id.is_empty() {
-            bail!("invalid Hanko session: missing sub");
-        }
-
-        let email = nonempty_trimmed_lower(token_data.claims.email.as_deref());
-
-        let conn = schema::open_configured(&db)?;
-
-        let account_id = match account_profile::lookup_account_by_hanko(&conn, &hanko_user_id)? {
-            Some(id) => id,
-            None => {
-                let account_id = uuid::Uuid::new_v4().to_string();
-                let username = username_from_hanko_email_or_id(email.as_deref(), &hanko_user_id);
-                let username = unique_hanko_username(&conn, username, &account_id)?;
-
-                account_profile::insert_account(
-                    &conn,
-                    &account_id,
-                    &username,
-                    None, // Hanko accounts have no local password
-                    None, // Display name is set later in onboarding
-                    Some(&hanko_user_id),
-                    false,
-                )?;
-
-                if let Some(email) = &email {
-                    let _ = account_profile::upsert_account_email(&conn, &account_id, email, true);
-                }
-
-                account_id
+            #[derive(Debug, Deserialize)]
+            struct HankoClaims {
+                sub: String,
+                #[serde(default)]
+                email: Option<String>,
             }
-        };
 
-        AuthTokenResponse::for_existing_account(&conn, account_id)
-    })
-    .await
-    .join_map("hanko session task", |_| {
-        ApiError::Unauthorized("invalid or expired session".into())
-    })?;
+            let token_data = jsonwebtoken::decode::<HankoClaims>(&jtw, &decoding_key, &validation)
+                .map_err(|e| anyhow::anyhow!("JWT verification: {e}"))?;
 
-    Ok(Json(result))
+            let hanko_user_id = token_data.claims.sub.trim().to_string();
+            if hanko_user_id.is_empty() {
+                bail!("invalid Hanko session: missing sub");
+            }
+
+            let email = nonempty_trimmed_lower(token_data.claims.email.as_deref());
+            Ok((hanko_user_id, email))
+        })
+        .await
+        .map_err(|e| ApiError::Internal(format!("hanko session task: {e}")))?
+        .map_err(|_| ApiError::Unauthorized("invalid or expired session".into()))?;
+
+    let mut conn = state
+        .db
+        .acquire()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let account_id = match account_profile::lookup_account_by_hanko(&mut conn, &hanko_user_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+    {
+        Some(id) => id,
+        None => {
+            let account_id = uuid::Uuid::new_v4().to_string();
+            let username = username_from_hanko_email_or_id(email.as_deref(), &hanko_user_id);
+            let username = unique_hanko_username(&mut conn, username, &account_id)
+                .await
+                .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+            account_profile::insert_account(
+                &mut conn,
+                &account_id,
+                &username,
+                None, // Hanko accounts have no local password
+                None, // Display name is set later in onboarding
+                Some(&hanko_user_id),
+                false,
+            )
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+            if let Some(email) = &email {
+                let _ = account_profile::upsert_account_email(&mut conn, &account_id, email, true)
+                    .await;
+            }
+
+            account_id
+        }
+    };
+
+    let response = AuthTokenResponse::for_existing_account(&mut conn, account_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    Ok(Json(response))
 }
 
 /// Self-hosted Try it: session for the shared demo account.
-fn try_demo_self_hosted(conn: &rusqlite::Connection) -> Result<AuthTokenResponse, ApiError> {
+async fn try_demo_self_hosted(conn: &mut AnyConnection) -> Result<AuthTokenResponse, ApiError> {
     if account_profile::username_for_account(conn, account_profile::DEMO_ACCOUNT_ID)
+        .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .is_none()
     {
@@ -754,18 +799,20 @@ fn try_demo_self_hosted(conn: &rusqlite::Connection) -> Result<AuthTokenResponse
         ));
     }
     AuthTokenResponse::for_existing_account(conn, account_profile::DEMO_ACCOUNT_ID.to_string())
+        .await
         .map_err(|e| ApiError::Internal(e.to_string()))
 }
 
 /// Hosted Try it: take a ready guest, or clone the template when `clone_if_empty`.
-fn try_demo_from_pool(
-    conn: &mut rusqlite::Connection,
+async fn try_demo_from_pool(
+    conn: &mut AnyConnection,
     cfg: &Config,
     session_secs: u64,
     clone_if_empty: bool,
 ) -> Result<Option<AuthTokenResponse>, ApiError> {
     if let Some((account_id, username, token)) =
         crate::guest_pool::assign_ready_guest(conn, session_secs)
+            .await
             .map_err(|e| ApiError::Internal(e.to_string()))?
     {
         return Ok(Some(AuthTokenResponse {
@@ -783,6 +830,7 @@ fn try_demo_from_pool(
         account_profile::DEMO_ACCOUNT_ID,
         session_secs,
     )
+    .await
     .map_err(|e| ApiError::ServiceUnavailable(e.to_string()))?;
     Ok(Some(AuthTokenResponse {
         token,
@@ -826,28 +874,25 @@ pub async fn try_demo_handler(
     check_try_demo_rate_limits(cf_ip)?;
 
     if !state.guest.enabled {
-        let db = state.cfg.paths.db.clone();
-        let result = tokio::task::spawn_blocking(move || -> Result<AuthTokenResponse, ApiError> {
-            let conn =
-                schema::open_configured(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
-            try_demo_self_hosted(&conn)
-        })
-        .await
-        .join_map("try-demo self-hosted", |e| e)?;
+        let mut conn = state
+            .db
+            .acquire()
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        let result = try_demo_self_hosted(&mut conn).await?;
         return Ok(Json(result));
     }
 
-    let db = state.cfg.paths.db.clone();
     let cfg = std::sync::Arc::clone(&state.cfg);
     let session_secs = state.guest.session_secs;
-    let assigned =
-        tokio::task::spawn_blocking(move || -> Result<Option<AuthTokenResponse>, ApiError> {
-            let mut conn =
-                schema::open_configured(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
-            try_demo_from_pool(&mut conn, &cfg, session_secs, false)
-        })
-        .await
-        .join_map("try-demo assign", |e| e)?;
+    let assigned = {
+        let mut conn = state
+            .db
+            .acquire()
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        try_demo_from_pool(&mut conn, &cfg, session_secs, false).await?
+    };
 
     if let Some(response) = assigned {
         record_try_demo_assignment(&state);
@@ -855,21 +900,19 @@ pub async fn try_demo_handler(
     }
 
     // Own the lock in a detached task so a 60s client timeout cannot drop the
-    // guard while `spawn_blocking` is still cloning. Dropping the JoinHandle
+    // guard while the clone is still running. Dropping the JoinHandle
     // detaches; the lock stays held until the clone returns.
     let lock = state.guest_clone_lock.clone();
-    let db = state.cfg.paths.db.clone();
+    let pool = state.db.clone();
     let cfg = std::sync::Arc::clone(&state.cfg);
     let session_secs = state.guest.session_secs;
     let clone_task = tokio::spawn(async move {
         let _guard = lock.lock().await;
-        tokio::task::spawn_blocking(move || -> Result<Option<AuthTokenResponse>, ApiError> {
-            let mut conn =
-                schema::open_configured(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
-            try_demo_from_pool(&mut conn, &cfg, session_secs, true)
-        })
-        .await
-        .join_map("try-demo clone", |e| e)
+        let mut conn = pool
+            .acquire()
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        try_demo_from_pool(&mut conn, &cfg, session_secs, true).await
     });
 
     match tokio::time::timeout(TRY_DEMO_CLONE_TIMEOUT, clone_task).await {
@@ -941,21 +984,21 @@ pub struct LogoutResponse {
 /// # Errors
 ///
 /// Returns an error when the current password is wrong or a database write fails.
-fn change_password_on_conn(
-    conn: &mut rusqlite::Connection,
+async fn change_password_on_conn(
+    conn: &mut AnyConnection,
     account_id: &str,
     current_password: &str,
     new_hash: &str,
 ) -> Result<String> {
-    let tx = conn.transaction()?;
-    let current_hash = account_profile::load_password_hash(&tx, account_id)?;
+    let mut tx = conn.begin().await?;
+    let current_hash = account_profile::load_password_hash(&mut tx, account_id).await?;
     if !passwords_match(current_hash.as_deref(), current_password) {
         bail!("current password is incorrect");
     }
-    account_profile::update_password_hash(&tx, account_id, new_hash)?;
-    api_tokens::delete_all_api_tokens(&tx, account_id)?;
-    let token = session_tokens::rotate_account_session_token(&tx, account_id)?;
-    tx.commit()?;
+    account_profile::update_password_hash(&mut tx, account_id, new_hash).await?;
+    api_tokens::delete_all_api_tokens(&mut tx, account_id).await?;
+    let token = session_tokens::rotate_account_session_token(&mut tx, account_id).await?;
+    tx.commit().await?;
     Ok(token)
 }
 
@@ -964,14 +1007,14 @@ fn change_password_on_conn(
 // ---------------------------------------------------------------------------
 
 /// Revoke the session token. Guest accounts are deleted with their data dir.
-fn logout_on_conn(conn: &rusqlite::Connection, token: &str, data_dir: &Path) -> Result<()> {
-    let account_id = session_tokens::lookup_account_for_token(conn, token)?;
-    let _ = session_tokens::revoke_session_token(conn, token)?;
+async fn logout_on_conn(conn: &mut AnyConnection, token: &str, data_dir: &Path) -> Result<()> {
+    let account_id = session_tokens::lookup_account_for_token(conn, token).await?;
+    let _ = session_tokens::revoke_session_token(conn, token).await?;
     let Some(account_id) = account_id else {
         return Ok(());
     };
-    if account_profile::is_guest_account(conn, &account_id)? {
-        account_profile::delete_account(conn, &account_id)?;
+    if account_profile::is_guest_account(conn, &account_id).await? {
+        account_profile::delete_account(conn, &account_id).await?;
         let dir = data_dir.join(&account_id);
         if dir.exists() {
             std::fs::remove_dir_all(&dir)
@@ -998,15 +1041,18 @@ pub async fn logout_handler(
     headers: HeaderMap,
 ) -> Result<Json<LogoutResponse>, ApiError> {
     let token = crate::server::bearer_token(&headers)?;
-    let db = state.cfg.paths.db.clone();
     let data_dir = state.cfg.paths.data_dir.clone();
-    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-        let conn = schema::open_configured(&db)?;
-        schema::ensure_accounts_schema(&conn)?;
-        logout_on_conn(&conn, &token, &data_dir)
-    })
-    .await
-    .join_blocking("logout task")?;
+    let mut conn = state
+        .db
+        .acquire()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    schema::ensure_accounts_schema(&mut conn)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    logout_on_conn(&mut conn, &token, &data_dir)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(LogoutResponse { ok: true }))
 }
 
@@ -1040,21 +1086,22 @@ pub async fn change_password_handler(
     crate::server::reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
     let account_id = auth.account_id;
     let current_password = req.current_password.clone();
-    let db = state.cfg.paths.db.clone();
     let new_hash = hash_password(new_password).map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    let token = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
-        let mut conn = schema::open_configured(&db)?;
-        change_password_on_conn(&mut conn, &account_id, &current_password, &new_hash)
-    })
-    .await
-    .join_map("change password task", |e| {
-        if e.to_string().contains("current password is incorrect") {
-            ApiError::BadRequest(e.to_string())
-        } else {
-            ApiError::Internal(e.to_string())
-        }
-    })?;
+    let mut conn = state
+        .db
+        .acquire()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let token = change_password_on_conn(&mut conn, &account_id, &current_password, &new_hash)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("current password is incorrect") {
+                ApiError::BadRequest(e.to_string())
+            } else {
+                ApiError::Internal(e.to_string())
+            }
+        })?;
 
     Ok(Json(ChangePasswordResponse { ok: true, token }))
 }
@@ -1092,37 +1139,34 @@ pub async fn delete_account_handler(
         ));
     }
     let current_password = req.current_password.clone();
-    let db = state.cfg.paths.db.clone();
     let account_root = state.cfg.paths.data_dir.join(&account_id);
 
-    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-        let conn = schema::open_configured(&db)?;
-        let password_hash = account_profile::load_password_hash(&conn, &account_id)?;
-        let has_local_password = matches!(password_hash.as_deref(), Some(hash) if !hash.is_empty());
-        if has_local_password {
-            let Some(pw) = current_password.as_deref() else {
-                bail!("current password is required to delete this account");
-            };
-            if !passwords_match(password_hash.as_deref(), pw) {
-                bail!("current password is incorrect");
-            }
+    let mut conn = state
+        .db
+        .acquire()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let password_hash = account_profile::load_password_hash(&mut conn, &account_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let has_local_password = matches!(password_hash.as_deref(), Some(hash) if !hash.is_empty());
+    if has_local_password {
+        let Some(pw) = current_password.as_deref() else {
+            return Err(ApiError::BadRequest(
+                "current password is required to delete this account".into(),
+            ));
+        };
+        if !passwords_match(password_hash.as_deref(), pw) {
+            return Err(ApiError::BadRequest("current password is incorrect".into()));
         }
-        account_profile::delete_account(&conn, &account_id)?;
-        if account_root.exists() {
-            std::fs::remove_dir_all(&account_root)
-                .with_context(|| format!("remove account data dir {}", account_root.display()))?;
-        }
-        Ok(())
-    })
-    .await
-    .join_map("delete account task", |e| {
-        let msg = e.to_string();
-        if msg.contains("current password") {
-            ApiError::BadRequest(msg)
-        } else {
-            ApiError::Internal(msg)
-        }
-    })?;
+    }
+    account_profile::delete_account(&mut conn, &account_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if account_root.exists() {
+        std::fs::remove_dir_all(&account_root)
+            .with_context(|| format!("remove account data dir {}", account_root.display()))?;
+    }
 
     Ok(Json(DeleteAccountResponse { ok: true }))
 }
@@ -1131,18 +1175,34 @@ pub async fn delete_account_handler(
 mod tests {
     use super::*;
     use crate::db::api_tokens::ApiTokenScopes;
-    use rusqlite::Connection;
+    use crate::db::engine;
 
     const TEST_ACCOUNT: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const OTHER_ACCOUNT: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
-    fn password_change_setup() -> (Connection, String, Vec<String>, String) {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        schema::ensure_vault_schema(&conn).unwrap();
+    /// Test database with the vault schema applied. The temp dir is returned
+    /// too: dropping it deletes the database file out from under the checked-out
+    /// connection, after which SQLite rejects writes with SQLITE_READONLY.
+    async fn test_conn() -> (tempfile::TempDir, sqlx::pool::PoolConnection<sqlx::Any>) {
+        let (pool, dir) = engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        schema::ensure_vault_schema(&mut conn).await.unwrap();
+        (dir, conn)
+    }
+
+    async fn password_change_setup() -> (
+        tempfile::TempDir,
+        sqlx::pool::PoolConnection<sqlx::Any>,
+        String,
+        Vec<String>,
+        String,
+    ) {
+        let (pool, dir) = engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        schema::ensure_vault_schema(&mut conn).await.unwrap();
         let old_hash = hash_password("old-password").unwrap();
         account_profile::insert_account(
-            &conn,
+            &mut conn,
             TEST_ACCOUNT,
             "alice",
             Some(&old_hash),
@@ -1150,9 +1210,10 @@ mod tests {
             None,
             false,
         )
+        .await
         .unwrap();
         account_profile::insert_account(
-            &conn,
+            &mut conn,
             OTHER_ACCOUNT,
             "bob",
             Some(&old_hash),
@@ -1160,34 +1221,40 @@ mod tests {
             None,
             false,
         )
+        .await
         .unwrap();
-        let old_session =
-            session_tokens::insert_account_session_token(&conn, TEST_ACCOUNT).unwrap();
+        let old_session = session_tokens::insert_account_session_token(&mut conn, TEST_ACCOUNT)
+            .await
+            .unwrap();
         let (_, _, _, _, _, first_api_token) = api_tokens::create_api_token(
-            &conn,
+            &mut conn,
             TEST_ACCOUNT,
             "backup client",
             ApiTokenScopes::Both,
             None,
         )
+        .await
         .unwrap();
         let (_, _, _, _, _, second_api_token) = api_tokens::create_api_token(
-            &conn,
+            &mut conn,
             TEST_ACCOUNT,
             "export client",
             ApiTokenScopes::Export,
             None,
         )
+        .await
         .unwrap();
         let (_, _, _, _, _, other_account_token) = api_tokens::create_api_token(
-            &conn,
+            &mut conn,
             OTHER_ACCOUNT,
             "other account client",
             ApiTokenScopes::Both,
             None,
         )
+        .await
         .unwrap();
         (
+            dir,
             conn,
             old_session,
             vec![first_api_token, second_api_token],
@@ -1292,50 +1359,51 @@ mod tests {
         assert_eq!(try_demo_client_key(Some("not-an-ip")), "try-demo:unknown");
     }
 
-    #[test]
-    fn change_password_transaction_updates_all_credentials() {
-        let (mut conn, old_session, api_tokens, other_account_token) = password_change_setup();
+    #[tokio::test]
+    async fn change_password_transaction_updates_all_credentials() {
+        let (_dir, mut conn, old_session, api_tokens, other_account_token) =
+            password_change_setup().await;
         let new_hash = hash_password("new-password").unwrap();
 
         let new_session =
-            change_password_on_conn(&mut conn, TEST_ACCOUNT, "old-password", &new_hash).unwrap();
+            change_password_on_conn(&mut conn, TEST_ACCOUNT, "old-password", &new_hash)
+                .await
+                .unwrap();
 
-        let stored_hash = account_profile::load_password_hash(&conn, TEST_ACCOUNT)
+        let stored_hash = account_profile::load_password_hash(&mut conn, TEST_ACCOUNT)
+            .await
             .unwrap()
             .unwrap();
         assert!(passwords_match(Some(&stored_hash), "new-password"));
         assert!(
-            session_tokens::lookup_account_for_token(&conn, &old_session)
+            session_tokens::lookup_account_for_token(&mut conn, &old_session)
+                .await
                 .unwrap()
                 .is_none()
         );
         assert_eq!(
-            session_tokens::lookup_account_for_token(&conn, &new_session)
+            session_tokens::lookup_account_for_token(&mut conn, &new_session)
+                .await
                 .unwrap()
                 .as_deref(),
             Some(TEST_ACCOUNT)
         );
         for api_token in api_tokens {
             assert!(
-                crate::db::api_tokens::lookup_account_for_api_token(&conn, &api_token)
+                crate::db::api_tokens::lookup_account_for_api_token(&mut conn, &api_token)
+                    .await
                     .unwrap()
                     .is_none()
             );
         }
         assert_eq!(
-            crate::db::api_tokens::lookup_account_for_api_token(&conn, &other_account_token)
+            crate::db::api_tokens::lookup_account_for_api_token(&mut conn, &other_account_token)
+                .await
                 .unwrap()
                 .unwrap()
                 .account_id,
             OTHER_ACCOUNT
         );
-    }
-
-    fn memory_conn() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        schema::ensure_vault_schema(&conn).unwrap();
-        conn
     }
 
     #[test]
@@ -1346,66 +1414,79 @@ mod tests {
         assert!(!reject_demo_password_login(false, "demo"));
     }
 
-    #[test]
-    fn logout_on_conn_deletes_guest_row_and_files() {
+    #[tokio::test]
+    async fn logout_on_conn_deletes_guest_row_and_files() {
         let tmp = tempfile::tempdir().unwrap();
         let data_dir = tmp.path().to_path_buf();
-        let conn = memory_conn();
+        let (_dir, mut conn) = test_conn().await;
         let guest_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
-        account_profile::insert_guest_account(&conn, guest_id, "guest-cccc", None).unwrap();
-        account_profile::set_guest_status(&conn, guest_id, "assigned").unwrap();
-        let token = session_tokens::insert_account_session_token(&conn, guest_id).unwrap();
+        account_profile::insert_guest_account(&mut conn, guest_id, "guest-cccc", None)
+            .await
+            .unwrap();
+        account_profile::set_guest_status(&mut conn, guest_id, "assigned")
+            .await
+            .unwrap();
+        let token = session_tokens::insert_account_session_token(&mut conn, guest_id)
+            .await
+            .unwrap();
         let guest_dir = data_dir.join(guest_id);
         std::fs::create_dir_all(&guest_dir).unwrap();
         std::fs::write(guest_dir.join("marker.txt"), "x").unwrap();
 
-        logout_on_conn(&conn, &token, &data_dir).unwrap();
+        logout_on_conn(&mut conn, &token, &data_dir).await.unwrap();
 
         assert!(
-            account_profile::username_for_account(&conn, guest_id)
+            account_profile::username_for_account(&mut conn, guest_id)
+                .await
                 .unwrap()
                 .is_none()
         );
         assert!(!guest_dir.exists());
         assert!(
-            session_tokens::lookup_account_for_token(&conn, &token)
+            session_tokens::lookup_account_for_token(&mut conn, &token)
+                .await
                 .unwrap()
                 .is_none()
         );
     }
 
-    #[test]
-    fn logout_on_conn_leaves_registered_account() {
+    #[tokio::test]
+    async fn logout_on_conn_leaves_registered_account() {
         let tmp = tempfile::tempdir().unwrap();
         let data_dir = tmp.path().to_path_buf();
-        let conn = memory_conn();
-        account_profile::insert_account(&conn, TEST_ACCOUNT, "alice", None, None, None, false)
+        let (_dir, mut conn) = test_conn().await;
+        account_profile::insert_account(&mut conn, TEST_ACCOUNT, "alice", None, None, None, false)
+            .await
             .unwrap();
-        let token = session_tokens::insert_account_session_token(&conn, TEST_ACCOUNT).unwrap();
+        let token = session_tokens::insert_account_session_token(&mut conn, TEST_ACCOUNT)
+            .await
+            .unwrap();
         let account_dir = data_dir.join(TEST_ACCOUNT);
         std::fs::create_dir_all(&account_dir).unwrap();
 
-        logout_on_conn(&conn, &token, &data_dir).unwrap();
+        logout_on_conn(&mut conn, &token, &data_dir).await.unwrap();
 
         assert_eq!(
-            account_profile::username_for_account(&conn, TEST_ACCOUNT)
+            account_profile::username_for_account(&mut conn, TEST_ACCOUNT)
+                .await
                 .unwrap()
                 .as_deref(),
             Some("alice")
         );
         assert!(account_dir.exists());
         assert!(
-            session_tokens::lookup_account_for_token(&conn, &token)
+            session_tokens::lookup_account_for_token(&mut conn, &token)
+                .await
                 .unwrap()
                 .is_none()
         );
     }
 
-    #[test]
-    fn try_demo_self_hosted_issues_demo_session() {
-        let conn = memory_conn();
+    #[tokio::test]
+    async fn try_demo_self_hosted_issues_demo_session() {
+        let (_dir, mut conn) = test_conn().await;
         account_profile::insert_account(
-            &conn,
+            &mut conn,
             account_profile::DEMO_ACCOUNT_ID,
             "demo",
             None,
@@ -1413,24 +1494,26 @@ mod tests {
             None,
             true,
         )
+        .await
         .unwrap();
 
-        let response = try_demo_self_hosted(&conn).unwrap();
+        let response = try_demo_self_hosted(&mut conn).await.unwrap();
         assert_eq!(response.account_id, account_profile::DEMO_ACCOUNT_ID);
         assert_eq!(response.username, "demo");
         assert!(response.token.starts_with("mv-user-"));
         assert_eq!(
-            session_tokens::lookup_account_for_token(&conn, &response.token)
+            session_tokens::lookup_account_for_token(&mut conn, &response.token)
+                .await
                 .unwrap()
                 .as_deref(),
             Some(account_profile::DEMO_ACCOUNT_ID)
         );
     }
 
-    #[test]
-    fn try_demo_self_hosted_missing_account_is_unavailable() {
-        let conn = memory_conn();
-        let err = try_demo_self_hosted(&conn).unwrap_err();
+    #[tokio::test]
+    async fn try_demo_self_hosted_missing_account_is_unavailable() {
+        let (_dir, mut conn) = test_conn().await;
+        let err = try_demo_self_hosted(&mut conn).await.unwrap_err();
         match err {
             ApiError::ServiceUnavailable(msg) => {
                 assert!(
@@ -1442,11 +1525,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn try_demo_assigns_ready_guest() {
-        let mut conn = memory_conn();
+    #[tokio::test]
+    async fn try_demo_assigns_ready_guest() {
+        let (pool, _dir) = engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        schema::ensure_vault_schema(&mut conn).await.unwrap();
         let guest_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
-        account_profile::insert_guest_account(&conn, guest_id, "guest-dddd", None).unwrap();
+        account_profile::insert_guest_account(&mut conn, guest_id, "guest-dddd", None)
+            .await
+            .unwrap();
         let cfg = crate::config::Config {
             paths: crate::config::PathsConfig {
                 db: std::path::PathBuf::from(":memory:"),
@@ -1455,16 +1542,19 @@ mod tests {
                 assets_converted_dir: "assets_converted".into(),
             },
             server: None,
+            database: crate::config::DatabaseConfig::default(),
         };
 
         let response = try_demo_from_pool(&mut conn, &cfg, 120, false)
+            .await
             .unwrap()
             .expect("ready guest");
         assert_eq!(response.account_id, guest_id);
         assert_eq!(response.username, "guest-dddd");
         assert!(response.token.starts_with("mv-user-"));
         assert_eq!(
-            account_profile::guest_status(&conn, guest_id)
+            account_profile::guest_status(&mut conn, guest_id)
+                .await
                 .unwrap()
                 .as_deref(),
             Some("assigned")
@@ -1481,17 +1571,18 @@ mod tests {
         }
     }
 
-    #[test]
-    fn try_demo_empty_pool_overlapping_clones_both_get_sessions() {
+    #[tokio::test]
+    async fn try_demo_empty_pool_overlapping_clones_both_get_sessions() {
         let tmp = tempfile::tempdir().unwrap();
         let db = tmp.path().join("vault.db");
         let data_dir = tmp.path().join("data");
         std::fs::create_dir_all(&data_dir).unwrap();
+        let (pool, _dir) = engine::test_pool().await;
         {
-            let conn = schema::open_configured(&db).unwrap();
-            schema::ensure_vault_schema(&conn).unwrap();
+            let mut conn = pool.acquire().await.unwrap();
+            schema::ensure_vault_schema(&mut conn).await.unwrap();
             account_profile::insert_account(
-                &conn,
+                &mut conn,
                 account_profile::DEMO_ACCOUNT_ID,
                 "demo",
                 None,
@@ -1499,6 +1590,7 @@ mod tests {
                 None,
                 true,
             )
+            .await
             .unwrap();
         }
         let cfg = crate::config::Config {
@@ -1509,22 +1601,31 @@ mod tests {
                 assets_converted_dir: "assets_converted".into(),
             },
             server: None,
+            database: crate::config::DatabaseConfig::default(),
         };
 
         let results = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        // Production serializes clones with `AppState::guest_clone_lock`; the
+        // plain clone transaction cannot retry a second concurrent writer once
+        // it has read from a stale snapshot, so mirror that lock here.
+        let clone_lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
         let mut handles = Vec::new();
         for _ in 0..2 {
-            let path = db.clone();
+            let pool = pool.clone();
             let cfg = cfg.clone();
             let results = std::sync::Arc::clone(&results);
-            handles.push(std::thread::spawn(move || {
-                let mut conn = schema::open_configured(&path).unwrap();
-                let assigned = try_demo_from_pool(&mut conn, &cfg, 120, true).unwrap();
+            let clone_lock = std::sync::Arc::clone(&clone_lock);
+            handles.push(tokio::spawn(async move {
+                let _guard = clone_lock.lock().await;
+                let mut conn = pool.acquire().await.unwrap();
+                let assigned = try_demo_from_pool(&mut conn, &cfg, 120, true)
+                    .await
+                    .unwrap();
                 results.lock().unwrap().push(assigned);
             }));
         }
         for handle in handles {
-            handle.join().expect("clone thread");
+            handle.await.expect("clone task");
         }
         let got = results.lock().unwrap();
         let responses: Vec<_> = got
@@ -1539,42 +1640,51 @@ mod tests {
         assert_ne!(responses[0].token, responses[1].token);
     }
 
-    #[test]
-    fn change_password_transaction_rolls_back_every_credential() {
-        let (mut conn, old_session, api_tokens, other_account_token) = password_change_setup();
-        conn.execute_batch(
+    #[tokio::test]
+    async fn change_password_transaction_rolls_back_every_credential() {
+        let (_dir, mut conn, old_session, api_tokens, other_account_token) =
+            password_change_setup().await;
+        sqlx::query(
             "CREATE TRIGGER fail_session_rotation
              BEFORE UPDATE ON account_session_tokens
              BEGIN
                  SELECT RAISE(FAIL, 'injected session rotation failure');
-             END;",
+             END",
         )
+        .execute(&mut *conn)
+        .await
         .unwrap();
         let new_hash = hash_password("new-password").unwrap();
 
         assert!(
-            change_password_on_conn(&mut conn, TEST_ACCOUNT, "old-password", &new_hash).is_err()
+            change_password_on_conn(&mut conn, TEST_ACCOUNT, "old-password", &new_hash)
+                .await
+                .is_err()
         );
 
-        let stored_hash = account_profile::load_password_hash(&conn, TEST_ACCOUNT)
+        let stored_hash = account_profile::load_password_hash(&mut conn, TEST_ACCOUNT)
+            .await
             .unwrap()
             .unwrap();
         assert!(passwords_match(Some(&stored_hash), "old-password"));
         assert_eq!(
-            session_tokens::lookup_account_for_token(&conn, &old_session)
+            session_tokens::lookup_account_for_token(&mut conn, &old_session)
+                .await
                 .unwrap()
                 .as_deref(),
             Some(TEST_ACCOUNT)
         );
         for api_token in api_tokens {
             assert!(
-                crate::db::api_tokens::lookup_account_for_api_token(&conn, &api_token)
+                crate::db::api_tokens::lookup_account_for_api_token(&mut conn, &api_token)
+                    .await
                     .unwrap()
                     .is_some()
             );
         }
         assert_eq!(
-            crate::db::api_tokens::lookup_account_for_api_token(&conn, &other_account_token)
+            crate::db::api_tokens::lookup_account_for_api_token(&mut conn, &other_account_token)
+                .await
                 .unwrap()
                 .unwrap()
                 .account_id,

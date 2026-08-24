@@ -16,6 +16,20 @@ pub struct Config {
     /// HTTP ingest server (`message-vault-server serve`). Required for `serve`.
     #[serde(default)]
     pub server: Option<ServerConfig>,
+    /// Database engine and connection URL. When `url` is set (a
+    /// `postgres://…` or `sqlite://…` URL), `serve` connects through it
+    /// instead of `paths.db`. Required for Postgres.
+    #[serde(default)]
+    pub database: DatabaseConfig,
+}
+
+/// `[database]` section: optional connection URL selecting the engine.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct DatabaseConfig {
+    /// Connection URL (`postgres://…` or `sqlite://…`). Unset = SQLite at
+    /// `paths.db`.
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 /// `[server]` section: HTTP bind address, CORS, and asset upload limits.
