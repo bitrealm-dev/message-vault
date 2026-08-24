@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import Button from "../../components/Button";
 import PasswordField from "../../components/PasswordField";
@@ -6,6 +6,7 @@ import PathPicker from "../../components/PathPicker";
 import PhoneTokenField, { type PhoneTokenFieldHandle } from "../../components/PhoneTokenField";
 import Select, { ListBoxItem, selectItemClassName } from "../../components/Select";
 import { EXPORT_SOURCES } from "../../lib/exportSources";
+import { ownerPhonesNeedMismatchAck } from "../../lib/phoneTokens";
 import { parseSelectKey } from "../../lib/selectKey";
 import type { AttachmentMediaMode, ContactNameMode } from "../../lib/types";
 import { accentLink } from "../../lib/uiStyles";
@@ -40,6 +41,11 @@ export type ImportFormFieldsProps = {
   onContactNameModeChange: (mode: ContactNameMode) => void;
   ownerPhones: string[];
   onOwnerPhonesChange: (phones: string[]) => void;
+  /** Vault account phones for SBR mismatch checks (empty until loaded). */
+  profilePhones: string[];
+  profilePhonesReady: boolean;
+  /** True when the profile request failed (fail open on mismatch gate). */
+  profilePhonesError: boolean;
   showMissingAccountPhoneWarning: boolean;
   formatOpen: boolean;
   onToggleFormat: () => void;
@@ -170,16 +176,47 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
   const isSbr = props.source === "sms-backup-restore";
   const showCompress = (isIos || isSbr) && props.attachmentMedia === "compress";
   const phoneFieldRef = useRef<PhoneTokenFieldHandle>(null);
-  const [phoneDraftPending, setPhoneDraftPending] = useState(false);
+  const [phoneDraft, setPhoneDraft] = useState("");
+  const [mismatchAck, setMismatchAck] = useState(false);
+  const phoneDraftPending = phoneDraft.trim().length > 0;
+  const phonesForMatch = phoneDraftPending
+    ? [...props.ownerPhones, phoneDraft.trim()]
+    : props.ownerPhones;
+  const phonesMismatch =
+    isSbr &&
+    ownerPhonesNeedMismatchAck(phonesForMatch, props.profilePhones, {
+      ready: props.profilePhonesReady,
+      fetchFailed: props.profilePhonesError,
+    });
+
+  useEffect(() => {
+    if (!phonesMismatch) setMismatchAck(false);
+  }, [phonesMismatch]);
+
+  useEffect(() => {
+    if (!isSbr) {
+      setPhoneDraft("");
+      setMismatchAck(false);
+    }
+  }, [isSbr]);
+
   const canImport =
     Boolean(props.backupPath) &&
     !props.running &&
-    (!isSbr || props.ownerPhones.length > 0 || phoneDraftPending);
+    (!isSbr || props.profilePhonesReady) &&
+    (!isSbr || props.ownerPhones.length > 0 || phoneDraftPending) &&
+    (!phonesMismatch || mismatchAck);
 
   function handleImport(): void {
     if (isSbr) {
+      if (!props.profilePhonesReady) return;
       const phones = phoneFieldRef.current?.flush() ?? props.ownerPhones;
       if (phones.length === 0) return;
+      const mismatch = ownerPhonesNeedMismatchAck(phones, props.profilePhones, {
+        ready: props.profilePhonesReady,
+        fetchFailed: props.profilePhonesError,
+      });
+      if (mismatch && !mismatchAck) return;
       props.onImport(phones);
       return;
     }
@@ -282,17 +319,16 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
               onContactNameModeChange={props.onContactNameModeChange}
             />
 
-            <StackedField label="Backup Device Phone Number">
+            <StackedField label="Backup Device Phone Numbers">
               <PhoneTokenField
                 ref={phoneFieldRef}
                 value={props.ownerPhones}
                 onChange={props.onOwnerPhonesChange}
-                onDraftPendingChange={setPhoneDraftPending}
-                aria-label="Backup Device Phone Number"
+                onDraftChange={setPhoneDraft}
+                aria-label="Backup Device Phone Numbers"
               />
               <p className={hintStyle}>
-                Your phone numbers on this backup (outgoing messages). Prefills from your vault
-                account; add more if you used several SIMs.
+                Pre-filled from your profile. Add numbers from other SIMs, if needed.
               </p>
               {props.showMissingAccountPhoneWarning ? (
                 <div
@@ -306,6 +342,24 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
                   so import can tell which messages you sent.
                 </div>
               ) : null}
+              {phonesMismatch && !mismatchAck && phonesForMatch.length > 0 ? (
+                <div
+                  role="status"
+                  className="mt-2 rounded-lg border border-warn-soft-border bg-warn-soft-bg px-3 py-2 text-[0.8125rem] text-warn-soft-text"
+                >
+                  I understand none of the entered phone numbers match my profile and that imported
+                  messages will not be linked to my account.
+                </div>
+              ) : null}
+              <label className="mt-2 flex cursor-pointer items-start gap-2 text-[0.8125rem] text-text">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 shrink-0"
+                  checked={mismatchAck}
+                  onChange={(e) => setMismatchAck(e.target.checked)}
+                />
+                <span>Allow import from phone numbers not on my profile.</span>
+              </label>
             </StackedField>
           </>
         ) : (
