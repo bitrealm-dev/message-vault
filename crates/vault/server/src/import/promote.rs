@@ -260,15 +260,15 @@ pub(super) async fn promote_append(
             SELECT 1
             FROM attachments a
             WHERE a.message_id = mm.prod_id
-              AND a.path IS sa.path
-              AND a.original_name IS sa.original_name
-              AND a.mime_type IS sa.mime_type
+              AND a.path IS NOT DISTINCT FROM sa.path
+              AND a.original_name IS NOT DISTINCT FROM sa.original_name
+              AND a.mime_type IS NOT DISTINCT FROM sa.mime_type
               AND a.is_sticker = sa.is_sticker
-              AND a.transcription IS sa.transcription
-              AND a.sha256 IS sa.sha256
-              AND a.assets_path IS sa.assets_path
-              AND a.size_bytes IS sa.size_bytes
-              AND a.missing_reason IS sa.missing_reason
+              AND a.transcription IS NOT DISTINCT FROM sa.transcription
+              AND a.sha256 IS NOT DISTINCT FROM sa.sha256
+              AND a.assets_path IS NOT DISTINCT FROM sa.assets_path
+              AND a.size_bytes IS NOT DISTINCT FROM sa.size_bytes
+              AND a.missing_reason IS NOT DISTINCT FROM sa.missing_reason
         )
         "#,
     )
@@ -298,9 +298,9 @@ pub(super) async fn promote_append(
             WHERE t.message_id = mm.prod_id
               AND t.part_index = st.part_index
               AND t.kind = st.kind
-              AND t.emoji IS st.emoji
+              AND t.emoji IS NOT DISTINCT FROM st.emoji
               AND t.is_from_me = st.is_from_me
-              AND t.sender_handle_id IS st.sender_handle_id
+              AND t.sender_handle_id IS NOT DISTINCT FROM st.sender_handle_id
         )
         "#,
     )
@@ -735,6 +735,257 @@ mod tests {
     use super::*;
 
     const TEST_ACCOUNT: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+
+    /// Full-text hit count under the Postgres 'simple' config.
+    async fn pg_fts_hits(conn: &mut AnyConnection, needle: &str) -> i64 {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM messages WHERE search_tsv @@ plainto_tsquery('simple', $1)",
+        )
+        .bind(needle)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap()
+    }
+
+    /// Postgres-gated: the promote path's disable→bulk-fill→enable FTS cycle
+    /// on the real engine. Skips unless `MV_TEST_POSTGRES_URL` is set (CI
+    /// service / `docker-compose.pg.yml`).
+    #[tokio::test]
+    async fn promote_fts_cycle_pg() {
+        let Some(url) = crate::pg_test_url() else {
+            return;
+        };
+        let _pg_guard = crate::PG_TEST_LOCK.lock().await;
+        sqlx::any::install_default_drivers();
+        let pool = sqlx::any::AnyPoolOptions::new()
+            .connect(&url)
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        schema::ensure_vault_schema(&mut conn).await.unwrap();
+        // The Postgres test database is shared across runs; clear anything a
+        // previous run left behind (the account FKs cascade). The username is
+        // distinct from the other gated tests' 'alice' because the
+        // case-insensitive username index is database-global.
+        sqlx::query("DELETE FROM accounts WHERE id = $1")
+            .bind(TEST_ACCOUNT)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        // One account + handle + conversation, and a pre-existing message
+        // below the promote watermark, indexed by the insert trigger.
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'promote-alice')")
+            .bind(TEST_ACCOUNT)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let handle_id: i64 = sqlx::query_scalar(
+            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+             VALUES ($1, '+15555550100', '+15555550100', 'phone', 'phone')
+             RETURNING id",
+        )
+        .bind(TEST_ACCOUNT)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let conversation_id: i64 = sqlx::query_scalar(
+            r#"
+            INSERT INTO conversations (
+                account_id, chat_handle_id, conversation_type,
+                group_title, exported_at, source_file
+            ) VALUES ($1, $2, 'individual', NULL, NULL, 'promote.json')
+            RETURNING id
+            "#,
+        )
+        .bind(TEST_ACCOUNT)
+        .bind(handle_id)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let carriedover_id: i64 = sqlx::query_scalar(
+            r#"
+            INSERT INTO messages (
+                conversation_id, account_id, source, guid, timestamp,
+                is_from_me, sort_order, body
+            ) VALUES ($1, $2, 'sms', 'carriedover', '2020-01-01T00:00:00Z', 0, 0, 'carriedover')
+            RETURNING id
+            "#,
+        )
+        .bind(conversation_id)
+        .bind(TEST_ACCOUNT)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(pg_fts_hits(&mut conn, "carriedover").await, 1);
+
+        // ── The promote window, driven directly (this is exactly what
+        // promote_append does between its staging inserts and the bulk fill):
+        // all six by-name ALTERs execute — any wrong trigger name fails here.
+        schema::disable_fts_triggers_pg(&mut *conn).await.unwrap();
+
+        // FK constraint triggers stay enabled during the window: an
+        // attachment pointing at a missing message must fail loudly.
+        let fk_err = sqlx::query(
+            "INSERT INTO attachments (message_id, original_name)
+             VALUES (99999999, 'dangling.jpg')",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap_err();
+        assert!(
+            format!("{fk_err}").contains("foreign key"),
+            "FK violation must fail loudly while the FTS triggers are disabled: {fk_err}"
+        );
+
+        // Raw inserts during the window skip per-row FTS work.
+        let fresh_id: i64 = sqlx::query_scalar(
+            r#"
+            INSERT INTO messages (
+                conversation_id, account_id, source, guid, timestamp,
+                is_from_me, sort_order, body
+            ) VALUES ($1, $2, 'sms', 'freshbody', '2020-01-01T00:00:00Z', 0, 0, 'freshbody')
+            RETURNING id
+            "#,
+        )
+        .bind(conversation_id)
+        .bind(TEST_ACCOUNT)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let unindexed: i64 = sqlx::query_scalar(
+            "SELECT CASE WHEN search_tsv IS NULL THEN 1 ELSE 0 END FROM messages WHERE id = $1",
+        )
+        .bind(fresh_id)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(
+            unindexed, 1,
+            "raw insert during the disabled window must leave search_tsv NULL"
+        );
+
+        // The promote-map bulk fill touches exactly the rows above the
+        // watermark (the temp map as promote fills it: staging id → prod id).
+        sqlx::query(
+            "CREATE TEMP TABLE IF NOT EXISTS _promote_msg_map (
+                 staging_id INTEGER PRIMARY KEY,
+                 prod_id INTEGER NOT NULL
+             )",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query("DELETE FROM _promote_msg_map")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO _promote_msg_map (staging_id, prod_id) VALUES ($1, $2), ($3, $4)")
+            .bind(1i64)
+            .bind(carriedover_id)
+            .bind(2i64)
+            .bind(fresh_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let indexed = schema::index_messages_fts_from_promote_map(&mut *conn, carriedover_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            indexed, 1,
+            "bulk fill must index exactly the rows above the watermark"
+        );
+        assert_eq!(pg_fts_hits(&mut conn, "carriedover").await, 1);
+        assert_eq!(pg_fts_hits(&mut conn, "freshbody").await, 1);
+
+        // ── Enable restores the triggers: a post-enable insert is indexed.
+        schema::enable_fts_triggers_pg(&mut *conn).await.unwrap();
+        sqlx::query(
+            r#"
+            INSERT INTO messages (
+                conversation_id, account_id, source, guid, timestamp,
+                is_from_me, sort_order, body
+            ) VALUES ($1, $2, 'sms', 'postenable', '2020-01-01T00:00:00Z', 0, 0, 'postenable')
+            "#,
+        )
+        .bind(conversation_id)
+        .bind(TEST_ACCOUNT)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(
+            pg_fts_hits(&mut conn, "postenable").await,
+            1,
+            "insert trigger must fire again after enable"
+        );
+
+        // ── The promote branch end-to-end: staging rows → promote_append →
+        // the bulk fill indexes the promoted rows above the watermark.
+        let staged_handle_id: i64 = sqlx::query_scalar(
+            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+             VALUES ($1, '+15555550200', '+15555550200', 'phone', 'phone')
+             RETURNING id",
+        )
+        .bind(TEST_ACCOUNT)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let staging_conv_id: i64 = sqlx::query_scalar(
+            r#"
+            INSERT INTO staging_conversations (
+                account_id, chat_handle_id, conversation_type, source_file
+            ) VALUES ($1, $2, 'individual', 'staged.json')
+            RETURNING id
+            "#,
+        )
+        .bind(TEST_ACCOUNT)
+        .bind(staged_handle_id)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            r#"
+            INSERT INTO staging_messages (
+                conversation_id, account_id, source, guid, timestamp,
+                is_from_me, sort_order, body
+            ) VALUES ($1, $2, 'sms', 'staged-guid-1', '2020-01-01T00:00:00Z', 0, 0, 'stagedbody')
+            "#,
+        )
+        .bind(staging_conv_id)
+        .bind(TEST_ACCOUNT)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let stats = promote_append(&mut conn, ImportMode::Append, TEST_ACCOUNT, false, &[])
+            .await
+            .unwrap();
+        assert_eq!(stats.messages, 1, "one staged message must promote");
+        assert_eq!(
+            pg_fts_hits(&mut conn, "stagedbody").await,
+            1,
+            "promoted rows above the watermark must be indexed"
+        );
+
+        // And the triggers still fire for brand-new rows after the promote.
+        sqlx::query(
+            r#"
+            INSERT INTO messages (
+                conversation_id, account_id, source, guid, timestamp,
+                is_from_me, sort_order, body
+            ) VALUES ($1, $2, 'sms', 'afterpromote', '2020-01-01T00:00:00Z', 0, 0, 'afterpromote')
+            "#,
+        )
+        .bind(conversation_id)
+        .bind(TEST_ACCOUNT)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(
+            pg_fts_hits(&mut conn, "afterpromote").await,
+            1,
+            "triggers must fire again after the promote cycle"
+        );
+    }
 
     #[tokio::test]
     async fn promote_message_map_ignores_other_accounts() {

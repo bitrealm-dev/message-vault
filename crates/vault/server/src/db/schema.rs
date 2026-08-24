@@ -1244,6 +1244,7 @@ mod tests {
         let Some(url) = crate::pg_test_url() else {
             return;
         };
+        let _pg_guard = crate::PG_TEST_LOCK.lock().await;
         sqlx::any::install_default_drivers();
         let pool = sqlx::any::AnyPoolOptions::new()
             .connect(&url)

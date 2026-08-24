@@ -106,7 +106,7 @@ pub async fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats
     println!("  account:      {}", account_id);
     println!("  input:        {}", input.display());
     match opts.db_url.as_deref() {
-        Some(url) => println!("  db:           {url}"),
+        Some(url) => println!("  db:           {}", redact_db_url(url)),
         None => println!("  db:           {}", db_path.display()),
     }
     println!("  sources:      {}", sources.join(", "));
@@ -131,7 +131,7 @@ pub async fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats
     let pool = match opts.db_url.as_deref() {
         Some(url) => engine::open_pool_from_url(url)
             .await
-            .with_context(|| format!("failed to open database at {url}"))?,
+            .with_context(|| format!("failed to open database at {}", redact_db_url(url)))?,
         None => engine::open_pool_for_path(&db_path)
             .await
             .with_context(|| format!("failed to open database {}", db_path.display()))?,
@@ -201,6 +201,26 @@ pub async fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats
         import: import_stats,
         dedupe,
     })
+}
+
+/// A database URL with credentials stripped, safe for status and error
+/// output: `postgres://user:secret@host:5432/db` prints as
+/// `postgres://host:5432/db`. Query parameters (which can carry secrets of
+/// their own) are dropped too. Inputs that are not `scheme://…` URLs print
+/// as a placeholder instead of being echoed raw.
+fn redact_db_url(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return "<db url>".to_string();
+    };
+    let rest = rest.split_once('?').map_or(rest, |(r, _)| r);
+    let (authority, path) = match rest.split_once('/') {
+        Some((authority, path)) => (authority, format!("/{path}")),
+        None => (rest, String::new()),
+    };
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    format!("{scheme}://{host}{path}")
 }
 
 /// Every JSON Lines file (`.jsonl`, one JSON object per line) directly inside
@@ -279,6 +299,32 @@ pub fn discover_sources(paths: &[PathBuf]) -> Result<Vec<String>> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn redacts_credentials_from_db_url() {
+        assert_eq!(
+            redact_db_url("postgres://vault:vault@127.0.0.1:5432/vault"),
+            "postgres://127.0.0.1:5432/vault"
+        );
+        assert_eq!(
+            redact_db_url("postgres://user:pa:ss@host:5432/db?sslmode=require"),
+            "postgres://host:5432/db"
+        );
+        assert_eq!(
+            redact_db_url("postgres://user@host/db"),
+            "postgres://host/db"
+        );
+        assert_eq!(redact_db_url("postgres://user:pw@host"), "postgres://host");
+        assert_eq!(
+            redact_db_url("sqlite://data/vault.db"),
+            "sqlite://data/vault.db"
+        );
+        assert_eq!(
+            redact_db_url("sqlite:///tmp/vault.db?mode=rwc"),
+            "sqlite:///tmp/vault.db"
+        );
+        assert_eq!(redact_db_url("not-a-url"), "<db url>");
+    }
 
     #[test]
     fn discover_sources_from_ir_headers() {
