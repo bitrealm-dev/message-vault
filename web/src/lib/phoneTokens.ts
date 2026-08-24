@@ -31,6 +31,28 @@ export function normalizePhoneDigits(phone: string): string {
 }
 
 /**
+ * US national form for comparison: strip non-digits; if 11 digits starting
+ * with `1`, drop the country code. Matches vault `sanitize_number` for US.
+ */
+export function toUsNationalDigits(phone: string): string {
+  let digits = normalizePhoneDigits(phone);
+  if (digits.length === 11 && digits.startsWith("1")) {
+    digits = digits.slice(1);
+  }
+  return digits;
+}
+
+/**
+ * True when two phone strings are the same US number despite formatting
+ * (`9412660605` vs `+19412660605`). Empty digit strings never match.
+ */
+export function phonesMatch(a: string, b: string): boolean {
+  const na = toUsNationalDigits(a);
+  const nb = toUsNationalDigits(b);
+  return na.length > 0 && na === nb;
+}
+
+/**
  * True when at least one owner phone digit-matches a profile phone.
  * Empty owner list or empty profile → false (nothing can match).
  */
@@ -39,14 +61,7 @@ export function ownerPhonesMatchProfile(
   profilePhones: readonly string[],
 ): boolean {
   if (ownerPhones.length === 0 || profilePhones.length === 0) return false;
-  const profileDigits = new Set(
-    profilePhones.map(normalizePhoneDigits).filter((d) => d.length > 0),
-  );
-  if (profileDigits.size === 0) return false;
-  return ownerPhones.some((phone) => {
-    const digits = normalizePhoneDigits(phone);
-    return digits.length > 0 && profileDigits.has(digits);
-  });
+  return ownerPhones.some((owner) => profilePhones.some((profile) => phonesMatch(owner, profile)));
 }
 
 /**
