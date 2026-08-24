@@ -88,6 +88,49 @@ jobs:
       - name: Test workspace
         run: cargo test --workspace
 
+  # ── Always: Postgres-gated server tests ───────────────────────────────
+  # Runs the search-parity and FTS suites against a real Postgres 16 service
+  # (the gated tests skip themselves unless MV_TEST_POSTGRES_URL is set).
+  test-postgres:
+    name: Build & Test (Rust, Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: vault
+          POSTGRES_PASSWORD: vault
+          POSTGRES_DB: vault
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vault"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Test message-vault-server against Postgres
+        env:
+          MV_TEST_POSTGRES_URL: postgres://vault:vault@postgres:5432/vault
+        run: cargo test -p message-vault-server
+
   # ── Always: cargo-deny advisories ─────────────────────────────────────
   deny:
     name: cargo-deny (advisories)
@@ -235,7 +278,7 @@ jobs:
   docker:
     name: Docker image
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [fmt, test, check-tauri]
+    needs: [fmt, test, test-postgres, check-tauri]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -285,7 +328,7 @@ jobs:
   release:
     name: Desktop App (${{ matrix.label }})
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [fmt, test, check-tauri]
+    needs: [fmt, test, test-postgres, check-tauri]
     timeout-minutes: 90
     strategy:
       fail-fast: false

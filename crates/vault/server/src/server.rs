@@ -17,18 +17,18 @@ use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+use sqlx::AnyConnection;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::services::ServeDir;
 
-use rusqlite::Connection;
-
 use crate::asset_uploads;
 use crate::config::{AuthMode, Config, GuestDemoSettings};
 use crate::db::account_profile;
 use crate::db::api_tokens;
+use crate::db::engine::{self, DbEngine};
 use crate::db::schema;
 use crate::db::session_tokens;
 use crate::export_api::ExportQueryError;
@@ -73,8 +73,9 @@ pub fn require_full_access(auth: &AuthIdentity) -> Result<(), ApiError> {
 ///
 /// Returns forbidden when `account_id` has a `guest_status`, or internal when
 /// the lookup fails.
-pub fn reject_if_guest(conn: &Connection, account_id: &str) -> Result<(), ApiError> {
+pub async fn reject_if_guest(conn: &mut AnyConnection, account_id: &str) -> Result<(), ApiError> {
     if account_profile::is_guest_account(conn, account_id)
+        .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
     {
         return Err(ApiError::Forbidden(
@@ -84,16 +85,16 @@ pub fn reject_if_guest(conn: &Connection, account_id: &str) -> Result<(), ApiErr
     Ok(())
 }
 
-/// Open the configured database and reject the account when it is a guest.
-pub(crate) async fn reject_if_guest_account(db: &Path, account_id: &str) -> Result<(), ApiError> {
-    let db = db.to_path_buf();
-    let account_id = account_id.to_string();
-    tokio::task::spawn_blocking(move || {
-        let conn = schema::open_configured(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
-        reject_if_guest(&conn, &account_id)
-    })
-    .await
-    .join_map("guest check task", |e| e)
+/// Reject the account when it is a guest, acquiring from the shared pool.
+pub(crate) async fn reject_if_guest_account(
+    pool: &sqlx::AnyPool,
+    account_id: &str,
+) -> Result<(), ApiError> {
+    let mut conn = pool
+        .acquire()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    reject_if_guest(&mut conn, account_id).await
 }
 
 /// Allow session or an API token that includes import.
@@ -148,10 +149,11 @@ pub fn require_import_or_export_access(auth: &AuthIdentity) -> Result<(), ApiErr
 pub struct AppState {
     /// Loaded configuration.
     pub cfg: Arc<Config>,
-    /// Warm connection for short import-session SQL only (`POST /v1/imports`,
-    /// complete, import-id verify / one-shot start). Bulk `POST /v1/import` and
-    /// export open their own connections so they do not hold this mutex.
-    pub(crate) db: Arc<StdMutex<Connection>>,
+    /// Connection pool (SQLite file or `[database] url`). Handlers and the
+    /// guest-pool worker acquire short-lived connections from here.
+    pub db: sqlx::AnyPool,
+    /// Engine the pool was opened for (SQLite by default, Postgres via URL).
+    pub db_engine: DbEngine,
     /// Per-account import mutex: same-account imports stay serialized so staging
     /// rows (the temporary import area) for that tenant are not wiped mid-run.
     /// Different accounts may overlap at the lock layer; SQLite write-ahead
@@ -255,43 +257,16 @@ impl From<crate::db::vault_imports::ImportLookupError> for ApiError {
     }
 }
 
-/// Map a `spawn_blocking` join + inner error onto `ApiError`.
-pub(crate) trait JoinBlocking<T, E>: Sized {
-    fn join_blocking(self, task: &str) -> Result<T, ApiError>
-    where
-        E: ToString,
-    {
-        self.join_map(task, |e| ApiError::Internal(e.to_string()))
-    }
-
-    fn join_map(self, task: &str, map: impl FnOnce(E) -> ApiError) -> Result<T, ApiError>;
-}
-
-impl<T, E> JoinBlocking<T, E> for Result<Result<T, E>, tokio::task::JoinError> {
-    fn join_map(self, task: &str, map: impl FnOnce(E) -> ApiError) -> Result<T, ApiError> {
-        self.map_err(|e| ApiError::Internal(format!("{task}: {e}")))?
-            .map_err(map)
+impl From<sqlx::Error> for ApiError {
+    fn from(e: sqlx::Error) -> Self {
+        Self::Internal(e.to_string())
     }
 }
 
-pub(crate) fn lock_conn(
-    db: &StdMutex<Connection>,
-) -> anyhow::Result<std::sync::MutexGuard<'_, Connection>> {
-    lock_named(db, "database")
-}
-
-pub(crate) fn lock_import_conn(
-    db: &StdMutex<Connection>,
-) -> anyhow::Result<std::sync::MutexGuard<'_, Connection>> {
-    lock_named(db, "import database")
-}
-
-fn lock_named<'a>(
-    db: &'a StdMutex<Connection>,
-    what: &str,
-) -> anyhow::Result<std::sync::MutexGuard<'a, Connection>> {
-    db.lock()
-        .map_err(|_| anyhow::anyhow!("{what} mutex poisoned"))
+impl From<anyhow::Error> for ApiError {
+    fn from(e: anyhow::Error) -> Self {
+        Self::Internal(e.to_string())
+    }
 }
 
 /// Build the Cross-Origin Resource Sharing (CORS) layer from
@@ -370,67 +345,6 @@ pub(crate) fn http_app(state: AppState) -> Router {
     api.with_state(state)
 }
 
-/// Open a configured connection, run `f`, and map join/task errors.
-///
-/// # Errors
-///
-/// Returns an API error when the blocking task fails or `f` returns an error.
-pub(crate) async fn with_configured_db<T, F>(
-    db_path: &Path,
-    task: &str,
-    f: F,
-) -> Result<T, ApiError>
-where
-    T: Send + 'static,
-    F: FnOnce(&Connection) -> anyhow::Result<T> + Send + 'static,
-{
-    let db = db_path.to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        let conn = schema::open_configured(&db)?;
-        f(&conn)
-    })
-    .await
-    .join_blocking(task)
-}
-
-pub(crate) async fn with_configured_db_map<T, E, F>(
-    db_path: &Path,
-    task: &str,
-    f: F,
-) -> Result<T, ApiError>
-where
-    T: Send + 'static,
-    E: From<anyhow::Error> + Send + 'static,
-    F: FnOnce(&Connection) -> Result<T, E> + Send + 'static,
-    ApiError: From<E>,
-{
-    let db = db_path.to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        let conn = schema::open_configured(&db)?;
-        f(&conn)
-    })
-    .await
-    .join_map(task, ApiError::from)
-}
-
-pub(crate) async fn with_locked_conn<T, E, F>(
-    db: Arc<StdMutex<Connection>>,
-    task: &str,
-    f: F,
-) -> Result<T, ApiError>
-where
-    T: Send + 'static,
-    E: From<anyhow::Error> + ToString + Send + 'static,
-    F: FnOnce(&Connection) -> Result<T, E> + Send + 'static,
-{
-    tokio::task::spawn_blocking(move || {
-        let conn = lock_conn(&db)?;
-        f(&conn)
-    })
-    .await
-    .join_blocking(task)
-}
-
 /// Start the HTTP server.
 ///
 /// # Errors
@@ -440,7 +354,20 @@ where
 pub async fn run(cfg: Config) -> anyhow::Result<()> {
     let server = cfg.require_server()?.clone();
     let bind = server.bind.clone();
-    let _operation_lock = crate::operation_lock::acquire_for_serve(&cfg.paths.db)?;
+    // Production entry points must install the Any drivers once before any pool
+    // connect (idempotent; `engine::test_pool` does the same for tests).
+    sqlx::any::install_default_drivers();
+    let db_url = cfg.database.url.clone();
+    let engine = match &db_url {
+        Some(url) => engine::detect_engine(url)?,
+        None => DbEngine::Sqlite,
+    };
+    let lock_path = if engine == DbEngine::Sqlite {
+        cfg.paths.db.clone()
+    } else {
+        cfg.paths.data_dir.join(".operation.lock")
+    };
+    let _operation_lock = crate::operation_lock::acquire_for_serve(&lock_path)?;
     let upload_limits = asset_uploads::UploadLimits::resolve(
         server.asset_part_size,
         server.asset_max_bytes,
@@ -448,25 +375,34 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     );
     let max_body_bytes = upload_limits.max_bytes as usize;
 
-    // Open a warm writer, recover hot journals, and ensure schema once before serving.
-    let db_conn = schema::open_configured(&cfg.paths.db)?;
-    let _: i64 = db_conn.query_row("SELECT COUNT(*) FROM sqlite_master", [], |r| r.get(0))?;
-    schema::ensure_vault_schema(&db_conn)?;
-    crate::operation_lock::mark_ready(&cfg.paths.db)?;
-    let mode: String = db_conn
-        .query_row("PRAGMA journal_mode", [], |r| r.get(0))
-        .unwrap_or_else(|_| "unknown".into());
-    eprintln!("  db:   {} (journal_mode={mode})", cfg.paths.db.display());
+    // Open the pool, warm it, and ensure schema once before serving.
+    let pool = match &db_url {
+        Some(url) => engine::open_pool_from_url(url).await?,
+        None => engine::open_pool_for_path(&cfg.paths.db).await?,
+    };
+    {
+        let mut conn = pool.acquire().await?;
+        let _: i32 = sqlx::query_scalar("SELECT 1").fetch_one(&mut *conn).await?; // warmup (i32: INT4 on Postgres, INTEGER on SQLite)
+        schema::ensure_vault_schema(&mut conn).await?;
+    }
+    if engine == DbEngine::Sqlite {
+        crate::operation_lock::mark_ready(&cfg.paths.db)?;
+        let mode: String = sqlx::query_scalar("PRAGMA journal_mode")
+            .fetch_one(&pool)
+            .await
+            .unwrap_or_else(|_| "unknown".into());
+        eprintln!("  db:   {} (journal_mode={mode})", cfg.paths.db.display());
+    }
     eprintln!(
         "  assets: max={} MiB  part_size={} MiB",
         upload_limits.max_bytes / (1024 * 1024),
         upload_limits.part_size / (1024 * 1024)
     );
-    let db = Arc::new(StdMutex::new(db_conn));
 
     let state = AppState {
         cfg: Arc::new(cfg),
-        db,
+        db: pool,
+        db_engine: engine,
         account_import_locks: Arc::new(Mutex::new(HashMap::new())),
         asset_complete_locks: Arc::new(Mutex::new(HashMap::new())),
         upload_limits,
@@ -523,7 +459,7 @@ fn spawn_guest_pool_worker(worker_state: AppState) {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
         loop {
             interval.tick().await;
-            let db = worker_state.cfg.paths.db.clone();
+            let pool = worker_state.db.clone();
             let cfg = worker_state.cfg.clone();
             let guest = worker_state.guest;
             let demand = match worker_state.guest_demand.lock() {
@@ -536,43 +472,44 @@ fn spawn_guest_pool_worker(worker_state: AppState) {
             let clone_lock = worker_state.guest_clone_lock.clone();
             let data_dir = cfg.paths.data_dir.clone();
 
-            let sweep_db = db.clone();
+            let sweep_pool = pool.clone();
+            let sweep_data = data_dir.clone();
             log_guest_pool_task(
                 "sweep",
-                tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
-                    let conn = schema::open_configured(&sweep_db)?;
-                    guest_pool::sweep_expired_guests(&conn, &data_dir)
-                })
+                async move {
+                    let mut conn = sweep_pool.acquire().await?;
+                    guest_pool::sweep_expired_guests(&mut conn, &sweep_data).await
+                }
                 .await,
             );
 
-            let shrink_db = db.clone();
+            let shrink_pool = pool.clone();
             let shrink_cfg = cfg.clone();
             log_guest_pool_task(
                 "shrink",
-                tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
-                    let conn = schema::open_configured(&shrink_db)?;
-                    guest_pool::shrink_over_ceiling(&conn, &shrink_cfg, guest)
-                })
+                async move {
+                    let mut conn = shrink_pool.acquire().await?;
+                    guest_pool::shrink_over_ceiling(&mut conn, &shrink_cfg, guest).await
+                }
                 .await,
             );
 
             loop {
-                let one_db = db.clone();
+                let one_pool = pool.clone();
                 let one_cfg = cfg.clone();
                 let result = {
                     let _guard = clone_lock.lock().await;
-                    tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
-                        let mut conn = schema::open_configured(&one_db)?;
-                        guest_pool::refill_one(&mut conn, &one_cfg, guest, demand)
-                    })
+                    async move {
+                        let mut conn = one_pool.acquire().await?;
+                        guest_pool::refill_one(&mut conn, &one_cfg, guest, demand).await
+                    }
                     .await
                 };
                 match result {
-                    Ok(Ok(0)) => break,
-                    Ok(Ok(_)) => {}
-                    other => {
-                        log_guest_pool_task("refill", other);
+                    Ok(0) => break,
+                    Ok(_) => {}
+                    Err(err) => {
+                        eprintln!("guest pool refill failed: {err:#}");
                         break;
                     }
                 }
@@ -581,11 +518,9 @@ fn spawn_guest_pool_worker(worker_state: AppState) {
     });
 }
 
-fn log_guest_pool_task(what: &str, result: Result<anyhow::Result<u32>, tokio::task::JoinError>) {
-    match result {
-        Ok(Ok(_)) => {}
-        Ok(Err(err)) => eprintln!("guest pool {what} failed: {err:#}"),
-        Err(join_err) => eprintln!("guest pool {what} failed: {join_err}"),
+fn log_guest_pool_task(what: &str, result: anyhow::Result<u32>) {
+    if let Err(err) = result {
+        eprintln!("guest pool {what} failed: {err:#}");
     }
 }
 
@@ -605,14 +540,17 @@ pub(crate) async fn health() -> (StatusCode, &'static str) {
     (StatusCode::OK, "ok\n")
 }
 
-async fn resolve_account_ref_async(db_path: &Path, account_ref: &str) -> Result<String, ApiError> {
-    let db = db_path.to_path_buf();
-    let account_ref = account_ref.to_string();
-    tokio::task::spawn_blocking(move || account_profile::resolve_account_ref_at(&db, &account_ref))
+async fn resolve_account_ref_async(
+    pool: &sqlx::AnyPool,
+    account_ref: &str,
+) -> Result<String, ApiError> {
+    let mut conn = pool
+        .acquire()
         .await
-        .join_map("account resolve task", |e| {
-            ApiError::BadRequest(e.to_string())
-        })
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    account_profile::resolve_account_ref(&mut conn, account_ref)
+        .await
+        .map_err(|e| ApiError::BadRequest(e.to_string()))
 }
 
 /// Read the Bearer token from `Authorization`.
@@ -650,24 +588,34 @@ pub async fn resolve_auth(headers: &HeaderMap, state: &AppState) -> Result<AuthI
     let token = bearer_token(headers)?;
     // Always look up against SQLite so rotate/delete in Settings takes effect
     // without restarting serve (no process-local token cache).
-    let token_owned = token.clone();
-    let resolved = with_configured_db(&state.cfg.paths.db, "auth lookup task", move |conn| {
-        schema::ensure_accounts_schema(conn)?;
-        if let Some(account_id) = session_tokens::lookup_account_for_token(conn, &token_owned)? {
-            return Ok(Some(AuthIdentity {
-                account_id,
-                capability: AuthCapability::Full,
-            }));
-        }
-        if let Some(tok) = api_tokens::lookup_account_for_api_token(conn, &token_owned)? {
-            return Ok(Some(AuthIdentity {
-                account_id: tok.account_id,
-                capability: AuthCapability::ApiToken(tok.scopes),
-            }));
-        }
-        Ok(None)
-    })
-    .await?;
+    let mut conn = state
+        .db
+        .acquire()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    schema::ensure_accounts_schema(&mut conn)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let resolved = if let Some(account_id) =
+        session_tokens::lookup_account_for_token(&mut conn, &token)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+    {
+        Some(AuthIdentity {
+            account_id,
+            capability: AuthCapability::Full,
+        })
+    } else if let Some(tok) = api_tokens::lookup_account_for_api_token(&mut conn, &token)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+    {
+        Some(AuthIdentity {
+            account_id: tok.account_id,
+            capability: AuthCapability::ApiToken(tok.scopes),
+        })
+    } else {
+        None
+    };
 
     resolved.ok_or_else(|| ApiError::Unauthorized("invalid API token".into()))
 }
@@ -677,11 +625,11 @@ pub async fn resolve_auth(headers: &HeaderMap, state: &AppState) -> Result<AuthI
 pub(crate) async fn resolve_import_account(
     auth: &AuthIdentity,
     query_account: Option<&str>,
-    db_path: &Path,
+    pool: &sqlx::AnyPool,
 ) -> Result<String, ApiError> {
     let query = nonempty_query_account(query_account);
     if let Some(q) = query {
-        let resolved = resolve_account_ref_async(db_path, q).await?;
+        let resolved = resolve_account_ref_async(pool, q).await?;
         if resolved != auth.account_id {
             return Err(ApiError::Forbidden(
                 "account query does not match token's account".into(),
@@ -844,7 +792,6 @@ mod tests {
         imports_create_handler, imports_get_handler,
     };
     use axum::extract::{Path as AxumPath, Query, State};
-    use rusqlite::params;
     use std::sync::{Arc, Mutex as StdMutex};
     use tempfile::TempDir;
 
@@ -863,24 +810,32 @@ mod tests {
 
     const TEST_ACCOUNT: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
-    fn test_state() -> (TempDir, AppState, String, i64) {
-        let tmp = TempDir::new().unwrap();
+    async fn test_state() -> (TempDir, AppState, String, i64) {
+        let (pool, tmp) = crate::db::engine::test_pool().await;
         let db_path = tmp.path().join("vault.db");
         let data_dir = tmp.path().join("data");
-        let conn = Connection::open(&db_path).unwrap();
-        schema::configure_connection(&conn).unwrap();
-        schema::ensure_vault_schema(&conn).unwrap();
-        schema::ensure_accounts_schema(&conn).unwrap();
-        crate::db::account_profile::ensure_account_row(&conn, TEST_ACCOUNT).unwrap();
-        let token =
-            crate::db::session_tokens::insert_account_session_token(&conn, TEST_ACCOUNT).unwrap();
+        {
+            let mut conn = pool.acquire().await.unwrap();
+            schema::ensure_vault_schema(&mut conn).await.unwrap();
+            schema::ensure_accounts_schema(&mut conn).await.unwrap();
+            crate::db::account_profile::ensure_account_row(&mut conn, TEST_ACCOUNT)
+                .await
+                .unwrap();
+        }
+        let token = crate::db::session_tokens::insert_account_session_token(
+            &mut pool.acquire().await.unwrap(),
+            TEST_ACCOUNT,
+        )
+        .await
+        .unwrap();
         let import_id = crate::db::vault_imports::start_import(
-            &conn,
+            &mut pool.acquire().await.unwrap(),
             TEST_ACCOUNT,
             "ios",
             "append",
             Some("message-vault-server"),
         )
+        .await
         .unwrap();
 
         let state = AppState {
@@ -899,8 +854,10 @@ mod tests {
                     cors_origins: Vec::new(),
                     openapi_ui: false,
                 }),
+                database: crate::config::DatabaseConfig::default(),
             }),
-            db: Arc::new(StdMutex::new(conn)),
+            db: pool,
+            db_engine: DbEngine::Sqlite,
             account_import_locks: Arc::new(Mutex::new(HashMap::new())),
             asset_complete_locks: Arc::new(Mutex::new(HashMap::new())),
             upload_limits: asset_uploads::UploadLimits::default(),
@@ -940,7 +897,7 @@ mod tests {
 
     #[tokio::test]
     async fn health_still_ok() {
-        let (_tmp, state, _token, _import_id) = test_state();
+        let (_tmp, state, _token, _import_id) = test_state().await;
         let response = get_path(state, "/health").await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.text().await.unwrap(), "ok\n");
@@ -948,7 +905,7 @@ mod tests {
 
     #[tokio::test]
     async fn openapi_ui_off_does_not_serve_spec() {
-        let (_tmp, state, _token, _import_id) = test_state();
+        let (_tmp, state, _token, _import_id) = test_state().await;
         assert!(!state.cfg.require_server().unwrap().openapi_ui);
         let response = get_path(state, "/openapi.json").await;
         assert_ne!(
@@ -963,7 +920,7 @@ mod tests {
 
     #[tokio::test]
     async fn openapi_ui_on_serves_spec_without_token() {
-        let (_tmp, mut state, _token, _import_id) = test_state();
+        let (_tmp, mut state, _token, _import_id) = test_state().await;
         {
             let cfg = Arc::make_mut(&mut state.cfg);
             cfg.server.as_mut().unwrap().openapi_ui = true;
@@ -975,7 +932,7 @@ mod tests {
     }
 
     async fn auth_route_status(mode: AuthMode, path: &str) -> StatusCode {
-        let (_tmp, state, _token, _import_id) = test_state();
+        let (_tmp, state, _token, _import_id) = test_state().await;
         let app = auth_public_router(mode).with_state(state);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -994,7 +951,7 @@ mod tests {
 
     #[tokio::test]
     async fn auth_mode_includes_try_demo_flag() {
-        let (_tmp, state, _token, _import_id) = test_state();
+        let (_tmp, state, _token, _import_id) = test_state().await;
         let Json(value) = crate::auth::auth_mode_handler(State(state)).await;
         assert!(!value.try_demo);
         assert!(!value.mode.is_empty());
@@ -1030,21 +987,27 @@ mod tests {
         );
     }
 
-    fn guest_test_state() -> (TempDir, AppState, String) {
-        let (tmp, state, _token, _import_id) = test_state();
+    async fn guest_test_state() -> (TempDir, AppState, String) {
+        let (tmp, state, _token, _import_id) = test_state().await;
         let guest_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
         let token = {
-            let conn = state.db.lock().unwrap();
-            account_profile::insert_guest_account(&conn, guest_id, "guest-bbbb", None).unwrap();
-            account_profile::set_guest_status(&conn, guest_id, "assigned").unwrap();
-            crate::db::session_tokens::insert_account_session_token(&conn, guest_id).unwrap()
+            let mut conn = state.db.acquire().await.unwrap();
+            account_profile::insert_guest_account(&mut conn, guest_id, "guest-bbbb", None)
+                .await
+                .unwrap();
+            account_profile::set_guest_status(&mut conn, guest_id, "assigned")
+                .await
+                .unwrap();
+            crate::db::session_tokens::insert_account_session_token(&mut conn, guest_id)
+                .await
+                .unwrap()
         };
         (tmp, state, token)
     }
 
     #[tokio::test]
     async fn guest_cannot_create_imports_but_can_export_messages() {
-        let (_tmp, state, token) = guest_test_state();
+        let (_tmp, state, token) = guest_test_state().await;
 
         let err = imports_create_handler(
             State(state.clone()),
@@ -1093,7 +1056,7 @@ mod tests {
 
     #[tokio::test]
     async fn guest_cannot_complete_imports() {
-        let (_tmp, state, token) = guest_test_state();
+        let (_tmp, state, token) = guest_test_state().await;
         let err = imports_complete_handler(
             State(state),
             auth_headers(&token),
@@ -1128,7 +1091,7 @@ mod tests {
 
     #[tokio::test]
     async fn imports_complete_and_detail_surface_timings_and_issues() {
-        let (_tmp, state, token, import_id) = test_state();
+        let (_tmp, state, token, import_id) = test_state().await;
         let body = CompleteImportBody {
             ok: true,
             message_count: Some(10),
@@ -1190,7 +1153,7 @@ mod tests {
 
     #[tokio::test]
     async fn imports_complete_rejects_invalid_issue_kind_before_db_write() {
-        let (_tmp, state, token, import_id) = test_state();
+        let (_tmp, state, token, import_id) = test_state().await;
         let body = CompleteImportBody {
             ok: true,
             message_count: Some(10),
@@ -1225,22 +1188,17 @@ mod tests {
             other => panic!("expected bad request, got {other:?}"),
         }
 
-        let status: String = state
-            .db
-            .lock()
-            .unwrap()
-            .query_row(
-                "SELECT status FROM vault_imports WHERE id = ?1",
-                params![import_id],
-                |r| r.get(0),
-            )
+        let status: String = sqlx::query_scalar("SELECT status FROM vault_imports WHERE id = $1")
+            .bind(import_id)
+            .fetch_one(&state.db)
+            .await
             .unwrap();
         assert_eq!(status, "running");
     }
 
     #[tokio::test]
     async fn imports_get_handler_returns_not_found_for_missing_import() {
-        let (_tmp, state, token, import_id) = test_state();
+        let (_tmp, state, token, import_id) = test_state().await;
         let err = imports_get_handler(State(state), auth_headers(&token), AxumPath(import_id + 1))
             .await
             .unwrap_err();

@@ -4,9 +4,12 @@
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
-use rusqlite::{Connection, params_from_iter};
 use serde::{Deserialize, Serialize};
+use sqlx::AnyConnection;
+use sqlx::{Arguments, Executor, Row};
 
+use crate::db::dialect::{engine_of, like_ci};
+use crate::db::engine::DbEngine;
 use crate::db::sql::group_rows_by_id;
 // Required so the moved handlers' unqualified `export_api::…` paths resolve.
 use crate::export_api::{self};
@@ -15,7 +18,6 @@ use crate::search_query::MAX_SEARCH_QUERY_BYTES;
 use crate::search_query::{FtsNode, ParsedSearchQuery, SearchMode, validate_search_query};
 use crate::server::{
     ApiError, AppState, require_export_access, resolve_auth, resolve_import_account,
-    with_configured_db_map,
 };
 
 pub use crate::page_limits::{DEFAULT_EXPORT_LIMIT, MAX_EXPORT_LIMIT, MAX_EXPORT_OFFSET};
@@ -228,8 +230,8 @@ impl From<anyhow::Error> for ExportQueryError {
     }
 }
 
-impl From<rusqlite::Error> for ExportQueryError {
-    fn from(e: rusqlite::Error) -> Self {
+impl From<sqlx::Error> for ExportQueryError {
+    fn from(e: sqlx::Error) -> Self {
         Self::Internal(e.to_string())
     }
 }
@@ -239,6 +241,67 @@ impl ExportQueryError {
     pub fn bad(msg: impl Into<String>) -> Self {
         Self::BadRequest(msg.into())
     }
+}
+
+/// One bound parameter in a dynamic export query. sqlx's Any driver exposes
+/// no user-constructible dynamic value, so heterogeneous binds ride this enum.
+///
+/// `Bool`/`Null` are part of the swap plan's verbatim enum contract and bound
+/// by [`bind_all`]; no current filter binds them, so silence the dead-code
+/// warning rather than drop plan-mandated variants.
+#[derive(Debug, PartialEq)]
+#[allow(dead_code)]
+pub(crate) enum SqlParam {
+    Text(String),
+    Int(i64),
+    Bool(bool),
+    Null,
+}
+
+/// Build a query from `sql` with all params bound, in order. Placeholders in
+/// the SQL must match this order after `renumber_placeholders`.
+///
+/// sqlx 0.8.6 does not re-export `Query` at the crate root (the root
+/// `sqlx::Query` re-export is 0.9-only), so the plan's literal signature is
+/// unnameable; this builds the arguments through the public `Arguments` API
+/// instead. `String`/`i64`/`bool`/`None` cannot fail to encode on the Any
+/// driver; an encode failure is unreachable and panics like sqlx's own
+/// `Query::bind`.
+pub(crate) fn bind_all<'q>(
+    sql: &'q str,
+    params: &[SqlParam],
+) -> impl sqlx::Execute<'q, sqlx::Any> + 'q {
+    let mut args = sqlx::any::AnyArguments::default();
+    for p in params {
+        match p {
+            SqlParam::Text(v) => args.add(v.clone()),
+            SqlParam::Int(v) => args.add(*v),
+            SqlParam::Bool(v) => args.add(*v),
+            SqlParam::Null => args.add(Option::<String>::None),
+        }
+        .expect("error encoding argument");
+    }
+    sqlx::query_with(sql, args)
+}
+
+/// Rewrite `?` placeholders to `$1..$N` in order. The Any driver performs no
+/// placeholder rewriting and `?` is invalid on Postgres; SQLite accepts `$N`.
+/// Valid because no SQL fragment in this crate contains `?` inside a string
+/// literal — keep it that way, and unit-test this against the committed
+/// fragment set.
+pub(crate) fn renumber_placeholders(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    let mut n = 0usize;
+    for ch in sql.chars() {
+        if ch == '?' {
+            n += 1;
+            out.push('$');
+            out.push_str(&n.to_string());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone)]
@@ -271,7 +334,7 @@ impl PageCursor {
 
 struct BuiltFilters {
     where_sql: String,
-    params: Vec<rusqlite::types::Value>,
+    params: Vec<SqlParam>,
     dedupe_sql: String,
 }
 
@@ -293,8 +356,8 @@ fn nonempty_source(source: Option<&str>) -> Option<&str> {
 }
 
 /// Build WHERE-clause SQL for a validated message-mode search.
-fn prepare_message_export(
-    conn: &Connection,
+async fn prepare_message_export(
+    conn: &mut AnyConnection,
     account_id: &str,
     query: &str,
     source_override: Option<&str>,
@@ -305,7 +368,7 @@ fn prepare_message_export(
             "contacts search mode is not supported on /v1/export/messages; omit search:contacts",
         ));
     }
-    build_message_filters(conn, account_id, &parsed, source_override)
+    build_message_filters(conn, account_id, &parsed, source_override).await
 }
 
 /// Export messages matching a Fastmail-style query (message mode only).
@@ -316,8 +379,8 @@ fn prepare_message_export(
 ///
 /// Returns a bad-request error for an invalid query or cursor, or an internal
 /// error when a database statement fails.
-pub fn export_messages(
-    conn: &Connection,
+pub async fn export_messages(
+    conn: &mut AnyConnection,
     opts: ExportPageOpts<'_>,
 ) -> Result<ExportMessagesResponse, ExportQueryError> {
     let limit = opts.limit.clamp(1, MAX_EXPORT_LIMIT);
@@ -329,7 +392,8 @@ pub fn export_messages(
         _ => None,
     };
 
-    let filters = prepare_message_export(conn, opts.account_id, opts.query, opts.source_override)?;
+    let filters =
+        prepare_message_export(conn, opts.account_id, opts.query, opts.source_override).await?;
     let fetch_limit = limit + 1;
 
     let mut sql = format!(
@@ -354,12 +418,12 @@ pub fn export_messages(
                 OR (m.timestamp = ? AND m.sort_order = ? AND m.id > ?)
               )",
         );
-        params.push(cur.timestamp.clone().into());
-        params.push(cur.timestamp.clone().into());
-        params.push(cur.sort_order.into());
-        params.push(cur.timestamp.clone().into());
-        params.push(cur.sort_order.into());
-        params.push(cur.id.into());
+        params.push(SqlParam::Text(cur.timestamp.clone()));
+        params.push(SqlParam::Text(cur.timestamp.clone()));
+        params.push(SqlParam::Int(cur.sort_order));
+        params.push(SqlParam::Text(cur.timestamp.clone()));
+        params.push(SqlParam::Int(cur.sort_order));
+        params.push(SqlParam::Int(cur.id));
     }
     sql.push_str(" ORDER BY m.timestamp ASC, m.sort_order ASC, m.id ASC");
     if let (Some(offset), None) = (opts.offset, &cursor) {
@@ -369,40 +433,42 @@ pub fn export_messages(
             )));
         }
         sql.push_str(" LIMIT ? OFFSET ?");
-        params.push((fetch_limit as i64).into());
-        params.push((offset as i64).into());
+        params.push(SqlParam::Int(fetch_limit as i64));
+        params.push(SqlParam::Int(offset as i64));
     } else {
         sql.push_str(" LIMIT ?");
-        params.push((fetch_limit as i64).into());
+        params.push(SqlParam::Int(fetch_limit as i64));
     }
 
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt
-        .query_map(params_from_iter(params.iter().cloned()), |row| {
+    let sql = renumber_placeholders(&sql);
+    let rows = (&mut *conn).fetch_all(bind_all(&sql, &params)).await?;
+    let rows: Vec<RawRow> = rows
+        .iter()
+        .map(|row| {
             Ok(RawRow {
-                id: row.get(0)?,
-                conversation_id: row.get(1)?,
-                source: row.get(2)?,
-                service: row.get(3)?,
-                guid: row.get(4)?,
-                timestamp: row.get(5)?,
-                timestamp_utc: row.get(6)?,
-                sort_order: row.get(7)?,
-                is_from_me: row.get::<_, i64>(8)? != 0,
-                sender: row.get(9)?,
-                subject: row.get(10)?,
-                body: row.get(11)?,
-                is_announcement: row.get::<_, i64>(12)? != 0,
-                is_reply: row.get::<_, i64>(13)? != 0,
-                thread_originator_guid: row.get(14)?,
-                thread_originator_part: row.get(15)?,
-                num_replies: row.get(16)?,
-                chat_identifier: row.get(17)?,
-                conversation_type: row.get(18)?,
-                group_title: row.get(19)?,
+                id: row.try_get::<i64, _>(0)?,
+                conversation_id: row.try_get(1)?,
+                source: row.try_get(2)?,
+                service: row.try_get(3)?,
+                guid: row.try_get(4)?,
+                timestamp: row.try_get(5)?,
+                timestamp_utc: row.try_get(6)?,
+                sort_order: row.try_get(7)?,
+                is_from_me: row.try_get::<i64, _>(8)? != 0,
+                sender: row.try_get(9)?,
+                subject: row.try_get(10)?,
+                body: row.try_get(11)?,
+                is_announcement: row.try_get::<i64, _>(12)? != 0,
+                is_reply: row.try_get::<i64, _>(13)? != 0,
+                thread_originator_guid: row.try_get(14)?,
+                thread_originator_part: row.try_get(15)?,
+                num_replies: row.try_get(16)?,
+                chat_identifier: row.try_get(17)?,
+                conversation_type: row.try_get(18)?,
+                group_title: row.try_get(19)?,
             })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+        })
+        .collect::<Result<Vec<RawRow>, ExportQueryError>>()?;
 
     let truncated = rows.len() > limit;
     let page_rows: Vec<RawRow> = if truncated {
@@ -425,10 +491,10 @@ pub fn export_messages(
     };
 
     let conv_ids = unique_ids(page_rows.iter().map(|r| r.conversation_id));
-    let participants = load_participants(conn, &conv_ids)?;
+    let participants = load_participants(conn, &conv_ids).await?;
     let msg_ids: Vec<i64> = page_rows.iter().map(|r| r.id).collect();
-    let attachments = load_attachments(conn, &msg_ids)?;
-    let tapbacks = load_tapbacks(conn, &msg_ids)?;
+    let attachments = load_attachments(conn, &msg_ids).await?;
+    let tapbacks = load_tapbacks(conn, &msg_ids).await?;
 
     let messages = page_rows
         .into_iter()
@@ -486,11 +552,12 @@ pub fn export_messages(
 ///
 /// Returns a bad-request error for an invalid query, or an internal error when
 /// a database statement fails.
-pub fn export_message_count(
-    conn: &Connection,
+pub async fn export_message_count(
+    conn: &mut AnyConnection,
     opts: ExportCountOpts<'_>,
 ) -> Result<ExportCountResponse, ExportQueryError> {
-    let filters = prepare_message_export(conn, opts.account_id, opts.query, opts.source_override)?;
+    let filters =
+        prepare_message_export(conn, opts.account_id, opts.query, opts.source_override).await?;
 
     let msg_sql = format!(
         "SELECT COUNT(*)
@@ -500,11 +567,10 @@ pub fn export_message_count(
         where_sql = filters.where_sql,
         dedupe = filters.dedupe_sql,
     );
-    let messages: i64 = conn.query_row(
-        &msg_sql,
-        params_from_iter(filters.params.iter().cloned()),
-        |row| row.get(0),
-    )?;
+    let messages: i64 = (&mut *conn)
+        .fetch_one(bind_all(&renumber_placeholders(&msg_sql), &filters.params))
+        .await?
+        .try_get(0)?;
 
     let conv_sql = format!(
         "SELECT COUNT(DISTINCT c.id)
@@ -514,11 +580,10 @@ pub fn export_message_count(
         where_sql = filters.where_sql,
         dedupe = filters.dedupe_sql,
     );
-    let conversations: i64 = conn.query_row(
-        &conv_sql,
-        params_from_iter(filters.params.iter().cloned()),
-        |row| row.get(0),
-    )?;
+    let conversations: i64 = (&mut *conn)
+        .fetch_one(bind_all(&renumber_placeholders(&conv_sql), &filters.params))
+        .await?
+        .try_get(0)?;
 
     let att_sql = format!(
         "SELECT COUNT(*), COALESCE(SUM(sz), 0)
@@ -536,11 +601,10 @@ pub fn export_message_count(
         where_sql = filters.where_sql,
         dedupe = filters.dedupe_sql,
     );
-    let (attachments, total_bytes): (i64, i64) = conn.query_row(
-        &att_sql,
-        params_from_iter(filters.params.iter().cloned()),
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
+    let row = (&mut *conn)
+        .fetch_one(bind_all(&renumber_placeholders(&att_sql), &filters.params))
+        .await?;
+    let (attachments, total_bytes): (i64, i64) = (row.try_get(0)?, row.try_get(1)?);
 
     Ok(ExportCountResponse {
         ok: true,
@@ -593,21 +657,22 @@ fn conversation_join_sql() -> String {
 
 fn push_participant_handle_or_alias_like(
     where_parts: &mut Vec<String>,
-    params: &mut Vec<rusqlite::types::Value>,
+    params: &mut Vec<SqlParam>,
+    engine: DbEngine,
     needle: &str,
 ) {
-    where_parts.push(
+    let like = like_ci(engine);
+    where_parts.push(format!(
         "EXISTS (
                  SELECT 1 FROM participants p
                  JOIN handles ph ON ph.id = p.handle_id
                  WHERE p.conversation_id = c.id
-                   AND (ph.raw LIKE ? OR coalesce(p.name_alias, '') LIKE ?)
+                   AND (ph.raw {like} OR coalesce(p.name_alias, '') {like})
                )"
-        .into(),
-    );
-    let like = format!("%{needle}%");
-    params.push(like.clone().into());
-    params.push(like.into());
+    ));
+    let pattern = format!("%{needle}%");
+    params.push(SqlParam::Text(pattern.clone()));
+    params.push(SqlParam::Text(pattern));
 }
 
 fn reject_unimplemented_message_filters(
@@ -647,63 +712,64 @@ fn reject_unimplemented_message_filters(
     )))
 }
 
-fn build_message_filters(
-    conn: &Connection,
+async fn build_message_filters(
+    conn: &mut AnyConnection,
     account_id: &str,
     parsed: &ParsedSearchQuery,
     source_override: Option<&str>,
 ) -> Result<BuiltFilters, ExportQueryError> {
     reject_unimplemented_message_filters(parsed)?;
+    let engine = engine_of(conn);
 
     let mut where_parts = vec!["c.account_id = ?".to_string()];
-    let mut params: Vec<rusqlite::types::Value> = vec![account_id.to_string().into()];
+    let mut params: Vec<SqlParam> = vec![SqlParam::Text(account_id.to_string())];
 
-    append_metadata_text_filters(parsed, &mut where_parts, &mut params)?;
+    append_metadata_text_filters(parsed, engine, &mut where_parts, &mut params)?;
 
     if let Some(conv) = &parsed.in_conversation {
         match conv.parse::<i64>() {
             Ok(id) => {
                 where_parts.push("c.id = ?".into());
-                params.push(id.into());
+                params.push(SqlParam::Int(id));
             }
             Err(_) => {
                 where_parts.push("hc.raw = ?".into());
-                params.push(conv.clone().into());
+                params.push(SqlParam::Text(conv.clone()));
             }
         }
     }
 
     if let Some(from) = &parsed.from {
-        where_parts.push(
-            "(m.is_from_me = 0 AND (hs.raw LIKE ? OR EXISTS (
+        let like = like_ci(engine);
+        where_parts.push(format!(
+            "(m.is_from_me = 0 AND (hs.raw {like} OR EXISTS (
                  SELECT 1 FROM participants p
                  JOIN handles ph ON ph.id = p.handle_id
                  WHERE p.conversation_id = c.id
-                   AND (ph.raw LIKE ? OR coalesce(p.name_alias, '') LIKE ?)
+                   AND (ph.raw {like} OR coalesce(p.name_alias, '') {like})
                )))"
-            .into(),
-        );
-        let like = format!("%{from}%");
-        params.push(like.clone().into());
-        params.push(like.clone().into());
-        params.push(like.into());
+        ));
+        let pattern = format!("%{from}%");
+        params.push(SqlParam::Text(pattern.clone()));
+        params.push(SqlParam::Text(pattern.clone()));
+        params.push(SqlParam::Text(pattern));
     }
 
     if let Some(to) = &parsed.to {
-        push_participant_handle_or_alias_like(&mut where_parts, &mut params, to);
+        push_participant_handle_or_alias_like(&mut where_parts, &mut params, engine, to);
     }
     if let Some(with_person) = &parsed.with_person {
-        push_participant_handle_or_alias_like(&mut where_parts, &mut params, with_person);
+        push_participant_handle_or_alias_like(&mut where_parts, &mut params, engine, with_person);
     }
 
     if let Some(subject) = &parsed.subject {
-        where_parts.push("coalesce(m.subject, '') LIKE ? COLLATE NOCASE".into());
-        params.push(format!("%{subject}%").into());
+        where_parts.push(format!("coalesce(m.subject, '') {}", like_ci(engine)));
+        params.push(SqlParam::Text(format!("%{subject}%")));
     }
 
     if let Some(after) = &parsed.after {
         where_parts.push("m.timestamp >= ?".into());
-        params.push(after.clone().into());
+        params.push(SqlParam::Text(after.clone()));
     }
     if let Some(before) = &parsed.before {
         where_parts.push("m.timestamp < ?".into());
@@ -712,18 +778,18 @@ fn build_message_filters(
         } else {
             before.clone()
         };
-        params.push(before_val.into());
+        params.push(SqlParam::Text(before_val));
     }
 
     let source_filter = nonempty_source(source_override).or(parsed.source.as_deref());
     if let Some(source) = source_filter {
         where_parts.push("m.source = ?".into());
-        params.push(source.to_string().into());
+        params.push(SqlParam::Text(source.to_string()));
     }
 
     if let Some(ct) = parsed.conversation_type {
         where_parts.push("c.conversation_type = ?".into());
-        params.push(ct.to_string().into());
+        params.push(SqlParam::Text(ct.to_string()));
     }
 
     if parsed.has_attachment == Some(true) {
@@ -731,28 +797,30 @@ fn build_message_filters(
     }
 
     if let Some(within) = &parsed.within {
-        let ids = list_group_member_contact_ids(conn, account_id, within)?;
+        let ids = list_group_member_contact_ids(conn, account_id, within).await?;
         where_parts.push(involves_contacts_sql(&ids));
     }
     if let Some(people) = &parsed.exclude_people {
-        let ids = list_group_member_contact_ids(conn, account_id, people)?;
+        let ids = list_group_member_contact_ids(conn, account_id, people).await?;
         where_parts.push(format!("NOT {}", involves_contacts_sql(&ids)));
     }
     if let Some(tag) = &parsed.tag {
-        where_parts.push(has_thread_tag_sql(false));
-        params.push(tag.clone().into());
+        where_parts.push(has_thread_tag_sql(engine, false));
+        params.push(SqlParam::Text(tag.clone()));
     }
     if let Some(tag) = &parsed.exclude_tag {
-        where_parts.push(has_thread_tag_sql(true));
-        params.push(tag.clone().into());
+        where_parts.push(has_thread_tag_sql(engine, true));
+        params.push(SqlParam::Text(tag.clone()));
     }
 
     if !parsed.first_contact.is_empty() {
-        let ids = contact_ids_within_day_bounds(conn, account_id, "first", &parsed.first_contact)?;
+        let ids =
+            contact_ids_within_day_bounds(conn, account_id, "first", &parsed.first_contact).await?;
         where_parts.push(involves_contacts_sql(&ids));
     }
     if !parsed.last_contact.is_empty() {
-        let ids = contact_ids_within_day_bounds(conn, account_id, "last", &parsed.last_contact)?;
+        let ids =
+            contact_ids_within_day_bounds(conn, account_id, "last", &parsed.last_contact).await?;
         where_parts.push(involves_contacts_sql(&ids));
     }
 
@@ -774,112 +842,162 @@ fn build_message_filters(
 
 fn append_metadata_text_filters(
     parsed: &ParsedSearchQuery,
+    engine: DbEngine,
     where_parts: &mut Vec<String>,
-    params: &mut Vec<rusqlite::types::Value>,
+    params: &mut Vec<SqlParam>,
 ) -> Result<(), ExportQueryError> {
     if let Some(ast) = &parsed.fts_ast {
-        where_parts.push(compile_metadata_fts_expr(ast, params)?);
+        let mut sql = String::new();
+        compile_metadata_fts_expr(ast, engine, &mut sql, params)?;
+        where_parts.push(sql);
     }
     Ok(())
 }
 
 fn compile_metadata_fts_expr(
     node: &FtsNode,
-    params: &mut Vec<rusqlite::types::Value>,
-) -> Result<String, ExportQueryError> {
+    engine: DbEngine,
+    sql: &mut String,
+    params: &mut Vec<SqlParam>,
+) -> Result<(), ExportQueryError> {
     match node {
         FtsNode::Term { value, prefix } => {
-            let fts_query = if prefix == &Some(true) {
-                format!("{}*", fts5_literal_query(value))
-            } else {
-                fts5_literal_query(value)
-            };
-            Ok(metadata_term_matches_sql(params, value, &fts_query))
+            push_metadata_like_chain(sql, params, engine, value);
+            // Full-text match on the message body index, per engine.
+            match engine {
+                DbEngine::Sqlite => {
+                    // Prefix: `"term"*` (star inside the quoted literal, matching
+                    // the current export_api.rs behavior); plain term: `"term"`.
+                    let fts_query = if *prefix == Some(true) {
+                        format!("{}*", fts5_literal_query(value))
+                    } else {
+                        fts5_literal_query(value)
+                    };
+                    sql.push_str(
+                        " OR EXISTS (SELECT 1 FROM messages_fts fts WHERE fts.rowid = m.id AND messages_fts MATCH ?",
+                    );
+                    params.push(SqlParam::Text(fts_query));
+                    sql.push(')');
+                }
+                DbEngine::Postgres => {
+                    // Prefix terms go through to_tsquery inside a quoted
+                    // literal; when the term has no queryable characters
+                    // (only quotes/backslashes), plainto_tsquery handles the
+                    // raw text instead of erroring on tsquery syntax.
+                    let (fn_name, arg) = if *prefix == Some(true) {
+                        match pg_prefix_tsquery(value) {
+                            Some(query) => ("to_tsquery", query),
+                            None => ("plainto_tsquery", value.clone()),
+                        }
+                    } else {
+                        ("plainto_tsquery", value.clone())
+                    };
+                    sql.push_str(&format!(
+                        " OR EXISTS (SELECT 1 FROM messages m_fts WHERE m_fts.id = m.id AND m_fts.search_tsv @@ {fn_name}('simple', ?"
+                    ));
+                    params.push(SqlParam::Text(arg));
+                    sql.push_str("))");
+                }
+            }
+            sql.push(')');
+            Ok(())
         }
-        FtsNode::Phrase { value } => Ok(metadata_term_matches_sql(
-            params,
-            value,
-            &fts5_literal_query(value),
-        )),
-        FtsNode::And { children } => compile_metadata_fts_children("AND", children, params),
-        FtsNode::Or { children } => compile_metadata_fts_children("OR", children, params),
-        FtsNode::Not { child } => Ok(format!(
-            "(NOT ({}))",
-            compile_metadata_fts_expr(child, params)?
-        )),
+        FtsNode::Phrase { value } => {
+            push_metadata_like_chain(sql, params, engine, value);
+            match engine {
+                DbEngine::Sqlite => {
+                    sql.push_str(
+                        " OR EXISTS (SELECT 1 FROM messages_fts fts WHERE fts.rowid = m.id AND messages_fts MATCH ?",
+                    );
+                    params.push(SqlParam::Text(fts5_literal_query(value)));
+                    sql.push(')');
+                }
+                DbEngine::Postgres => {
+                    sql.push_str(
+                        " OR EXISTS (SELECT 1 FROM messages m_fts WHERE m_fts.id = m.id AND m_fts.search_tsv @@ phraseto_tsquery('simple', ?",
+                    );
+                    params.push(SqlParam::Text(value.clone()));
+                    sql.push_str("))");
+                }
+            }
+            sql.push(')');
+            Ok(())
+        }
+        FtsNode::And { children } => {
+            compile_metadata_fts_children("AND", engine, children, sql, params)
+        }
+        FtsNode::Or { children } => {
+            compile_metadata_fts_children("OR", engine, children, sql, params)
+        }
+        FtsNode::Not { child } => {
+            sql.push_str("(NOT (");
+            compile_metadata_fts_expr(child, engine, sql, params)?;
+            sql.push_str("))");
+            Ok(())
+        }
     }
 }
 
 fn compile_metadata_fts_children(
     operator: &str,
+    engine: DbEngine,
     children: &[FtsNode],
-    params: &mut Vec<rusqlite::types::Value>,
-) -> Result<String, ExportQueryError> {
+    sql: &mut String,
+    params: &mut Vec<SqlParam>,
+) -> Result<(), ExportQueryError> {
     if children.is_empty() {
         return Err(ExportQueryError::bad(format!(
             "{operator} search expression has no operands"
         )));
     }
-    let compiled = children
-        .iter()
-        .map(|child| compile_metadata_fts_expr(child, params))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(format!("({})", compiled.join(&format!(" {operator} "))))
+    sql.push('(');
+    for (i, child) in children.iter().enumerate() {
+        if i > 0 {
+            sql.push_str(&format!(" {operator} "));
+        }
+        compile_metadata_fts_expr(child, engine, sql, params)?;
+    }
+    sql.push(')');
+    Ok(())
 }
 
-fn metadata_term_matches_sql(
-    params: &mut Vec<rusqlite::types::Value>,
+/// The LIKE-based metadata chain shared by Term and Phrase leaves: handles,
+/// participant aliases, contacts, and attachment names, all `%term%`
+/// case-insensitive. Pushes 8 binds (one per LIKE clause); the caller then
+/// pushes the full-text match and closes the outer parenthesis.
+fn push_metadata_like_chain(
+    sql: &mut String,
+    params: &mut Vec<SqlParam>,
+    engine: DbEngine,
     term: &str,
-    fts_query: &str,
-) -> String {
-    let like = format!("%{term}%");
+) {
+    let pattern = format!("%{term}%");
+    sql.push_str("(coalesce(hs.raw, '') ");
+    sql.push_str(like_ci(engine));
+    sql.push_str(
+        " OR EXISTS (SELECT 1 FROM participants p_md JOIN handles hp ON hp.id = p_md.handle_id WHERE p_md.conversation_id = c.id AND (hp.raw ",
+    );
+    sql.push_str(like_ci(engine));
+    sql.push_str(" OR coalesce(p_md.name_alias, '') ");
+    sql.push_str(like_ci(engine));
+    sql.push_str(
+        ")) OR EXISTS (SELECT 1 FROM contact_handles ch_md JOIN contacts ct_md ON ct_md.id = ch_md.contact_id JOIN handles hm ON hm.id = ch_md.handle_id WHERE ch_md.account_id = c.account_id AND (hm.raw ",
+    );
+    sql.push_str(like_ci(engine));
+    sql.push_str(" OR coalesce(ct_md.preferred_name, '') ");
+    sql.push_str(like_ci(engine));
+    sql.push_str(
+        ") AND ((c.conversation_type = 'individual' AND hm.id = c.chat_handle_id) OR EXISTS (SELECT 1 FROM participants p_md2 WHERE p_md2.conversation_id = c.id AND p_md2.handle_id = ch_md.handle_id))) OR EXISTS (SELECT 1 FROM attachments a_md WHERE a_md.message_id = m.id AND (coalesce(a_md.original_name, '') ",
+    );
+    sql.push_str(like_ci(engine));
+    sql.push_str(" OR coalesce(a_md.mime_type, '') ");
+    sql.push_str(like_ci(engine));
+    sql.push_str(" OR coalesce(a_md.derived_mime_type, '') ");
+    sql.push_str(like_ci(engine));
+    sql.push_str("))");
     for _ in 0..8 {
-        params.push(like.clone().into());
+        params.push(SqlParam::Text(pattern.clone()));
     }
-    params.push(fts_query.to_string().into());
-    "(
-    coalesce(hs.raw, '') LIKE ? COLLATE NOCASE
-    OR EXISTS (
-      SELECT 1 FROM participants p_md
-      JOIN handles hp ON hp.id = p_md.handle_id
-      WHERE p_md.conversation_id = c.id
-        AND (
-          hp.raw LIKE ? COLLATE NOCASE
-          OR coalesce(p_md.name_alias, '') LIKE ? COLLATE NOCASE
-        )
-    )
-    OR EXISTS (
-      SELECT 1 FROM contact_handles ch_md
-      JOIN contacts ct_md ON ct_md.id = ch_md.contact_id
-      JOIN handles hm ON hm.id = ch_md.handle_id
-      WHERE ch_md.account_id = c.account_id
-        AND (
-          hm.raw LIKE ? COLLATE NOCASE
-          OR coalesce(ct_md.preferred_name, '') LIKE ? COLLATE NOCASE
-        )
-        AND (
-          (c.conversation_type = 'individual' AND hm.id = c.chat_handle_id)
-          OR EXISTS (
-            SELECT 1 FROM participants p_md2
-            WHERE p_md2.conversation_id = c.id AND p_md2.handle_id = ch_md.handle_id
-          )
-        )
-    )
-    OR EXISTS (
-      SELECT 1 FROM attachments a_md
-      WHERE a_md.message_id = m.id
-        AND (
-          coalesce(a_md.original_name, '') LIKE ? COLLATE NOCASE
-          OR coalesce(a_md.mime_type, '') LIKE ? COLLATE NOCASE
-          OR coalesce(a_md.derived_mime_type, '') LIKE ? COLLATE NOCASE
-        )
-    )
-    OR EXISTS (
-      SELECT 1 FROM messages_fts fts
-      WHERE fts.rowid = m.id AND messages_fts MATCH ?
-    )
-  )"
-    .into()
 }
 
 /// Quote a free-text token for full-text search so operators and punctuation are treated as literal text.
@@ -887,7 +1005,40 @@ fn fts5_literal_query(term: &str) -> String {
     format!("\"{}\"", term.replace('"', "\"\""))
 }
 
-fn has_thread_tag_sql(exclude: bool) -> String {
+/// Quote a term for a Postgres prefix query under the 'simple' config:
+/// `'term':*`. Tsquery quoted literals cannot carry single quotes or
+/// backslashes (verified on Postgres 16: the lexer splits the token instead
+/// of honoring an escape), so terms containing either return `None`; the
+/// caller falls back to `plainto_tsquery`, which treats its input as raw
+/// text.
+fn pg_prefix_tsquery(term: &str) -> Option<String> {
+    if term.is_empty() || term.contains(['\\', '\'']) {
+        return None;
+    }
+    Some(format!("'{}':*", term))
+}
+
+/// Case-insensitive equality fragment on the aliased `name` column (`?`
+/// placeholder form; the renumber pass rewrites it). SQLite uses COLLATE
+/// NOCASE; Postgres lower()s both sides with the alias INSIDE `lower()` —
+/// `ct.lower(...)` would parse as a schema-qualified function call.
+fn name_eq_ci(engine: DbEngine, alias: &str) -> String {
+    match engine {
+        DbEngine::Sqlite => format!("{alias}.name = ? COLLATE NOCASE"),
+        DbEngine::Postgres => format!("lower({alias}.name) = lower(?)"),
+    }
+}
+
+/// Case-insensitive equality on the aliased `name` column with a hand-numbered
+/// placeholder.
+fn name_eq_sql(engine: DbEngine, alias: &str, placeholder: usize) -> String {
+    match engine {
+        DbEngine::Sqlite => format!("{alias}.name = ${placeholder} COLLATE NOCASE"),
+        DbEngine::Postgres => format!("lower({alias}.name) = lower(${placeholder})"),
+    }
+}
+
+fn has_thread_tag_sql(engine: DbEngine, exclude: bool) -> String {
     let exists = if exclude { "NOT EXISTS" } else { "EXISTS" };
     format!(
         "{exists} (
@@ -895,8 +1046,9 @@ fn has_thread_tag_sql(exclude: bool) -> String {
            JOIN conversation_tags ct ON ct.id = ctm.tag_id
            WHERE ctm.conversation_id = c.id
              AND ct.account_id = c.account_id
-             AND ct.name = ? COLLATE NOCASE
-         )"
+             AND {name_eq}
+         )",
+        name_eq = name_eq_ci(engine, "ct"),
     )
 }
 
@@ -927,8 +1079,8 @@ fn involves_contacts_sql(contact_ids: &[i64]) -> String {
     )
 }
 
-fn list_group_member_contact_ids(
-    conn: &Connection,
+async fn list_group_member_contact_ids(
+    conn: &mut AnyConnection,
     account_id: &str,
     name: &str,
 ) -> Result<Vec<i64>, ExportQueryError> {
@@ -936,36 +1088,45 @@ fn list_group_member_contact_ids(
     if trimmed.is_empty() {
         return Ok(Vec::new());
     }
-    let mut stmt = conn.prepare(
+    let engine = engine_of(conn);
+    let sql = format!(
         "SELECT cgm.contact_id
              FROM contact_group_members cgm
              JOIN contact_groups cg ON cg.id = cgm.group_id
-             WHERE cg.name = ? COLLATE NOCASE AND cg.account_id = ?
+             WHERE {name_eq} AND cg.account_id = $2
              ORDER BY cgm.contact_id",
-    )?;
-    let rows = stmt
-        .query_map(rusqlite::params![trimmed, account_id], |r| r.get(0))?
-        .collect::<Result<Vec<i64>, _>>()?;
-    Ok(rows)
+        name_eq = name_eq_sql(engine, "cg", 1),
+    );
+    let rows = sqlx::query(&sql)
+        .bind(trimmed)
+        .bind(account_id)
+        .fetch_all(&mut *conn)
+        .await?;
+    rows.iter()
+        .map(|r| r.try_get::<i64, _>(0))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(Into::into)
 }
 
-fn contact_ids_within_day_bounds(
-    conn: &Connection,
+async fn contact_ids_within_day_bounds(
+    conn: &mut AnyConnection,
     account_id: &str,
     bound: &str,
     bounds: &crate::search_query::DateBounds,
 ) -> Result<Vec<i64>, ExportQueryError> {
     let day = if bound == "first" { "MIN" } else { "MAX" };
     let mut having = Vec::new();
-    let mut params: Vec<rusqlite::types::Value> = vec![account_id.to_string().into()];
+    let mut params: Vec<SqlParam> = vec![SqlParam::Text(account_id.to_string())];
+    let mut n = 1;
     if let Some(from) = &bounds.from {
-        having.push(format!("{day}(substr(m.timestamp, 1, 10)) >= ?"));
-        params.push(from.clone().into());
+        n += 1;
+        having.push(format!("{day}(substr(m.timestamp, 1, 10)) >= ${n}"));
+        params.push(SqlParam::Text(from.clone()));
     }
     if let Some(to) = &bounds.to {
-        // Exclusive upper bound: the string compare on YYYY-MM-DD already excludes the day.
-        having.push(format!("{day}(substr(m.timestamp, 1, 10)) < ?"));
-        params.push(to.clone().into());
+        n += 1;
+        having.push(format!("{day}(substr(m.timestamp, 1, 10)) < ${n}"));
+        params.push(SqlParam::Text(to.clone()));
     }
     if having.is_empty() {
         return Ok(Vec::new());
@@ -979,19 +1140,19 @@ fn contact_ids_within_day_bounds(
           AND c.conversation_type = 'individual'
           AND c.chat_handle_id = ch.handle_id
          JOIN messages m ON m.conversation_id = c.id
-         WHERE ch.account_id = ? AND m.duplicate_of IS NULL
+         WHERE ch.account_id = $1 AND m.duplicate_of IS NULL
          GROUP BY ch.contact_id
          HAVING {having_sql}"
     );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt
-        .query_map(params_from_iter(params.iter().cloned()), |r| r.get(0))?
-        .collect::<Result<Vec<i64>, _>>()?;
-    Ok(rows)
+    let rows = (&mut *conn).fetch_all(bind_all(&sql, &params)).await?;
+    rows.iter()
+        .map(|r| r.try_get::<i64, _>(0))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(Into::into)
 }
 
-fn load_participants(
-    conn: &Connection,
+async fn load_participants(
+    conn: &mut AnyConnection,
     conversation_ids: &[i64],
 ) -> Result<std::collections::HashMap<i64, Vec<ExportParticipant>>, ExportQueryError> {
     group_rows_by_id(
@@ -1024,21 +1185,22 @@ fn load_participants(
         },
         |row| {
             Ok((
-                row.get::<_, i64>(0)?,
+                row.try_get::<i64, _>(0)?,
                 ExportParticipant {
-                    handle: row.get(1)?,
-                    name_alias: row.get(2)?,
-                    preferred_name: row.get(3)?,
-                    handle_type: row.get(4)?,
-                    contact_id: row.get(5)?,
+                    handle: row.try_get(1)?,
+                    name_alias: row.try_get(2)?,
+                    preferred_name: row.try_get(3)?,
+                    handle_type: row.try_get(4)?,
+                    contact_id: row.try_get(5)?,
                 },
             ))
         },
     )
+    .await
 }
 
-fn load_attachments(
-    conn: &Connection,
+async fn load_attachments(
+    conn: &mut AnyConnection,
     message_ids: &[i64],
 ) -> Result<std::collections::HashMap<i64, Vec<ExportAttachment>>, ExportQueryError> {
     group_rows_by_id(
@@ -1055,23 +1217,24 @@ fn load_attachments(
         },
         |row| {
             Ok((
-                row.get::<_, i64>(0)?,
+                row.try_get::<i64, _>(0)?,
                 ExportAttachment {
-                    path: row.get(1)?,
-                    original_name: row.get(2)?,
-                    mime_type: row.get(3)?,
-                    sha256: row.get(4)?,
-                    is_sticker: row.get::<_, i64>(5)? != 0,
-                    transcription: row.get(6)?,
-                    missing_reason: row.get(7)?,
+                    path: row.try_get(1)?,
+                    original_name: row.try_get(2)?,
+                    mime_type: row.try_get(3)?,
+                    sha256: row.try_get(4)?,
+                    is_sticker: row.try_get::<i64, _>(5)? != 0,
+                    transcription: row.try_get(6)?,
+                    missing_reason: row.try_get(7)?,
                 },
             ))
         },
     )
+    .await
 }
 
-fn load_tapbacks(
-    conn: &Connection,
+async fn load_tapbacks(
+    conn: &mut AnyConnection,
     message_ids: &[i64],
 ) -> Result<std::collections::HashMap<i64, Vec<ExportTapback>>, ExportQueryError> {
     group_rows_by_id(
@@ -1089,17 +1252,18 @@ fn load_tapbacks(
         },
         |row| {
             Ok((
-                row.get::<_, i64>(0)?,
+                row.try_get::<i64, _>(0)?,
                 ExportTapback {
-                    part_index: row.get(1)?,
-                    kind: row.get(2)?,
-                    emoji: row.get(3)?,
-                    is_from_me: row.get::<_, i64>(4)? != 0,
-                    sender: row.get(5)?,
+                    part_index: row.try_get(1)?,
+                    kind: row.try_get(2)?,
+                    emoji: row.try_get(3)?,
+                    is_from_me: row.try_get::<i64, _>(4)? != 0,
+                    sender: row.try_get(5)?,
                 },
             ))
         },
     )
+    .await
 }
 
 #[derive(Debug, Deserialize)]
@@ -1154,21 +1318,20 @@ pub(crate) async fn export_messages_count_handler(
 ) -> Result<Json<export_api::ExportCountResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_export_access(&auth)?;
-    let account =
-        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
+    let account = resolve_import_account(&auth, query.account.as_deref(), &state.db).await?;
     let q = query.q.clone();
     let source = query.source.clone();
 
-    let body = with_configured_db_map(&state.cfg.paths.db, "export count task", move |conn| {
-        export_api::export_message_count(
-            conn,
-            ExportCountOpts {
-                account_id: &account,
-                query: &q,
-                source_override: source.as_deref(),
-            },
-        )
-    })
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    let body = export_api::export_message_count(
+        &mut conn,
+        ExportCountOpts {
+            account_id: &account,
+            query: &q,
+            source_override: source.as_deref(),
+        },
+    )
     .await?;
     Ok(Json(body))
 }
@@ -1201,27 +1364,26 @@ pub(crate) async fn export_messages_handler(
 ) -> Result<Json<export_api::ExportMessagesResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_export_access(&auth)?;
-    let account =
-        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
+    let account = resolve_import_account(&auth, query.account.as_deref(), &state.db).await?;
     let limit = query.limit.unwrap_or(DEFAULT_EXPORT_LIMIT);
     let offset = query.offset;
     let q = query.q.clone();
     let cursor = query.cursor.clone();
     let source = query.source.clone();
 
-    let body = with_configured_db_map(&state.cfg.paths.db, "export task", move |conn| {
-        export_api::export_messages(
-            conn,
-            ExportPageOpts {
-                account_id: &account,
-                query: &q,
-                limit,
-                offset,
-                cursor: cursor.as_deref(),
-                source_override: source.as_deref(),
-            },
-        )
-    })
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    let body = export_api::export_messages(
+        &mut conn,
+        ExportPageOpts {
+            account_id: &account,
+            query: &q,
+            limit,
+            offset,
+            cursor: cursor.as_deref(),
+            source_override: source.as_deref(),
+        },
+    )
     .await?;
     Ok(Json(body))
 }
@@ -1229,57 +1391,81 @@ pub(crate) async fn export_messages_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::{Connection, params};
+    use crate::db::{engine, schema};
 
-    fn setup() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        crate::db::schema::ensure_vault_schema(&conn).unwrap();
-        conn.execute(
-            "INSERT INTO accounts (id, username, read_only) VALUES ('a1', 'alice', 0)",
-            [],
-        )
-        .unwrap();
+    #[test]
+    fn pg_prefix_tsquery_falls_back_on_unescapable_terms() {
+        assert_eq!(pg_prefix_tsquery("foo"), Some("'foo':*".to_string()));
+        // Quotes and backslashes cannot live inside a tsquery quoted
+        // literal; the caller falls back to plainto_tsquery for them.
+        assert_eq!(pg_prefix_tsquery("it's"), None);
+        assert_eq!(pg_prefix_tsquery(r"a\b"), None);
+        assert_eq!(pg_prefix_tsquery(""), None);
+    }
+
+    async fn setup() -> (sqlx::AnyPool, tempfile::TempDir) {
+        let (pool, dir) = engine::test_pool().await;
+        schema::ensure_vault_schema(&mut pool.acquire().await.unwrap())
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, username, read_only) VALUES ($1, 'alice', 0)")
+            .bind("a1")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
         // Create handles and conversations using chat_handle_id (FK to handles).
         for (cid, phone) in [(1, "+1555"), (2, "+1666")] {
-            conn.execute(
+            sqlx::query(
                 "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-                 VALUES ('a1', ?1, ?1, 'phone', 'phone')",
-                params![phone],
+                 VALUES ($1, $2, $2, 'phone', 'phone')",
             )
+            .bind("a1")
+            .bind(phone)
+            .execute(&mut *conn)
+            .await
             .unwrap();
-            let handle_id = conn.last_insert_rowid();
-            conn.execute(
+            let handle_id: i64 = sqlx::query_scalar("SELECT last_insert_rowid()")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+            sqlx::query(
                 "INSERT INTO conversations (id, account_id, chat_handle_id, conversation_type, source_file)
-                 VALUES (?1, 'a1', ?2, 'individual', 'backup-a.jsonl')",
-                params![cid, handle_id],
+                 VALUES ($1, 'a1', $2, 'individual', 'backup-a.jsonl')",
             )
+            .bind(cid)
+            .bind(handle_id)
+            .execute(&mut *conn)
+            .await
             .unwrap();
         }
-        conn.execute(
+        sqlx::query(
             "INSERT INTO messages (id, conversation_id, account_id, source, service, timestamp, is_from_me, sort_order, body)
              VALUES (1, 1, 'a1', 'sms', 'sms', '2020-01-01T00:00:00Z', 0, 0, 'hello one'),
                     (2, 2, 'a1', 'sms', 'sms', '2020-01-02T00:00:00Z', 0, 0, 'hello two')",
-            [],
         )
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn
+        (pool, dir)
     }
 
-    #[test]
-    fn export_includes_attachment_missing_reason() {
-        let conn = setup();
-        conn.execute(
+    #[tokio::test]
+    async fn export_includes_attachment_missing_reason() {
+        let (pool, _dir) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
             "INSERT INTO attachments (
                 message_id, path, original_name, mime_type, sha256, is_sticker,
                 size_bytes, missing_reason
              ) VALUES (1, 'attachments/gone.bin', 'gone.bin', 'image/png', NULL, 0, 2048, 'file_missing')",
-            [],
         )
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
         let res = export_messages(
-            &conn,
+            &mut conn,
             ExportPageOpts {
                 account_id: "a1",
                 query: "in:1",
@@ -1289,6 +1475,7 @@ mod tests {
                 source_override: None,
             },
         )
+        .await
         .unwrap();
         assert_eq!(res.messages.len(), 1);
         assert_eq!(res.messages[0].attachments.len(), 1);
@@ -1299,12 +1486,13 @@ mod tests {
         assert_eq!(att.mime_type.as_deref(), Some("image/png"));
     }
 
-    #[test]
-    fn conversation_filter_scopes_messages() {
-        let conn = setup();
+    #[tokio::test]
+    async fn conversation_filter_scopes_messages() {
+        let (pool, _dir) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
 
         let res = export_messages(
-            &conn,
+            &mut conn,
             ExportPageOpts {
                 account_id: "a1",
                 query: "in:1",
@@ -1314,13 +1502,14 @@ mod tests {
                 source_override: None,
             },
         )
+        .await
         .unwrap();
         assert_eq!(res.messages.len(), 1);
         assert_eq!(res.messages[0].id, 1);
         assert_eq!(res.messages[0].service.as_deref(), Some("sms"));
 
         let res = export_messages(
-            &conn,
+            &mut conn,
             ExportPageOpts {
                 account_id: "a1",
                 query: "conversation:2",
@@ -1330,12 +1519,13 @@ mod tests {
                 source_override: None,
             },
         )
+        .await
         .unwrap();
         assert_eq!(res.messages.len(), 1);
         assert_eq!(res.messages[0].id, 2);
 
         let res = export_messages(
-            &conn,
+            &mut conn,
             ExportPageOpts {
                 account_id: "a1",
                 query: "",
@@ -1345,48 +1535,57 @@ mod tests {
                 source_override: None,
             },
         )
+        .await
         .unwrap();
         assert_eq!(res.messages.len(), 2);
     }
 
-    #[test]
-    fn export_message_count_supports_handle_filters() {
-        let conn = setup();
-        conn.execute(
+    #[tokio::test]
+    async fn export_message_count_supports_handle_filters() {
+        let (pool, _dir) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
             "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
              VALUES ('a1', 'alice', 'alice', 'other', 'other')",
-            [],
         )
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        let sender_id = conn.last_insert_rowid();
-        conn.execute(
-            "UPDATE messages SET sender_handle_id = ?1 WHERE id = 1",
-            [sender_id],
-        )
-        .unwrap();
-        conn.execute(
+        let sender_id: i64 = sqlx::query_scalar("SELECT last_insert_rowid()")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE messages SET sender_handle_id = $1 WHERE id = 1")
+            .bind(sender_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query(
             "UPDATE handles SET raw = 'alice-chat', normalized = 'alice-chat'
              WHERE id = (SELECT chat_handle_id FROM conversations WHERE id = 1)",
-            [],
         )
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO attachments (
                 message_id, path, original_name, mime_type, sha256, is_sticker, size_bytes
              ) VALUES (1, 'attachments/a.txt', 'a.txt', 'text/plain', 'abc123', 0, 12)",
-            [],
         )
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
         for query in ["from:alice", "in:alice-chat"] {
             let counts = export_message_count(
-                &conn,
+                &mut conn,
                 ExportCountOpts {
                     account_id: "a1",
                     query,
                     source_override: None,
                 },
             )
+            .await
             .unwrap();
             assert_eq!(counts.messages, 1, "query={query}");
             assert_eq!(counts.conversations, 1, "query={query}");
@@ -1394,11 +1593,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn free_text_matches_message_body_via_fts() {
-        let conn = setup();
+    #[tokio::test]
+    async fn free_text_matches_message_body_via_fts() {
+        let (pool, _dir) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
         let res = export_messages(
-            &conn,
+            &mut conn,
             ExportPageOpts {
                 account_id: "a1",
                 query: "one",
@@ -1408,6 +1608,7 @@ mod tests {
                 source_override: None,
             },
         )
+        .await
         .unwrap();
         assert_eq!(res.messages.len(), 1);
         assert_eq!(res.messages[0].id, 1);
@@ -1420,14 +1621,19 @@ mod tests {
         );
     }
 
-    #[test]
-    fn export_boolean_query_preserves_or() {
-        let conn = setup();
-        conn.execute("UPDATE messages SET body = 'foo' WHERE id = 1", [])
+    #[tokio::test]
+    async fn export_boolean_query_preserves_or() {
+        let (pool, _dir) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("UPDATE messages SET body = 'foo' WHERE id = 1")
+            .execute(&mut *conn)
+            .await
             .unwrap();
-        conn.execute("UPDATE messages SET body = 'bar' WHERE id = 2", [])
+        sqlx::query("UPDATE messages SET body = 'bar' WHERE id = 2")
+            .execute(&mut *conn)
+            .await
             .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO messages (
                 id, conversation_id, account_id, source, service, timestamp,
                 is_from_me, sort_order, body
@@ -1435,12 +1641,13 @@ mod tests {
                 3, 1, 'a1', 'sms', 'sms', '2020-01-03T00:00:00Z',
                 0, 0, 'foo bar'
              )",
-            [],
         )
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
         let result = export_messages(
-            &conn,
+            &mut conn,
             ExportPageOpts {
                 account_id: "a1",
                 query: "foo OR bar",
@@ -1450,19 +1657,25 @@ mod tests {
                 source_override: None,
             },
         )
+        .await
         .unwrap();
         let ids: Vec<i64> = result.messages.iter().map(|message| message.id).collect();
         assert_eq!(ids, vec![1, 2, 3]);
     }
 
-    #[test]
-    fn export_boolean_query_preserves_and_and_not() {
-        let conn = setup();
-        conn.execute("UPDATE messages SET body = 'foo' WHERE id = 1", [])
+    #[tokio::test]
+    async fn export_boolean_query_preserves_and_and_not() {
+        let (pool, _dir) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("UPDATE messages SET body = 'foo' WHERE id = 1")
+            .execute(&mut *conn)
+            .await
             .unwrap();
-        conn.execute("UPDATE messages SET body = 'bar' WHERE id = 2", [])
+        sqlx::query("UPDATE messages SET body = 'bar' WHERE id = 2")
+            .execute(&mut *conn)
+            .await
             .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO messages (
                 id, conversation_id, account_id, source, service, timestamp,
                 is_from_me, sort_order, body
@@ -1470,101 +1683,133 @@ mod tests {
                 3, 1, 'a1', 'sms', 'sms', '2020-01-03T00:00:00Z',
                 0, 0, 'foo bar'
              )",
-            [],
         )
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
-        let matching_ids = |query| {
-            export_messages(
-                &conn,
-                ExportPageOpts {
-                    account_id: "a1",
-                    query,
-                    limit: 100,
-                    offset: None,
-                    cursor: None,
-                    source_override: None,
-                },
-            )
-            .unwrap()
-            .messages
-            .into_iter()
-            .map(|message| message.id)
-            .collect::<Vec<_>>()
+        // All call sites pass string literals, so `'static` sidesteps the
+        // closure-returning-future lifetime puzzle (the future would otherwise
+        // borrow a caller-owned reference the closure cannot name).
+        let matching_ids = |query: &'static str| {
+            let pool = pool.clone();
+            async move {
+                let mut conn = pool.acquire().await.unwrap();
+                export_messages(
+                    &mut conn,
+                    ExportPageOpts {
+                        account_id: "a1",
+                        query,
+                        limit: 100,
+                        offset: None,
+                        cursor: None,
+                        source_override: None,
+                    },
+                )
+                .await
+                .unwrap()
+                .messages
+                .into_iter()
+                .map(|message| message.id)
+                .collect::<Vec<_>>()
+            }
         };
-        assert_eq!(matching_ids("foo AND bar"), vec![3]);
-        assert_eq!(matching_ids("foo AND NOT bar"), vec![1]);
+        assert_eq!(matching_ids("foo AND bar").await, vec![3]);
+        assert_eq!(matching_ids("foo AND NOT bar").await, vec![1]);
     }
 
-    #[test]
-    fn export_boolean_query_combines_metadata_body_phrases_prefixes_and_nesting() {
-        let conn = setup();
-        conn.execute(
+    #[tokio::test]
+    async fn export_boolean_query_combines_metadata_body_phrases_prefixes_and_nesting() {
+        let (pool, _dir) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
             "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
              VALUES ('a1', 'blocked', 'blocked', 'other', 'other')",
-            [],
         )
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        let blocked_sender = conn.last_insert_rowid();
-        conn.execute(
-            "UPDATE messages SET body = 'alpha phrase', sender_handle_id = ?1 WHERE id = 1",
-            [blocked_sender],
-        )
-        .unwrap();
-        conn.execute("UPDATE messages SET body = 'unrelated' WHERE id = 2", [])
+        let blocked_sender: i64 = sqlx::query_scalar("SELECT last_insert_rowid()")
+            .fetch_one(&mut *conn)
+            .await
             .unwrap();
-        conn.execute(
+        sqlx::query(
+            "UPDATE messages SET body = 'alpha phrase', sender_handle_id = $1 WHERE id = 1",
+        )
+        .bind(blocked_sender)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE messages SET body = 'unrelated' WHERE id = 2")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query(
             "INSERT INTO attachments (
                 message_id, path, original_name, mime_type, sha256, is_sticker
              ) VALUES (
                 2, 'attachments/report-final.pdf', 'report-final.pdf',
                 'application/pdf', 'report-digest', 0
              )",
-            [],
         )
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
-        let matching_ids = |query| {
-            export_messages(
-                &conn,
-                ExportPageOpts {
-                    account_id: "a1",
-                    query,
-                    limit: 100,
-                    offset: None,
-                    cursor: None,
-                    source_override: None,
-                },
-            )
-            .unwrap()
-            .messages
-            .into_iter()
-            .map(|message| message.id)
-            .collect::<Vec<_>>()
+        // All call sites pass string literals, so `'static` sidesteps the
+        // closure-returning-future lifetime puzzle (the future would otherwise
+        // borrow a caller-owned reference the closure cannot name).
+        let matching_ids = |query: &'static str| {
+            let pool = pool.clone();
+            async move {
+                let mut conn = pool.acquire().await.unwrap();
+                export_messages(
+                    &mut conn,
+                    ExportPageOpts {
+                        account_id: "a1",
+                        query,
+                        limit: 100,
+                        offset: None,
+                        cursor: None,
+                        source_override: None,
+                    },
+                )
+                .await
+                .unwrap()
+                .messages
+                .into_iter()
+                .map(|message| message.id)
+                .collect::<Vec<_>>()
+            }
         };
 
-        assert_eq!(matching_ids(r#""alpha phrase" OR report*"#), vec![1, 2]);
         assert_eq!(
-            matching_ids(r#"blocked AND ("alpha phrase" OR report*)"#),
+            matching_ids(r#""alpha phrase" OR report*"#).await,
+            vec![1, 2]
+        );
+        assert_eq!(
+            matching_ids(r#"blocked AND ("alpha phrase" OR report*)"#).await,
             vec![1]
         );
-        assert_eq!(matching_ids("NOT NOT report*"), vec![2]);
+        assert_eq!(matching_ids("NOT NOT report*").await, vec![2]);
 
-        conn.execute(
+        sqlx::query(
             "INSERT INTO trashed_conversations (account_id, conversation_id)
              VALUES ('a1', 2)",
-            [],
         )
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        assert_eq!(matching_ids(r#""alpha phrase" OR report*"#), vec![1]);
+        assert_eq!(matching_ids(r#""alpha phrase" OR report*"#).await, vec![1]);
     }
 
-    #[test]
-    fn rejects_oversized_search_query_and_offset() {
-        let conn = setup();
+    #[tokio::test]
+    async fn rejects_oversized_search_query_and_offset() {
+        let (pool, _dir) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
         let huge = "x".repeat(MAX_SEARCH_QUERY_BYTES + 1);
         let err = export_messages(
-            &conn,
+            &mut conn,
             ExportPageOpts {
                 account_id: "a1",
                 query: &huge,
@@ -1574,11 +1819,12 @@ mod tests {
                 source_override: None,
             },
         )
+        .await
         .unwrap_err();
         assert!(err.to_string().contains("exceeds"), "{err}");
 
         let err = export_messages(
-            &conn,
+            &mut conn,
             ExportPageOpts {
                 account_id: "a1",
                 query: "",
@@ -1588,40 +1834,48 @@ mod tests {
                 source_override: None,
             },
         )
+        .await
         .unwrap_err();
         assert!(err.to_string().contains("offset"), "{err}");
     }
 
-    #[test]
-    fn export_does_not_leak_other_account_messages() {
-        let conn = setup();
-        conn.execute(
-            "INSERT INTO accounts (id, username, read_only) VALUES ('a2', 'bob', 0)",
-            [],
-        )
-        .unwrap();
-        conn.execute(
+    #[tokio::test]
+    async fn export_does_not_leak_other_account_messages() {
+        let (pool, _dir) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, username, read_only) VALUES ('a2', 'bob', 0)")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query(
             "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
              VALUES ('a2', '+1777', '+1777', 'phone', 'phone')",
-            [],
         )
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        let bob_handle = conn.last_insert_rowid();
-        conn.execute(
+        let bob_handle: i64 = sqlx::query_scalar("SELECT last_insert_rowid()")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query(
             "INSERT INTO conversations (id, account_id, chat_handle_id, conversation_type, source_file)
-             VALUES (99, 'a2', ?1, 'individual', 'bob.jsonl')",
-            params![bob_handle],
+             VALUES (99, 'a2', $1, 'individual', 'bob.jsonl')",
         )
+        .bind(bob_handle)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO messages (id, conversation_id, account_id, source, service, timestamp, is_from_me, sort_order, body)
              VALUES (99, 99, 'a2', 'sms', 'sms', '2020-02-01T00:00:00Z', 0, 0, 'bob secret')",
-            [],
         )
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
         let alice = export_messages(
-            &conn,
+            &mut conn,
             ExportPageOpts {
                 account_id: "a1",
                 query: "secret",
@@ -1631,6 +1885,7 @@ mod tests {
                 source_override: None,
             },
         )
+        .await
         .unwrap();
         assert!(
             alice.messages.is_empty(),
@@ -1638,7 +1893,7 @@ mod tests {
         );
 
         let alice_all = export_messages(
-            &conn,
+            &mut conn,
             ExportPageOpts {
                 account_id: "a1",
                 query: "",
@@ -1648,7 +1903,213 @@ mod tests {
                 source_override: None,
             },
         )
+        .await
         .unwrap();
         assert!(alice_all.messages.iter().all(|m| m.id != 99));
+    }
+
+    /// Cursor pagination end to end: the 6 cursor binds (`timestamp`, then the
+    /// `timestamp|sort_order|id` triple twice) must align with the assembled
+    /// SQL after renumbering, and `LIMIT ?` follows them.
+    #[tokio::test]
+    async fn export_pages_with_cursor_and_limit() {
+        let (pool, _dir) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
+            "INSERT INTO messages (
+                id, conversation_id, account_id, source, service, timestamp,
+                is_from_me, sort_order, body
+             ) VALUES (
+                3, 1, 'a1', 'sms', 'sms', '2020-01-03T00:00:00Z',
+                0, 0, 'third'
+             )",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        // Owned cursor so the async closure borrows nothing borrowed by the
+        // caller (a `&str` capture would need a lifetime the closure cannot name).
+        let page = |limit: usize, cursor: Option<String>| {
+            let pool = pool.clone();
+            async move {
+                let mut conn = pool.acquire().await.unwrap();
+                export_messages(
+                    &mut conn,
+                    ExportPageOpts {
+                        account_id: "a1",
+                        query: "",
+                        limit,
+                        offset: None,
+                        cursor: cursor.as_deref(),
+                        source_override: None,
+                    },
+                )
+                .await
+                .unwrap()
+            }
+        };
+
+        let first = page(2, None).await;
+        assert_eq!(first.messages.len(), 2);
+        assert!(first.truncated == Some(true));
+        let cursor = first.next_cursor.expect("first page must carry a cursor");
+
+        let second = page(2, Some(cursor)).await;
+        assert_eq!(second.messages.len(), 1);
+        assert_eq!(second.messages[0].id, 3);
+        assert_eq!(second.truncated, None);
+        assert!(second.next_cursor.is_none());
+    }
+
+    #[test]
+    fn renumber_placeholders_numbers_in_order() {
+        let sql = "a = ? AND b = ? AND c IN (?, ?) AND d LIKE ?";
+        assert_eq!(
+            renumber_placeholders(sql),
+            "a = $1 AND b = $2 AND c IN ($3, $4) AND d LIKE $5"
+        );
+        assert_eq!(renumber_placeholders("no placeholders"), "no placeholders");
+    }
+
+    /// The compiled metadata search for a mixed Term/Phrase/And/Or/Not query
+    /// must place exactly one `?` per pushed bind, in push order: each leaf
+    /// pushes 8 LIKE patterns (`%term%`) then its full-text bind.
+    #[test]
+    fn compiled_fts_placeholders_match_bind_order() {
+        let parsed =
+            validate_search_query(r#"blocked AND ("alpha phrase" OR report*) AND NOT spam"#)
+                .unwrap();
+        let ast = parsed.fts_ast.as_ref().unwrap();
+        let mut sql = String::new();
+        let mut params = Vec::new();
+        compile_metadata_fts_expr(ast, DbEngine::Sqlite, &mut sql, &mut params).unwrap();
+
+        assert_eq!(params.len(), 36, "4 leaves × 9 binds each");
+        let renumbered = renumber_placeholders(&sql);
+        assert!(
+            !renumbered.contains('?'),
+            "no `?` may survive: {renumbered}"
+        );
+        assert_eq!(renumbered.matches('$').count(), params.len());
+
+        // Bind order: leaf 1 (blocked) 8 LIKE patterns, then its FTS bind;
+        // leaf 2 (alpha phrase) 8 + FTS; leaf 3 (report*) 8 + FTS; leaf 4 (spam).
+        for p in &params[0..8] {
+            assert_eq!(p, &SqlParam::Text("%blocked%".into()));
+        }
+        assert_eq!(params[8], SqlParam::Text("\"blocked\"".into()));
+        for p in &params[9..17] {
+            assert_eq!(p, &SqlParam::Text("%alpha phrase%".into()));
+        }
+        assert_eq!(params[17], SqlParam::Text("\"alpha phrase\"".into()));
+        for p in &params[18..26] {
+            assert_eq!(p, &SqlParam::Text("%report%".into()));
+        }
+        assert_eq!(params[26], SqlParam::Text("\"report\"*".into()));
+        for p in &params[27..35] {
+            assert_eq!(p, &SqlParam::Text("%spam%".into()));
+        }
+        assert_eq!(params[35], SqlParam::Text("\"spam\"".into()));
+
+        // The renumbered SQL numbers the same order: `$1..$9` for leaf 1, etc.
+        for n in 1..=36 {
+            assert!(
+                renumbered.contains(&format!("${n}")),
+                "missing ${n}: {renumbered}"
+            );
+        }
+    }
+
+    /// The Postgres branch emits the tsquery calls; prefix terms become
+    /// `to_tsquery` with a `'term':*` operand, phrases `phraseto_tsquery`.
+    #[test]
+    fn fts_compiler_emits_postgres_branch() {
+        let parsed = validate_search_query(r#"report* OR "alpha phrase""#).unwrap();
+        let ast = parsed.fts_ast.as_ref().unwrap();
+        let mut sql = String::new();
+        let mut params = Vec::new();
+        compile_metadata_fts_expr(ast, DbEngine::Postgres, &mut sql, &mut params).unwrap();
+
+        assert!(
+            sql.contains("search_tsv @@ to_tsquery('simple', ?)"),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("search_tsv @@ phraseto_tsquery('simple', ?)"),
+            "{sql}"
+        );
+        assert!(!sql.contains("messages_fts"), "{sql}");
+        assert!(sql.contains("ILIKE ?"), "{sql}");
+        assert!(!sql.contains("COLLATE NOCASE"), "{sql}");
+        assert_eq!(params.len(), 18);
+        assert_eq!(params[8], SqlParam::Text("'report':*".into()));
+        assert_eq!(params[17], SqlParam::Text("alpha phrase".into()));
+        let renumbered = renumber_placeholders(&sql);
+        assert!(!renumbered.contains('?'));
+        assert_eq!(renumbered.matches('$').count(), params.len());
+    }
+
+    /// The case-insensitive equality fragments must keep the table alias
+    /// INSIDE `lower()` on Postgres — `ct.lower(...)` parses as a
+    /// schema-qualified function call — at both call sites: the thread-tag
+    /// subquery (alias `ct`) and the contact-group lookup (alias `cg`). The
+    /// SQLite arms stay alias-outside COLLATE NOCASE, unchanged.
+    #[test]
+    fn pg_ci_eq_keeps_alias_inside_lower() {
+        let tag_sql = has_thread_tag_sql(DbEngine::Postgres, false);
+        assert!(tag_sql.contains("lower(ct.name) = lower(?)"), "{tag_sql}");
+        assert!(!tag_sql.contains("ct.lower("), "{tag_sql}");
+
+        let group_eq = name_eq_sql(DbEngine::Postgres, "cg", 1);
+        assert_eq!(group_eq, "lower(cg.name) = lower($1)");
+        assert!(!group_eq.contains("cg.lower("));
+
+        // SQLite arms are byte-identical in behavior to the pre-port form.
+        let tag_sqlite = has_thread_tag_sql(DbEngine::Sqlite, false);
+        assert!(
+            tag_sqlite.contains("ct.name = ? COLLATE NOCASE"),
+            "{tag_sqlite}"
+        );
+        assert_eq!(
+            name_eq_sql(DbEngine::Sqlite, "cg", 1),
+            "cg.name = $1 COLLATE NOCASE"
+        );
+    }
+
+    /// End-to-end placeholder discipline: the assembled export query's `$N`
+    /// placeholders must be exactly `1..=params.len()` in bind order.
+    #[tokio::test]
+    async fn export_sql_placeholders_match_params_order() {
+        let (pool, _dir) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let parsed = validate_search_query(
+            r#"from:alice to:bob subject:hello tag:work "alpha phrase" OR report*"#,
+        )
+        .unwrap();
+        let filters = build_message_filters(&mut conn, "a1", &parsed, None)
+            .await
+            .unwrap();
+        let sql = format!(
+            "SELECT m.id {messages_from_sql} WHERE {where_sql}{dedupe}",
+            messages_from_sql = messages_from_sql(),
+            where_sql = filters.where_sql,
+            dedupe = filters.dedupe_sql,
+        );
+        let renumbered = renumber_placeholders(&sql);
+        assert!(
+            !renumbered.contains('?'),
+            "no `?` may survive: {renumbered}"
+        );
+        assert_eq!(renumbered.matches('$').count(), filters.params.len());
+        for n in 1..=filters.params.len() {
+            assert!(
+                renumbered.contains(&format!("${n}")),
+                "missing ${n}: {renumbered}"
+            );
+        }
+        // account 1, `from:alice` 3, `to:bob` 2, `subject:hello` 1,
+        // `tag:work` 1, then the two FTS leaves at 9 binds each = 26.
+        assert_eq!(filters.params.len(), 26);
     }
 }

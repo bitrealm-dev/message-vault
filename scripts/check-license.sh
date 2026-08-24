@@ -26,7 +26,13 @@ fi
 
 # Every tracked Cargo.toml package declares the same FCL expression, so Cargo
 # metadata cannot silently drift back to another license. The workspace-root
-# manifest has no [package] section and therefore no license field.
+# manifest has no [package] section and therefore no license field. The
+# vendored `vendor/sqlx-sqlite/` fork is third-party code and keeps upstream's
+# own license (MIT OR Apache-2.0), so it is excluded from the FCL check. The
+# AGPL sweep in the loop below skips vendor/ the same way: a future vendored
+# crate whose text mentions AGPL would pass silently. That is intentional —
+# vendor/ is third-party code, and its license is not the repo's — but keep
+# the exclusion in mind when the sweep seems to miss a manifest.
 while IFS= read -r manifest; do
   if grep -q '^\[package\]' "${manifest}"; then
     if ! grep -q "^license = \"${EXPECTED_CARGO_LICENSE}\"$" "${manifest}"; then
@@ -38,7 +44,7 @@ while IFS= read -r manifest; do
     echo "${manifest}: still mentions AGPL" >&2
     failures=$((failures + 1))
   fi
-done < <(git ls-files '*Cargo.toml' | sort)
+done < <(git ls-files '*Cargo.toml' | grep -v '^vendor/' | sort)
 
 # web/package.json and its lockfile mirror the same license.
 for file in web/package.json web/package-lock.json; do

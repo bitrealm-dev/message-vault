@@ -53,6 +53,7 @@ Import a message-ir JSONL folder (source from export.source unless --source)
   Default value: `config/config.toml`
 * `--input <INPUT>` [aliases: `dir`, `staging-dir`, `export-dir`] — Folder of `*.jsonl` conversation files (+ attachments)
 * `--db <DB>` — Output SQLite database path (overrides config)
+* `--db-url <DB_URL>` — Connection URL (postgres://… or sqlite://…; overrides `[database]` url)
 * `--assets-dir <ASSETS_DIR>` — Originals asset store directory (overrides account/source default; fixed-source only)
 * `--contacts <CONTACTS>` — Address book to load: VCF or vCard CSV export
 * `--overwrite-contacts` — Reload contacts from --contacts even if the table is non-empty
@@ -82,6 +83,7 @@ Soft-hide the same SMS when it appears under more than one import source
 
   Default value: `config/config.toml`
 * `--db <DB>` — Output SQLite database path (overrides config)
+* `--db-url <DB_URL>` — Connection URL (postgres://… or sqlite://…; overrides `[database]` url)
 * `--window-secs <WINDOW_SECS>` — Near-time window in seconds for Pass B (default 2)
 
   Default value: `2`
@@ -134,6 +136,7 @@ Run HTTP ingest API (`POST /v1/import` with message-ir JSONL)
 * `--config <CONFIG>` — Path to config.toml (must include `[server]` with `bind`)
 
   Default value: `config/config.toml`
+* `--db-url <DB_URL>` — Connection URL (postgres://… or sqlite://…; overrides `[database]` url)
 
 
 

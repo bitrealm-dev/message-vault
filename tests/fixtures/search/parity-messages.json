@@ -1,0 +1,17 @@
+[
+  {"k": 1, "source": "sms", "guid": "p1", "body": "hello vault"},
+  {"k": 2, "source": "sms", "guid": "p2", "body": "HELLO again"},
+  {"k": 3, "source": "imessage", "guid": "p3", "body": "quarterly reporting deadline"},
+  {"k": 4, "source": "imessage", "guid": "p4", "body": "exactly two words"},
+  {"k": 5, "source": "sms", "guid": "p5", "body": "two words apart"},
+  {"k": 6, "source": "sms", "guid": "p6", "body": "red apple"},
+  {"k": 7, "source": "sms", "guid": "p7", "body": "green apple"},
+  {"k": 8, "source": "sms", "guid": "p8", "body": "red car"},
+  {"k": 9, "source": "whatsapp", "guid": "p9", "body": "cafe meeting"},
+  {"k": 10, "source": "whatsapp", "guid": "p10", "body": "café meeting"},
+  {"k": 11, "source": "sms", "guid": "p11", "body": null, "subject": "dinner plans"},
+  {"k": 12, "source": "sms", "guid": "p12", "body": "listen to the attached note", "attachments": [{"original_name": "voice.m4a", "transcription": "secret phrase"}]},
+  {"k": 13, "source": "sms", "guid": "p13", "body": "attachment filename only", "attachments": [{"original_name": "IMG_0001.jpg"}]},
+  {"k": 14, "source": "sms", "guid": "p14", "body": "punctuation: dash-separated words"},
+  {"k": 15, "source": "sms", "guid": "p15", "body": "alpha and beta"}
+]

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use message_ir::{HandleService, HandleType};
-use rusqlite::{Statement, Transaction, params};
+use sqlx::AnyConnection;
 
 use crate::assets::{self, AssetStats, StoredAsset};
 use crate::config::validate_source_id;
@@ -170,65 +170,57 @@ fn prepare_attachments(
     Ok(prepared)
 }
 
-pub(super) struct StagingInserts<'conn> {
+/// Per-row insert statements for one import run. sqlx Any cannot prepare ahead
+/// of time (no `Statement` handle), so the SQL lives as module constants and
+/// every row runs its own `sqlx::query` against the caller's connection.
+pub(super) struct StagingInserts {
     account_id: String,
     import_id: Option<i64>,
-    conv: Statement<'conn>,
-    part: Statement<'conn>,
-    msg: Statement<'conn>,
-    att: Statement<'conn>,
-    tap: Statement<'conn>,
 }
 
-impl<'conn> StagingInserts<'conn> {
-    pub(super) fn prepare(
-        tx: &'conn Transaction<'_>,
-        account_id: &str,
-        import_id: Option<i64>,
-    ) -> Result<Self> {
-        Ok(Self {
+const INSERT_CONVERSATION: &str = r#"
+INSERT INTO staging_conversations (
+    account_id, chat_handle_id, conversation_type, group_title, exported_at, source_file
+) VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id
+"#;
+
+const INSERT_PARTICIPANT: &str = r#"
+INSERT INTO staging_participants (conversation_id, handle_id, contact_id, name_alias)
+VALUES ($1, $2, $3, $4)
+"#;
+
+const INSERT_MESSAGE: &str = r#"
+INSERT INTO staging_messages (
+    conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
+    sender_handle_id, service, subject, body, is_announcement, is_reply,
+    thread_originator_guid, thread_originator_part, num_replies, sort_order, import_id
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+)
+ON CONFLICT DO NOTHING
+RETURNING id
+"#;
+
+const INSERT_ATTACHMENT: &str = r#"
+INSERT INTO staging_attachments (
+    message_id, path, original_name, mime_type, is_sticker, transcription,
+    sha256, assets_path, size_bytes, missing_reason
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+"#;
+
+const INSERT_TAPBACK: &str = r#"
+INSERT INTO staging_tapbacks (
+    message_id, part_index, kind, emoji, is_from_me, sender_handle_id
+) VALUES ($1, $2, $3, $4, $5, $6)
+"#;
+
+impl StagingInserts {
+    pub(super) fn new(account_id: &str, import_id: Option<i64>) -> Self {
+        Self {
             account_id: account_id.to_string(),
             import_id,
-            conv: tx.prepare(
-                r#"
-                INSERT INTO staging_conversations (
-                    account_id, chat_handle_id, conversation_type, group_title, exported_at, source_file
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                "#,
-            )?,
-            part: tx.prepare(
-                r#"
-                INSERT INTO staging_participants (conversation_id, handle_id, contact_id, name_alias)
-                VALUES (?1, ?2, ?3, ?4)
-                "#,
-            )?,
-            msg: tx.prepare(
-                r#"
-                INSERT OR IGNORE INTO staging_messages (
-                    conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
-                    sender_handle_id, service, subject, body, is_announcement, is_reply,
-                    thread_originator_guid, thread_originator_part, num_replies, sort_order, import_id
-                ) VALUES (
-                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18
-                )
-                "#,
-            )?,
-            att: tx.prepare(
-                r#"
-                INSERT INTO staging_attachments (
-                    message_id, path, original_name, mime_type, is_sticker, transcription,
-                    sha256, assets_path, size_bytes, missing_reason
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-                "#,
-            )?,
-            tap: tx.prepare(
-                r#"
-                INSERT INTO staging_tapbacks (
-                    message_id, part_index, kind, emoji, is_from_me, sender_handle_id
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                "#,
-            )?,
-        })
+        }
     }
 }
 
@@ -289,9 +281,9 @@ pub fn is_orphaned_export(path: &Path) -> bool {
     stem.eq_ignore_ascii_case("orphaned")
 }
 
-pub(super) fn import_file_to_staging<'conn>(
-    tx: &Transaction<'conn>,
-    stmts: &mut StagingInserts<'conn>,
+pub(super) async fn import_file_to_staging(
+    tx: &mut AnyConnection,
+    stmts: &mut StagingInserts,
     opts: &ImportOptions<'_>,
     path: &Path,
     asset_stats: &mut AssetStats,
@@ -312,16 +304,19 @@ pub(super) fn import_file_to_staging<'conn>(
         match record {
             ExportRecord::Conversation(c) => {
                 if let Some(header) = pending.take() {
-                    stats.merge_file(&import_conversation_to_staging(ImportConversationArgs {
-                        tx,
-                        stmts,
-                        opts,
-                        source_file: &source_file,
-                        conversation: header,
-                        messages: std::mem::take(&mut messages),
-                        asset_stats,
-                        media_work,
-                    })?);
+                    stats.merge_file(
+                        &import_conversation_to_staging(ImportConversationArgs {
+                            tx,
+                            stmts,
+                            opts,
+                            source_file: &source_file,
+                            conversation: header,
+                            messages: std::mem::take(&mut messages),
+                            asset_stats,
+                            media_work,
+                        })
+                        .await?,
+                    );
                 }
                 let source = resolve_conversation_source(
                     opts,
@@ -355,16 +350,19 @@ pub(super) fn import_file_to_staging<'conn>(
     }
 
     if let Some(header) = pending.take() {
-        stats.merge_file(&import_conversation_to_staging(ImportConversationArgs {
-            tx,
-            stmts,
-            opts,
-            source_file: &source_file,
-            conversation: header,
-            messages,
-            asset_stats,
-            media_work,
-        })?);
+        stats.merge_file(
+            &import_conversation_to_staging(ImportConversationArgs {
+                tx,
+                stmts,
+                opts,
+                source_file: &source_file,
+                conversation: header,
+                messages,
+                asset_stats,
+                media_work,
+            })
+            .await?,
+        );
     } else if is_orphaned {
         if opts.source_from_jsonl {
             bail!(
@@ -372,24 +370,27 @@ pub(super) fn import_file_to_staging<'conn>(
                 path.display()
             );
         }
-        stats.merge_file(&import_conversation_to_staging(ImportConversationArgs {
-            tx,
-            stmts,
-            opts,
-            source_file: &source_file,
-            conversation: (
-                "orphaned".to_string(),
-                None,
-                "orphaned".to_string(),
-                None,
-                None,
-                Vec::new(),
-                opts.source.to_string(),
-            ),
-            messages,
-            asset_stats,
-            media_work,
-        })?);
+        stats.merge_file(
+            &import_conversation_to_staging(ImportConversationArgs {
+                tx,
+                stmts,
+                opts,
+                source_file: &source_file,
+                conversation: (
+                    "orphaned".to_string(),
+                    None,
+                    "orphaned".to_string(),
+                    None,
+                    None,
+                    Vec::new(),
+                    opts.source.to_string(),
+                ),
+                messages,
+                asset_stats,
+                media_work,
+            })
+            .await?,
+        );
     } else if messages.is_empty() {
         bail!(
             "{} has no conversation header and no messages",
@@ -405,9 +406,9 @@ pub(super) fn import_file_to_staging<'conn>(
     Ok(stats)
 }
 
-struct ImportConversationArgs<'a, 'conn> {
-    tx: &'a Transaction<'conn>,
-    stmts: &'a mut StagingInserts<'conn>,
+struct ImportConversationArgs<'a> {
+    tx: &'a mut AnyConnection,
+    stmts: &'a mut StagingInserts,
     opts: &'a ImportOptions<'a>,
     source_file: &'a str,
     conversation: ConversationHeader,
@@ -416,7 +417,7 @@ struct ImportConversationArgs<'a, 'conn> {
     media_work: &'a Path,
 }
 
-fn import_conversation_to_staging(args: ImportConversationArgs<'_, '_>) -> Result<ImportStats> {
+async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Result<ImportStats> {
     let ImportConversationArgs {
         tx,
         stmts,
@@ -475,21 +476,22 @@ fn import_conversation_to_staging(args: ImportConversationArgs<'_, '_>) -> Resul
         &chat_identifier,
         infer_handle_type(&chat_identifier),
         Some(platform_str),
-    )?;
+    )
+    .await?;
     if flagged {
         stats.phones_needing_review += 1;
     }
-    let _ = ensure_sibling_contact_link(tx, &stmts.account_id, chat_handle_id)?;
+    let _ = ensure_sibling_contact_link(tx, &stmts.account_id, chat_handle_id).await?;
 
-    stmts.conv.execute(params![
-        stmts.account_id,
-        chat_handle_id,
-        conversation_type,
-        group_title,
-        exported_at,
-        source_file,
-    ])?;
-    let conversation_id = tx.last_insert_rowid();
+    let conversation_id: i64 = sqlx::query_scalar(INSERT_CONVERSATION)
+        .bind(&stmts.account_id)
+        .bind(chat_handle_id)
+        .bind(conversation_type)
+        .bind(group_title)
+        .bind(exported_at)
+        .bind(source_file)
+        .fetch_one(&mut *tx)
+        .await?;
     stats.conversations = 1;
 
     for (handle, name_alias, handle_type) in kept_participants {
@@ -501,21 +503,26 @@ fn import_conversation_to_staging(args: ImportConversationArgs<'_, '_>) -> Resul
             &handle,
             handle_type,
             Some(platform_str),
-        )?;
+        )
+        .await?;
         if flagged {
             stats.phones_needing_review += 1;
         }
-        let contact_id = ensure_sibling_contact_link(tx, &stmts.account_id, handle_id)?;
+        let contact_id = ensure_sibling_contact_link(tx, &stmts.account_id, handle_id).await?;
         // Seed contact identity alias from the import display name (first wins).
-        seed_contact_handle_alias(tx, &stmts.account_id, handle_id, name_alias.as_deref())?;
+        seed_contact_handle_alias(tx, &stmts.account_id, handle_id, name_alias.as_deref()).await?;
         let vault_name = match contact_id {
-            Some(id) => contact_preferred_name(tx, &stmts.account_id, id)?,
+            Some(id) => contact_preferred_name(tx, &stmts.account_id, id).await?,
             None => None,
         };
         let name_alias = apply_contact_name_mode(opts.contact_name_mode, name_alias, vault_name);
-        stmts
-            .part
-            .execute(params![conversation_id, handle_id, contact_id, name_alias])?;
+        sqlx::query(INSERT_PARTICIPANT)
+            .bind(conversation_id)
+            .bind(handle_id)
+            .bind(contact_id)
+            .bind(name_alias)
+            .execute(&mut *tx)
+            .await?;
         stats.participants += 1;
     }
 
@@ -540,35 +547,36 @@ fn import_conversation_to_staging(args: ImportConversationArgs<'_, '_>) -> Resul
             msg.sender_handle_type,
             sender_platform.as_str(),
             &mut stats,
-        )?;
+        )
+        .await?;
 
-        let inserted = stmts.msg.execute(params![
-            conversation_id,
-            &stmts.account_id,
-            source,
-            msg.guid,
-            msg.timestamp,
-            msg.timestamp_utc,
-            msg.is_from_me as i64,
-            sender_handle_id,
-            msg.service,
-            msg.subject,
-            body,
-            msg.is_announcement as i64,
-            msg.is_reply as i64,
-            msg.thread_originator_guid,
-            msg.thread_originator_part,
-            msg.num_replies,
-            sort_order as i64,
-            stmts.import_id,
-        ])?;
+        let inserted_id: Option<i64> = sqlx::query_scalar(INSERT_MESSAGE)
+            .bind(conversation_id)
+            .bind(&stmts.account_id)
+            .bind(&source)
+            .bind(msg.guid)
+            .bind(msg.timestamp)
+            .bind(msg.timestamp_utc)
+            .bind(msg.is_from_me as i64)
+            .bind(sender_handle_id)
+            .bind(msg.service)
+            .bind(msg.subject)
+            .bind(body)
+            .bind(msg.is_announcement as i64)
+            .bind(msg.is_reply as i64)
+            .bind(msg.thread_originator_guid)
+            .bind(msg.thread_originator_part)
+            .bind(msg.num_replies)
+            .bind(sort_order as i64)
+            .bind(stmts.import_id)
+            .fetch_optional(&mut *tx)
+            .await?;
 
-        if inserted == 0 {
+        // `ON CONFLICT DO NOTHING` returns no row for a deduped message.
+        let Some(message_id) = inserted_id else {
             stats.messages_deduped += 1;
             continue;
-        }
-
-        let message_id = tx.last_insert_rowid();
+        };
         stats.messages += 1;
 
         for prepared in attachments {
@@ -592,18 +600,19 @@ fn import_conversation_to_staging(args: ImportConversationArgs<'_, '_>) -> Resul
                 None
             };
 
-            stmts.att.execute(params![
-                message_id,
-                att.path,
-                att.original_name,
-                mime_type,
-                att.is_sticker as i64,
-                att.transcription,
-                sha256,
-                assets_path,
-                size_bytes,
-                missing_reason,
-            ])?;
+            sqlx::query(INSERT_ATTACHMENT)
+                .bind(message_id)
+                .bind(att.path)
+                .bind(att.original_name)
+                .bind(mime_type)
+                .bind(att.is_sticker as i64)
+                .bind(att.transcription)
+                .bind(sha256)
+                .bind(assets_path)
+                .bind(size_bytes)
+                .bind(missing_reason)
+                .execute(&mut *tx)
+                .await?;
             stats.attachments += 1;
         }
 
@@ -618,15 +627,17 @@ fn import_conversation_to_staging(args: ImportConversationArgs<'_, '_>) -> Resul
                 None,
                 sender_platform.as_str(),
                 &mut stats,
-            )?;
-            stmts.tap.execute(params![
-                message_id,
-                tap.part_index,
-                tap.kind,
-                tap.emoji,
-                tap.is_from_me as i64,
-                sender_handle_id,
-            ])?;
+            )
+            .await?;
+            sqlx::query(INSERT_TAPBACK)
+                .bind(message_id)
+                .bind(tap.part_index)
+                .bind(tap.kind)
+                .bind(tap.emoji)
+                .bind(tap.is_from_me as i64)
+                .bind(sender_handle_id)
+                .execute(&mut *tx)
+                .await?;
             stats.tapbacks += 1;
         }
     }

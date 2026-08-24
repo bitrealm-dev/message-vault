@@ -35,3 +35,6 @@ exclude = ["src-tauri"]
 message-ir = { path = "crates/libs/ir" }
 contacts = { path = "crates/libs/contacts" }
 phone = { path = "crates/libs/phone" }
+
+[patch.crates-io]
+sqlx-sqlite = { path = "vendor/sqlx-sqlite" }

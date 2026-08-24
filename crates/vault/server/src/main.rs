@@ -3,5 +3,6 @@ use clap::Parser;
 
 fn main() -> Result<()> {
     let cli = message_vault_server::cli::Cli::parse();
-    message_vault_server::cli::run(cli)
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(message_vault_server::cli::run(cli))
 }

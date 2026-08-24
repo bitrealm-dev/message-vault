@@ -5,8 +5,14 @@
 //! and column names, reserved names, and one post-change hook, so this module
 //! implements them once behind [`MembershipSpec`].
 
+use std::future::Future;
+use std::pin::Pin;
+
 use anyhow::Result as AnyResult;
-use rusqlite::{Connection, OptionalExtension, params};
+use sqlx::AnyConnection;
+
+use crate::db::dialect::engine_of;
+use crate::db::engine::DbEngine;
 
 /// Longest allowed name for either kind of set (characters).
 pub const MAX_NAME_LEN: usize = 80;
@@ -20,11 +26,27 @@ pub enum MembershipError {
     Internal(String),
 }
 
-impl From<rusqlite::Error> for MembershipError {
-    fn from(e: rusqlite::Error) -> Self {
+impl From<sqlx::Error> for MembershipError {
+    fn from(e: sqlx::Error) -> Self {
         Self::Internal(e.to_string())
     }
 }
+
+/// Case-insensitive name equality for one engine (`COLLATE NOCASE` is
+/// invalid Postgres SQL; Postgres uses `lower()`).
+fn name_eq_sql(engine: DbEngine, placeholder: usize) -> String {
+    match engine {
+        DbEngine::Sqlite => format!("name = ${placeholder} COLLATE NOCASE"),
+        DbEngine::Postgres => format!("lower(name) = lower(${placeholder})"),
+    }
+}
+
+/// Extra work after a membership change, async over the connection borrow.
+type ChangeHook = for<'a> fn(
+    &'a mut AnyConnection,
+    &'a str,
+    i64,
+) -> Pin<Box<dyn Future<Output = AnyResult<()>> + Send + 'a>>;
 
 /// Table names, labels, reserved names, and messages for one named set.
 ///
@@ -54,7 +76,7 @@ pub struct MembershipSpec {
     pub special_reserved: &'static [(&'static str, &'static str)],
     /// Extra work after a membership change (groups touch the contact row).
     #[allow(clippy::type_complexity)]
-    pub on_change: Option<fn(&Connection, &str, i64) -> AnyResult<()>>,
+    pub on_change: Option<ChangeHook>,
 }
 
 /// Thread tags on conversations.
@@ -153,39 +175,53 @@ pub fn group_spec() -> &'static MembershipSpec {
     &SPEC
 }
 
-fn touch_member_owner(conn: &Connection, account_id: &str, member_id: i64) -> AnyResult<()> {
-    crate::db::contacts::touch_contact(conn, account_id, member_id)
+fn touch_member_owner<'a>(
+    conn: &'a mut AnyConnection,
+    account_id: &'a str,
+    member_id: i64,
+) -> Pin<Box<dyn Future<Output = AnyResult<()>> + Send + 'a>> {
+    Box::pin(crate::db::contacts::touch_contact(
+        conn, account_id, member_id,
+    ))
 }
 
-fn find_id(
+async fn find_id(
     spec: &MembershipSpec,
-    conn: &Connection,
+    conn: &mut AnyConnection,
     account_id: &str,
     name: &str,
 ) -> Result<Option<i64>, MembershipError> {
     let sql = format!(
-        "SELECT id FROM {table} WHERE account_id = ?1 AND name = ?2 COLLATE NOCASE",
-        table = spec.table
+        "SELECT id FROM {table} WHERE account_id = $1 AND {name_eq}",
+        table = spec.table,
+        name_eq = name_eq_sql(engine_of(conn), 2),
     );
-    let id = conn
-        .query_row(&sql, params![account_id, name], |row| row.get(0))
-        .optional()?;
+    let id = sqlx::query_scalar::<_, i64>(&sql)
+        .bind(account_id)
+        .bind(name)
+        .fetch_optional(&mut *conn)
+        .await?;
     Ok(id)
 }
 
-fn ensure_id(
+async fn ensure_id(
     spec: &MembershipSpec,
-    conn: &Connection,
+    conn: &mut AnyConnection,
     account_id: &str,
     name: &str,
 ) -> Result<i64, MembershipError> {
     let name = normalize_name(spec, name)?;
     let sql = format!(
-        "INSERT OR IGNORE INTO {table} (account_id, name) VALUES (?1, ?2)",
+        "INSERT INTO {table} (account_id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING",
         table = spec.table
     );
-    conn.execute(&sql, params![account_id, name])?;
-    find_id(spec, conn, account_id, &name)?
+    sqlx::query(&sql)
+        .bind(account_id)
+        .bind(&name)
+        .execute(&mut *conn)
+        .await?;
+    find_id(spec, conn, account_id, &name)
+        .await?
         .ok_or_else(|| MembershipError::Internal(format!("failed to ensure {} {name}", spec.label)))
 }
 
@@ -223,20 +259,25 @@ fn normalize_name(spec: &MembershipSpec, name: &str) -> Result<String, Membershi
 }
 
 /// Names for this account, A–Z, excluding reserved leftovers.
-pub fn list_names(
+pub async fn list_names(
     spec: &MembershipSpec,
-    conn: &Connection,
+    conn: &mut AnyConnection,
     account_id: &str,
 ) -> Result<Vec<String>, MembershipError> {
+    let order = match engine_of(conn) {
+        DbEngine::Sqlite => "ORDER BY name COLLATE NOCASE",
+        DbEngine::Postgres => "ORDER BY lower(name)",
+    };
     let sql = format!(
-        "SELECT name FROM {table} WHERE account_id = ?1 ORDER BY name COLLATE NOCASE",
+        "SELECT name FROM {table} WHERE account_id = $1 {order}",
         table = spec.table
     );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params![account_id], |row| row.get::<_, String>(0))?;
+    let rows = sqlx::query_scalar::<_, String>(&sql)
+        .bind(account_id)
+        .fetch_all(&mut *conn)
+        .await?;
     let mut out = Vec::new();
-    for row in rows {
-        let name = row?;
+    for name in rows {
         if !is_reserved(spec, &name) {
             out.push(name);
         }
@@ -245,31 +286,35 @@ pub fn list_names(
 }
 
 /// Create a name. Fails when the name is taken (ignoring case).
-pub fn create_name(
+pub async fn create_name(
     spec: &MembershipSpec,
-    conn: &Connection,
+    conn: &mut AnyConnection,
     account_id: &str,
     name: &str,
 ) -> Result<String, MembershipError> {
     let name = normalize_name(spec, name)?;
-    if find_id(spec, conn, account_id, &name)?.is_some() {
+    if find_id(spec, conn, account_id, &name).await?.is_some() {
         return Err(MembershipError::Conflict(format!(
             "{} already exists",
             spec.label
         )));
     }
     let sql = format!(
-        "INSERT INTO {table} (account_id, name) VALUES (?1, ?2)",
+        "INSERT INTO {table} (account_id, name) VALUES ($1, $2)",
         table = spec.table
     );
-    conn.execute(&sql, params![account_id, name])?;
+    sqlx::query(&sql)
+        .bind(account_id)
+        .bind(&name)
+        .execute(&mut *conn)
+        .await?;
     Ok(name)
 }
 
 /// Rename a name. Allows a case-only change of the same name.
-pub fn rename_name(
+pub async fn rename_name(
     spec: &MembershipSpec,
-    conn: &Connection,
+    conn: &mut AnyConnection,
     account_id: &str,
     from: &str,
     to: &str,
@@ -279,7 +324,7 @@ pub fn rename_name(
         return Err(MembershipError::BadRequest("from and to required".into()));
     }
     let new_name = normalize_name(spec, to)?;
-    let Some(id) = find_id(spec, conn, account_id, old_name)? else {
+    let Some(id) = find_id(spec, conn, account_id, old_name).await? else {
         return Err(MembershipError::NotFound(format!(
             "{} not found",
             spec.label
@@ -289,7 +334,7 @@ pub fn rename_name(
         if old_name == new_name {
             return Ok(new_name);
         }
-    } else if let Some(other) = find_id(spec, conn, account_id, &new_name)?
+    } else if let Some(other) = find_id(spec, conn, account_id, &new_name).await?
         && other != id
     {
         return Err(MembershipError::Conflict(format!(
@@ -298,17 +343,22 @@ pub fn rename_name(
         )));
     }
     let sql = format!(
-        "UPDATE {table} SET name = ?1 WHERE id = ?2 AND account_id = ?3",
+        "UPDATE {table} SET name = $1 WHERE id = $2 AND account_id = $3",
         table = spec.table
     );
-    conn.execute(&sql, params![new_name, id, account_id])?;
+    sqlx::query(&sql)
+        .bind(&new_name)
+        .bind(id)
+        .bind(account_id)
+        .execute(&mut *conn)
+        .await?;
     Ok(new_name)
 }
 
 /// Delete a name and its memberships.
-pub fn delete_name(
+pub async fn delete_name(
     spec: &MembershipSpec,
-    conn: &Connection,
+    conn: &mut AnyConnection,
     account_id: &str,
     name: &str,
 ) -> Result<(), MembershipError> {
@@ -316,30 +366,37 @@ pub fn delete_name(
     if trimmed.is_empty() {
         return Err(MembershipError::BadRequest("name required".into()));
     }
-    let Some(id) = find_id(spec, conn, account_id, trimmed)? else {
+    let Some(id) = find_id(spec, conn, account_id, trimmed).await? else {
         return Err(MembershipError::NotFound(format!(
             "{} not found",
             spec.label
         )));
     };
     let members_sql = format!(
-        "DELETE FROM {mt} WHERE {nc} = ?1",
+        "DELETE FROM {mt} WHERE {nc} = $1",
         mt = spec.members_table,
         nc = spec.name_column
     );
-    conn.execute(&members_sql, params![id])?;
+    sqlx::query(&members_sql)
+        .bind(id)
+        .execute(&mut *conn)
+        .await?;
     let sql = format!(
-        "DELETE FROM {table} WHERE id = ?1 AND account_id = ?2",
+        "DELETE FROM {table} WHERE id = $1 AND account_id = $2",
         table = spec.table
     );
-    conn.execute(&sql, params![id, account_id])?;
+    sqlx::query(&sql)
+        .bind(id)
+        .bind(account_id)
+        .execute(&mut *conn)
+        .await?;
     Ok(())
 }
 
 /// Member ids that currently belong to a named set (case-insensitive).
-pub fn list_member_ids(
+pub async fn list_member_ids(
     spec: &MembershipSpec,
-    conn: &Connection,
+    conn: &mut AnyConnection,
     account_id: &str,
     name: &str,
 ) -> Result<Vec<i64>, MembershipError> {
@@ -351,42 +408,44 @@ pub fn list_member_ids(
         "SELECT m.{mc}
          FROM {mt} m
          JOIN {table} n ON n.id = m.{nc}
-         WHERE n.account_id = ?1 AND n.name = ?2 COLLATE NOCASE
+         WHERE n.account_id = $1 AND {name_eq}
          ORDER BY m.{mc}",
         mc = spec.member_column,
         mt = spec.members_table,
         table = spec.table,
         nc = spec.name_column,
+        name_eq = name_eq_sql(engine_of(conn), 2),
     );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params![account_id, trimmed], |row| row.get(0))?;
-    let mut out = Vec::new();
-    for row in rows {
-        out.push(row?);
-    }
-    Ok(out)
+    let rows = sqlx::query_scalar::<_, i64>(&sql)
+        .bind(account_id)
+        .bind(trimmed)
+        .fetch_all(&mut *conn)
+        .await?;
+    Ok(rows)
 }
 
-fn member_exists(
+async fn member_exists(
     spec: &MembershipSpec,
-    conn: &Connection,
+    conn: &mut AnyConnection,
     account_id: &str,
     member_id: i64,
 ) -> Result<bool, MembershipError> {
     let sql = format!(
-        "SELECT id FROM {mt} WHERE id = ?1 AND account_id = ?2",
+        "SELECT id FROM {mt} WHERE id = $1 AND account_id = $2",
         mt = spec.member_table
     );
-    let found: Option<i64> = conn
-        .query_row(&sql, params![member_id, account_id], |row| row.get(0))
-        .optional()?;
+    let found: Option<i64> = sqlx::query_scalar::<_, i64>(&sql)
+        .bind(member_id)
+        .bind(account_id)
+        .fetch_optional(&mut *conn)
+        .await?;
     Ok(found.is_some())
 }
 
 /// Add or remove one name for many members. Creates the name when enabling.
-pub fn set_membership(
+pub async fn set_membership(
     spec: &MembershipSpec,
-    conn: &Connection,
+    conn: &mut AnyConnection,
     account_id: &str,
     member_ids: &[i64],
     name: &str,
@@ -416,7 +475,7 @@ pub fn set_membership(
     }
 
     for id in &ids {
-        if !member_exists(spec, conn, account_id, *id)? {
+        if !member_exists(spec, conn, account_id, *id).await? {
             return Err(MembershipError::NotFound(format!(
                 "{} {id} not found",
                 spec.member_label
@@ -425,9 +484,9 @@ pub fn set_membership(
     }
 
     let name_row_id = if enable {
-        ensure_id(spec, conn, account_id, name_trimmed)?
+        ensure_id(spec, conn, account_id, name_trimmed).await?
     } else {
-        match find_id(spec, conn, account_id, name_trimmed)? {
+        match find_id(spec, conn, account_id, name_trimmed).await? {
             Some(id) => id,
             None => return Ok(0),
         }
@@ -437,34 +496,49 @@ pub fn set_membership(
     for id in ids {
         let n = if enable {
             let sql = format!(
-                "INSERT OR IGNORE INTO {mt} ({mc}, {nc})
-                 SELECT id, ?1 FROM {member_table} WHERE id = ?2 AND account_id = ?3",
+                "INSERT INTO {mt} ({mc}, {nc})
+                 SELECT id, $1 FROM {member_table} WHERE id = $2 AND account_id = $3
+                 ON CONFLICT DO NOTHING",
                 mt = spec.members_table,
                 mc = spec.member_column,
                 nc = spec.name_column,
                 member_table = spec.member_table,
             );
-            conn.execute(&sql, params![name_row_id, id, account_id])?
+            sqlx::query(&sql)
+                .bind(name_row_id)
+                .bind(id)
+                .bind(account_id)
+                .execute(&mut *conn)
+                .await?
+                .rows_affected()
         } else {
             let sql = format!(
                 "DELETE FROM {mt}
-                 WHERE {mc} = ?1 AND {nc} = ?2
+                 WHERE {mc} = $1 AND {nc} = $2
                    AND EXISTS (
                      SELECT 1 FROM {member_table}
                      WHERE {member_table}.id = {mt}.{mc}
-                       AND {member_table}.account_id = ?3
+                       AND {member_table}.account_id = $3
                    )",
                 mt = spec.members_table,
                 mc = spec.member_column,
                 nc = spec.name_column,
                 member_table = spec.member_table,
             );
-            conn.execute(&sql, params![id, name_row_id, account_id])?
+            sqlx::query(&sql)
+                .bind(id)
+                .bind(name_row_id)
+                .bind(account_id)
+                .execute(&mut *conn)
+                .await?
+                .rows_affected()
         };
         if n > 0 {
             changed += 1;
             if let Some(hook) = spec.on_change {
-                hook(conn, account_id, id).map_err(|e| MembershipError::Internal(e.to_string()))?;
+                hook(conn, account_id, id)
+                    .await
+                    .map_err(|e| MembershipError::Internal(e.to_string()))?;
             }
         }
     }
@@ -474,37 +548,46 @@ pub fn set_membership(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::params;
 
+    use crate::db::engine;
     use crate::db::schema;
 
-    fn setup() -> (Connection, String) {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        schema::ensure_vault_schema(&conn).unwrap();
+    async fn setup() -> (sqlx::AnyPool, tempfile::TempDir, String) {
+        let (pool, dir) = engine::test_pool().await;
+        schema::ensure_vault_schema(&mut pool.acquire().await.unwrap())
+            .await
+            .unwrap();
         let account = "00000000-0000-4000-8000-0000000000d9".to_string();
-        conn.execute(
-            "INSERT INTO accounts (id, username, read_only) VALUES (?1, 'alice', 0)",
-            params![&account],
-        )
-        .unwrap();
-        (conn, account)
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, username, read_only) VALUES ($1, 'alice', 0)")
+            .bind(&account)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        (pool, dir, account)
     }
 
-    #[test]
-    fn reserved_names_rejected_with_exact_messages() {
-        let (conn, account) = setup();
-        let err = create_name(tag_spec(), &conn, &account, "Trash").unwrap_err();
+    #[tokio::test]
+    async fn reserved_names_rejected_with_exact_messages() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let err = create_name(tag_spec(), &mut conn, &account, "Trash")
+            .await
+            .unwrap_err();
         match err {
             MembershipError::BadRequest(msg) => assert_eq!(msg, "\"Trash\" is a reserved tag"),
             other => panic!("expected BadRequest, got {other:?}"),
         }
-        let err = create_name(group_spec(), &conn, &account, "Trash").unwrap_err();
+        let err = create_name(group_spec(), &mut conn, &account, "Trash")
+            .await
+            .unwrap_err();
         match err {
             MembershipError::BadRequest(msg) => assert_eq!(msg, "Trash is a reserved group"),
             other => panic!("expected BadRequest, got {other:?}"),
         }
-        let err = create_name(group_spec(), &conn, &account, "Group Chats").unwrap_err();
+        let err = create_name(group_spec(), &mut conn, &account, "Group Chats")
+            .await
+            .unwrap_err();
         match err {
             MembershipError::BadRequest(msg) => {
                 assert_eq!(msg, "Group Messages is a reserved name")
@@ -513,11 +596,14 @@ mod tests {
         }
     }
 
-    #[test]
-    fn names_over_max_len_rejected() {
-        let (conn, account) = setup();
+    #[tokio::test]
+    async fn names_over_max_len_rejected() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
         let long = "x".repeat(MAX_NAME_LEN + 1);
-        let err = create_name(tag_spec(), &conn, &account, &long).unwrap_err();
+        let err = create_name(tag_spec(), &mut conn, &account, &long)
+            .await
+            .unwrap_err();
         match err {
             MembershipError::BadRequest(msg) => {
                 assert_eq!(
@@ -529,31 +615,45 @@ mod tests {
         }
     }
 
-    #[test]
-    fn on_change_hook_runs_on_membership_change() {
-        let (conn, account) = setup();
-        conn.execute(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Ada')",
-            params![&account],
+    #[tokio::test]
+    async fn on_change_hook_runs_on_membership_change() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Ada')")
+            .bind(&account)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let contact_id: i64 = sqlx::query_scalar(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Ada') RETURNING id",
         )
+        .bind(&account)
+        .fetch_one(&mut *conn)
+        .await
         .unwrap();
-        let contact_id = conn.last_insert_rowid();
-        conn.execute(
-            "UPDATE contacts SET last_modified = '2000-01-01 00:00:00' WHERE id = ?1",
-            params![contact_id],
-        )
-        .unwrap();
+        sqlx::query("UPDATE contacts SET last_modified = '2000-01-01 00:00:00' WHERE id = $1")
+            .bind(contact_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
 
         assert_eq!(
-            set_membership(group_spec(), &conn, &account, &[contact_id], "Family", true).unwrap(),
+            set_membership(
+                group_spec(),
+                &mut conn,
+                &account,
+                &[contact_id],
+                "Family",
+                true
+            )
+            .await
+            .unwrap(),
             1
         );
-        let after: String = conn
-            .query_row(
-                "SELECT last_modified FROM contacts WHERE id = ?1",
-                params![contact_id],
-                |r| r.get(0),
-            )
+        let after: String = sqlx::query_scalar("SELECT last_modified FROM contacts WHERE id = $1")
+            .bind(contact_id)
+            .fetch_one(&mut *conn)
+            .await
             .unwrap();
         assert_ne!(
             after, "2000-01-01 00:00:00",

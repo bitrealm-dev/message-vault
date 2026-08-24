@@ -23,7 +23,7 @@ use axum::response::Response;
 use crate::asset_uploads;
 use crate::config::validate_source_id;
 use crate::server::{
-    ApiError, AppState, JoinBlocking, discard_body, read_body_limited, reject_if_guest_account,
+    ApiError, AppState, discard_body, read_body_limited, reject_if_guest_account,
     require_export_access, require_import_access, require_import_or_export_access, resolve_auth,
     resolve_import_account, stream_body_to_file, upload_content_type,
 };
@@ -695,8 +695,7 @@ async fn resolve_asset_lookup(
         ));
     }
     validate_source_id(&query.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    let account =
-        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
+    let account = resolve_import_account(&auth, query.account.as_deref(), &state.db).await?;
     let source_id = query.source.clone();
 
     let cfg = Arc::clone(&state.cfg);
@@ -862,7 +861,7 @@ pub(crate) async fn asset_put_handler(
 ) -> Result<Json<AssetPutResponse>, ApiError> {
     let (account, source_id, existing) =
         resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
-    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
+    reject_if_guest_account(&state.db, &account).await?;
 
     let mime = upload_content_type(&headers);
 
@@ -912,7 +911,8 @@ pub(crate) async fn asset_put_handler(
         )
     })
     .await
-    .join_map("asset upload task", |e| ApiError::BadRequest(e.to_string()))?;
+    .map_err(|e| ApiError::Internal(format!("asset upload task: {e}")))?
+    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
     // Rename consumes the temp file; remove leftovers after errors / already_present races.
     let _ = tokio::fs::remove_file(&tmp_path).await;
@@ -985,7 +985,7 @@ pub(crate) async fn asset_upload_start_handler(
 ) -> Result<Json<AssetUploadStartResponse>, ApiError> {
     let (account, source_id, _existing) =
         resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
-    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
+    reject_if_guest_account(&state.db, &account).await?;
     let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
     let mime = body.mime.clone();
     let bytes = body.bytes;
@@ -995,7 +995,8 @@ pub(crate) async fn asset_upload_start_handler(
         asset_uploads::start_upload(&assets_dir, &sha, bytes, mime.as_deref(), limits)
     })
     .await
-    .join_map("upload start task", |e| ApiError::BadRequest(e.to_string()))?;
+    .map_err(|e| ApiError::Internal(format!("upload start task: {e}")))?
+    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
     match result {
         (Some(stored), None) => Ok(Json(AssetUploadStartResponse {
@@ -1050,7 +1051,7 @@ pub(crate) async fn asset_upload_part_handler(
 ) -> Result<Json<AssetUploadPartResponse>, ApiError> {
     let (account, source_id, _existing) =
         resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
-    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
+    reject_if_guest_account(&state.db, &account).await?;
     if part == 0 {
         return Err(ApiError::BadRequest("part number must be >= 1".into()));
     }
@@ -1062,7 +1063,8 @@ pub(crate) async fn asset_upload_part_handler(
         asset_uploads::put_part(&assets_dir, &sha, &uid, part, &body)
     })
     .await
-    .join_map("upload part task", |e| ApiError::BadRequest(e.to_string()))?;
+    .map_err(|e| ApiError::Internal(format!("upload part task: {e}")))?
+    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
     Ok(Json(AssetUploadPartResponse {
         ok: true,
         part,
@@ -1098,7 +1100,7 @@ pub(crate) async fn asset_upload_complete_handler(
 ) -> Result<Json<AssetPutResponse>, ApiError> {
     let (account, source_id, existing) =
         resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
-    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
+    reject_if_guest_account(&state.db, &account).await?;
     if let Some(stored) = existing {
         // Drop staging if a concurrent single-PUT won the race.
         let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
@@ -1128,9 +1130,8 @@ pub(crate) async fn asset_upload_complete_handler(
         asset_uploads::complete_upload(&assets_dir, &sha, &uid, limits)
     })
     .await
-    .join_map("upload complete task", |e| {
-        ApiError::BadRequest(e.to_string())
-    })?;
+    .map_err(|e| ApiError::Internal(format!("upload complete task: {e}")))?
+    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
     Ok(AssetPutResponse::stored(stored, already_present))
 }
@@ -1167,7 +1168,8 @@ pub(crate) async fn asset_upload_abort_handler(
     let uid = upload_id.clone();
     tokio::task::spawn_blocking(move || asset_uploads::abort_upload(&assets_dir, &sha, &uid))
         .await
-        .join_map("upload abort task", |e| ApiError::BadRequest(e.to_string()))?;
+        .map_err(|e| ApiError::Internal(format!("upload abort task: {e}")))?
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
     Ok(Json(AssetUploadAbortResponse { ok: true }))
 }
 

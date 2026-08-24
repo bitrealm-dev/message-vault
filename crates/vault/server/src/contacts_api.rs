@@ -2,26 +2,31 @@
 //! `GET|POST /v1/export/contacts/{id}`, and `POST /v1/export/contacts/summaries`.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 use anyhow::{Result as AnyResult, bail};
 use axum::Json;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::HeaderMap;
 use message_ir::HandleType;
-use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use serde::{Deserialize, Serialize};
+use sqlx::AnyConnection;
 
 use crate::db::contacts::{self, contact_id_for_handle};
+use crate::db::dialect::{engine_of, group_concat_unit_separator, like_ci_numbered};
+use crate::db::engine::DbEngine;
 use crate::db::handles::infer_handle_type_from_shape;
 use crate::db::sql::in_placeholders;
 use crate::export_api::ExportQueryError;
-use crate::server::{
-    ApiError, AppState, JoinBlocking, lock_conn, require_full_access, resolve_auth,
-    with_locked_conn,
-};
+use crate::server::{ApiError, AppState, require_full_access, resolve_auth};
 
 pub use crate::page_limits::{DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, MAX_LIST_OFFSET};
+
+/// One bound value in the dynamic list query. sqlx Any has no
+/// user-constructible dynamic value, so binds ride this enum and are chained
+/// onto the statement in order at execution time.
+enum Bind {
+    Text(String),
+}
 
 /// One page of the contact list.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -194,8 +199,8 @@ pub struct ContactSummariesPage {
 /// A contact is linked to a conversation when one of its handles is either
 /// the conversation's chat handle or a participant handle in it.
 ///
-/// `contact_id_expr` is the SQL expression for the contact id (`?` or `ct.id`).
-fn involves_contact_expr(contact_id_expr: &str) -> String {
+/// `contact_id_expr` is the SQL expression for the contact id (`$N` or `ct.id`).
+pub(crate) fn involves_contact_expr(contact_id_expr: &str) -> String {
     format!(
         "EXISTS (
        SELECT 1 FROM contact_handles ch
@@ -212,9 +217,10 @@ fn involves_contact_expr(contact_id_expr: &str) -> String {
     )
 }
 
-/// Expects one bind parameter: `contact_id` (i64). Alias `c` = conversations.
+/// Expects two bind parameters: `account_id` ($1), `contact_id` ($2).
+/// Alias `c` = conversations.
 pub(crate) fn involves_contact_sql() -> String {
-    involves_contact_expr("?")
+    involves_contact_expr("$2")
 }
 
 /// Conversation `c` is not in `trashed_conversations`.
@@ -293,13 +299,14 @@ fn involved_message_date_agg(involves: &str, min_or_max: &str) -> String {
 
 fn push_contact_date_bounds(
     where_parts: &mut Vec<String>,
-    params: &mut Vec<rusqlite::types::Value>,
+    params: &mut Vec<Bind>,
     bounds: &[DateBound],
     agg: &str,
 ) {
     for bound in bounds {
-        where_parts.push(format!("{agg} {} date(?)", date_bound_cmp(bound.op)));
-        params.push(bound.ymd.clone().into());
+        let n = params.len() + 1;
+        where_parts.push(format!("{agg} {} date(${n})", date_bound_cmp(bound.op)));
+        params.push(Bind::Text(bound.ymd.clone()));
     }
 }
 
@@ -513,6 +520,15 @@ fn parse_contact_list_filters(q: &str) -> ContactListFilters {
     out
 }
 
+/// Case-insensitive group-name equality for one engine (`COLLATE NOCASE` is
+/// invalid Postgres SQL; Postgres uses `lower()`).
+fn group_name_eq_sql(engine: DbEngine, placeholder: usize) -> String {
+    match engine {
+        DbEngine::Sqlite => format!("cl.name = ${placeholder} COLLATE NOCASE"),
+        DbEngine::Postgres => format!("lower(cl.name) = lower(${placeholder})"),
+    }
+}
+
 /// Flat list of contacts: id, display name, handle count, and handle values (paged).
 ///
 /// `q` matches preferred name or any linked handle (raw/normalized), case-insensitive.
@@ -526,8 +542,8 @@ fn parse_contact_list_filters(q: &str) -> ContactListFilters {
 ///
 /// Returns a bad-request error for an invalid query, or an internal error when
 /// a database statement fails.
-pub fn list_contacts(
-    conn: &Connection,
+pub async fn list_contacts(
+    conn: &mut AnyConnection,
     account_id: &str,
     q: &str,
     limit: usize,
@@ -542,45 +558,51 @@ pub fn list_contacts(
 
     crate::search_query::validate_list_search_query(q)?;
     let filters = parse_contact_list_filters(q);
+    let engine = engine_of(conn);
     let involves = involves_ct_sql();
     let has_messages_sql = contact_has_messages_sql();
 
     let mut where_parts = vec![
-        "ct.account_id = ?1".to_string(),
+        "ct.account_id = $1".to_string(),
         NOT_TRASHED_CONTACT_SQL.to_string(),
     ];
-    let mut params: Vec<rusqlite::types::Value> = vec![account_id.to_string().into()];
+    let mut params: Vec<Bind> = vec![Bind::Text(account_id.to_string())];
 
     if let Some(ref handle) = filters.handle {
-        where_parts.push(
+        let n = params.len() + 1;
+        where_parts.push(format!(
             "EXISTS (
                SELECT 1 FROM contact_handles ch
                JOIN handles h ON h.id = ch.handle_id
                WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id
-                 AND (h.raw LIKE ? OR coalesce(h.normalized, '') LIKE ?)
-             )"
-            .into(),
-        );
+                 AND (h.raw {} OR coalesce(h.normalized, '') {})
+             )",
+            like_ci_numbered(engine, n),
+            like_ci_numbered(engine, n + 1),
+        ));
         let like = format!("%{handle}%");
-        params.push(like.clone().into());
-        params.push(like.into());
+        params.push(Bind::Text(like.clone()));
+        params.push(Bind::Text(like));
     }
 
     if !filters.text.is_empty() {
-        where_parts.push(
-            "(COALESCE(NULLIF(trim(ct.preferred_name), ''), '(unknown)') LIKE ?
+        let n = params.len() + 1;
+        where_parts.push(format!(
+            "(COALESCE(NULLIF(trim(ct.preferred_name), ''), '(unknown)') {}
               OR EXISTS (
                 SELECT 1 FROM contact_handles ch
                 JOIN handles h ON h.id = ch.handle_id
                 WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id
-                  AND (h.raw LIKE ? OR coalesce(h.normalized, '') LIKE ?)
-              ))"
-            .into(),
-        );
+                  AND (h.raw {} OR coalesce(h.normalized, '') {})
+              ))",
+            like_ci_numbered(engine, n),
+            like_ci_numbered(engine, n + 1),
+            like_ci_numbered(engine, n + 2),
+        ));
         let like = format!("%{}%", filters.text);
-        params.push(like.clone().into());
-        params.push(like.clone().into());
-        params.push(like.into());
+        params.push(Bind::Text(like.clone()));
+        params.push(Bind::Text(like.clone()));
+        params.push(Bind::Text(like));
     }
 
     match filters.has_messages {
@@ -620,17 +642,18 @@ pub fn list_contacts(
     }
 
     if let Some(ref label) = filters.group {
-        where_parts.push(
+        let n = params.len() + 1;
+        where_parts.push(format!(
             "EXISTS (
                SELECT 1 FROM contact_group_members clm
                JOIN contact_groups cl ON cl.id = clm.group_id
                WHERE clm.contact_id = ct.id
                  AND cl.account_id = ct.account_id
-                 AND cl.name = ? COLLATE NOCASE
-             )"
-            .into(),
-        );
-        params.push(label.clone().into());
+                 AND {}
+             )",
+            group_name_eq_sql(engine, n),
+        ));
+        params.push(Bind::Text(label.clone()));
     } else if filters.no_group {
         where_parts.push(
             "NOT EXISTS (
@@ -644,7 +667,8 @@ pub fn list_contacts(
     }
 
     if !filters.services.is_empty() {
-        let placeholders = in_placeholders(filters.services.len());
+        let n = params.len() + 1;
+        let placeholders = in_placeholders(n, filters.services.len());
         where_parts.push(format!(
             "EXISTS (
                SELECT 1 FROM conversations c
@@ -655,7 +679,7 @@ pub fn list_contacts(
              )"
         ));
         for s in &filters.services {
-            params.push(s.clone().into());
+            params.push(Bind::Text(s.clone()));
         }
     }
 
@@ -674,20 +698,27 @@ pub fn list_contacts(
 
     let where_sql = where_parts.join(" AND ");
     let count_sql = format!("SELECT COUNT(*) FROM contacts ct WHERE {where_sql}");
-    let total: i64 = conn.query_row(
-        &count_sql,
-        params_from_iter(params.iter().cloned()),
-        |row| row.get(0),
-    )?;
+    let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
+    for p in &params {
+        match p {
+            Bind::Text(v) => count_q = count_q.bind(v.clone()),
+        }
+    }
+    let total: i64 = count_q.fetch_one(&mut *conn).await?;
     let total = total.max(0) as u64;
 
+    let order_by = match engine {
+        DbEngine::Sqlite => "ORDER BY name COLLATE NOCASE, ct.id",
+        DbEngine::Postgres => "ORDER BY lower(name), ct.id",
+    };
+    let page_n = params.len() + 1;
     let sql = format!(
         "SELECT ct.id,
                 COALESCE(NULLIF(trim(ct.preferred_name), ''), '(unknown)') AS name,
                 (SELECT COUNT(*)
                  FROM contact_handles ch
                  WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id) AS handle_count,
-                (SELECT GROUP_CONCAT(val, char(31))
+                (SELECT {handles_agg}
                  FROM (
                    SELECT DISTINCT h.normalized AS val
                    FROM contact_handles ch
@@ -702,62 +733,75 @@ pub fn list_contacts(
                      AND h.raw IS NOT NULL AND trim(h.raw) != ''
                  )) AS handles,
                 ct.last_modified,
-                (SELECT GROUP_CONCAT(cl.name, char(31))
+                (SELECT {groups_agg}
                  FROM contact_group_members clm
                  JOIN contact_groups cl ON cl.id = clm.group_id
                  WHERE clm.contact_id = ct.id AND cl.account_id = ct.account_id) AS groups
          FROM contacts ct
          WHERE {where_sql}
-         ORDER BY name COLLATE NOCASE, ct.id
-         LIMIT ? OFFSET ?"
+         {order_by}
+         LIMIT ${page_n} OFFSET ${page_n_plus}",
+        handles_agg = group_concat_unit_separator(engine, "val"),
+        groups_agg = group_concat_unit_separator(engine, "cl.name"),
+        page_n = page_n,
+        page_n_plus = page_n + 1
     );
+    let mut page_q = sqlx::query_as::<_, ContactRow>(&sql);
+    for p in &params {
+        match p {
+            Bind::Text(v) => page_q = page_q.bind(v.clone()),
+        }
+    }
+    let rows: Vec<ContactRow> = page_q
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(&mut *conn)
+        .await?;
 
-    let mut page_params = params.clone();
-    page_params.push((limit as i64).into());
-    page_params.push((offset as i64).into());
-
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt
-        .query_map(params_from_iter(page_params.iter().cloned()), |row| {
-            let handles_blob: Option<String> = row.get(3)?;
-            let handles = handles_blob
-                .map(|s| {
-                    s.split('\u{1f}')
-                        .map(str::trim)
-                        .filter(|v| !v.is_empty())
-                        .map(str::to_string)
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let groups_blob: Option<String> = row.get(5)?;
-            let mut groups = groups_blob
-                .map(|s| {
-                    s.split('\u{1f}')
-                        .map(str::trim)
-                        .filter(|v| !v.is_empty())
-                        .map(str::to_string)
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            groups.sort_by_key(|a| a.to_ascii_lowercase());
-            Ok(ContactSummary {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                handle_count: row.get::<_, i64>(2)?.max(0) as u64,
-                handles,
-                last_modified: row.get(4)?,
-                groups,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+    let contacts = rows
+        .into_iter()
+        .map(
+            |(id, name, handle_count, handles_blob, last_modified, groups_blob)| {
+                let handles = handles_blob
+                    .map(|s| {
+                        s.split('\u{1f}')
+                            .map(str::trim)
+                            .filter(|v| !v.is_empty())
+                            .map(str::to_string)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let mut groups = groups_blob
+                    .map(|s| {
+                        s.split('\u{1f}')
+                            .map(str::trim)
+                            .filter(|v| !v.is_empty())
+                            .map(str::to_string)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                groups.sort_by_key(|a| a.to_ascii_lowercase());
+                ContactSummary {
+                    id,
+                    name,
+                    handle_count: handle_count.max(0) as u64,
+                    handles,
+                    last_modified,
+                    groups,
+                }
+            },
+        )
+        .collect();
 
     Ok(ContactListPage {
-        contacts: rows,
+        contacts,
         total,
         limit,
         offset,
     })
 }
+
+type ContactRow = (i64, String, i64, Option<String>, String, Option<String>);
 
 /// Parse `q` into optional handle filter + free-text remainder.
 fn parse_contact_list_query(q: &str) -> (Option<String>, String) {
@@ -808,32 +852,30 @@ fn parse_contact_list_query(q: &str) -> (Option<String>, String) {
 /// # Errors
 ///
 /// Returns an internal error when a database statement fails.
-pub fn get_contact_detail(
-    conn: &Connection,
+pub async fn get_contact_detail(
+    conn: &mut AnyConnection,
     account_id: &str,
     contact_id: i64,
 ) -> Result<Option<ContactDetail>, ExportQueryError> {
-    let name_and_modified: Option<(String, String)> = conn
-        .query_row(
-            &format!(
-                "SELECT COALESCE(NULLIF(trim(preferred_name), ''), '(unknown)'),
-                        last_modified
-                 FROM contacts ct
-                 WHERE ct.id = ?1 AND ct.account_id = ?2
-                   AND {not_trashed}",
-                not_trashed = NOT_TRASHED_CONTACT_SQL,
-            ),
-            rusqlite::params![contact_id, account_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()?;
+    let name_and_modified: Option<(String, String)> = sqlx::query_as(&format!(
+        "SELECT COALESCE(NULLIF(trim(preferred_name), ''), '(unknown)'),
+                last_modified
+         FROM contacts ct
+         WHERE ct.id = $1 AND ct.account_id = $2
+           AND {not_trashed}",
+        not_trashed = NOT_TRASHED_CONTACT_SQL,
+    ))
+    .bind(contact_id)
+    .bind(account_id)
+    .fetch_optional(&mut *conn)
+    .await?;
     let Some((name, last_modified)) = name_and_modified else {
         return Ok(None);
     };
 
     // One row per handle. Date range and message counts cover direct + group
     // conversations that include the handle (excluding trashed conversations).
-    let mut stmt = conn.prepare(&format!(
+    let rows: Vec<ContactHandleRow> = sqlx::query_as(&format!(
         "SELECT h.raw,
                     NULLIF(trim(h.service), '') AS service,
                     NULLIF(trim(ch.name_alias), '') AS name_alias,
@@ -854,37 +896,50 @@ pub fn get_contact_detail(
                AND {not_trashed_conversation}
                AND {not_trashed_handle}
              LEFT JOIN messages m ON m.conversation_id = c.id AND m.duplicate_of IS NULL
-             WHERE ch.account_id = ?1 AND ch.contact_id = ?2
+             WHERE ch.account_id = $1 AND ch.contact_id = $2
              GROUP BY ch.handle_id, h.raw, h.service, ch.name_alias
              ORDER BY h.raw",
         not_trashed_conversation = NOT_TRASHED_CONVERSATION_SQL,
         not_trashed_handle = NOT_TRASHED_CHAT_HANDLE_SQL,
-    ))?;
-    let mut handles = Vec::new();
-    let rows = stmt.query_map(rusqlite::params![account_id, contact_id], |row| {
-        Ok(ContactHandleInfo {
-            handle: row.get(0)?,
-            service: row.get(1)?,
-            name_alias: row.get(2)?,
-            start_date: row.get(3)?,
-            end_date: row.get(4)?,
-            individual_conversations: row.get::<_, i64>(5)?.max(0) as u64,
-            group_conversations: row.get::<_, i64>(6)?.max(0) as u64,
-            individual_message_count: row.get::<_, i64>(7)?.max(0) as u64,
-            group_message_count: row.get::<_, i64>(8)?.max(0) as u64,
-        })
-    })?;
-    for row in rows {
-        handles.push(row?);
-    }
+    ))
+    .bind(account_id)
+    .bind(contact_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    let handles = rows
+        .into_iter()
+        .map(
+            |(
+                handle,
+                service,
+                name_alias,
+                start_date,
+                end_date,
+                individual_conversations,
+                group_conversations,
+                individual_message_count,
+                group_message_count,
+            )| ContactHandleInfo {
+                handle,
+                service,
+                name_alias,
+                start_date,
+                end_date,
+                individual_conversations: individual_conversations.max(0) as u64,
+                group_conversations: group_conversations.max(0) as u64,
+                individual_message_count: individual_message_count.max(0) as u64,
+                group_message_count: group_message_count.max(0) as u64,
+            },
+        )
+        .collect();
 
     // Conversation + message stats across handles of this contact only.
     // Do not GROUP BY the entire account messages table — that dominated drawer latency.
-    let mut stats_stmt = conn.prepare(&format!(
+    let (direct, groups, total): (i64, i64, i64) = sqlx::query_as(&format!(
         "WITH involved AS (
                SELECT c.id, c.conversation_type
                FROM conversations c
-               WHERE c.account_id = ?1
+               WHERE c.account_id = $1
                  AND {involves_contact_sql}
                  AND {not_trashed_conversation}
                  AND {not_trashed_handle}
@@ -898,14 +953,14 @@ pub fn get_contact_detail(
         involves_contact_sql = involves_contact_sql(),
         not_trashed_conversation = NOT_TRASHED_CONVERSATION_SQL,
         not_trashed_handle = NOT_TRASHED_CHAT_HANDLE_SQL,
-    ))?;
-    let (direct, groups, total): (i64, i64, i64) = stats_stmt
-        .query_row(rusqlite::params![account_id, contact_id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })?;
+    ))
+    .bind(account_id)
+    .bind(contact_id)
+    .fetch_one(&mut *conn)
+    .await?;
 
     let contact_groups =
-        crate::contact_groups_api::groups_for_contact(conn, account_id, contact_id)?;
+        crate::contact_groups_api::groups_for_contact(conn, account_id, contact_id).await?;
 
     Ok(Some(ContactDetail {
         id: contact_id,
@@ -919,6 +974,18 @@ pub fn get_contact_detail(
     }))
 }
 
+type ContactHandleRow = (
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    i64,
+    i64,
+    i64,
+    i64,
+);
+
 /// First/last seen and message counts for many contacts in one grouped query.
 ///
 /// Unknown, trashed, and duplicate ids are skipped. At most [`MAX_LIST_LIMIT`]
@@ -927,8 +994,8 @@ pub fn get_contact_detail(
 /// # Errors
 ///
 /// Returns an internal error when a database statement fails.
-pub fn get_contact_summaries(
-    conn: &Connection,
+pub async fn get_contact_summaries(
+    conn: &mut AnyConnection,
     account_id: &str,
     ids: &[i64],
 ) -> Result<Vec<ContactSelectionSummary>, ExportQueryError> {
@@ -947,7 +1014,7 @@ pub fn get_contact_summaries(
         return Ok(Vec::new());
     }
 
-    let placeholders = in_placeholders(unique.len());
+    let placeholders = in_placeholders(2, unique.len());
     let involves = involves_contact_expr("selected.id");
     let sql = format!(
         "WITH selected AS (
@@ -955,7 +1022,7 @@ pub fn get_contact_summaries(
                    ct.account_id,
                    COALESCE(NULLIF(trim(ct.preferred_name), ''), '(unknown)') AS name
             FROM contacts ct
-            WHERE ct.account_id = ?
+            WHERE ct.account_id = $1
               AND ct.id IN ({placeholders})
               AND {not_trashed}
          ),
@@ -986,35 +1053,55 @@ pub fn get_contact_summaries(
         not_trashed_handle = NOT_TRASHED_CHAT_HANDLE_SQL,
     );
 
-    let mut params: Vec<rusqlite::types::Value> = Vec::with_capacity(1 + unique.len());
-    params.push(account_id.to_string().into());
+    let mut q = sqlx::query_as::<_, ContactSelectionRow>(&sql);
+    q = q.bind(account_id);
     for id in &unique {
-        params.push((*id).into());
+        q = q.bind(*id);
     }
+    let rows: Vec<ContactSelectionRow> = q.fetch_all(&mut *conn).await?;
 
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params_from_iter(params.iter().cloned()), |row| {
-        Ok(ContactSelectionSummary {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            start_date: row.get(2)?,
-            end_date: row.get(3)?,
-            individual_conversations: row.get::<_, i64>(4)?.max(0) as u64,
-            group_conversations: row.get::<_, i64>(5)?.max(0) as u64,
-            individual_message_count: row.get::<_, i64>(6)?.max(0) as u64,
-            group_message_count: row.get::<_, i64>(7)?.max(0) as u64,
-        })
-    })?;
     let mut by_id = HashMap::new();
-    for row in rows {
-        let summary = row?;
-        by_id.insert(summary.id, summary);
+    for (
+        id,
+        name,
+        start_date,
+        end_date,
+        individual_conversations,
+        group_conversations,
+        individual_message_count,
+        group_message_count,
+    ) in rows
+    {
+        by_id.insert(
+            id,
+            ContactSelectionSummary {
+                id,
+                name,
+                start_date,
+                end_date,
+                individual_conversations: individual_conversations.max(0) as u64,
+                group_conversations: group_conversations.max(0) as u64,
+                individual_message_count: individual_message_count.max(0) as u64,
+                group_message_count: group_message_count.max(0) as u64,
+            },
+        );
     }
     Ok(unique
         .into_iter()
         .filter_map(|id| by_id.remove(&id))
         .collect())
 }
+
+type ContactSelectionRow = (
+    i64,
+    String,
+    Option<String>,
+    Option<String>,
+    i64,
+    i64,
+    i64,
+    i64,
+);
 
 fn infer_handle_type(raw: &str, service: Option<&str>) -> HandleType {
     let svc = service
@@ -1028,8 +1115,8 @@ fn infer_handle_type(raw: &str, service: Option<&str>) -> HandleType {
     }
 }
 
-fn find_contact_handle_id(
-    conn: &Connection,
+async fn find_contact_handle_id(
+    conn: &mut AnyConnection,
     account_id: &str,
     contact_id: i64,
     raw: &str,
@@ -1043,33 +1130,36 @@ fn find_contact_handle_id(
         "SELECT ch.handle_id
          FROM contact_handles ch
          JOIN handles h ON h.id = ch.handle_id
-         WHERE ch.account_id = ?1 AND ch.contact_id = ?2
-           AND (h.raw = ?3 OR h.normalized = ?3)",
+         WHERE ch.account_id = $1 AND ch.contact_id = $2
+           AND (h.raw = $3 OR h.normalized = $3)",
     );
     let id = if let Some(svc) = service.map(str::trim).filter(|s| !s.is_empty()) {
-        sql.push_str(" AND h.service = ?4 LIMIT 1");
+        sql.push_str(" AND h.service = $4 LIMIT 1");
         let platform = message_ir::HandleService::parse(svc);
-        conn.query_row(
-            &sql,
-            params![account_id, contact_id, needle, platform.as_str()],
-            |row| row.get(0),
-        )
-        .optional()?
+        sqlx::query_scalar::<_, i64>(&sql)
+            .bind(account_id)
+            .bind(contact_id)
+            .bind(needle)
+            .bind(platform.as_str())
+            .fetch_optional(&mut *conn)
+            .await?
     } else {
         sql.push_str(
             " ORDER BY CASE h.service WHEN 'phone' THEN 0 WHEN 'whatsapp' THEN 1 ELSE 2 END
              LIMIT 1",
         );
-        conn.query_row(&sql, params![account_id, contact_id, needle], |row| {
-            row.get(0)
-        })
-        .optional()?
+        sqlx::query_scalar::<_, i64>(&sql)
+            .bind(account_id)
+            .bind(contact_id)
+            .bind(needle)
+            .fetch_optional(&mut *conn)
+            .await?
     };
     Ok(id)
 }
 
-fn ensure_handle_row(
-    conn: &Connection,
+async fn ensure_handle_row(
+    conn: &mut AnyConnection,
     account_id: &str,
     raw: &str,
     service: Option<&str>,
@@ -1082,24 +1172,27 @@ fn ensure_handle_row(
         raw.trim(),
         handle_type,
         service.map(|s| s.trim()).filter(|s| !s.is_empty()),
-    )?;
+    )
+    .await?;
     Ok(id)
 }
 
-fn contact_exists(conn: &Connection, account_id: &str, contact_id: i64) -> AnyResult<bool> {
-    let found: Option<i64> = conn
-        .query_row(
-            &format!(
-                "SELECT ct.id
-                 FROM contacts ct
-                 WHERE ct.id = ?1 AND ct.account_id = ?2
-                   AND {not_trashed}",
-                not_trashed = NOT_TRASHED_CONTACT_SQL,
-            ),
-            params![contact_id, account_id],
-            |row| row.get(0),
-        )
-        .optional()?;
+async fn contact_exists(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    contact_id: i64,
+) -> AnyResult<bool> {
+    let found: Option<i64> = sqlx::query_scalar(&format!(
+        "SELECT ct.id
+         FROM contacts ct
+         WHERE ct.id = $1 AND ct.account_id = $2
+           AND {not_trashed}",
+        not_trashed = NOT_TRASHED_CONTACT_SQL,
+    ))
+    .bind(contact_id)
+    .bind(account_id)
+    .fetch_optional(&mut *conn)
+    .await?;
     Ok(found.is_some())
 }
 
@@ -1108,13 +1201,13 @@ fn contact_exists(conn: &Connection, account_id: &str, contact_id: i64) -> AnyRe
 /// # Errors
 ///
 /// Returns an error when the mutation is invalid or a database write fails.
-pub fn mutate_contact(
-    conn: &Connection,
+pub async fn mutate_contact(
+    conn: &mut AnyConnection,
     account_id: &str,
     contact_id: i64,
     body: &ContactMutationBody,
 ) -> AnyResult<bool> {
-    if !contact_exists(conn, account_id, contact_id)? {
+    if !contact_exists(conn, account_id, contact_id).await? {
         return Ok(false);
     }
 
@@ -1136,11 +1229,13 @@ pub fn mutate_contact(
         if name.is_empty() {
             bail!("name must not be empty");
         }
-        conn.execute(
-            "UPDATE contacts SET preferred_name = ?1 WHERE id = ?2 AND account_id = ?3",
-            params![name, contact_id, account_id],
-        )?;
-        return touch_ok(conn, account_id, contact_id);
+        sqlx::query("UPDATE contacts SET preferred_name = $1 WHERE id = $2 AND account_id = $3")
+            .bind(name)
+            .bind(contact_id)
+            .bind(account_id)
+            .execute(&mut *conn)
+            .await?;
+        return touch_ok(conn, account_id, contact_id).await;
     }
 
     if let Some(add) = body.add_handle.as_ref() {
@@ -1148,18 +1243,25 @@ pub fn mutate_contact(
         if raw.is_empty() {
             bail!("handle must not be empty");
         }
-        let handle_id = ensure_handle_row(conn, account_id, raw, add.service.as_deref())?;
+        let handle_id = ensure_handle_row(conn, account_id, raw, add.service.as_deref()).await?;
         // One contact per handle (PK on contact_handles.handle_id + account).
-        if require_handle_available(conn, account_id, handle_id, contact_id)?.is_some() {
+        if require_handle_available(conn, account_id, handle_id, contact_id)
+            .await?
+            .is_some()
+        {
             // Already linked — no address-book change.
             return Ok(true);
         }
-        conn.execute(
+        sqlx::query(
             "INSERT INTO contact_handles (account_id, handle_id, contact_id)
-             VALUES (?1, ?2, ?3)",
-            params![account_id, handle_id, contact_id],
-        )?;
-        return touch_ok(conn, account_id, contact_id);
+             VALUES ($1, $2, $3)",
+        )
+        .bind(account_id)
+        .bind(handle_id)
+        .bind(contact_id)
+        .execute(&mut *conn)
+        .await?;
+        return touch_ok(conn, account_id, contact_id).await;
     }
 
     if let Some(upd) = body.update_handle.as_ref() {
@@ -1169,11 +1271,12 @@ pub fn mutate_contact(
             bail!("previous_handle and handle must not be empty");
         }
         let Some(old_id) =
-            find_contact_handle_id(conn, account_id, contact_id, prev, upd.service.as_deref())?
+            find_contact_handle_id(conn, account_id, contact_id, prev, upd.service.as_deref())
+                .await?
         else {
             bail!("previous handle not found on contact");
         };
-        let new_id = ensure_handle_row(conn, account_id, next, upd.service.as_deref())?;
+        let new_id = ensure_handle_row(conn, account_id, next, upd.service.as_deref()).await?;
         if old_id == new_id {
             if let Some(svc) = upd
                 .service
@@ -1181,29 +1284,42 @@ pub fn mutate_contact(
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
-                conn.execute(
-                    "UPDATE handles SET service = ?1 WHERE id = ?2",
-                    params![svc, new_id],
-                )?;
-                return touch_ok(conn, account_id, contact_id);
+                sqlx::query("UPDATE handles SET service = $1 WHERE id = $2")
+                    .bind(svc)
+                    .bind(new_id)
+                    .execute(&mut *conn)
+                    .await?;
+                return touch_ok(conn, account_id, contact_id).await;
             }
             return Ok(true);
         }
-        if require_handle_available(conn, account_id, new_id, contact_id)?.is_some() {
+        if require_handle_available(conn, account_id, new_id, contact_id)
+            .await?
+            .is_some()
+        {
             // Already on this contact — drop the previous link.
-            conn.execute(
+            sqlx::query(
                 "DELETE FROM contact_handles
-                 WHERE account_id = ?1 AND contact_id = ?2 AND handle_id = ?3",
-                params![account_id, contact_id, old_id],
-            )?;
-            return touch_ok(conn, account_id, contact_id);
+                 WHERE account_id = $1 AND contact_id = $2 AND handle_id = $3",
+            )
+            .bind(account_id)
+            .bind(contact_id)
+            .bind(old_id)
+            .execute(&mut *conn)
+            .await?;
+            return touch_ok(conn, account_id, contact_id).await;
         }
-        conn.execute(
-            "UPDATE contact_handles SET handle_id = ?1
-             WHERE account_id = ?2 AND contact_id = ?3 AND handle_id = ?4",
-            params![new_id, account_id, contact_id, old_id],
-        )?;
-        return touch_ok(conn, account_id, contact_id);
+        sqlx::query(
+            "UPDATE contact_handles SET handle_id = $1
+             WHERE account_id = $2 AND contact_id = $3 AND handle_id = $4",
+        )
+        .bind(new_id)
+        .bind(account_id)
+        .bind(contact_id)
+        .bind(old_id)
+        .execute(&mut *conn)
+        .await?;
+        return touch_ok(conn, account_id, contact_id).await;
     }
 
     if let Some(rem) = body.remove_handle.as_ref() {
@@ -1212,28 +1328,33 @@ pub fn mutate_contact(
             bail!("handle must not be empty");
         }
         let Some(handle_id) =
-            find_contact_handle_id(conn, account_id, contact_id, raw, rem.service.as_deref())?
+            find_contact_handle_id(conn, account_id, contact_id, raw, rem.service.as_deref())
+                .await?
         else {
             bail!("handle not found on contact");
         };
-        conn.execute(
+        sqlx::query(
             "DELETE FROM contact_handles
-             WHERE account_id = ?1 AND contact_id = ?2 AND handle_id = ?3",
-            params![account_id, contact_id, handle_id],
-        )?;
-        return touch_ok(conn, account_id, contact_id);
+             WHERE account_id = $1 AND contact_id = $2 AND handle_id = $3",
+        )
+        .bind(account_id)
+        .bind(contact_id)
+        .bind(handle_id)
+        .execute(&mut *conn)
+        .await?;
+        return touch_ok(conn, account_id, contact_id).await;
     }
 
     Ok(true)
 }
 
-fn require_handle_available(
-    conn: &Connection,
+async fn require_handle_available(
+    conn: &mut AnyConnection,
     account_id: &str,
     handle_id: i64,
     contact_id: i64,
 ) -> AnyResult<Option<i64>> {
-    let existing = contact_id_for_handle(conn, account_id, handle_id)?;
+    let existing = contact_id_for_handle(conn, account_id, handle_id).await?;
     if let Some(other) = existing
         && other != contact_id
     {
@@ -1242,8 +1363,8 @@ fn require_handle_available(
     Ok(existing)
 }
 
-fn touch_ok(conn: &Connection, account_id: &str, contact_id: i64) -> AnyResult<bool> {
-    contacts::touch_contact(conn, account_id, contact_id)?;
+async fn touch_ok(conn: &mut AnyConnection, account_id: &str, contact_id: i64) -> AnyResult<bool> {
+    contacts::touch_contact(conn, account_id, contact_id).await?;
     Ok(true)
 }
 
@@ -1272,14 +1393,12 @@ pub(crate) async fn contacts_list_handler(
 ) -> Result<Json<ContactListPage>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
-    let db = Arc::clone(&state.db);
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
     let q = query.q.unwrap_or_default();
     let limit = query.limit.unwrap_or(DEFAULT_LIST_LIMIT);
     let offset = query.offset.unwrap_or(0);
-    let page = with_locked_conn(db, "contacts list task", move |conn| {
-        list_contacts(conn, &auth.account_id, &q, limit, offset)
-    })
-    .await?;
+    let page = list_contacts(&mut conn, &auth.account_id, &q, limit, offset).await?;
     Ok(Json(page))
 }
 
@@ -1310,12 +1429,11 @@ pub(crate) async fn contact_summaries_handler(
             MAX_LIST_LIMIT
         )));
     }
-    let db = Arc::clone(&state.db);
-    let page = with_locked_conn(db, "contact summaries task", move |conn| {
-        get_contact_summaries(conn, &auth.account_id, &body.ids)
-            .map(|contacts| ContactSummariesPage { contacts })
-    })
-    .await?;
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    let page = get_contact_summaries(&mut conn, &auth.account_id, &body.ids)
+        .await
+        .map(|contacts| ContactSummariesPage { contacts })?;
     Ok(Json(page))
 }
 
@@ -1341,11 +1459,9 @@ pub(crate) async fn contact_detail_handler(
 ) -> Result<Json<ContactDetail>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let detail = with_locked_conn(db, "contact detail task", move |conn| {
-        get_contact_detail(conn, &auth.account_id, contact_id)
-    })
-    .await?;
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    let detail = get_contact_detail(&mut conn, &auth.account_id, contact_id).await?;
     detail
         .map(Json)
         .ok_or_else(|| ApiError::NotFound("contact not found".into()))
@@ -1375,76 +1491,74 @@ pub(crate) async fn contact_mutate_handler(
 ) -> Result<Json<ContactDetail>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let account_id = auth.account_id.clone();
-    let detail = tokio::task::spawn_blocking(move || -> Result<_, ApiError> {
-        let conn = lock_conn(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
-        match mutate_contact(&conn, &account_id, contact_id, &body) {
-            Ok(false) => Err(ApiError::NotFound("contact not found".into())),
-            Err(e) => Err(ApiError::BadRequest(e.to_string())),
-            Ok(true) => get_contact_detail(&conn, &account_id, contact_id)
-                .map_err(|e| ApiError::Internal(e.to_string()))?
-                .ok_or_else(|| ApiError::Internal("contact missing after mutate".into())),
-        }
-    })
-    .await
-    .join_map("contact mutate task", |e| e)?;
-
-    Ok(Json(detail))
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    match mutate_contact(&mut conn, &auth.account_id, contact_id, &body).await {
+        Ok(false) => Err(ApiError::NotFound("contact not found".into())),
+        Err(e) => Err(ApiError::BadRequest(e.to_string())),
+        Ok(true) => get_contact_detail(&mut conn, &auth.account_id, contact_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .ok_or_else(|| ApiError::Internal("contact missing after mutate".into()))
+            .map(Json),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::params;
 
-    use crate::db::account_profile;
-    use crate::db::schema;
+    use crate::db::{account_profile, engine, schema};
 
-    fn setup() -> (Connection, String) {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        schema::ensure_vault_schema(&conn).unwrap();
+    async fn setup() -> (sqlx::AnyPool, tempfile::TempDir, String) {
+        let (pool, dir) = engine::test_pool().await;
+        schema::ensure_vault_schema(&mut pool.acquire().await.unwrap())
+            .await
+            .unwrap();
         let account = "00000000-0000-4000-8000-0000000000c1".to_string();
-        conn.execute(
-            "INSERT INTO accounts (id, username, read_only) VALUES (?1, 'alice', 0)",
-            params![&account],
-        )
-        .unwrap();
-        (conn, account)
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, username, read_only) VALUES ($1, 'alice', 0)")
+            .bind(&account)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        (pool, dir, account)
     }
 
-    #[test]
-    fn list_contacts_uses_preferred_name_and_handle_ids() {
-        let (conn, account) = setup();
-        conn.execute(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Pat')",
-            params![&account],
+    #[tokio::test]
+    async fn list_contacts_uses_preferred_name_and_handle_ids() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let contact_id: i64 = sqlx::query_scalar(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Pat') RETURNING id",
         )
+        .bind(&account)
+        .fetch_one(&mut *conn)
+        .await
         .unwrap();
-        let contact_id: i64 = conn
-            .query_row(
-                "SELECT id FROM contacts WHERE account_id = ?1",
-                params![&account],
-                |r| r.get(0),
-            )
-            .unwrap();
         let handle_id = account_profile::link_account_handle(
-            &conn,
+            &mut conn,
             &account,
             "+15555550100",
             HandleType::Phone,
         )
+        .await
         .unwrap();
         // link_account_handle puts it on account_handles; also link as contact handle.
-        conn.execute(
+        sqlx::query(
             "INSERT INTO contact_handles (account_id, handle_id, contact_id)
-             VALUES (?1, ?2, ?3)",
-            params![&account, handle_id, contact_id],
+             VALUES ($1, $2, $3)",
         )
+        .bind(&account)
+        .bind(handle_id)
+        .bind(contact_id)
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
-        let page = list_contacts(&conn, &account, "", DEFAULT_LIST_LIMIT, 0).unwrap();
+        let page = list_contacts(&mut conn, &account, "", DEFAULT_LIST_LIMIT, 0)
+            .await
+            .unwrap();
         assert_eq!(page.total, 1);
         assert_eq!(page.contacts.len(), 1);
         assert_eq!(page.contacts[0].name, "Pat");
@@ -1459,170 +1573,208 @@ mod tests {
         );
     }
 
-    #[test]
-    fn list_contacts_filters_and_paginates() {
-        let (conn, account) = setup();
+    #[tokio::test]
+    async fn list_contacts_filters_and_paginates() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
         for (name, phone) in [
             ("Pat", "+15555550100"),
             ("Sam", "+15555550200"),
             ("Alex", "+15555550300"),
         ] {
-            conn.execute(
-                "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, ?2)",
-                params![&account, name],
+            let contact_id: i64 = sqlx::query_scalar(
+                "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, $2) RETURNING id",
             )
+            .bind(&account)
+            .bind(name)
+            .fetch_one(&mut *conn)
+            .await
             .unwrap();
-            let contact_id: i64 = conn
-                .query_row(
-                    "SELECT id FROM contacts WHERE account_id = ?1 AND preferred_name = ?2",
-                    params![&account, name],
-                    |r| r.get(0),
-                )
-                .unwrap();
             let handle_id =
-                account_profile::link_account_handle(&conn, &account, phone, HandleType::Phone)
+                account_profile::link_account_handle(&mut conn, &account, phone, HandleType::Phone)
+                    .await
                     .unwrap();
-            conn.execute(
+            sqlx::query(
                 "INSERT INTO contact_handles (account_id, handle_id, contact_id)
-                 VALUES (?1, ?2, ?3)",
-                params![&account, handle_id, contact_id],
+                 VALUES ($1, $2, $3)",
             )
+            .bind(&account)
+            .bind(handle_id)
+            .bind(contact_id)
+            .execute(&mut *conn)
+            .await
             .unwrap();
         }
 
-        let by_name = list_contacts(&conn, &account, "sam", DEFAULT_LIST_LIMIT, 0).unwrap();
+        let by_name = list_contacts(&mut conn, &account, "sam", DEFAULT_LIST_LIMIT, 0)
+            .await
+            .unwrap();
         assert_eq!(by_name.total, 1);
         assert_eq!(by_name.contacts[0].name, "Sam");
 
-        let by_handle =
-            list_contacts(&conn, &account, "handle:5555550200", DEFAULT_LIST_LIMIT, 0).unwrap();
+        let by_handle = list_contacts(
+            &mut conn,
+            &account,
+            "handle:5555550200",
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .await
+        .unwrap();
         assert_eq!(by_handle.total, 1);
         assert_eq!(by_handle.contacts[0].name, "Sam");
 
-        let page0 = list_contacts(&conn, &account, "", 2, 0).unwrap();
+        let page0 = list_contacts(&mut conn, &account, "", 2, 0).await.unwrap();
         assert_eq!(page0.total, 3);
         assert_eq!(page0.limit, 2);
         assert_eq!(page0.offset, 0);
         assert_eq!(page0.contacts.len(), 2);
-        let page1 = list_contacts(&conn, &account, "", 2, 2).unwrap();
+        let page1 = list_contacts(&mut conn, &account, "", 2, 2).await.unwrap();
         assert_eq!(page1.total, 3);
         assert_eq!(page1.offset, 2);
         assert_eq!(page1.contacts.len(), 1);
 
-        let clamped = list_contacts(&conn, &account, "", MAX_LIST_LIMIT + 50, 0).unwrap();
+        let clamped = list_contacts(&mut conn, &account, "", MAX_LIST_LIMIT + 50, 0)
+            .await
+            .unwrap();
         assert_eq!(clamped.limit, MAX_LIST_LIMIT);
         assert_eq!(clamped.total, 3);
     }
 
-    #[test]
-    fn get_contact_detail_counts_direct_group_and_messages() {
-        let (conn, account) = setup();
-        conn.execute(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Sam')",
-            params![&account],
+    #[tokio::test]
+    async fn get_contact_detail_counts_direct_group_and_messages() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let contact_id: i64 = sqlx::query_scalar(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Sam') RETURNING id",
         )
+        .bind(&account)
+        .fetch_one(&mut *conn)
+        .await
         .unwrap();
-        let contact_id: i64 = conn
-            .query_row(
-                "SELECT id FROM contacts WHERE account_id = ?1",
-                params![&account],
-                |r| r.get(0),
-            )
-            .unwrap();
         let peer = account_profile::link_account_handle(
-            &conn,
+            &mut conn,
             &account,
             "+15555550200",
             HandleType::Phone,
         )
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO contact_handles (account_id, handle_id, contact_id)
-             VALUES (?1, ?2, ?3)",
-            params![&account, peer, contact_id],
+             VALUES ($1, $2, $3)",
         )
+        .bind(&account)
+        .bind(peer)
+        .bind(contact_id)
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
         // Direct conversation with 2 messages.
-        conn.execute(
+        sqlx::query(
             "INSERT INTO conversations (
                 id, account_id, chat_handle_id, conversation_type, source_file
-             ) VALUES (1, ?1, ?2, 'individual', 'd.jsonl')",
-            params![&account, peer],
+             ) VALUES (1, $1, $2, 'individual', 'd.jsonl')",
         )
+        .bind(&account)
+        .bind(peer)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO participants (conversation_id, handle_id, name_alias)
-             VALUES (1, ?1, 'Sam')",
-            params![peer],
+             VALUES (1, $1, 'Sam')",
         )
+        .bind(peer)
+        .execute(&mut *conn)
+        .await
         .unwrap();
         for (body, ts) in [
             ("hi", "2024-06-01T12:00:00Z"),
             ("there", "2024-06-01T13:00:00Z"),
         ] {
-            conn.execute(
+            sqlx::query(
                 "INSERT INTO messages (
                     conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
-                 ) VALUES (1, ?1, 'imessage', ?2, 0, 0, ?3)",
-                params![&account, ts, body],
+                 ) VALUES (1, $1, 'imessage', $2, 0, 0, $3)",
             )
+            .bind(&account)
+            .bind(ts)
+            .bind(body)
+            .execute(&mut *conn)
+            .await
             .unwrap();
         }
 
         // Group conversation that includes Sam, with 1 message.
         let group_chat = account_profile::link_account_handle(
-            &conn,
+            &mut conn,
             &account,
             "chat-sam-group",
             HandleType::Other,
         )
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO conversations (
                 id, account_id, chat_handle_id, conversation_type, group_title, source_file
-             ) VALUES (2, ?1, ?2, 'group', 'Sam Group', 'g.jsonl')",
-            params![&account, group_chat],
+             ) VALUES (2, $1, $2, 'group', 'Sam Group', 'g.jsonl')",
         )
+        .bind(&account)
+        .bind(group_chat)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO participants (conversation_id, handle_id, name_alias)
-             VALUES (2, ?1, 'Sam')",
-            params![peer],
+             VALUES (2, $1, 'Sam')",
         )
+        .bind(peer)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO messages (
                 conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
-             ) VALUES (2, ?1, 'imessage', '2024-07-01T12:00:00Z', 0, 0, 'group hi')",
-            params![&account],
+             ) VALUES (2, $1, 'imessage', '2024-07-01T12:00:00Z', 0, 0, 'group hi')",
         )
+        .bind(&account)
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
         // Unrelated conversation should not be counted.
         let other = account_profile::link_account_handle(
-            &conn,
+            &mut conn,
             &account,
             "+15555550999",
             HandleType::Phone,
         )
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO conversations (
                 id, account_id, chat_handle_id, conversation_type, source_file
-             ) VALUES (9, ?1, ?2, 'individual', 'other.jsonl')",
-            params![&account, other],
+             ) VALUES (9, $1, $2, 'individual', 'other.jsonl')",
         )
+        .bind(&account)
+        .bind(other)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO messages (
                 conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
-             ) VALUES (9, ?1, 'imessage', '2024-08-01T12:00:00Z', 0, 0, 'nope')",
-            params![&account],
+             ) VALUES (9, $1, 'imessage', '2024-08-01T12:00:00Z', 0, 0, 'nope')",
         )
+        .bind(&account)
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
-        let detail = get_contact_detail(&conn, &account, contact_id)
+        let detail = get_contact_detail(&mut conn, &account, contact_id)
+            .await
             .unwrap()
             .expect("contact exists");
         assert_eq!(detail.name, "Sam");
@@ -1642,135 +1794,162 @@ mod tests {
         assert_eq!(detail.handles[0].group_message_count, 1);
     }
 
-    #[test]
-    fn get_contact_summaries_counts_two_contacts_in_one_query() {
-        let (conn, account) = setup();
+    #[tokio::test]
+    async fn get_contact_summaries_counts_two_contacts_in_one_query() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
 
-        conn.execute(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Sam')",
-            params![&account],
+        let sam_id: i64 = sqlx::query_scalar(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Sam') RETURNING id",
         )
+        .bind(&account)
+        .fetch_one(&mut *conn)
+        .await
         .unwrap();
-        let sam_id: i64 = conn
-            .query_row(
-                "SELECT id FROM contacts WHERE account_id = ?1 AND preferred_name = 'Sam'",
-                params![&account],
-                |r| r.get(0),
-            )
-            .unwrap();
         let sam_handle = account_profile::link_account_handle(
-            &conn,
+            &mut conn,
             &account,
             "+15555550200",
             HandleType::Phone,
         )
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO contact_handles (account_id, handle_id, contact_id)
-             VALUES (?1, ?2, ?3)",
-            params![&account, sam_handle, sam_id],
+             VALUES ($1, $2, $3)",
         )
+        .bind(&account)
+        .bind(sam_handle)
+        .bind(sam_id)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO conversations (
                 id, account_id, chat_handle_id, conversation_type, source_file
-             ) VALUES (1, ?1, ?2, 'individual', 'd.jsonl')",
-            params![&account, sam_handle],
+             ) VALUES (1, $1, $2, 'individual', 'd.jsonl')",
         )
+        .bind(&account)
+        .bind(sam_handle)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO participants (conversation_id, handle_id, name_alias)
-             VALUES (1, ?1, 'Sam')",
-            params![sam_handle],
+             VALUES (1, $1, 'Sam')",
         )
+        .bind(sam_handle)
+        .execute(&mut *conn)
+        .await
         .unwrap();
         for (body, ts) in [
             ("hi", "2024-06-01T12:00:00Z"),
             ("there", "2024-06-01T13:00:00Z"),
         ] {
-            conn.execute(
+            sqlx::query(
                 "INSERT INTO messages (
                     conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
-                 ) VALUES (1, ?1, 'imessage', ?2, 0, 0, ?3)",
-                params![&account, ts, body],
+                 ) VALUES (1, $1, 'imessage', $2, 0, 0, $3)",
             )
+            .bind(&account)
+            .bind(ts)
+            .bind(body)
+            .execute(&mut *conn)
+            .await
             .unwrap();
         }
         let group_chat = account_profile::link_account_handle(
-            &conn,
+            &mut conn,
             &account,
             "chat-sam-group",
             HandleType::Other,
         )
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO conversations (
                 id, account_id, chat_handle_id, conversation_type, group_title, source_file
-             ) VALUES (2, ?1, ?2, 'group', 'Sam Group', 'g.jsonl')",
-            params![&account, group_chat],
+             ) VALUES (2, $1, $2, 'group', 'Sam Group', 'g.jsonl')",
         )
+        .bind(&account)
+        .bind(group_chat)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO participants (conversation_id, handle_id, name_alias)
-             VALUES (2, ?1, 'Sam')",
-            params![sam_handle],
+             VALUES (2, $1, 'Sam')",
         )
+        .bind(sam_handle)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO messages (
                 conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
-             ) VALUES (2, ?1, 'imessage', '2024-07-01T12:00:00Z', 0, 0, 'group hi')",
-            params![&account],
+             ) VALUES (2, $1, 'imessage', '2024-07-01T12:00:00Z', 0, 0, 'group hi')",
         )
+        .bind(&account)
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
-        conn.execute(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Pat')",
-            params![&account],
+        let pat_id: i64 = sqlx::query_scalar(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Pat') RETURNING id",
         )
+        .bind(&account)
+        .fetch_one(&mut *conn)
+        .await
         .unwrap();
-        let pat_id: i64 = conn
-            .query_row(
-                "SELECT id FROM contacts WHERE account_id = ?1 AND preferred_name = 'Pat'",
-                params![&account],
-                |r| r.get(0),
-            )
-            .unwrap();
         let pat_handle = account_profile::link_account_handle(
-            &conn,
+            &mut conn,
             &account,
             "+15555550100",
             HandleType::Phone,
         )
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO contact_handles (account_id, handle_id, contact_id)
-             VALUES (?1, ?2, ?3)",
-            params![&account, pat_handle, pat_id],
+             VALUES ($1, $2, $3)",
         )
+        .bind(&account)
+        .bind(pat_handle)
+        .bind(pat_id)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO conversations (
                 id, account_id, chat_handle_id, conversation_type, source_file
-             ) VALUES (3, ?1, ?2, 'individual', 'pat.jsonl')",
-            params![&account, pat_handle],
+             ) VALUES (3, $1, $2, 'individual', 'pat.jsonl')",
         )
+        .bind(&account)
+        .bind(pat_handle)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO participants (conversation_id, handle_id, name_alias)
-             VALUES (3, ?1, 'Pat')",
-            params![pat_handle],
+             VALUES (3, $1, 'Pat')",
         )
+        .bind(pat_handle)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO messages (
                 conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
-             ) VALUES (3, ?1, 'imessage', '2024-05-01T09:00:00Z', 0, 0, 'hey')",
-            params![&account],
+             ) VALUES (3, $1, 'imessage', '2024-05-01T09:00:00Z', 0, 0, 'hey')",
         )
+        .bind(&account)
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
-        let summaries = get_contact_summaries(&conn, &account, &[sam_id, pat_id, 99_999]).unwrap();
+        let summaries = get_contact_summaries(&mut conn, &account, &[sam_id, pat_id, 99_999])
+            .await
+            .unwrap();
         assert_eq!(summaries.len(), 2);
 
         assert_eq!(summaries[0].id, sam_id);
@@ -1804,25 +1983,21 @@ mod tests {
         );
     }
 
-    #[test]
-    fn mutate_contact_add_update_remove_handle_and_rename() {
-        let (conn, account) = setup();
-        conn.execute(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Sam')",
-            params![&account],
+    #[tokio::test]
+    async fn mutate_contact_add_update_remove_handle_and_rename() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let contact_id: i64 = sqlx::query_scalar(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Sam') RETURNING id",
         )
+        .bind(&account)
+        .fetch_one(&mut *conn)
+        .await
         .unwrap();
-        let contact_id: i64 = conn
-            .query_row(
-                "SELECT id FROM contacts WHERE account_id = ?1",
-                params![&account],
-                |r| r.get(0),
-            )
-            .unwrap();
 
         assert!(
             mutate_contact(
-                &conn,
+                &mut conn,
                 &account,
                 contact_id,
                 &ContactMutationBody {
@@ -1835,10 +2010,12 @@ mod tests {
                     remove_handle: None,
                 },
             )
+            .await
             .unwrap()
         );
 
-        let detail = get_contact_detail(&conn, &account, contact_id)
+        let detail = get_contact_detail(&mut conn, &account, contact_id)
+            .await
             .unwrap()
             .unwrap();
         assert_eq!(detail.handles.len(), 1);
@@ -1846,7 +2023,7 @@ mod tests {
 
         assert!(
             mutate_contact(
-                &conn,
+                &mut conn,
                 &account,
                 contact_id,
                 &ContactMutationBody {
@@ -1856,16 +2033,18 @@ mod tests {
                     remove_handle: None,
                 },
             )
+            .await
             .unwrap()
         );
-        let renamed = get_contact_detail(&conn, &account, contact_id)
+        let renamed = get_contact_detail(&mut conn, &account, contact_id)
+            .await
             .unwrap()
             .unwrap();
         assert_eq!(renamed.name, "Samantha");
 
         assert!(
             mutate_contact(
-                &conn,
+                &mut conn,
                 &account,
                 contact_id,
                 &ContactMutationBody {
@@ -1879,9 +2058,11 @@ mod tests {
                     remove_handle: None,
                 },
             )
+            .await
             .unwrap()
         );
-        let updated = get_contact_detail(&conn, &account, contact_id)
+        let updated = get_contact_detail(&mut conn, &account, contact_id)
+            .await
             .unwrap()
             .unwrap();
         assert_eq!(updated.handles.len(), 1);
@@ -1889,7 +2070,7 @@ mod tests {
 
         assert!(
             mutate_contact(
-                &conn,
+                &mut conn,
                 &account,
                 contact_id,
                 &ContactMutationBody {
@@ -1902,26 +2083,31 @@ mod tests {
                     }),
                 },
             )
+            .await
             .unwrap()
         );
-        let empty = get_contact_detail(&conn, &account, contact_id)
+        let empty = get_contact_detail(&mut conn, &account, contact_id)
+            .await
             .unwrap()
             .unwrap();
         assert!(empty.handles.is_empty());
     }
 
-    #[test]
-    fn mutate_contact_rejects_trashed_contact() {
-        let (conn, account) = setup();
-        let contact_id = insert_contact_with_handle(&conn, &account, "Trashed", "+15555550100");
-        conn.execute(
-            "INSERT INTO trashed_contacts (account_id, contact_id) VALUES (?1, ?2)",
-            params![&account, contact_id],
-        )
-        .unwrap();
+    #[tokio::test]
+    async fn mutate_contact_rejects_trashed_contact() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let contact_id =
+            insert_contact_with_handle(&mut conn, &account, "Trashed", "+15555550100").await;
+        sqlx::query("INSERT INTO trashed_contacts (account_id, contact_id) VALUES ($1, $2)")
+            .bind(&account)
+            .bind(contact_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
 
         let changed = mutate_contact(
-            &conn,
+            &mut conn,
             &account,
             contact_id,
             &ContactMutationBody {
@@ -1931,64 +2117,76 @@ mod tests {
                 remove_handle: None,
             },
         )
+        .await
         .unwrap();
 
         assert!(!changed);
-        let name: String = conn
-            .query_row(
-                "SELECT preferred_name FROM contacts WHERE id = ?1 AND account_id = ?2",
-                params![contact_id, &account],
-                |row| row.get(0),
-            )
-            .unwrap();
+        let name: String = sqlx::query_scalar(
+            "SELECT preferred_name FROM contacts WHERE id = $1 AND account_id = $2",
+        )
+        .bind(contact_id)
+        .bind(&account)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
         assert_eq!(name, "Trashed");
     }
 
-    fn contact_last_modified(conn: &Connection, account: &str, contact_id: i64) -> String {
-        conn.query_row(
-            "SELECT last_modified FROM contacts WHERE id = ?1 AND account_id = ?2",
-            params![contact_id, account],
-            |r| r.get(0),
-        )
-        .unwrap()
+    async fn contact_last_modified(
+        conn: &mut AnyConnection,
+        account: &str,
+        contact_id: i64,
+    ) -> String {
+        sqlx::query_scalar("SELECT last_modified FROM contacts WHERE id = $1 AND account_id = $2")
+            .bind(contact_id)
+            .bind(account)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap()
     }
 
-    fn set_contact_last_modified(conn: &Connection, account: &str, contact_id: i64, value: &str) {
-        conn.execute(
-            "UPDATE contacts SET last_modified = ?1 WHERE id = ?2 AND account_id = ?3",
-            params![value, contact_id, account],
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn mutate_contact_bumps_last_modified_on_shape_changes() {
-        let (conn, account) = setup();
-        conn.execute(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Sam')",
-            params![&account],
-        )
-        .unwrap();
-        let contact_id: i64 = conn
-            .query_row(
-                "SELECT id FROM contacts WHERE account_id = ?1",
-                params![&account],
-                |r| r.get(0),
-            )
+    async fn set_contact_last_modified(
+        conn: &mut AnyConnection,
+        account: &str,
+        contact_id: i64,
+        value: &str,
+    ) {
+        sqlx::query("UPDATE contacts SET last_modified = $1 WHERE id = $2 AND account_id = $3")
+            .bind(value)
+            .bind(contact_id)
+            .bind(account)
+            .execute(&mut *conn)
+            .await
             .unwrap();
+    }
 
-        let detail = get_contact_detail(&conn, &account, contact_id)
+    #[tokio::test]
+    async fn mutate_contact_bumps_last_modified_on_shape_changes() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let contact_id: i64 = sqlx::query_scalar(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Sam') RETURNING id",
+        )
+        .bind(&account)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+
+        let detail = get_contact_detail(&mut conn, &account, contact_id)
+            .await
             .unwrap()
             .unwrap();
         assert!(!detail.last_modified.is_empty());
-        let page = list_contacts(&conn, &account, "", DEFAULT_LIST_LIMIT, 0).unwrap();
+        let page = list_contacts(&mut conn, &account, "", DEFAULT_LIST_LIMIT, 0)
+            .await
+            .unwrap();
         assert_eq!(page.contacts[0].last_modified, detail.last_modified);
 
         const OLD: &str = "2000-01-01 00:00:00";
-        set_contact_last_modified(&conn, &account, contact_id, OLD);
+        set_contact_last_modified(&mut conn, &account, contact_id, OLD).await;
         assert!(
             mutate_contact(
-                &conn,
+                &mut conn,
                 &account,
                 contact_id,
                 &ContactMutationBody {
@@ -1998,15 +2196,16 @@ mod tests {
                     remove_handle: None,
                 },
             )
+            .await
             .unwrap()
         );
-        let after_rename = contact_last_modified(&conn, &account, contact_id);
+        let after_rename = contact_last_modified(&mut conn, &account, contact_id).await;
         assert_ne!(after_rename, OLD);
 
-        set_contact_last_modified(&conn, &account, contact_id, OLD);
+        set_contact_last_modified(&mut conn, &account, contact_id, OLD).await;
         assert!(
             mutate_contact(
-                &conn,
+                &mut conn,
                 &account,
                 contact_id,
                 &ContactMutationBody {
@@ -2019,16 +2218,17 @@ mod tests {
                     remove_handle: None,
                 },
             )
+            .await
             .unwrap()
         );
-        let after_add = contact_last_modified(&conn, &account, contact_id);
+        let after_add = contact_last_modified(&mut conn, &account, contact_id).await;
         assert_ne!(after_add, OLD);
 
         // Re-adding the same handle is a no-op and must not bump.
-        set_contact_last_modified(&conn, &account, contact_id, OLD);
+        set_contact_last_modified(&mut conn, &account, contact_id, OLD).await;
         assert!(
             mutate_contact(
-                &conn,
+                &mut conn,
                 &account,
                 contact_id,
                 &ContactMutationBody {
@@ -2041,14 +2241,18 @@ mod tests {
                     remove_handle: None,
                 },
             )
+            .await
             .unwrap()
         );
-        assert_eq!(contact_last_modified(&conn, &account, contact_id), OLD);
+        assert_eq!(
+            contact_last_modified(&mut conn, &account, contact_id).await,
+            OLD
+        );
 
-        set_contact_last_modified(&conn, &account, contact_id, OLD);
+        set_contact_last_modified(&mut conn, &account, contact_id, OLD).await;
         assert!(
             mutate_contact(
-                &conn,
+                &mut conn,
                 &account,
                 contact_id,
                 &ContactMutationBody {
@@ -2061,134 +2265,165 @@ mod tests {
                     }),
                 },
             )
+            .await
             .unwrap()
         );
-        assert_ne!(contact_last_modified(&conn, &account, contact_id), OLD);
+        assert_ne!(
+            contact_last_modified(&mut conn, &account, contact_id).await,
+            OLD
+        );
     }
 
-    fn insert_contact_with_handle(
-        conn: &Connection,
+    async fn insert_contact_with_handle(
+        conn: &mut AnyConnection,
         account: &str,
         name: &str,
         phone: &str,
     ) -> i64 {
         // Schema requires preferred_name NOT NULL; empty string = no display name.
-        conn.execute(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, ?2)",
-            params![account, name],
+        let contact_id: i64 = sqlx::query_scalar(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, $2) RETURNING id",
         )
+        .bind(account)
+        .bind(name)
+        .fetch_one(&mut *conn)
+        .await
         .unwrap();
-        let contact_id: i64 = conn
-            .query_row(
-                "SELECT id FROM contacts WHERE account_id = ?1 ORDER BY id DESC LIMIT 1",
-                params![account],
-                |r| r.get(0),
-            )
-            .unwrap();
         let handle_id =
-            account_profile::link_account_handle(conn, account, phone, HandleType::Phone).unwrap();
-        conn.execute(
+            account_profile::link_account_handle(conn, account, phone, HandleType::Phone)
+                .await
+                .unwrap();
+        sqlx::query(
             "INSERT INTO contact_handles (account_id, handle_id, contact_id)
-             VALUES (?1, ?2, ?3)",
-            params![account, handle_id, contact_id],
+             VALUES ($1, $2, $3)",
         )
+        .bind(account)
+        .bind(handle_id)
+        .bind(contact_id)
+        .execute(&mut *conn)
+        .await
         .unwrap();
         contact_id
     }
 
-    fn insert_direct_conversation(
-        conn: &Connection,
+    async fn insert_direct_conversation(
+        conn: &mut AnyConnection,
         account: &str,
         conversation_id: i64,
         phone: &str,
         service: &str,
         timestamps: &[&str],
     ) {
-        let handle_id = conn
-            .query_row(
-                "SELECT id FROM handles WHERE account_id = ?1 AND (raw = ?2 OR normalized = ?2) LIMIT 1",
-                params![account, phone],
-                |r| r.get::<_, i64>(0),
-            )
-            .unwrap_or_else(|_| {
+        let handle_id: i64 = match sqlx::query_scalar::<_, i64>(
+            "SELECT id FROM handles WHERE account_id = $1 AND (raw = $2 OR normalized = $2) LIMIT 1",
+        )
+        .bind(account)
+        .bind(phone)
+        .fetch_optional(&mut *conn)
+        .await
+        .unwrap()
+        {
+            Some(id) => id,
+            None => {
                 account_profile::link_account_handle(conn, account, phone, HandleType::Phone)
+                    .await
                     .unwrap()
-            });
-        conn.execute(
+            }
+        };
+        sqlx::query(
             "INSERT INTO conversations (
                 id, account_id, chat_handle_id, conversation_type, source_file
-             ) VALUES (?1, ?2, ?3, 'individual', 't.jsonl')",
-            params![conversation_id, account, handle_id],
+             ) VALUES ($1, $2, $3, 'individual', 't.jsonl')",
         )
+        .bind(conversation_id)
+        .bind(account)
+        .bind(handle_id)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO participants (conversation_id, handle_id, name_alias)
-             VALUES (?1, ?2, NULL)",
-            params![conversation_id, handle_id],
+             VALUES ($1, $2, NULL)",
         )
+        .bind(conversation_id)
+        .bind(handle_id)
+        .execute(&mut *conn)
+        .await
         .unwrap();
         for (i, ts) in timestamps.iter().enumerate() {
-            conn.execute(
+            sqlx::query(
                 "INSERT INTO messages (
                     conversation_id, account_id, source, service, timestamp, is_from_me, sort_order, body
-                 ) VALUES (?1, ?2, ?3, ?3, ?4, 0, ?5, 'hi')",
-                params![conversation_id, account, service, ts, i as i64],
+                 ) VALUES ($1, $2, $3, $3, $4, 0, $5, 'hi')",
             )
+            .bind(conversation_id)
+            .bind(account)
+            .bind(service)
+            .bind(ts)
+            .bind(i as i64)
+            .execute(&mut *conn)
+            .await
             .unwrap();
         }
     }
 
-    #[test]
-    fn list_contacts_filters_has_messages_and_never_messaged() {
-        let (conn, account) = setup();
-        insert_contact_with_handle(&conn, &account, "Messaged", "+15555550100");
-        insert_contact_with_handle(&conn, &account, "Silent", "+15555550200");
+    #[tokio::test]
+    async fn list_contacts_filters_has_messages_and_never_messaged() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        insert_contact_with_handle(&mut conn, &account, "Messaged", "+15555550100").await;
+        insert_contact_with_handle(&mut conn, &account, "Silent", "+15555550200").await;
         insert_direct_conversation(
-            &conn,
+            &mut conn,
             &account,
             1,
             "+15555550100",
             "imessage",
             &["2024-06-01T12:00:00Z"],
-        );
+        )
+        .await;
 
         let with_msg = list_contacts(
-            &conn,
+            &mut conn,
             &account,
             "has:messages search:contacts",
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(with_msg.total, 1);
         assert_eq!(with_msg.contacts[0].name, "Messaged");
 
         let never = list_contacts(
-            &conn,
+            &mut conn,
             &account,
             "has:no-messages search:contacts",
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(never.total, 1);
         assert_eq!(never.contacts[0].name, "Silent");
     }
 
-    #[test]
-    fn list_contacts_filters_no_preferred_name() {
-        let (conn, account) = setup();
-        insert_contact_with_handle(&conn, &account, "Pat", "+15555550100");
-        insert_contact_with_handle(&conn, &account, "", "+15555550200");
-        insert_contact_with_handle(&conn, &account, "+15555550300", "+15555550300");
+    #[tokio::test]
+    async fn list_contacts_filters_no_preferred_name() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        insert_contact_with_handle(&mut conn, &account, "Pat", "+15555550100").await;
+        insert_contact_with_handle(&mut conn, &account, "", "+15555550200").await;
+        insert_contact_with_handle(&mut conn, &account, "+15555550300", "+15555550300").await;
 
         let page = list_contacts(
-            &conn,
+            &mut conn,
             &account,
             "has:no-name search:contacts",
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(page.total, 2);
         let names: Vec<_> = page.contacts.iter().map(|c| c.name.as_str()).collect();
@@ -2196,67 +2431,75 @@ mod tests {
         assert!(names.iter().any(|n| n.contains("5555550300")));
     }
 
-    #[test]
-    fn list_contacts_filters_no_handle() {
-        let (conn, account) = setup();
-        insert_contact_with_handle(&conn, &account, "WithHandle", "+15555550100");
-        conn.execute(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, ?2)",
-            params![account, "Orphan"],
-        )
-        .unwrap();
+    #[tokio::test]
+    async fn list_contacts_filters_no_handle() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        insert_contact_with_handle(&mut conn, &account, "WithHandle", "+15555550100").await;
+        sqlx::query("INSERT INTO contacts (account_id, preferred_name) VALUES ($1, $2)")
+            .bind(&account)
+            .bind("Orphan")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
 
         let page = list_contacts(
-            &conn,
+            &mut conn,
             &account,
             "has:no-handle search:contacts",
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(page.total, 1);
         assert_eq!(page.contacts[0].name, "Orphan");
         assert_eq!(page.contacts[0].handle_count, 0);
     }
 
-    #[test]
-    fn list_contacts_filters_service_or() {
-        let (conn, account) = setup();
-        insert_contact_with_handle(&conn, &account, "IMsg", "+15555550100");
-        insert_contact_with_handle(&conn, &account, "Sms", "+15555550200");
-        insert_contact_with_handle(&conn, &account, "Wa", "+15555550300");
+    #[tokio::test]
+    async fn list_contacts_filters_service_or() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        insert_contact_with_handle(&mut conn, &account, "IMsg", "+15555550100").await;
+        insert_contact_with_handle(&mut conn, &account, "Sms", "+15555550200").await;
+        insert_contact_with_handle(&mut conn, &account, "Wa", "+15555550300").await;
         insert_direct_conversation(
-            &conn,
+            &mut conn,
             &account,
             1,
             "+15555550100",
             "iMessage",
             &["2024-06-01T12:00:00Z"],
-        );
+        )
+        .await;
         insert_direct_conversation(
-            &conn,
+            &mut conn,
             &account,
             2,
             "+15555550200",
             "sms",
             &["2024-06-01T12:00:00Z"],
-        );
+        )
+        .await;
         insert_direct_conversation(
-            &conn,
+            &mut conn,
             &account,
             3,
             "+15555550300",
             "whatsapp",
             &["2024-06-01T12:00:00Z"],
-        );
+        )
+        .await;
 
         let page = list_contacts(
-            &conn,
+            &mut conn,
             &account,
             "service:phone search:contacts",
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(page.total, 2);
         let names: Vec<_> = page.contacts.iter().map(|c| c.name.as_str()).collect();
@@ -2264,108 +2507,118 @@ mod tests {
         assert!(names.contains(&"Sms"));
     }
 
-    #[test]
-    fn list_contacts_filters_first_and_last_contact_dates() {
-        let (conn, account) = setup();
-        insert_contact_with_handle(&conn, &account, "Early", "+15555550100");
-        insert_contact_with_handle(&conn, &account, "Late", "+15555550200");
+    #[tokio::test]
+    async fn list_contacts_filters_first_and_last_contact_dates() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        insert_contact_with_handle(&mut conn, &account, "Early", "+15555550100").await;
+        insert_contact_with_handle(&mut conn, &account, "Late", "+15555550200").await;
         insert_direct_conversation(
-            &conn,
+            &mut conn,
             &account,
             1,
             "+15555550100",
             "imessage",
             &["2020-01-15T12:00:00Z", "2020-02-01T12:00:00Z"],
-        );
+        )
+        .await;
         insert_direct_conversation(
-            &conn,
+            &mut conn,
             &account,
             2,
             "+15555550200",
             "imessage",
             &["2024-06-01T12:00:00Z", "2024-08-01T12:00:00Z"],
-        );
+        )
+        .await;
 
         // Bare first-contact = on or after (back-compat).
         let first = list_contacts(
-            &conn,
+            &mut conn,
             &account,
             "first-contact:2024-01-01 search:contacts",
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(first.total, 1);
         assert_eq!(first.contacts[0].name, "Late");
 
         // Prefixed >= matches bare first semantics.
         let first_ge = list_contacts(
-            &conn,
+            &mut conn,
             &account,
             "first-contact:>=2024-01-01 search:contacts",
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(first_ge.total, 1);
         assert_eq!(first_ge.contacts[0].name, "Late");
 
         // Bare last-contact = on or before (back-compat).
         let last = list_contacts(
-            &conn,
+            &mut conn,
             &account,
             "last-contact:2020-12-31 search:contacts",
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(last.total, 1);
         assert_eq!(last.contacts[0].name, "Early");
 
         // Before: earliest message strictly before 2024-01-01 → Early only.
         let first_before = list_contacts(
-            &conn,
+            &mut conn,
             &account,
             "first-contact:<2024-01-01 search:contacts",
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(first_before.total, 1);
         assert_eq!(first_before.contacts[0].name, "Early");
 
         // Between on first message: >=2024-01-01 and <2025-01-01 → Late.
         let between = list_contacts(
-            &conn,
+            &mut conn,
             &account,
             "first-contact:>=2024-01-01 first-contact:<2025-01-01 search:contacts",
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(between.total, 1);
         assert_eq!(between.contacts[0].name, "Late");
 
         // Last message on or after mid-2024 → Late (MAX 2024-08-01).
         let last_ge = list_contacts(
-            &conn,
+            &mut conn,
             &account,
             "last-contact:>=2024-07-01 search:contacts",
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(last_ge.total, 1);
         assert_eq!(last_ge.contacts[0].name, "Late");
 
         // Last message before 2024-01-01 → Early.
         let last_before = list_contacts(
-            &conn,
+            &mut conn,
             &account,
             "last-contact:<2024-01-01 search:contacts",
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(last_before.total, 1);
         assert_eq!(last_before.contacts[0].name, "Early");
@@ -2397,31 +2650,43 @@ mod tests {
         assert!(parse_date_bound_value("<=2024-01-15", DateBoundOp::OnOrAfter).is_none());
     }
 
-    #[test]
-    fn list_contacts_filters_by_group_and_no_group() {
-        let (conn, account) = setup();
-        let family = insert_contact_with_handle(&conn, &account, "Ada", "+15555550100");
-        insert_contact_with_handle(&conn, &account, "Ben", "+15555550200");
+    #[tokio::test]
+    async fn list_contacts_filters_by_group_and_no_group() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let family = insert_contact_with_handle(&mut conn, &account, "Ada", "+15555550100").await;
+        insert_contact_with_handle(&mut conn, &account, "Ben", "+15555550200").await;
         crate::contact_groups_api::set_contacts_group_membership(
-            &conn,
+            &mut conn,
             &account,
             &[family],
             "Family",
             true,
         )
+        .await
         .unwrap();
 
-        let grouped =
-            list_contacts(&conn, &account, "group:Family", DEFAULT_LIST_LIMIT, 0).unwrap();
+        let grouped = list_contacts(&mut conn, &account, "group:Family", DEFAULT_LIST_LIMIT, 0)
+            .await
+            .unwrap();
         assert_eq!(grouped.total, 1);
         assert_eq!(grouped.contacts[0].name, "Ada");
         assert_eq!(grouped.contacts[0].groups, vec!["Family".to_string()]);
 
-        let quoted =
-            list_contacts(&conn, &account, r#"group:"Family""#, DEFAULT_LIST_LIMIT, 0).unwrap();
+        let quoted = list_contacts(
+            &mut conn,
+            &account,
+            r#"group:"Family""#,
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .await
+        .unwrap();
         assert_eq!(quoted.total, 1);
 
-        let none = list_contacts(&conn, &account, "group:none", DEFAULT_LIST_LIMIT, 0).unwrap();
+        let none = list_contacts(&mut conn, &account, "group:none", DEFAULT_LIST_LIMIT, 0)
+            .await
+            .unwrap();
         assert_eq!(none.total, 1);
         assert_eq!(none.contacts[0].name, "Ben");
         assert!(none.contacts[0].groups.is_empty());

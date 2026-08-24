@@ -5,8 +5,11 @@ use std::io::{self, Write};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
+use sqlx::AnyConnection;
+use sqlx::Connection;
+
+use crate::db::schema;
 
 /// Collapse whitespace so minor text differences do not split the same SMS.
 pub fn normalize_body(body: Option<&str>) -> String {
@@ -119,33 +122,34 @@ pub struct DedupeStats {
 }
 
 /// Source preference for survivors: first imported source (min message id), then name.
-pub fn source_priority_from_db(conn: &Connection, account_id: &str) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare(
+pub async fn source_priority_from_db(
+    conn: &mut AnyConnection,
+    account_id: &str,
+) -> Result<Vec<String>> {
+    let rows: Vec<(String,)> = sqlx::query_as(
         r#"
         SELECT m.source, MIN(m.id) AS first_id
         FROM messages m
         JOIN conversations c ON c.id = m.conversation_id
-        WHERE c.account_id = ?1
+        WHERE c.account_id = $1
           AND m.source IS NOT NULL
           AND TRIM(m.source) != ''
         GROUP BY m.source
         ORDER BY first_id ASC, m.source ASC
         "#,
-    )?;
-    let rows = stmt.query_map(params![account_id], |row| row.get::<_, String>(0))?;
-    let mut out = Vec::new();
-    for row in rows {
-        out.push(row?);
-    }
-    Ok(out)
+    )
+    .bind(account_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows.into_iter().map(|(source,)| source).collect())
 }
 
 /// Recompute every content key, clear prior flags, then soft-hide cross-source duplicates.
 ///
 /// Survivor preference: source imported first (min message id), then source name.
 /// Optional `source_priority` overrides (tests); `None` loads order from the DB.
-pub fn dedupe_cross_source(
-    conn: &mut Connection,
+pub async fn dedupe_cross_source(
+    conn: &mut AnyConnection,
     account_id: &str,
     source_priority: Option<&[String]>,
     near_window_secs: i64,
@@ -154,7 +158,7 @@ pub fn dedupe_cross_source(
     let priority = match source_priority {
         Some(p) => p,
         None => {
-            owned_priority = source_priority_from_db(conn, account_id)?;
+            owned_priority = source_priority_from_db(conn, account_id).await?;
             owned_priority.as_slice()
         }
     };
@@ -169,19 +173,21 @@ pub fn dedupe_cross_source(
     {
         println!("  dedupe:   recomputing content keys…");
         let _ = io::stdout().flush();
-        let tx = conn.transaction()?;
-        stats.keys_filled = recompute_all_content_keys(&tx, account_id)?;
-        tx.execute(
+        let mut tx = conn.begin().await?;
+        stats.keys_filled = recompute_all_content_keys(&mut tx, account_id).await?;
+        sqlx::query(
             r#"
             UPDATE messages
             SET duplicate_of = NULL
             WHERE conversation_id IN (
-                SELECT id FROM conversations WHERE account_id = ?1
+                SELECT id FROM conversations WHERE account_id = $1
             )
             "#,
-            params![account_id],
-        )?;
-        tx.commit()?;
+        )
+        .bind(account_id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
         println!(
             "  dedupe:   keys filled={}  ({:.1}s)",
             stats.keys_filled,
@@ -192,11 +198,11 @@ pub fn dedupe_cross_source(
     {
         println!("  dedupe:   pass A exact content_key…");
         let _ = io::stdout().flush();
-        let tx = conn.transaction()?;
-        let (groups, flagged) = flag_exact_content_key_dupes(&tx, account_id, &prio)?;
+        let mut tx = conn.begin().await?;
+        let (groups, flagged) = flag_exact_content_key_dupes(&mut tx, account_id, &prio).await?;
         stats.exact_groups = groups;
         stats.exact_flagged = flagged;
-        tx.commit()?;
+        tx.commit().await?;
         println!(
             "  dedupe:   exact groups={} flagged={}  ({:.1}s)",
             stats.exact_groups,
@@ -208,9 +214,10 @@ pub fn dedupe_cross_source(
     {
         println!("  dedupe:   pass B near-time (±{near_window_secs}s)…");
         let _ = io::stdout().flush();
-        let tx = conn.transaction()?;
-        stats.near_flagged = flag_near_time_dupes(&tx, account_id, &prio, near_window_secs)?;
-        tx.commit()?;
+        let mut tx = conn.begin().await?;
+        stats.near_flagged =
+            flag_near_time_dupes(&mut tx, account_id, &prio, near_window_secs).await?;
+        tx.commit().await?;
         println!(
             "  dedupe:   near flagged={}  ({:.1}s total)",
             stats.near_flagged,
@@ -222,20 +229,24 @@ pub fn dedupe_cross_source(
 }
 
 /// Compute `content_key` for production rows that still lack one (after attachments exist).
-pub fn fill_missing_content_keys(conn: &Connection, account_id: &str) -> Result<u64> {
-    recompute_content_keys(conn, true, account_id)
+pub async fn fill_missing_content_keys(conn: &mut AnyConnection, account_id: &str) -> Result<u64> {
+    recompute_content_keys(conn, true, account_id).await
 }
 
 /// Rebuild every message `content_key` from current chat/time/body/attachments.
-pub fn recompute_all_content_keys(conn: &Connection, account_id: &str) -> Result<u64> {
-    recompute_content_keys(conn, false, account_id)
+pub async fn recompute_all_content_keys(conn: &mut AnyConnection, account_id: &str) -> Result<u64> {
+    recompute_content_keys(conn, false, account_id).await
 }
 
-fn recompute_content_keys(conn: &Connection, missing_only: bool, account_id: &str) -> Result<u64> {
+async fn recompute_content_keys(
+    conn: &mut AnyConnection,
+    missing_only: bool,
+    account_id: &str,
+) -> Result<u64> {
     let filter = if missing_only {
-        "WHERE (m.content_key IS NULL OR m.content_key = '') AND c.account_id = ?1"
+        "WHERE (m.content_key IS NULL OR m.content_key = '') AND c.account_id = $1"
     } else {
-        "WHERE c.account_id = ?1"
+        "WHERE c.account_id = $1"
     };
     let sql = format!(
         r#"
@@ -250,7 +261,6 @@ fn recompute_content_keys(conn: &Connection, missing_only: bool, account_id: &st
         ORDER BY m.id
         "#
     );
-    let mut stmt = conn.prepare(&sql)?;
     type ExactDedupeRow = (
         i64,
         i64,
@@ -262,22 +272,10 @@ fn recompute_content_keys(conn: &Connection, missing_only: bool, account_id: &st
         Option<String>,
         Option<String>,
     );
-    let rows: Vec<ExactDedupeRow> = stmt
-        .query_map(params![account_id], |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-                row.get(5)?,
-                row.get(6)?,
-                row.get(7)?,
-                row.get(8)?,
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    drop(stmt);
+    let rows: Vec<ExactDedupeRow> = sqlx::query_as(&sql)
+        .bind(account_id)
+        .fetch_all(&mut *conn)
+        .await?;
 
     if rows.is_empty() {
         return Ok(0);
@@ -287,22 +285,21 @@ fn recompute_content_keys(conn: &Connection, missing_only: bool, account_id: &st
     // across import sources).
     let mut group_handles: HashMap<i64, Vec<String>> = HashMap::new();
     {
-        let mut p_stmt = conn.prepare(
+        let p_rows: Vec<(i64, String)> = sqlx::query_as(
             r#"
             SELECT p.conversation_id, h.normalized
             FROM participants p
             JOIN conversations c ON c.id = p.conversation_id
             JOIN handles h ON h.id = p.handle_id
-            WHERE c.account_id = ?1
+            WHERE c.account_id = $1
               AND h.normalized IS NOT NULL AND h.normalized != ''
             ORDER BY p.conversation_id, h.normalized
             "#,
-        )?;
-        let p_rows = p_stmt.query_map(params![account_id], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-        })?;
-        for row in p_rows {
-            let (conversation_id, handle) = row?;
+        )
+        .bind(account_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        for (conversation_id, handle) in p_rows {
             group_handles
                 .entry(conversation_id)
                 .or_default()
@@ -315,23 +312,24 @@ fn recompute_content_keys(conn: &Connection, missing_only: bool, account_id: &st
     let max_id = rows.last().map(|r| r.0).unwrap_or(0);
     let mut shas_by_msg: HashMap<i64, Vec<String>> = HashMap::new();
     {
-        let mut att_stmt = conn.prepare(
+        let att_rows: Vec<(i64, String)> = sqlx::query_as(
             r#"
             SELECT a.message_id, a.sha256
             FROM attachments a
             JOIN messages m ON m.id = a.message_id
             JOIN conversations c ON c.id = m.conversation_id
-            WHERE c.account_id = ?1
-              AND a.message_id BETWEEN ?2 AND ?3
+            WHERE c.account_id = $1
+              AND a.message_id BETWEEN $2 AND $3
               AND a.sha256 IS NOT NULL AND a.sha256 != ''
             ORDER BY a.message_id
             "#,
-        )?;
-        let att_rows = att_stmt.query_map(params![account_id, min_id, max_id], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-        })?;
-        for row in att_rows {
-            let (message_id, sha) = row?;
+        )
+        .bind(account_id)
+        .bind(min_id)
+        .bind(max_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        for (message_id, sha) in att_rows {
             shas_by_msg.entry(message_id).or_default().push(sha);
         }
     }
@@ -372,32 +370,39 @@ fn recompute_content_keys(conn: &Connection, missing_only: bool, account_id: &st
     }
 
     let filled = keys.len() as u64;
-    conn.execute_batch(
+    for stmt in schema::split_ddl(
         r#"
         CREATE TEMP TABLE IF NOT EXISTS _content_keys (
-            id INTEGER PRIMARY KEY,
+            id BIGINT PRIMARY KEY,
             content_key TEXT NOT NULL
         );
         DELETE FROM _content_keys;
         "#,
-    )?;
+    ) {
+        sqlx::query(&stmt).execute(&mut *conn).await?;
+    }
     {
-        let mut ins =
-            conn.prepare("INSERT INTO _content_keys (id, content_key) VALUES (?1, ?2)")?;
         for (id, key) in &keys {
-            ins.execute(params![id, key])?;
+            sqlx::query("INSERT INTO _content_keys (id, content_key) VALUES ($1, $2)")
+                .bind(id)
+                .bind(key)
+                .execute(&mut *conn)
+                .await?;
         }
     }
-    conn.execute(
+    sqlx::query(
         r#"
         UPDATE messages AS m
         SET content_key = k.content_key
         FROM _content_keys AS k
         WHERE m.id = k.id
         "#,
-        [],
-    )?;
-    conn.execute_batch("DROP TABLE IF EXISTS _content_keys;")?;
+    )
+    .execute(&mut *conn)
+    .await?;
+    for stmt in schema::split_ddl("DROP TABLE IF EXISTS _content_keys;") {
+        sqlx::query(&stmt).execute(&mut *conn).await?;
+    }
 
     Ok(filled)
 }
@@ -409,16 +414,16 @@ struct Cand {
     att_count: i64,
 }
 
-fn flag_exact_content_key_dupes(
-    conn: &Connection,
+async fn flag_exact_content_key_dupes(
+    conn: &mut AnyConnection,
     account_id: &str,
     prio: &HashMap<&str, usize>,
 ) -> Result<(u64, u64)> {
     // One scan of messages + one aggregated attachment pass, then group in Rust.
     // Avoids N round-trips (one SELECT + several UPDATEs per duplicate key).
-    let mut stmt = conn.prepare(
+    let rows: Vec<(i64, String, String, i64)> = sqlx::query_as(
         r#"
-        SELECT m.id, m.source, m.content_key, IFNULL(ac.n, 0)
+        SELECT m.id, m.source, m.content_key, COALESCE(ac.n, 0)
         FROM messages m
         JOIN conversations c ON c.id = m.conversation_id
         LEFT JOIN (
@@ -426,35 +431,26 @@ fn flag_exact_content_key_dupes(
             FROM attachments a
             JOIN messages m2 ON m2.id = a.message_id
             JOIN conversations c2 ON c2.id = m2.conversation_id
-            WHERE c2.account_id = ?1
+            WHERE c2.account_id = $1
               AND a.sha256 IS NOT NULL AND a.sha256 != ''
             GROUP BY a.message_id
         ) ac ON ac.message_id = m.id
-        WHERE c.account_id = ?1
+        WHERE c.account_id = $1
           AND m.content_key IS NOT NULL AND m.content_key != ''
         "#,
-    )?;
+    )
+    .bind(account_id)
+    .fetch_all(&mut *conn)
+    .await?;
 
     let mut by_key: HashMap<String, Vec<Cand>> = HashMap::new();
-    {
-        let rows = stmt.query_map(params![account_id], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, i64>(3)?,
-            ))
-        })?;
-        for row in rows {
-            let (id, source, content_key, att_count) = row?;
-            by_key.entry(content_key).or_default().push(Cand {
-                id,
-                source,
-                att_count,
-            });
-        }
+    for (id, source, content_key, att_count) in rows {
+        by_key.entry(content_key).or_default().push(Cand {
+            id,
+            source,
+            att_count,
+        });
     }
-    drop(stmt);
 
     let mut flags: Vec<(i64, i64)> = Vec::new(); // (loser_id, winner_id)
     let mut groups = 0u64;
@@ -477,7 +473,7 @@ fn flag_exact_content_key_dupes(
         return Ok((groups, 0));
     }
 
-    apply_duplicate_flags(conn, "_pass_a_flags", &flags)?;
+    apply_duplicate_flags(conn, "_pass_a_flags", &flags).await?;
 
     Ok((groups, flagged))
 }
@@ -589,25 +585,14 @@ struct NearRow {
     att_count: i64,
 }
 
-fn flag_near_time_dupes(
-    conn: &Connection,
+async fn flag_near_time_dupes(
+    conn: &mut AnyConnection,
     account_id: &str,
     prio: &HashMap<&str, usize>,
     window_secs: i64,
 ) -> Result<u64> {
     // Preload unflagged messages + attachment fingerprints once, then cluster in Rust.
     // Avoids per-message attachment queries and per-candidate duplicate_of SELECTs.
-    let mut msg_stmt = conn.prepare(
-        r#"
-        SELECT m.id, m.conversation_id, m.source, m.is_from_me, m.timestamp_utc, m.timestamp, m.body,
-               COALESCE(hs.normalized, '')
-        FROM messages m
-        JOIN conversations c ON c.id = m.conversation_id
-        LEFT JOIN handles hs ON hs.id = m.sender_handle_id
-        WHERE c.account_id = ?1
-          AND m.duplicate_of IS NULL
-        "#,
-    )?;
     type NearDedupeRow = (
         i64,
         i64,
@@ -618,40 +603,38 @@ fn flag_near_time_dupes(
         Option<String>,
         String,
     );
-    let msg_rows: Vec<NearDedupeRow> = msg_stmt
-        .query_map(params![account_id], |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-                row.get(5)?,
-                row.get(6)?,
-                row.get(7)?,
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    drop(msg_stmt);
+    let msg_rows: Vec<NearDedupeRow> = sqlx::query_as(
+        r#"
+        SELECT m.id, m.conversation_id, m.source, m.is_from_me, m.timestamp_utc, m.timestamp, m.body,
+               COALESCE(hs.normalized, '')
+        FROM messages m
+        JOIN conversations c ON c.id = m.conversation_id
+        LEFT JOIN handles hs ON hs.id = m.sender_handle_id
+        WHERE c.account_id = $1
+          AND m.duplicate_of IS NULL
+        "#,
+    )
+    .bind(account_id)
+    .fetch_all(&mut *conn)
+    .await?;
 
     let mut shas_by_msg: HashMap<i64, Vec<String>> = HashMap::new();
     {
-        let mut att_stmt = conn.prepare(
+        let att_rows: Vec<(i64, String)> = sqlx::query_as(
             r#"
             SELECT a.message_id, a.sha256
             FROM attachments a
             JOIN messages m ON m.id = a.message_id
             JOIN conversations c ON c.id = m.conversation_id
-            WHERE c.account_id = ?1
+            WHERE c.account_id = $1
               AND a.sha256 IS NOT NULL AND a.sha256 != ''
             ORDER BY a.message_id, a.sha256
             "#,
-        )?;
-        let att_rows = att_stmt.query_map(params![account_id], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-        })?;
-        for row in att_rows {
-            let (message_id, sha) = row?;
+        )
+        .bind(account_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        for (message_id, sha) in att_rows {
             shas_by_msg.entry(message_id).or_default().push(sha);
         }
     }
@@ -748,55 +731,80 @@ fn flag_near_time_dupes(
         return Ok(0);
     }
 
-    apply_duplicate_flags(conn, "_pass_b_flags", &flags)?;
+    apply_duplicate_flags(conn, "_pass_b_flags", &flags).await?;
 
     Ok(flagged)
 }
 
-fn apply_duplicate_flags(conn: &Connection, table: &str, flags: &[(i64, i64)]) -> Result<()> {
-    conn.execute_batch(&format!(
+async fn apply_duplicate_flags(
+    conn: &mut AnyConnection,
+    table: &str,
+    flags: &[(i64, i64)],
+) -> Result<()> {
+    for stmt in schema::split_ddl(&format!(
         "CREATE TEMP TABLE IF NOT EXISTS {table} (
-            id INTEGER PRIMARY KEY,
-            winner INTEGER NOT NULL
+            id BIGINT PRIMARY KEY,
+            winner BIGINT NOT NULL
         );
         DELETE FROM {table};"
-    ))?;
+    )) {
+        sqlx::query(&stmt).execute(&mut *conn).await?;
+    }
     {
-        let sql = format!("INSERT INTO {table} (id, winner) VALUES (?1, ?2)");
-        let mut ins = conn.prepare(&sql)?;
+        let insert_sql = format!("INSERT INTO {table} (id, winner) VALUES ($1, $2)");
         for (id, winner) in flags {
-            ins.execute(params![id, winner])?;
+            sqlx::query(&insert_sql)
+                .bind(id)
+                .bind(winner)
+                .execute(&mut *conn)
+                .await?;
         }
     }
-    conn.execute(
-        &format!(
-            "UPDATE messages AS m
-             SET duplicate_of = f.winner
-             FROM {table} AS f
-             WHERE m.id = f.id"
-        ),
-        [],
-    )?;
-    conn.execute_batch(&format!("DROP TABLE IF EXISTS {table};"))?;
+    sqlx::query(&format!(
+        "UPDATE messages AS m
+         SET duplicate_of = f.winner
+         FROM {table} AS f
+         WHERE m.id = f.id"
+    ))
+    .execute(&mut *conn)
+    .await?;
+    for stmt in schema::split_ddl(&format!("DROP TABLE IF EXISTS {table};")) {
+        sqlx::query(&stmt).execute(&mut *conn).await?;
+    }
     Ok(())
 }
 
-/// Open DB helpers used by CLI.
-pub fn run_dedupe(
+/// Open DB helpers used by CLI. `db_url` (`postgres://…` or `sqlite://…`)
+/// selects the engine and wins over `db_path`, mirroring
+/// [`crate::import_cli`]'s pool choice.
+pub async fn run_dedupe(
     db_path: &std::path::Path,
     account_id: &str,
     near_window_secs: i64,
+    db_url: Option<&str>,
 ) -> Result<DedupeStats> {
-    let mut conn = crate::db::schema::open_configured(db_path)
-        .with_context(|| format!("failed to open database {}", db_path.display()))?;
-    crate::db::schema::ensure_vault_schema(&conn)?;
-    dedupe_cross_source(&mut conn, account_id, None, near_window_secs)
+    let pool = match db_url {
+        Some(url) => crate::db::engine::open_pool_from_url(url)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to open database at {}",
+                    crate::import_cli::redact_db_url(url)
+                )
+            })?,
+        None => crate::db::engine::open_pool_for_path(db_path)
+            .await
+            .with_context(|| format!("failed to open database {}", db_path.display()))?,
+    };
+    let mut conn = pool.acquire().await?;
+    crate::db::schema::ensure_vault_schema(&mut conn).await?;
+    dedupe_cross_source(&mut conn, account_id, None, near_window_secs).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::schema;
+    use crate::db::engine;
 
     #[test]
     fn normalize_collapses_whitespace() {
@@ -891,45 +899,46 @@ mod tests {
 
     const TEST_ACCOUNT_ID: &str = "00000000-0000-0000-0000-000000000001";
 
-    fn setup_db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        schema::ensure_vault_schema(&conn).unwrap();
-        conn.execute(
-            "INSERT INTO accounts (id, username, read_only) VALUES (?1, 'test', 0)",
-            params![TEST_ACCOUNT_ID],
-        )
-        .unwrap();
-        conn.execute(
+    async fn setup_db(conn: &mut AnyConnection) {
+        schema::ensure_vault_schema(conn).await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, username, read_only) VALUES ($1, 'test', 0)")
+            .bind(TEST_ACCOUNT_ID)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query(
             r#"
             INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-            VALUES (?1, '+14075551212', '+14075551212', 'phone', 'phone')
+            VALUES ($1, '+14075551212', '+14075551212', 'phone', 'phone')
             "#,
-            params![TEST_ACCOUNT_ID],
         )
+        .bind(TEST_ACCOUNT_ID)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        let handle_id: i64 = conn
-            .query_row(
-                "SELECT id FROM handles WHERE account_id = ?1 AND normalized = '+14075551212'",
-                params![TEST_ACCOUNT_ID],
-                |row| row.get(0),
-            )
-            .unwrap();
-        conn.execute(
+        let handle_id: i64 = sqlx::query_scalar(
+            "SELECT id FROM handles WHERE account_id = $1 AND normalized = '+14075551212'",
+        )
+        .bind(TEST_ACCOUNT_ID)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
             r#"
             INSERT INTO conversations (
                 account_id, chat_handle_id, conversation_type, group_title, exported_at, source_file
             )
-            VALUES (?1, ?2, 'individual', NULL, NULL, 't.json')
+            VALUES ($1, $2, 'individual', NULL, NULL, 't.json')
             "#,
-            params![TEST_ACCOUNT_ID, handle_id],
         )
+        .bind(TEST_ACCOUNT_ID)
+        .bind(handle_id)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn
     }
 
     struct InsertMsgArgs<'a> {
-        conn: &'a Connection,
         source: &'a str,
         guid: &'a str,
         utc: &'a str,
@@ -939,188 +948,220 @@ mod tests {
         sort_order: i64,
     }
 
-    fn insert_msg(args: InsertMsgArgs<'_>) -> i64 {
-        args.conn
-            .execute(
-                r#"
+    async fn insert_msg(conn: &mut AnyConnection, args: InsertMsgArgs<'_>) -> i64 {
+        sqlx::query_scalar(
+            r#"
             INSERT INTO messages (
                 conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
                 sender_handle_id, subject, body, sort_order
-            ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL, ?7, ?8)
+            ) VALUES (1, $1, $2, $3, $4, $5, $6, NULL, NULL, $7, $8)
+            RETURNING id
             "#,
-                params![
-                    TEST_ACCOUNT_ID,
-                    args.source,
-                    args.guid,
-                    args.local,
-                    args.utc,
-                    args.from_me,
-                    args.body,
-                    args.sort_order
-                ],
-            )
-            .unwrap();
-        args.conn.last_insert_rowid()
+        )
+        .bind(TEST_ACCOUNT_ID)
+        .bind(args.source)
+        .bind(args.guid)
+        .bind(args.local)
+        .bind(args.utc)
+        .bind(args.from_me)
+        .bind(args.body)
+        .bind(args.sort_order)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap()
     }
 
-    #[test]
-    fn integration_exact_flags_cross_source() {
-        let mut conn = setup_db();
-        let a = insert_msg(InsertMsgArgs {
-            conn: &conn,
-            source: "go-sms-pro",
-            guid: "g1",
-            utc: "2015-03-12T18:04:22Z",
-            local: "2015-03-12T14:04:22-04:00",
-            from_me: 1,
-            body: "Running late",
-            sort_order: 0,
-        });
-        let b = insert_msg(InsertMsgArgs {
-            conn: &conn,
-            source: "sms-backup-plus",
-            guid: "g2",
-            utc: "2015-03-12T18:04:22+00:00",
-            local: "2015-03-12T14:04:22-04:00",
-            from_me: 1,
-            body: "Running late",
-            sort_order: 0,
-        });
+    #[tokio::test]
+    async fn integration_exact_flags_cross_source() {
+        let (pool, _dir) = engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        setup_db(&mut conn).await;
+        let a = insert_msg(
+            &mut conn,
+            InsertMsgArgs {
+                source: "go-sms-pro",
+                guid: "g1",
+                utc: "2015-03-12T18:04:22Z",
+                local: "2015-03-12T14:04:22-04:00",
+                from_me: 1,
+                body: "Running late",
+                sort_order: 0,
+            },
+        )
+        .await;
+        let b = insert_msg(
+            &mut conn,
+            InsertMsgArgs {
+                source: "sms-backup-plus",
+                guid: "g2",
+                utc: "2015-03-12T18:04:22+00:00",
+                local: "2015-03-12T14:04:22-04:00",
+                from_me: 1,
+                body: "Running late",
+                sort_order: 0,
+            },
+        )
+        .await;
         let priority = ["go-sms-pro".into(), "sms-backup-plus".into()];
-        let stats = dedupe_cross_source(&mut conn, TEST_ACCOUNT_ID, Some(&priority), 2).unwrap();
+        let stats = dedupe_cross_source(&mut conn, TEST_ACCOUNT_ID, Some(&priority), 2)
+            .await
+            .unwrap();
         assert_eq!(stats.exact_groups, 1);
         assert_eq!(stats.exact_flagged, 1);
-        let dup: Option<i64> = conn
-            .query_row(
-                "SELECT duplicate_of FROM messages WHERE id = ?1",
-                params![b],
-                |row| row.get(0),
-            )
-            .unwrap();
+        let dup: Option<i64> =
+            sqlx::query_scalar("SELECT duplicate_of FROM messages WHERE id = $1")
+                .bind(b)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
         assert_eq!(dup, Some(a));
-        let keep: Option<i64> = conn
-            .query_row(
-                "SELECT duplicate_of FROM messages WHERE id = ?1",
-                params![a],
-                |row| row.get(0),
-            )
-            .unwrap();
+        let keep: Option<i64> =
+            sqlx::query_scalar("SELECT duplicate_of FROM messages WHERE id = $1")
+                .bind(a)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
         assert_eq!(keep, None);
     }
 
-    #[test]
-    fn integration_near_flags_within_window() {
-        let mut conn = setup_db();
-        let a = insert_msg(InsertMsgArgs {
-            conn: &conn,
-            source: "go-sms-pro",
-            guid: "g1",
-            utc: "2015-03-12T18:04:22Z",
-            local: "2015-03-12T14:04:22-04:00",
-            from_me: 0,
-            body: "On my way",
-            sort_order: 0,
-        });
-        let b = insert_msg(InsertMsgArgs {
-            conn: &conn,
-            source: "sms-backup-plus",
-            guid: "g2",
-            utc: "2015-03-12T18:04:24Z",
-            local: "2015-03-12T14:04:24-04:00",
-            from_me: 0,
-            body: "On my way",
-            sort_order: 1,
-        });
+    #[tokio::test]
+    async fn integration_near_flags_within_window() {
+        let (pool, _dir) = engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        setup_db(&mut conn).await;
+        let a = insert_msg(
+            &mut conn,
+            InsertMsgArgs {
+                source: "go-sms-pro",
+                guid: "g1",
+                utc: "2015-03-12T18:04:22Z",
+                local: "2015-03-12T14:04:22-04:00",
+                from_me: 0,
+                body: "On my way",
+                sort_order: 0,
+            },
+        )
+        .await;
+        let b = insert_msg(
+            &mut conn,
+            InsertMsgArgs {
+                source: "sms-backup-plus",
+                guid: "g2",
+                utc: "2015-03-12T18:04:24Z",
+                local: "2015-03-12T14:04:24-04:00",
+                from_me: 0,
+                body: "On my way",
+                sort_order: 1,
+            },
+        )
+        .await;
         let priority = ["go-sms-pro".into(), "sms-backup-plus".into()];
-        let stats = dedupe_cross_source(&mut conn, TEST_ACCOUNT_ID, Some(&priority), 2).unwrap();
+        let stats = dedupe_cross_source(&mut conn, TEST_ACCOUNT_ID, Some(&priority), 2)
+            .await
+            .unwrap();
         assert_eq!(stats.exact_flagged, 0);
         assert_eq!(stats.near_flagged, 1);
-        let dup: Option<i64> = conn
-            .query_row(
-                "SELECT duplicate_of FROM messages WHERE id = ?1",
-                params![b],
-                |row| row.get(0),
-            )
-            .unwrap();
+        let dup: Option<i64> =
+            sqlx::query_scalar("SELECT duplicate_of FROM messages WHERE id = $1")
+                .bind(b)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
         assert_eq!(dup, Some(a));
     }
 
-    #[test]
-    fn integration_negative_far_apart_not_flagged() {
-        let mut conn = setup_db();
-        insert_msg(InsertMsgArgs {
-            conn: &conn,
-            source: "go-sms-pro",
-            guid: "g1",
-            utc: "2015-03-12T18:04:22Z",
-            local: "2015-03-12T14:04:22-04:00",
-            from_me: 0,
-            body: "On my way",
-            sort_order: 0,
-        });
-        insert_msg(InsertMsgArgs {
-            conn: &conn,
-            source: "sms-backup-plus",
-            guid: "g2",
-            utc: "2015-03-12T18:05:22Z",
-            local: "2015-03-12T14:05:22-04:00",
-            from_me: 0,
-            body: "On my way",
-            sort_order: 1,
-        });
+    #[tokio::test]
+    async fn integration_negative_far_apart_not_flagged() {
+        let (pool, _dir) = engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        setup_db(&mut conn).await;
+        insert_msg(
+            &mut conn,
+            InsertMsgArgs {
+                source: "go-sms-pro",
+                guid: "g1",
+                utc: "2015-03-12T18:04:22Z",
+                local: "2015-03-12T14:04:22-04:00",
+                from_me: 0,
+                body: "On my way",
+                sort_order: 0,
+            },
+        )
+        .await;
+        insert_msg(
+            &mut conn,
+            InsertMsgArgs {
+                source: "sms-backup-plus",
+                guid: "g2",
+                utc: "2015-03-12T18:05:22Z",
+                local: "2015-03-12T14:05:22-04:00",
+                from_me: 0,
+                body: "On my way",
+                sort_order: 1,
+            },
+        )
+        .await;
         let priority = ["go-sms-pro".into(), "sms-backup-plus".into()];
-        let stats = dedupe_cross_source(&mut conn, TEST_ACCOUNT_ID, Some(&priority), 2).unwrap();
+        let stats = dedupe_cross_source(&mut conn, TEST_ACCOUNT_ID, Some(&priority), 2)
+            .await
+            .unwrap();
         assert_eq!(stats.exact_flagged, 0);
         assert_eq!(stats.near_flagged, 0);
-        let hidden: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM messages WHERE duplicate_of IS NOT NULL",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
+        let hidden: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE duplicate_of IS NOT NULL")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
         assert_eq!(hidden, 0);
     }
 
-    #[test]
-    fn integration_priority_prefers_first_imported_source() {
-        let mut conn = setup_db();
+    #[tokio::test]
+    async fn integration_priority_prefers_first_imported_source() {
+        let (pool, _dir) = engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        setup_db(&mut conn).await;
         // First row wins when priority is derived from min(message id) per source.
-        let first_imported = insert_msg(InsertMsgArgs {
-            conn: &conn,
-            source: "sms-backup-plus",
-            guid: "g1",
-            utc: "2015-03-12T18:04:22Z",
-            local: "2015-03-12T14:04:22-04:00",
-            from_me: 1,
-            body: "Hello",
-            sort_order: 0,
-        });
-        let second_imported = insert_msg(InsertMsgArgs {
-            conn: &conn,
-            source: "go-sms-pro",
-            guid: "g2",
-            utc: "2015-03-12T18:04:22Z",
-            local: "2015-03-12T14:04:22-04:00",
-            from_me: 1,
-            body: "Hello",
-            sort_order: 1,
-        });
-        dedupe_cross_source(&mut conn, TEST_ACCOUNT_ID, None, 2).unwrap();
-        let dup_first: Option<i64> = conn
-            .query_row(
-                "SELECT duplicate_of FROM messages WHERE id = ?1",
-                params![first_imported],
-                |row| row.get(0),
-            )
+        let first_imported = insert_msg(
+            &mut conn,
+            InsertMsgArgs {
+                source: "sms-backup-plus",
+                guid: "g1",
+                utc: "2015-03-12T18:04:22Z",
+                local: "2015-03-12T14:04:22-04:00",
+                from_me: 1,
+                body: "Hello",
+                sort_order: 0,
+            },
+        )
+        .await;
+        let second_imported = insert_msg(
+            &mut conn,
+            InsertMsgArgs {
+                source: "go-sms-pro",
+                guid: "g2",
+                utc: "2015-03-12T18:04:22Z",
+                local: "2015-03-12T14:04:22-04:00",
+                from_me: 1,
+                body: "Hello",
+                sort_order: 1,
+            },
+        )
+        .await;
+        dedupe_cross_source(&mut conn, TEST_ACCOUNT_ID, None, 2)
+            .await
             .unwrap();
-        let dup_second: Option<i64> = conn
-            .query_row(
-                "SELECT duplicate_of FROM messages WHERE id = ?1",
-                params![second_imported],
-                |row| row.get(0),
-            )
-            .unwrap();
+        let dup_first: Option<i64> =
+            sqlx::query_scalar("SELECT duplicate_of FROM messages WHERE id = $1")
+                .bind(first_imported)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        let dup_second: Option<i64> =
+            sqlx::query_scalar("SELECT duplicate_of FROM messages WHERE id = $1")
+                .bind(second_imported)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
         assert_eq!(dup_first, None);
         assert_eq!(dup_second, Some(first_imported));
     }
