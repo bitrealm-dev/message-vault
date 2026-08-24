@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Document and ship CORS origins for packaged desktop builds (`https://tauri.localhost` and variants). Release AppImages were blocked from Connect when the vault only allowed Vite `:5173` origins.
+
 ### Added
 
 - Generated HTTP API route catalog at `/vault/developer/rustdoc/http/`, plus an optional explorer at `/docs` when `[server] openapi_ui` is true

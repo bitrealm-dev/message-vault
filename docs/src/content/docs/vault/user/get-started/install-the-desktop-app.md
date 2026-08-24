@@ -51,3 +51,5 @@ Compiling the app and the vault from a git checkout: [Contributing](/vault/devel
 ## Next
 
 Sign in with **http://127.0.0.1:8080** and the vault username and password, then [Import from a backup](/vault/user/import-from-a-backup/). The desktop app uses the IPv4 address because `localhost` can resolve to IPv6, which a local Docker vault does not listen on.
+
+If Connect fails in a release build (AppImage, `.deb`, `.msi`, or `.dmg`) but `curl http://127.0.0.1:8080/v1/auth/mode` works, the vault’s `[server] cors_origins` list is missing the packaged-app origin. Add at least `https://tauri.localhost` (and usually `http://tauri.localhost` and `tauri://localhost`), restart the vault, and try again. Dev builds that load Vite on port 5173 need the `http://localhost:5173` / `http://127.0.0.1:5173` entries instead (or as well).
