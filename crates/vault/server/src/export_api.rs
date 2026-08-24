@@ -261,11 +261,12 @@ pub(crate) enum SqlParam {
 /// Build a query from `sql` with all params bound, in order. Placeholders in
 /// the SQL must match this order after `renumber_placeholders`.
 ///
-/// sqlx 0.8 exposes no root `Query` type, so this builds the arguments
-/// through the public `Arguments` API instead of taking a `Query` (the plan's
-/// `sqlx::Query` signature is a 0.9-era shape). `String`/`i64`/`bool`/`None`
-/// cannot fail to encode on the Any driver; an encode failure is
-/// unreachable and panics like sqlx's own `Query::bind`.
+/// sqlx 0.8.6 does not re-export `Query` at the crate root (the root
+/// `sqlx::Query` re-export is 0.9-only), so the plan's literal signature is
+/// unnameable; this builds the arguments through the public `Arguments` API
+/// instead. `String`/`i64`/`bool`/`None` cannot fail to encode on the Any
+/// driver; an encode failure is unreachable and panics like sqlx's own
+/// `Query::bind`.
 pub(crate) fn bind_all<'q>(
     sql: &'q str,
     params: &[SqlParam],
@@ -1005,21 +1006,23 @@ fn pg_prefix_tsquery(term: &str) -> String {
     format!("'{}':*", term.replace('\'', ""))
 }
 
-/// Case-insensitive equality fragment on `name` (`?` placeholder form; the
-/// renumber pass rewrites it). SQLite uses COLLATE NOCASE; Postgres lower()
-/// both sides.
-fn name_eq_ci(engine: DbEngine) -> &'static str {
+/// Case-insensitive equality fragment on the aliased `name` column (`?`
+/// placeholder form; the renumber pass rewrites it). SQLite uses COLLATE
+/// NOCASE; Postgres lower()s both sides with the alias INSIDE `lower()` —
+/// `ct.lower(...)` would parse as a schema-qualified function call.
+fn name_eq_ci(engine: DbEngine, alias: &str) -> String {
     match engine {
-        DbEngine::Sqlite => "name = ? COLLATE NOCASE",
-        DbEngine::Postgres => "lower(name) = lower(?)",
+        DbEngine::Sqlite => format!("{alias}.name = ? COLLATE NOCASE"),
+        DbEngine::Postgres => format!("lower({alias}.name) = lower(?)"),
     }
 }
 
-/// Case-insensitive equality on `name` with a hand-numbered placeholder.
-fn name_eq_sql(engine: DbEngine, placeholder: usize) -> String {
+/// Case-insensitive equality on the aliased `name` column with a hand-numbered
+/// placeholder.
+fn name_eq_sql(engine: DbEngine, alias: &str, placeholder: usize) -> String {
     match engine {
-        DbEngine::Sqlite => format!("name = ${placeholder} COLLATE NOCASE"),
-        DbEngine::Postgres => format!("lower(name) = lower(${placeholder})"),
+        DbEngine::Sqlite => format!("{alias}.name = ${placeholder} COLLATE NOCASE"),
+        DbEngine::Postgres => format!("lower({alias}.name) = lower(${placeholder})"),
     }
 }
 
@@ -1031,9 +1034,9 @@ fn has_thread_tag_sql(engine: DbEngine, exclude: bool) -> String {
            JOIN conversation_tags ct ON ct.id = ctm.tag_id
            WHERE ctm.conversation_id = c.id
              AND ct.account_id = c.account_id
-             AND ct.{name_eq}
+             AND {name_eq}
          )",
-        name_eq = name_eq_ci(engine),
+        name_eq = name_eq_ci(engine, "ct"),
     )
 }
 
@@ -1078,9 +1081,9 @@ async fn list_group_member_contact_ids(
         "SELECT cgm.contact_id
              FROM contact_group_members cgm
              JOIN contact_groups cg ON cg.id = cgm.group_id
-             WHERE cg.{name_eq} AND cg.account_id = $2
+             WHERE {name_eq} AND cg.account_id = $2
              ORDER BY cgm.contact_id",
-        name_eq = name_eq_sql(engine, 1),
+        name_eq = name_eq_sql(engine, "cg", 1),
     );
     let rows = sqlx::query(&sql)
         .bind(trimmed)
@@ -2025,6 +2028,33 @@ mod tests {
         let renumbered = renumber_placeholders(&sql);
         assert!(!renumbered.contains('?'));
         assert_eq!(renumbered.matches('$').count(), params.len());
+    }
+
+    /// The case-insensitive equality fragments must keep the table alias
+    /// INSIDE `lower()` on Postgres — `ct.lower(...)` parses as a
+    /// schema-qualified function call — at both call sites: the thread-tag
+    /// subquery (alias `ct`) and the contact-group lookup (alias `cg`). The
+    /// SQLite arms stay alias-outside COLLATE NOCASE, unchanged.
+    #[test]
+    fn pg_ci_eq_keeps_alias_inside_lower() {
+        let tag_sql = has_thread_tag_sql(DbEngine::Postgres, false);
+        assert!(tag_sql.contains("lower(ct.name) = lower(?)"), "{tag_sql}");
+        assert!(!tag_sql.contains("ct.lower("), "{tag_sql}");
+
+        let group_eq = name_eq_sql(DbEngine::Postgres, "cg", 1);
+        assert_eq!(group_eq, "lower(cg.name) = lower($1)");
+        assert!(!group_eq.contains("cg.lower("));
+
+        // SQLite arms are byte-identical in behavior to the pre-port form.
+        let tag_sqlite = has_thread_tag_sql(DbEngine::Sqlite, false);
+        assert!(
+            tag_sqlite.contains("ct.name = ? COLLATE NOCASE"),
+            "{tag_sqlite}"
+        );
+        assert_eq!(
+            name_eq_sql(DbEngine::Sqlite, "cg", 1),
+            "cg.name = $1 COLLATE NOCASE"
+        );
     }
 
     /// End-to-end placeholder discipline: the assembled export query's `$N`
