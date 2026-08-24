@@ -12,5 +12,7 @@
 //! Tauri also requires a library target (`cdylib` / `staticlib`), so this
 //! file exists alongside `main.rs`. Both declare the same modules.
 
+#![warn(missing_docs)]
+
 pub mod commands;
 pub mod state;

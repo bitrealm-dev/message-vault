@@ -57,16 +57,32 @@ fn finished_push_events(
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PushArgs {
+    /// Base URL of the vault server, for example `http://127.0.0.1:8080`.
     pub base_url: String,
+    /// Vault account name.
     pub username: String,
+    /// API token or account password for the vault.
     pub key: String,
+    /// Folder of conversation files to upload.
     pub input_dir: String,
+    /// Import mode. `append` adds to existing data (safe to re-run);
+    /// `replace` deletes existing messages for this source, then imports.
     pub mode: String,
+    /// When true, ignore the journal and re-upload assets and re-import
+    /// messages.
     pub force: bool,
+    /// When true, continue after a failed conversation.
     pub continue_on_error: bool,
+    /// When true, import messages without uploading attachments.
     pub skip_attachments: bool,
+    /// When true, trust export metadata: skip re-hashing attachments when
+    /// size_bytes matches the file size on disk. Without this flag every
+    /// attachment is re-hashed.
     pub trust_export: bool,
+    /// Server-side import option that controls how missing contact names
+    /// are filled in, for example `fill_missing`.
     pub contact_name_mode: Option<String>,
+    /// Import id of an earlier import to resume, when set.
     pub import_id: Option<i64>,
 }
 

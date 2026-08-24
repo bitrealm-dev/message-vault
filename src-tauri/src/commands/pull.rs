@@ -13,11 +13,17 @@ use crate::state::AppState;
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PullArgs {
+    /// Base URL of the vault server, for example `http://127.0.0.1:8080`.
     pub base_url: String,
+    /// Vault account name.
     pub username: String,
+    /// API token or account password for the vault.
     pub key: String,
+    /// Folder the pulled conversation files are written into.
     pub out_dir: String,
+    /// Vault search query selecting which conversations to pull.
     pub query: String,
+    /// When true, skip attachments and download messages only.
     pub skip_attachments: bool,
 }
 

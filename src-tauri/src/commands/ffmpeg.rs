@@ -15,9 +15,13 @@ use super::optional_trimmed;
 /// Paths the Settings screen shows after looking for ffmpeg and ffprobe.
 #[derive(serde::Serialize)]
 pub struct FfmpegToolsProbeDto {
+    /// Whether both tools were found and pass `-version`.
     pub ok: bool,
+    /// Resolved ffmpeg path, when found.
     pub ffmpeg_path: Option<String>,
+    /// Resolved ffprobe path, when found.
     pub ffprobe_path: Option<String>,
+    /// What was missing, when `ok` is false.
     pub error: Option<String>,
 }
 

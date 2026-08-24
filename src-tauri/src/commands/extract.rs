@@ -129,17 +129,29 @@ fn count_jsonl_output(root: &Path) -> anyhow::Result<JsonlOutputCounts> {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtractArgs {
+    /// Backup source key, for example `imessage-ios` or `whatsapp-android`.
     pub source: String,
+    /// Path to the phone backup (a folder, database file, or XML file).
     pub path: String,
+    /// Folder the exporter writes conversation files into.
     pub output_dir: String,
+    /// Password for encrypted backups, when the source needs one.
     pub backup_password: Option<String>,
+    /// Attachment handling choice: `copy`, `convert`, `compress`, or `skip`.
     pub attachment_media: Option<String>,
+    /// Video/image size cap for convert and compress: `720p`, `1080p`, or `4k`.
     pub media_max_resolution: Option<String>,
+    /// Frame-rate cap for compressed video, for example `30`.
     pub media_max_fps: Option<String>,
+    /// Smallest media file size that still counts as an attachment, for example `20M`.
     pub media_min_size: Option<String>,
+    /// Conversation filter string passed to the exporter.
     pub conversation_filter: Option<String>,
+    /// Export start date, inclusive, in `YYYY-MM-DD` form.
     pub start_date: Option<String>,
+    /// Export end date, inclusive, in `YYYY-MM-DD` form.
     pub end_date: Option<String>,
+    /// When true, replace names and phone numbers with fake ones.
     pub obfuscate: Option<bool>,
 }
 
