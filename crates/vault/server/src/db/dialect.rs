@@ -44,6 +44,15 @@ pub fn engine_of(conn: &sqlx::AnyConnection) -> DbEngine {
     }
 }
 
+/// Aggregate many values into one column with U+001F separators (the format
+/// the export pipeline expects). SQLite uses GROUP_CONCAT, Postgres string_agg.
+pub fn group_concat_unit_separator(engine: DbEngine, col: &str) -> String {
+    match engine {
+        DbEngine::Sqlite => format!("GROUP_CONCAT({col}, char(31))"),
+        DbEngine::Postgres => format!("string_agg({col}, chr(31))"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -66,5 +75,25 @@ mod tests {
             "LIKE $3 COLLATE NOCASE"
         );
         assert_eq!(like_ci_numbered(DbEngine::Postgres, 3), "ILIKE $3");
+    }
+
+    #[test]
+    fn group_concat_unit_separator_emits_engine_aggregates() {
+        assert_eq!(
+            group_concat_unit_separator(DbEngine::Sqlite, "val"),
+            "GROUP_CONCAT(val, char(31))"
+        );
+        assert_eq!(
+            group_concat_unit_separator(DbEngine::Postgres, "val"),
+            "string_agg(val, chr(31))"
+        );
+        assert_eq!(
+            group_concat_unit_separator(DbEngine::Sqlite, "cl.name"),
+            "GROUP_CONCAT(cl.name, char(31))"
+        );
+        assert_eq!(
+            group_concat_unit_separator(DbEngine::Postgres, "cl.name"),
+            "string_agg(cl.name, chr(31))"
+        );
     }
 }

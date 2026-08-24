@@ -234,6 +234,12 @@ impl From<rusqlite::Error> for ExportQueryError {
     }
 }
 
+impl From<sqlx::Error> for ExportQueryError {
+    fn from(e: sqlx::Error) -> Self {
+        Self::Internal(e.to_string())
+    }
+}
+
 impl ExportQueryError {
     /// Build a [`ExportQueryError::BadRequest`] from a message.
     pub fn bad(msg: impl Into<String>) -> Self {

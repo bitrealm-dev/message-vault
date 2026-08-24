@@ -1,22 +1,32 @@
 //! Read-only conversation list used by `GET /v1/export/conversations`.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::HeaderMap;
-use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use serde::Serialize;
+use sqlx::AnyConnection;
+use sqlx::Row;
 
+use crate::db::dialect::{engine_of, like_ci_numbered};
+use crate::db::engine::DbEngine;
 use crate::db::sql::{fold_in_id_chunks, group_rows_by_id, in_placeholders};
 use crate::export_api::ExportQueryError;
 use crate::search_query::{CountComparison, parse_count_comparison};
-use crate::server::{ApiError, AppState, require_full_access, resolve_auth, with_locked_conn};
+use crate::server::{ApiError, AppState, require_full_access, resolve_auth};
 
 pub use crate::page_limits::{
     DEFAULT_LIST_LIMIT, MAX_CONVERSATION_LIST_LIMIT as MAX_LIST_LIMIT, MAX_LIST_OFFSET,
 };
+
+/// One bound value in the dynamic list query. sqlx Any has no
+/// user-constructible dynamic value, so binds ride this enum and are chained
+/// onto the statement in order at execution time.
+enum Bind {
+    Text(String),
+    Int(i64),
+}
 
 /// One page of the conversation list.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -85,6 +95,16 @@ struct RawConversation {
     date_range_start: Option<String>,
     date_range_end: Option<String>,
 }
+
+type RawConversationRow = (
+    i64,
+    String,
+    Option<String>,
+    i64,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConversationTypeFilter {
@@ -190,7 +210,16 @@ fn pull_named_ops(q: &str) -> (String, Vec<(String, String, bool)>) {
     (rest, found)
 }
 
-fn involves_people_group_sql(exclude: bool) -> String {
+/// Case-insensitive name equality for one engine (`COLLATE NOCASE` is
+/// invalid Postgres SQL; Postgres uses `lower()`).
+fn name_eq_sql(engine: DbEngine, placeholder: usize) -> String {
+    match engine {
+        DbEngine::Sqlite => format!("name = ${placeholder} COLLATE NOCASE"),
+        DbEngine::Postgres => format!("lower(name) = lower(${placeholder})"),
+    }
+}
+
+fn involves_people_group_sql(engine: DbEngine, exclude: bool, placeholder: usize) -> String {
     let exists = if exclude { "NOT EXISTS" } else { "EXISTS" };
     format!(
         "{exists} (
@@ -199,7 +228,7 @@ fn involves_people_group_sql(exclude: bool) -> String {
            JOIN contact_handles ch ON ch.contact_id = cgm.contact_id
              AND ch.account_id = c.account_id
            WHERE cg.account_id = c.account_id
-             AND cg.name = ? COLLATE NOCASE
+             AND {name_eq}
              AND (
                ch.handle_id = c.chat_handle_id
                OR EXISTS (
@@ -207,11 +236,12 @@ fn involves_people_group_sql(exclude: bool) -> String {
                  WHERE p.conversation_id = c.id AND p.handle_id = ch.handle_id
                )
              )
-         )"
+         )",
+        name_eq = name_eq_sql(engine, placeholder)
     )
 }
 
-fn has_thread_tag_sql(exclude: bool) -> String {
+fn has_thread_tag_sql(engine: DbEngine, exclude: bool, placeholder: usize) -> String {
     let exists = if exclude { "NOT EXISTS" } else { "EXISTS" };
     format!(
         "{exists} (
@@ -219,8 +249,9 @@ fn has_thread_tag_sql(exclude: bool) -> String {
            JOIN conversation_tags ct ON ct.id = ctm.tag_id
            WHERE ctm.conversation_id = c.id
              AND ct.account_id = c.account_id
-             AND ct.name = ? COLLATE NOCASE
-         )"
+             AND {name_eq}
+         )",
+        name_eq = name_eq_sql(engine, placeholder)
     )
 }
 
@@ -328,8 +359,8 @@ fn parse_conversation_list_query(q: &str) -> ConversationListQuery {
 ///
 /// Returns a bad-request error for an invalid query, or an internal error when
 /// a database statement fails.
-pub fn list_conversations(
-    conn: &Connection,
+pub async fn list_conversations(
+    conn: &mut AnyConnection,
     account_id: &str,
     q: &str,
     limit: usize,
@@ -344,9 +375,10 @@ pub fn list_conversations(
 
     crate::search_query::validate_list_search_query(q)?;
     let parsed = parse_conversation_list_query(q.trim());
+    let engine = engine_of(conn);
 
-    let mut where_parts = vec!["c.account_id = ?1".to_string()];
-    let mut params: Vec<rusqlite::types::Value> = vec![account_id.to_string().into()];
+    let mut where_parts = vec!["c.account_id = $1".to_string()];
+    let mut params: Vec<Bind> = vec![Bind::Text(account_id.to_string())];
 
     if parsed.trash_only {
         // Match normal-list exclusion: conversation trash OR chat-handle trash.
@@ -380,40 +412,47 @@ pub fn list_conversations(
 
     if let Some(ref handle) = parsed.handle {
         if let Some(ref service) = parsed.service {
-            where_parts.push(
+            let n = params.len() + 1;
+            where_parts.push(format!(
                 "(
-                    (hc.raw = ? AND lower(hc.service) = lower(?))
+                    (hc.raw = ${n} AND lower(hc.service) = lower(${n1}))
                     OR EXISTS (
                         SELECT 1 FROM participants p
                         JOIN handles ph ON ph.id = p.handle_id
                         WHERE p.conversation_id = c.id
-                          AND ph.raw = ?
-                          AND lower(ph.service) = lower(?)
+                          AND ph.raw = ${n2}
+                          AND lower(ph.service) = lower(${n3})
                     )
-                  )"
-                .into(),
-            );
-            params.push(handle.clone().into());
-            params.push(service.clone().into());
-            params.push(handle.clone().into());
-            params.push(service.clone().into());
+                  )",
+                n = n,
+                n1 = n + 1,
+                n2 = n + 2,
+                n3 = n + 3
+            ));
+            params.push(Bind::Text(handle.clone()));
+            params.push(Bind::Text(service.clone()));
+            params.push(Bind::Text(handle.clone()));
+            params.push(Bind::Text(service.clone()));
         } else {
-            where_parts.push(
-                "(hc.raw = ? OR EXISTS (
+            let n = params.len() + 1;
+            where_parts.push(format!(
+                "(hc.raw = ${n} OR EXISTS (
                     SELECT 1 FROM participants p
                     JOIN handles ph ON ph.id = p.handle_id
-                    WHERE p.conversation_id = c.id AND ph.raw = ?
-                  ))"
-                .into(),
-            );
-            params.push(handle.clone().into());
-            params.push(handle.clone().into());
+                    WHERE p.conversation_id = c.id AND ph.raw = ${n1}
+                  ))",
+                n = n,
+                n1 = n + 1
+            ));
+            params.push(Bind::Text(handle.clone()));
+            params.push(Bind::Text(handle.clone()));
         }
     }
 
     if let Some(contact_id) = parsed.contact_id {
-        where_parts.push(crate::contacts_api::involves_contact_sql());
-        params.push(contact_id.into());
+        let n = params.len() + 1;
+        where_parts.push(crate::contacts_api::involves_contact_expr(&format!("${n}")));
+        params.push(Bind::Int(contact_id));
     }
 
     match parsed.type_filter {
@@ -427,28 +466,33 @@ pub fn list_conversations(
     }
 
     if let Some(ref cmp) = parsed.participants {
+        let n = params.len() + 1;
         where_parts.push(format!(
-            "(SELECT COUNT(*) FROM participants pcnt WHERE pcnt.conversation_id = c.id) {} ?",
+            "(SELECT COUNT(*) FROM participants pcnt WHERE pcnt.conversation_id = c.id) {} ${n}",
             cmp.comparator.as_str()
         ));
-        params.push((cmp.value as i64).into());
+        params.push(Bind::Int(cmp.value as i64));
     }
 
     if let Some(ref people) = parsed.people {
-        where_parts.push(involves_people_group_sql(false));
-        params.push(people.clone().into());
+        let n = params.len() + 1;
+        where_parts.push(involves_people_group_sql(engine, false, n));
+        params.push(Bind::Text(people.clone()));
     }
     if let Some(ref people) = parsed.exclude_people {
-        where_parts.push(involves_people_group_sql(true));
-        params.push(people.clone().into());
+        let n = params.len() + 1;
+        where_parts.push(involves_people_group_sql(engine, true, n));
+        params.push(Bind::Text(people.clone()));
     }
     if let Some(ref tag) = parsed.tag {
-        where_parts.push(has_thread_tag_sql(false));
-        params.push(tag.clone().into());
+        let n = params.len() + 1;
+        where_parts.push(has_thread_tag_sql(engine, false, n));
+        params.push(Bind::Text(tag.clone()));
     }
     if let Some(ref tag) = parsed.exclude_tag {
-        where_parts.push(has_thread_tag_sql(true));
-        params.push(tag.clone().into());
+        let n = params.len() + 1;
+        where_parts.push(has_thread_tag_sql(engine, true, n));
+        params.push(Bind::Text(tag.clone()));
     }
     if parsed.no_tag {
         where_parts.push(
@@ -462,39 +506,42 @@ pub fn list_conversations(
     }
 
     if let Some(import_id) = parsed.import_id {
-        where_parts.push(
+        let n = params.len() + 1;
+        where_parts.push(format!(
             "EXISTS (
                SELECT 1 FROM messages m
                WHERE m.conversation_id = c.id
                  AND m.account_id = c.account_id
-                 AND m.import_id = ?
+                 AND m.import_id = ${n}
              )"
-            .into(),
-        );
-        params.push(import_id.into());
+        ));
+        params.push(Bind::Int(import_id));
     }
 
     if let Some(ref text) = parsed.text {
-        where_parts.push(
-            "(c.group_title LIKE ? OR hc.raw LIKE ? OR EXISTS (
+        let n = params.len() + 1;
+        where_parts.push(format!(
+            "(c.group_title {} OR hc.raw {} OR EXISTS (
                 SELECT 1 FROM participants p
                 JOIN handles ph ON ph.id = p.handle_id
                 LEFT JOIN contacts ct ON ct.id = p.contact_id
                 WHERE p.conversation_id = c.id
                   AND (
-                    ph.raw LIKE ?
-                    OR coalesce(p.name_alias, '') LIKE ?
-                    OR coalesce(ct.preferred_name, '') LIKE ?
+                    ph.raw {}
+                    OR coalesce(p.name_alias, '') {}
+                    OR coalesce(ct.preferred_name, '') {}
                   )
-              ))"
-            .into(),
-        );
+              ))",
+            like_ci_numbered(engine, n),
+            like_ci_numbered(engine, n + 1),
+            like_ci_numbered(engine, n + 2),
+            like_ci_numbered(engine, n + 3),
+            like_ci_numbered(engine, n + 4),
+        ));
         let like = format!("%{text}%");
-        params.push(like.clone().into());
-        params.push(like.clone().into());
-        params.push(like.clone().into());
-        params.push(like.clone().into());
-        params.push(like.into());
+        for _ in 0..5 {
+            params.push(Bind::Text(like.clone()));
+        }
     }
 
     let where_sql = where_parts.join(" AND ");
@@ -505,13 +552,17 @@ pub fn list_conversations(
          JOIN handles hc ON hc.id = c.chat_handle_id
          WHERE {where_sql}"
     );
-    let total: i64 = conn.query_row(
-        &count_sql,
-        params_from_iter(params.iter().cloned()),
-        |row| row.get(0),
-    )?;
+    let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
+    for p in &params {
+        match p {
+            Bind::Text(v) => count_q = count_q.bind(v.clone()),
+            Bind::Int(v) => count_q = count_q.bind(*v),
+        }
+    }
+    let total: i64 = count_q.fetch_one(&mut *conn).await?;
     let total = total.max(0) as u64;
 
+    let page_n = params.len() + 1;
     let sql = format!(
         "SELECT c.id,
                 c.conversation_type,
@@ -528,32 +579,50 @@ pub fn list_conversations(
          JOIN handles hc ON hc.id = c.chat_handle_id
          WHERE {where_sql}
          ORDER BY last_message_at DESC, c.id DESC
-         LIMIT ? OFFSET ?"
+         LIMIT ${page_n} OFFSET ${page_n_plus}",
+        page_n = page_n,
+        page_n_plus = page_n + 1
     );
-
-    let mut page_params = params.clone();
-    page_params.push((limit as i64).into());
-    page_params.push((offset as i64).into());
-
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt
-        .query_map(params_from_iter(page_params.iter().cloned()), |row| {
-            Ok(RawConversation {
-                id: row.get(0)?,
-                conversation_type: row.get(1)?,
-                group_title: row.get(2)?,
-                message_count: row.get(3)?,
-                last_message_at: row.get(4)?,
-                date_range_start: row.get(5)?,
-                date_range_end: row.get(6)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut page_q = sqlx::query_as::<_, RawConversationRow>(&sql);
+    for p in &params {
+        match p {
+            Bind::Text(v) => page_q = page_q.bind(v.clone()),
+            Bind::Int(v) => page_q = page_q.bind(*v),
+        }
+    }
+    let rows: Vec<RawConversationRow> = page_q
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(&mut *conn)
+        .await?;
+    let rows: Vec<RawConversation> = rows
+        .into_iter()
+        .map(
+            |(
+                id,
+                conversation_type,
+                group_title,
+                message_count,
+                last_message_at,
+                date_range_start,
+                date_range_end,
+            )| RawConversation {
+                id,
+                conversation_type,
+                group_title,
+                message_count,
+                last_message_at,
+                date_range_start,
+                date_range_end,
+            },
+        )
+        .collect();
 
     let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
-    let mut participants = load_participants(conn, &ids)?;
-    let source_sets = load_conversation_sources(conn, &ids)?;
+    let mut participants = load_participants(conn, &ids).await?;
+    let source_sets = load_conversation_sources(conn, &ids).await?;
     let mut tag_sets = crate::thread_tags_api::tags_for_conversations(conn, account_id, &ids)
+        .await
         .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
 
     let mut out = Vec::with_capacity(rows.len());
@@ -571,7 +640,7 @@ pub fn list_conversations(
         );
         let parts = participants.remove(&row.id).unwrap_or_default();
         let parts = if parts.is_empty() {
-            chat_handle_as_participant(conn, row.id)?
+            chat_handle_as_participant(conn, row.id).await?
         } else {
             parts
         };
@@ -599,22 +668,21 @@ pub fn list_conversations(
     })
 }
 
-fn chat_handle_as_participant(
-    conn: &Connection,
+async fn chat_handle_as_participant(
+    conn: &mut AnyConnection,
     conversation_id: i64,
 ) -> Result<Vec<ConversationParticipant>, ExportQueryError> {
-    let row: Option<(String, String, String)> = conn
-        .query_row(
-            "SELECT h.raw,
-                    h.service,
-                    h.handle_type
-             FROM conversations c
-             JOIN handles h ON h.id = c.chat_handle_id
-             WHERE c.id = ?1",
-            [conversation_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-        )
-        .optional()?;
+    let row: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT h.raw,
+                h.service,
+                h.handle_type
+         FROM conversations c
+         JOIN handles h ON h.id = c.chat_handle_id
+         WHERE c.id = $1",
+    )
+    .bind(conversation_id)
+    .fetch_optional(&mut *conn)
+    .await?;
     Ok(match row {
         Some((handle, service, handle_type)) => vec![ConversationParticipant {
             name: None,
@@ -631,8 +699,8 @@ fn chat_handle_as_participant(
     })
 }
 
-fn load_participants(
-    conn: &Connection,
+async fn load_participants(
+    conn: &mut AnyConnection,
     conversation_ids: &[i64],
 ) -> Result<HashMap<i64, Vec<ConversationParticipant>>, ExportQueryError> {
     // Join contact preferred_name / name_alias here so the list path does not
@@ -668,19 +736,22 @@ fn load_participants(
             )
         },
         |row| {
-            let contact_id: Option<i64> = row.get(5)?;
+            let contact_id: Option<i64> = row.try_get(5)?;
             Ok((
-                row.get::<_, i64>(0)?,
+                row.try_get::<i64, _>(0)?,
                 ConversationParticipant {
-                    name: row.get(1)?,
-                    name_alias: row.get(2)?,
-                    handle: row.get(3)?,
-                    service: row.get::<_, String>(4).unwrap_or_else(|_| "unknown".into()),
+                    name: row.try_get(1)?,
+                    name_alias: row.try_get(2)?,
+                    handle: row.try_get(3)?,
+                    service: row
+                        .try_get::<String, _>(4)
+                        .unwrap_or_else(|_| "unknown".into()),
                     contact_id: contact_id.map(|id| id.to_string()),
                 },
             ))
         },
     )
+    .await
 }
 
 const IMESSAGE_SOURCE: &str = "imessage";
@@ -705,34 +776,37 @@ pub fn display_service_label(sources: &[String]) -> String {
     "unknown".into()
 }
 
-fn load_conversation_sources(
-    conn: &Connection,
+async fn load_conversation_sources(
+    conn: &mut AnyConnection,
     conversation_ids: &[i64],
 ) -> Result<HashMap<i64, Vec<String>>, ExportQueryError> {
-    fold_in_id_chunks(conversation_ids, |chunk| {
-        let placeholders = in_placeholders(chunk.len());
-        let sql = format!(
-            "SELECT conversation_id, source
-             FROM messages
-             WHERE duplicate_of IS NULL
-               AND conversation_id IN ({placeholders})
-             GROUP BY conversation_id, source
-             ORDER BY conversation_id, source"
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params_from_iter(chunk.iter().copied()), |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-        })?;
-        let mut out = Vec::new();
-        for row in rows {
-            let (cid, source) = row?;
-            if source.trim().is_empty() {
-                continue;
+    fold_in_id_chunks(conn, conversation_ids, |conn, chunk| {
+        Box::pin(async move {
+            let placeholders = in_placeholders(1, chunk.len());
+            let sql = format!(
+                "SELECT conversation_id, source
+                 FROM messages
+                 WHERE duplicate_of IS NULL
+                   AND conversation_id IN ({placeholders})
+                 GROUP BY conversation_id, source
+                 ORDER BY conversation_id, source"
+            );
+            let mut q = sqlx::query_as::<_, (i64, String)>(&sql);
+            for id in chunk {
+                q = q.bind(*id);
             }
-            out.push((cid, source));
-        }
-        Ok(out)
+            let rows = q.fetch_all(&mut *conn).await?;
+            let mut out = Vec::new();
+            for (cid, source) in rows {
+                if source.trim().is_empty() {
+                    continue;
+                }
+                out.push((cid, source));
+            }
+            Ok(out)
+        })
     })
+    .await
 }
 
 /// One backup source with message counts and share.
@@ -760,34 +834,33 @@ pub struct ConversationSourcesPage {
 /// # Errors
 ///
 /// Returns an internal error when a database statement fails.
-pub fn list_conversation_source_stats(
-    conn: &Connection,
+pub async fn list_conversation_source_stats(
+    conn: &mut AnyConnection,
     account_id: &str,
     conversation_id: i64,
 ) -> Result<Option<ConversationSourcesPage>, ExportQueryError> {
-    let owned: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM conversations WHERE id = ?1 AND account_id = ?2",
-        rusqlite::params![conversation_id, account_id],
-        |row| row.get(0),
-    )?;
+    let owned: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM conversations WHERE id = $1 AND account_id = $2")
+            .bind(conversation_id)
+            .bind(account_id)
+            .fetch_one(&mut *conn)
+            .await?;
     if owned == 0 {
         return Ok(None);
     }
 
-    let mut stmt = conn.prepare(
+    let rows: Vec<(String, i64, i64)> = sqlx::query_as(
         "SELECT source,
                     COUNT(*) AS message_count,
                     SUM(CASE WHEN duplicate_of IS NULL THEN 1 ELSE 0 END) AS unique_count
              FROM messages
-             WHERE conversation_id = ?1
+             WHERE conversation_id = $1
              GROUP BY source
              ORDER BY source",
-    )?;
-    let rows: Vec<(String, i64, i64)> = stmt
-        .query_map(rusqlite::params![conversation_id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+    )
+    .bind(conversation_id)
+    .fetch_all(&mut *conn)
+    .await?;
 
     let total_unique: i64 = rows.iter().map(|(_, _, u)| *u).sum();
     let sources = rows
@@ -835,14 +908,12 @@ pub(crate) async fn conversations_list_handler(
 ) -> Result<Json<ConversationListPage>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
-    let db = Arc::clone(&state.db);
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
     let q = query.q.unwrap_or_default();
     let limit = query.limit.unwrap_or(DEFAULT_LIST_LIMIT);
     let offset = query.offset.unwrap_or(0);
-    let page = with_locked_conn(db, "conversations list task", move |conn| {
-        list_conversations(conn, &auth.account_id, &q, limit, offset)
-    })
-    .await?;
+    let page = list_conversations(&mut conn, &auth.account_id, &q, limit, offset).await?;
     Ok(Json(page))
 }
 
@@ -867,11 +938,9 @@ pub(crate) async fn conversation_sources_handler(
 ) -> Result<Json<ConversationSourcesPage>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let page = with_locked_conn(db, "conversation sources task", move |conn| {
-        list_conversation_source_stats(conn, &auth.account_id, conversation_id)
-    })
-    .await?;
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    let page = list_conversation_source_stats(&mut conn, &auth.account_id, conversation_id).await?;
     page.map(Json)
         .ok_or_else(|| ApiError::NotFound("conversation not found".into()))
 }
@@ -880,55 +949,67 @@ pub(crate) async fn conversation_sources_handler(
 mod tests {
     use super::*;
     use message_ir::HandleType;
-    use rusqlite::params;
 
-    use crate::db::{account_profile, schema, vault_imports};
+    use crate::db::{account_profile, engine, schema, vault_imports};
     use crate::search_query::CountComparator;
 
-    fn setup() -> (Connection, String) {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        schema::ensure_vault_schema(&conn).unwrap();
+    async fn setup() -> (sqlx::AnyPool, tempfile::TempDir, String) {
+        let (pool, dir) = engine::test_pool().await;
+        schema::ensure_vault_schema(&mut pool.acquire().await.unwrap())
+            .await
+            .unwrap();
         let account = "00000000-0000-4000-8000-0000000000c2".to_string();
-        conn.execute(
-            "INSERT INTO accounts (id, username, read_only) VALUES (?1, 'alice', 0)",
-            params![&account],
-        )
-        .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, username, read_only) VALUES ($1, 'alice', 0)")
+            .bind(&account)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
         let peer = account_profile::link_account_handle(
-            &conn,
+            &mut conn,
             &account,
             "+15555550200",
             HandleType::Phone,
         )
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO conversations (
                 id, account_id, chat_handle_id, conversation_type, source_file
-             ) VALUES (1, ?1, ?2, 'individual', 'c.jsonl')",
-            params![&account, peer],
+             ) VALUES (1, $1, $2, 'individual', 'c.jsonl')",
         )
+        .bind(&account)
+        .bind(peer)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO participants (conversation_id, handle_id, name_alias)
-             VALUES (1, ?1, 'Sam')",
-            params![peer],
+             VALUES (1, $1, 'Sam')",
         )
+        .bind(peer)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO messages (
                 conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
-             ) VALUES (1, ?1, 'imessage', '2024-06-01T12:00:00Z', 0, 0, 'hello')",
-            params![&account],
+             ) VALUES (1, $1, 'imessage', '2024-06-01T12:00:00Z', 0, 0, 'hello')",
         )
+        .bind(&account)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        (conn, account)
+        (pool, dir, account)
     }
 
-    #[test]
-    fn list_conversations_returns_summary() {
-        let (conn, account) = setup();
-        let page = list_conversations(&conn, &account, "", DEFAULT_LIST_LIMIT, 0).unwrap();
+    #[tokio::test]
+    async fn list_conversations_returns_summary() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let page = list_conversations(&mut conn, &account, "", DEFAULT_LIST_LIMIT, 0)
+            .await
+            .unwrap();
         assert_eq!(page.total, 1);
         assert_eq!(page.conversations.len(), 1);
         assert_eq!(page.conversations[0].id, "1");
@@ -938,26 +1019,30 @@ mod tests {
         assert_eq!(page.conversations[0].participants[0].handle, "+15555550200");
     }
 
-    #[test]
-    fn is_trash_includes_handle_trashed_conversations() {
-        let (conn, account) = setup();
-        let handle_id: i64 = conn
-            .query_row(
-                "SELECT chat_handle_id FROM conversations WHERE id = 1",
-                [],
-                |r| r.get(0),
-            )
+    #[tokio::test]
+    async fn is_trash_includes_handle_trashed_conversations() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let handle_id: i64 =
+            sqlx::query_scalar("SELECT chat_handle_id FROM conversations WHERE id = 1")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        sqlx::query("INSERT INTO trashed_handles (account_id, handle_id) VALUES ($1, $2)")
+            .bind(&account)
+            .bind(handle_id)
+            .execute(&mut *conn)
+            .await
             .unwrap();
-        conn.execute(
-            "INSERT INTO trashed_handles (account_id, handle_id) VALUES (?1, ?2)",
-            params![&account, handle_id],
-        )
-        .unwrap();
 
-        let normal = list_conversations(&conn, &account, "", DEFAULT_LIST_LIMIT, 0).unwrap();
+        let normal = list_conversations(&mut conn, &account, "", DEFAULT_LIST_LIMIT, 0)
+            .await
+            .unwrap();
         assert_eq!(normal.total, 0, "handle-trashed threads leave the inbox");
 
-        let trash = list_conversations(&conn, &account, "is:trash", DEFAULT_LIST_LIMIT, 0).unwrap();
+        let trash = list_conversations(&mut conn, &account, "is:trash", DEFAULT_LIST_LIMIT, 0)
+            .await
+            .unwrap();
         assert_eq!(
             trash.total, 1,
             "is:trash should include handle-trashed threads"
@@ -965,153 +1050,193 @@ mod tests {
         assert_eq!(trash.conversations[0].id, "1");
     }
 
-    #[test]
-    fn list_conversations_filters_by_handle() {
-        let (conn, account) = setup();
+    #[tokio::test]
+    async fn list_conversations_filters_by_handle() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
         let hit = list_conversations(
-            &conn,
+            &mut conn,
             &account,
             "handle:+15555550200",
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(hit.total, 1);
         assert_eq!(hit.conversations.len(), 1);
         let miss = list_conversations(
-            &conn,
+            &mut conn,
             &account,
             "handle:+19999999999",
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(miss.total, 0);
         assert!(miss.conversations.is_empty());
     }
 
-    #[test]
-    fn list_conversations_filters_by_handle_and_service() {
-        let (conn, account) = setup();
+    #[tokio::test]
+    async fn list_conversations_filters_by_handle_and_service() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
         // setup() already has phone:+15555550200 as conversation 1.
         let wa = account_profile::link_account_handle_with_service(
-            &conn,
+            &mut conn,
             &account,
             "+15555550200",
             HandleType::Phone,
             Some("whatsapp"),
         )
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO conversations (
                 id, account_id, chat_handle_id, conversation_type, source_file
-             ) VALUES (10, ?1, ?2, 'individual', 'wa.jsonl')",
-            params![&account, wa],
+             ) VALUES (10, $1, $2, 'individual', 'wa.jsonl')",
         )
+        .bind(&account)
+        .bind(wa)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO participants (conversation_id, handle_id, name_alias)
-             VALUES (10, ?1, 'Sam WA')",
-            params![wa],
+             VALUES (10, $1, 'Sam WA')",
         )
+        .bind(wa)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO messages (
                 conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
-             ) VALUES (10, ?1, 'whatsapp', '2024-08-01T12:00:00Z', 0, 0, 'wa hello')",
-            params![&account],
+             ) VALUES (10, $1, 'whatsapp', '2024-08-01T12:00:00Z', 0, 0, 'wa hello')",
         )
+        .bind(&account)
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
         let any_platform = list_conversations(
-            &conn,
+            &mut conn,
             &account,
             "handle:+15555550200",
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(any_platform.total, 2);
 
         let phone_only = list_conversations(
-            &conn,
+            &mut conn,
             &account,
             "handle:+15555550200 service:phone",
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(phone_only.total, 1);
         assert_eq!(phone_only.conversations[0].id, "1");
 
         let wa_only = list_conversations(
-            &conn,
+            &mut conn,
             &account,
             "handle:+15555550200 service:whatsapp",
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(wa_only.total, 1);
         assert_eq!(wa_only.conversations[0].id, "10");
 
-        let lone_service =
-            list_conversations(&conn, &account, "service:whatsapp", DEFAULT_LIST_LIMIT, 0).unwrap();
-        let all = list_conversations(&conn, &account, "", DEFAULT_LIST_LIMIT, 0).unwrap();
+        let lone_service = list_conversations(
+            &mut conn,
+            &account,
+            "service:whatsapp",
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .await
+        .unwrap();
+        let all = list_conversations(&mut conn, &account, "", DEFAULT_LIST_LIMIT, 0)
+            .await
+            .unwrap();
         assert_eq!(lone_service.total, all.total);
     }
 
-    #[test]
-    fn list_conversations_paginates() {
-        let (conn, account) = setup();
+    #[tokio::test]
+    async fn list_conversations_paginates() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
         // Second conversation + message.
         let peer2 = account_profile::link_account_handle(
-            &conn,
+            &mut conn,
             &account,
             "+15555550300",
             HandleType::Phone,
         )
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO conversations (
                 id, account_id, chat_handle_id, conversation_type, source_file
-             ) VALUES (2, ?1, ?2, 'individual', 'c2.jsonl')",
-            params![&account, peer2],
+             ) VALUES (2, $1, $2, 'individual', 'c2.jsonl')",
         )
+        .bind(&account)
+        .bind(peer2)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO messages (
                 conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
-             ) VALUES (2, ?1, 'imessage', '2024-07-01T12:00:00Z', 0, 0, 'later')",
-            params![&account],
+             ) VALUES (2, $1, 'imessage', '2024-07-01T12:00:00Z', 0, 0, 'later')",
         )
+        .bind(&account)
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
-        let page0 = list_conversations(&conn, &account, "", 1, 0).unwrap();
+        let page0 = list_conversations(&mut conn, &account, "", 1, 0)
+            .await
+            .unwrap();
         assert_eq!(page0.total, 2);
         assert_eq!(page0.limit, 1);
         assert_eq!(page0.offset, 0);
         assert_eq!(page0.conversations.len(), 1);
         assert_eq!(page0.conversations[0].id, "2"); // newer first
 
-        let page1 = list_conversations(&conn, &account, "", 1, 1).unwrap();
+        let page1 = list_conversations(&mut conn, &account, "", 1, 1)
+            .await
+            .unwrap();
         assert_eq!(page1.total, 2);
         assert_eq!(page1.offset, 1);
         assert_eq!(page1.conversations.len(), 1);
         assert_eq!(page1.conversations[0].id, "1");
 
-        let by_text = list_conversations(&conn, &account, "5555550300", 10, 0).unwrap();
+        let by_text = list_conversations(&mut conn, &account, "5555550300", 10, 0)
+            .await
+            .unwrap();
         assert_eq!(by_text.total, 1);
         assert_eq!(by_text.conversations[0].id, "2");
 
-        let clamped = list_conversations(&conn, &account, "", MAX_LIST_LIMIT + 50, 0).unwrap();
+        let clamped = list_conversations(&mut conn, &account, "", MAX_LIST_LIMIT + 50, 0)
+            .await
+            .unwrap();
         assert_eq!(clamped.limit, MAX_LIST_LIMIT);
         assert_eq!(clamped.total, 2);
     }
 
-    #[test]
-    fn list_queries_enforce_search_limits() {
-        let (conn, account) = setup();
+    #[tokio::test]
+    async fn list_queries_enforce_search_limits() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
         let oversized = "x".repeat(2_049);
         let too_many_terms = (0..33)
             .map(|index| format!("term{index}"))
@@ -1121,12 +1246,13 @@ mod tests {
 
         for query in [&oversized, &too_many_terms, &too_many_nodes] {
             let contact_error = crate::contacts_api::list_contacts(
-                &conn,
+                &mut conn,
                 &account,
                 query,
                 crate::contacts_api::DEFAULT_LIST_LIMIT,
                 0,
             )
+            .await
             .unwrap_err();
             assert!(
                 matches!(contact_error, ExportQueryError::BadRequest(_)),
@@ -1134,7 +1260,9 @@ mod tests {
             );
 
             let conversation_error =
-                list_conversations(&conn, &account, query, DEFAULT_LIST_LIMIT, 0).unwrap_err();
+                list_conversations(&mut conn, &account, query, DEFAULT_LIST_LIMIT, 0)
+                    .await
+                    .unwrap_err();
             assert!(
                 matches!(conversation_error, ExportQueryError::BadRequest(_)),
                 "conversation query should be rejected: {query}"
@@ -1142,129 +1270,157 @@ mod tests {
         }
     }
 
-    #[test]
-    fn list_queries_accept_literal_boolean_words_and_parentheses() {
-        let (conn, account) = setup();
+    #[tokio::test]
+    async fn list_queries_accept_literal_boolean_words_and_parentheses() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
 
         for query in [
             "OR", "AND", "NOT", "foo OR", "foo AND", "foo NOT", "(", ")", "(foo", "foo)",
         ] {
             crate::contacts_api::list_contacts(
-                &conn,
+                &mut conn,
                 &account,
                 query,
                 crate::contacts_api::DEFAULT_LIST_LIMIT,
                 0,
             )
+            .await
             .unwrap();
 
-            list_conversations(&conn, &account, query, DEFAULT_LIST_LIMIT, 0).unwrap();
+            list_conversations(&mut conn, &account, query, DEFAULT_LIST_LIMIT, 0)
+                .await
+                .unwrap();
         }
     }
 
-    #[test]
-    fn malformed_boolean_queries_are_bad_requests_for_export() {
-        let (conn, account) = setup();
+    #[tokio::test]
+    async fn malformed_boolean_queries_are_bad_requests_for_export() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
 
         for query in ["foo OR", "(foo OR bar", "foo OR bar)"] {
             let export_error = crate::export_api::export_message_count(
-                &conn,
+                &mut conn,
                 crate::export_api::ExportCountOpts {
                     account_id: &account,
                     query,
                     source_override: None,
                 },
             )
+            .await
             .unwrap_err();
             assert!(matches!(export_error, ExportQueryError::BadRequest(_)));
         }
     }
 
-    #[test]
-    fn list_conversations_filters_by_contact_and_type() {
-        let (conn, account) = setup();
+    #[tokio::test]
+    async fn list_conversations_filters_by_contact_and_type() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
         // Link peer handle to a contact.
-        conn.execute(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Sam')",
-            params![&account],
-        )
-        .unwrap();
-        let contact_id: i64 = conn
-            .query_row(
-                "SELECT id FROM contacts WHERE account_id = ?1",
-                params![&account],
-                |r| r.get(0),
-            )
+        sqlx::query("INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Sam')")
+            .bind(&account)
+            .execute(&mut *conn)
+            .await
             .unwrap();
-        let peer_handle_id: i64 = conn
-            .query_row(
-                "SELECT id FROM handles WHERE account_id = ?1 AND raw = ?2",
-                params![&account, "+15555550200"],
-                |r| r.get(0),
-            )
+        let contact_id: i64 = sqlx::query_scalar("SELECT id FROM contacts WHERE account_id = $1")
+            .bind(&account)
+            .fetch_one(&mut *conn)
+            .await
             .unwrap();
-        conn.execute(
+        let peer_handle_id: i64 =
+            sqlx::query_scalar("SELECT id FROM handles WHERE account_id = $1 AND raw = $2")
+                .bind(&account)
+                .bind("+15555550200")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        sqlx::query(
             "INSERT INTO contact_handles (account_id, handle_id, contact_id)
-             VALUES (?1, ?2, ?3)",
-            params![&account, peer_handle_id, contact_id],
+             VALUES ($1, $2, $3)",
         )
+        .bind(&account)
+        .bind(peer_handle_id)
+        .bind(contact_id)
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
         // Unrelated group conversation (no link to Sam).
         let other = account_profile::link_account_handle(
-            &conn,
+            &mut conn,
             &account,
             "+15555550999",
             HandleType::Phone,
         )
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO conversations (
                 id, account_id, chat_handle_id, conversation_type, group_title, source_file
-             ) VALUES (9, ?1, ?2, 'group', 'Other', 'g.jsonl')",
-            params![&account, other],
+             ) VALUES (9, $1, $2, 'group', 'Other', 'g.jsonl')",
         )
+        .bind(&account)
+        .bind(other)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO messages (
                 conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
-             ) VALUES (9, ?1, 'imessage', '2024-08-01T12:00:00Z', 0, 0, 'group')",
-            params![&account],
+             ) VALUES (9, $1, 'imessage', '2024-08-01T12:00:00Z', 0, 0, 'group')",
         )
+        .bind(&account)
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
         // Group that includes Sam (distinct chat handle; Sam is a participant).
-        let group_chat =
-            account_profile::link_account_handle(&conn, &account, "chat123456", HandleType::Other)
-                .unwrap();
-        conn.execute(
+        let group_chat = account_profile::link_account_handle(
+            &mut conn,
+            &account,
+            "chat123456",
+            HandleType::Other,
+        )
+        .await
+        .unwrap();
+        sqlx::query(
             "INSERT INTO conversations (
                 id, account_id, chat_handle_id, conversation_type, group_title, source_file
-             ) VALUES (3, ?1, ?2, 'group', 'Sam Group', 'sg.jsonl')",
-            params![&account, group_chat],
+             ) VALUES (3, $1, $2, 'group', 'Sam Group', 'sg.jsonl')",
         )
+        .bind(&account)
+        .bind(group_chat)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO participants (conversation_id, handle_id, name_alias)
-             VALUES (3, ?1, 'Sam')",
-            params![peer_handle_id],
+             VALUES (3, $1, 'Sam')",
         )
+        .bind(peer_handle_id)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO messages (
                 conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
-             ) VALUES (3, ?1, 'imessage', '2024-09-01T12:00:00Z', 0, 0, 'hi group')",
-            params![&account],
+             ) VALUES (3, $1, 'imessage', '2024-09-01T12:00:00Z', 0, 0, 'hi group')",
         )
+        .bind(&account)
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
         let all = list_conversations(
-            &conn,
+            &mut conn,
             &account,
             &format!("contact:{contact_id}"),
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(all.total, 2);
         let ids: Vec<&str> = all.conversations.iter().map(|c| c.id.as_str()).collect();
@@ -1272,24 +1428,26 @@ mod tests {
         assert!(ids.contains(&"3"));
 
         let direct = list_conversations(
-            &conn,
+            &mut conn,
             &account,
             &format!("contact:{contact_id} is:direct"),
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(direct.total, 1);
         assert_eq!(direct.conversations[0].id, "1");
         assert!(!direct.conversations[0].is_group);
 
         let groups = list_conversations(
-            &conn,
+            &mut conn,
             &account,
             &format!("contact:{contact_id} is:group"),
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(groups.total, 1);
         assert_eq!(groups.conversations[0].id, "3");
@@ -1352,42 +1510,52 @@ mod tests {
         assert_eq!(quoted_handle.handle.as_deref(), Some("+15555550100"));
     }
 
-    #[test]
-    fn list_conversations_enriches_participant_names_from_contact() {
-        let (conn, account) = setup();
+    #[tokio::test]
+    async fn list_conversations_enriches_participant_names_from_contact() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
         // setup() participant residue is name_alias 'Sam' on +15555550200.
-        conn.execute(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Sam Preferred')",
-            params![&account],
+        sqlx::query(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Sam Preferred')",
         )
+        .bind(&account)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        let contact_id: i64 = conn
-            .query_row(
-                "SELECT id FROM contacts WHERE account_id = ?1",
-                params![&account],
-                |r| r.get(0),
-            )
+        let contact_id: i64 = sqlx::query_scalar("SELECT id FROM contacts WHERE account_id = $1")
+            .bind(&account)
+            .fetch_one(&mut *conn)
+            .await
             .unwrap();
-        let peer_handle_id: i64 = conn
-            .query_row(
-                "SELECT id FROM handles WHERE account_id = ?1 AND raw = ?2",
-                params![&account, "+15555550200"],
-                |r| r.get(0),
-            )
-            .unwrap();
-        conn.execute(
+        let peer_handle_id: i64 =
+            sqlx::query_scalar("SELECT id FROM handles WHERE account_id = $1 AND raw = $2")
+                .bind(&account)
+                .bind("+15555550200")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        sqlx::query(
             "INSERT INTO contact_handles (account_id, handle_id, contact_id, name_alias)
-             VALUES (?1, ?2, ?3, 'Sammy')",
-            params![&account, peer_handle_id, contact_id],
+             VALUES ($1, $2, $3, 'Sammy')",
         )
+        .bind(&account)
+        .bind(peer_handle_id)
+        .bind(contact_id)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
-            "UPDATE participants SET contact_id = ?1 WHERE conversation_id = 1 AND handle_id = ?2",
-            params![contact_id, peer_handle_id],
+        sqlx::query(
+            "UPDATE participants SET contact_id = $1 WHERE conversation_id = 1 AND handle_id = $2",
         )
+        .bind(contact_id)
+        .bind(peer_handle_id)
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
-        let page = list_conversations(&conn, &account, "", 10, 0).unwrap();
+        let page = list_conversations(&mut conn, &account, "", 10, 0)
+            .await
+            .unwrap();
         assert_eq!(page.conversations.len(), 1);
         let p = &page.conversations[0].participants[0];
         assert_eq!(p.handle, "+15555550200");
@@ -1396,10 +1564,13 @@ mod tests {
         assert_eq!(p.contact_id, Some(contact_id.to_string()));
     }
 
-    #[test]
-    fn list_conversations_keeps_participant_residue_name_without_contact() {
-        let (conn, account) = setup();
-        let page = list_conversations(&conn, &account, "", 10, 0).unwrap();
+    #[tokio::test]
+    async fn list_conversations_keeps_participant_residue_name_without_contact() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let page = list_conversations(&mut conn, &account, "", 10, 0)
+            .await
+            .unwrap();
         let p = &page.conversations[0].participants[0];
         // No contact_id → residue `participants.name_alias` is exposed as `name`.
         assert_eq!(p.name.as_deref(), Some("Sam"));
@@ -1407,76 +1578,90 @@ mod tests {
         assert_eq!(p.contact_id, None);
     }
 
-    #[test]
-    fn list_conversations_keeps_residue_when_linked_contact_has_empty_preferred_name() {
-        let (conn, account) = setup();
-        conn.execute(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, '')",
-            params![&account],
-        )
-        .unwrap();
-        let contact_id: i64 = conn
-            .query_row(
-                "SELECT id FROM contacts WHERE account_id = ?1",
-                params![&account],
-                |r| r.get(0),
-            )
+    #[tokio::test]
+    async fn list_conversations_keeps_residue_when_linked_contact_has_empty_preferred_name() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("INSERT INTO contacts (account_id, preferred_name) VALUES ($1, '')")
+            .bind(&account)
+            .execute(&mut *conn)
+            .await
             .unwrap();
-        let peer_handle_id: i64 = conn
-            .query_row(
-                "SELECT id FROM handles WHERE account_id = ?1 AND raw = ?2",
-                params![&account, "+15555550200"],
-                |r| r.get(0),
-            )
+        let contact_id: i64 = sqlx::query_scalar("SELECT id FROM contacts WHERE account_id = $1")
+            .bind(&account)
+            .fetch_one(&mut *conn)
+            .await
             .unwrap();
-        conn.execute(
+        let peer_handle_id: i64 =
+            sqlx::query_scalar("SELECT id FROM handles WHERE account_id = $1 AND raw = $2")
+                .bind(&account)
+                .bind("+15555550200")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        sqlx::query(
             "INSERT INTO contact_handles (account_id, handle_id, contact_id, name_alias)
-             VALUES (?1, ?2, ?3, 'Sammy')",
-            params![&account, peer_handle_id, contact_id],
+             VALUES ($1, $2, $3, 'Sammy')",
         )
+        .bind(&account)
+        .bind(peer_handle_id)
+        .bind(contact_id)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
-            "UPDATE participants SET contact_id = ?1 WHERE conversation_id = 1 AND handle_id = ?2",
-            params![contact_id, peer_handle_id],
+        sqlx::query(
+            "UPDATE participants SET contact_id = $1 WHERE conversation_id = 1 AND handle_id = $2",
         )
+        .bind(contact_id)
+        .bind(peer_handle_id)
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
-        let page = list_conversations(&conn, &account, "", 10, 0).unwrap();
+        let page = list_conversations(&mut conn, &account, "", 10, 0)
+            .await
+            .unwrap();
         let p = &page.conversations[0].participants[0];
         assert_eq!(p.name.as_deref(), Some("Sam"));
         assert_eq!(p.name_alias.as_deref(), Some("Sammy"));
     }
 
-    #[test]
-    fn list_conversations_matches_contact_preferred_name() {
-        let (conn, account) = setup();
-        conn.execute(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Sam Preferred')",
-            params![&account],
+    #[tokio::test]
+    async fn list_conversations_matches_contact_preferred_name() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Sam Preferred')",
         )
+        .bind(&account)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        let contact_id: i64 = conn
-            .query_row(
-                "SELECT id FROM contacts WHERE account_id = ?1",
-                params![&account],
-                |r| r.get(0),
-            )
+        let contact_id: i64 = sqlx::query_scalar("SELECT id FROM contacts WHERE account_id = $1")
+            .bind(&account)
+            .fetch_one(&mut *conn)
+            .await
             .unwrap();
-        let peer_handle_id: i64 = conn
-            .query_row(
-                "SELECT id FROM handles WHERE account_id = ?1 AND raw = ?2",
-                params![&account, "+15555550200"],
-                |r| r.get(0),
-            )
-            .unwrap();
-        conn.execute(
-            "UPDATE participants SET contact_id = ?1, name_alias = NULL
-             WHERE conversation_id = '1' AND handle_id = ?2",
-            params![contact_id, peer_handle_id],
+        let peer_handle_id: i64 =
+            sqlx::query_scalar("SELECT id FROM handles WHERE account_id = $1 AND raw = $2")
+                .bind(&account)
+                .bind("+15555550200")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        sqlx::query(
+            "UPDATE participants SET contact_id = $1, name_alias = NULL
+             WHERE conversation_id = '1' AND handle_id = $2",
         )
+        .bind(contact_id)
+        .bind(peer_handle_id)
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
-        let by_name = list_conversations(&conn, &account, "Sam Preferred", 10, 0).unwrap();
+        let by_name = list_conversations(&mut conn, &account, "Sam Preferred", 10, 0)
+            .await
+            .unwrap();
         assert_eq!(by_name.total, 1);
         assert_eq!(by_name.conversations[0].id, "1");
     }
@@ -1495,75 +1680,102 @@ mod tests {
         assert!(parse_participants_comparison(">").is_none());
     }
 
-    #[test]
-    fn list_conversations_filters_by_participant_count() {
-        let (conn, account) = setup();
+    #[tokio::test]
+    async fn list_conversations_filters_by_participant_count() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
         // setup() has conversation 1 with 1 participant.
 
         let p2 = account_profile::link_account_handle(
-            &conn,
+            &mut conn,
             &account,
             "+15555550301",
             HandleType::Phone,
         )
+        .await
         .unwrap();
         let p3 = account_profile::link_account_handle(
-            &conn,
+            &mut conn,
             &account,
             "+15555550302",
             HandleType::Phone,
         )
+        .await
         .unwrap();
-        let group_chat =
-            account_profile::link_account_handle(&conn, &account, "chat-big", HandleType::Other)
-                .unwrap();
-        conn.execute(
+        let group_chat = account_profile::link_account_handle(
+            &mut conn,
+            &account,
+            "chat-big",
+            HandleType::Other,
+        )
+        .await
+        .unwrap();
+        sqlx::query(
             "INSERT INTO conversations (
                 id, account_id, chat_handle_id, conversation_type, group_title, source_file
-             ) VALUES (10, ?1, ?2, 'group', 'Trio', 't.jsonl')",
-            params![&account, group_chat],
+             ) VALUES (10, $1, $2, 'group', 'Trio', 't.jsonl')",
         )
+        .bind(&account)
+        .bind(group_chat)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO participants (conversation_id, handle_id, name_alias) VALUES
-             (10, ?1, 'A'), (10, ?2, 'B')",
-            params![p2, p3],
+             (10, $1, 'A'), (10, $2, 'B')",
         )
+        .bind(p2)
+        .bind(p3)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO messages (
                 conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
-             ) VALUES (10, ?1, 'imessage', '2024-10-01T12:00:00Z', 0, 0, 'hi')",
-            params![&account],
+             ) VALUES (10, $1, 'imessage', '2024-10-01T12:00:00Z', 0, 0, 'hi')",
         )
+        .bind(&account)
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
-        let eq2 = list_conversations(&conn, &account, "participants:=2", 50, 0).unwrap();
+        let eq2 = list_conversations(&mut conn, &account, "participants:=2", 50, 0)
+            .await
+            .unwrap();
         assert_eq!(eq2.total, 1);
         assert_eq!(eq2.conversations[0].id, "10");
 
-        let gt1 = list_conversations(&conn, &account, "participants:>1", 50, 0).unwrap();
+        let gt1 = list_conversations(&mut conn, &account, "participants:>1", 50, 0)
+            .await
+            .unwrap();
         assert_eq!(gt1.total, 1);
         assert_eq!(gt1.conversations[0].id, "10");
 
-        let eq1 = list_conversations(&conn, &account, "participants:1", 50, 0).unwrap();
+        let eq1 = list_conversations(&mut conn, &account, "participants:1", 50, 0)
+            .await
+            .unwrap();
         assert_eq!(eq1.total, 1);
         assert_eq!(eq1.conversations[0].id, "1");
 
-        let lt2 = list_conversations(&conn, &account, "is:group participants:<2", 50, 0).unwrap();
+        let lt2 = list_conversations(&mut conn, &account, "is:group participants:<2", 50, 0)
+            .await
+            .unwrap();
         assert_eq!(lt2.total, 0);
     }
 
-    #[test]
-    fn list_conversations_participants_eq_on_demo_fixture_db() {
+    #[tokio::test]
+    async fn list_conversations_participants_eq_on_demo_fixture_db() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../data/vault.db");
         if !path.is_file() {
             eprintln!("skip — missing {}", path.display());
             return;
         }
-        let conn = Connection::open(&path).unwrap();
+        let pool = engine::open_pool_for_path(&path).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
         let account = "00000000-0000-0000-0000-00000000d001";
-        let page = list_conversations(&conn, account, "participants:=3", 50, 0).unwrap();
+        let page = list_conversations(&mut conn, account, "participants:=3", 50, 0)
+            .await
+            .unwrap();
         assert!(
             page.total >= 1,
             "demo db should have conversations with 3 participants; total={}",
@@ -1575,206 +1787,271 @@ mod tests {
         );
     }
 
-    #[test]
-    fn list_conversations_filters_by_import_id() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        schema::ensure_vault_schema(&conn).unwrap();
+    #[tokio::test]
+    async fn list_conversations_filters_by_import_id() {
+        // Fresh db (setup() already owns conversation 1, which this test inserts itself).
+        let (pool, _dir) = engine::test_pool().await;
+        schema::ensure_vault_schema(&mut pool.acquire().await.unwrap())
+            .await
+            .unwrap();
         let account = "00000000-0000-4000-8000-0000000000c2".to_string();
-        conn.execute(
-            "INSERT INTO accounts (id, username, read_only) VALUES (?1, 'alice', 0)",
-            params![&account],
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, username, read_only) VALUES ($1, 'alice', 0)")
+            .bind(&account)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let import_a = vault_imports::start_import(
+            &mut conn,
+            &account,
+            "imessage-ios",
+            "append",
+            Some("test"),
         )
+        .await
+        .unwrap();
+        let import_b = vault_imports::start_import(
+            &mut conn,
+            &account,
+            "imessage-ios",
+            "append",
+            Some("test"),
+        )
+        .await
         .unwrap();
 
-        let import_a =
-            vault_imports::start_import(&conn, &account, "imessage-ios", "append", Some("test"))
-                .unwrap();
-        let import_b =
-            vault_imports::start_import(&conn, &account, "imessage-ios", "append", Some("test"))
-                .unwrap();
-
         let peer1 = account_profile::link_account_handle(
-            &conn,
+            &mut conn,
             &account,
             "+15555550200",
             HandleType::Phone,
         )
+        .await
         .unwrap();
         let peer2 = account_profile::link_account_handle(
-            &conn,
+            &mut conn,
             &account,
             "+15555550300",
             HandleType::Phone,
         )
+        .await
         .unwrap();
 
-        conn.execute(
+        sqlx::query(
             "INSERT INTO conversations (
                 id, account_id, chat_handle_id, conversation_type, source_file
-             ) VALUES (1, ?1, ?2, 'individual', 'c1.jsonl')",
-            params![&account, peer1],
+             ) VALUES (1, $1, $2, 'individual', 'c1.jsonl')",
         )
+        .bind(&account)
+        .bind(peer1)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO participants (conversation_id, handle_id, name_alias)
-             VALUES (1, ?1, 'Sam')",
-            params![peer1],
+             VALUES (1, $1, 'Sam')",
         )
+        .bind(peer1)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO conversations (
                 id, account_id, chat_handle_id, conversation_type, source_file
-             ) VALUES (2, ?1, ?2, 'individual', 'c2.jsonl')",
-            params![&account, peer2],
+             ) VALUES (2, $1, $2, 'individual', 'c2.jsonl')",
         )
+        .bind(&account)
+        .bind(peer2)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO participants (conversation_id, handle_id, name_alias)
-             VALUES (2, ?1, 'Alex')",
-            params![peer2],
+             VALUES (2, $1, 'Alex')",
         )
+        .bind(peer2)
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
-        conn.execute(
+        sqlx::query(
             "INSERT INTO messages (
                 conversation_id, account_id, source, timestamp, is_from_me, sort_order, body,
                 import_id
-             ) VALUES (1, ?1, 'imessage', '2024-06-01T12:00:00Z', 0, 0, 'hello', ?2)",
-            params![&account, import_a],
+             ) VALUES (1, $1, 'imessage', '2024-06-01T12:00:00Z', 0, 0, 'hello', $2)",
         )
+        .bind(&account)
+        .bind(import_a)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO messages (
                 conversation_id, account_id, source, timestamp, is_from_me, sort_order, body,
                 import_id
-             ) VALUES (2, ?1, 'imessage', '2024-07-01T12:00:00Z', 0, 0, 'later', ?2)",
-            params![&account, import_b],
+             ) VALUES (2, $1, 'imessage', '2024-07-01T12:00:00Z', 0, 0, 'later', $2)",
         )
+        .bind(&account)
+        .bind(import_b)
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
         let a = list_conversations(
-            &conn,
+            &mut conn,
             &account,
             &format!("import:{import_a}"),
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(a.total, 1);
         assert_eq!(a.conversations[0].id, "1");
 
         let b = list_conversations(
-            &conn,
+            &mut conn,
             &account,
             &format!("import:{import_b}"),
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(b.total, 1);
         assert_eq!(b.conversations[0].id, "2");
 
         let missing =
-            list_conversations(&conn, &account, "import:999999", DEFAULT_LIST_LIMIT, 0).unwrap();
+            list_conversations(&mut conn, &account, "import:999999", DEFAULT_LIST_LIMIT, 0)
+                .await
+                .unwrap();
         assert_eq!(missing.total, 0);
 
         let junk = list_conversations(
-            &conn,
+            &mut conn,
             &account,
             "import:not-a-number",
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
-        let all = list_conversations(&conn, &account, "", DEFAULT_LIST_LIMIT, 0).unwrap();
+        let all = list_conversations(&mut conn, &account, "", DEFAULT_LIST_LIMIT, 0)
+            .await
+            .unwrap();
         assert_eq!(junk.total, all.total);
     }
 
-    #[test]
-    fn list_conversations_import_id_includes_duplicate_only_thread() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        schema::ensure_vault_schema(&conn).unwrap();
+    #[tokio::test]
+    async fn list_conversations_import_id_includes_duplicate_only_thread() {
+        // Fresh db: setup() would add a second non-duplicate conversation,
+        // which breaks the "all" total assertion below.
+        let (pool, _dir) = engine::test_pool().await;
+        schema::ensure_vault_schema(&mut pool.acquire().await.unwrap())
+            .await
+            .unwrap();
         let account = "00000000-0000-4000-8000-0000000000c2".to_string();
-        conn.execute(
-            "INSERT INTO accounts (id, username, read_only) VALUES (?1, 'alice', 0)",
-            params![&account],
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, username, read_only) VALUES ($1, 'alice', 0)")
+            .bind(&account)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let import_a = vault_imports::start_import(
+            &mut conn,
+            &account,
+            "imessage-ios",
+            "append",
+            Some("test"),
         )
+        .await
         .unwrap();
 
-        let import_a =
-            vault_imports::start_import(&conn, &account, "imessage-ios", "append", Some("test"))
-                .unwrap();
-
         let peer = account_profile::link_account_handle(
-            &conn,
+            &mut conn,
             &account,
             "+15555550400",
             HandleType::Phone,
         )
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO conversations (
                 id, account_id, chat_handle_id, conversation_type, source_file
-             ) VALUES (3, ?1, ?2, 'individual', 'dup-only.jsonl')",
-            params![&account, peer],
+             ) VALUES (3, $1, $2, 'individual', 'dup-only.jsonl')",
         )
+        .bind(&account)
+        .bind(peer)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO participants (conversation_id, handle_id, name_alias)
-             VALUES (3, ?1, 'Pat')",
-            params![peer],
+             VALUES (3, $1, 'Pat')",
         )
+        .bind(peer)
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
         // Canonical message in another conversation (winner for dedupe).
         let peer_other = account_profile::link_account_handle(
-            &conn,
+            &mut conn,
             &account,
             "+15555550401",
             HandleType::Phone,
         )
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO conversations (
                 id, account_id, chat_handle_id, conversation_type, source_file
-             ) VALUES (4, ?1, ?2, 'individual', 'winner.jsonl')",
-            params![&account, peer_other],
+             ) VALUES (4, $1, $2, 'individual', 'winner.jsonl')",
         )
+        .bind(&account)
+        .bind(peer_other)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO messages (
                 conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
-             ) VALUES (4, ?1, 'imessage', '2024-05-01T12:00:00Z', 0, 0, 'canonical')",
-            params![&account],
+             ) VALUES (4, $1, 'imessage', '2024-05-01T12:00:00Z', 0, 0, 'canonical')",
         )
+        .bind(&account)
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        let winner_id: i64 = conn
-            .query_row(
-                "SELECT id FROM messages WHERE conversation_id = 4",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let winner_id: i64 =
+            sqlx::query_scalar("SELECT id FROM messages WHERE conversation_id = 4")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
 
         // Only message in conversation 3 from import A is a duplicate.
-        conn.execute(
+        sqlx::query(
             "INSERT INTO messages (
                 conversation_id, account_id, source, timestamp, is_from_me, sort_order, body,
                 import_id, duplicate_of
-             ) VALUES (3, ?1, 'imessage', '2024-06-01T12:00:00Z', 0, 0, 'dup', ?2, ?3)",
-            params![&account, import_a, winner_id],
+             ) VALUES (3, $1, 'imessage', '2024-06-01T12:00:00Z', 0, 0, 'dup', $2, $3)",
         )
+        .bind(&account)
+        .bind(import_a)
+        .bind(winner_id)
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
         let by_import = list_conversations(
-            &conn,
+            &mut conn,
             &account,
             &format!("import:{import_a}"),
             DEFAULT_LIST_LIMIT,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(
             by_import.total, 1,
@@ -1782,7 +2059,9 @@ mod tests {
         );
         assert_eq!(by_import.conversations[0].id, "3");
 
-        let all = list_conversations(&conn, &account, "", DEFAULT_LIST_LIMIT, 0).unwrap();
+        let all = list_conversations(&mut conn, &account, "", DEFAULT_LIST_LIMIT, 0)
+            .await
+            .unwrap();
         assert_eq!(
             all.total, 1,
             "default list still requires a non-duplicate message"
@@ -1805,59 +2084,72 @@ mod tests {
         assert_eq!(display_service_label(&["whatsapp".into()]), "WhatsApp");
     }
 
-    #[test]
-    fn list_conversations_filters_by_tag_and_people() {
-        let (conn, account) = setup();
+    #[tokio::test]
+    async fn list_conversations_filters_by_tag_and_people() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
         crate::thread_tags_api::set_conversations_tag_membership(
-            &conn,
+            &mut conn,
             &account,
             &[1],
             "Holiday",
             true,
         )
+        .await
         .unwrap();
-        let tagged =
-            list_conversations(&conn, &account, "tag:Holiday", DEFAULT_LIST_LIMIT, 0).unwrap();
+        let tagged = list_conversations(&mut conn, &account, "tag:Holiday", DEFAULT_LIST_LIMIT, 0)
+            .await
+            .unwrap();
         assert_eq!(tagged.total, 1);
         assert_eq!(tagged.conversations[0].tags, vec!["Holiday".to_string()]);
-        let hidden =
-            list_conversations(&conn, &account, "-tag:Holiday", DEFAULT_LIST_LIMIT, 0).unwrap();
+        let hidden = list_conversations(&mut conn, &account, "-tag:Holiday", DEFAULT_LIST_LIMIT, 0)
+            .await
+            .unwrap();
         assert_eq!(hidden.total, 0);
-        let untagged =
-            list_conversations(&conn, &account, "tag:none", DEFAULT_LIST_LIMIT, 0).unwrap();
+        let untagged = list_conversations(&mut conn, &account, "tag:none", DEFAULT_LIST_LIMIT, 0)
+            .await
+            .unwrap();
         assert_eq!(untagged.total, 0);
 
-        conn.execute(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Sam')",
-            params![&account],
+        let contact_id: i64 = sqlx::query_scalar(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Sam') RETURNING id",
         )
+        .bind(&account)
+        .fetch_one(&mut *conn)
+        .await
         .unwrap();
-        let contact_id = conn.last_insert_rowid();
-        let handle_id: i64 = conn
-            .query_row(
-                "SELECT chat_handle_id FROM conversations WHERE id = 1",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        conn.execute(
-            "INSERT INTO contact_handles (account_id, handle_id, contact_id) VALUES (?1, ?2, ?3)",
-            params![&account, handle_id, contact_id],
+        let handle_id: i64 =
+            sqlx::query_scalar("SELECT chat_handle_id FROM conversations WHERE id = 1")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        sqlx::query(
+            "INSERT INTO contact_handles (account_id, handle_id, contact_id) VALUES ($1, $2, $3)",
         )
+        .bind(&account)
+        .bind(handle_id)
+        .bind(contact_id)
+        .execute(&mut *conn)
+        .await
         .unwrap();
         crate::contact_groups_api::set_contacts_group_membership(
-            &conn,
+            &mut conn,
             &account,
             &[contact_id],
             "Family",
             true,
         )
+        .await
         .unwrap();
         let family =
-            list_conversations(&conn, &account, "people:Family", DEFAULT_LIST_LIMIT, 0).unwrap();
+            list_conversations(&mut conn, &account, "people:Family", DEFAULT_LIST_LIMIT, 0)
+                .await
+                .unwrap();
         assert_eq!(family.total, 1);
         let not_family =
-            list_conversations(&conn, &account, "-people:Family", DEFAULT_LIST_LIMIT, 0).unwrap();
+            list_conversations(&mut conn, &account, "-people:Family", DEFAULT_LIST_LIMIT, 0)
+                .await
+                .unwrap();
         assert_eq!(not_family.total, 0);
     }
 }
