@@ -11,12 +11,8 @@ import {
 
 describe("clampWidth", () => {
   it("rounds and clamps to the inclusive range", () => {
-    expect(clampWidth(100, LEFT_PANEL_MIN_WIDTH, LEFT_PANEL_MAX_WIDTH)).toBe(
-      LEFT_PANEL_MIN_WIDTH,
-    );
-    expect(clampWidth(600, LEFT_PANEL_MIN_WIDTH, LEFT_PANEL_MAX_WIDTH)).toBe(
-      LEFT_PANEL_MAX_WIDTH,
-    );
+    expect(clampWidth(100, LEFT_PANEL_MIN_WIDTH, LEFT_PANEL_MAX_WIDTH)).toBe(LEFT_PANEL_MIN_WIDTH);
+    expect(clampWidth(600, LEFT_PANEL_MIN_WIDTH, LEFT_PANEL_MAX_WIDTH)).toBe(LEFT_PANEL_MAX_WIDTH);
     expect(clampWidth(220.6, LEFT_PANEL_MIN_WIDTH, LEFT_PANEL_MAX_WIDTH)).toBe(221);
     expect(clampWidth(220.4, LEFT_PANEL_MIN_WIDTH, LEFT_PANEL_MAX_WIDTH)).toBe(220);
   });

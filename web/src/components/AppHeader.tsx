@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { shouldIgnoreOutsideDismiss } from "../lib/portaledOverlay";
 import AdvancedSearchForm, { type AdvancedSearchMode } from "./AdvancedSearchForm";
 import AppAccountMenu from "./AppAccountMenu";
-import { loadWidth } from "./columnResize";
 import ContactSearch from "./ContactSearch";
+import { loadWidth } from "./columnResize";
 import GlobalSearch from "./GlobalSearch";
 import {
   LEFT_PANEL_DEFAULT_WIDTH,

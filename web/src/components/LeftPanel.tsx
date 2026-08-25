@@ -10,6 +10,7 @@ import ColumnResizeHandle from "./ColumnResizeHandle";
 import { useReportColumnResizing } from "./columnResizeState";
 import GroupsNav from "./GroupsNav";
 import { TrashIcon } from "./icons";
+import { LIST_TOOLBAR_CLASS } from "./ListRangeHeader";
 import {
   LEFT_PANEL_DEFAULT_WIDTH,
   LEFT_PANEL_MAX_WIDTH,
@@ -17,7 +18,6 @@ import {
   LEFT_PANEL_STORAGE_KEY,
   LEFT_PANEL_WIDTH_VAR,
 } from "./leftPanelWidth";
-import { LIST_TOOLBAR_CLASS } from "./ListRangeHeader";
 import NavCollapsibleSection from "./NavCollapsibleSection";
 import NavGlyphButton from "./NavGlyphButton";
 import SavedGroupForm from "./SavedGroupForm";
@@ -119,6 +119,12 @@ export default function LeftPanel({
   useEffect(() => {
     document.documentElement.style.setProperty(LEFT_PANEL_WIDTH_VAR, `${width}px`);
   }, [width]);
+
+  useEffect(() => {
+    return () => {
+      document.documentElement.style.removeProperty(LEFT_PANEL_WIDTH_VAR);
+    };
+  }, []);
 
   function isActive(path: string): boolean {
     if (path === "/") {
