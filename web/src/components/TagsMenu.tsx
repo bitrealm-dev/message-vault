@@ -31,6 +31,7 @@ export default function TagsMenu({
       title="Tags"
       searchPlaceholder="Search tags…"
       emptyText="No tags"
+      noMatchText="No matching tags"
       createButtonLabel="Create tag"
       createTitle="Create thread tag"
       createPlaceholder="Tag name"
