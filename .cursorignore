@@ -8,6 +8,7 @@
 
 # Cargo / Tauri build output
 target/
+debug/
 src-tauri/gen/
 
 # npm packages and frontend build output
