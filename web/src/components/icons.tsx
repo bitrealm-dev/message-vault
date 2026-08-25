@@ -72,6 +72,15 @@ export function ChevronRightIcon({ size, className, ...rest }: IconProps) {
   );
 }
 
+/** Chevron pointing down — a closed menu that opens below. */
+export function ChevronDownIcon({ size, className, ...rest }: IconProps) {
+  return (
+    <IconShell size={size} className={className} {...rest}>
+      <path d="m6 9 6 6 6-6" />
+    </IconShell>
+  );
+}
+
 /** Three dots for a row menu. */
 export function EllipsisIcon({ size, className, ...rest }: IconProps) {
   return (

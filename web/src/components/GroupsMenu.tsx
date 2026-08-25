@@ -3,7 +3,7 @@ import { isReservedGroupName, reservedGroupError } from "../lib/contactGroups";
 import type { MembershipCheckState } from "../lib/membershipChecks";
 import { shouldIgnoreOutsideDismiss } from "../lib/portaledOverlay";
 import { popupShadow } from "../lib/uiStyles";
-import { PeopleGroupIcon } from "./icons";
+import { ChevronDownIcon, PeopleGroupIcon } from "./icons";
 
 export type GroupCheckState = MembershipCheckState;
 
@@ -95,22 +95,19 @@ export default function GroupsMenu({
     if (!open) return;
     if (mode === "list") {
       setQuery("");
-      if (!labeled) {
-        requestAnimationFrame(() => searchRef.current?.focus());
-      }
+      requestAnimationFrame(() => searchRef.current?.focus());
     } else {
       setNewName("");
       setCreateError(null);
       requestAnimationFrame(() => nameRef.current?.focus());
     }
-  }, [open, mode, labeled]);
+  }, [open, mode]);
 
   const visibleGroups = useMemo(() => {
-    if (labeled) return allGroups;
     const q = query.trim().toLowerCase();
     if (!q) return allGroups;
     return allGroups.filter((g) => g.toLowerCase().includes(q));
-  }, [allGroups, labeled, query]);
+  }, [allGroups, query]);
 
   const hasAnyMembership = Object.values(checks).some(
     (state) => state === "on" || state === "mixed",
@@ -154,24 +151,25 @@ export default function GroupsMenu({
       >
         {labeled ? <span>{title}</span> : null}
         {icon ?? <PeopleGroupIcon size={16} />}
+        {labeled ? <ChevronDownIcon size={12} className="shrink-0 text-muted" /> : null}
       </button>
       {open && mode === "list" ? (
         <div
           data-mv-overlay=""
-          className={`absolute top-full right-0 z-[100] mt-1 w-64 rounded-xl border border-border bg-popover ${popupShadow}`}
+          className={`absolute top-full z-[100] mt-1 w-64 rounded-xl border border-border bg-popover ${
+            labeled ? "left-0" : "right-0"
+          } ${popupShadow}`}
         >
-          {labeled ? null : (
-            <div className="border-b border-border p-2">
-              <input
-                ref={searchRef}
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={searchPlaceholder}
-                className="box-border w-full rounded border border-border bg-elevated px-2 py-1.5 text-[0.813rem] text-text outline-none"
-              />
-            </div>
-          )}
+          <div className="border-b border-border p-2">
+            <input
+              ref={searchRef}
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={searchPlaceholder}
+              className="box-border w-full rounded border border-border bg-elevated px-2 py-1.5 text-[0.813rem] text-text outline-none focus:border-accent"
+            />
+          </div>
           <div className="max-h-56 overflow-y-auto py-1">
             {visibleGroups.length === 0 ? (
               <p className="px-3 py-2 text-[0.75rem] text-muted">{emptyText}</p>
@@ -225,7 +223,9 @@ export default function GroupsMenu({
       {open && mode === "create" ? (
         <div
           data-mv-overlay=""
-          className={`absolute top-full right-0 z-[100] mt-1 w-64 rounded-xl border border-border bg-popover p-3 ${popupShadow}`}
+          className={`absolute top-full z-[100] mt-1 w-64 rounded-xl border border-border bg-popover p-3 ${
+            labeled ? "left-0" : "right-0"
+          } ${popupShadow}`}
         >
           <h3 className="text-[0.875rem] font-semibold text-text">{createTitle}</h3>
           <input
