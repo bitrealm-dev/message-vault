@@ -96,7 +96,9 @@ export default function ContactDrawer({
   const [detail, setDetail] = useState<ContactDetail | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
+  const nameEditorRef = useRef<HTMLDivElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const savingNameRef = useRef(false);
   const drawerLeft = useDrawerLeft(variant === "overlay" && !!contactId);
 
   // Prefer in-state detail only when it matches this contact; otherwise use cache
@@ -181,11 +183,16 @@ export default function ContactDrawer({
   }, [displayName]);
 
   const cancelEdit = useCallback(() => {
+    if (savingNameRef.current) return;
     setEditingName(false);
     if (matchedName != null) {
       setNameValue(matchedName);
     }
   }, [matchedName]);
+
+  useEffect(() => {
+    if (!editingName) savingNameRef.current = false;
+  }, [editingName]);
 
   useEffect(() => {
     if (!contactId) return;
@@ -203,19 +210,26 @@ export default function ContactDrawer({
 
   useEffect(() => {
     if (!contactId || !editingName) return;
-    const onPointerDown = (e: MouseEvent) => {
-      const el = nameInputRef.current;
-      if (!el) return;
-      if (e.target instanceof Node && el.contains(e.target)) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (savingNameRef.current) return;
+      const root = nameEditorRef.current;
+      if (!root) return;
+      if (e.target instanceof Node && root.contains(e.target)) return;
       cancelEdit();
     };
-    document.addEventListener("mousedown", onPointerDown, true);
-    return () => document.removeEventListener("mousedown", onPointerDown, true);
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
   }, [contactId, editingName, cancelEdit]);
 
   useEffect(() => {
     if (!editingName) return;
-    requestAnimationFrame(() => nameInputRef.current?.focus());
+    const frame = requestAnimationFrame(() => {
+      const input = nameInputRef.current;
+      if (!input) return;
+      input.focus();
+      input.select();
+    });
+    return () => cancelAnimationFrame(frame);
   }, [editingName]);
 
   if (!contactId) return null;
@@ -247,15 +261,21 @@ export default function ContactDrawer({
   };
 
   const saveName = async () => {
-    if (!detailMatches || nameValue === matchedDetail?.name) {
+    if (savingNameRef.current) return;
+    savingNameRef.current = true;
+    try {
+      if (!detailMatches || nameValue === matchedDetail?.name) {
+        setEditingName(false);
+        return;
+      }
+      await apiClient.post(`/v1/export/contacts/${contactId}`, {
+        name: nameValue,
+      });
       setEditingName(false);
-      return;
+      loadDetail();
+    } catch {
+      savingNameRef.current = false;
     }
-    await apiClient.post(`/v1/export/contacts/${contactId}`, {
-      name: nameValue,
-    });
-    setEditingName(false);
-    loadDetail();
   };
 
   const panelClass =
@@ -287,12 +307,14 @@ export default function ContactDrawer({
         onBrowse={onBrowseConversations ? browse : undefined}
         title={
           editingName && detailMatches ? (
-            <div className="w-1/2 min-w-0">
+            <div ref={nameEditorRef} className="w-max min-w-[8rem] max-w-[50%]">
               <input
                 ref={nameInputRef}
                 type="text"
                 value={nameValue}
+                size={Math.max(nameValue.length + 1, 8)}
                 aria-label="Contact name"
+                title="Press Enter to save, Escape to cancel"
                 onChange={(e) => setNameValue(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
@@ -307,7 +329,7 @@ export default function ContactDrawer({
                 onBlur={() => {
                   cancelEdit();
                 }}
-                className="box-border w-full min-w-0 rounded border border-border bg-elevated px-1 py-0 text-[1.125rem] font-semibold text-text"
+                className="box-border h-7 w-full min-w-0 rounded border border-border bg-elevated px-1.5 py-0 text-[1.125rem] font-semibold leading-none text-text"
               />
             </div>
           ) : (

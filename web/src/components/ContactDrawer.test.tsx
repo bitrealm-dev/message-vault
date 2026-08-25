@@ -458,16 +458,19 @@ describe("ContactDrawer", () => {
       expect(screen.getByRole("button", { name: "Edit name" })).not.toBeDisabled();
     });
     await user.click(screen.getByRole("button", { name: "Edit name" }));
-    return screen.getByRole("textbox");
+    return screen.getByRole("textbox", { name: "Contact name" });
   }
 
-  it("constrains the name editor to half of the title slot", async () => {
+  it("constrains the name editor to at most half of the title slot", async () => {
     const user = userEvent.setup();
     const input = await openNameEditor(user);
     const wrapper = input.parentElement;
-    expect(wrapper?.className).toMatch(/w-1\/2/);
+    expect(wrapper?.className).toMatch(/max-w-\[50%\]/);
+    expect(wrapper?.className).toMatch(/min-w-\[8rem\]/);
+    expect(input.className).toMatch(/\bh-7\b/);
     expect(input.className).toMatch(/w-full/);
     expect(wrapper?.className).not.toMatch(/\bw-full\b/);
+    expect(wrapper?.className).not.toMatch(/w-1\/2/);
   });
 
   it("cancels name edit on Escape without saving", async () => {
@@ -483,12 +486,12 @@ describe("ContactDrawer", () => {
     expect(screen.getByRole("button", { name: "Edit name" })).toBeTruthy();
   });
 
-  it("cancels name edit on outside mousedown without saving", async () => {
+  it("cancels name edit on blur without saving", async () => {
     const user = userEvent.setup();
     const input = await openNameEditor(user);
     await user.clear(input);
     await user.type(input, "Renamed");
-    document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    await user.tab();
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Contact a" })).toBeTruthy();
     });
@@ -496,12 +499,26 @@ describe("ContactDrawer", () => {
     expect(screen.getByRole("button", { name: "Edit name" })).toBeTruthy();
   });
 
-  it("saves the name on Enter", async () => {
+  it("cancels name edit when clicking Contact groups without saving", async () => {
+    const user = userEvent.setup();
+    const input = await openNameEditor(user);
+    await user.clear(input);
+    await user.type(input, "Renamed");
+    await user.click(screen.getByText("Contact groups"));
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Contact a" })).toBeTruthy();
+    });
+    expect(post).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Edit name" })).toBeTruthy();
+  });
+
+  it("saves the name on Enter even if the field blurs", async () => {
     const user = userEvent.setup();
     const input = await openNameEditor(user);
     await user.clear(input);
     await user.type(input, "Renamed");
     await user.keyboard("{Enter}");
+    input.blur();
     await waitFor(() => {
       expect(post).toHaveBeenCalledWith("/v1/export/contacts/a", { name: "Renamed" });
     });
