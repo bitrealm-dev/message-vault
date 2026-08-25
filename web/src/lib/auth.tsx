@@ -1,3 +1,4 @@
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   createContext,
   type ReactNode,
@@ -11,6 +12,7 @@ import { apiClient, setBaseUrl, setToken } from "./api";
 import { parsePersistedAuth } from "./authGuards";
 import { clearContactDetailCache } from "./contactDetailCache";
 import { invalidateContactGroups } from "./contactGroups";
+import { isTauri } from "./tauri-check";
 import { invalidateThreadTags } from "./threadTags";
 
 interface AuthState {
@@ -39,13 +41,27 @@ interface AuthContextValue extends AuthState {
   login: (serverUrl: string, token: string, accountId: string) => Promise<void>;
   /** Save a new session token after the user changes their password. */
   updateToken: (token: string) => void;
-  logout: () => void;
+  /** Revoke the vault session (best-effort) and clear the saved login. */
+  logout: () => Promise<void>;
   setServer: (url: string) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 const STORAGE_KEY = "message-vault-auth";
+
+/** Max time to wait for the vault logout request before clearing local state. */
+const LOGOUT_TIMEOUT_MS = 2000;
+
+/** AbortSignal that fires after {@link LOGOUT_TIMEOUT_MS}. */
+function logoutTimeoutSignal(): AbortSignal {
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    return AbortSignal.timeout(LOGOUT_TIMEOUT_MS);
+  }
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), LOGOUT_TIMEOUT_MS);
+  return controller.signal;
+}
 
 /** Read the last saved login from browser storage. */
 function loadPersisted(): Partial<AuthState> | null {
@@ -224,10 +240,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
     authEpoch.current++;
     // Tell the server to end the session while the token is still set on the API client.
-    void apiClient.post("/v1/auth/logout", {}).catch(() => {});
+    // Await so close-to-quit can finish (or time out) before the WebView dies.
+    try {
+      await apiClient.post("/v1/auth/logout", {}, { signal: logoutTimeoutSignal() });
+    } catch {
+      // Vault unreachable, 401, or timeout — still clear the local session.
+    }
     setToken(null);
     clearContactDetailCache();
     invalidateContactGroups();
@@ -241,6 +262,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       needsOnboarding: false,
     }));
   }, []);
+
+  // Desktop only: on window close, revoke the session then quit.
+  const closingRef = useRef(false);
+  useEffect(() => {
+    if (!isTauri()) return;
+
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const win = getCurrentWindow();
+        unlisten = await win.onCloseRequested(async (event) => {
+          event.preventDefault();
+          if (closingRef.current) return;
+          closingRef.current = true;
+          try {
+            await logout();
+          } finally {
+            try {
+              await win.destroy();
+            } catch {
+              // Window may already be gone.
+            }
+          }
+        });
+        if (cancelled) {
+          unlisten();
+          unlisten = undefined;
+        }
+      } catch {
+        // Missing window permissions or not a real Tauri window — leave close alone.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [logout]);
 
   return (
     <AuthContext.Provider value={{ ...state, login, logout, updateToken, setServer }}>
