@@ -48,7 +48,11 @@ describe("GroupsMenu", () => {
 
     await user.click(screen.getByRole("button", { name: "Contact Groups" }));
     await user.type(screen.getByRole("searchbox", { name: "Search groups…" }), "zzz");
-    expect(screen.getByText("No matching groups")).toBeTruthy();
+    const empty = screen.getByText("No matching groups");
+    expect(empty).toBeTruthy();
+    expect(empty.tagName).toBe("DIV");
+    expect(empty.className).toContain("py-1.5");
+    expect(empty.className).not.toContain("py-2");
     expect(screen.queryByText("No groups")).toBeNull();
   });
 

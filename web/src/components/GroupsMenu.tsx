@@ -174,7 +174,9 @@ export default function GroupsMenu({
           </div>
           <div className="max-h-56 overflow-y-auto py-1">
             {visibleGroups.length === 0 ? (
-              <p className="px-3 py-2 text-[0.75rem] text-muted">{listEmptyText}</p>
+              <div className="flex items-center px-3 py-1.5 text-[0.813rem] text-muted">
+                {listEmptyText}
+              </div>
             ) : (
               visibleGroups.map((name) => {
                 const state = checks[name] ?? "off";
