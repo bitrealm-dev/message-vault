@@ -24,7 +24,6 @@ export type ImportStep = {
   label: string;
   status: "pending" | "active" | "done" | "error";
   detail?: string;
-  pathLink?: string;
   durationMs?: number | null;
 };
 
@@ -220,9 +219,7 @@ export function useImportJob() {
       outputDir = await resolveImportStagingDir(form.backupPath, form.source);
       setStagingDir(outputDir);
       setSteps((current) =>
-        current.map((step, i) =>
-          i === 0 ? { ...step, pathLink: outputDir, detail: "Extracting…" } : step,
-        ),
+        current.map((step, i) => (i === 0 ? { ...step, detail: "Extracting…" } : step)),
       );
 
       timingRef.current.extractStartedAt = performance.now();
@@ -269,7 +266,6 @@ export function useImportJob() {
         {
           label: "Parse backup",
           status: "done",
-          pathLink: outputDir,
           detail: "Extraction complete",
           durationMs: parseMs,
         },
