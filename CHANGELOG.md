@@ -18,7 +18,7 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 ### Changed
 
 - 2026-08-24: Faster HTTP vault-push: skip per-file asset HEAD until this run sees
-  `already_present`, raise JSONL import batches from 8 MiB to 50 MiB, let the
+  `already_present`, raise JSONL import batches from 8 MiB to 64 MiB, let the
   desktop app flush imports on size only, overlap more prepare/upload work, and
   keep 64 idle HTTP connections per host. One preflight HEAD of the first queued
   digest avoids re-uploading a burst of files the vault already has.

@@ -121,7 +121,7 @@ pub async fn push(
             trust_export: args.trust_export,
             verify_digests: false,
             max_retries: 3,
-            // Pack until 50 MiB; do not stop at a message count.
+            // Pack until 64 MiB; do not stop at a message count.
             batch_size: vault_push::NO_MESSAGE_COUNT_LIMIT,
             // Above the CLI default (8): desktop imports are often many small files.
             asset_upload_workers: 16,

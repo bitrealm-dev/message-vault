@@ -57,11 +57,11 @@ use crate::project;
 
 /// How many messages to pack into one import HTTP request when size is not the limit.
 pub const DEFAULT_BATCH_SIZE: usize = 1_000;
-/// Soft max size of one import request body (about 50 MiB).
+/// Soft max size of one import request body (about 64 MiB).
 ///
 /// Kept under Cloudflare's ~100 MiB upload cap so a large group chat is
 /// split into several requests instead of one giant one that gets rejected.
-pub const MAX_IMPORT_BODY_BYTES: usize = 50 * 1024 * 1024;
+pub const MAX_IMPORT_BODY_BYTES: usize = 64 * 1024 * 1024;
 /// Sentinel for "do not flush import batches on message count; size only".
 ///
 /// Desktop import uses this so SMS-style short messages pack until
@@ -2853,8 +2853,8 @@ mod tests {
     }
 
     #[test]
-    fn import_body_limit_is_50_mib() {
-        assert_eq!(MAX_IMPORT_BODY_BYTES, 50 * 1024 * 1024);
+    fn import_body_limit_is_64_mib() {
+        assert_eq!(MAX_IMPORT_BODY_BYTES, 64 * 1024 * 1024);
     }
 
     #[test]
