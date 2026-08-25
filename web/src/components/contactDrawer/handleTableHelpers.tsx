@@ -1,42 +1,74 @@
 import type { ReactNode } from "react";
-import { Column } from "react-aria-components";
-import { linkClass, mutedClass, thClass, thRightClass } from "./handleTableStyles";
+import { Column, ColumnResizer, Group } from "react-aria-components";
+import {
+  columnResizerClass,
+  linkClass,
+  mutedClass,
+  thClass,
+  thLeftClass,
+  thRightClass,
+} from "./handleTableStyles";
+import { headerLabelMinWidth } from "./headerLabelMinWidth";
 
 export function SortableColumn({
   id,
-  widthClass,
+  widthClass = "",
   align = "center",
   isRowHeader,
+  allowsResizing = false,
+  defaultWidth,
+  minWidth,
   children,
 }: {
   id: string;
-  widthClass: string;
-  align?: "center" | "right";
+  widthClass?: string;
+  align?: "left" | "center" | "right";
   isRowHeader?: boolean;
+  allowsResizing?: boolean;
+  defaultWidth?: number | `${number}%` | `${number}fr`;
+  minWidth?: number;
   children: ReactNode;
 }) {
-  const justify = align === "right" ? "justify-end" : "justify-center";
-  const textAlign = align === "right" ? "text-right" : "text-center";
-  const headerAlign = align === "right" ? thRightClass : thClass;
+  const justify =
+    align === "right" ? "justify-end" : align === "left" ? "justify-start" : "justify-center";
+  const textAlign =
+    align === "right" ? "text-right" : align === "left" ? "text-left" : "text-center";
+  const headerAlign = align === "right" ? thRightClass : align === "left" ? thLeftClass : thClass;
+  const resolvedMinWidth =
+    minWidth ??
+    (allowsResizing && typeof children === "string" ? headerLabelMinWidth(children) : undefined);
+
   return (
     <Column
       id={id}
       isRowHeader={isRowHeader}
       allowsSorting
-      className={`${headerAlign} ${widthClass}`}
+      defaultWidth={defaultWidth}
+      minWidth={resolvedMinWidth}
+      className={`${headerAlign} ${widthClass}`.trim()}
     >
       {({ sortDirection }) => (
-        <span className={`relative mx-auto inline-flex max-w-full items-center ${justify}`}>
-          <span className={`${textAlign} leading-tight`}>{children}</span>
-          <span
-            aria-hidden="true"
-            className={`absolute top-1/2 left-[calc(100%+0.25rem)] -translate-y-1/2 text-[0.55rem] leading-none ${
-              sortDirection ? "text-accent" : "invisible"
-            }`}
+        <div className={`flex w-full min-w-0 items-center gap-1 ${justify}`}>
+          <Group
+            role="presentation"
+            className={`relative inline-flex min-w-0 max-w-full items-center outline-none ${justify}`}
           >
-            {sortDirection === "descending" ? "▼" : "▲"}
-          </span>
-        </span>
+            <span
+              className={`${textAlign} leading-tight ${sortDirection ? "text-accent" : "text-text"}`}
+            >
+              {children}
+            </span>
+            <span
+              aria-hidden="true"
+              className={`ml-1 shrink-0 text-[0.55rem] leading-none ${
+                sortDirection ? "text-accent" : "invisible"
+              }`}
+            >
+              {sortDirection === "descending" ? "▼" : "▲"}
+            </span>
+          </Group>
+          {allowsResizing ? <ColumnResizer className={columnResizerClass} /> : null}
+        </div>
       )}
     </Column>
   );

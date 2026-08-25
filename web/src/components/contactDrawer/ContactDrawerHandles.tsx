@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   Cell,
   Column,
+  ResizableTableContainer,
   Row,
   type SortDescriptor,
   Table,
@@ -18,9 +19,12 @@ import { renderHandleSummaryRow, renderHandleTableRow } from "./HandleTableRow";
 import { SortableColumn } from "./handleTableHelpers";
 import { removeIdentityConfirmBody, sortValue } from "./handleTableLogic";
 import { tdClass, thClass } from "./handleTableStyles";
+import { headerLabelMinWidth } from "./headerLabelMinWidth";
 import { useHandleMutations } from "./useHandleMutations";
 
 type BrowseFn = (args: { kind: ContactBrowseKind; handle?: string; service?: string }) => void;
+
+const ACTIONS_COL_WIDTH = 40;
 
 export function ContactDrawerHandles({
   contactId,
@@ -95,77 +99,132 @@ export function ContactDrawerHandles({
           Add identity
         </Button>
       </div>
-      <Table
-        aria-label="Contact handles"
-        className="w-full border-collapse text-left table-fixed"
-        sortDescriptor={sortDescriptor ?? undefined}
-        onSortChange={setSortDescriptor}
-      >
-        <TableHeader className={dataCardHeaderRowClass}>
-          <SortableColumn id="service" isRowHeader widthClass="w-[16%]">
-            Service
-          </SortableColumn>
-          <SortableColumn id="handle" widthClass="w-[12%]">
-            Identity
-          </SortableColumn>
-          <SortableColumn id="name_alias" widthClass="w-[12%]">
-            Alias
-          </SortableColumn>
-          <SortableColumn id="start_date" widthClass="w-[9%]">
-            First Seen
-          </SortableColumn>
-          <SortableColumn id="end_date" widthClass="w-[9%]">
-            Last Seen
-          </SortableColumn>
-          <SortableColumn id="conversations" widthClass="w-[10%]" align="right">
-            Threads
-          </SortableColumn>
-          <SortableColumn id="direct_messages" widthClass="w-[8%]" align="right">
-            Direct
-            <br />
-            Messages
-          </SortableColumn>
-          <SortableColumn id="group_messages" widthClass="w-[8%]" align="right">
-            Group
-            <br />
-            Messages
-          </SortableColumn>
-          <Column className={`${thClass} w-[8%] !cursor-default`} />
-        </TableHeader>
-        {handleRows.length === 0 ? (
-          <TableBody className="[&_tr]:border-b [&_tr]:border-border">
-            <Row id="handles-empty" className="outline-none">
-              <Cell className={`${tdClass} text-muted`}>{loading ? "Loading…" : "No handles"}</Cell>
-              <Cell className={tdClass} />
-              <Cell className={tdClass} />
-              <Cell className={tdClass} />
-              <Cell className={tdClass} />
-              <Cell className={tdClass} />
-              <Cell className={tdClass} />
-              <Cell className={tdClass} />
-              <Cell className={tdClass} />
-            </Row>
+      <ResizableTableContainer className="w-full overflow-x-auto">
+        <Table
+          aria-label="Contact handles"
+          className="w-full border-collapse text-left"
+          sortDescriptor={sortDescriptor ?? undefined}
+          onSortChange={setSortDescriptor}
+        >
+          <TableHeader className={dataCardHeaderRowClass}>
+            <SortableColumn
+              id="service"
+              isRowHeader
+              align="left"
+              allowsResizing
+              defaultWidth="1.2fr"
+              minWidth={headerLabelMinWidth("Service")}
+            >
+              Service
+            </SortableColumn>
+            <SortableColumn
+              id="handle"
+              align="left"
+              allowsResizing
+              defaultWidth="1.4fr"
+              minWidth={headerLabelMinWidth("Identity")}
+            >
+              Identity
+            </SortableColumn>
+            <SortableColumn
+              id="name_alias"
+              align="left"
+              allowsResizing
+              defaultWidth="1.2fr"
+              minWidth={headerLabelMinWidth("Alias")}
+            >
+              Alias
+            </SortableColumn>
+            <SortableColumn
+              id="start_date"
+              align="left"
+              allowsResizing
+              defaultWidth="1fr"
+              minWidth={headerLabelMinWidth("First Seen")}
+            >
+              First Seen
+            </SortableColumn>
+            <SortableColumn
+              id="end_date"
+              align="left"
+              allowsResizing
+              defaultWidth="1fr"
+              minWidth={headerLabelMinWidth("Last Seen")}
+            >
+              Last Seen
+            </SortableColumn>
+            <SortableColumn
+              id="conversations"
+              align="left"
+              allowsResizing
+              defaultWidth="1fr"
+              minWidth={headerLabelMinWidth("Threads")}
+            >
+              Threads
+            </SortableColumn>
+            <SortableColumn
+              id="direct_messages"
+              align="left"
+              allowsResizing
+              defaultWidth="1.1fr"
+              minWidth={headerLabelMinWidth("Direct Messages")}
+            >
+              Direct Messages
+            </SortableColumn>
+            <SortableColumn
+              id="group_messages"
+              align="left"
+              allowsResizing
+              defaultWidth="1.1fr"
+              minWidth={headerLabelMinWidth("Group Messages")}
+            >
+              Group Messages
+            </SortableColumn>
+            <Column
+              id="actions"
+              width={ACTIONS_COL_WIDTH}
+              minWidth={ACTIONS_COL_WIDTH}
+              defaultWidth={ACTIONS_COL_WIDTH}
+              className={`${thClass} !cursor-default`}
+            />
+          </TableHeader>
+          {handleRows.length === 0 ? (
+            <TableBody className="[&_tr]:border-b [&_tr]:border-border">
+              <Row id="handles-empty" className="outline-none">
+                <Cell className={`${tdClass} !text-left text-muted`}>
+                  {loading ? "Loading…" : "No handles"}
+                </Cell>
+                <Cell className={tdClass} />
+                <Cell className={tdClass} />
+                <Cell className={tdClass} />
+                <Cell className={tdClass} />
+                <Cell className={tdClass} />
+                <Cell className={tdClass} />
+                <Cell className={tdClass} />
+                <Cell className={tdClass} />
+              </Row>
+            </TableBody>
+          ) : (
+            <TableBody
+              items={sortedRows}
+              dependencies={[busy, sortDescriptor]}
+              className="[&_tr]:border-b [&_tr]:border-border"
+            >
+              {(h) =>
+                renderHandleTableRow(h, {
+                  busy,
+                  loading,
+                  onBrowse,
+                  onRequestRemove: requestRemoveHandle,
+                })
+              }
+            </TableBody>
+          )}
+          <TableBody className="border-t-2 border-border">
+            {renderHandleSummaryRow(footerAsHandle, onBrowse, loading)}
           </TableBody>
-        ) : (
-          <TableBody
-            items={sortedRows}
-            dependencies={[busy, sortDescriptor]}
-            className="[&_tr]:border-b [&_tr]:border-border"
-          >
-            {(h) =>
-              renderHandleTableRow(h, {
-                busy,
-                loading,
-                onBrowse,
-                onRequestRemove: requestRemoveHandle,
-              })
-            }
-          </TableBody>
-        )}
-        <TableBody className="border-t-2 border-border">
-          {renderHandleSummaryRow(footerAsHandle, onBrowse, loading)}
-        </TableBody>
-      </Table>
+        </Table>
+      </ResizableTableContainer>
       <AddIdentityDialog
         open={adding}
         busy={busy}

@@ -435,4 +435,31 @@ describe("ContactDrawer", () => {
       expect(screen.getByRole("button", { name: "Edit name" })).not.toBeDisabled();
     });
   });
+
+  it("left-aligns identity headers and shows column resizers", async () => {
+    get.mockResolvedValue(detail("a"));
+    render(
+      <ContactDrawer
+        variant="docked"
+        contactId="a"
+        preview={{
+          id: "a",
+          name: "Contact a",
+          handles: ["+1555000a"],
+          groups: [],
+        }}
+        onClose={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("grid", { name: "Contact handles" })).toBeTruthy();
+    });
+
+    const service = screen.getByRole("columnheader", { name: /Service/i });
+    expect(service.className).toMatch(/text-left/);
+    expect(screen.getByRole("columnheader", { name: /Direct Messages/i })).toBeTruthy();
+    const table = screen.getByRole("grid", { name: "Contact handles" });
+    expect(table.querySelectorAll(".cursor-col-resize").length).toBeGreaterThanOrEqual(8);
+  });
 });
