@@ -10,6 +10,7 @@ import ContactList from "../screens/ContactList";
 import ConversationList from "../screens/ConversationList";
 import AppHeader from "./AppHeader";
 import CheckedContactsPanel from "./CheckedContactsPanel";
+import { ColumnResizeProvider } from "./ColumnResizeContext";
 import ContactDrawer from "./ContactDrawer";
 import type { ContactBrowseKind, ContactPreview } from "./contactDrawer/contactDrawerTypes";
 import LeftPanel from "./LeftPanel";
@@ -198,105 +199,110 @@ export default function AppLayout() {
           onSearchChange={handleSearchChange}
           onSearch={handleSearch}
         />
-        <div className="flex min-h-0 flex-1">
-          <LeftPanel onSearchChange={handleSearchChange} onSearch={handleSearch} />
+        <ColumnResizeProvider>
+          <div className="flex min-h-0 flex-1 overflow-hidden">
+            <LeftPanel onSearchChange={handleSearchChange} onSearch={handleSearch} />
 
-          {/* Conversations: render list component directly with props */}
-          {mode === "conversations" && !isMessageRoute && (
-            <>
-              <ListColumn>
-                <ConversationList
-                  selectedId={null}
-                  onSelect={handleConversationSelect}
-                  query={threadListQuery}
-                />
-              </ListColumn>
-              <RightPane>
-                <main className={mainPane}>
-                  <div className={emptyMain}>Select a conversation to view messages</div>
-                </main>
-              </RightPane>
-            </>
-          )}
-
-          {/* Contacts: render list component directly with props */}
-          {mode === "contacts" && (
-            <>
-              <ListColumn>
-                <ContactList
-                  filter={contactSearch}
-                  groupFilter={groupFilter}
-                  selectedId={selectedContact?.id ?? null}
-                  onSelect={(c) =>
-                    setSelectedContact({ id: c.id, name: c.name, handles: c.handles })
-                  }
-                  onCheckedChange={handleCheckedContacts}
-                  clearCheckedRev={clearCheckedRev}
-                />
-              </ListColumn>
-              <RightPane>
-                {checkedContacts.length > 0 ? (
-                  <CheckedContactsPanel contacts={checkedContacts} onClear={clearCheckedContacts} />
-                ) : selectedContact ? (
-                  <ContactDrawer
-                    variant="docked"
-                    contactId={selectedContact.id}
-                    preview={selectedContact}
-                    onClose={closeContactDrawer}
-                    onBrowseConversations={handleBrowseContactConversations}
+            {/* Conversations: render list component directly with props */}
+            {mode === "conversations" && !isMessageRoute && (
+              <>
+                <ListColumn>
+                  <ConversationList
+                    selectedId={null}
+                    onSelect={handleConversationSelect}
+                    query={threadListQuery}
                   />
-                ) : (
+                </ListColumn>
+                <RightPane>
                   <main className={mainPane}>
-                    <div className={emptyMain}>Select a contact to view details</div>
+                    <div className={emptyMain}>Select a conversation to view messages</div>
                   </main>
-                )}
-              </RightPane>
-            </>
-          )}
+                </RightPane>
+              </>
+            )}
 
-          {/* Trash: ListColumn shows ConversationList with trash query; main shows TrashScreen via <Outlet /> */}
-          {isTrash && (
-            <>
-              <ListColumn>
-                <ConversationList
-                  selectedId={null}
-                  // Trash thread selection is handled by TrashScreen in the outlet.
-                  onSelect={() => {}}
-                  query="is:trash"
-                />
-              </ListColumn>
-              <RightPane>
-                <main className={mainPane}>
-                  <Outlet />
-                </main>
-              </RightPane>
-            </>
-          )}
+            {/* Contacts: render list component directly with props */}
+            {mode === "contacts" && (
+              <>
+                <ListColumn>
+                  <ContactList
+                    filter={contactSearch}
+                    groupFilter={groupFilter}
+                    selectedId={selectedContact?.id ?? null}
+                    onSelect={(c) =>
+                      setSelectedContact({ id: c.id, name: c.name, handles: c.handles })
+                    }
+                    onCheckedChange={handleCheckedContacts}
+                    clearCheckedRev={clearCheckedRev}
+                  />
+                </ListColumn>
+                <RightPane>
+                  {checkedContacts.length > 0 ? (
+                    <CheckedContactsPanel
+                      contacts={checkedContacts}
+                      onClear={clearCheckedContacts}
+                    />
+                  ) : selectedContact ? (
+                    <ContactDrawer
+                      variant="docked"
+                      contactId={selectedContact.id}
+                      preview={selectedContact}
+                      onClose={closeContactDrawer}
+                      onBrowseConversations={handleBrowseContactConversations}
+                    />
+                  ) : (
+                    <main className={mainPane}>
+                      <div className={emptyMain}>Select a contact to view details</div>
+                    </main>
+                  )}
+                </RightPane>
+              </>
+            )}
 
-          {/* Message route: single <Outlet /> — MessageRoute renders both ListColumn + main */}
-          {isMessageRoute && (
-            <div className="flex min-w-0 flex-1">
-              <Outlet />
-            </div>
-          )}
+            {/* Trash: ListColumn shows ConversationList with trash query; main shows TrashScreen via <Outlet /> */}
+            {isTrash && (
+              <>
+                <ListColumn>
+                  <ConversationList
+                    selectedId={null}
+                    // Trash thread selection is handled by TrashScreen in the outlet.
+                    onSelect={() => {}}
+                    query="is:trash"
+                  />
+                </ListColumn>
+                <RightPane>
+                  <main className={mainPane}>
+                    <Outlet />
+                  </main>
+                </RightPane>
+              </>
+            )}
 
-          {/* Full-screen views: no ListColumn, just main */}
-          {isFullScreen && (
-            <main className={mainPane}>
-              <Outlet />
-            </main>
-          )}
+            {/* Message route: single <Outlet /> — MessageRoute renders both ListColumn + main */}
+            {isMessageRoute && (
+              <div className="flex min-w-0 flex-1 overflow-hidden">
+                <Outlet />
+              </div>
+            )}
 
-          {/* Overlay contact panel (e.g. opened from a message thread). */}
-          {openContactId ? (
-            <ContactDrawer
-              variant="overlay"
-              contactId={openContactId}
-              onClose={closeContactDrawer}
-              onBrowseConversations={handleBrowseContactConversations}
-            />
-          ) : null}
-        </div>
+            {/* Full-screen views: no ListColumn, just main */}
+            {isFullScreen && (
+              <main className={mainPane}>
+                <Outlet />
+              </main>
+            )}
+
+            {/* Overlay contact panel (e.g. opened from a message thread). */}
+            {openContactId ? (
+              <ContactDrawer
+                variant="overlay"
+                contactId={openContactId}
+                onClose={closeContactDrawer}
+                onBrowseConversations={handleBrowseContactConversations}
+              />
+            ) : null}
+          </div>
+        </ColumnResizeProvider>
       </div>
     </RightToolbarProvider>
   );

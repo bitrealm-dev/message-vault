@@ -6,6 +6,8 @@ import { isTauri } from "../lib/tauri-check";
 import { useAccountProfile } from "../lib/useAccountProfile";
 import { useContactGroups } from "../lib/useContactGroups";
 import { useThreadTags } from "../lib/useThreadTags";
+import ColumnResizeHandle from "./ColumnResizeHandle";
+import { useReportColumnResizing } from "./columnResizeState";
 import GroupsNav from "./GroupsNav";
 import { TrashIcon } from "./icons";
 import { LIST_TOOLBAR_CLASS } from "./ListRangeHeader";
@@ -13,6 +15,12 @@ import NavCollapsibleSection from "./NavCollapsibleSection";
 import NavGlyphButton from "./NavGlyphButton";
 import SavedGroupForm from "./SavedGroupForm";
 import ThreadTagsNav from "./ThreadTagsNav";
+import { useColumnResize } from "./useColumnResize";
+
+const DEFAULT_WIDTH = 220;
+const MIN_WIDTH = 160;
+const MAX_WIDTH = 360;
+const STORAGE_KEY = "leftPanelWidth:v1";
 
 function NavIcon({ children }: { children: ReactNode }) {
   return (
@@ -96,6 +104,14 @@ export default function LeftPanel({
   const location = useLocation();
   const navigate = useNavigate();
   const { profile } = useAccountProfile();
+  const onDraggingChange = useReportColumnResizing();
+  const { width, dragging, handleHover, handleProps } = useColumnResize({
+    storageKey: STORAGE_KEY,
+    defaultWidth: DEFAULT_WIDTH,
+    minWidth: MIN_WIDTH,
+    maxWidth: MAX_WIDTH,
+    onDraggingChange,
+  });
 
   function isActive(path: string): boolean {
     if (path === "/") {
@@ -121,7 +137,10 @@ export default function LeftPanel({
   }, []);
 
   return (
-    <div className="flex h-full w-[220px] shrink-0 flex-col overflow-hidden border-r border-border bg-panel text-text">
+    <div
+      style={{ flex: `0 0 ${width}px`, width: `${width}px` }}
+      className="relative flex h-full shrink-0 flex-col overflow-hidden border-r border-border bg-panel text-text"
+    >
       <div className={LIST_TOOLBAR_CLASS} aria-hidden />
       <div className="min-h-0 flex-1 overflow-auto">
         {/* Browse */}
@@ -226,6 +245,16 @@ export default function LeftPanel({
           onCancel={() => setShowGroupForm(false)}
         />
       )}
+
+      <ColumnResizeHandle
+        ariaLabel="Resize navigation panel"
+        width={width}
+        minWidth={MIN_WIDTH}
+        maxWidth={MAX_WIDTH}
+        dragging={dragging}
+        handleHover={handleHover}
+        handleProps={handleProps}
+      />
     </div>
   );
 }

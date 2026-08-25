@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Document and ship CORS origins for packaged desktop builds (`tauri://localhost`, `http://tauri.localhost`, `https://tauri.localhost`). Release AppImages were blocked from Connect when the vault only allowed Vite `:5173` origins.
 
+### Changed
+
+- Make the Messages/Contacts nav width-draggable, and let the conversation/contact list shrink to nothing when the window is narrow so the thread stays readable.
+
 ### Added
 
 - Generated HTTP API route catalog at `/vault/developer/rustdoc/http/`, plus an optional explorer at `/docs` when `[server] openapi_ui` is true

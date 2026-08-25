@@ -1,6 +1,6 @@
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
-import { useListColumnResizing } from "./ListColumnResizeContext";
+import { useColumnResizing } from "./columnResizeState";
 
 /** How often the x–y of z label may update while scrolling. */
 const RANGE_REPORT_MS = 50;
@@ -84,7 +84,7 @@ export default function VirtualList({
   const [layoutTick, setLayoutTick] = useState(0);
 
   // While the user drags the column width, skip per-row measurement so the list does not jump.
-  const columnResizing = useListColumnResizing();
+  const columnResizing = useColumnResizing();
   const measureRows = dynamicSize && !columnResizing;
   const wasResizingRef = useRef(false);
 

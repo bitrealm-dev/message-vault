@@ -4,7 +4,7 @@ import { personDisplayLabel } from "../lib/nameAliases";
 import { listRowDividers } from "../lib/tw";
 import type { Conversation } from "../lib/types";
 import { useNameAliases } from "../lib/useNameAliases";
-import { useListColumnResizing } from "./ListColumnResizeContext";
+import { useColumnResizing } from "./columnResizeState";
 
 /** Short service label (imessage / sms/mms). */
 function formatServiceLabel(service: string): string | null {
@@ -119,7 +119,7 @@ export default function ConversationRow({
   checked?: boolean;
   onCheckChange?: (id: string) => void;
 }) {
-  const columnResizing = useListColumnResizing();
+  const columnResizing = useColumnResizing();
   const useAliases = useNameAliases();
   const isGroup = conversation.is_group;
   const wraps = isGroup && !conversation.label && !columnResizing;
