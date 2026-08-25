@@ -53,6 +53,12 @@ Prefer VAULT_KEY for the vault key. Prefer Message Vault → Vault for a GUI.
 * `--asset-upload-workers <ASSET_UPLOAD_WORKERS>` — Simultaneous attachment uploads; message imports remain sequential
 
   Default value: `8`
+* `--prepare-ahead <PREPARE_AHEAD>` — Conversations to prepare (read + upload media) ahead of the import loop
+
+  Default value: `3`
+* `--prepare-workers <PREPARE_WORKERS>` — Worker threads that prepare conversations ahead of import
+
+  Default value: `2`
 * `--asset-max-bytes <ASSET_MAX_BYTES>` — Max attachment size in bytes (must not exceed vault server.asset_max_bytes)
 
   Default value: `536870912`

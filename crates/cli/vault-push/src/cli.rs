@@ -4,7 +4,10 @@ use std::path::PathBuf;
 
 use clap::{Command, CommandFactory, Parser};
 
-use crate::{DEFAULT_ASSET_MAX_BYTES, DEFAULT_ASSET_UPLOAD_WORKERS, DEFAULT_BATCH_SIZE};
+use crate::{
+    DEFAULT_ASSET_MAX_BYTES, DEFAULT_ASSET_UPLOAD_WORKERS, DEFAULT_BATCH_SIZE,
+    DEFAULT_PREPARE_AHEAD, DEFAULT_PREPARE_WORKERS,
+};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -68,6 +71,14 @@ pub struct Cli {
     #[arg(long, default_value_t = DEFAULT_ASSET_UPLOAD_WORKERS)]
     pub asset_upload_workers: usize,
 
+    /// Conversations to prepare (read + upload media) ahead of the import loop
+    #[arg(long, default_value_t = DEFAULT_PREPARE_AHEAD)]
+    pub prepare_ahead: usize,
+
+    /// Worker threads that prepare conversations ahead of import
+    #[arg(long, default_value_t = DEFAULT_PREPARE_WORKERS)]
+    pub prepare_workers: usize,
+
     /// Max attachment size in bytes (must not exceed vault server.asset_max_bytes)
     #[arg(long, default_value_t = DEFAULT_ASSET_MAX_BYTES)]
     pub asset_max_bytes: u64,
@@ -101,5 +112,13 @@ mod clap_command_tests {
         let cmd = super::clap_command();
         assert_eq!(cmd.get_name(), "vault-push");
         assert!(cmd.get_arguments().any(|a| a.get_long() == Some("url")));
+        assert!(
+            cmd.get_arguments()
+                .any(|a| a.get_long() == Some("prepare-ahead"))
+        );
+        assert!(
+            cmd.get_arguments()
+                .any(|a| a.get_long() == Some("prepare-workers"))
+        );
     }
 }

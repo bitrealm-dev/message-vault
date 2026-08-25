@@ -102,6 +102,8 @@ fn text_only_config(dir: &Path, base_url: String) -> VaultPushConfig {
         max_retries: 0,
         batch_size: 50,
         asset_upload_workers: 1,
+        prepare_ahead: vault_push::DEFAULT_PREPARE_AHEAD,
+        prepare_workers: vault_push::DEFAULT_PREPARE_WORKERS,
         asset_multipart_threshold: vault_push::MAX_PROXY_BODY_BYTES,
         asset_max_bytes: vault_push::DEFAULT_ASSET_MAX_BYTES,
         report_path: Some(dir.join("vault-push-report.json")),
@@ -543,6 +545,8 @@ fn profiles_attachment_upload_phases() {
         max_retries: 0,
         batch_size: 50,
         asset_upload_workers: 2,
+        prepare_ahead: vault_push::DEFAULT_PREPARE_AHEAD,
+        prepare_workers: vault_push::DEFAULT_PREPARE_WORKERS,
         asset_multipart_threshold: vault_push::MAX_PROXY_BODY_BYTES,
         asset_max_bytes: vault_push::DEFAULT_ASSET_MAX_BYTES,
         report_path: Some(report_path.clone()),
@@ -562,7 +566,7 @@ fn profiles_attachment_upload_phases() {
         run(&cfg, Some(&mut progress)).unwrap()
     };
 
-    head.assert();
+    assert_eq!(head.hits(), 0, "first upload must PUT without a HEAD probe");
     asset.assert();
     import.assert();
     let profile = report.results[0].profile.as_ref().unwrap();
@@ -585,9 +589,48 @@ fn profiles_attachment_upload_phases() {
     assert!(persisted_log.contains("Import "));
 }
 
+fn ir_attachment(rel: &str, digest: String) -> IrAttachment {
+    IrAttachment {
+        path: Some(rel.into()),
+        original_name: Some(rel.rsplit('/').next().unwrap_or(rel).into()),
+        mime_type: Some("text/plain".into()),
+        digest_sha256: Some(digest),
+        is_sticker: false,
+        transcription: None,
+        sticker_effect: None,
+        size_bytes: None,
+        missing_reason: None,
+        bytes: None,
+    }
+}
+
+/// Two unique files in one conversation; one worker so upload order is stable.
+fn two_attachment_docs(
+    dir: &Path,
+    a_name: &str,
+    a_bytes: &[u8],
+    b_name: &str,
+    b_bytes: &[u8],
+) -> (String, String) {
+    let attachment_dir = dir.join("attachments");
+    fs::create_dir(&attachment_dir).unwrap();
+    fs::write(attachment_dir.join(a_name), a_bytes).unwrap();
+    fs::write(attachment_dir.join(b_name), b_bytes).unwrap();
+    let digest_a = hex::encode(Sha256::digest(a_bytes));
+    let digest_b = hex::encode(Sha256::digest(b_bytes));
+    let mut doc = sample_doc();
+    doc.messages[0].attachments = vec![
+        ir_attachment(&format!("attachments/{a_name}"), digest_a.clone()),
+        ir_attachment(&format!("attachments/{b_name}"), digest_b.clone()),
+    ];
+    write_jsonl(dir, &doc);
+    (digest_a, digest_b)
+}
+
 #[test]
-fn skips_put_when_head_reports_asset_present() {
-    const ASSET_BYTES: &[u8] = b"already on vault";
+fn puts_two_new_assets_without_head() {
+    const A: &[u8] = b"new-asset-alpha";
+    const B: &[u8] = b"new-asset-bravo";
 
     let server = MockServer::start();
     let _auth = server.mock(|when, then| {
@@ -600,24 +643,27 @@ fn skips_put_when_head_reports_asset_present() {
             "sources": ["sms-backup-restore"]
         }));
     });
-    let digest = hex::encode(Sha256::digest(ASSET_BYTES));
-    let head = server.mock(|when, then| {
-        when.method("HEAD").path(format!("/v1/assets/{digest}"));
-        then.status(200).json_body(json!({
-            "ok": true,
-            "sha256": digest,
-            "assets_path": format!("ab/{digest}.txt"),
-            "already_present": true
-        }));
+    let dir = tempdir().unwrap();
+    let (digest_a, digest_b) = two_attachment_docs(dir.path(), "a.txt", A, "b.txt", B);
+    let head_a = server.mock(|when, then| {
+        when.method("HEAD").path(format!("/v1/assets/{digest_a}"));
+        then.status(404);
     });
-    let put = server.mock(|when, then| {
-        when.method(PUT).path(format!("/v1/assets/{digest}"));
-        then.status(200).json_body(json!({
-            "ok": true,
-            "already_present": false
-        }));
+    let head_b = server.mock(|when, then| {
+        when.method("HEAD").path(format!("/v1/assets/{digest_b}"));
+        then.status(404);
     });
-    let import = server.mock(|when, then| {
+    let put_a = server.mock(|when, then| {
+        when.method(PUT).path(format!("/v1/assets/{digest_a}"));
+        then.status(200)
+            .json_body(json!({ "ok": true, "already_present": false }));
+    });
+    let put_b = server.mock(|when, then| {
+        when.method(PUT).path(format!("/v1/assets/{digest_b}"));
+        then.status(200)
+            .json_body(json!({ "ok": true, "already_present": false }));
+    });
+    let _import = server.mock(|when, then| {
         when.method(POST).path("/v1/import");
         then.status(200).json_body(json!({
             "ok": true,
@@ -626,34 +672,80 @@ fn skips_put_when_head_reports_asset_present() {
         }));
     });
 
-    let dir = tempdir().unwrap();
-    let attachment_dir = dir.path().join("attachments");
-    fs::create_dir(&attachment_dir).unwrap();
-    fs::write(attachment_dir.join("fixture.txt"), ASSET_BYTES).unwrap();
-    let mut doc = sample_doc();
-    doc.messages[0].attachments.push(IrAttachment {
-        path: Some("attachments/fixture.txt".into()),
-        original_name: Some("fixture.txt".into()),
-        mime_type: Some("text/plain".into()),
-        digest_sha256: Some(digest.clone()),
-        is_sticker: false,
-        transcription: None,
-        sticker_effect: None,
-        size_bytes: None,
-        missing_reason: None,
-        bytes: None,
+    let mut cfg = text_only_config(dir.path(), server.base_url());
+    cfg.force = true;
+    cfg.asset_upload_workers = 1;
+    let report = run(&cfg, None).unwrap();
+
+    assert_eq!(head_a.hits(), 0);
+    assert_eq!(head_b.hits(), 0);
+    assert_eq!(put_a.hits(), 1);
+    assert_eq!(put_b.hits(), 1);
+    assert_eq!(report.assets_uploaded, 2);
+}
+
+#[test]
+fn heads_later_assets_after_put_reports_already_present() {
+    const FIRST: &[u8] = b"already-on-vault-first";
+    const SECOND: &[u8] = b"already-on-vault-second";
+
+    let server = MockServer::start();
+    let _auth = server.mock(|when, then| {
+        when.method(GET).path("/v1/auth/check");
+        then.status(200).json_body(json!({
+            "ok": true,
+            "account_id": "acct-1",
+            "username": "alice",
+            "account_ok": true,
+            "sources": ["sms-backup-restore"]
+        }));
     });
-    write_jsonl(dir.path(), &doc);
+    let dir = tempdir().unwrap();
+    let (digest_a, digest_b) =
+        two_attachment_docs(dir.path(), "first.txt", FIRST, "second.txt", SECOND);
+    // Jobs run in sha256 order. The lexicographically first digest PUTs;
+    // after already_present, the second digest HEADs and skips PUT.
+    let (first_digest, second_digest) = if digest_a < digest_b {
+        (digest_a, digest_b)
+    } else {
+        (digest_b, digest_a)
+    };
+    let put_first = server.mock(|when, then| {
+        when.method(PUT).path(format!("/v1/assets/{first_digest}"));
+        then.status(200)
+            .json_body(json!({ "ok": true, "already_present": true }));
+    });
+    let head_second = server.mock(|when, then| {
+        when.method("HEAD")
+            .path(format!("/v1/assets/{second_digest}"));
+        then.status(200).json_body(json!({
+            "ok": true,
+            "already_present": true
+        }));
+    });
+    let put_second = server.mock(|when, then| {
+        when.method(PUT).path(format!("/v1/assets/{second_digest}"));
+        then.status(200)
+            .json_body(json!({ "ok": true, "already_present": false }));
+    });
+    let _import = server.mock(|when, then| {
+        when.method(POST).path("/v1/import");
+        then.status(200).json_body(json!({
+            "ok": true,
+            "messages": 1,
+            "messages_appended": 1
+        }));
+    });
 
     let mut cfg = text_only_config(dir.path(), server.base_url());
     cfg.force = true;
+    cfg.asset_upload_workers = 1;
     let report = run(&cfg, None).unwrap();
 
-    head.assert();
-    assert_eq!(put.hits(), 0, "PUT must be skipped when HEAD says present");
-    import.assert();
-    assert_eq!(report.assets_uploaded, 0);
-    assert_eq!(report.assets_skipped, 1);
+    assert_eq!(put_first.hits(), 1);
+    assert!(head_second.hits() >= 1);
+    assert_eq!(put_second.hits(), 0);
+    assert_eq!(report.assets_skipped, 2);
 }
 
 #[test]
@@ -757,7 +849,7 @@ fn multipart_upload_when_over_proxy_threshold() {
     cfg.asset_multipart_threshold = 20; // force multipart for 40-byte file
     let report = run(&cfg, None).unwrap();
 
-    head.assert();
+    assert_eq!(head.hits(), 0, "first upload must PUT without a HEAD probe");
     start.assert();
     part1.assert();
     part2.assert();
@@ -1019,7 +1111,7 @@ fn shared_attachment_uploaded_once_across_conversations() {
     assert!(report.ok);
     assert_eq!(report.conversations_ok, 2);
     assert_eq!(put.hits(), 1, "shared digest must upload once");
-    assert!(head.hits() >= 1);
+    assert_eq!(head.hits(), 0, "first upload must PUT without a HEAD probe");
     import.assert();
     assert_eq!(report.assets_uploaded, 1);
 }

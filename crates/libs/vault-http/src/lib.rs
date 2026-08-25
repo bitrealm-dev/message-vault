@@ -26,17 +26,20 @@ pub struct AuthInfo {
     pub username: Option<String>,
 }
 
+/// Idle connections kept per vault host for worker threads.
+const POOL_MAX_IDLE_PER_HOST: usize = 64;
+
 /// Build the shared blocking reqwest client.
 ///
-/// One client per `HttpSession`; the connection pool keeps 16 idle
-/// connections per host for the worker threads.
+/// One client per `HttpSession`; the connection pool keeps
+/// [`POOL_MAX_IDLE_PER_HOST`] idle connections per host for the worker threads.
 ///
 /// # Errors
 ///
 /// Returns an error when the reqwest client cannot be built.
 pub fn build_client() -> Result<reqwest::blocking::Client> {
     reqwest::blocking::Client::builder()
-        .pool_max_idle_per_host(16)
+        .pool_max_idle_per_host(POOL_MAX_IDLE_PER_HOST)
         .build()
         .context("build HTTP client")
 }
@@ -74,5 +77,10 @@ mod tests {
     #[test]
     fn truncate_survives_max_zero() {
         assert_eq!(truncate("héllo", 0), "…");
+    }
+
+    #[test]
+    fn idle_pool_keeps_64_connections_per_host() {
+        assert_eq!(POOL_MAX_IDLE_PER_HOST, 64);
     }
 }
