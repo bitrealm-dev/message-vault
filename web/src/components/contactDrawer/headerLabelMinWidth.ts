@@ -1,5 +1,5 @@
-/** Left pad (`pl-1` = 4px) plus reserved right slot for the sort caret (`pr-4` = 16px). */
-const HEADER_CHROME_PX = 20;
+/** Symmetric gutter so a centered label clears the edge-pinned sort caret. */
+const HEADER_CHROME_PX = 32;
 
 /** Body cell horizontal padding (`px-1` both sides). */
 const CELL_PADDING_PX = 8;

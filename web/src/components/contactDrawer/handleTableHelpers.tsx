@@ -49,23 +49,27 @@ export function SortableColumn({
     >
       {({ sortDirection }) => (
         <div className="relative flex w-full min-w-0 items-center">
-          <Group className={`flex min-w-0 flex-1 items-center outline-none ${justify}`}>
+          <Group
+            className={`flex min-w-0 flex-1 items-center outline-none ${justify} ${
+              align === "right" ? "pr-4" : ""
+            }`}
+          >
             <span
-              className={`relative inline-flex max-w-full items-center pr-4 ${textAlign} leading-tight ${
+              className={`max-w-full leading-tight ${textAlign} ${
                 sortDirection ? "text-accent" : "text-text"
               }`}
             >
               {children}
-              <span
-                aria-hidden="true"
-                className={`absolute top-1/2 right-0 -translate-y-1/2 text-[0.55rem] leading-none ${
-                  sortDirection ? "text-accent" : "invisible"
-                }`}
-              >
-                {sortDirection === "descending" ? "▼" : "▲"}
-              </span>
             </span>
           </Group>
+          <span
+            aria-hidden="true"
+            className={`pointer-events-none absolute top-1/2 right-1 -translate-y-1/2 text-[0.55rem] leading-none ${
+              sortDirection ? "text-accent" : "invisible"
+            }`}
+          >
+            {sortDirection === "descending" ? "▼" : "▲"}
+          </span>
           {allowsResizing ? <ColumnResizer className={columnResizerClass} /> : null}
         </div>
       )}

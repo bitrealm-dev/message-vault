@@ -31,7 +31,7 @@ type BrowseFn = (args: { kind: ContactBrowseKind; handle?: string; service?: str
 const twoLineHeader = (line1: string, line2: string) => (
   <>
     <span className="sr-only">{`${line1} ${line2}`}</span>
-    <span className="flex flex-col items-end leading-tight" aria-hidden="true">
+    <span className="flex flex-col items-center leading-tight" aria-hidden="true">
       <span className="whitespace-nowrap">{line1}</span>
       <span className="whitespace-nowrap">{line2}</span>
     </span>
@@ -194,7 +194,6 @@ export function ContactDrawerHandles({
             <SortableColumn
               id="service"
               isRowHeader
-              align="left"
               allowsResizing
               defaultWidth={columnWidths.service.width}
               minWidth={columnWidths.service.min}
@@ -203,7 +202,6 @@ export function ContactDrawerHandles({
             </SortableColumn>
             <SortableColumn
               id="handle"
-              align="left"
               allowsResizing
               defaultWidth={columnWidths.handle.width}
               minWidth={columnWidths.handle.min}
@@ -212,7 +210,6 @@ export function ContactDrawerHandles({
             </SortableColumn>
             <SortableColumn
               id="name_alias"
-              align="left"
               allowsResizing
               defaultWidth={columnWidths.alias.width}
               minWidth={columnWidths.alias.min}
@@ -237,7 +234,6 @@ export function ContactDrawerHandles({
             </SortableColumn>
             <SortableColumn
               id="conversations"
-              align="right"
               allowsResizing
               defaultWidth={columnWidths.conversations.width}
               minWidth={columnWidths.conversations.min}
@@ -246,7 +242,6 @@ export function ContactDrawerHandles({
             </SortableColumn>
             <SortableColumn
               id="direct_messages"
-              align="right"
               allowsResizing
               defaultWidth={columnWidths.directMessages.width}
               minWidth={columnWidths.directMessages.min}
@@ -255,7 +250,6 @@ export function ContactDrawerHandles({
             </SortableColumn>
             <SortableColumn
               id="group_messages"
-              align="right"
               allowsResizing
               defaultWidth="1fr"
               minWidth={columnWidths.groupMessages.min}

@@ -457,7 +457,8 @@ describe("ContactDrawer", () => {
     });
 
     const service = screen.getByRole("columnheader", { name: /Service/i });
-    expect(service.className).toMatch(/text-left/);
+    expect(service.className).toMatch(/text-center/);
+    expect(service.className).not.toMatch(/text-left/);
 
     const firstSeen = screen.getByRole("columnheader", { name: /First Seen/i });
     expect(firstSeen.querySelector(".whitespace-nowrap")).toBeTruthy();
@@ -469,16 +470,19 @@ describe("ContactDrawer", () => {
     expect(lastSeen.className).not.toMatch(/text-left/);
 
     const threads = screen.getByRole("columnheader", { name: /Threads/i });
-    expect(threads.className).toMatch(/text-right/);
+    expect(threads.className).toMatch(/text-center/);
+    expect(threads.className).not.toMatch(/text-right/);
 
     const direct = screen.getByRole("columnheader", { name: /Direct Messages/i });
     expect(direct.querySelector(".flex-col")).toBeTruthy();
-    expect(direct.querySelector(".items-end")).toBeTruthy();
-    expect(direct.className).toMatch(/text-right/);
+    expect(direct.querySelector(".items-center")).toBeTruthy();
+    expect(direct.className).toMatch(/text-center/);
+    expect(direct.className).not.toMatch(/text-right/);
     const group = screen.getByRole("columnheader", { name: /Group Messages/i });
     expect(group.querySelector(".flex-col")).toBeTruthy();
-    expect(group.querySelector(".items-end")).toBeTruthy();
-    expect(group.className).toMatch(/text-right/);
+    expect(group.querySelector(".items-center")).toBeTruthy();
+    expect(group.className).toMatch(/text-center/);
+    expect(group.className).not.toMatch(/text-right/);
 
     const table = screen.getByRole("grid", { name: "Contact handles" });
     expect(table.querySelectorAll(".cursor-col-resize").length).toBeGreaterThanOrEqual(8);
