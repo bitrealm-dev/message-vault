@@ -1,0 +1,43 @@
+# Always skip: generated output, dependencies, local data, and tool caches.
+# These are not product source. Cursor should not index or read them.
+#
+# Skip-unless trees (legacy UIs and the vendored SQLite driver) live in
+# .cursorindexingignore so search skips them, but Agent can still open a
+# file when the task is specifically about that tree.
+
+# Cargo / Tauri build output
+target/
+src-tauri/gen/
+
+# npm packages and frontend build output
+**/node_modules/
+web/dist/
+web-next/.next/
+web-next/out/
+docs/.astro/
+docs/dist/
+docs/public/vault/developer/rustdoc/
+
+# Local vault data and generated demo copies
+data/
+crates/vault/demo-seed/staging/
+
+# Scratch, caches, packaging, and local export trees
+.tmp/
+.npm-cache/
+dist/
+out/
+staging/
+staging-*/
+export-*/
+
+# Tooling clones and caches (not app code)
+.worktrees/
+.claude/
+.superpowers/
+
+# Local secrets and machine identity
+.env
+config/config.toml
+config/export-to-vault.sh
+**/export.ini
