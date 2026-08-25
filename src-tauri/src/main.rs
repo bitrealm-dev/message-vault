@@ -36,6 +36,7 @@ fn main() {
             commands::ffmpeg::probe_ffmpeg_tools,
             commands::ffmpeg::set_ffmpeg_tools_dir,
             commands::paths::home_dir,
+            commands::paths::open_path,
             commands::push::push,
             commands::pull::pull,
         ]);
