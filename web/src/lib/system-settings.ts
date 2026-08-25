@@ -3,6 +3,7 @@
 import { invokeHomeDir } from "./tauri";
 import { isTauri } from "./tauri-check";
 
+/** localStorage key for the import staging parent (legacy name kept for saved paths). */
 const VAULT_WORKING_DIR_KEY = "mv-vault-working-dir";
 const REMEMBER_IMPORTER_PATHS_KEY = "mv-remember-importer-paths";
 const IMPORTER_PATHS_KEY = "mv-importer-paths";
@@ -10,11 +11,21 @@ const IMPORTER_PATHS_KEY = "mv-importer-paths";
 let cachedHomeDir: string | null = null;
 let homeDirPromise: Promise<string> | null = null;
 
-/** Parent folder under the user home directory that holds import staging folders. */
+/** Default folder name under the user home directory for import staging. */
 const IMPORT_STAGING_PARENT = "message-vault";
 
-/** Folder chosen in Settings as the vault working directory. Empty when unset. */
-export function getVaultWorkingDir(): string {
+/**
+ * Default import staging parent: `{home}/message-vault`.
+ * When home is empty, returns the relative folder name `message-vault`.
+ */
+export function defaultImportStagingDir(homeDir: string): string {
+  const home = homeDir.trim().replace(/[/\\]+$/, "");
+  if (!home) return IMPORT_STAGING_PARENT;
+  return `${home}/${IMPORT_STAGING_PARENT}`;
+}
+
+/** Folder chosen in Settings as the import staging parent. Empty when unset. */
+export function getImportStagingDir(): string {
   try {
     return localStorage.getItem(VAULT_WORKING_DIR_KEY)?.trim() || "";
   } catch {
@@ -22,7 +33,7 @@ export function getVaultWorkingDir(): string {
   }
 }
 
-export function setVaultWorkingDir(dir: string): void {
+export function setImportStagingDir(dir: string): void {
   try {
     const trimmed = dir.trim();
     if (trimmed) localStorage.setItem(VAULT_WORKING_DIR_KEY, trimmed);
@@ -30,6 +41,18 @@ export function setVaultWorkingDir(dir: string): void {
   } catch {
     // Private browsing and full storage can throw. Keep the in-memory value.
   }
+}
+
+/**
+ * Resolved parent folder for import staging (saved override or default).
+ * Empty when neither a saved path nor a home directory is available.
+ */
+export async function resolveImportStagingParent(): Promise<string> {
+  const saved = getImportStagingDir();
+  if (saved) return saved.replace(/[/\\]+$/, "");
+  const home = (await getHomeDir()).trim();
+  if (!home) return "";
+  return defaultImportStagingDir(home);
 }
 
 /** User home folder from the desktop app. Empty in the browser or when lookup fails. */
@@ -143,39 +166,41 @@ function stagingDirName(sourceId: string, now: Date = new Date()): string {
 }
 
 /**
- * Join the user home folder with `message-vault/staging-<importer>-YYMMDD-HHMMSS`.
- * When home is empty (browser builds, failed lookup), the path is relative.
+ * Join a staging parent folder with `staging-<importer>-YYMMDD-HHMMSS`.
+ * When the parent is empty, the path is only the staging folder name.
  */
 export function joinImportStagingPath(
-  homeDir: string,
+  parentDir: string,
   sourceId: string,
   now: Date = new Date(),
 ): string {
   const name = stagingDirName(sourceId, now);
-  const home = homeDir.trim().replace(/[/\\]+$/, "");
-  if (!home) {
-    return `${IMPORT_STAGING_PARENT}/${name}`;
-  }
-  return `${home}/${IMPORT_STAGING_PARENT}/${name}`;
+  const parent = parentDir.trim().replace(/[/\\]+$/, "");
+  if (!parent) return name;
+  return `${parent}/${name}`;
 }
 
 /**
- * Full path for a new import staging folder.
- * Always `{home}/message-vault/staging-<importer>-YYMMDD-HHMMSS`.
+ * Full path for a new import staging folder under the Settings parent
+ * (default `{home}/message-vault`).
  *
- * @throws If the desktop app cannot determine the user home directory. A
- * relative `message-vault/…` path would otherwise be created next to the
- * process working directory (for example the AppImage mount).
+ * @throws If neither a saved staging parent nor the user home directory is
+ * available. A relative `message-vault/…` path would otherwise be created next
+ * to the process working directory (for example the AppImage mount).
  */
 export async function resolveImportStagingDir(
   _backupPath: string,
   sourceId: string,
 ): Promise<string> {
+  const saved = getImportStagingDir();
+  if (saved) {
+    return joinImportStagingPath(saved, sourceId);
+  }
   const home = (await getHomeDir()).trim();
   if (!home) {
     throw new Error(
       "Could not determine the user home directory. Import staging needs ~/message-vault/.",
     );
   }
-  return joinImportStagingPath(home, sourceId);
+  return joinImportStagingPath(defaultImportStagingDir(home), sourceId);
 }
