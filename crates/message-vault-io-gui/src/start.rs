@@ -1190,6 +1190,8 @@ fn run_vault_upload(
         batch_size: vault_push::DEFAULT_BATCH_SIZE,
         // Guided import often has many small attachments. Use the library default worker count.
         asset_upload_workers: vault_push::DEFAULT_ASSET_UPLOAD_WORKERS,
+        prepare_ahead: vault_push::DEFAULT_PREPARE_AHEAD,
+        prepare_workers: vault_push::DEFAULT_PREPARE_WORKERS,
         asset_multipart_threshold: vault_push::MAX_PROXY_BODY_BYTES,
         asset_max_bytes: vault_push::DEFAULT_ASSET_MAX_BYTES,
         report_path: None,

@@ -60,6 +60,8 @@ fn real_main() -> Result<ExitCode> {
         max_retries: cli.max_retries,
         batch_size: cli.batch_size,
         asset_upload_workers: cli.asset_upload_workers,
+        prepare_ahead: cli.prepare_ahead,
+        prepare_workers: cli.prepare_workers,
         asset_multipart_threshold: vault_push::MAX_PROXY_BODY_BYTES,
         asset_max_bytes: cli.asset_max_bytes,
         report_path: cli.report,

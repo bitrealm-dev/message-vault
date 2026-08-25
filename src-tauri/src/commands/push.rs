@@ -121,12 +121,19 @@ pub async fn push(
             trust_export: args.trust_export,
             verify_digests: false,
             max_retries: 3,
-            batch_size: 100,
-            asset_upload_workers: 8,
+            // Pack until 50 MiB; do not stop at a message count.
+            batch_size: vault_push::NO_MESSAGE_COUNT_LIMIT,
+            // Above the CLI default (8): desktop imports are often many small files.
+            asset_upload_workers: 16,
+            // Above the CLI default (3): hide more hashing behind in-flight imports.
+            prepare_ahead: 8,
+            // Above the CLI default (2): more of the prepare-ahead queue runs at once.
+            prepare_workers: 4,
             asset_multipart_threshold: 5 * 1024 * 1024,
             asset_max_bytes: 50 * 1024 * 1024,
             report_path: None,
             log_path: None,
+            // Relies on one preflight HEAD per run instead of a persisted journal.
             journal_path: None,
             cancel: Some(cancel),
             contact_name_mode,

@@ -155,7 +155,7 @@ fn payload_too_large_message(kind: &str, bytes: Option<usize>) -> String {
     format!(
         "{kind} rejected: HTTP 413 Payload Too Large{size}. \
          Cloudflare Free/Pro caps proxied uploads at ~100 MB. \
-         vault-push chunks message imports under 8 MiB and large assets via multipart; \
+         vault-push chunks message imports under 50 MiB and large assets via multipart; \
          if this still fails, raise nginx client_max_body_size for /v1 (need ≥100m for 64 MiB parts) \
          or tunnel to vault :8080."
     )
@@ -833,5 +833,14 @@ mod tests {
         let final_url = reqwest::Url::parse("http://127.0.0.1:8080/v1/auth/check").unwrap();
         let err = classify_unauthorized("http://127.0.0.1:8080", &requested, &final_url);
         assert_eq!(err.kind(), "invalid_key");
+    }
+
+    #[test]
+    fn payload_too_large_mentions_50_mib_import_chunks() {
+        let msg = payload_too_large_message("import", Some(10));
+        assert!(
+            msg.contains("50 MiB"),
+            "413 help must name the import chunk size, got {msg}"
+        );
     }
 }
