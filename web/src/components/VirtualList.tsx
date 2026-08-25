@@ -30,6 +30,8 @@ type VirtualListProps = {
   style?: CSSProperties;
   empty?: ReactNode;
   footer?: ReactNode;
+  /** Ignore this many CSS pixels at the bottom of the viewport when reporting the visible range. */
+  visibleBottomInset?: number;
 };
 
 function rangeFromVirtualItems(
@@ -37,13 +39,14 @@ function rangeFromVirtualItems(
   scrollOffset: number,
   viewportHeight: number,
   count: number,
+  bottomInset = 0,
 ): VisibleRange {
   if (count === 0 || virtualItems.length === 0 || viewportHeight <= 0) {
     return { start: 0, end: 0 };
   }
 
   const viewTop = scrollOffset;
-  const viewBottom = scrollOffset + viewportHeight;
+  const viewBottom = scrollOffset + Math.max(0, viewportHeight - bottomInset);
   let startIdx: number | null = null;
   let endIdx: number | null = null;
 
@@ -70,6 +73,7 @@ export default function VirtualList({
   style,
   empty,
   footer,
+  visibleBottomInset = 0,
 }: VirtualListProps) {
   const parentRef = useRef<HTMLDivElement | null>(null);
   const onRangeRef = useRef(onVisibleRangeChange);
@@ -120,7 +124,13 @@ export default function VirtualList({
   const virtualItems = virtualizer.getVirtualItems();
   const scrollOffset = parentRef.current?.scrollTop ?? 0;
   const viewportHeight = parentRef.current?.clientHeight ?? 0;
-  const nextRange = rangeFromVirtualItems(virtualItems, scrollOffset, viewportHeight, count);
+  const nextRange = rangeFromVirtualItems(
+    virtualItems,
+    scrollOffset,
+    viewportHeight,
+    count,
+    visibleBottomInset,
+  );
   void layoutTick;
   const nextRangeStart = nextRange.start;
   const nextRangeEnd = nextRange.end;

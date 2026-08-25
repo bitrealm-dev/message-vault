@@ -1,9 +1,13 @@
 /** @vitest-environment jsdom */
 
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import ListRangeHeader from "./ListRangeHeader";
+
+afterEach(() => {
+  cleanup();
+});
 
 describe("ListRangeHeader", () => {
   it("shows the range label", () => {
@@ -29,6 +33,22 @@ describe("ListRangeHeader", () => {
         selectAllLabel="Select all contacts"
       />,
     );
+    await user.click(screen.getByRole("checkbox", { name: "Select all contacts" }));
+    expect(onSelectAllChange).toHaveBeenCalledWith(true);
+  });
+
+  it("keeps select-all without a range label", async () => {
+    const onSelectAllChange = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ListRangeHeader
+        onSelectAllChange={onSelectAllChange}
+        selectAllLabel="Select all contacts"
+        actions={<button type="button">Sort</button>}
+      />,
+    );
+    expect(screen.queryByText("1–20 of 100")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sort" })).toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: "Select all contacts" }));
     expect(onSelectAllChange).toHaveBeenCalledWith(true);
   });
