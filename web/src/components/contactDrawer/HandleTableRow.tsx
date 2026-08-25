@@ -12,9 +12,8 @@ import { conversationCount, handleDateCell } from "./handleTableLogic";
 import {
   iconBtnDangerClass,
   rowActionsRevealClass,
-  tdCenterClass,
   tdClass,
-  tdRightClass,
+  tdLeftClass,
 } from "./handleTableStyles";
 
 type BrowseFn = (args: { kind: ContactBrowseKind; handle?: string; service?: string }) => void;
@@ -34,26 +33,26 @@ export function renderHandleTableRow(
   const loading = opts.loading;
   return (
     <Row id={h.id} className="group/handle-row outline-none">
-      <Cell className={`${tdClass} overflow-hidden`}>
+      <Cell className={tdLeftClass}>
         <span>{formatHandleServiceLabel(h.handle, h.service)}</span>
       </Cell>
-      <Cell className={`${tdClass} overflow-hidden`}>
+      <Cell className={tdLeftClass}>
         <span className="break-all" title={h.handle}>
           {h.handle}
         </span>
       </Cell>
-      <Cell className={`${tdClass} overflow-hidden text-muted`}>
-        <span className="break-all" title={alias || undefined}>
+      <Cell className={`${tdLeftClass} text-muted`}>
+        <span className="break-normal hyphens-none" title={alias || undefined}>
           {loading ? "—" : alias || "—"}
         </span>
       </Cell>
-      <Cell className={`${tdCenterClass} whitespace-nowrap text-muted`}>
+      <Cell className={`${tdLeftClass} whitespace-nowrap text-muted`}>
         {loading ? "—" : handleDateCell(h.start_date)}
       </Cell>
-      <Cell className={`${tdCenterClass} whitespace-nowrap text-muted`}>
+      <Cell className={`${tdLeftClass} whitespace-nowrap text-muted`}>
         {loading ? "—" : handleDateCell(h.end_date)}
       </Cell>
-      <Cell className={tdRightClass}>
+      <Cell className={tdLeftClass}>
         <CountCell
           value={convos}
           loading={loading}
@@ -69,13 +68,13 @@ export function renderHandleTableRow(
           }
         />
       </Cell>
-      <Cell className={tdRightClass}>
+      <Cell className={tdLeftClass}>
         <CountCell value={h.individual_message_count} loading={loading} />
       </Cell>
-      <Cell className={tdRightClass}>
+      <Cell className={tdLeftClass}>
         <CountCell value={h.group_message_count} loading={loading} />
       </Cell>
-      <Cell className={`${tdClass} whitespace-nowrap`}>
+      <Cell className={`${tdClass} !px-1 whitespace-nowrap`}>
         <div className={`flex items-center justify-center ${rowActionsRevealClass}`}>
           <Button
             variant="ghost"
@@ -100,16 +99,16 @@ export function renderHandleSummaryRow(
 ) {
   return (
     <Row id="handles-total" className="outline-none">
-      <Cell className={`${tdClass} font-semibold`}>Summary</Cell>
-      <Cell className={`${tdClass} text-muted`}>—</Cell>
-      <Cell className={`${tdClass} text-muted`}>—</Cell>
-      <Cell className={`${tdCenterClass} whitespace-nowrap text-muted`}>
+      <Cell className={`${tdLeftClass} font-semibold`}>Summary</Cell>
+      <Cell className={`${tdLeftClass} text-muted`}>—</Cell>
+      <Cell className={`${tdLeftClass} text-muted`}>—</Cell>
+      <Cell className={`${tdLeftClass} whitespace-nowrap text-muted`}>
         {loading ? "—" : handleDateCell(totals.start_date)}
       </Cell>
-      <Cell className={`${tdCenterClass} whitespace-nowrap text-muted`}>
+      <Cell className={`${tdLeftClass} whitespace-nowrap text-muted`}>
         {loading ? "—" : handleDateCell(totals.end_date)}
       </Cell>
-      <Cell className={tdRightClass}>
+      <Cell className={tdLeftClass}>
         <CountCell
           value={conversationCount(totals)}
           loading={loading}
@@ -118,10 +117,10 @@ export function renderHandleSummaryRow(
           }
         />
       </Cell>
-      <Cell className={tdRightClass}>
+      <Cell className={tdLeftClass}>
         <CountCell value={totals.individual_message_count} loading={loading} />
       </Cell>
-      <Cell className={tdRightClass}>
+      <Cell className={tdLeftClass}>
         <CountCell value={totals.group_message_count} loading={loading} />
       </Cell>
       <Cell className={tdClass} />
