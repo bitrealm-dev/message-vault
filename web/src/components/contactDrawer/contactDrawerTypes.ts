@@ -27,7 +27,26 @@ export type ContactPreview = {
   groups?: string[];
 };
 
+/** List-API contact row (snake_case `handle_count`) mapped into `ContactPreview`. */
+export type ContactListPreviewSource = {
+  id: string;
+  name: string;
+  handles?: string[];
+  handle_count?: number;
+  groups?: string[];
+};
+
 export type ContactBrowseKind = "all" | "direct" | "group";
+
+export function contactPreviewFromListRow(c: ContactListPreviewSource): ContactPreview {
+  return {
+    id: c.id,
+    name: c.name,
+    handles: c.handles,
+    handleCount: c.handle_count,
+    groups: c.groups,
+  };
+}
 
 /** Format an API ISO timestamp as YYYY-MM-DD for the handles table. */
 export function formatHandleDate(iso: string | null | undefined): string | null {
@@ -48,6 +67,15 @@ export function emptyHandleRow(handle: string): CachedContactHandle {
   };
 }
 
+/** Shown in the Identity cell when stubbing more rows than preview strings. */
+export const HANDLE_STUB_PLACEHOLDER = "…";
+
+/** Collapse raw/normalized forms of the same phone so stub labels stay unique. */
+function handleStubKey(handle: string): string {
+  const digits = handle.replace(/\D/g, "");
+  return digits.length >= 7 ? digits : handle.trim().toLowerCase();
+}
+
 /**
  * Build loading stub rows for the handles table.
  * Prefer `handleCount` (one row per linked identity) over the full preview
@@ -57,14 +85,21 @@ export function previewHandleStubRows(
   handles: string[] | undefined,
   handleCount: number | undefined,
 ): CachedContactHandle[] {
-  const list = handles ?? [];
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const handle of handles ?? []) {
+    const key = handleStubKey(handle);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(handle);
+  }
   const count =
     handleCount != null && Number.isFinite(handleCount)
       ? Math.max(0, Math.floor(handleCount))
-      : list.length;
+      : unique.length;
   const rows: CachedContactHandle[] = [];
   for (let i = 0; i < count; i++) {
-    rows.push(emptyHandleRow(list[i] ?? ""));
+    rows.push(emptyHandleRow(unique[i] ?? HANDLE_STUB_PLACEHOLDER));
   }
   return rows;
 }

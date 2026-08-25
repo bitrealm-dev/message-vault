@@ -12,7 +12,12 @@ import AppHeader from "./AppHeader";
 import CheckedContactsPanel from "./CheckedContactsPanel";
 import { ColumnResizeProvider } from "./ColumnResizeContext";
 import ContactDrawer from "./ContactDrawer";
-import type { ContactBrowseKind, ContactPreview } from "./contactDrawer/contactDrawerTypes";
+import {
+  type ContactBrowseKind,
+  type ContactListPreviewSource,
+  type ContactPreview,
+  contactPreviewFromListRow,
+} from "./contactDrawer/contactDrawerTypes";
 import LeftPanel from "./LeftPanel";
 import ListColumn from "./ListColumn";
 import RightPane from "./RightPane";
@@ -72,28 +77,9 @@ export default function AppLayout() {
   const [selectedContact, setSelectedContact] = useState<ContactPreview | null>(null);
   const [checkedContacts, setCheckedContacts] = useState<ContactPreview[]>([]);
   const [clearCheckedRev, setClearCheckedRev] = useState(0);
-  const handleCheckedContacts = useCallback(
-    (
-      contacts: Array<{
-        id: string;
-        name: string;
-        handles?: string[];
-        handle_count?: number;
-        groups?: string[];
-      }>,
-    ) => {
-      setCheckedContacts(
-        contacts.map((c) => ({
-          id: c.id,
-          name: c.name,
-          handles: c.handles,
-          handleCount: c.handle_count,
-          groups: c.groups,
-        })),
-      );
-    },
-    [],
-  );
+  const handleCheckedContacts = useCallback((contacts: ContactListPreviewSource[]) => {
+    setCheckedContacts(contacts.map(contactPreviewFromListRow));
+  }, []);
   const clearCheckedContacts = useCallback(() => {
     setClearCheckedRev((n) => n + 1);
   }, []);
@@ -248,15 +234,7 @@ export default function AppLayout() {
                     filter={contactSearch}
                     groupFilter={groupFilter}
                     selectedId={selectedContact?.id ?? null}
-                    onSelect={(c) =>
-                      setSelectedContact({
-                        id: c.id,
-                        name: c.name,
-                        handles: c.handles,
-                        handleCount: c.handle_count,
-                        groups: c.groups,
-                      })
-                    }
+                    onSelect={(c) => setSelectedContact(contactPreviewFromListRow(c))}
                     onCheckedChange={handleCheckedContacts}
                     clearCheckedRev={clearCheckedRev}
                   />

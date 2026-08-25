@@ -256,6 +256,70 @@ describe("ContactDrawer", () => {
     });
   });
 
+  it("stubs two identities when preview lists raw then normalized for each", async () => {
+    let resolveDetail!: (d: CachedContactDetail) => void;
+    const pending = new Promise<CachedContactDetail>((resolve) => {
+      resolveDetail = resolve;
+    });
+    get.mockImplementation(() => pending);
+
+    render(
+      <ContactDrawer
+        variant="docked"
+        contactId="b"
+        preview={{
+          id: "b",
+          name: "Contact b",
+          handles: ["+15550001", "15550001", "+15550002", "15550002"],
+          handleCount: 2,
+          groups: ["Family"],
+        }}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("+15550001")).toBeTruthy();
+    expect(screen.getByText("+15550002")).toBeTruthy();
+    expect(screen.queryByText("15550001")).toBeNull();
+    expect(screen.queryByText("15550002")).toBeNull();
+    const table = screen.getByRole("grid", { name: "Contact handles" });
+    expect(table.querySelectorAll('[role="row"]').length).toBe(4);
+
+    resolveDetail(
+      detail("b", {
+        name: "Contact b",
+        groups: ["Family"],
+        handles: [
+          {
+            handle: "+15550001",
+            service: "phone",
+            name_alias: null,
+            start_date: "2020-01-01T00:00:00Z",
+            end_date: "2024-01-01T00:00:00Z",
+            individual_conversations: 1,
+            group_conversations: 0,
+            individual_message_count: 4,
+            group_message_count: 0,
+          },
+          {
+            handle: "+15550002",
+            service: "phone",
+            name_alias: null,
+            start_date: "2020-01-01T00:00:00Z",
+            end_date: "2024-01-01T00:00:00Z",
+            individual_conversations: 2,
+            group_conversations: 0,
+            individual_message_count: 8,
+            group_message_count: 0,
+          },
+        ],
+      }),
+    );
+    await waitFor(() => {
+      expect(table.querySelectorAll('[role="row"]').length).toBe(4);
+    });
+  });
+
   it("keeps the edit-name control mounted and disabled while detail is loading", async () => {
     let resolveDetail!: (d: CachedContactDetail) => void;
     const pending = new Promise<CachedContactDetail>((resolve) => {
