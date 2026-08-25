@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { apiClient, setBaseUrl, setToken } from "./api";
+import { apiClient, getToken, setBaseUrl, setToken } from "./api";
 import { parsePersistedAuth } from "./authGuards";
 import { clearContactDetailCache } from "./contactDetailCache";
 import { invalidateContactGroups } from "./contactGroups";
@@ -244,10 +244,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     authEpoch.current++;
     // Tell the server to end the session while the token is still set on the API client.
     // Await so close-to-quit can finish (or time out) before the WebView dies.
-    try {
-      await apiClient.post("/v1/auth/logout", {}, { signal: logoutTimeoutSignal() });
-    } catch {
-      // Vault unreachable, 401, or timeout — still clear the local session.
+    if (getToken()) {
+      try {
+        await apiClient.post("/v1/auth/logout", {}, { signal: logoutTimeoutSignal() });
+      } catch {
+        // Vault unreachable, 401, or timeout — still clear the local session.
+      }
     }
     setToken(null);
     clearContactDetailCache();
@@ -280,12 +282,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           closingRef.current = true;
           try {
             await logout();
-          } finally {
-            try {
-              await win.destroy();
-            } catch {
-              // Window may already be gone.
-            }
+            await win.destroy();
+          } catch {
+            // Destroy failed or window already gone — allow another close attempt.
+            closingRef.current = false;
           }
         });
         if (cancelled) {

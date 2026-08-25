@@ -6,19 +6,25 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const post = vi.fn();
 const get = vi.fn();
-const setToken = vi.fn();
+const setTokenFn = vi.fn();
 const setBaseUrl = vi.fn();
 const isTauri = vi.fn();
 const onCloseRequested = vi.fn();
 const destroy = vi.fn();
 const getCurrentWindow = vi.fn();
 
+let currentToken: string | null = null;
+
 vi.mock("./api", () => ({
   apiClient: {
     post: (...args: unknown[]) => post(...args),
     get: (...args: unknown[]) => get(...args),
   },
-  setToken: (...args: unknown[]) => setToken(...args),
+  setToken: (token: string | null) => {
+    currentToken = token;
+    setTokenFn(token);
+  },
+  getToken: () => currentToken,
   setBaseUrl: (...args: unknown[]) => setBaseUrl(...args),
 }));
 
@@ -59,9 +65,10 @@ function seedSession() {
 describe("AuthProvider logout", () => {
   beforeEach(() => {
     localStorage.clear();
+    currentToken = null;
     post.mockReset();
     get.mockReset();
-    setToken.mockReset();
+    setTokenFn.mockReset();
     setBaseUrl.mockReset();
     isTauri.mockReset();
     onCloseRequested.mockReset();
@@ -85,7 +92,7 @@ describe("AuthProvider logout", () => {
       order.push("post");
       return { ok: true };
     });
-    setToken.mockImplementation((token: string | null) => {
+    setTokenFn.mockImplementation((token: string | null) => {
       if (token === null) order.push("clear-token");
     });
 
@@ -124,7 +131,21 @@ describe("AuthProvider logout", () => {
     });
 
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
-    expect(setToken).toHaveBeenCalledWith(null);
+    expect(setTokenFn).toHaveBeenCalledWith(null);
+    expect(result.current.isAuthenticated).toBe(false);
+  });
+
+  it("skips the vault logout request when there is no session token", async () => {
+    const { AuthProvider, useAuth } = await import("./auth");
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: ({ children }: { children: ReactNode }) => <AuthProvider>{children}</AuthProvider>,
+    });
+
+    await act(async () => {
+      await result.current.logout();
+    });
+
+    expect(post).not.toHaveBeenCalled();
     expect(result.current.isAuthenticated).toBe(false);
   });
 
@@ -180,5 +201,42 @@ describe("AuthProvider logout", () => {
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
     expect(result.current.isAuthenticated).toBe(false);
     expect(destroy).toHaveBeenCalled();
+  });
+
+  it("allows another close attempt when destroy fails", async () => {
+    isTauri.mockReturnValue(true);
+    let closeHandler: ((event: { preventDefault: () => void }) => Promise<void>) | undefined;
+    onCloseRequested.mockImplementation(async (handler) => {
+      closeHandler = handler;
+      return () => {};
+    });
+    destroy.mockRejectedValueOnce(new Error("denied")).mockResolvedValueOnce(undefined);
+
+    seedSession();
+    const { AuthProvider } = await import("./auth");
+    render(
+      <AuthProvider>
+        <div>ok</div>
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(closeHandler).toBeTypeOf("function");
+    });
+
+    const handler = closeHandler;
+    if (!handler) {
+      throw new Error("expected onCloseRequested handler");
+    }
+
+    await act(async () => {
+      await handler({ preventDefault: vi.fn() });
+    });
+    expect(destroy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await handler({ preventDefault: vi.fn() });
+    });
+    expect(destroy).toHaveBeenCalledTimes(2);
   });
 });
