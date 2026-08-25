@@ -29,11 +29,11 @@ export default function ColumnResizeHandle({
       aria-valuemax={maxWidth}
       tabIndex={0}
       {...handleProps}
-      className="absolute top-0 right-0 z-[60] h-full w-3 translate-x-full touch-none cursor-col-resize bg-transparent"
+      className="absolute top-0 right-0 z-[60] h-full w-3 touch-none cursor-col-resize bg-transparent"
     >
       <div
         aria-hidden
-        className={`pointer-events-none absolute top-0 bottom-0 left-0 w-px ${
+        className={`pointer-events-none absolute top-0 right-0 bottom-0 w-px ${
           dragging || handleHover ? "bg-accent" : "bg-transparent"
         }`}
       />
