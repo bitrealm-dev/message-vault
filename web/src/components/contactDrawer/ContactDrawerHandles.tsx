@@ -25,7 +25,9 @@ import { removeIdentityConfirmBody, sortValue } from "./handleTableLogic";
 import { tdClass } from "./handleTableStyles";
 import {
   columnInitialWidth,
+  HANDLE_TABLE_COUNT_CELL_PADDING_PX,
   HANDLE_TABLE_DATE_SAMPLE,
+  HANDLE_TABLE_GROUP_CELL_PADDING_PX,
   HANDLE_TABLE_MESSAGES_MAX,
   HANDLE_TABLE_THREADS_MAX,
   headerLabelMinWidth,
@@ -70,8 +72,16 @@ function collectColumnWidths(
   const threadsMin = headerLabelMinWidth("Threads");
   // Two-line headers: min from the longest line ("Messages").
   const messagesMin = headerLabelMinWidth("Messages");
-  const dateCol = columnInitialWidth(Math.max(startMin, endMin), [HANDLE_TABLE_DATE_SAMPLE]);
-  const groupTrashPadPx = 20;
+  const dateCol = columnInitialWidth(
+    Math.max(startMin, endMin),
+    [HANDLE_TABLE_DATE_SAMPLE],
+    HANDLE_TABLE_COUNT_CELL_PADDING_PX,
+  );
+  const groupMin = columnInitialWidth(
+    messagesMin,
+    [HANDLE_TABLE_MESSAGES_MAX],
+    HANDLE_TABLE_GROUP_CELL_PADDING_PX,
+  );
 
   const serviceTexts = [
     "Summary",
@@ -87,16 +97,24 @@ function collectColumnWidths(
     startDate: { width: dateCol, min: startMin },
     endDate: { width: dateCol, min: endMin },
     conversations: {
-      width: columnInitialWidth(threadsMin, [HANDLE_TABLE_THREADS_MAX]),
+      width: columnInitialWidth(
+        threadsMin,
+        [HANDLE_TABLE_THREADS_MAX],
+        HANDLE_TABLE_COUNT_CELL_PADDING_PX,
+      ),
       min: threadsMin,
     },
     directMessages: {
-      width: columnInitialWidth(messagesMin, [HANDLE_TABLE_MESSAGES_MAX]),
+      width: columnInitialWidth(
+        messagesMin,
+        [HANDLE_TABLE_MESSAGES_MAX],
+        HANDLE_TABLE_COUNT_CELL_PADDING_PX,
+      ),
       min: messagesMin,
     },
     groupMessages: {
-      width: columnInitialWidth(messagesMin, [HANDLE_TABLE_MESSAGES_MAX]) + groupTrashPadPx,
-      min: messagesMin + groupTrashPadPx,
+      width: groupMin,
+      min: groupMin,
     },
   };
 }

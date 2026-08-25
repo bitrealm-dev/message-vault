@@ -51,7 +51,7 @@ export function SortableColumn({
         <div className="relative flex w-full min-w-0 items-center">
           <Group
             className={`flex min-w-0 flex-1 items-center outline-none ${justify} ${
-              align === "right" ? "pr-4" : ""
+              align === "right" ? "pr-4" : align === "left" ? "" : "px-4"
             }`}
           >
             <span

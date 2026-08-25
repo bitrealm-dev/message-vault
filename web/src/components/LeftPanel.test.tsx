@@ -37,9 +37,9 @@ beforeEach(() => {
   tauriState.isTauri = false;
 });
 
-function renderPanel() {
+function renderPanel(initialEntries?: string[]) {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={initialEntries}>
       <LeftPanel onSearchChange={() => {}} onSearch={() => {}} />
     </MemoryRouter>,
   );
@@ -97,6 +97,14 @@ describe("LeftPanel", () => {
       const heading = screen.getByRole("button", { name: "Messages", expanded: true });
       expect(heading.getAttribute("aria-expanded")).toBe("true");
       expect(heading.querySelector('[class*="size-[15px]"]')).not.toBeNull();
+      expect(heading.className).toContain("col-span-2");
+      expect(heading.querySelector('[class*="motion-reduce:transition-none"]')).not.toBeNull();
+    });
+
+    it("highlights the Messages heading when Import is the current route", () => {
+      renderPanel(["/import"]);
+      const heading = screen.getByRole("button", { name: "Messages", expanded: true });
+      expect(heading.className).toMatch(/bg-hover/);
     });
 
     it("indents Import and Export like nested group rows", () => {

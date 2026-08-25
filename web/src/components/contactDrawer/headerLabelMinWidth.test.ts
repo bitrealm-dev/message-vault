@@ -3,7 +3,9 @@
 import { describe, expect, it } from "vitest";
 import {
   columnInitialWidth,
+  HANDLE_TABLE_COUNT_CELL_PADDING_PX,
   HANDLE_TABLE_DATE_SAMPLE,
+  HANDLE_TABLE_GROUP_CELL_PADDING_PX,
   HANDLE_TABLE_MESSAGES_MAX,
   HANDLE_TABLE_THREADS_MAX,
   headerLabelMinWidth,
@@ -34,13 +36,29 @@ describe("headerLabelMinWidth", () => {
     expect(HANDLE_TABLE_THREADS_MAX).toBe("9,999");
     expect(HANDLE_TABLE_MESSAGES_MAX).toBe("999,999");
     expect(HANDLE_TABLE_DATE_SAMPLE).toBe("2020-12-31");
-    expect(columnInitialWidth(threads, [HANDLE_TABLE_THREADS_MAX])).toBeGreaterThanOrEqual(threads);
-    expect(columnInitialWidth(messages, [HANDLE_TABLE_MESSAGES_MAX])).toBeGreaterThanOrEqual(
-      messages,
+    expect(HANDLE_TABLE_COUNT_CELL_PADDING_PX).toBe(24);
+    expect(HANDLE_TABLE_GROUP_CELL_PADDING_PX).toBe(48);
+    expect(
+      columnInitialWidth(threads, [HANDLE_TABLE_THREADS_MAX], HANDLE_TABLE_COUNT_CELL_PADDING_PX),
+    ).toBeGreaterThanOrEqual(threads);
+    expect(
+      columnInitialWidth(messages, [HANDLE_TABLE_MESSAGES_MAX], HANDLE_TABLE_COUNT_CELL_PADDING_PX),
+    ).toBeGreaterThanOrEqual(messages);
+    const dateCol = columnInitialWidth(
+      Math.max(firstSeen, lastSeen),
+      [HANDLE_TABLE_DATE_SAMPLE],
+      HANDLE_TABLE_COUNT_CELL_PADDING_PX,
     );
-    const dateCol = columnInitialWidth(Math.max(firstSeen, lastSeen), [HANDLE_TABLE_DATE_SAMPLE]);
     expect(dateCol).toBeGreaterThanOrEqual(firstSeen);
     expect(dateCol).toBeGreaterThanOrEqual(lastSeen);
+    const groupCol = columnInitialWidth(
+      messages,
+      [HANDLE_TABLE_MESSAGES_MAX],
+      HANDLE_TABLE_GROUP_CELL_PADDING_PX,
+    );
+    expect(groupCol).toBeGreaterThanOrEqual(
+      columnInitialWidth(messages, [HANDLE_TABLE_MESSAGES_MAX], HANDLE_TABLE_COUNT_CELL_PADDING_PX),
+    );
   });
 });
 

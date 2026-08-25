@@ -108,6 +108,9 @@ describe("SortableColumn", () => {
     expect(caret?.className).toMatch(/pointer-events-none/);
     expect(caret?.className).toMatch(/invisible/);
     expect(header.className).toMatch(/px-0/);
+    const group = flexRow?.querySelector(".flex-1");
+    expect(group?.className).toMatch(/px-4/);
+    expect(group?.className).not.toMatch(/pr-4/);
     const label = caret?.parentElement?.querySelector("span.max-w-full");
     expect(label?.className).not.toMatch(/px-4/);
     expect(label?.className).not.toMatch(/pr-4/);
@@ -126,6 +129,29 @@ describe("SortableColumn", () => {
     expect(last.className).toMatch(/absolute/);
     const group = children[0] as HTMLElement;
     expect(group.className).toMatch(/flex-1/);
+  });
+
+  it("keeps right-aligned headers off the edge caret", () => {
+    render(
+      <ResizableTableContainer>
+        <Table aria-label="Checked contacts">
+          <TableHeader>
+            <SortableColumn id="conversations" align="right">
+              Threads
+            </SortableColumn>
+          </TableHeader>
+          <TableBody>
+            <Row id="r1">
+              <Cell>12</Cell>
+            </Row>
+          </TableBody>
+        </Table>
+      </ResizableTableContainer>,
+    );
+    const header = screen.getByRole("columnheader", { name: /Threads/i });
+    const group = header.querySelector(".flex-1");
+    expect(group?.className).toMatch(/pr-4/);
+    expect(group?.className).not.toMatch(/px-4/);
   });
 
   it("accents the active sort column and flips direction on second click", async () => {

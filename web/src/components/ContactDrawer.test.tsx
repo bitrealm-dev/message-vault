@@ -436,7 +436,7 @@ describe("ContactDrawer", () => {
     });
   });
 
-  it("left-aligns identity headers and shows column resizers", async () => {
+  it("centers identity headers between column markers and keeps Group last", async () => {
     get.mockResolvedValue(detail("a"));
     render(
       <ContactDrawer

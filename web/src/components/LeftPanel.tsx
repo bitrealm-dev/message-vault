@@ -222,7 +222,11 @@ export default function LeftPanel({
 
         {/* Import/Export — desktop app only, never on a guest session */}
         {canUseImportExportWithProfile(isTauri(), profile) && (
-          <NavCollapsibleSection id="messages-import-export" title="Messages">
+          <NavCollapsibleSection
+            id="messages-import-export"
+            title="Messages"
+            headingActive={isActive("/import") || isActive("/export")}
+          >
             <button
               type="button"
               onClick={() => navigate("/import")}
