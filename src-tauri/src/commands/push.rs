@@ -121,7 +121,7 @@ pub async fn push(
             trust_export: args.trust_export,
             verify_digests: false,
             max_retries: 3,
-            // Pack until 50 MiB; do not stop at a message count.
+            // Pack until vault_push::MAX_IMPORT_BODY_BYTES (64 MiB); do not stop at a message count.
             batch_size: vault_push::NO_MESSAGE_COUNT_LIMIT,
             // Above the CLI default (8): desktop imports are often many small files.
             asset_upload_workers: 16,
@@ -130,6 +130,7 @@ pub async fn push(
             // Above the CLI default (2): more of the prepare-ahead queue runs at once.
             prepare_workers: 4,
             asset_multipart_threshold: 5 * 1024 * 1024,
+            // Per-file attachment cap. JSONL import batches use MAX_IMPORT_BODY_BYTES.
             asset_max_bytes: 50 * 1024 * 1024,
             report_path: None,
             log_path: None,
