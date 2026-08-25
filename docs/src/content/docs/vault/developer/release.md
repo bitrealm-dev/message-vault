@@ -15,7 +15,7 @@ The JSONL schema version 3 is independent of the product version. Leave other `C
 ## Before tagging
 
 1. Merge the work to `main`. Wait until CI on `main` is green (`fmt`, workspace tests, `web` tests). `./scripts/check-pr.sh` is optional locally.
-2. Move `[Unreleased]` entries in `CHANGELOG.md` under the new version heading ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/)).
+2. Move `[Unreleased]` entries in `CHANGELOG.md` under the new version heading ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/)), keeping each bullet’s ISO date (`YYYY-MM-DD`) and dating the heading (`## [0.8.0] - 2026-08-24`).
 3. Set these four files to the same number (for example `0.8.0`):
    - `src-tauri/Cargo.toml`
    - `src-tauri/tauri.conf.json`
