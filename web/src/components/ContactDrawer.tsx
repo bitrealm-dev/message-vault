@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { apiClient } from "../lib/api";
 import {
   type CachedContactDetail,
@@ -96,6 +96,9 @@ export default function ContactDrawer({
   const [detail, setDetail] = useState<ContactDetail | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
+  const nameEditorRef = useRef<HTMLDivElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const savingNameRef = useRef(false);
   const drawerLeft = useDrawerLeft(variant === "overlay" && !!contactId);
 
   // Prefer in-state detail only when it matches this contact; otherwise use cache
@@ -179,20 +182,55 @@ export default function ContactDrawer({
     setEditingName(false);
   }, [displayName]);
 
+  const cancelEdit = useCallback(() => {
+    if (savingNameRef.current) return;
+    setEditingName(false);
+    if (matchedName != null) {
+      setNameValue(matchedName);
+    }
+  }, [matchedName]);
+
+  useEffect(() => {
+    if (!editingName) savingNameRef.current = false;
+  }, [editingName]);
+
   useEffect(() => {
     if (!contactId) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (editingName) {
-        setEditingName(false);
-        setNameValue(detailMatches ? (matchedName ?? nameValue) : nameValue);
+        cancelEdit();
         return;
       }
       onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [contactId, editingName, detailMatches, matchedName, nameValue, onClose]);
+  }, [contactId, editingName, cancelEdit, onClose]);
+
+  useEffect(() => {
+    if (!contactId || !editingName) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (savingNameRef.current) return;
+      const root = nameEditorRef.current;
+      if (!root) return;
+      if (e.target instanceof Node && root.contains(e.target)) return;
+      cancelEdit();
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [contactId, editingName, cancelEdit]);
+
+  useEffect(() => {
+    if (!editingName) return;
+    const frame = requestAnimationFrame(() => {
+      const input = nameInputRef.current;
+      if (!input) return;
+      input.focus();
+      input.select();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [editingName]);
 
   if (!contactId) return null;
 
@@ -223,15 +261,21 @@ export default function ContactDrawer({
   };
 
   const saveName = async () => {
-    if (!detailMatches || nameValue === matchedDetail?.name) {
+    if (savingNameRef.current) return;
+    savingNameRef.current = true;
+    try {
+      if (!detailMatches || nameValue === matchedDetail?.name) {
+        setEditingName(false);
+        return;
+      }
+      await apiClient.post(`/v1/export/contacts/${contactId}`, {
+        name: nameValue,
+      });
       setEditingName(false);
-      return;
+      loadDetail();
+    } catch {
+      savingNameRef.current = false;
     }
-    await apiClient.post(`/v1/export/contacts/${contactId}`, {
-      name: nameValue,
-    });
-    setEditingName(false);
-    loadDetail();
   };
 
   const panelClass =
@@ -263,26 +307,31 @@ export default function ContactDrawer({
         onBrowse={onBrowseConversations ? browse : undefined}
         title={
           editingName && detailMatches ? (
-            <input
-              type="text"
-              value={nameValue}
-              onChange={(e) => setNameValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void saveName();
-                } else if (e.key === "Escape") {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setEditingName(false);
-                  setNameValue(matchedDetail?.name);
-                }
-              }}
-              onBlur={() => {
-                void saveName();
-              }}
-              className="box-border w-full min-w-0 rounded border border-border bg-elevated p-1 text-[1.125rem] font-semibold text-text"
-            />
+            <div ref={nameEditorRef} className="w-max min-w-[8rem] max-w-[50%]">
+              <input
+                ref={nameInputRef}
+                type="text"
+                value={nameValue}
+                size={Math.max(nameValue.length + 1, 8)}
+                aria-label="Contact name"
+                title="Press Enter to save, Escape to cancel"
+                onChange={(e) => setNameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void saveName();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    cancelEdit();
+                  }
+                }}
+                onBlur={() => {
+                  cancelEdit();
+                }}
+                className="box-border h-7 w-full min-w-0 rounded border border-border bg-elevated px-1.5 py-0 text-[1.125rem] font-semibold leading-none text-text"
+              />
+            </div>
           ) : (
             <div className="flex min-w-0 items-center gap-2">
               <h2 className="m-0 min-w-0 truncate text-[1.125rem] font-semibold">{displayName}</h2>

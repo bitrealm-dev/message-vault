@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CachedContactDetail } from "../lib/contactDetailCache";
 import {
@@ -11,14 +12,14 @@ import {
 import ContactDrawer from "./ContactDrawer";
 
 const get = vi.fn();
+const post = vi.fn();
 
 vi.mock("../lib/api", () => ({
   apiClient: {
     get: (...args: unknown[]) => get(...args),
-    post: vi.fn(),
+    post: (...args: unknown[]) => post(...args),
   },
 }));
-
 function detail(id: string, overrides: Partial<CachedContactDetail> = {}): CachedContactDetail {
   return {
     id,
@@ -52,6 +53,8 @@ describe("ContactDrawer", () => {
   beforeEach(() => {
     clearContactDetailCache();
     get.mockReset();
+    post.mockReset();
+    post.mockResolvedValue(undefined);
   });
 
   it("keeps groups and avoids zero counts on first paint when switching to an uncached contact", async () => {
@@ -433,6 +436,91 @@ describe("ContactDrawer", () => {
     resolveDetail(detail("b", { name: "Contact b", groups: ["Family"] }));
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Edit name" })).not.toBeDisabled();
+    });
+  });
+
+  async function openNameEditor(user: ReturnType<typeof userEvent.setup>) {
+    get.mockResolvedValue(detail("a", { name: "Contact a" }));
+    render(
+      <ContactDrawer
+        variant="docked"
+        contactId="a"
+        preview={{
+          id: "a",
+          name: "Contact a",
+          handles: ["+1555000a"],
+          groups: [],
+        }}
+        onClose={() => {}}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Edit name" })).not.toBeDisabled();
+    });
+    await user.click(screen.getByRole("button", { name: "Edit name" }));
+    return screen.getByRole("textbox", { name: "Contact name" });
+  }
+
+  it("constrains the name editor to at most half of the title slot", async () => {
+    const user = userEvent.setup();
+    const input = await openNameEditor(user);
+    const wrapper = input.parentElement;
+    expect(wrapper?.className).toMatch(/max-w-\[50%\]/);
+    expect(wrapper?.className).toMatch(/min-w-\[8rem\]/);
+    expect(input.className).toMatch(/\bh-7\b/);
+    expect(input.className).toMatch(/w-full/);
+    expect(wrapper?.className).not.toMatch(/\bw-full\b/);
+    expect(wrapper?.className).not.toMatch(/w-1\/2/);
+  });
+
+  it("cancels name edit on Escape without saving", async () => {
+    const user = userEvent.setup();
+    const input = await openNameEditor(user);
+    await user.clear(input);
+    await user.type(input, "Renamed");
+    await user.keyboard("{Escape}");
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Contact a" })).toBeTruthy();
+    });
+    expect(post).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Edit name" })).toBeTruthy();
+  });
+
+  it("cancels name edit on blur without saving", async () => {
+    const user = userEvent.setup();
+    const input = await openNameEditor(user);
+    await user.clear(input);
+    await user.type(input, "Renamed");
+    await user.tab();
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Contact a" })).toBeTruthy();
+    });
+    expect(post).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Edit name" })).toBeTruthy();
+  });
+
+  it("cancels name edit when clicking Contact groups without saving", async () => {
+    const user = userEvent.setup();
+    const input = await openNameEditor(user);
+    await user.clear(input);
+    await user.type(input, "Renamed");
+    await user.click(screen.getByText("Contact groups"));
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Contact a" })).toBeTruthy();
+    });
+    expect(post).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Edit name" })).toBeTruthy();
+  });
+
+  it("saves the name on Enter even if the field blurs", async () => {
+    const user = userEvent.setup();
+    const input = await openNameEditor(user);
+    await user.clear(input);
+    await user.type(input, "Renamed");
+    await user.keyboard("{Enter}");
+    input.blur();
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledWith("/v1/export/contacts/a", { name: "Renamed" });
     });
   });
 

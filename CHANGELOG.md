@@ -31,6 +31,7 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
   immediately (no Save button), keeps both path labels on one line with aligned help
   text, renames the field to **ffmpeg directory**, and shows whether `ffmpeg` /
   `ffprobe` were found under Media.
+- 2026-08-25: Contact name editor stays at most half the title slot and matches the pencil row height. Click-away, Tab, and blur discard the draft; Enter still saves.
 - 2026-08-25: Contacts list shows the “N–M of total” range in a floating pill at the bottom of the panel (always visible), with extra scroll space so the last contact is not covered. Messages still uses the top toolbar label.
 - 2026-08-25: Left nav: Messages / Contacts / Trash icons line up with Contact Groups chevrons, and nested group, tag, and saved-search icons line up with section titles. Named saved searches use a hover ellipsis (Rename… / Delete) instead of a trash can. The Thread Tags section is now titled Message Tags.
 - 2026-08-25: Contact Groups and Tags menus left-align with their buttons. Contact Groups shows a down chevron, both filter from the search row, and a miss says “No matching groups” instead of “No groups”.
