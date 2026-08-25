@@ -14,7 +14,6 @@ import {
   rowActionsRevealClass,
   tdClass,
   tdLeftClass,
-  tdRightClass,
 } from "./handleTableStyles";
 
 type BrowseFn = (args: { kind: ContactBrowseKind; handle?: string; service?: string }) => void;
@@ -43,7 +42,7 @@ export function renderHandleTableRow(
         </span>
       </Cell>
       <Cell className={`${tdLeftClass} overflow-hidden text-muted`}>
-        <span className="break-all" title={alias || undefined}>
+        <span className="break-normal hyphens-none" title={alias || undefined}>
           {loading ? "—" : alias || "—"}
         </span>
       </Cell>
@@ -53,7 +52,7 @@ export function renderHandleTableRow(
       <Cell className={`${tdLeftClass} whitespace-nowrap text-muted`}>
         {loading ? "—" : handleDateCell(h.end_date)}
       </Cell>
-      <Cell className={tdRightClass}>
+      <Cell className={tdLeftClass}>
         <CountCell
           value={convos}
           loading={loading}
@@ -69,10 +68,10 @@ export function renderHandleTableRow(
           }
         />
       </Cell>
-      <Cell className={tdRightClass}>
+      <Cell className={tdLeftClass}>
         <CountCell value={h.individual_message_count} loading={loading} />
       </Cell>
-      <Cell className={tdRightClass}>
+      <Cell className={tdLeftClass}>
         <CountCell value={h.group_message_count} loading={loading} />
       </Cell>
       <Cell className={`${tdClass} whitespace-nowrap`}>
@@ -109,7 +108,7 @@ export function renderHandleSummaryRow(
       <Cell className={`${tdLeftClass} whitespace-nowrap text-muted`}>
         {loading ? "—" : handleDateCell(totals.end_date)}
       </Cell>
-      <Cell className={tdRightClass}>
+      <Cell className={tdLeftClass}>
         <CountCell
           value={conversationCount(totals)}
           loading={loading}
@@ -118,10 +117,10 @@ export function renderHandleSummaryRow(
           }
         />
       </Cell>
-      <Cell className={tdRightClass}>
+      <Cell className={tdLeftClass}>
         <CountCell value={totals.individual_message_count} loading={loading} />
       </Cell>
-      <Cell className={tdRightClass}>
+      <Cell className={tdLeftClass}>
         <CountCell value={totals.group_message_count} loading={loading} />
       </Cell>
       <Cell className={tdClass} />

@@ -458,7 +458,20 @@ describe("ContactDrawer", () => {
 
     const service = screen.getByRole("columnheader", { name: /Service/i });
     expect(service.className).toMatch(/text-left/);
-    expect(screen.getByRole("columnheader", { name: /Direct Messages/i })).toBeTruthy();
+
+    const direct = screen.getByRole("columnheader", { name: /Direct Messages/i });
+    expect(direct.querySelector(".flex-col")).toBeTruthy();
+    const group = screen.getByRole("columnheader", { name: /Group Messages/i });
+    expect(group.querySelector(".flex-col")).toBeTruthy();
+
+    const firstSeen = screen.getByRole("columnheader", { name: /First Seen/i });
+    expect(firstSeen.querySelector(".whitespace-nowrap")).toBeTruthy();
+    const lastSeen = screen.getByRole("columnheader", { name: /Last Seen/i });
+    expect(lastSeen.querySelector(".whitespace-nowrap")).toBeTruthy();
+
+    const threads = screen.getByRole("columnheader", { name: /Threads/i });
+    expect(threads.className).toMatch(/text-left/);
+
     const table = screen.getByRole("grid", { name: "Contact handles" });
     expect(table.querySelectorAll(".cursor-col-resize").length).toBeGreaterThanOrEqual(8);
   });

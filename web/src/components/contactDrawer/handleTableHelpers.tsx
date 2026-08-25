@@ -13,7 +13,7 @@ import { headerLabelMinWidth } from "./headerLabelMinWidth";
 export function SortableColumn({
   id,
   widthClass = "",
-  align = "center",
+  align = "left",
   isRowHeader,
   allowsResizing = false,
   defaultWidth,
@@ -48,23 +48,23 @@ export function SortableColumn({
       className={`${headerAlign} ${widthClass}`.trim()}
     >
       {({ sortDirection }) => (
-        <div className={`flex w-full min-w-0 items-center gap-1 ${justify}`}>
+        <div className="relative flex w-full min-w-0 items-center">
           <Group
             role="presentation"
-            className={`relative inline-flex min-w-0 max-w-full items-center outline-none ${justify}`}
+            className={`flex min-w-0 flex-1 items-center outline-none ${justify}`}
           >
             <span
-              className={`${textAlign} leading-tight ${sortDirection ? "text-accent" : "text-text"}`}
+              className={`relative ${textAlign} leading-tight ${sortDirection ? "text-accent" : "text-text"}`}
             >
               {children}
-            </span>
-            <span
-              aria-hidden="true"
-              className={`ml-1 shrink-0 text-[0.55rem] leading-none ${
-                sortDirection ? "text-accent" : "invisible"
-              }`}
-            >
-              {sortDirection === "descending" ? "▼" : "▲"}
+              {sortDirection ? (
+                <span
+                  aria-hidden="true"
+                  className="absolute top-1/2 left-[calc(100%+0.125rem)] -translate-y-1/2 text-[0.55rem] leading-none text-accent"
+                >
+                  {sortDirection === "descending" ? "▼" : "▲"}
+                </span>
+              ) : null}
             </span>
           </Group>
           {allowsResizing ? <ColumnResizer className={columnResizerClass} /> : null}

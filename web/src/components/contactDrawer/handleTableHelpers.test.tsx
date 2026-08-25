@@ -19,6 +19,7 @@ afterEach(() => {
   cleanup();
 });
 
+// biome-ignore lint/style/useComponentExportOnlyModules: local test harness only
 function Harness() {
   const [sortDescriptor, setSortDescriptor] = useState<SortDescriptor | null>(null);
   return (
@@ -56,6 +57,20 @@ describe("SortableColumn", () => {
     // RAC ColumnResizer uses role="presentation"; identify by resize cursor class.
     const resizers = container.querySelectorAll(".cursor-col-resize");
     expect(resizers.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("pins the resizer as the last child of a full-width flex row", () => {
+    render(<Harness />);
+    const service = screen.getByRole("columnheader", { name: /Service/i });
+    const flexRow = service.querySelector(".relative.flex.w-full");
+    expect(flexRow).toBeTruthy();
+    const children = Array.from(flexRow?.children ?? []);
+    expect(children.length).toBeGreaterThanOrEqual(2);
+    const last = children[children.length - 1] as HTMLElement;
+    expect(last.className).toMatch(/cursor-col-resize/);
+    expect(last.className).toMatch(/absolute/);
+    const group = children[0] as HTMLElement;
+    expect(group.className).toMatch(/flex-1/);
   });
 
   it("accents the active sort column and flips direction on second click", async () => {
