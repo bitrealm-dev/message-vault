@@ -7,6 +7,9 @@ import { ChevronDownIcon, PeopleGroupIcon } from "./icons";
 
 export type GroupCheckState = MembershipCheckState;
 
+/** Padding, type size, and flex line shared by group rows and the empty message. */
+const MENU_ROW_CLASS = "flex items-center gap-2 px-3 py-1.5 text-[0.813rem] leading-5";
+
 /** Assign or remove groups (or tags) on the selected rows. */
 export default function GroupsMenu({
   allGroups,
@@ -174,14 +177,17 @@ export default function GroupsMenu({
           </div>
           <div className="max-h-56 overflow-y-auto py-1">
             {visibleGroups.length === 0 ? (
-              <p className="px-3 py-2 text-[0.75rem] text-muted">{listEmptyText}</p>
+              <div role="status" className={`${MENU_ROW_CLASS} text-muted`}>
+                <span className="size-3.5 shrink-0" aria-hidden />
+                <span>{listEmptyText}</span>
+              </div>
             ) : (
               visibleGroups.map((name) => {
                 const state = checks[name] ?? "off";
                 return (
                   <label
                     key={name}
-                    className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-[0.813rem] text-text hover:bg-hover"
+                    className={`${MENU_ROW_CLASS} cursor-pointer text-text hover:bg-hover`}
                   >
                     <input
                       type="checkbox"

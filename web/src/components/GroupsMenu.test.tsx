@@ -10,6 +10,7 @@ afterEach(() => {
 });
 
 const GROUPS = ["College", "Family", "Work"] as const;
+const ROW_TOKENS = ["px-3", "py-1.5", "text-[0.813rem]", "leading-5"] as const;
 
 function renderMenu(labeled = true) {
   return render(
@@ -42,14 +43,46 @@ describe("GroupsMenu", () => {
     expect(screen.queryByText("Work")).toBeNull();
   });
 
-  it("says no matching groups when the query hits nothing", async () => {
+  it("keeps the empty message on the same row metrics as a group row", async () => {
     const user = userEvent.setup();
     renderMenu();
 
     await user.click(screen.getByRole("button", { name: "Contact Groups" }));
+    const groupRow = screen.getByText("Family").closest("label");
+    expect(groupRow).toBeTruthy();
+    for (const token of ROW_TOKENS) {
+      expect(groupRow?.className).toContain(token);
+    }
+
     await user.type(screen.getByRole("searchbox", { name: "Search groups…" }), "zzz");
-    expect(screen.getByText("No matching groups")).toBeTruthy();
+    const empty = screen.getByRole("status");
+    expect(empty.tagName).toBe("DIV");
+    expect(empty.textContent).toContain("No matching groups");
+    for (const token of ROW_TOKENS) {
+      expect(empty.className).toContain(token);
+    }
     expect(screen.queryByText("No groups")).toBeNull();
+  });
+
+  it("shows no groups on the same row when the catalog is empty", async () => {
+    const user = userEvent.setup();
+    render(
+      <GroupsMenu
+        allGroups={[]}
+        checks={{}}
+        labeled
+        ariaLabel="Contact Groups"
+        title="Contact Groups"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Contact Groups" }));
+    const empty = screen.getByRole("status");
+    expect(empty.textContent).toContain("No groups");
+    for (const token of ROW_TOKENS) {
+      expect(empty.className).toContain(token);
+    }
+    expect(screen.queryByText("No matching groups")).toBeNull();
   });
 
   it("filters the icon-only tags menu", async () => {
