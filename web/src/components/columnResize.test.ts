@@ -2,13 +2,19 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clampWidth, loadWidth, saveWidth } from "./columnResize";
+import {
+  LEFT_PANEL_DEFAULT_WIDTH,
+  LEFT_PANEL_MAX_WIDTH,
+  LEFT_PANEL_MIN_WIDTH,
+  LEFT_PANEL_STORAGE_KEY,
+} from "./leftPanelWidth";
 
 describe("clampWidth", () => {
   it("rounds and clamps to the inclusive range", () => {
-    expect(clampWidth(100, 160, 360)).toBe(160);
-    expect(clampWidth(400, 160, 360)).toBe(360);
-    expect(clampWidth(220.6, 160, 360)).toBe(221);
-    expect(clampWidth(220.4, 160, 360)).toBe(220);
+    expect(clampWidth(100, LEFT_PANEL_MIN_WIDTH, LEFT_PANEL_MAX_WIDTH)).toBe(LEFT_PANEL_MIN_WIDTH);
+    expect(clampWidth(600, LEFT_PANEL_MIN_WIDTH, LEFT_PANEL_MAX_WIDTH)).toBe(LEFT_PANEL_MAX_WIDTH);
+    expect(clampWidth(220.6, LEFT_PANEL_MIN_WIDTH, LEFT_PANEL_MAX_WIDTH)).toBe(221);
+    expect(clampWidth(220.4, LEFT_PANEL_MIN_WIDTH, LEFT_PANEL_MAX_WIDTH)).toBe(220);
   });
 });
 
@@ -35,6 +41,27 @@ describe("loadWidth", () => {
     expect(loadWidth("testWidth:v1", 300, 220, 560)).toBe(220);
     localStorage.setItem("testWidth:v1", "999");
     expect(loadWidth("testWidth:v1", 300, 220, 560)).toBe(560);
+  });
+
+  it("clamps nav panel widths to the shared left-panel bounds", () => {
+    localStorage.setItem(LEFT_PANEL_STORAGE_KEY, "100");
+    expect(
+      loadWidth(
+        LEFT_PANEL_STORAGE_KEY,
+        LEFT_PANEL_DEFAULT_WIDTH,
+        LEFT_PANEL_MIN_WIDTH,
+        LEFT_PANEL_MAX_WIDTH,
+      ),
+    ).toBe(LEFT_PANEL_MIN_WIDTH);
+    localStorage.setItem(LEFT_PANEL_STORAGE_KEY, "999");
+    expect(
+      loadWidth(
+        LEFT_PANEL_STORAGE_KEY,
+        LEFT_PANEL_DEFAULT_WIDTH,
+        LEFT_PANEL_MIN_WIDTH,
+        LEFT_PANEL_MAX_WIDTH,
+      ),
+    ).toBe(LEFT_PANEL_MAX_WIDTH);
   });
 
   it("returns defaultWidth for non-numeric storage", () => {

@@ -11,16 +11,18 @@ import { useReportColumnResizing } from "./columnResizeState";
 import GroupsNav from "./GroupsNav";
 import { TrashIcon } from "./icons";
 import { LIST_TOOLBAR_CLASS } from "./ListRangeHeader";
+import {
+  LEFT_PANEL_DEFAULT_WIDTH,
+  LEFT_PANEL_MAX_WIDTH,
+  LEFT_PANEL_MIN_WIDTH,
+  LEFT_PANEL_STORAGE_KEY,
+  LEFT_PANEL_WIDTH_VAR,
+} from "./leftPanelWidth";
 import NavCollapsibleSection from "./NavCollapsibleSection";
 import NavGlyphButton from "./NavGlyphButton";
 import SavedGroupForm from "./SavedGroupForm";
 import ThreadTagsNav from "./ThreadTagsNav";
 import { useColumnResize } from "./useColumnResize";
-
-const DEFAULT_WIDTH = 220;
-const MIN_WIDTH = 160;
-const MAX_WIDTH = 360;
-const STORAGE_KEY = "leftPanelWidth:v1";
 
 function NavIcon({ children }: { children: ReactNode }) {
   return (
@@ -106,12 +108,23 @@ export default function LeftPanel({
   const { profile } = useAccountProfile();
   const onDraggingChange = useReportColumnResizing();
   const { width, dragging, handleHover, handleProps } = useColumnResize({
-    storageKey: STORAGE_KEY,
-    defaultWidth: DEFAULT_WIDTH,
-    minWidth: MIN_WIDTH,
-    maxWidth: MAX_WIDTH,
+    storageKey: LEFT_PANEL_STORAGE_KEY,
+    defaultWidth: LEFT_PANEL_DEFAULT_WIDTH,
+    minWidth: LEFT_PANEL_MIN_WIDTH,
+    maxWidth: LEFT_PANEL_MAX_WIDTH,
     onDraggingChange,
   });
+
+  // Keep the header brand slot aligned with the nav while it resizes.
+  useEffect(() => {
+    document.documentElement.style.setProperty(LEFT_PANEL_WIDTH_VAR, `${width}px`);
+  }, [width]);
+
+  useEffect(() => {
+    return () => {
+      document.documentElement.style.removeProperty(LEFT_PANEL_WIDTH_VAR);
+    };
+  }, []);
 
   function isActive(path: string): boolean {
     if (path === "/") {
@@ -249,8 +262,8 @@ export default function LeftPanel({
       <ColumnResizeHandle
         ariaLabel="Resize navigation panel"
         width={width}
-        minWidth={MIN_WIDTH}
-        maxWidth={MAX_WIDTH}
+        minWidth={LEFT_PANEL_MIN_WIDTH}
+        maxWidth={LEFT_PANEL_MAX_WIDTH}
         dragging={dragging}
         handleHover={handleHover}
         handleProps={handleProps}

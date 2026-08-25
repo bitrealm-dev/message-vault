@@ -3,7 +3,15 @@ import { shouldIgnoreOutsideDismiss } from "../lib/portaledOverlay";
 import AdvancedSearchForm, { type AdvancedSearchMode } from "./AdvancedSearchForm";
 import AppAccountMenu from "./AppAccountMenu";
 import ContactSearch from "./ContactSearch";
+import { loadWidth } from "./columnResize";
 import GlobalSearch from "./GlobalSearch";
+import {
+  LEFT_PANEL_DEFAULT_WIDTH,
+  LEFT_PANEL_MAX_WIDTH,
+  LEFT_PANEL_MIN_WIDTH,
+  LEFT_PANEL_STORAGE_KEY,
+  LEFT_PANEL_WIDTH_VAR,
+} from "./leftPanelWidth";
 
 /** Full-width bar: app name on the left, search in the remaining space. */
 export default function AppHeader({
@@ -20,6 +28,15 @@ export default function AppHeader({
   const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
   const conversationsAdvancedRef = useRef<HTMLDivElement>(null);
   const isContacts = searchMode === "contacts";
+  // Same key as LeftPanel so a stored width does not flash at the default.
+  const [brandWidth] = useState(() =>
+    loadWidth(
+      LEFT_PANEL_STORAGE_KEY,
+      LEFT_PANEL_DEFAULT_WIDTH,
+      LEFT_PANEL_MIN_WIDTH,
+      LEFT_PANEL_MAX_WIDTH,
+    ),
+  );
 
   useEffect(() => {
     if (!showAdvancedSearch || isContacts) return;
@@ -33,7 +50,10 @@ export default function AppHeader({
 
   return (
     <header className="relative z-20 flex shrink-0 items-center border-b border-border bg-panel">
-      <div className="flex h-12 w-[220px] shrink-0 items-center px-3">
+      <div
+        className="box-border flex h-12 shrink-0 items-center px-3"
+        style={{ width: `var(${LEFT_PANEL_WIDTH_VAR}, ${brandWidth}px)` }}
+      >
         <AppAccountMenu />
       </div>
       <div className="flex min-w-0 flex-1 items-center justify-center px-3 py-2">
