@@ -2,7 +2,7 @@
 
 Extract WhatsApp backups with `wtsexporter`, then convert the result into JSON Lines, JSON, CSV, EML, MBOX, or XML.
 
-The desktop app Extract Messages screen uses this crate as a library. The `whatsapp-exporter` command is the same converter from a terminal.
+The desktop app Import screen uses this crate as a library. The `whatsapp-exporter` command is the same converter from a terminal.
 
 ## Build and test
 

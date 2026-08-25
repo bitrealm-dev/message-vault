@@ -172,7 +172,6 @@ export default function LoginScreen() {
                 Leave blank to use this origin (Vite `/v1` proxy or vault-hosted UI).
               </p>
             )}
-            {isTauri() && <div className="mb-4" />}
 
             <AuthErrorFooter error={displayError} />
             <TryItFooter busy={busy} onClick={handleTryDemo} />
@@ -238,6 +237,9 @@ export default function LoginScreen() {
 }
 
 function TryItFooter({ busy, onClick }: { busy: boolean; onClick: () => void }) {
+  const caption = TRY_IT_ENABLED
+    ? "Open a sample account."
+    : "Sample sign-in is temporarily unavailable.";
   return (
     <>
       <div className={`${orRowClass} mb-2 mt-3`}>
@@ -246,14 +248,19 @@ function TryItFooter({ busy, onClick }: { busy: boolean; onClick: () => void }) 
         <span className={orLineClass} />
       </div>
       <TryItButton busy={busy} onClick={onClick} />
-      <p className={`${mutedText} mt-2`}>Open a sample account.</p>
+      <p className={`${mutedText} mt-2`}>{caption}</p>
     </>
   );
 }
 
 function TryItButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
   return (
-    <Button variant="primary" onClick={onClick} disabled={!TRY_IT_ENABLED || busy}>
+    <Button
+      variant="primary"
+      onClick={onClick}
+      disabled={!TRY_IT_ENABLED || busy}
+      title={TRY_IT_ENABLED ? undefined : "Sample sign-in is temporarily unavailable."}
+    >
       {busy ? "Opening sample…" : "Try it"}
     </Button>
   );

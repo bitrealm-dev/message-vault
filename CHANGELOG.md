@@ -13,7 +13,7 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ### Removed
 
-- 2026-08-25: Drop Extract and Format from the desktop login screen. Login puts Connect or Sign in first, with **Try it** under an OR divider (disabled for now; demo-login code stays). JSONL-on-disk and format conversion stay available through Import after sign-in and the CLI exporters / `message-reexporter`.
+- 2026-08-25: Drop Extract and Format from the desktop login screen. Login puts Connect or Sign in first, with **Try it** under an OR divider (disabled for now; demo-login code stays). Import after sign-in still stores a backup in the vault. JSONL-on-disk and format conversion stay on the CLI exporters / `message-reexporter`.
 
 ### Fixed
 
