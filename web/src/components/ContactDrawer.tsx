@@ -12,7 +12,7 @@ import { ContactDrawerHandles } from "./contactDrawer/ContactDrawerHandles";
 import {
   type ContactBrowseKind,
   type ContactPreview,
-  emptyHandleRow,
+  previewHandleStubRows,
 } from "./contactDrawer/contactDrawerTypes";
 import { PencilIcon } from "./icons";
 
@@ -198,7 +198,9 @@ export default function ContactDrawer({
 
   const handleRows: ContactDetail["handles"] = detailMatches
     ? matchedDetail.handles
-    : ((previewMatches ? preview?.handles : undefined)?.map((h) => emptyHandleRow(h)) ?? []);
+    : previewMatches
+      ? previewHandleStubRows(preview?.handles, preview?.handleCount)
+      : [];
 
   // null = membership unknown (loading, no preview groups); [] = known empty.
   const displayGroups: string[] | null = detailMatches
@@ -234,7 +236,7 @@ export default function ContactDrawer({
 
   const panelClass =
     variant === "docked"
-      ? "flex h-full min-h-0 min-w-0 flex-col overflow-auto bg-panel px-6 pb-6 pt-2 outline-none"
+      ? "flex h-full min-h-0 min-w-0 flex-col overflow-auto [scrollbar-gutter:stable] bg-panel px-6 pb-6 pt-2 outline-none"
       : "fixed top-0 bottom-0 z-40 w-[min(920px,calc(100vw-14rem))] overflow-auto border-l border-border bg-panel p-6 shadow-[2px_0_12px_rgba(0,0,0,0.18)] outline-none";
 
   const panelStyle =
@@ -284,17 +286,16 @@ export default function ContactDrawer({
           ) : (
             <div className="flex min-w-0 items-center gap-2">
               <h2 className="m-0 min-w-0 truncate text-[1.125rem] font-semibold">{displayName}</h2>
-              {detailMatches ? (
-                <Button
-                  variant="ghost"
-                  title="Edit name"
-                  aria-label="Edit name"
-                  onClick={() => setEditingName(true)}
-                  className={iconBtnClass}
-                >
-                  <PencilIcon />
-                </Button>
-              ) : null}
+              <Button
+                variant="ghost"
+                title="Edit name"
+                aria-label="Edit name"
+                disabled={!detailMatches}
+                onClick={() => setEditingName(true)}
+                className={iconBtnClass}
+              >
+                <PencilIcon />
+              </Button>
             </div>
           )
         }

@@ -18,6 +18,12 @@ export type ContactPreview = {
   id: string;
   name: string;
   handles?: string[];
+  /**
+   * True linked-identity count from the list API (`handle_count`).
+   * List `handles` may include both raw and normalized forms of one identity;
+   * stub rows while loading should match this count, not `handles.length`.
+   */
+  handleCount?: number;
   groups?: string[];
 };
 
@@ -40,6 +46,27 @@ export function emptyHandleRow(handle: string): CachedContactHandle {
     individual_message_count: 0,
     group_message_count: 0,
   };
+}
+
+/**
+ * Build loading stub rows for the handles table.
+ * Prefer `handleCount` (one row per linked identity) over the full preview
+ * string list, which can list both raw and normalized forms of the same phone.
+ */
+export function previewHandleStubRows(
+  handles: string[] | undefined,
+  handleCount: number | undefined,
+): CachedContactHandle[] {
+  const list = handles ?? [];
+  const count =
+    handleCount != null && Number.isFinite(handleCount)
+      ? Math.max(0, Math.floor(handleCount))
+      : list.length;
+  const rows: CachedContactHandle[] = [];
+  for (let i = 0; i < count; i++) {
+    rows.push(emptyHandleRow(list[i] ?? ""));
+  }
+  return rows;
 }
 
 export function sumHandleTotals(handles: CachedContactDetail["handles"]): {

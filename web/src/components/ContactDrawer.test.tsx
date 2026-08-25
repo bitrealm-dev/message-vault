@@ -199,4 +199,91 @@ describe("ContactDrawer", () => {
       expect(screen.queryByText("No groups")).toBeNull();
     });
   });
+
+  it("stubs one handle row when preview lists raw and normalized forms of the same identity", async () => {
+    let resolveDetail!: (d: CachedContactDetail) => void;
+    const pending = new Promise<CachedContactDetail>((resolve) => {
+      resolveDetail = resolve;
+    });
+    get.mockImplementation(() => pending);
+
+    render(
+      <ContactDrawer
+        variant="docked"
+        contactId="b"
+        preview={{
+          id: "b",
+          name: "Contact b",
+          handles: ["+1555000b", "1555000b"],
+          handleCount: 1,
+          groups: ["Family"],
+        }}
+        onClose={() => {}}
+      />,
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Contact b" });
+    expect(dialog.getAttribute("aria-busy")).toBe("true");
+    expect(screen.getByText("+1555000b")).toBeTruthy();
+    expect(screen.queryByText("1555000b")).toBeNull();
+
+    const table = screen.getByRole("grid", { name: "Contact handles" });
+    // Header + one handle row + summary row.
+    expect(table.querySelectorAll('[role="row"]').length).toBe(3);
+
+    resolveDetail(
+      detail("b", {
+        name: "Contact b",
+        groups: ["Family"],
+        handles: [
+          {
+            handle: "+1555000b",
+            service: "phone",
+            name_alias: null,
+            start_date: "2020-01-01T00:00:00Z",
+            end_date: "2024-01-01T00:00:00Z",
+            individual_conversations: 3,
+            group_conversations: 1,
+            individual_message_count: 42,
+            group_message_count: 7,
+          },
+        ],
+      }),
+    );
+    await waitFor(() => {
+      expect(dialog.getAttribute("aria-busy")).toBeNull();
+      expect(table.querySelectorAll('[role="row"]').length).toBe(3);
+    });
+  });
+
+  it("keeps the edit-name control mounted and disabled while detail is loading", async () => {
+    let resolveDetail!: (d: CachedContactDetail) => void;
+    const pending = new Promise<CachedContactDetail>((resolve) => {
+      resolveDetail = resolve;
+    });
+    get.mockImplementation(() => pending);
+
+    render(
+      <ContactDrawer
+        variant="docked"
+        contactId="b"
+        preview={{
+          id: "b",
+          name: "Contact b",
+          handles: ["+1555000b"],
+          handleCount: 1,
+          groups: ["Family"],
+        }}
+        onClose={() => {}}
+      />,
+    );
+
+    const edit = screen.getByRole("button", { name: "Edit name" });
+    expect(edit).toBeDisabled();
+
+    resolveDetail(detail("b", { name: "Contact b", groups: ["Family"] }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Edit name" })).not.toBeDisabled();
+    });
+  });
 });

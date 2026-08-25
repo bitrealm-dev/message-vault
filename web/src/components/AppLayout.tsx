@@ -72,9 +72,28 @@ export default function AppLayout() {
   const [selectedContact, setSelectedContact] = useState<ContactPreview | null>(null);
   const [checkedContacts, setCheckedContacts] = useState<ContactPreview[]>([]);
   const [clearCheckedRev, setClearCheckedRev] = useState(0);
-  const handleCheckedContacts = useCallback((contacts: ContactPreview[]) => {
-    setCheckedContacts(contacts);
-  }, []);
+  const handleCheckedContacts = useCallback(
+    (
+      contacts: Array<{
+        id: string;
+        name: string;
+        handles?: string[];
+        handle_count?: number;
+        groups?: string[];
+      }>,
+    ) => {
+      setCheckedContacts(
+        contacts.map((c) => ({
+          id: c.id,
+          name: c.name,
+          handles: c.handles,
+          handleCount: c.handle_count,
+          groups: c.groups,
+        })),
+      );
+    },
+    [],
+  );
   const clearCheckedContacts = useCallback(() => {
     setClearCheckedRev((n) => n + 1);
   }, []);
@@ -234,6 +253,7 @@ export default function AppLayout() {
                         id: c.id,
                         name: c.name,
                         handles: c.handles,
+                        handleCount: c.handle_count,
                         groups: c.groups,
                       })
                     }
