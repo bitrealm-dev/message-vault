@@ -13,6 +13,11 @@ export function setToken(token: string | null) {
   authToken = token;
 }
 
+/** Current session token on the API client, or null when signed out. */
+export function getToken(): string | null {
+  return authToken;
+}
+
 export function getBaseUrl(): string {
   return baseUrl;
 }

@@ -18,6 +18,8 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ### Changed
 
+- 2026-08-24: Desktop app: closing the window signs out of the vault (best-effort
+  session revoke, then clear the saved login) so the next launch shows sign-in.
 - 2026-08-24: Faster HTTP vault-push: skip per-file asset HEAD until this run sees
   `already_present`, raise JSONL import batches from 8 MiB to 64 MiB, let the
   desktop app flush imports on size only, overlap more prepare/upload work, and
