@@ -14,8 +14,9 @@ pub use journal::{JOURNAL_NAME, LOG_NAME, REPORT_NAME};
 pub use run::{
     DEFAULT_ASSET_MAX_BYTES, DEFAULT_ASSET_UPLOAD_WORKERS, DEFAULT_BATCH_SIZE,
     DEFAULT_PREPARE_AHEAD, DEFAULT_PREPARE_WORKERS, FileResult, MAX_IMPORT_BODY_BYTES,
-    MAX_PROXY_BODY_BYTES, ProgressEvent, ProgressFn, PushReport, UploadProfile, VaultPushConfig,
-    authenticate, detect_source, format_duration_ms, format_push_summary, run,
+    MAX_PROXY_BODY_BYTES, NO_MESSAGE_COUNT_LIMIT, ProgressEvent, ProgressFn, PushReport,
+    UploadProfile, VaultPushConfig, authenticate, detect_source, format_duration_ms,
+    format_push_summary, run,
 };
 pub use vault_http::AuthError;
 pub use vault_http::AuthInfo;

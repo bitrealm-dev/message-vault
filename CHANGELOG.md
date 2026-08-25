@@ -20,7 +20,8 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 - 2026-08-24: Faster HTTP vault-push: skip per-file asset HEAD until this run sees
   `already_present`, raise JSONL import batches from 8 MiB to 50 MiB, let the
   desktop app flush imports on size only, overlap more prepare/upload work, and
-  keep 64 idle HTTP connections per host.
+  keep 64 idle HTTP connections per host. One preflight HEAD of the first queued
+  digest avoids re-uploading a burst of files the vault already has.
 - 2026-08-24: Make the Messages/Contacts nav width-draggable, and let the conversation/contact list shrink to nothing when the window is narrow so the thread stays readable.
 - 2026-08-24: **Desktop host:** share the cancel/spawn/error scaffolding across the four
   job commands, wire the shared cancel flag into push, drop the runtime

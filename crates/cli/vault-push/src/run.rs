@@ -62,6 +62,11 @@ pub const DEFAULT_BATCH_SIZE: usize = 1_000;
 /// Kept under Cloudflare's ~100 MiB upload cap so a large group chat is
 /// split into several requests instead of one giant one that gets rejected.
 pub const MAX_IMPORT_BODY_BYTES: usize = 50 * 1024 * 1024;
+/// Sentinel for "do not flush import batches on message count; size only".
+///
+/// Desktop import uses this so SMS-style short messages pack until
+/// [`MAX_IMPORT_BODY_BYTES`] instead of stopping at a small count.
+pub const NO_MESSAGE_COUNT_LIMIT: usize = usize::MAX;
 /// Max size for uploading an attachment in a single HTTP PUT.
 ///
 /// Bigger files use multipart upload (many smaller pieces), which proxies
@@ -1207,6 +1212,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
     let prepare_ahead = cfg.prepare_ahead.max(1);
     let prepare_workers = cfg.prepare_workers.max(1).min(prepare_ahead);
     let probe_existing_assets = Arc::new(AtomicBool::new(false));
+    let preflight_done = Arc::new(Mutex::new(false));
     let (job_tx, job_rx) = mpsc::sync_channel::<Option<PrepareJob>>(prepare_ahead);
     let (result_tx, result_rx) = mpsc::channel::<PrepareJobResult>();
     let job_rx = Arc::new(Mutex::new(job_rx));
@@ -1224,6 +1230,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
             let username = username.clone();
             let journal_path = journal_path.clone();
             let probe_existing_assets = Arc::clone(&probe_existing_assets);
+            let preflight_done = Arc::clone(&preflight_done);
             scope.spawn(move || {
                 loop {
                     let job = {
@@ -1246,6 +1253,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                         batch_size,
                         digest_cache: &digest_cache,
                         probe_existing: probe_existing_assets.as_ref(),
+                        preflight_done: preflight_done.as_ref(),
                     });
                     let _ = result_tx.send(PrepareJobResult {
                         idx: job.idx,
@@ -1655,6 +1663,7 @@ struct PrepareFileArgs<'a> {
     batch_size: usize,
     digest_cache: &'a DigestCache,
     probe_existing: &'a AtomicBool,
+    preflight_done: &'a Mutex<bool>,
 }
 
 /// One attachment omitted from upload but kept as metadata on the message.
@@ -1721,6 +1730,7 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
         batch_size,
         digest_cache,
         probe_existing,
+        preflight_done,
     } = args;
 
     let read_started = Instant::now();
@@ -1851,6 +1861,7 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
             journal,
             journal_path,
             probe_existing,
+            preflight_done,
         })?;
         profile.asset_upload_ms = elapsed_ms(asset_upload_started);
         profile.asset_bytes = upload_stats.bytes;
@@ -1967,6 +1978,7 @@ struct UploadAssets<'a> {
     journal: &'a Mutex<SharedJournal>,
     journal_path: &'a Path,
     probe_existing: &'a AtomicBool,
+    preflight_done: &'a Mutex<bool>,
 }
 
 /// Try to reserve this sha256 for upload. Returns false if another worker
@@ -2009,12 +2021,47 @@ fn finish_asset_upload(
     Ok(())
 }
 
+/// One HEAD of the first queued digest for this run. If the vault already has
+/// it, enable HEAD-skip so later files do not send PUT bodies.
+fn preflight_existing_assets(
+    http: &HttpSession,
+    url: &str,
+    key: &str,
+    username: &str,
+    source: &str,
+    jobs: &[AssetUploadJob],
+    probe_existing: &AtomicBool,
+    preflight_done: &Mutex<bool>,
+    max_retries: u32,
+) -> Result<()> {
+    if probe_existing.load(Ordering::Relaxed) {
+        return Ok(());
+    }
+    let mut done = preflight_done.lock().expect("preflight mutex poisoned");
+    if probe_existing.load(Ordering::Relaxed) || *done {
+        return Ok(());
+    }
+    *done = true;
+    let Some(job) = jobs.first() else {
+        return Ok(());
+    };
+    let present = vault_http::with_retries(max_retries, || {
+        http.head_asset(url, key, username, source, &job.digest)
+    })?;
+    if present.is_some() {
+        probe_existing.store(true, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
 /// Upload each unique attachment for one conversation (several workers in parallel).
 ///
-/// PUT first. After this run sees `already_present` (PUT or multipart start),
-/// later files HEAD and skip the upload when the vault already has them.
-/// That avoids a round trip on a first import into an empty vault, and still
-/// skips bytes on a re-import once overlap is confirmed.
+/// PUT first after one cheap HEAD of the first queued digest in this run.
+///
+/// If that HEAD reports `already_present`, later files HEAD and skip the body
+/// (re-import). If it misses, this run PUTs until a response sets the flag.
+/// Holding the preflight lock during that HEAD keeps parallel conversations
+/// from PUTting duplicate bodies before the answer is known.
 ///
 /// # Errors
 ///
@@ -2032,6 +2079,7 @@ fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
         journal,
         journal_path,
         probe_existing,
+        preflight_done,
     } = args;
     let mut jobs = Vec::with_capacity(unique.len());
     let mut stats = AssetUploadStats::default();
@@ -2079,6 +2127,18 @@ fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
     if jobs.is_empty() {
         return Ok(stats);
     }
+
+    preflight_existing_assets(
+        http,
+        url,
+        &cfg.key,
+        username,
+        source,
+        &jobs,
+        probe_existing,
+        preflight_done,
+        cfg.max_retries,
+    )?;
 
     // Work-stealing style: workers pull the next job index from a shared counter.
     let worker_count = cfg.asset_upload_workers.max(1).min(jobs.len());
@@ -2805,6 +2865,22 @@ mod tests {
         assert!(should_flush_before_chunk(&batch, &chunk(10, 2), 3, 100));
         assert!(should_flush_before_chunk(&batch, &chunk(70, 1), 10, 100));
         assert!(!should_flush_before_chunk(&batch, &chunk(10, 1), 3, 100));
+    }
+
+    #[test]
+    fn import_batch_does_not_flush_on_count_when_unlimited() {
+        let mut batch = ImportBatch::new("imessage");
+        batch.push(0, chunk(40, 2));
+        assert!(
+            !should_flush_before_chunk(&batch, &chunk(10, 50), NO_MESSAGE_COUNT_LIMIT, 1000),
+            "desktop size-only flush must not split on message count"
+        );
+        assert!(should_flush_before_chunk(
+            &batch,
+            &chunk(70, 1),
+            NO_MESSAGE_COUNT_LIMIT,
+            100
+        ));
     }
 
     #[test]

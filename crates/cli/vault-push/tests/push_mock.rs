@@ -566,7 +566,10 @@ fn profiles_attachment_upload_phases() {
         run(&cfg, Some(&mut progress)).unwrap()
     };
 
-    assert_eq!(head.hits(), 0, "first upload must PUT without a HEAD probe");
+    assert!(
+        head.hits() >= 1,
+        "first upload pays one preflight HEAD of the queued digest"
+    );
     asset.assert();
     import.assert();
     let profile = report.results[0].profile.as_ref().unwrap();
@@ -677,8 +680,23 @@ fn puts_two_new_assets_without_head() {
     cfg.asset_upload_workers = 1;
     let report = run(&cfg, None).unwrap();
 
-    assert_eq!(head_a.hits(), 0);
-    assert_eq!(head_b.hits(), 0);
+    // One preflight HEAD of the first queued digest (sha256 order); later new
+    // files still PUT without HEAD.
+    let head_first = if digest_a < digest_b {
+        &head_a
+    } else {
+        &head_b
+    };
+    let head_second = if digest_a < digest_b {
+        &head_b
+    } else {
+        &head_a
+    };
+    assert!(
+        head_first.hits() >= 1,
+        "first import pays one preflight HEAD"
+    );
+    assert_eq!(head_second.hits(), 0);
     assert_eq!(put_a.hits(), 1);
     assert_eq!(put_b.hits(), 1);
     assert_eq!(report.assets_uploaded, 2);
@@ -710,6 +728,14 @@ fn heads_later_assets_after_put_reports_already_present() {
     } else {
         (digest_b, digest_a)
     };
+    // Preflight HEAD of the first digest misses (404). The PUT then reports
+    // already_present and later files HEAD-skip. Sequential workers are
+    // required so the second job runs after that store.
+    let head_first = server.mock(|when, then| {
+        when.method("HEAD")
+            .path(format!("/v1/assets/{first_digest}"));
+        then.status(404);
+    });
     let put_first = server.mock(|when, then| {
         when.method(PUT).path(format!("/v1/assets/{first_digest}"));
         then.status(200)
@@ -742,9 +768,73 @@ fn heads_later_assets_after_put_reports_already_present() {
     cfg.asset_upload_workers = 1;
     let report = run(&cfg, None).unwrap();
 
+    assert!(head_first.hits() >= 1, "preflight HEAD of the first digest");
     assert_eq!(put_first.hits(), 1);
     assert!(head_second.hits() >= 1);
     assert_eq!(put_second.hits(), 0);
+    assert_eq!(report.assets_skipped, 2);
+}
+
+#[test]
+fn preflight_head_skips_puts_when_first_asset_already_present() {
+    const A: &[u8] = b"vault-already-has-alpha";
+    const B: &[u8] = b"vault-already-has-bravo";
+
+    let server = MockServer::start();
+    let _auth = server.mock(|when, then| {
+        when.method(GET).path("/v1/auth/check");
+        then.status(200).json_body(json!({
+            "ok": true,
+            "account_id": "acct-1",
+            "username": "alice",
+            "account_ok": true,
+            "sources": ["sms-backup-restore"]
+        }));
+    });
+    let dir = tempdir().unwrap();
+    let (digest_a, digest_b) = two_attachment_docs(dir.path(), "a.txt", A, "b.txt", B);
+    let head_a = server.mock(|when, then| {
+        when.method("HEAD").path(format!("/v1/assets/{digest_a}"));
+        then.status(200).json_body(json!({
+            "ok": true,
+            "already_present": true
+        }));
+    });
+    let head_b = server.mock(|when, then| {
+        when.method("HEAD").path(format!("/v1/assets/{digest_b}"));
+        then.status(200).json_body(json!({
+            "ok": true,
+            "already_present": true
+        }));
+    });
+    let put_a = server.mock(|when, then| {
+        when.method(PUT).path(format!("/v1/assets/{digest_a}"));
+        then.status(200)
+            .json_body(json!({ "ok": true, "already_present": false }));
+    });
+    let put_b = server.mock(|when, then| {
+        when.method(PUT).path(format!("/v1/assets/{digest_b}"));
+        then.status(200)
+            .json_body(json!({ "ok": true, "already_present": false }));
+    });
+    let _import = server.mock(|when, then| {
+        when.method(POST).path("/v1/import");
+        then.status(200).json_body(json!({
+            "ok": true,
+            "messages": 1,
+            "messages_appended": 1
+        }));
+    });
+
+    let mut cfg = text_only_config(dir.path(), server.base_url());
+    cfg.force = true;
+    // Parallel workers would both PUT before a post-PUT flag is visible.
+    cfg.asset_upload_workers = 2;
+    let report = run(&cfg, None).unwrap();
+
+    assert_eq!(put_a.hits(), 0, "preflight HEAD must skip PUT for A");
+    assert_eq!(put_b.hits(), 0, "preflight HEAD must skip PUT for B");
+    assert!(head_a.hits() + head_b.hits() >= 1);
     assert_eq!(report.assets_skipped, 2);
 }
 
@@ -849,7 +939,10 @@ fn multipart_upload_when_over_proxy_threshold() {
     cfg.asset_multipart_threshold = 20; // force multipart for 40-byte file
     let report = run(&cfg, None).unwrap();
 
-    assert_eq!(head.hits(), 0, "first upload must PUT without a HEAD probe");
+    assert!(
+        head.hits() >= 1,
+        "first upload pays one preflight HEAD of the queued digest"
+    );
     start.assert();
     part1.assert();
     part2.assert();
@@ -1111,7 +1204,10 @@ fn shared_attachment_uploaded_once_across_conversations() {
     assert!(report.ok);
     assert_eq!(report.conversations_ok, 2);
     assert_eq!(put.hits(), 1, "shared digest must upload once");
-    assert_eq!(head.hits(), 0, "first upload must PUT without a HEAD probe");
+    assert!(
+        head.hits() >= 1,
+        "first upload pays one preflight HEAD of the queued digest"
+    );
     import.assert();
     assert_eq!(report.assets_uploaded, 1);
 }
