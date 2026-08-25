@@ -48,6 +48,41 @@ export function contactPreviewFromListRow(c: ContactListPreviewSource): ContactP
   };
 }
 
+export type ThreadParticipantPreviewSource = {
+  contact_id: string | null;
+  handle: string;
+  name?: string | null;
+  preferred_name?: string | null;
+  name_alias?: string | null;
+};
+
+/** Preferred name, then identity alias, then handle — same order as chips with aliases off. */
+function threadParticipantDisplayName(p: ThreadParticipantPreviewSource): string {
+  return (
+    (p.name ?? p.preferred_name)?.trim() || p.name_alias?.trim() || p.handle.trim() || "Contact"
+  );
+}
+
+export function contactPreviewFromThreadParticipants(
+  contactId: string,
+  participants: readonly ThreadParticipantPreviewSource[],
+): ContactPreview | null {
+  const matched = participants.filter((p) => p.contact_id === contactId);
+  if (matched.length === 0) return null;
+  const handles = matched.map((p) => p.handle).filter((h) => h.length > 0);
+  const named = matched.find((p) =>
+    Boolean((p.name ?? p.preferred_name)?.trim() || p.name_alias?.trim()),
+  );
+  const uniqueCount = previewHandleStubRows(handles, undefined).length;
+  return {
+    id: contactId,
+    name: threadParticipantDisplayName(named ?? matched[0]),
+    handles,
+    // At least one stub row so an empty handle list does not take the empty-table Loading path.
+    handleCount: Math.max(1, uniqueCount),
+  };
+}
+
 /** Format an API ISO timestamp as YYYY-MM-DD for the handles table. */
 export function formatHandleDate(iso: string | null | undefined): string | null {
   return formatIsoDateOnly(iso);

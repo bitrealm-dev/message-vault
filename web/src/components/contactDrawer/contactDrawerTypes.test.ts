@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   contactPreviewFromListRow,
+  contactPreviewFromThreadParticipants,
   HANDLE_STUB_PLACEHOLDER,
   previewHandleStubRows,
 } from "./contactDrawerTypes";
@@ -52,5 +53,97 @@ describe("previewHandleStubRows", () => {
   it("keeps two distinct phones when handleCount is 2", () => {
     const rows = previewHandleStubRows(["+15550001", "15550001", "+15550002", "15550002"], 2);
     expect(rows.map((r) => r.handle)).toEqual(["+15550001", "+15550002"]);
+  });
+});
+
+describe("contactPreviewFromThreadParticipants", () => {
+  it("builds a preview from matching conversation participants", () => {
+    expect(
+      contactPreviewFromThreadParticipants("c1", [
+        { contact_id: "c1", handle: "+15550001", name: "Ada" },
+        { contact_id: "c2", handle: "+15550002", name: "Bob" },
+      ]),
+    ).toEqual({
+      id: "c1",
+      name: "Ada",
+      handles: ["+15550001"],
+      handleCount: 1,
+    });
+  });
+
+  it("uses preferred_name when name is missing (message-header participants)", () => {
+    expect(
+      contactPreviewFromThreadParticipants("c1", [
+        { contact_id: "c1", handle: "+15550001", preferred_name: "Ada" },
+      ])?.name,
+    ).toBe("Ada");
+  });
+
+  it("counts two distinct phones for the same contact as two identities", () => {
+    expect(
+      contactPreviewFromThreadParticipants("c1", [
+        { contact_id: "c1", handle: "+15550001", name: "Ada" },
+        { contact_id: "c1", handle: "+15550002", name: "Ada" },
+      ]),
+    ).toMatchObject({
+      handles: ["+15550001", "+15550002"],
+      handleCount: 2,
+    });
+  });
+
+  it("collapses raw and normalized forms of the same phone to handleCount 1", () => {
+    expect(
+      contactPreviewFromThreadParticipants("c1", [
+        { contact_id: "c1", handle: "+15550001", name: "Ada" },
+        { contact_id: "c1", handle: "15550001", name: "Ada" },
+      ])?.handleCount,
+    ).toBe(1);
+  });
+
+  it("falls back to the handle when no display name is set", () => {
+    expect(
+      contactPreviewFromThreadParticipants("c1", [
+        { contact_id: "c1", handle: "+15550001", name: null },
+      ])?.name,
+    ).toBe("+15550001");
+  });
+
+  it("uses name_alias when preferred name is missing (thread chip fallback)", () => {
+    expect(
+      contactPreviewFromThreadParticipants("c1", [
+        { contact_id: "c1", handle: "+15550001", name: null, name_alias: "Mom" },
+      ])?.name,
+    ).toBe("Mom");
+  });
+
+  it("prefers preferred name over name_alias so the stub heading matches the drawer", () => {
+    expect(
+      contactPreviewFromThreadParticipants("c1", [
+        {
+          contact_id: "c1",
+          handle: "+15550001",
+          name: "Ada",
+          name_alias: "Mom",
+        },
+      ])?.name,
+    ).toBe("Ada");
+  });
+
+  it("stubs at least one identity when matched handles are empty", () => {
+    expect(
+      contactPreviewFromThreadParticipants("c1", [{ contact_id: "c1", handle: "", name: "Ada" }]),
+    ).toMatchObject({
+      name: "Ada",
+      handles: [],
+      handleCount: 1,
+    });
+  });
+
+  it("returns null when no participant matches the contact id", () => {
+    expect(
+      contactPreviewFromThreadParticipants("missing", [
+        { contact_id: "c1", handle: "+15550001", name: "Ada" },
+      ]),
+    ).toBeNull();
   });
 });

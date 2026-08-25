@@ -21,6 +21,7 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ### Fixed
 
+- 2026-08-25: Opening a contact from a message thread stubs the overlay handles table from that thread’s participant handles, so the card does not jump from one empty Loading row to the real identity count.
 - 2026-08-24: Make the left nav resize grip reachable (it sat under the list column), raise its max width to 520px, and keep the header brand slot aligned while dragging.
 - 2026-08-24: Document and ship CORS origins for packaged desktop builds (`tauri://localhost`, `http://tauri.localhost`, `https://tauri.localhost`). Release AppImages were blocked from Connect when the vault only allowed Vite `:5173` origins.
 

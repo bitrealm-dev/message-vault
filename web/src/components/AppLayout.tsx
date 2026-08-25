@@ -161,11 +161,14 @@ export default function AppLayout() {
     navigate(`/messages/${c.id}${params}`, { state: { conversation: c } });
   };
 
+  const locationState = asMessagesLocationState(location.state);
+  const openContactId = locationState?.openContactId ?? null;
+  const openContactPreview = locationState?.openContactPreview ?? null;
+
   const closeContactDrawer = () => {
     setSelectedContact(null);
-    const state = asMessagesLocationState(location.state);
-    if (!state?.openContactId) return;
-    const { openContactId: _closed, ...rest } = state;
+    if (!openContactId || !locationState) return;
+    const { openContactId: _closed, openContactPreview: _preview, ...rest } = locationState;
     navigate(`${location.pathname}${location.search}`, {
       replace: true,
       state: Object.keys(rest).length > 0 ? rest : null,
@@ -191,9 +194,6 @@ export default function AppLayout() {
 
   const isFullScreen = mode === "import" || mode === "export" || mode === "settings";
   const isTrash = mode === "trash";
-
-  // Contact drawer: MessageRoute stores the contact id on location state.
-  const openContactId = asMessagesLocationState(location.state)?.openContactId ?? null;
 
   return (
     <RightToolbarProvider>
@@ -300,6 +300,7 @@ export default function AppLayout() {
               <ContactDrawer
                 variant="overlay"
                 contactId={openContactId}
+                preview={openContactPreview}
                 onClose={closeContactDrawer}
                 onBrowseConversations={handleBrowseContactConversations}
               />
