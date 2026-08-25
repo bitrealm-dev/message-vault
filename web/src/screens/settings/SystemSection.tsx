@@ -4,11 +4,13 @@ import FormRow from "../../components/FormRow";
 import PathPicker from "../../components/PathPicker";
 import { FFMPEG_TOOLS_STORAGE_KEY } from "../../lib/ffmpeg-tools";
 import {
+  defaultImportStagingDir,
   getHomeDir,
+  getImportStagingDir,
   getRememberImporterPaths,
-  getVaultWorkingDir,
+  isUsableImportStagingParent,
+  setImportStagingDir,
   setRememberImporterPaths,
-  setVaultWorkingDir,
 } from "../../lib/system-settings";
 import { type FfmpegToolsProbe, probeFfmpegTools, setFfmpegToolsDir } from "../../lib/tauri";
 import { isTauri } from "../../lib/tauri-check";
@@ -19,6 +21,8 @@ type Status =
   | { type: "error"; message: string };
 
 const sectionHeading = "m-0 mb-2 text-[12px] font-semibold uppercase tracking-[0.05em] text-muted";
+
+const EXAMPLE_STAGING = "staging-iphone-ios-260809-143022";
 
 function formatProbePaths(probe: FfmpegToolsProbe): string {
   const parts: string[] = [];
@@ -43,10 +47,20 @@ function statusColor(status: Status): string {
   return "var(--muted)";
 }
 
+/** Example path shown under the Import Staging Directory field. */
+function stagingHelpExample(stagingDir: string, defaultDir: string): string {
+  const trimmed = stagingDir.trim().replace(/[/\\]+$/, "");
+  const defaultTrimmed = defaultDir.trim().replace(/[/\\]+$/, "");
+  if (!trimmed || (defaultTrimmed && trimmed === defaultTrimmed)) {
+    return `~/message-vault/${EXAMPLE_STAGING}`;
+  }
+  return `${trimmed}/${EXAMPLE_STAGING}`;
+}
+
 export function SystemSection() {
   const [ffmpegPath, setFfmpegPath] = useState("");
-  const [workingDir, setWorkingDir] = useState("");
-  const [homeDir, setHomeDir] = useState("");
+  const [stagingDir, setStagingDir] = useState("");
+  const [defaultStagingDir, setDefaultStagingDir] = useState("");
   const [rememberPaths, setRememberPaths] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<Status>({ type: "idle" });
@@ -60,9 +74,10 @@ export function SystemSection() {
 
     void (async () => {
       const home = await getHomeDir();
-      setHomeDir(home);
-      const storedWorking = getVaultWorkingDir();
-      setWorkingDir(storedWorking || home);
+      const defaultDir = defaultImportStagingDir(home);
+      setDefaultStagingDir(defaultDir);
+      const storedStaging = getImportStagingDir();
+      setStagingDir(storedStaging || defaultDir);
 
       try {
         const result = storedFfmpeg.trim()
@@ -92,14 +107,21 @@ export function SystemSection() {
     setStatus({ type: "idle" });
 
     try {
-      const home = homeDir || (await getHomeDir());
-      const workingTrimmed = workingDir.trim();
-      // Empty or equal to home → restore default (no localStorage override).
-      if (!workingTrimmed || (home && workingTrimmed === home)) {
-        setVaultWorkingDir("");
-        setWorkingDir(home);
+      const home = (await getHomeDir()) || "";
+      const defaultDir = defaultImportStagingDir(home) || defaultStagingDir;
+      setDefaultStagingDir(defaultDir);
+      const stagingTrimmed = stagingDir.trim();
+      // Empty, equal to the default, or unusable (relative / filesystem root)
+      // → restore default (no localStorage override).
+      if (
+        !stagingTrimmed ||
+        (defaultDir && stagingTrimmed === defaultDir) ||
+        !isUsableImportStagingParent(stagingTrimmed)
+      ) {
+        setImportStagingDir("");
+        setStagingDir(defaultDir);
       } else {
-        setVaultWorkingDir(workingTrimmed);
+        setImportStagingDir(stagingTrimmed);
       }
 
       const ffmpegTrimmed = ffmpegPath.trim();
@@ -148,27 +170,27 @@ export function SystemSection() {
   if (!isTauri()) {
     return (
       <p className="m-0 text-[0.875rem] text-muted">
-        System settings (working directory, ffmpeg tools, and remembered importer paths) are
+        System settings (import staging directory, ffmpeg tools, and remembered importer paths) are
         available in the desktop app.
       </p>
     );
   }
 
+  const helpExample = stagingHelpExample(stagingDir, defaultStagingDir);
+
   return (
     <div>
       <h3 className={sectionHeading}>Vault</h3>
-      <FormRow label="Vault Working Directory">
+      <FormRow label="Import Staging Directory">
         <PathPicker
-          value={workingDir}
-          onChange={setWorkingDir}
+          value={stagingDir}
+          onChange={setStagingDir}
           directory
-          placeholder={homeDir || "User home directory"}
+          placeholder={defaultStagingDir || "~/message-vault"}
         />
       </FormRow>
       <p className="mt-1 text-[0.75rem] text-muted">
-        Import staging is written under message-vault in your home directory (for example
-        ~/message-vault/staging-iphone-ios-260809-143022). This working directory is not used to
-        choose that path.
+        Temporary import files are written here. For example {helpExample}
       </p>
 
       <label className="mt-5 flex cursor-pointer items-start gap-2 text-[0.875rem]">
