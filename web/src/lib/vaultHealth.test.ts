@@ -4,7 +4,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   checkVaultHealth,
   HEALTH_BACKOFF_CAP_MS,
+  HEALTH_PROBE_TIMEOUT_MS,
   healthBackoffMs,
+  healthProbeUrl,
   healthStatusLabel,
 } from "./vaultHealth";
 
@@ -26,9 +28,30 @@ describe("healthBackoffMs", () => {
   });
 });
 
+describe("healthProbeUrl", () => {
+  it("uses this origin when the URL is blank", () => {
+    expect(healthProbeUrl("")).toBe("/health");
+    expect(healthProbeUrl("   ")).toBe("/health");
+  });
+
+  it("strips trailing slashes on absolute http(s) URLs", () => {
+    expect(healthProbeUrl("http://127.0.0.1:8080/")).toBe("http://127.0.0.1:8080/health");
+    expect(healthProbeUrl("https://vault.example.com/app/")).toBe(
+      "https://vault.example.com/app/health",
+    );
+  });
+
+  it("rejects relative and non-http values", () => {
+    expect(healthProbeUrl("hello")).toBeNull();
+    expect(healthProbeUrl("ftp://example.com")).toBeNull();
+    expect(healthProbeUrl("javascript:alert(1)")).toBeNull();
+  });
+});
+
 describe("healthStatusLabel", () => {
   it("names each status", () => {
     expect(healthStatusLabel("unknown")).toBe("Server status unknown");
+    expect(healthStatusLabel("checking")).toBe("Checking server");
     expect(healthStatusLabel("ok")).toBe("Server reachable");
     expect(healthStatusLabel("fail")).toBe("Server unreachable");
   });
@@ -37,6 +60,7 @@ describe("healthStatusLabel", () => {
 describe("checkVaultHealth", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it("returns true when /health is ok", async () => {
@@ -46,7 +70,18 @@ describe("checkVaultHealth", () => {
     await expect(checkVaultHealth("http://127.0.0.1:8080/")).resolves.toBe(true);
     expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8080/health", {
       method: "GET",
-      signal: undefined,
+      signal: expect.any(AbortSignal),
+      cache: "no-store",
+    });
+  });
+
+  it("probes this origin when the URL is blank", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(checkVaultHealth("   ")).resolves.toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith("/health", {
+      method: "GET",
+      signal: expect.any(AbortSignal),
       cache: "no-store",
     });
   });
@@ -61,18 +96,36 @@ describe("checkVaultHealth", () => {
     await expect(checkVaultHealth("http://127.0.0.1:8080")).resolves.toBe(false);
   });
 
-  it("returns false for a blank URL without calling fetch", async () => {
+  it("returns false for a non-http URL without calling fetch", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    await expect(checkVaultHealth("   ")).resolves.toBe(false);
+    await expect(checkVaultHealth("hello")).resolves.toBe(false);
+    await expect(checkVaultHealth("ftp://example.com")).resolves.toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("returns false when aborted", async () => {
-    const err = new DOMException("Aborted", "AbortError");
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(err));
+    const fetchMock = vi.fn().mockRejectedValue(new DOMException("Aborted", "AbortError"));
+    vi.stubGlobal("fetch", fetchMock);
     const ac = new AbortController();
     ac.abort();
     await expect(checkVaultHealth("http://127.0.0.1:8080", ac.signal)).resolves.toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("returns false when the probe times out", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("Aborted", "AbortError"));
+        });
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = checkVaultHealth("http://127.0.0.1:8080");
+    await vi.advanceTimersByTimeAsync(HEALTH_PROBE_TIMEOUT_MS);
+    await expect(pending).resolves.toBe(false);
   });
 });

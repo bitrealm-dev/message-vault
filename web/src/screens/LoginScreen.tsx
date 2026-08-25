@@ -38,7 +38,7 @@ export default function LoginScreen() {
 
   const hankoRef = useRef<HTMLDivElement>(null);
   // Only probe while choosing a vault; stop after Connect advances the card.
-  const healthStatus = useVaultHealth(authMode === null ? serverUrl : "");
+  const healthStatus = useVaultHealth(authMode === null ? serverUrl : null);
 
   const displayError = error || hankoError;
 

@@ -11,6 +11,10 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ## [Unreleased]
 
+### Added
+
+- 2026-08-25: Show a grey / green / red light next to **Server URL** on login. The light probes `GET /health` (this origin when the field is blank) so it is clear whether the vault is reachable before Connect.
+
 ### Removed
 
 - 2026-08-25: Drop Extract and Format from the desktop login screen. Login puts Connect or Sign in first, with **Try it** under an OR divider (disabled for now; demo-login code stays). Import after sign-in still stores a backup in the vault. JSONL-on-disk and format conversion stay on the CLI exporters / `message-reexporter`.

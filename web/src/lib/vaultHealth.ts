@@ -2,6 +2,8 @@
 export const HEALTH_BACKOFF_CAP_MS = 30_000;
 export const HEALTH_SUCCESS_RECHECK_MS = 30_000;
 export const HEALTH_URL_DEBOUNCE_MS = 400;
+/** Give up on a single /health request so a black-holed host cannot leave the light grey. */
+export const HEALTH_PROBE_TIMEOUT_MS = 8_000;
 
 /** Progressive backoff: 1s → 2s → 4s → … capped at 30s. */
 export function healthBackoffMs(failureIndex: number): number {
@@ -10,10 +12,25 @@ export function healthBackoffMs(failureIndex: number): number {
   return Math.min(delay, HEALTH_BACKOFF_CAP_MS);
 }
 
-export type VaultHealthStatus = "unknown" | "ok" | "fail";
+export type VaultHealthStatus = "unknown" | "checking" | "ok" | "fail";
 
-function trimBaseUrl(baseUrl: string): string {
-  return baseUrl.trim().replace(/\/+$/, "");
+/**
+ * URL to GET for vault liveness.
+ * A blank value means this origin (same as the API client empty base URL).
+ * Returns null when the value is not empty and not an absolute http(s) URL.
+ */
+export function healthProbeUrl(baseUrl: string): string | null {
+  const trimmed = baseUrl.trim();
+  if (!trimmed) return "/health";
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  return `${trimmed.replace(/\/+$/, "")}/health`;
 }
 
 /**
@@ -21,17 +38,27 @@ function trimBaseUrl(baseUrl: string): string {
  * Returns true only when the response is OK.
  */
 export async function checkVaultHealth(baseUrl: string, signal?: AbortSignal): Promise<boolean> {
-  const base = trimBaseUrl(baseUrl);
-  if (!base) return false;
+  const url = healthProbeUrl(baseUrl);
+  if (!url) return false;
+  if (signal?.aborted) return false;
+
+  const timeoutController = new AbortController();
+  const timer = setTimeout(() => timeoutController.abort(), HEALTH_PROBE_TIMEOUT_MS);
+  const onParentAbort = () => timeoutController.abort();
+  signal?.addEventListener("abort", onParentAbort, { once: true });
+
   try {
-    const res = await fetch(`${base}/health`, {
+    const res = await fetch(url, {
       method: "GET",
-      signal,
+      signal: timeoutController.signal,
       cache: "no-store",
     });
     return res.ok;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onParentAbort);
   }
 }
 
@@ -41,7 +68,13 @@ export function healthStatusLabel(status: VaultHealthStatus): string {
       return "Server reachable";
     case "fail":
       return "Server unreachable";
-    default:
+    case "checking":
+      return "Checking server";
+    case "unknown":
       return "Server status unknown";
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
   }
 }

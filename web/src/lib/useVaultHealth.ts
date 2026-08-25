@@ -8,15 +8,14 @@ import {
 } from "./vaultHealth";
 
 /**
- * Probe vault /health for a non-empty server URL with debounce and backoff.
- * Blank URL stays `unknown` (grey). Failures back off; success rechecks slowly.
+ * Probe vault /health for a server URL with debounce and backoff.
+ * Pass `null` to stop (sign-in card). An empty string probes this origin.
  */
-export function useVaultHealth(serverUrl: string): VaultHealthStatus {
+export function useVaultHealth(serverUrl: string | null): VaultHealthStatus {
   const [status, setStatus] = useState<VaultHealthStatus>("unknown");
 
   useEffect(() => {
-    const trimmed = serverUrl.trim();
-    if (!trimmed) {
+    if (serverUrl === null) {
       setStatus("unknown");
       return;
     }
@@ -44,9 +43,10 @@ export function useVaultHealth(serverUrl: string): VaultHealthStatus {
       controller?.abort();
       controller = new AbortController();
       const signal = controller.signal;
+      setStatus("checking");
 
       void (async () => {
-        const ok = await checkVaultHealth(trimmed, signal);
+        const ok = await checkVaultHealth(serverUrl, signal);
         if (cancelled || signal.aborted) return;
         if (ok) {
           failureIndex = 0;

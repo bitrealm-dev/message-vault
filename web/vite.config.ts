@@ -13,6 +13,11 @@ export default defineConfig({
         target: "http://127.0.0.1:8080",
         changeOrigin: true,
       },
+      // Login health light uses GET /health when the server URL field is blank.
+      "/health": {
+        target: "http://127.0.0.1:8080",
+        changeOrigin: true,
+      },
     },
   },
   test: {

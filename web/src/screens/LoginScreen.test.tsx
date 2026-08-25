@@ -3,7 +3,7 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/auth", () => ({
   useAuth: () => ({
@@ -20,6 +20,10 @@ vi.mock("../lib/tauri-check", () => ({
 import LoginScreen from "./LoginScreen";
 
 describe("LoginScreen", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+  });
+
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
@@ -42,9 +46,27 @@ describe("LoginScreen", () => {
     expect(screen.getByRole("status", { name: "Server status unknown" })).toBeInTheDocument();
   });
 
+  it("turns the Server URL light green for a blank URL when this origin is up", async () => {
+    render(
+      <MemoryRouter>
+        <LoginScreen />
+      </MemoryRouter>,
+    );
+
+    await waitFor(
+      () => {
+        expect(screen.getByRole("status", { name: "Server reachable" })).toBeInTheDocument();
+      },
+      { timeout: 2000 },
+    );
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/health",
+      expect.objectContaining({ method: "GET", cache: "no-store" }),
+    );
+  });
+
   it("turns the Server URL light green when /health succeeds", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
-    vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
     render(
@@ -64,15 +86,14 @@ describe("LoginScreen", () => {
       { timeout: 2000 },
     );
 
-    expect(fetchMock).toHaveBeenCalledWith(
+    expect(fetch).toHaveBeenCalledWith(
       "http://127.0.0.1:8080/health",
       expect.objectContaining({ method: "GET", cache: "no-store" }),
     );
   });
 
   it("turns the Server URL light red when /health fails", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 503 });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 503 }));
     const user = userEvent.setup();
 
     render(
