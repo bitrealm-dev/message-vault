@@ -14,7 +14,7 @@ import NavCollapsibleSection from "./NavCollapsibleSection";
 import NavGlyphButton from "./NavGlyphButton";
 import {
   NAV_LEADING_GLYPH_CLASS,
-  NAV_LEADING_ROW_CLASS,
+  NAV_NESTED_ROW_CLASS,
   navGlyphRowClass,
 } from "./navSectionLayout";
 
@@ -135,7 +135,7 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
                 <button
                   type="button"
                   onClick={() => navigate(href)}
-                  className={`${NAV_LEADING_ROW_CLASS} cursor-pointer border-none bg-transparent p-0 text-left text-inherit`}
+                  className={`${NAV_NESTED_ROW_CLASS} cursor-pointer border-none bg-transparent p-0 text-left text-inherit`}
                 >
                   <span className={NAV_LEADING_GLYPH_CLASS}>
                     <PeopleGroupIcon size={15} />
@@ -198,7 +198,7 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
           onClick={() => navigate("/no-group")}
           className={`${navGlyphRowClass(location.pathname === "/no-group")} cursor-pointer`}
         >
-          <span className={NAV_LEADING_ROW_CLASS}>
+          <span className={NAV_NESTED_ROW_CLASS}>
             <span className={NAV_LEADING_GLYPH_CLASS}>
               <PersonIcon size={15} />
             </span>

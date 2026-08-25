@@ -14,7 +14,7 @@ import NavCollapsibleSection from "./NavCollapsibleSection";
 import NavGlyphButton from "./NavGlyphButton";
 import {
   NAV_LEADING_GLYPH_CLASS,
-  NAV_LEADING_ROW_CLASS,
+  NAV_NESTED_ROW_CLASS,
   navGlyphRowClass,
 } from "./navSectionLayout";
 
@@ -116,8 +116,8 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
     <>
       <NavCollapsibleSection
         id="thread-tags"
-        title="Thread Tags"
-        addLabel="Create thread tag"
+        title="Message Tags"
+        addLabel="Create message tag"
         addDisabled={busy}
         onAdd={() => {
           setMenuFor(null);
@@ -135,7 +135,7 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
                 <button
                   type="button"
                   onClick={() => navigate(href)}
-                  className={`${NAV_LEADING_ROW_CLASS} cursor-pointer border-none bg-transparent p-0 text-left text-inherit`}
+                  className={`${NAV_NESTED_ROW_CLASS} cursor-pointer border-none bg-transparent p-0 text-left text-inherit`}
                 >
                   <span className={NAV_LEADING_GLYPH_CLASS}>
                     <TagIcon size={15} />
@@ -198,7 +198,7 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
           onClick={() => navigate("/no-tag")}
           className={`${navGlyphRowClass(location.pathname === "/no-tag")} cursor-pointer`}
         >
-          <span className={NAV_LEADING_ROW_CLASS}>
+          <span className={NAV_NESTED_ROW_CLASS}>
             <span className={NAV_LEADING_GLYPH_CLASS}>
               <TagIcon size={15} />
             </span>
@@ -209,7 +209,7 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
 
       {createOpen ? (
         <GroupNameDialog
-          title="Create thread tag"
+          title="Create message tag"
           placeholder="Tag name"
           confirmLabel="Create"
           error={error}

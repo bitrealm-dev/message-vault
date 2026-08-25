@@ -39,4 +39,14 @@ describe("GroupsNav", () => {
     expect(college.querySelector('[class*="size-[15px]"]')).not.toBeNull();
     expect(noGroup.querySelector('[class*="size-[15px]"]')).not.toBeNull();
   });
+
+  it("indents nested rows so icons line up with the heading title", () => {
+    renderNav("/contacts");
+    const college = screen.getByRole("button", { name: "College" });
+    expect(college.className).toContain("pl-[calc(15px+0.5rem)]");
+    const noGroupInner = screen
+      .getByRole("button", { name: "No group" })
+      .querySelector('[class*="pl-[calc(15px+0.5rem)]"]');
+    expect(noGroupInner).not.toBeNull();
+  });
 });
