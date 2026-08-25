@@ -5,7 +5,7 @@ description: Use the desktop app Import screen to read a phone backup and store 
 
 **Import** is in the desktop app sidebar after you sign in. It is not shown in the browser-only UI. Pick a backup source, point at the file or folder, and start the run. The app extracts from that backup and pushes into the vault in one flow.
 
-JSONL (JSON Lines) folders on disk are a later task: [Extract to files](/vault/user/how-to/extract-to-files/).
+JSONL (JSON Lines) folders on disk are a command-line task: [Extract to files](/vault/user/how-to/extract-to-files/).
 
 ## Before you start
 

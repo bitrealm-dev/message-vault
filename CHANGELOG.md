@@ -11,6 +11,10 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ## [Unreleased]
 
+### Removed
+
+- 2026-08-25: Drop Extract and Format from the desktop login screen. Login puts Connect or Sign in first, with **Try it** under an OR divider (disabled for now; demo-login code stays). JSONL-on-disk and format conversion stay available through Import after sign-in and the CLI exporters / `message-reexporter`.
+
 ### Fixed
 
 - 2026-08-24: Make the left nav resize grip reachable (it sat under the list column), raise its max width to 520px, and keep the header brand slot aligned while dragging.
