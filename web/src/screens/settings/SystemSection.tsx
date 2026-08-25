@@ -8,6 +8,7 @@ import {
   getHomeDir,
   getImportStagingDir,
   getRememberImporterPaths,
+  isUsableImportStagingParent,
   setImportStagingDir,
   setRememberImporterPaths,
 } from "../../lib/system-settings";
@@ -110,8 +111,13 @@ export function SystemSection() {
       const defaultDir = defaultImportStagingDir(home) || defaultStagingDir;
       setDefaultStagingDir(defaultDir);
       const stagingTrimmed = stagingDir.trim();
-      // Empty or equal to the default → restore default (no localStorage override).
-      if (!stagingTrimmed || (defaultDir && stagingTrimmed === defaultDir)) {
+      // Empty, equal to the default, or unusable (relative / filesystem root)
+      // → restore default (no localStorage override).
+      if (
+        !stagingTrimmed ||
+        (defaultDir && stagingTrimmed === defaultDir) ||
+        !isUsableImportStagingParent(stagingTrimmed)
+      ) {
         setImportStagingDir("");
         setStagingDir(defaultDir);
       } else {

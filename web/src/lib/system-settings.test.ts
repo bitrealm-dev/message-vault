@@ -1,9 +1,28 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   defaultImportStagingDir,
+  isUsableImportStagingParent,
   joinImportStagingPath,
   resolveImportStagingDir,
 } from "./system-settings";
+
+const mem = new Map<string, string>();
+
+beforeEach(() => {
+  mem.clear();
+  (globalThis as { localStorage?: Storage }).localStorage = {
+    getItem: (k) => mem.get(k) ?? null,
+    setItem: (k, v) => {
+      mem.set(k, String(v));
+    },
+    removeItem: (k) => {
+      mem.delete(k);
+    },
+    clear: () => mem.clear(),
+    key: () => null,
+    length: 0,
+  };
+});
 
 describe("defaultImportStagingDir", () => {
   it("joins message-vault under the home folder", () => {
@@ -16,6 +35,26 @@ describe("defaultImportStagingDir", () => {
 
   it("uses a relative message-vault path when home is empty", () => {
     expect(defaultImportStagingDir("")).toBe("message-vault");
+  });
+
+  it("joins message-vault under a Unix root home", () => {
+    expect(defaultImportStagingDir("/")).toBe("/message-vault");
+  });
+});
+
+describe("isUsableImportStagingParent", () => {
+  it("accepts an absolute folder", () => {
+    expect(isUsableImportStagingParent("/data/imports")).toBe(true);
+  });
+
+  it("rejects the filesystem root", () => {
+    expect(isUsableImportStagingParent("/")).toBe(false);
+    expect(isUsableImportStagingParent("///")).toBe(false);
+  });
+
+  it("rejects a relative folder", () => {
+    expect(isUsableImportStagingParent("message-vault")).toBe(false);
+    expect(isUsableImportStagingParent("")).toBe(false);
   });
 });
 
@@ -31,6 +70,12 @@ describe("joinImportStagingPath", () => {
   it("does not nest another message-vault under a custom parent", () => {
     expect(joinImportStagingPath("/data/imports", "imessage-ios", now)).toBe(
       "/data/imports/staging-iphone-ios-260824-180509",
+    );
+  });
+
+  it("keeps a Unix root when stripping trailing slashes", () => {
+    expect(joinImportStagingPath("/", "imessage-ios", now)).toBe(
+      "/staging-iphone-ios-260824-180509",
     );
   });
 
@@ -59,6 +104,27 @@ describe("joinImportStagingPath", () => {
 
 describe("resolveImportStagingDir", () => {
   it("fails when the user home directory cannot be determined and no parent is saved", async () => {
+    await expect(resolveImportStagingDir("/backup", "imessage-ios")).rejects.toThrow(
+      /home directory/i,
+    );
+  });
+
+  it("joins a saved custom parent without nesting message-vault", async () => {
+    localStorage.setItem("mv-vault-working-dir", "/data/imports");
+    await expect(resolveImportStagingDir("/backup", "imessage-ios")).resolves.toMatch(
+      /^\/data\/imports\/staging-iphone-ios-\d{6}-\d{6}$/,
+    );
+  });
+
+  it("ignores a saved filesystem root and fails without a home directory", async () => {
+    localStorage.setItem("mv-vault-working-dir", "/");
+    await expect(resolveImportStagingDir("/backup", "imessage-ios")).rejects.toThrow(
+      /home directory/i,
+    );
+  });
+
+  it("ignores a saved relative parent and fails without a home directory", async () => {
+    localStorage.setItem("mv-vault-working-dir", "message-vault");
     await expect(resolveImportStagingDir("/backup", "imessage-ios")).rejects.toThrow(
       /home directory/i,
     );

@@ -122,6 +122,7 @@ pub(crate) fn resolve_openable_path(raw: &str, staging_root: &str) -> Result<Pat
         } else {
             normalize_lexically(&staging_root)
         };
+        reject_filesystem_root(&root)?;
         if !canonical.starts_with(&root) {
             return Err("Path is outside the import staging folder".to_string());
         }
@@ -130,10 +131,19 @@ pub(crate) fn resolve_openable_path(raw: &str, staging_root: &str) -> Result<Pat
 
     let normalized = normalize_lexically(&candidate);
     let root = normalize_lexically(&staging_root);
+    reject_filesystem_root(&root)?;
     if !normalized.starts_with(&root) {
         return Err("Path is outside the import staging folder".to_string());
     }
     Ok(normalized)
+}
+
+/// `/` (and a Windows drive root) would make `starts_with` true for every absolute path.
+fn reject_filesystem_root(root: &Path) -> Result<(), String> {
+    if root.parent().is_none() {
+        return Err("Import staging directory cannot be the filesystem root".to_string());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -165,6 +175,12 @@ mod tests {
     fn rejects_relative_staging_root() {
         let err = resolve_openable_path("/tmp/staging", "message-vault").unwrap_err();
         assert!(err.contains("must be absolute"));
+    }
+
+    #[test]
+    fn rejects_filesystem_root_staging_root() {
+        let err = resolve_openable_path("/etc/passwd", "/").unwrap_err();
+        assert!(err.contains("filesystem root"));
     }
 
     #[test]

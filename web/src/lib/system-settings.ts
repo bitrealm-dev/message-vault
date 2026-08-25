@@ -15,12 +15,37 @@ let homeDirPromise: Promise<string> | null = null;
 const IMPORT_STAGING_PARENT = "message-vault";
 
 /**
+ * Strip trailing `/` or `\\` without turning a Unix root into an empty string.
+ */
+export function stripTrailingPathSeparators(path: string): string {
+  const trimmed = path.trim();
+  const stripped = trimmed.replace(/[/\\]+$/, "");
+  if (!stripped && /^[/\\]+$/.test(trimmed)) return "/";
+  return stripped;
+}
+
+/**
+ * True for an absolute folder that is not the filesystem root.
+ * Relative paths and `/` would write or open next to the process cwd, or anywhere on disk.
+ */
+export function isUsableImportStagingParent(path: string): boolean {
+  const parent = stripTrailingPathSeparators(path);
+  if (!parent || parent === "/") return false;
+  if (/^[A-Za-z]:$/.test(parent)) return false;
+  if (parent.startsWith("/")) return true;
+  if (/^[A-Za-z]:[\\/]/.test(path.trim())) return true;
+  if (parent.startsWith("\\\\")) return true;
+  return false;
+}
+
+/**
  * Default import staging parent: `{home}/message-vault`.
  * When home is empty, returns the relative folder name `message-vault`.
  */
 export function defaultImportStagingDir(homeDir: string): string {
-  const home = homeDir.trim().replace(/[/\\]+$/, "");
+  const home = stripTrailingPathSeparators(homeDir);
   if (!home) return IMPORT_STAGING_PARENT;
+  if (home === "/") return `/${IMPORT_STAGING_PARENT}`;
   return `${home}/${IMPORT_STAGING_PARENT}`;
 }
 
@@ -49,10 +74,13 @@ export function setImportStagingDir(dir: string): void {
  */
 export async function resolveImportStagingParent(): Promise<string> {
   const saved = getImportStagingDir();
-  if (saved) return saved.replace(/[/\\]+$/, "");
+  if (isUsableImportStagingParent(saved)) {
+    return stripTrailingPathSeparators(saved);
+  }
   const home = (await getHomeDir()).trim();
   if (!home) return "";
-  return defaultImportStagingDir(home);
+  const fallback = defaultImportStagingDir(home);
+  return isUsableImportStagingParent(fallback) ? stripTrailingPathSeparators(fallback) : "";
 }
 
 /** User home folder from the desktop app. Empty in the browser or when lookup fails. */
@@ -175,8 +203,9 @@ export function joinImportStagingPath(
   now: Date = new Date(),
 ): string {
   const name = stagingDirName(sourceId, now);
-  const parent = parentDir.trim().replace(/[/\\]+$/, "");
+  const parent = stripTrailingPathSeparators(parentDir);
   if (!parent) return name;
+  if (parent === "/") return `/${name}`;
   return `${parent}/${name}`;
 }
 
@@ -192,15 +221,11 @@ export async function resolveImportStagingDir(
   _backupPath: string,
   sourceId: string,
 ): Promise<string> {
-  const saved = getImportStagingDir();
-  if (saved) {
-    return joinImportStagingPath(saved, sourceId);
-  }
-  const home = (await getHomeDir()).trim();
-  if (!home) {
+  const parent = await resolveImportStagingParent();
+  if (!parent) {
     throw new Error(
       "Could not determine the user home directory. Import staging needs ~/message-vault/.",
     );
   }
-  return joinImportStagingPath(defaultImportStagingDir(home), sourceId);
+  return joinImportStagingPath(parent, sourceId);
 }
