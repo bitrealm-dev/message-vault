@@ -3,7 +3,7 @@ import { cloneElement, isValidElement, type ReactElement, type ReactNode, useId 
 type FormFieldProps = {
   label: string;
   children: ReactNode;
-  /** `inline` = label beside control (Extract/Format). `stacked` = label above (Import). */
+  /** `inline` = label beside control (Export). `stacked` = label above (Import). */
   layout?: "inline" | "stacked";
   /** Optional control beside a stacked label (e.g. disclosure toggle). */
   trailing?: ReactNode;

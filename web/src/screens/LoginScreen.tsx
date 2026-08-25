@@ -11,14 +11,15 @@ import { type AuthMode, initialLoginServerUrl, isAuthMode } from "../lib/authGua
 import { isTauri } from "../lib/tauri-check";
 import { authCard, authTitle, mutedText, pageCenter } from "../lib/uiStyles";
 import { useAsyncAction } from "../lib/useAsyncAction";
-import ExtractScreen from "./Extract";
-import FormatScreen from "./Format";
 
 interface AuthModeResponse {
   mode: string;
   hanko_api_url?: string | null;
   try_demo?: boolean;
 }
+
+/** Flip to true to allow demo sign-in from the login cards. */
+const TRY_IT_ENABLED = false;
 
 export default function LoginScreen() {
   const navigate = useNavigate();
@@ -34,7 +35,6 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
 
   const hankoRef = useRef<HTMLDivElement>(null);
-  const [offlineScreen, setOfflineScreen] = useState<"none" | "extract" | "format">("none");
 
   const displayError = error || hankoError;
 
@@ -141,29 +141,15 @@ export default function LoginScreen() {
     };
   }, [authMode, hankoApiUrl, serverUrl, login, run]);
 
-  if (offlineScreen === "extract") {
-    return <ExtractScreen onBack={() => setOfflineScreen("none")} />;
-  }
-  if (offlineScreen === "format") {
-    return <FormatScreen onBack={() => setOfflineScreen("none")} />;
-  }
-
   return (
     <div className={pageCenter}>
       <div className={authCard}>
-        <h1 className={authTitle}>{authMode === null ? "Message Vault" : "Sign In"}</h1>
+        <h1 className={authMode === null ? `${authTitle} !text-center` : authTitle}>
+          {authMode === null ? "Message Vault" : "Sign In"}
+        </h1>
 
         {authMode === null && (
           <>
-            <div className="mb-4">
-              <TryItButton busy={busy} onClick={handleTryDemo} />
-              <p className={`${mutedText} mt-2`}>Open a sample account.</p>
-            </div>
-            <div className={`${orRowClass} mb-4`}>
-              <span className={orLineClass} />
-              <span className={orTextClass}>OR</span>
-              <span className={orLineClass} />
-            </div>
             <TextField
               label="Server URL"
               value={serverUrl}
@@ -186,37 +172,14 @@ export default function LoginScreen() {
                 Leave blank to use this origin (Vite `/v1` proxy or vault-hosted UI).
               </p>
             )}
-            {isTauri() && <div className="mb-4" />}
-
-            {isTauri() && (
-              <>
-                <div className={`${orRowClass} mb-2 mt-3`}>
-                  <span className={orLineClass} />
-                  <span className={orTextClass}>OR</span>
-                  <span className={orLineClass} />
-                </div>
-                <p className={`${mutedText} text-center mb-2`}>Use offline message tools.</p>
-                <div className="flex gap-3">
-                  <Button onClick={() => setOfflineScreen("extract")} className="flex-1 !p-2">
-                    Extract messages
-                  </Button>
-                  <Button onClick={() => setOfflineScreen("format")} className="flex-1 !p-2">
-                    Format conversion
-                  </Button>
-                </div>
-              </>
-            )}
 
             <AuthErrorFooter error={displayError} />
+            <TryItFooter busy={busy} onClick={handleTryDemo} />
           </>
         )}
 
         {authMode === "local" && (
           <>
-            <div className="mb-4">
-              <TryItButton busy={busy} onClick={handleTryDemo} />
-              <p className={`${mutedText} mt-2`}>Open a sample account.</p>
-            </div>
             <TextField
               label="Username"
               value={username}
@@ -244,15 +207,12 @@ export default function LoginScreen() {
             </div>
 
             <AuthErrorFooter error={displayError} />
+            <TryItFooter busy={busy} onClick={handleTryDemo} />
           </>
         )}
 
         {authMode === "hanko" && (
           <>
-            <div className="mb-4">
-              <TryItButton busy={busy} onClick={handleTryDemo} />
-              <p className={`${mutedText} mt-2`}>Open a sample account.</p>
-            </div>
             <div ref={hankoRef}>
               {hankoApiUrl ? (
                 <hanko-auth />
@@ -264,6 +224,7 @@ export default function LoginScreen() {
             </div>
 
             <AuthErrorFooter error={displayError} />
+            <TryItFooter busy={busy} onClick={handleTryDemo} />
           </>
         )}
 
@@ -275,9 +236,31 @@ export default function LoginScreen() {
   );
 }
 
+function TryItFooter({ busy, onClick }: { busy: boolean; onClick: () => void }) {
+  const caption = TRY_IT_ENABLED
+    ? "Open a sample account."
+    : "Sample sign-in is temporarily unavailable.";
+  return (
+    <>
+      <div className={`${orRowClass} mb-2 mt-3`}>
+        <span className={orLineClass} />
+        <span className={orTextClass}>OR</span>
+        <span className={orLineClass} />
+      </div>
+      <TryItButton busy={busy} onClick={onClick} />
+      <p className={`${mutedText} mt-2`}>{caption}</p>
+    </>
+  );
+}
+
 function TryItButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
   return (
-    <Button variant="primary" onClick={onClick} disabled={busy}>
+    <Button
+      variant="primary"
+      onClick={onClick}
+      disabled={!TRY_IT_ENABLED || busy}
+      title={TRY_IT_ENABLED ? undefined : "Sample sign-in is temporarily unavailable."}
+    >
       {busy ? "Opening sample…" : "Try it"}
     </Button>
   );

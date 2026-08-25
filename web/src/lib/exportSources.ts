@@ -1,4 +1,4 @@
-/** Backup sources offered by Extract and Import in the desktop app. */
+/** Backup sources offered by Import in the desktop app. */
 export const EXPORT_SOURCES: { id: string; label: string }[] = [
   { id: "imessage-ios", label: "iPhone - iOS" },
   { id: "imessage-macos", label: "iMessage - macOS" },

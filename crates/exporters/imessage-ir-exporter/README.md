@@ -2,7 +2,7 @@
 
 Export Apple Messages from a Mac `chat.db` or an iPhone backup into JSON Lines, JSON, CSV, EML, MBOX, or XML.
 
-The desktop app Extract Messages screen uses this crate as a library. The `imessage-ir-exporter` command is the same converter from a terminal.
+The desktop app Import screen uses this crate as a library. The `imessage-ir-exporter` command is the same converter from a terminal.
 
 ## Build and test
 

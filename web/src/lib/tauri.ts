@@ -33,21 +33,6 @@ export async function invokeCancel(): Promise<void> {
   return invoke("cancel");
 }
 
-export interface FormatConfig {
-  input_dir: string;
-  output_dir: string;
-  output_format: string;
-}
-
-/** Convert an extracted folder into another file format. */
-export async function invokeFormat(config: FormatConfig): Promise<void> {
-  return invoke("format", {
-    inputDir: config.input_dir,
-    outputDir: config.output_dir,
-    outputFormat: config.output_format,
-  });
-}
-
 export interface PushConfig {
   base_url: string;
   username: string;

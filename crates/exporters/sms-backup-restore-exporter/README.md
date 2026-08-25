@@ -2,7 +2,7 @@
 
 Convert an SMS Backup & Restore (SyncTech) XML backup into JSON Lines, JSON, CSV, EML, MBOX, or SMS Backup & Restore XML.
 
-The desktop app Extract Messages screen uses this crate as a library. The `sms-backup-restore-exporter` command is the same converter from a terminal.
+The desktop app Import screen uses this crate as a library. The `sms-backup-restore-exporter` command is the same converter from a terminal.
 
 ## Build and test
 
