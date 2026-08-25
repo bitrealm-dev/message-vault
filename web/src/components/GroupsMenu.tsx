@@ -19,6 +19,7 @@ export default function GroupsMenu({
   title = "Contact Groups",
   searchPlaceholder = "Search groups…",
   emptyText = "No groups",
+  noMatchText = "No matching groups",
   createButtonLabel = "Create group",
   createTitle = "Create contact group",
   createPlaceholder = "Group name",
@@ -42,6 +43,7 @@ export default function GroupsMenu({
   title?: string;
   searchPlaceholder?: string;
   emptyText?: string;
+  noMatchText?: string;
   createButtonLabel?: string;
   createTitle?: string;
   createPlaceholder?: string;
@@ -112,6 +114,9 @@ export default function GroupsMenu({
   const hasAnyMembership = Object.values(checks).some(
     (state) => state === "on" || state === "mixed",
   );
+  const listEmptyText = query.trim() ? noMatchText : emptyText;
+  const toneClass = open ? "text-accent" : "text-muted";
+  const popoverClass = `absolute top-full left-0 z-[100] mt-1 w-64 rounded-xl border border-border bg-popover ${popupShadow}`;
 
   const saveNew = () => {
     if (disabled || !onCreate) return;
@@ -141,25 +146,21 @@ export default function GroupsMenu({
         }}
         className={
           labeled
-            ? `inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-elevated px-2.5 text-[0.75rem] font-medium text-muted hover:text-text disabled:cursor-default disabled:opacity-40 ${
-                open ? "text-accent" : ""
-              }`
-            : `flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-border bg-elevated text-muted hover:text-text disabled:cursor-default disabled:opacity-40 ${
-                open ? "text-accent" : ""
-              }`
+            ? `inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-elevated px-2.5 text-[0.75rem] font-medium hover:text-text disabled:cursor-default disabled:opacity-40 ${toneClass}`
+            : `flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-border bg-elevated hover:text-text disabled:cursor-default disabled:opacity-40 ${toneClass}`
         }
       >
-        {labeled ? <span>{title}</span> : null}
         {icon ?? <PeopleGroupIcon size={16} />}
-        {labeled ? <ChevronDownIcon size={12} className="shrink-0 text-muted" /> : null}
+        {labeled ? <span>{title}</span> : null}
+        {labeled ? (
+          <ChevronDownIcon
+            size={12}
+            className={`shrink-0 transition-transform duration-150${open ? " rotate-180" : ""}`}
+          />
+        ) : null}
       </button>
       {open && mode === "list" ? (
-        <div
-          data-mv-overlay=""
-          className={`absolute top-full z-[100] mt-1 w-64 rounded-xl border border-border bg-popover ${
-            labeled ? "left-0" : "right-0"
-          } ${popupShadow}`}
-        >
+        <div data-mv-overlay="" className={popoverClass}>
           <div className="border-b border-border p-2">
             <input
               ref={searchRef}
@@ -167,12 +168,13 @@ export default function GroupsMenu({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={searchPlaceholder}
+              aria-label={searchPlaceholder}
               className="box-border w-full rounded border border-border bg-elevated px-2 py-1.5 text-[0.813rem] text-text outline-none focus:border-accent"
             />
           </div>
           <div className="max-h-56 overflow-y-auto py-1">
             {visibleGroups.length === 0 ? (
-              <p className="px-3 py-2 text-[0.75rem] text-muted">{emptyText}</p>
+              <p className="px-3 py-2 text-[0.75rem] text-muted">{listEmptyText}</p>
             ) : (
               visibleGroups.map((name) => {
                 const state = checks[name] ?? "off";
@@ -221,12 +223,7 @@ export default function GroupsMenu({
         </div>
       ) : null}
       {open && mode === "create" ? (
-        <div
-          data-mv-overlay=""
-          className={`absolute top-full z-[100] mt-1 w-64 rounded-xl border border-border bg-popover p-3 ${
-            labeled ? "left-0" : "right-0"
-          } ${popupShadow}`}
-        >
+        <div data-mv-overlay="" className={`${popoverClass} p-3`}>
           <h3 className="text-[0.875rem] font-semibold text-text">{createTitle}</h3>
           <input
             ref={nameRef}

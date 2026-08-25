@@ -26,7 +26,7 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ### Changed
 
-- 2026-08-25: Contact Groups menu left-aligns with its button, shows a down chevron, and filters the group list from the search row at the top.
+- 2026-08-25: Contact Groups and Tags menus left-align with their buttons. Contact Groups shows a down chevron, both filter from the search row, and a miss says “No matching groups” instead of “No groups”.
 
 - 2026-08-25: Settings → System uses **Import Staging Directory** (default
   `$HOME/message-vault`) as the real parent for import `staging-*` folders. The
