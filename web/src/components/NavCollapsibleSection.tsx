@@ -1,7 +1,11 @@
 import { type ReactNode, useState } from "react";
 import { ChevronRightIcon, PlusIcon } from "./icons";
 import NavGlyphButton from "./NavGlyphButton";
-import { NAV_SECTION_GRID_CLASS } from "./navSectionLayout";
+import {
+  NAV_LEADING_GLYPH_CLASS,
+  NAV_LEADING_ROW_CLASS,
+  NAV_SECTION_GRID_CLASS,
+} from "./navSectionLayout";
 
 const STORAGE_PREFIX = "mv-left-nav-open:";
 
@@ -57,14 +61,14 @@ export default function NavCollapsibleSection({
               return next;
             });
           }}
-          className="flex min-w-0 cursor-pointer items-center gap-1.5 border-none bg-transparent p-0 text-left text-[0.875rem] font-bold text-text"
+          className={`${NAV_LEADING_ROW_CLASS} cursor-pointer border-none bg-transparent p-0 text-left text-[0.875rem] font-bold text-text`}
         >
-          <ChevronRightIcon
-            size={12}
-            className={`shrink-0 text-muted transition-transform duration-150 ${
-              open ? "rotate-90" : ""
-            }`}
-          />
+          <span className={NAV_LEADING_GLYPH_CLASS}>
+            <ChevronRightIcon
+              size={12}
+              className={`text-muted transition-transform duration-150 ${open ? "rotate-90" : ""}`}
+            />
+          </span>
           <span className="truncate">{title}</span>
         </button>
         <NavGlyphButton aria-label={addLabel} disabled={addDisabled} onClick={onAdd}>

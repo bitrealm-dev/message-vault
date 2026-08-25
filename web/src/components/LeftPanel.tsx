@@ -1,7 +1,14 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { canUseImportExportWithProfile } from "../lib/desktopFeatures";
-import { addGroup, listGroups, removeGroup, SAVED_GROUPS_CHANGED_EVENT } from "../lib/savedGroups";
+import {
+  addGroup,
+  listGroups,
+  removeGroup,
+  SAVED_GROUPS_CHANGED_EVENT,
+  type SavedGroup,
+  updateGroup,
+} from "../lib/savedGroups";
 import { isTauri } from "../lib/tauri-check";
 import { useAccountProfile } from "../lib/useAccountProfile";
 import { useContactGroups } from "../lib/useContactGroups";
@@ -9,7 +16,7 @@ import { useThreadTags } from "../lib/useThreadTags";
 import ColumnResizeHandle from "./ColumnResizeHandle";
 import { useReportColumnResizing } from "./columnResizeState";
 import GroupsNav from "./GroupsNav";
-import { TrashIcon } from "./icons";
+import { EllipsisIcon, SearchIcon, TrashIcon } from "./icons";
 import { LIST_TOOLBAR_CLASS } from "./ListRangeHeader";
 import {
   LEFT_PANEL_DEFAULT_WIDTH,
@@ -20,7 +27,12 @@ import {
 } from "./leftPanelWidth";
 import NavCollapsibleSection from "./NavCollapsibleSection";
 import NavGlyphButton from "./NavGlyphButton";
-import { NAV_SECTION_GRID_CLASS } from "./navSectionLayout";
+import {
+  NAV_LEADING_GLYPH_CLASS,
+  NAV_LEADING_ROW_CLASS,
+  NAV_NESTED_ROW_CLASS,
+  navGlyphRowClass,
+} from "./navSectionLayout";
 import SavedGroupForm from "./SavedGroupForm";
 import ThreadTagsNav from "./ThreadTagsNav";
 import { useColumnResize } from "./useColumnResize";
@@ -97,6 +109,13 @@ function linkClass(active: boolean): string {
   }`;
 }
 
+/** Browse rows: same leading slot as section headings (no extra row padding). */
+function browseLinkClass(active: boolean): string {
+  return `${NAV_LEADING_ROW_CLASS} box-border w-full cursor-pointer rounded border-none px-0 py-1.5 text-left text-[0.875rem] text-text hover:bg-hover ${
+    active ? "bg-hover font-semibold" : "bg-transparent font-normal"
+  }`;
+}
+
 export default function LeftPanel({
   onSearchChange,
   onSearch: _onSearch,
@@ -141,6 +160,8 @@ export default function LeftPanel({
 
   const [groups, setGroups] = useState(() => listGroups());
   const [showGroupForm, setShowGroupForm] = useState(false);
+  const [editFor, setEditFor] = useState<SavedGroup | null>(null);
+  const [menuFor, setMenuFor] = useState<string | null>(null);
   const { groups: contactGroups } = useContactGroups();
   const { tags: threadTags } = useThreadTags();
 
@@ -149,6 +170,24 @@ export default function LeftPanel({
     globalThis.addEventListener(SAVED_GROUPS_CHANGED_EVENT, refresh);
     return () => globalThis.removeEventListener(SAVED_GROUPS_CHANGED_EVENT, refresh);
   }, []);
+
+  useEffect(() => {
+    if (!menuFor) return;
+    const onPointerDown = (e: MouseEvent) => {
+      const t = e.target;
+      if (t instanceof Element && t.closest("[data-saved-search-row-menu]")) return;
+      setMenuFor(null);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuFor(null);
+    };
+    document.addEventListener("mousedown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [menuFor]);
 
   return (
     <div
@@ -159,24 +198,34 @@ export default function LeftPanel({
       <div className="min-h-0 flex-1 overflow-auto">
         {/* Browse */}
         <div className="px-3 py-2">
-          <button type="button" className={linkClass(isActive("/"))} onClick={() => navigate("/")}>
-            <ConversationsIcon />
+          <button
+            type="button"
+            className={browseLinkClass(isActive("/"))}
+            onClick={() => navigate("/")}
+          >
+            <span className={NAV_LEADING_GLYPH_CLASS}>
+              <ConversationsIcon />
+            </span>
             Messages
           </button>
           <button
             type="button"
-            className={linkClass(isActive("/contacts"))}
+            className={browseLinkClass(isActive("/contacts"))}
             onClick={() => navigate("/contacts")}
           >
-            <ContactsIcon />
+            <span className={NAV_LEADING_GLYPH_CLASS}>
+              <ContactsIcon />
+            </span>
             Contacts
           </button>
           <button
             type="button"
-            className={linkClass(isActive("/trash"))}
+            className={browseLinkClass(isActive("/trash"))}
             onClick={() => navigate("/trash")}
           >
-            <TrashIcon size={15} />
+            <span className={NAV_LEADING_GLYPH_CLASS}>
+              <TrashIcon size={15} />
+            </span>
             Trash
           </button>
         </div>
@@ -211,45 +260,100 @@ export default function LeftPanel({
           id="saved-searches"
           title="Saved Searches"
           addLabel="Create saved search"
-          onAdd={() => setShowGroupForm(true)}
+          onAdd={() => {
+            setMenuFor(null);
+            setEditFor(null);
+            setShowGroupForm(true);
+          }}
           className="px-3 pt-3"
         >
           {groups.length === 0 ? (
-            <div className="py-1.5 pl-3 text-[0.813rem] text-muted">No saved searches</div>
+            <div className={`${NAV_LEADING_ROW_CLASS} py-1.5 text-[0.813rem] text-muted`}>
+              <span className={NAV_LEADING_GLYPH_CLASS} aria-hidden />
+              <span>No saved searches</span>
+            </div>
           ) : (
-            groups.map((g) => (
-              <div key={g.id} className={NAV_SECTION_GRID_CLASS}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onSearchChange(g.query);
-                    navigate(`/?q=${encodeURIComponent(g.query)}`);
-                  }}
-                  className="min-w-0 cursor-pointer truncate border-none bg-transparent py-1.5 pl-3 text-left text-[0.813rem] text-text"
-                >
-                  {g.name}
-                </button>
-                <NavGlyphButton
-                  title="Delete saved search"
-                  aria-label={`Delete saved search ${g.name}`}
-                  danger
-                  onClick={() => {
-                    removeGroup(g.id);
-                    setGroups(listGroups());
-                  }}
-                >
-                  <TrashIcon size={13} />
-                </NavGlyphButton>
-              </div>
-            ))
+            groups.map((g) => {
+              const active =
+                location.pathname === "/" &&
+                location.search === `?q=${encodeURIComponent(g.query)}`;
+              const menuOpen = menuFor === g.id;
+              return (
+                <div key={g.id} className="relative w-full">
+                  <div className={navGlyphRowClass(active)}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onSearchChange(g.query);
+                        navigate(`/?q=${encodeURIComponent(g.query)}`);
+                      }}
+                      className={`${NAV_NESTED_ROW_CLASS} cursor-pointer border-none bg-transparent p-0 text-left text-inherit`}
+                    >
+                      <span className={NAV_LEADING_GLYPH_CLASS}>
+                        <SearchIcon size={15} />
+                      </span>
+                      <span className="min-w-0 truncate">{g.name}</span>
+                    </button>
+                    <NavGlyphButton
+                      data-saved-search-row-menu=""
+                      aria-label={`Saved search options for ${g.name}`}
+                      aria-haspopup="menu"
+                      aria-expanded={menuOpen}
+                      active={menuOpen}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setMenuFor(menuOpen ? null : g.id);
+                      }}
+                      className={
+                        active || menuOpen
+                          ? ""
+                          : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                      }
+                    >
+                      <EllipsisIcon size={15} />
+                    </NavGlyphButton>
+                  </div>
+                  {menuOpen ? (
+                    <div
+                      data-saved-search-row-menu=""
+                      data-mv-overlay=""
+                      className="absolute top-full right-0 z-[80] mt-0.5 min-w-[7.5rem] rounded-lg border border-border bg-popover py-1 shadow-xl"
+                    >
+                      <button
+                        type="button"
+                        className="block w-full cursor-pointer border-none bg-transparent px-3 py-1.5 text-left text-[0.813rem] text-text hover:bg-hover"
+                        onClick={() => {
+                          setMenuFor(null);
+                          setShowGroupForm(false);
+                          setEditFor(g);
+                        }}
+                      >
+                        Rename…
+                      </button>
+                      <button
+                        type="button"
+                        className="block w-full cursor-pointer border-none bg-transparent px-3 py-1.5 text-left text-[0.813rem] text-text hover:bg-hover"
+                        onClick={() => {
+                          setMenuFor(null);
+                          removeGroup(g.id);
+                          setGroups(listGroups());
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })
           )}
         </NavCollapsibleSection>
 
         <ThreadTagsNav tags={threadTags} />
       </div>
 
-      {/* Saved group form modal */}
-      {showGroupForm && (
+      {showGroupForm ? (
         <SavedGroupForm
           onSave={(name, query) => {
             addGroup(name, query);
@@ -258,7 +362,19 @@ export default function LeftPanel({
           }}
           onCancel={() => setShowGroupForm(false)}
         />
-      )}
+      ) : null}
+      {editFor ? (
+        <SavedGroupForm
+          key={editFor.id}
+          initial={{ name: editFor.name, query: editFor.query }}
+          onSave={(name, query) => {
+            updateGroup(editFor.id, name, query);
+            setGroups(listGroups());
+            setEditFor(null);
+          }}
+          onCancel={() => setEditFor(null)}
+        />
+      ) : null}
 
       <ColumnResizeHandle
         ariaLabel="Resize navigation panel"

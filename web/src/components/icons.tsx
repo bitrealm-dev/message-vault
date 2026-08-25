@@ -135,6 +135,16 @@ export function SignOutIcon({ size, className, ...rest }: IconProps) {
   );
 }
 
+/** Magnifying glass — a saved search. */
+export function SearchIcon({ size, className, ...rest }: IconProps) {
+  return (
+    <IconShell size={size} className={className} {...rest}>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m21 21-4.3-4.3" />
+    </IconShell>
+  );
+}
+
 /** One person — contacts with no group. */
 export function PersonIcon({ size, className, ...rest }: IconProps) {
   return (

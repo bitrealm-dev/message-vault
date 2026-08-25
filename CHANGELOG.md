@@ -27,6 +27,7 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ### Changed
 
+- 2026-08-25: Left nav: Messages / Contacts / Trash icons line up with Contact Groups chevrons, and nested group, tag, and saved-search icons line up with section titles. Named saved searches use a hover ellipsis (Rename… / Delete) instead of a trash can. The Thread Tags section is now titled Message Tags.
 - 2026-08-25: Contact Groups and Tags menus left-align with their buttons. Contact Groups shows a down chevron, both filter from the search row, and a miss says “No matching groups” instead of “No groups”.
 
 - 2026-08-25: Settings → System uses **Import Staging Directory** (default

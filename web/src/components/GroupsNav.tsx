@@ -12,7 +12,11 @@ import GroupNameDialog from "./GroupNameDialog";
 import { EllipsisIcon, PeopleGroupIcon, PersonIcon } from "./icons";
 import NavCollapsibleSection from "./NavCollapsibleSection";
 import NavGlyphButton from "./NavGlyphButton";
-import { navGlyphRowClass } from "./navSectionLayout";
+import {
+  NAV_LEADING_GLYPH_CLASS,
+  NAV_NESTED_ROW_CLASS,
+  navGlyphRowClass,
+} from "./navSectionLayout";
 
 function apiErrorMessage(err: unknown, fallback: string): string {
   if (!(err instanceof Error)) return fallback;
@@ -50,8 +54,15 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
       if (t instanceof Element && t.closest("[data-group-row-menu]")) return;
       setMenuFor(null);
     };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuFor(null);
+    };
     document.addEventListener("mousedown", onPointerDown, true);
-    return () => document.removeEventListener("mousedown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
   }, [menuFor]);
 
   const createGroup = async (name: string) => {
@@ -131,14 +142,17 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
                 <button
                   type="button"
                   onClick={() => navigate(href)}
-                  className="flex min-w-0 cursor-pointer items-center gap-2 border-none bg-transparent p-0 pl-3 text-left text-inherit"
+                  className={`${NAV_NESTED_ROW_CLASS} cursor-pointer border-none bg-transparent p-0 text-left text-inherit`}
                 >
-                  <PeopleGroupIcon size={15} />
+                  <span className={NAV_LEADING_GLYPH_CLASS}>
+                    <PeopleGroupIcon size={15} />
+                  </span>
                   <span className="min-w-0 truncate">{name}</span>
                 </button>
                 <NavGlyphButton
                   data-group-row-menu=""
                   aria-label={`Group options for ${name}`}
+                  aria-haspopup="menu"
                   aria-expanded={menuOpen}
                   disabled={busy}
                   active={menuOpen}
@@ -190,10 +204,12 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
         <button
           type="button"
           onClick={() => navigate("/no-group")}
-          className={`${navGlyphRowClass(location.pathname === "/no-group")} cursor-pointer bg-transparent`}
+          className={`${navGlyphRowClass(location.pathname === "/no-group")} cursor-pointer`}
         >
-          <span className="flex min-w-0 items-center gap-2 pl-3">
-            <PersonIcon size={15} />
+          <span className={NAV_NESTED_ROW_CLASS}>
+            <span className={NAV_LEADING_GLYPH_CLASS}>
+              <PersonIcon size={15} />
+            </span>
             <span className="truncate">No group</span>
           </span>
         </button>

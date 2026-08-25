@@ -58,6 +58,22 @@ export function removeGroup(id: string): void {
   }
 }
 
+/** Update a saved search's name and query. Id stays the same. */
+export function updateGroup(id: string, name: string, query: string): SavedGroup | null {
+  const groups = listGroups();
+  const idx = groups.findIndex((g) => g.id === id);
+  if (idx < 0) return null;
+  const next: SavedGroup = { id, name, query };
+  groups[idx] = next;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(groups));
+    notifySavedGroupsChanged();
+  } catch {
+    // Full or blocked storage should not break renaming a group.
+  }
+  return next;
+}
+
 /** Unique name for an import group, adding " 2", " 3", … when the date is already used. */
 export function uniqueImportGroupName(
   source: string,

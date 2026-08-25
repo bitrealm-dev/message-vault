@@ -12,7 +12,11 @@ import GroupNameDialog from "./GroupNameDialog";
 import { EllipsisIcon, TagIcon } from "./icons";
 import NavCollapsibleSection from "./NavCollapsibleSection";
 import NavGlyphButton from "./NavGlyphButton";
-import { navGlyphRowClass } from "./navSectionLayout";
+import {
+  NAV_LEADING_GLYPH_CLASS,
+  NAV_NESTED_ROW_CLASS,
+  navGlyphRowClass,
+} from "./navSectionLayout";
 
 function apiErrorMessage(err: unknown, fallback: string): string {
   if (!(err instanceof Error)) return fallback;
@@ -50,8 +54,15 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
       if (t instanceof Element && t.closest("[data-tag-row-menu]")) return;
       setMenuFor(null);
     };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuFor(null);
+    };
     document.addEventListener("mousedown", onPointerDown, true);
-    return () => document.removeEventListener("mousedown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
   }, [menuFor]);
 
   const createTag = async (name: string) => {
@@ -112,8 +123,8 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
     <>
       <NavCollapsibleSection
         id="thread-tags"
-        title="Thread Tags"
-        addLabel="Create thread tag"
+        title="Message Tags"
+        addLabel="Create message tag"
         addDisabled={busy}
         onAdd={() => {
           setMenuFor(null);
@@ -131,14 +142,17 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
                 <button
                   type="button"
                   onClick={() => navigate(href)}
-                  className="flex min-w-0 cursor-pointer items-center gap-2 border-none bg-transparent p-0 pl-3 text-left text-inherit"
+                  className={`${NAV_NESTED_ROW_CLASS} cursor-pointer border-none bg-transparent p-0 text-left text-inherit`}
                 >
-                  <TagIcon size={15} />
+                  <span className={NAV_LEADING_GLYPH_CLASS}>
+                    <TagIcon size={15} />
+                  </span>
                   <span className="min-w-0 truncate">{name}</span>
                 </button>
                 <NavGlyphButton
                   data-tag-row-menu=""
                   aria-label={`Tag options for ${name}`}
+                  aria-haspopup="menu"
                   aria-expanded={menuOpen}
                   disabled={busy}
                   active={menuOpen}
@@ -190,10 +204,12 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
         <button
           type="button"
           onClick={() => navigate("/no-tag")}
-          className={`${navGlyphRowClass(location.pathname === "/no-tag")} cursor-pointer bg-transparent`}
+          className={`${navGlyphRowClass(location.pathname === "/no-tag")} cursor-pointer`}
         >
-          <span className="flex min-w-0 items-center gap-2 pl-3">
-            <TagIcon size={15} />
+          <span className={NAV_NESTED_ROW_CLASS}>
+            <span className={NAV_LEADING_GLYPH_CLASS}>
+              <TagIcon size={15} />
+            </span>
             <span className="truncate">No tag</span>
           </span>
         </button>
@@ -201,7 +217,7 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
 
       {createOpen ? (
         <GroupNameDialog
-          title="Create thread tag"
+          title="Create message tag"
           placeholder="Tag name"
           confirmLabel="Create"
           error={error}
