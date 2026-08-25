@@ -13,6 +13,13 @@ const conversation = {
   label: null,
 };
 
+const preview = {
+  id: "c1",
+  name: "Ada",
+  handles: ["+15550001"],
+  handleCount: 1,
+};
+
 describe("asMessagesLocationState", () => {
   it("accepts conversation and openContactId", () => {
     expect(
@@ -35,5 +42,33 @@ describe("asMessagesLocationState", () => {
     expect(asMessagesLocationState({ conversation: { id: 1 } })).toBeNull();
     expect(asMessagesLocationState({ openContactId: 5 })).toBeNull();
     expect(asMessagesLocationState({})).toBeNull();
+  });
+
+  it("accepts openContactPreview when it matches openContactId", () => {
+    expect(
+      asMessagesLocationState({
+        conversation,
+        openContactId: "c1",
+        openContactPreview: preview,
+      }),
+    ).toEqual({ conversation, openContactId: "c1", openContactPreview: preview });
+  });
+
+  it("drops openContactPreview when id does not match openContactId", () => {
+    expect(
+      asMessagesLocationState({
+        openContactId: "c1",
+        openContactPreview: { ...preview, id: "other" },
+      }),
+    ).toEqual({ openContactId: "c1" });
+  });
+
+  it("drops malformed openContactPreview without rejecting the rest of state", () => {
+    expect(
+      asMessagesLocationState({
+        openContactId: "c1",
+        openContactPreview: { id: "c1" },
+      }),
+    ).toEqual({ openContactId: "c1" });
   });
 });
