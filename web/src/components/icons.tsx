@@ -154,3 +154,22 @@ export function PersonIcon({ size, className, ...rest }: IconProps) {
     </IconShell>
   );
 }
+
+/** Check mark — a tool was found. */
+export function CheckIcon({ size, className, ...rest }: IconProps) {
+  return (
+    <IconShell size={size} className={className} {...rest}>
+      <path d="M20 6 9 17l-5-5" />
+    </IconShell>
+  );
+}
+
+/** X mark — a tool was not found. */
+export function XIcon({ size, className, ...rest }: IconProps) {
+  return (
+    <IconShell size={size} className={className} {...rest}>
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
+    </IconShell>
+  );
+}

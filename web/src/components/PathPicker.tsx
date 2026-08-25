@@ -7,9 +7,17 @@ interface PathPickerProps {
   onChange: (path: string) => void;
   directory?: boolean;
   placeholder?: string;
+  /** Forwarded to the text field so a wrapping label can focus the input. */
+  id?: string;
 }
 
-export default function PathPicker({ value, onChange, directory, placeholder }: PathPickerProps) {
+export default function PathPicker({
+  value,
+  onChange,
+  directory,
+  placeholder,
+  id,
+}: PathPickerProps) {
   const browse = async () => {
     const result = directory
       ? await open({ directory: true, multiple: false })
@@ -21,7 +29,13 @@ export default function PathPicker({ value, onChange, directory, placeholder }: 
 
   return (
     <div className="flex flex-1 gap-2">
-      <TextField value={value} onChange={onChange} placeholder={placeholder} className="flex-1" />
+      <TextField
+        id={id}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        className="flex-1"
+      />
       <Button onClick={browse} className="!px-3 !py-1 !text-[0.813rem]">
         Browse
       </Button>

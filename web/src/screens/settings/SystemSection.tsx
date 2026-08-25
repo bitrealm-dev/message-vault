@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
-import Button from "../../components/Button";
-import FormRow from "../../components/FormRow";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { CheckIcon, XIcon } from "../../components/icons";
 import PathPicker from "../../components/PathPicker";
 import { FFMPEG_TOOLS_STORAGE_KEY } from "../../lib/ffmpeg-tools";
 import {
@@ -15,39 +14,18 @@ import {
 import { type FfmpegToolsProbe, probeFfmpegTools, setFfmpegToolsDir } from "../../lib/tauri";
 import { isTauri } from "../../lib/tauri-check";
 
-type Status =
-  | { type: "idle" }
-  | { type: "success"; message: string }
-  | { type: "error"; message: string };
-
 const sectionHeading = "m-0 mb-2 text-[12px] font-semibold uppercase tracking-[0.05em] text-muted";
 
 const EXAMPLE_STAGING = "staging-iphone-ios-260809-143022";
 
-function formatProbePaths(probe: FfmpegToolsProbe): string {
-  const parts: string[] = [];
-  if (probe.ffmpeg_path) parts.push(`ffmpeg: ${probe.ffmpeg_path}`);
-  if (probe.ffprobe_path) parts.push(`ffprobe: ${probe.ffprobe_path}`);
-  return parts.join(" · ");
-}
+/** Shared label + control grid so Vault and Media path fields share one nowrap label column. */
+const settingsGrid = "grid grid-cols-[13.5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-1";
+const settingsLabel = "whitespace-nowrap text-[0.875rem] font-medium text-text";
+const settingsHelp = "col-start-2 pl-2 text-[0.75rem] text-muted";
 
-function formatDefaultDiscovery(probe: FfmpegToolsProbe): string {
-  const paths = formatProbePaths(probe);
-  return paths ? `Using default discovery. ${paths}` : "Using default discovery.";
-}
+const FFMPEG_DEBOUNCE_MS = 300;
 
-function formatFolderSuccess(probe: FfmpegToolsProbe): string {
-  const paths = formatProbePaths(probe);
-  return paths || "ffmpeg tools folder saved.";
-}
-
-function statusColor(status: Status): string {
-  if (status.type === "error") return "var(--danger, #dc2626)";
-  if (status.type === "success") return "var(--accent)";
-  return "var(--muted)";
-}
-
-/** Example path shown under the Import Staging Directory field. */
+/** Example path shown under the Import staging directory field. */
 function stagingHelpExample(stagingDir: string, defaultDir: string): string {
   const trimmed = stagingDir.trim().replace(/[/\\]+$/, "");
   const defaultTrimmed = defaultDir.trim().replace(/[/\\]+$/, "");
@@ -57,13 +35,82 @@ function stagingHelpExample(stagingDir: string, defaultDir: string): string {
   return `${trimmed}/${EXAMPLE_STAGING}`;
 }
 
+function persistFfmpegDir(dir: string): void {
+  const trimmed = dir.trim();
+  if (!trimmed) {
+    localStorage.removeItem(FFMPEG_TOOLS_STORAGE_KEY);
+    return;
+  }
+  localStorage.setItem(FFMPEG_TOOLS_STORAGE_KEY, trimmed);
+}
+
+function ToolStatusRow({ name, path }: { name: "ffmpeg" | "ffprobe"; path: string | null }) {
+  if (path) {
+    const label = `Found ${name} - ${path}`;
+    return (
+      <li className="flex items-start gap-1.5 text-[0.75rem] text-text" aria-label={label}>
+        <CheckIcon size={14} className="mt-0.5 shrink-0 text-ok" />
+        <span>
+          Found <code className="font-mono text-[0.7rem]">{name}</code>
+          {" - "}
+          <code className="font-mono text-[0.7rem]">{path}</code>
+        </span>
+      </li>
+    );
+  }
+  const label = `${name} not found`;
+  return (
+    <li className="flex items-start gap-1.5 text-[0.75rem] text-text" aria-label={label}>
+      <XIcon size={14} className="mt-0.5 shrink-0 text-danger" />
+      <span>
+        <code className="font-mono text-[0.7rem]">{name}</code> not found
+      </span>
+    </li>
+  );
+}
+
 export function SystemSection() {
+  const stagingId = useId();
+  const ffmpegId = useId();
   const [ffmpegPath, setFfmpegPath] = useState("");
   const [stagingDir, setStagingDir] = useState("");
   const [defaultStagingDir, setDefaultStagingDir] = useState("");
   const [rememberPaths, setRememberPaths] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState<Status>({ type: "idle" });
+  const [probe, setProbe] = useState<FfmpegToolsProbe | null>(null);
+  const ffmpegDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ffmpegApplyGen = useRef(0);
+
+  const runFfmpegApply = useCallback(async (dir: string) => {
+    const gen = ++ffmpegApplyGen.current;
+    const trimmed = dir.trim();
+    try {
+      if (!trimmed) {
+        const result = await setFfmpegToolsDir(null);
+        if (gen !== ffmpegApplyGen.current) return;
+        persistFfmpegDir("");
+        setProbe(result);
+        return;
+      }
+
+      const probed = await probeFfmpegTools(trimmed);
+      if (gen !== ffmpegApplyGen.current) return;
+      setProbe(probed);
+      if (!probed.ok) return;
+
+      const applied = await setFfmpegToolsDir(trimmed);
+      if (gen !== ffmpegApplyGen.current) return;
+      setProbe(applied);
+      if (applied.ok) persistFfmpegDir(trimmed);
+    } catch {
+      if (gen !== ffmpegApplyGen.current) return;
+      setProbe({
+        ok: false,
+        ffmpeg_path: null,
+        ffprobe_path: null,
+        error: "Could not check ffmpeg tools",
+      });
+    }
+  }, []);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -78,93 +125,36 @@ export function SystemSection() {
       setDefaultStagingDir(defaultDir);
       const storedStaging = getImportStagingDir();
       setStagingDir(storedStaging || defaultDir);
-
-      try {
-        const result = storedFfmpeg.trim()
-          ? await probeFfmpegTools(storedFfmpeg.trim())
-          : await probeFfmpegTools(null);
-        if (result.ok) {
-          setStatus({
-            type: "success",
-            message: storedFfmpeg.trim()
-              ? formatFolderSuccess(result)
-              : formatDefaultDiscovery(result),
-          });
-        } else if (result.error) {
-          setStatus({ type: "error", message: result.error });
-        }
-      } catch (err) {
-        setStatus({
-          type: "error",
-          message: err instanceof Error ? err.message : String(err),
-        });
-      }
+      await runFfmpegApply(storedFfmpeg);
     })();
-  }, []);
 
-  const handleSave = async () => {
-    setSaving(true);
-    setStatus({ type: "idle" });
+    return () => {
+      if (ffmpegDebounceRef.current) clearTimeout(ffmpegDebounceRef.current);
+    };
+  }, [runFfmpegApply]);
 
-    try {
-      const home = (await getHomeDir()) || "";
-      const defaultDir = defaultImportStagingDir(home) || defaultStagingDir;
-      setDefaultStagingDir(defaultDir);
-      const stagingTrimmed = stagingDir.trim();
-      // Empty, equal to the default, or unusable (relative / filesystem root)
-      // → restore default (no localStorage override).
-      if (
-        !stagingTrimmed ||
-        (defaultDir && stagingTrimmed === defaultDir) ||
-        !isUsableImportStagingParent(stagingTrimmed)
-      ) {
-        setImportStagingDir("");
-        setStagingDir(defaultDir);
-      } else {
-        setImportStagingDir(stagingTrimmed);
-      }
-
-      const ffmpegTrimmed = ffmpegPath.trim();
-      if (!ffmpegTrimmed) {
-        localStorage.removeItem(FFMPEG_TOOLS_STORAGE_KEY);
-        const result = await setFfmpegToolsDir(null);
-        if (!result.ok) {
-          setStatus({
-            type: "error",
-            message: result.error ?? "ffmpeg and ffprobe not found on PATH",
-          });
-          return;
-        }
-        setStatus({
-          type: "success",
-          message: `Settings saved. ${formatDefaultDiscovery(result)}`,
-        });
-        return;
-      }
-
-      const probe = await probeFfmpegTools(ffmpegTrimmed);
-      if (!probe.ok) {
-        setStatus({
-          type: "error",
-          message: probe.error ?? "ffmpeg and ffprobe not found in folder",
-        });
-        return;
-      }
-
-      const result = await setFfmpegToolsDir(ffmpegTrimmed);
-      localStorage.setItem(FFMPEG_TOOLS_STORAGE_KEY, ffmpegTrimmed);
-      setStatus({
-        type: "success",
-        message: `Settings saved. ${formatFolderSuccess(result)}`,
-      });
-    } catch (err) {
-      setStatus({
-        type: "error",
-        message: err instanceof Error ? err.message : String(err),
-      });
-    } finally {
-      setSaving(false);
+  const onStagingPathChange = (next: string) => {
+    setStagingDir(next);
+    const defaultDir = defaultStagingDir;
+    const trimmed = next.trim();
+    // Empty or equal to the default → no override (import uses the default parent).
+    if (!trimmed || (defaultDir && trimmed === defaultDir)) {
+      setImportStagingDir("");
+      return;
     }
+    // Relative / filesystem root while typing: keep the field, do not persist yet.
+    if (!isUsableImportStagingParent(trimmed)) {
+      return;
+    }
+    setImportStagingDir(trimmed);
+  };
+
+  const onFfmpegPathChange = (next: string) => {
+    setFfmpegPath(next);
+    if (ffmpegDebounceRef.current) clearTimeout(ffmpegDebounceRef.current);
+    ffmpegDebounceRef.current = setTimeout(() => {
+      void runFfmpegApply(next);
+    }, FFMPEG_DEBOUNCE_MS);
   };
 
   if (!isTauri()) {
@@ -181,17 +171,23 @@ export function SystemSection() {
   return (
     <div>
       <h3 className={sectionHeading}>Vault</h3>
-      <FormRow label="Import Staging Directory">
-        <PathPicker
-          value={stagingDir}
-          onChange={setStagingDir}
-          directory
-          placeholder={defaultStagingDir || "~/message-vault"}
-        />
-      </FormRow>
-      <p className="mt-1 text-[0.75rem] text-muted">
-        Temporary import files are written here. For example {helpExample}
-      </p>
+      <div className={settingsGrid}>
+        <label htmlFor={stagingId} className={settingsLabel}>
+          Import staging directory
+        </label>
+        <div>
+          <PathPicker
+            id={stagingId}
+            value={stagingDir}
+            onChange={onStagingPathChange}
+            directory
+            placeholder={defaultStagingDir || "~/message-vault"}
+          />
+        </div>
+        <p className={settingsHelp}>
+          Temporary import files are written here. For example {helpExample}
+        </p>
+      </div>
 
       <label className="mt-5 flex cursor-pointer items-start gap-2 text-[0.875rem]">
         <input
@@ -214,36 +210,37 @@ export function SystemSection() {
 
       <div className="mt-8">
         <h3 className={sectionHeading}>Media</h3>
-        <FormRow label="ffmpeg tools folder">
-          <PathPicker
-            value={ffmpegPath}
-            onChange={setFfmpegPath}
-            directory
-            placeholder="Uses system PATH by default"
-          />
-        </FormRow>
-        <p className="mt-1 text-[0.75rem] text-muted">
-          Folder must contain both ffmpeg and ffprobe. Leave blank to use system PATH.{" "}
-          <a
-            href="https://bitrealm.io/vault/user/how-to/media-and-privacy/"
-            target="_blank"
-            rel="noopener"
-            className="text-accent"
-          >
-            Install help
-          </a>
-        </p>
-      </div>
-
-      <div className="mt-6 flex items-center gap-3">
-        <Button onClick={() => void handleSave()} disabled={saving} className="!px-6 !py-2">
-          {saving ? "Saving…" : "Save"}
-        </Button>
-        {status.type !== "idle" && (
-          <span className="text-[0.875rem]" style={{ color: statusColor(status) }}>
-            {status.message}
-          </span>
-        )}
+        <div className={settingsGrid}>
+          <label htmlFor={ffmpegId} className={settingsLabel}>
+            ffmpeg directory
+          </label>
+          <div>
+            <PathPicker
+              id={ffmpegId}
+              value={ffmpegPath}
+              onChange={onFfmpegPathChange}
+              directory
+              placeholder="Uses system PATH by default"
+            />
+          </div>
+          <p className={settingsHelp}>
+            Folder must contain both ffmpeg and ffprobe. Leave blank to use system PATH.{" "}
+            <a
+              href="https://bitrealm.io/vault/user/how-to/media-and-privacy/"
+              target="_blank"
+              rel="noopener"
+              className="text-accent"
+            >
+              Install help
+            </a>
+          </p>
+          {probe ? (
+            <ul className={`${settingsHelp} mt-1 list-none space-y-1 p-0`}>
+              <ToolStatusRow name="ffmpeg" path={probe.ffmpeg_path} />
+              <ToolStatusRow name="ffprobe" path={probe.ffprobe_path} />
+            </ul>
+          ) : null}
+        </div>
       </div>
     </div>
   );
