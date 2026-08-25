@@ -307,6 +307,40 @@ describe("ContactDrawer", () => {
     });
   });
 
+  it("stubs one overlay identity row when thread preview has no handle strings", async () => {
+    let resolveDetail!: (d: CachedContactDetail) => void;
+    const pending = new Promise<CachedContactDetail>((resolve) => {
+      resolveDetail = resolve;
+    });
+    get.mockImplementation(() => pending);
+
+    render(
+      <ContactDrawer
+        variant="overlay"
+        contactId="b"
+        preview={{
+          id: "b",
+          name: "Mom",
+          handles: [],
+          handleCount: 1,
+        }}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Mom" })).toBeTruthy();
+    expect(screen.queryByText("Loading…")).toBeNull();
+
+    const table = screen.getByRole("grid", { name: "Contact handles" });
+    expect(table.querySelectorAll('[role="row"]').length).toBe(3);
+    expect(table.textContent).toContain("…");
+
+    resolveDetail(detail("b", { name: "Ada Lovelace" }));
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Ada Lovelace" })).toBeTruthy();
+    });
+  });
+
   it("stubs two identities when preview lists raw then normalized for each", async () => {
     let resolveDetail!: (d: CachedContactDetail) => void;
     const pending = new Promise<CachedContactDetail>((resolve) => {

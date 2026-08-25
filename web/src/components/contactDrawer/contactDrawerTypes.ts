@@ -53,7 +53,15 @@ export type ThreadParticipantPreviewSource = {
   handle: string;
   name?: string | null;
   preferred_name?: string | null;
+  name_alias?: string | null;
 };
+
+/** Preferred name, then identity alias, then handle — same order as chips with aliases off. */
+function threadParticipantDisplayName(p: ThreadParticipantPreviewSource): string {
+  return (
+    (p.name ?? p.preferred_name)?.trim() || p.name_alias?.trim() || p.handle.trim() || "Contact"
+  );
+}
 
 export function contactPreviewFromThreadParticipants(
   contactId: string,
@@ -62,13 +70,16 @@ export function contactPreviewFromThreadParticipants(
   const matched = participants.filter((p) => p.contact_id === contactId);
   if (matched.length === 0) return null;
   const handles = matched.map((p) => p.handle).filter((h) => h.length > 0);
-  const named = matched.find((p) => (p.name ?? p.preferred_name)?.trim());
-  const name = (named?.name ?? named?.preferred_name)?.trim() || matched[0].handle;
+  const named = matched.find((p) =>
+    Boolean((p.name ?? p.preferred_name)?.trim() || p.name_alias?.trim()),
+  );
+  const uniqueCount = previewHandleStubRows(handles, undefined).length;
   return {
     id: contactId,
-    name,
+    name: threadParticipantDisplayName(named ?? matched[0]),
     handles,
-    handleCount: previewHandleStubRows(handles, undefined).length,
+    // At least one stub row so an empty handle list does not take the empty-table Loading path.
+    handleCount: Math.max(1, uniqueCount),
   };
 }
 

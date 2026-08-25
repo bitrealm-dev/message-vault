@@ -31,14 +31,18 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
+/** Upper bound for stub rows from location state (real identity lists stay far below this). */
+const MAX_OPEN_CONTACT_HANDLE_COUNT = 500;
+
 /**
  * Parse a contact preview from location state.
- * Requires string `id` and `name`. Optional `handles`/`groups` must be string arrays;
- * optional `handleCount` must be a finite number. Returns null on any invalid field.
+ * Requires non-empty string `id` and `name`. Optional `handles`/`groups` must be string arrays;
+ * optional `handleCount` must be a non-negative integer at most 500. Returns null on any invalid field.
  */
 function asOpenContactPreview(value: unknown): OpenContactPreview | null {
   if (!isRecord(value)) return null;
-  if (typeof value.id !== "string" || typeof value.name !== "string") return null;
+  if (typeof value.id !== "string" || value.id.length === 0) return null;
+  if (typeof value.name !== "string" || value.name.length === 0) return null;
 
   const out: OpenContactPreview = { id: value.id, name: value.name };
 
@@ -53,7 +57,12 @@ function asOpenContactPreview(value: unknown): OpenContactPreview | null {
   }
 
   if ("handleCount" in value && value.handleCount !== undefined) {
-    if (typeof value.handleCount !== "number" || !Number.isFinite(value.handleCount)) {
+    if (
+      typeof value.handleCount !== "number" ||
+      !Number.isInteger(value.handleCount) ||
+      value.handleCount < 0 ||
+      value.handleCount > MAX_OPEN_CONTACT_HANDLE_COUNT
+    ) {
       return null;
     }
     out.handleCount = value.handleCount;

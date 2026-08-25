@@ -71,4 +71,34 @@ describe("asMessagesLocationState", () => {
       }),
     ).toEqual({ openContactId: "c1" });
   });
+
+  it("drops openContactPreview when name is empty", () => {
+    expect(
+      asMessagesLocationState({
+        openContactId: "c1",
+        openContactPreview: { ...preview, name: "" },
+      }),
+    ).toEqual({ openContactId: "c1" });
+  });
+
+  it("drops openContactPreview when handleCount is negative or not an integer", () => {
+    expect(
+      asMessagesLocationState({
+        openContactId: "c1",
+        openContactPreview: { ...preview, handleCount: -1 },
+      }),
+    ).toEqual({ openContactId: "c1" });
+    expect(
+      asMessagesLocationState({
+        openContactId: "c1",
+        openContactPreview: { ...preview, handleCount: 1.5 },
+      }),
+    ).toEqual({ openContactId: "c1" });
+    expect(
+      asMessagesLocationState({
+        openContactId: "c1",
+        openContactPreview: { ...preview, handleCount: 501 },
+      }),
+    ).toEqual({ openContactId: "c1" });
+  });
 });
