@@ -61,6 +61,8 @@ cd docs && npm run check && npm run build     # docs tree only
 ./scripts/check-pr.sh                         # all of the above in one pass; stops on first failure
 ```
 
+After `web/` UI changes, verify in the browser with the Playwright MCP (`plugin-playwright-playwright`) against Vite on `http://127.0.0.1:5173` (vault on `:8080`). Details and Tauri-only limits: [`.cursor/rules/playwright-mcp.mdc`](.cursor/rules/playwright-mcp.mdc).
+
 ## Rules that are easy to get wrong
 
 - **Version lockstep** (current `0.7.3`): `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `web/package.json`, `crates/vault/server/Cargo.toml` all carry the product version. Leave other crates at `0.1.0`; never bump `message-vault-io-gui` (`0.6.0`) or `web-next` (`0.3.0`).
