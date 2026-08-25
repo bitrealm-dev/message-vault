@@ -185,9 +185,7 @@ describe("ContactDrawer", () => {
     });
     get.mockImplementation(() => pending);
 
-    render(
-      <ContactDrawer variant="overlay" contactId="z" preview={null} onClose={() => {}} />,
-    );
+    render(<ContactDrawer variant="overlay" contactId="z" preview={null} onClose={() => {}} />);
 
     const dialog = screen.getByRole("dialog", { name: "Loading…" });
     expect(dialog.getAttribute("aria-busy")).toBe("true");
