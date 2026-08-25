@@ -286,7 +286,7 @@ Clippy is not a CI job. Run it locally with `./scripts/lint-all.sh` (`rust-analy
 
 ### Releases and versions
 
-The product follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (`MAJOR.MINOR.PATCH`). Record user-visible changes in `CHANGELOG.md` ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/)) under `[Unreleased]` until a tag ships.
+The product follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (`MAJOR.MINOR.PATCH`). Record user-visible changes in `CHANGELOG.md` ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/)) under `[Unreleased]` until a tag ships. Every changelog bullet must start with an ISO date (`YYYY-MM-DD`); released version headings use `## [0.8.0] - 2026-08-24`.
 
 Three version numbers are easy to mix up:
 
