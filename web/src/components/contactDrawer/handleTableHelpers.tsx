@@ -42,7 +42,19 @@ export function SortableColumn({
   );
 }
 
-export function CountCell({ value, onClick }: { value: number; onClick?: () => void }) {
+export function CountCell({
+  value,
+  onClick,
+  loading = false,
+}: {
+  value: number;
+  onClick?: () => void;
+  /** When true, show an em dash instead of a zeroed stub count. */
+  loading?: boolean;
+}) {
+  if (loading) {
+    return <span className={mutedClass}>—</span>;
+  }
   const text = value.toLocaleString();
   if (value > 0 && onClick) {
     return (

@@ -230,7 +230,12 @@ export default function AppLayout() {
                     groupFilter={groupFilter}
                     selectedId={selectedContact?.id ?? null}
                     onSelect={(c) =>
-                      setSelectedContact({ id: c.id, name: c.name, handles: c.handles })
+                      setSelectedContact({
+                        id: c.id,
+                        name: c.name,
+                        handles: c.handles,
+                        groups: c.groups,
+                      })
                     }
                     onCheckedChange={handleCheckedContacts}
                     clearCheckedRev={clearCheckedRev}

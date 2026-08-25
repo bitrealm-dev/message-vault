@@ -1,0 +1,202 @@
+/** @vitest-environment jsdom */
+
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { CachedContactDetail } from "../lib/contactDetailCache";
+import {
+  clearContactDetailCache,
+  fetchContactDetail,
+  getCachedContactDetail,
+} from "../lib/contactDetailCache";
+import ContactDrawer from "./ContactDrawer";
+
+const get = vi.fn();
+
+vi.mock("../lib/api", () => ({
+  apiClient: {
+    get: (...args: unknown[]) => get(...args),
+    post: vi.fn(),
+  },
+}));
+
+function detail(id: string, overrides: Partial<CachedContactDetail> = {}): CachedContactDetail {
+  return {
+    id,
+    name: `Contact ${id}`,
+    handles: [
+      {
+        handle: `+1555000${id}`,
+        service: "phone",
+        name_alias: null,
+        start_date: "2020-01-01T00:00:00Z",
+        end_date: "2024-01-01T00:00:00Z",
+        individual_conversations: 3,
+        group_conversations: 1,
+        individual_message_count: 42,
+        group_message_count: 7,
+      },
+    ],
+    direct_conversations: 3,
+    group_conversations: 1,
+    total_messages: 49,
+    groups: [`Group-${id}`],
+    ...overrides,
+  };
+}
+
+describe("ContactDrawer", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  beforeEach(() => {
+    clearContactDetailCache();
+    get.mockReset();
+  });
+
+  it("keeps groups and avoids zero counts on first paint when switching to an uncached contact", async () => {
+    const a = detail("a");
+    await fetchContactDetail("a", async () => a);
+
+    let resolveB!: (d: CachedContactDetail) => void;
+    const pendingB = new Promise<CachedContactDetail>((resolve) => {
+      resolveB = resolve;
+    });
+    get.mockImplementation((path: string) => {
+      if (String(path).includes("/a")) return Promise.resolve(a);
+      return pendingB;
+    });
+
+    const { rerender } = render(
+      <ContactDrawer
+        variant="docked"
+        contactId="a"
+        preview={{
+          id: "a",
+          name: a.name,
+          handles: a.handles.map((h) => h.handle),
+          groups: a.groups,
+        }}
+        onClose={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: a.name })).toBeTruthy();
+      expect(screen.getByText("Group-a")).toBeTruthy();
+    });
+
+    rerender(
+      <ContactDrawer
+        variant="docked"
+        contactId="b"
+        preview={{
+          id: "b",
+          name: "Contact b",
+          handles: ["+1555000b"],
+          groups: ["Family"],
+        }}
+        onClose={() => {}}
+      />,
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Contact b" });
+    expect(dialog.getAttribute("aria-busy")).toBe("true");
+    expect(screen.getByText("Family")).toBeTruthy();
+    expect(screen.getByText("+1555000b")).toBeTruthy();
+
+    const table = screen.getByRole("grid", { name: "Contact handles" });
+    const dashes = table.textContent?.match(/—/g) ?? [];
+    expect(dashes.length).toBeGreaterThanOrEqual(4);
+
+    resolveB(detail("b", { name: "Contact b", groups: ["Family"] }));
+    await waitFor(() => {
+      expect(dialog.getAttribute("aria-busy")).toBeNull();
+      expect(screen.getAllByText("42").length).toBeGreaterThan(0);
+    });
+  });
+
+  it("shows cached counts and groups on first paint when switching to a cached contact", async () => {
+    const a = detail("a");
+    const b = detail("b", {
+      name: "Cached Bob",
+      groups: ["Work"],
+      handles: [
+        {
+          handle: "+15551212",
+          service: "phone",
+          name_alias: null,
+          start_date: "2021-06-01T00:00:00Z",
+          end_date: "2025-01-01T00:00:00Z",
+          individual_conversations: 5,
+          group_conversations: 2,
+          individual_message_count: 99,
+          group_message_count: 11,
+        },
+      ],
+    });
+    await fetchContactDetail("a", async () => a);
+    await fetchContactDetail("b", async () => b);
+    expect(getCachedContactDetail("b")?.name).toBe("Cached Bob");
+
+    get.mockImplementation((path: string) => {
+      if (String(path).includes("/a")) return Promise.resolve(a);
+      return Promise.resolve(b);
+    });
+
+    const { rerender } = render(
+      <ContactDrawer
+        variant="docked"
+        contactId="a"
+        preview={{ id: "a", name: a.name, handles: ["+1555000a"], groups: a.groups }}
+        onClose={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: a.name })).toBeTruthy();
+    });
+
+    rerender(
+      <ContactDrawer
+        variant="docked"
+        contactId="b"
+        preview={{
+          id: "b",
+          name: "Cached Bob",
+          handles: ["+15551212"],
+          groups: ["Work"],
+        }}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Cached Bob" })).toBeTruthy();
+    expect(screen.getByRole("dialog").getAttribute("aria-busy")).toBeNull();
+    expect(screen.getByText("Work")).toBeTruthy();
+    expect(screen.getAllByText("99").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("11").length).toBeGreaterThan(0);
+  });
+
+  it("does not claim No groups while loading without preview groups", async () => {
+    let resolveDetail!: (d: CachedContactDetail) => void;
+    const pending = new Promise<CachedContactDetail>((resolve) => {
+      resolveDetail = resolve;
+    });
+    get.mockImplementation(() => pending);
+
+    render(<ContactDrawer variant="overlay" contactId="z" preview={null} onClose={() => {}} />);
+
+    const dialog = screen.getByRole("dialog", { name: "Loading…" });
+    expect(dialog.getAttribute("aria-busy")).toBe("true");
+    expect(screen.queryByText("No groups")).toBeNull();
+    expect(screen.getByText("…")).toBeTruthy();
+
+    resolveDetail(detail("z", { name: "Zed", groups: ["Work"] }));
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: "Zed" })).toBeTruthy();
+      expect(screen.getByText("Work")).toBeTruthy();
+      expect(screen.queryByText("No groups")).toBeNull();
+    });
+  });
+});

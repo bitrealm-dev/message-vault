@@ -18,6 +18,7 @@ export type ContactPreview = {
   id: string;
   name: string;
   handles?: string[];
+  groups?: string[];
 };
 
 export type ContactBrowseKind = "all" | "direct" | "group";
