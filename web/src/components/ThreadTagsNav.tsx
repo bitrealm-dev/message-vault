@@ -131,7 +131,7 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
                 <button
                   type="button"
                   onClick={() => navigate(href)}
-                  className="flex min-w-0 cursor-pointer items-center gap-2 border-none bg-transparent p-0 pl-3 text-left text-inherit"
+                  className="flex min-w-0 cursor-pointer items-center gap-2 border-none bg-transparent p-0 text-left text-inherit"
                 >
                   <TagIcon size={15} />
                   <span className="min-w-0 truncate">{name}</span>
@@ -190,9 +190,9 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
         <button
           type="button"
           onClick={() => navigate("/no-tag")}
-          className={`${navGlyphRowClass(location.pathname === "/no-tag")} cursor-pointer bg-transparent`}
+          className={`${navGlyphRowClass(location.pathname === "/no-tag")} cursor-pointer bg-transparent p-0`}
         >
-          <span className="flex min-w-0 items-center gap-2 pl-3">
+          <span className="flex min-w-0 items-center gap-2">
             <TagIcon size={15} />
             <span className="truncate">No tag</span>
           </span>
