@@ -1,7 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   Cell,
-  Column,
   ResizableTableContainer,
   Row,
   type SortDescriptor,
@@ -23,18 +22,16 @@ import {
 import { renderHandleSummaryRow, renderHandleTableRow } from "./HandleTableRow";
 import { SortableColumn } from "./handleTableHelpers";
 import { conversationCount, removeIdentityConfirmBody, sortValue } from "./handleTableLogic";
-import { tdClass, thClass } from "./handleTableStyles";
+import { tdClass } from "./handleTableStyles";
 import { columnInitialWidth, headerLabelMinWidth } from "./headerLabelMinWidth";
 import { useHandleMutations } from "./useHandleMutations";
 
 type BrowseFn = (args: { kind: ContactBrowseKind; handle?: string; service?: string }) => void;
 
-const ACTIONS_COL_WIDTH = 40;
-
 const twoLineHeader = (line1: string, line2: string) => (
   <>
     <span className="sr-only">{`${line1} ${line2}`}</span>
-    <span className="flex flex-col items-start leading-tight" aria-hidden="true">
+    <span className="flex flex-col items-end leading-tight" aria-hidden="true">
       <span className="whitespace-nowrap">{line1}</span>
       <span className="whitespace-nowrap">{line2}</span>
     </span>
@@ -224,7 +221,6 @@ export function ContactDrawerHandles({
             </SortableColumn>
             <SortableColumn
               id="start_date"
-              align="left"
               allowsResizing
               defaultWidth={columnWidths.startDate.width}
               minWidth={columnWidths.startDate.min}
@@ -233,7 +229,6 @@ export function ContactDrawerHandles({
             </SortableColumn>
             <SortableColumn
               id="end_date"
-              align="left"
               allowsResizing
               defaultWidth={columnWidths.endDate.width}
               minWidth={columnWidths.endDate.min}
@@ -242,7 +237,7 @@ export function ContactDrawerHandles({
             </SortableColumn>
             <SortableColumn
               id="conversations"
-              align="left"
+              align="right"
               allowsResizing
               defaultWidth={columnWidths.conversations.width}
               minWidth={columnWidths.conversations.min}
@@ -251,7 +246,7 @@ export function ContactDrawerHandles({
             </SortableColumn>
             <SortableColumn
               id="direct_messages"
-              align="left"
+              align="right"
               allowsResizing
               defaultWidth={columnWidths.directMessages.width}
               minWidth={columnWidths.directMessages.min}
@@ -260,20 +255,13 @@ export function ContactDrawerHandles({
             </SortableColumn>
             <SortableColumn
               id="group_messages"
-              align="left"
+              align="right"
               allowsResizing
-              defaultWidth={columnWidths.groupMessages.width}
+              defaultWidth="1fr"
               minWidth={columnWidths.groupMessages.min}
             >
               {twoLineHeader("Group", "Messages")}
             </SortableColumn>
-            <Column
-              id="actions"
-              width={ACTIONS_COL_WIDTH}
-              minWidth={ACTIONS_COL_WIDTH}
-              defaultWidth={ACTIONS_COL_WIDTH}
-              className={`${thClass} !cursor-default`}
-            />
           </TableHeader>
           {handleRows.length === 0 ? (
             <TableBody className="[&_tr]:border-b [&_tr]:border-border">
@@ -281,7 +269,6 @@ export function ContactDrawerHandles({
                 <Cell className={`${tdClass} !text-left text-muted`}>
                   {loading ? "Loading…" : "No handles"}
                 </Cell>
-                <Cell className={tdClass} />
                 <Cell className={tdClass} />
                 <Cell className={tdClass} />
                 <Cell className={tdClass} />

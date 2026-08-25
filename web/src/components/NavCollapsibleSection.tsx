@@ -28,7 +28,11 @@ function writeOpen(id: string, open: boolean) {
   }
 }
 
-/** Sidebar block whose heading toggles the list; the plus still creates an item. */
+/**
+ * Sidebar block whose heading toggles the list.
+ * When addLabel and onAdd are set, the trailing plus creates an item;
+ * otherwise the 1.5rem trailing slot stays as an empty spacer so titles align.
+ */
 export default function NavCollapsibleSection({
   id,
   title,
@@ -40,13 +44,14 @@ export default function NavCollapsibleSection({
 }: {
   id: string;
   title: string;
-  addLabel: string;
-  onAdd: () => void;
+  addLabel?: string;
+  onAdd?: () => void;
   addDisabled?: boolean;
   className?: string;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(() => readOpen(id));
+  const showAdd = addLabel != null && onAdd != null;
 
   return (
     <div className={className}>
@@ -71,9 +76,13 @@ export default function NavCollapsibleSection({
           </span>
           <span className="truncate">{title}</span>
         </button>
-        <NavGlyphButton aria-label={addLabel} disabled={addDisabled} onClick={onAdd}>
-          <PlusIcon size={14} />
-        </NavGlyphButton>
+        {showAdd ? (
+          <NavGlyphButton aria-label={addLabel} disabled={addDisabled} onClick={onAdd}>
+            <PlusIcon size={14} />
+          </NavGlyphButton>
+        ) : (
+          <span aria-hidden className="size-6 shrink-0" />
+        )}
       </div>
       {open ? children : null}
     </div>

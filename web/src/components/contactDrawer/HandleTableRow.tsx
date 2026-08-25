@@ -14,9 +14,13 @@ import {
   rowActionsRevealClass,
   tdClass,
   tdLeftClass,
+  tdRightClass,
 } from "./handleTableStyles";
 
 type BrowseFn = (args: { kind: ContactBrowseKind; handle?: string; service?: string }) => void;
+
+/** Last count column: room on the right for the hover trash control. */
+const tdGroupMessagesClass = `${tdRightClass} relative !pr-9`;
 
 /** Returns a RAC `Row` element (must stay a direct TableBody child). */
 export function renderHandleTableRow(
@@ -46,13 +50,13 @@ export function renderHandleTableRow(
           {loading ? "—" : alias || "—"}
         </span>
       </Cell>
-      <Cell className={`${tdLeftClass} whitespace-nowrap text-muted`}>
+      <Cell className={`${tdClass} whitespace-nowrap text-muted`}>
         {loading ? "—" : handleDateCell(h.start_date)}
       </Cell>
-      <Cell className={`${tdLeftClass} whitespace-nowrap text-muted`}>
+      <Cell className={`${tdClass} whitespace-nowrap text-muted`}>
         {loading ? "—" : handleDateCell(h.end_date)}
       </Cell>
-      <Cell className={tdLeftClass}>
+      <Cell className={tdRightClass}>
         <CountCell
           value={convos}
           loading={loading}
@@ -68,14 +72,12 @@ export function renderHandleTableRow(
           }
         />
       </Cell>
-      <Cell className={tdLeftClass}>
+      <Cell className={tdRightClass}>
         <CountCell value={h.individual_message_count} loading={loading} />
       </Cell>
-      <Cell className={tdLeftClass}>
+      <Cell className={tdGroupMessagesClass}>
         <CountCell value={h.group_message_count} loading={loading} />
-      </Cell>
-      <Cell className={`${tdClass} !px-1 whitespace-nowrap`}>
-        <div className={`flex items-center justify-center ${rowActionsRevealClass}`}>
+        <div className={`absolute top-1/2 right-0 -translate-y-1/2 ${rowActionsRevealClass}`}>
           <Button
             variant="ghost"
             disabled={opts.busy || opts.loading}
@@ -102,13 +104,13 @@ export function renderHandleSummaryRow(
       <Cell className={`${tdLeftClass} font-semibold`}>Summary</Cell>
       <Cell className={`${tdLeftClass} text-muted`}>—</Cell>
       <Cell className={`${tdLeftClass} text-muted`}>—</Cell>
-      <Cell className={`${tdLeftClass} whitespace-nowrap text-muted`}>
+      <Cell className={`${tdClass} whitespace-nowrap text-muted`}>
         {loading ? "—" : handleDateCell(totals.start_date)}
       </Cell>
-      <Cell className={`${tdLeftClass} whitespace-nowrap text-muted`}>
+      <Cell className={`${tdClass} whitespace-nowrap text-muted`}>
         {loading ? "—" : handleDateCell(totals.end_date)}
       </Cell>
-      <Cell className={tdLeftClass}>
+      <Cell className={tdRightClass}>
         <CountCell
           value={conversationCount(totals)}
           loading={loading}
@@ -117,13 +119,12 @@ export function renderHandleSummaryRow(
           }
         />
       </Cell>
-      <Cell className={tdLeftClass}>
+      <Cell className={tdRightClass}>
         <CountCell value={totals.individual_message_count} loading={loading} />
       </Cell>
-      <Cell className={tdLeftClass}>
+      <Cell className={tdGroupMessagesClass}>
         <CountCell value={totals.group_message_count} loading={loading} />
       </Cell>
-      <Cell className={tdClass} />
     </Row>
   );
 }

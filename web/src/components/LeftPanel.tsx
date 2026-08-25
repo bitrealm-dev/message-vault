@@ -99,16 +99,6 @@ function ExportIcon() {
   );
 }
 
-/** Sidebar header for each nav group. */
-const sectionHeaderClass = "pt-1 pb-1.5 text-[0.875rem] font-bold text-text";
-
-/** Nav button: selected and hovered rows share the list hover tint. */
-function linkClass(active: boolean): string {
-  return `box-border flex w-full cursor-pointer items-center gap-2 rounded border-none px-3 py-1.5 text-left text-[0.875rem] text-text hover:bg-hover ${
-    active ? "bg-hover font-semibold" : "bg-transparent font-normal"
-  }`;
-}
-
 /** Browse rows: same leading slot as section headings (no extra row padding). */
 function browseLinkClass(active: boolean): string {
   return `${NAV_LEADING_ROW_CLASS} box-border w-full cursor-pointer rounded border-none px-0 py-1.5 text-left text-[0.875rem] text-text hover:bg-hover ${
@@ -232,25 +222,32 @@ export default function LeftPanel({
 
         {/* Import/Export — desktop app only, never on a guest session */}
         {canUseImportExportWithProfile(isTauri(), profile) && (
-          <div className="px-3 py-2">
-            <div className={sectionHeaderClass}>Messages</div>
+          <NavCollapsibleSection id="messages-import-export" title="Messages">
             <button
               type="button"
-              className={linkClass(isActive("/import"))}
               onClick={() => navigate("/import")}
+              className={`${navGlyphRowClass(isActive("/import"))} cursor-pointer`}
             >
-              <ImportIcon />
-              Import
+              <span className={NAV_NESTED_ROW_CLASS}>
+                <span className={NAV_LEADING_GLYPH_CLASS}>
+                  <ImportIcon />
+                </span>
+                <span className="truncate">Import</span>
+              </span>
             </button>
             <button
               type="button"
-              className={linkClass(isActive("/export"))}
               onClick={() => navigate("/export")}
+              className={`${navGlyphRowClass(isActive("/export"))} cursor-pointer`}
             >
-              <ExportIcon />
-              Export
+              <span className={NAV_NESTED_ROW_CLASS}>
+                <span className={NAV_LEADING_GLYPH_CLASS}>
+                  <ExportIcon />
+                </span>
+                <span className="truncate">Export</span>
+              </span>
             </button>
-          </div>
+          </NavCollapsibleSection>
         )}
 
         <GroupsNav groups={contactGroups} />

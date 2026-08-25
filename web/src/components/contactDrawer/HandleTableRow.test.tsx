@@ -30,7 +30,7 @@ const sample: CachedContactHandle & { id: string } = {
 };
 
 describe("renderHandleTableRow", () => {
-  it("left-aligns count cells and wraps alias only on spaces", () => {
+  it("right-aligns count cells, overlays trash in Group Messages, wraps alias on spaces", () => {
     render(
       <ResizableTableContainer>
         <Table aria-label="Contact handles">
@@ -43,7 +43,6 @@ describe("renderHandleTableRow", () => {
             <Column>Threads</Column>
             <Column>Direct</Column>
             <Column>Group</Column>
-            <Column>Actions</Column>
           </TableHeader>
           <TableBody>
             {renderHandleTableRow(sample, {
@@ -58,17 +57,20 @@ describe("renderHandleTableRow", () => {
 
     const grid = screen.getByRole("grid", { name: "Contact handles" });
     const cells = grid.querySelectorAll("[role='gridcell'], [role='rowheader']");
-    // Service, Identity, Alias, dates, Threads, Direct, Group, Actions
-    expect(cells.length).toBeGreaterThanOrEqual(8);
+    // Service, Identity, Alias, dates, Threads, Direct, Group (no actions column)
+    expect(cells.length).toBe(8);
 
     const aliasSpan = screen.getByTitle("Mary Elizabeth Katherine");
     expect(aliasSpan.className).toMatch(/break-normal/);
     expect(aliasSpan.className).not.toMatch(/break-all/);
 
     const threadsCell = Array.from(cells).find((c) => c.textContent === "3");
-    expect(threadsCell?.className).toMatch(/text-left/);
+    expect(threadsCell?.className).toMatch(/text-right/);
 
-    const actionsCell = cells[cells.length - 1];
-    expect(actionsCell?.className).toMatch(/px-1/);
+    const groupCell = cells[cells.length - 1];
+    expect(groupCell?.textContent).toContain("5");
+    expect(groupCell?.className).toMatch(/text-right/);
+    expect(groupCell?.className).toMatch(/pr-9/);
+    expect(screen.getByRole("button", { name: "Remove identity" })).toBeTruthy();
   });
 });

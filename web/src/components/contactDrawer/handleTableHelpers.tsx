@@ -51,7 +51,7 @@ export function SortableColumn({
         <div className="relative flex w-full min-w-0 items-center">
           <Group className={`flex min-w-0 flex-1 items-center outline-none ${justify}`}>
             <span
-              className={`relative inline-flex max-w-full items-center pr-2.5 ${textAlign} leading-tight ${
+              className={`relative inline-flex max-w-full items-center pr-4 ${textAlign} leading-tight ${
                 sortDirection ? "text-accent" : "text-text"
               }`}
             >

@@ -86,6 +86,8 @@ describe("SortableColumn", () => {
     expect(caret?.textContent).toBe("▲");
     expect(caret?.className).toMatch(/invisible/);
     expect(caret?.className).toMatch(/right-0/);
+    const label = caret?.parentElement;
+    expect(label?.className).toMatch(/pr-4/);
   });
 
   it("pins the resizer as the last child of a full-width flex row", () => {

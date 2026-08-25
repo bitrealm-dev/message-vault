@@ -459,20 +459,32 @@ describe("ContactDrawer", () => {
     const service = screen.getByRole("columnheader", { name: /Service/i });
     expect(service.className).toMatch(/text-left/);
 
-    const direct = screen.getByRole("columnheader", { name: /Direct Messages/i });
-    expect(direct.querySelector(".flex-col")).toBeTruthy();
-    const group = screen.getByRole("columnheader", { name: /Group Messages/i });
-    expect(group.querySelector(".flex-col")).toBeTruthy();
-
     const firstSeen = screen.getByRole("columnheader", { name: /First Seen/i });
     expect(firstSeen.querySelector(".whitespace-nowrap")).toBeTruthy();
+    expect(firstSeen.className).toMatch(/text-center/);
+    expect(firstSeen.className).not.toMatch(/text-left/);
     const lastSeen = screen.getByRole("columnheader", { name: /Last Seen/i });
     expect(lastSeen.querySelector(".whitespace-nowrap")).toBeTruthy();
+    expect(lastSeen.className).toMatch(/text-center/);
+    expect(lastSeen.className).not.toMatch(/text-left/);
 
     const threads = screen.getByRole("columnheader", { name: /Threads/i });
-    expect(threads.className).toMatch(/text-left/);
+    expect(threads.className).toMatch(/text-right/);
+
+    const direct = screen.getByRole("columnheader", { name: /Direct Messages/i });
+    expect(direct.querySelector(".flex-col")).toBeTruthy();
+    expect(direct.querySelector(".items-end")).toBeTruthy();
+    expect(direct.className).toMatch(/text-right/);
+    const group = screen.getByRole("columnheader", { name: /Group Messages/i });
+    expect(group.querySelector(".flex-col")).toBeTruthy();
+    expect(group.querySelector(".items-end")).toBeTruthy();
+    expect(group.className).toMatch(/text-right/);
 
     const table = screen.getByRole("grid", { name: "Contact handles" });
     expect(table.querySelectorAll(".cursor-col-resize").length).toBeGreaterThanOrEqual(8);
+
+    const headers = screen.getAllByRole("columnheader");
+    const groupIndex = headers.findIndex((h) => /Group Messages/i.test(h.textContent ?? ""));
+    expect(groupIndex).toBe(headers.length - 1);
   });
 });
