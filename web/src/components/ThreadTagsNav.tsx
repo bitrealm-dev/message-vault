@@ -12,7 +12,11 @@ import GroupNameDialog from "./GroupNameDialog";
 import { EllipsisIcon, TagIcon } from "./icons";
 import NavCollapsibleSection from "./NavCollapsibleSection";
 import NavGlyphButton from "./NavGlyphButton";
-import { navGlyphRowClass } from "./navSectionLayout";
+import {
+  NAV_LEADING_GLYPH_CLASS,
+  NAV_LEADING_ROW_CLASS,
+  navGlyphRowClass,
+} from "./navSectionLayout";
 
 function apiErrorMessage(err: unknown, fallback: string): string {
   if (!(err instanceof Error)) return fallback;
@@ -131,9 +135,11 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
                 <button
                   type="button"
                   onClick={() => navigate(href)}
-                  className="flex min-w-0 cursor-pointer items-center gap-2 border-none bg-transparent p-0 text-left text-inherit"
+                  className={`${NAV_LEADING_ROW_CLASS} cursor-pointer border-none bg-transparent p-0 text-left text-inherit`}
                 >
-                  <TagIcon size={15} />
+                  <span className={NAV_LEADING_GLYPH_CLASS}>
+                    <TagIcon size={15} />
+                  </span>
                   <span className="min-w-0 truncate">{name}</span>
                 </button>
                 <NavGlyphButton
@@ -190,10 +196,12 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
         <button
           type="button"
           onClick={() => navigate("/no-tag")}
-          className={`${navGlyphRowClass(location.pathname === "/no-tag")} cursor-pointer bg-transparent p-0`}
+          className={`${navGlyphRowClass(location.pathname === "/no-tag")} cursor-pointer`}
         >
-          <span className="flex min-w-0 items-center gap-2">
-            <TagIcon size={15} />
+          <span className={NAV_LEADING_ROW_CLASS}>
+            <span className={NAV_LEADING_GLYPH_CLASS}>
+              <TagIcon size={15} />
+            </span>
             <span className="truncate">No tag</span>
           </span>
         </button>

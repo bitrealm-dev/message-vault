@@ -20,7 +20,11 @@ import {
 } from "./leftPanelWidth";
 import NavCollapsibleSection from "./NavCollapsibleSection";
 import NavGlyphButton from "./NavGlyphButton";
-import { NAV_SECTION_GRID_CLASS } from "./navSectionLayout";
+import {
+  NAV_LEADING_GLYPH_CLASS,
+  NAV_LEADING_ROW_CLASS,
+  NAV_SECTION_GRID_CLASS,
+} from "./navSectionLayout";
 import SavedGroupForm from "./SavedGroupForm";
 import ThreadTagsNav from "./ThreadTagsNav";
 import { useColumnResize } from "./useColumnResize";
@@ -215,7 +219,10 @@ export default function LeftPanel({
           className="px-3 pt-3"
         >
           {groups.length === 0 ? (
-            <div className="py-1.5 text-[0.813rem] text-muted">No saved searches</div>
+            <div className={`${NAV_LEADING_ROW_CLASS} py-1.5 text-[0.813rem] text-muted`}>
+              <span className={NAV_LEADING_GLYPH_CLASS} aria-hidden />
+              <span>No saved searches</span>
+            </div>
           ) : (
             groups.map((g) => (
               <div key={g.id} className={NAV_SECTION_GRID_CLASS}>
@@ -225,9 +232,10 @@ export default function LeftPanel({
                     onSearchChange(g.query);
                     navigate(`/?q=${encodeURIComponent(g.query)}`);
                   }}
-                  className="min-w-0 cursor-pointer truncate border-none bg-transparent py-1.5 text-left text-[0.813rem] text-text"
+                  className={`${NAV_LEADING_ROW_CLASS} min-w-0 cursor-pointer border-none bg-transparent py-1.5 text-left text-[0.813rem] text-text`}
                 >
-                  {g.name}
+                  <span className={NAV_LEADING_GLYPH_CLASS} aria-hidden />
+                  <span className="min-w-0 truncate">{g.name}</span>
                 </button>
                 <NavGlyphButton
                   title="Delete saved search"
