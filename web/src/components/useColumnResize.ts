@@ -1,5 +1,5 @@
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { clampWidth, loadWidth, saveWidth } from "./columnResize";
 
 export type ColumnResizeHandleProps = {
@@ -28,6 +28,24 @@ export type UseColumnResizeResult = {
   handleProps: ColumnResizeHandleProps;
 };
 
+/** Clear body styles set for the duration of a column-width drag. */
+function clearBodyDragStyles(): void {
+  document.body.style.userSelect = "";
+  document.body.style.cursor = "";
+}
+
+/**
+ * On-screen width of the column that owns the resize handle.
+ * Falls back to preferredWidth when the parent is missing (tests / detached nodes).
+ */
+export function measureColumnWidth(handle: HTMLElement, preferredWidth: number): number {
+  const parent = handle.parentElement;
+  if (!parent) return preferredWidth;
+  const measured = parent.getBoundingClientRect().width;
+  if (!Number.isFinite(measured) || measured <= 0) return preferredWidth;
+  return measured;
+}
+
 /** Drag and keyboard resize for a vertical column, with localStorage persistence. */
 export function useColumnResize({
   storageKey,
@@ -44,21 +62,32 @@ export function useColumnResize({
   const startWidthRef = useRef(defaultWidth);
   const widthRef = useRef(width);
   widthRef.current = width;
+  const draggingRef = useRef(false);
   const onDraggingChangeRef = useRef(onDraggingChange);
   onDraggingChangeRef.current = onDraggingChange;
 
   const setDraggingState = (next: boolean) => {
+    draggingRef.current = next;
     setDragging(next);
     onDraggingChangeRef.current?.(next);
   };
+
+  // If the column unmounts mid-drag (route change), clear body styles and context.
+  useEffect(() => {
+    return () => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      clearBodyDragStyles();
+      onDraggingChangeRef.current?.(false);
+    };
+  }, []);
 
   const endDrag = (el: HTMLElement, pointerId: number) => {
     if (el.hasPointerCapture(pointerId)) {
       el.releasePointerCapture(pointerId);
     }
     setDraggingState(false);
-    document.body.style.userSelect = "";
-    document.body.style.cursor = "";
+    clearBodyDragStyles();
     saveWidth(storageKey, widthRef.current);
   };
 
@@ -66,7 +95,8 @@ export function useColumnResize({
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     startXRef.current = e.clientX;
-    startWidthRef.current = widthRef.current;
+    // Use the painted width so a flex-shrunk column does not jump to preferred.
+    startWidthRef.current = measureColumnWidth(e.currentTarget, widthRef.current);
     setDraggingState(true);
     document.body.style.userSelect = "none";
     document.body.style.cursor = "col-resize";
