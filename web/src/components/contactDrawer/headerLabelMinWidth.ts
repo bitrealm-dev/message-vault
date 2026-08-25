@@ -1,6 +1,11 @@
 /** Symmetric gutter so a centered label clears the edge-pinned sort caret. */
 const HEADER_CHROME_PX = 32;
 
+/** Locale-formatted body maxima used to size count and date columns. */
+export const HANDLE_TABLE_THREADS_MAX = "9,999";
+export const HANDLE_TABLE_MESSAGES_MAX = "999,999";
+export const HANDLE_TABLE_DATE_SAMPLE = "2020-12-31";
+
 /** Body cell horizontal padding (`px-1` both sides). */
 const CELL_PADDING_PX = 8;
 

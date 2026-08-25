@@ -21,9 +21,15 @@ import {
 } from "./contactDrawerTypes";
 import { renderHandleSummaryRow, renderHandleTableRow } from "./HandleTableRow";
 import { SortableColumn } from "./handleTableHelpers";
-import { conversationCount, removeIdentityConfirmBody, sortValue } from "./handleTableLogic";
+import { removeIdentityConfirmBody, sortValue } from "./handleTableLogic";
 import { tdClass } from "./handleTableStyles";
-import { columnInitialWidth, headerLabelMinWidth } from "./headerLabelMinWidth";
+import {
+  columnInitialWidth,
+  HANDLE_TABLE_DATE_SAMPLE,
+  HANDLE_TABLE_MESSAGES_MAX,
+  HANDLE_TABLE_THREADS_MAX,
+  headerLabelMinWidth,
+} from "./headerLabelMinWidth";
 import { useHandleMutations } from "./useHandleMutations";
 
 type BrowseFn = (args: { kind: ContactBrowseKind; handle?: string; service?: string }) => void;
@@ -64,8 +70,8 @@ function collectColumnWidths(
   const threadsMin = headerLabelMinWidth("Threads");
   // Two-line headers: min from the longest line ("Messages").
   const messagesMin = headerLabelMinWidth("Messages");
-  const dateCol = columnInitialWidth(Math.max(startMin, endMin), ["2020-12-31"]);
-  const totals = sumHandleTotals(handleRows);
+  const dateCol = columnInitialWidth(Math.max(startMin, endMin), [HANDLE_TABLE_DATE_SAMPLE]);
+  const groupTrashPadPx = 20;
 
   const serviceTexts = [
     "Summary",
@@ -73,18 +79,6 @@ function collectColumnWidths(
   ];
   const handleTexts = ["—", ...handleRows.map((h) => h.handle)];
   const aliasTexts = ["—", ...handleRows.map((h) => (loading ? "—" : h.name_alias?.trim() || "—"))];
-  const threadTexts = [
-    conversationCount(totals).toLocaleString(),
-    ...handleRows.map((h) => conversationCount(h).toLocaleString()),
-  ];
-  const directTexts = [
-    totals.individual_message_count.toLocaleString(),
-    ...handleRows.map((h) => h.individual_message_count.toLocaleString()),
-  ];
-  const groupTexts = [
-    totals.group_message_count.toLocaleString(),
-    ...handleRows.map((h) => h.group_message_count.toLocaleString()),
-  ];
 
   return {
     service: { width: columnInitialWidth(serviceMin, serviceTexts), min: serviceMin },
@@ -92,9 +86,18 @@ function collectColumnWidths(
     alias: { width: columnInitialWidth(aliasMin, aliasTexts), min: aliasMin },
     startDate: { width: dateCol, min: startMin },
     endDate: { width: dateCol, min: endMin },
-    conversations: { width: columnInitialWidth(threadsMin, threadTexts), min: threadsMin },
-    directMessages: { width: columnInitialWidth(messagesMin, directTexts), min: messagesMin },
-    groupMessages: { width: columnInitialWidth(messagesMin, groupTexts), min: messagesMin },
+    conversations: {
+      width: columnInitialWidth(threadsMin, [HANDLE_TABLE_THREADS_MAX]),
+      min: threadsMin,
+    },
+    directMessages: {
+      width: columnInitialWidth(messagesMin, [HANDLE_TABLE_MESSAGES_MAX]),
+      min: messagesMin,
+    },
+    groupMessages: {
+      width: columnInitialWidth(messagesMin, [HANDLE_TABLE_MESSAGES_MAX]) + groupTrashPadPx,
+      min: messagesMin + groupTrashPadPx,
+    },
   };
 }
 
