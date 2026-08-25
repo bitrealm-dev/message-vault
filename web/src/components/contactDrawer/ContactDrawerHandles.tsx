@@ -163,7 +163,7 @@ export function ContactDrawerHandles({
           </TableBody>
         )}
         <TableBody className="border-t-2 border-border">
-          {renderHandleSummaryRow(footerAsHandle, onBrowse)}
+          {renderHandleSummaryRow(footerAsHandle, onBrowse, loading)}
         </TableBody>
       </Table>
       <AddIdentityDialog

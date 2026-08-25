@@ -98,10 +98,22 @@ export default function ContactDrawer({
   const [nameValue, setNameValue] = useState("");
   const drawerLeft = useDrawerLeft(variant === "overlay" && !!contactId);
 
-  const detailMatches = !!contactId && !!detail && String(detail.id) === String(contactId);
+  // Prefer in-state detail only when it matches this contact; otherwise use cache
+  // during render so a cache hit never paints a loading flash.
+  const matchedDetail =
+    contactId && detail && String(detail.id) === String(contactId)
+      ? detail
+      : contactId
+        ? getCachedContactDetail(contactId)
+        : null;
+  const detailMatches = !!matchedDetail;
   const previewMatches = !!contactId && !!preview && String(preview.id) === String(contactId);
 
-  const displayName = detailMatches ? detail?.name : previewMatches ? preview?.name : "Loading…";
+  const displayName = detailMatches
+    ? matchedDetail.name
+    : previewMatches
+      ? preview?.name
+      : "Loading…";
   const loading = !detailMatches;
 
   const loadDetail = () => {
@@ -172,20 +184,26 @@ export default function ContactDrawer({
       if (e.key !== "Escape") return;
       if (editingName) {
         setEditingName(false);
-        setNameValue(detailMatches ? detail?.name : nameValue);
+        setNameValue(detailMatches ? matchedDetail?.name : nameValue);
         return;
       }
       onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [contactId, editingName, detailMatches, detail, nameValue, onClose]);
+  }, [contactId, editingName, detailMatches, matchedDetail, nameValue, onClose]);
 
   if (!contactId) return null;
 
   const handleRows: ContactDetail["handles"] = detailMatches
-    ? detail?.handles
+    ? matchedDetail.handles
     : ((previewMatches ? preview?.handles : undefined)?.map((h) => emptyHandleRow(h)) ?? []);
+
+  const displayGroups = detailMatches
+    ? (matchedDetail.groups ?? [])
+    : previewMatches
+      ? (preview?.groups ?? [])
+      : [];
 
   const browse = (args: { kind: ContactBrowseKind; handle?: string; service?: string }) => {
     if (!onBrowseConversations || !contactId) return;
@@ -199,7 +217,7 @@ export default function ContactDrawer({
   };
 
   const saveName = async () => {
-    if (!detailMatches || nameValue === detail?.name) {
+    if (!detailMatches || nameValue === matchedDetail?.name) {
       setEditingName(false);
       return;
     }
@@ -245,7 +263,7 @@ export default function ContactDrawer({
                   e.preventDefault();
                   e.stopPropagation();
                   setEditingName(false);
-                  setNameValue(detail?.name);
+                  setNameValue(matchedDetail?.name);
                 }
               }}
               onBlur={() => {
@@ -271,29 +289,27 @@ export default function ContactDrawer({
           )
         }
         intro={
-          detailMatches ? (
-            <div>
-              <div className="mb-1.5">
-                <span className="text-[0.75rem] font-semibold uppercase tracking-[0.04em] text-muted">
-                  Contact groups
-                </span>
-              </div>
-              <div className="flex min-h-6 flex-wrap items-center gap-1.5">
-                {(detail?.groups ?? []).length > 0 ? (
-                  (detail?.groups ?? []).map((name) => (
-                    <span
-                      key={name}
-                      className="rounded-full bg-elevated px-2 py-0.5 text-[0.75rem] leading-4 text-text"
-                    >
-                      {name}
-                    </span>
-                  ))
-                ) : (
-                  <span className="py-0.5 text-[0.75rem] leading-4 text-muted">No groups</span>
-                )}
-              </div>
+          <div>
+            <div className="mb-1.5">
+              <span className="text-[0.75rem] font-semibold uppercase tracking-[0.04em] text-muted">
+                Contact groups
+              </span>
             </div>
-          ) : null
+            <div className="flex min-h-6 flex-wrap items-center gap-1.5">
+              {displayGroups.length > 0 ? (
+                displayGroups.map((name) => (
+                  <span
+                    key={name}
+                    className="rounded-full bg-elevated px-2 py-0.5 text-[0.75rem] leading-4 text-text"
+                  >
+                    {name}
+                  </span>
+                ))
+              ) : (
+                <span className="py-0.5 text-[0.75rem] leading-4 text-muted">No groups</span>
+              )}
+            </div>
+          </div>
         }
         toolbarExtra={
           <button

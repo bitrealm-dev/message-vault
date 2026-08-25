@@ -31,6 +31,7 @@ export function renderHandleTableRow(
 ) {
   const convos = conversationCount(h);
   const alias = h.name_alias?.trim() || "";
+  const loading = opts.loading;
   return (
     <Row id={h.id} className="group/handle-row outline-none">
       <Cell className={`${tdClass} overflow-hidden`}>
@@ -43,18 +44,19 @@ export function renderHandleTableRow(
       </Cell>
       <Cell className={`${tdClass} overflow-hidden text-muted`}>
         <span className="break-all" title={alias || undefined}>
-          {alias || "—"}
+          {loading ? "—" : alias || "—"}
         </span>
       </Cell>
       <Cell className={`${tdCenterClass} whitespace-nowrap text-muted`}>
-        {handleDateCell(h.start_date)}
+        {loading ? "—" : handleDateCell(h.start_date)}
       </Cell>
       <Cell className={`${tdCenterClass} whitespace-nowrap text-muted`}>
-        {handleDateCell(h.end_date)}
+        {loading ? "—" : handleDateCell(h.end_date)}
       </Cell>
       <Cell className={tdRightClass}>
         <CountCell
           value={convos}
+          loading={loading}
           onClick={
             opts.onBrowse
               ? () =>
@@ -68,10 +70,10 @@ export function renderHandleTableRow(
         />
       </Cell>
       <Cell className={tdRightClass}>
-        <CountCell value={h.individual_message_count} />
+        <CountCell value={h.individual_message_count} loading={loading} />
       </Cell>
       <Cell className={tdRightClass}>
-        <CountCell value={h.group_message_count} />
+        <CountCell value={h.group_message_count} loading={loading} />
       </Cell>
       <Cell className={`${tdClass} whitespace-nowrap`}>
         <div className={`flex items-center justify-center ${rowActionsRevealClass}`}>
@@ -91,31 +93,36 @@ export function renderHandleTableRow(
   );
 }
 
-export function renderHandleSummaryRow(totals: CachedContactHandle, onBrowse?: BrowseFn) {
+export function renderHandleSummaryRow(
+  totals: CachedContactHandle,
+  onBrowse?: BrowseFn,
+  loading = false,
+) {
   return (
     <Row id="handles-total" className="outline-none">
       <Cell className={`${tdClass} font-semibold`}>Summary</Cell>
       <Cell className={`${tdClass} text-muted`}>—</Cell>
       <Cell className={`${tdClass} text-muted`}>—</Cell>
       <Cell className={`${tdCenterClass} whitespace-nowrap text-muted`}>
-        {handleDateCell(totals.start_date)}
+        {loading ? "—" : handleDateCell(totals.start_date)}
       </Cell>
       <Cell className={`${tdCenterClass} whitespace-nowrap text-muted`}>
-        {handleDateCell(totals.end_date)}
+        {loading ? "—" : handleDateCell(totals.end_date)}
       </Cell>
       <Cell className={tdRightClass}>
         <CountCell
           value={conversationCount(totals)}
+          loading={loading}
           onClick={
             onBrowse && conversationCount(totals) > 0 ? () => onBrowse({ kind: "all" }) : undefined
           }
         />
       </Cell>
       <Cell className={tdRightClass}>
-        <CountCell value={totals.individual_message_count} />
+        <CountCell value={totals.individual_message_count} loading={loading} />
       </Cell>
       <Cell className={tdRightClass}>
-        <CountCell value={totals.group_message_count} />
+        <CountCell value={totals.group_message_count} loading={loading} />
       </Cell>
       <Cell className={tdClass} />
     </Row>
