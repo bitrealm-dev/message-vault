@@ -61,12 +61,12 @@ describe("SystemSection", () => {
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   });
 
-  it("has no Save button and uses the new labels", async () => {
+  it("has no Save button and labels the path fields", async () => {
     render(<SystemSection />);
     await waitFor(() => {
-      expect(screen.getByText("Import staging directory")).toBeTruthy();
+      expect(screen.getByLabelText("Import staging directory")).toBeTruthy();
     });
-    expect(screen.getByText("ffmpeg directory")).toBeTruthy();
+    expect(screen.getByLabelText("ffmpeg directory")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Saving…" })).toBeNull();
   });
@@ -109,5 +109,57 @@ describe("SystemSection", () => {
       expect(screen.getByLabelText(/ffmpeg not found/i)).toBeTruthy();
     });
     expect(screen.getByLabelText(/Found ffprobe/i)).toBeTruthy();
+  });
+
+  it("does not persist an ffmpeg directory when the probe fails", async () => {
+    const user = userEvent.setup();
+    const missing = {
+      ok: false,
+      ffmpeg_path: null,
+      ffprobe_path: null,
+      error: "ffmpeg not found or failed -version",
+    };
+    probeFfmpegTools.mockResolvedValue(missing);
+    setFfmpegToolsDir.mockResolvedValue(missing);
+    render(<SystemSection />);
+    await waitFor(() => {
+      expect(screen.getByLabelText("ffmpeg directory")).toBeTruthy();
+    });
+
+    const ffmpegInput = screen.getByLabelText("ffmpeg directory");
+    await user.type(ffmpegInput, "/opt/no-ffmpeg");
+    await waitFor(() => {
+      expect(probeFfmpegTools).toHaveBeenCalledWith("/opt/no-ffmpeg");
+    });
+    expect(localStorage.getItem("mv-ffmpeg-path")).toBeNull();
+    expect(setFfmpegToolsDir).not.toHaveBeenCalledWith("/opt/no-ffmpeg");
+  });
+
+  it("keeps a previous ffmpeg directory when a later probe fails", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("mv-ffmpeg-path", "/usr/bin");
+    render(<SystemSection />);
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("/usr/bin")).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(setFfmpegToolsDir).toHaveBeenCalledWith("/usr/bin");
+    });
+
+    const missing = {
+      ok: false,
+      ffmpeg_path: null,
+      ffprobe_path: null,
+      error: "ffmpeg not found or failed -version",
+    };
+    probeFfmpegTools.mockResolvedValue(missing);
+    setFfmpegToolsDir.mockResolvedValue(missing);
+
+    const ffmpegInput = screen.getByLabelText("ffmpeg directory");
+    await user.type(ffmpegInput, "x");
+    await waitFor(() => {
+      expect(probeFfmpegTools).toHaveBeenCalledWith("/usr/binx");
+    });
+    expect(localStorage.getItem("mv-ffmpeg-path")).toBe("/usr/bin");
   });
 });

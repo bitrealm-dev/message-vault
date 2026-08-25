@@ -18,8 +18,8 @@ const sectionHeading = "m-0 mb-2 text-[12px] font-semibold uppercase tracking-[0
 
 const EXAMPLE_STAGING = "staging-iphone-ios-260809-143022";
 
-/** Shared label + control grid so both path fields share one nowrap label column. */
-const settingsGrid = "grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1";
+/** Shared label + control grid so Vault and Media path fields share one nowrap label column. */
+const settingsGrid = "grid grid-cols-[13.5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-1";
 const settingsLabel = "whitespace-nowrap text-[0.875rem] font-medium text-text";
 const settingsHelp = "col-start-2 pl-2 text-[0.75rem] text-muted";
 
@@ -35,19 +35,13 @@ function stagingHelpExample(stagingDir: string, defaultDir: string): string {
   return `${trimmed}/${EXAMPLE_STAGING}`;
 }
 
-async function applyFfmpegDir(dir: string): Promise<FfmpegToolsProbe> {
+function persistFfmpegDir(dir: string): void {
   const trimmed = dir.trim();
   if (!trimmed) {
     localStorage.removeItem(FFMPEG_TOOLS_STORAGE_KEY);
-    return setFfmpegToolsDir(null);
+    return;
   }
-
-  const probe = await probeFfmpegTools(trimmed);
   localStorage.setItem(FFMPEG_TOOLS_STORAGE_KEY, trimmed);
-  if (probe.ok) {
-    return setFfmpegToolsDir(trimmed);
-  }
-  return probe;
 }
 
 function ToolStatusRow({ name, path }: { name: "ffmpeg" | "ffprobe"; path: string | null }) {
@@ -88,10 +82,25 @@ export function SystemSection() {
 
   const runFfmpegApply = useCallback(async (dir: string) => {
     const gen = ++ffmpegApplyGen.current;
+    const trimmed = dir.trim();
     try {
-      const result = await applyFfmpegDir(dir);
+      if (!trimmed) {
+        const result = await setFfmpegToolsDir(null);
+        if (gen !== ffmpegApplyGen.current) return;
+        persistFfmpegDir("");
+        setProbe(result);
+        return;
+      }
+
+      const probed = await probeFfmpegTools(trimmed);
       if (gen !== ffmpegApplyGen.current) return;
-      setProbe(result);
+      setProbe(probed);
+      if (!probed.ok) return;
+
+      const applied = await setFfmpegToolsDir(trimmed);
+      if (gen !== ffmpegApplyGen.current) return;
+      setProbe(applied);
+      if (applied.ok) persistFfmpegDir(trimmed);
     } catch {
       if (gen !== ffmpegApplyGen.current) return;
       setProbe({
@@ -166,8 +175,9 @@ export function SystemSection() {
         <label htmlFor={stagingId} className={settingsLabel}>
           Import staging directory
         </label>
-        <div id={stagingId}>
+        <div>
           <PathPicker
+            id={stagingId}
             value={stagingDir}
             onChange={onStagingPathChange}
             directory
@@ -204,8 +214,9 @@ export function SystemSection() {
           <label htmlFor={ffmpegId} className={settingsLabel}>
             ffmpeg directory
           </label>
-          <div id={ffmpegId}>
+          <div>
             <PathPicker
+              id={ffmpegId}
               value={ffmpegPath}
               onChange={onFfmpegPathChange}
               directory
