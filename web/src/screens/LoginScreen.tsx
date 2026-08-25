@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import AuthBackButton from "../components/AuthBackButton";
 import AuthErrorFooter from "../components/AuthErrorFooter";
 import Button from "../components/Button";
+import HealthDot from "../components/HealthDot";
 import PasswordField from "../components/PasswordField";
 import TextField from "../components/TextField";
 import { apiClient, setBaseUrl } from "../lib/api";
@@ -11,6 +12,7 @@ import { type AuthMode, initialLoginServerUrl, isAuthMode } from "../lib/authGua
 import { isTauri } from "../lib/tauri-check";
 import { authCard, authTitle, mutedText, pageCenter } from "../lib/uiStyles";
 import { useAsyncAction } from "../lib/useAsyncAction";
+import { useVaultHealth } from "../lib/useVaultHealth";
 
 interface AuthModeResponse {
   mode: string;
@@ -35,6 +37,8 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
 
   const hankoRef = useRef<HTMLDivElement>(null);
+  // Only probe while choosing a vault; stop after Connect advances the card.
+  const healthStatus = useVaultHealth(authMode === null ? serverUrl : null);
 
   const displayError = error || hankoError;
 
@@ -152,6 +156,7 @@ export default function LoginScreen() {
           <>
             <TextField
               label="Server URL"
+              labelEnd={<HealthDot status={healthStatus} />}
               value={serverUrl}
               onChange={setServerUrl}
               onKeyDown={(e) => e.key === "Enter" && detectMode()}

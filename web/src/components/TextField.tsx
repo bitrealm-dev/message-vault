@@ -1,4 +1,4 @@
-import type { InputHTMLAttributes, KeyboardEventHandler } from "react";
+import type { InputHTMLAttributes, KeyboardEventHandler, ReactNode } from "react";
 import {
   FieldError,
   Input,
@@ -22,6 +22,8 @@ export const textInputClassName =
  */
 export interface TextFieldProps extends RACTextFieldProps {
   label?: string;
+  /** Optional control beside the label (e.g. a status light). */
+  labelEnd?: ReactNode;
   hint?: string;
   inputClassName?: string;
   className?: string;
@@ -39,6 +41,7 @@ export interface TextFieldProps extends RACTextFieldProps {
 
 export default function TextField({
   label,
+  labelEnd,
   hint,
   inputClassName,
   className,
@@ -46,7 +49,12 @@ export default function TextField({
 }: TextFieldProps) {
   return (
     <RACTextField {...props} className={className}>
-      {label && <Label className="mb-1 block text-[0.875rem] font-medium text-text">{label}</Label>}
+      {label ? (
+        <div className="mb-1 flex items-center gap-2">
+          <Label className="text-[0.875rem] font-medium text-text">{label}</Label>
+          {labelEnd}
+        </div>
+      ) : null}
       <Input className={`${textInputClassName} ${inputClassName ?? ""}`} />
       {hint && (
         <Text slot="description" className="mt-1 block text-[0.75rem] text-muted">
