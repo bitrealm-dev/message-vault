@@ -79,13 +79,42 @@ describe("SortableColumn", () => {
     expect(resizers.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("keeps an invisible sort caret in the header so width does not jump", () => {
-    render(<Harness />);
-    const service = screen.getByRole("columnheader", { name: /Service/i });
-    const caret = service.querySelector("[aria-hidden='true']");
-    expect(caret?.textContent).toBe("▲");
+  it("pins the sort caret to the column edge, not the label", () => {
+    render(
+      <ResizableTableContainer>
+        <Table aria-label="Contact handles">
+          <TableHeader>
+            <SortableColumn id="service" allowsResizing>
+              Service
+            </SortableColumn>
+          </TableHeader>
+          <TableBody>
+            <Row id="r1">
+              <Cell>Phone</Cell>
+            </Row>
+          </TableBody>
+        </Table>
+      </ResizableTableContainer>,
+    );
+    const header = screen.getByRole("columnheader", { name: /Service/i });
+    const flexRow = header.querySelector(".relative.flex.w-full");
+    const caret = Array.from(header.querySelectorAll("[aria-hidden='true']")).find(
+      (el) => el.textContent === "▲" || el.textContent === "▼",
+    );
+    expect(caret).toBeTruthy();
+    expect(caret?.parentElement).toBe(flexRow);
+    expect(caret?.className).toMatch(/absolute/);
+    expect(caret?.className).toMatch(/right-1/);
+    expect(caret?.className).toMatch(/pointer-events-none/);
     expect(caret?.className).toMatch(/invisible/);
-    expect(caret?.className).toMatch(/right-0/);
+    expect(header.className).toMatch(/px-0/);
+    const group = flexRow?.querySelector(".flex-1");
+    expect(group?.className).toMatch(/px-4/);
+    expect(group?.className).not.toMatch(/pr-4/);
+    const label = caret?.parentElement?.querySelector("span.max-w-full");
+    expect(label?.className).not.toMatch(/px-4/);
+    expect(label?.className).not.toMatch(/pr-4/);
+    expect(label?.contains(caret as Node)).toBe(false);
   });
 
   it("pins the resizer as the last child of a full-width flex row", () => {
@@ -100,6 +129,29 @@ describe("SortableColumn", () => {
     expect(last.className).toMatch(/absolute/);
     const group = children[0] as HTMLElement;
     expect(group.className).toMatch(/flex-1/);
+  });
+
+  it("keeps right-aligned headers off the edge caret", () => {
+    render(
+      <ResizableTableContainer>
+        <Table aria-label="Checked contacts">
+          <TableHeader>
+            <SortableColumn id="conversations" align="right">
+              Threads
+            </SortableColumn>
+          </TableHeader>
+          <TableBody>
+            <Row id="r1">
+              <Cell>12</Cell>
+            </Row>
+          </TableBody>
+        </Table>
+      </ResizableTableContainer>,
+    );
+    const header = screen.getByRole("columnheader", { name: /Threads/i });
+    const group = header.querySelector(".flex-1");
+    expect(group?.className).toMatch(/pr-4/);
+    expect(group?.className).not.toMatch(/px-4/);
   });
 
   it("accents the active sort column and flips direction on second click", async () => {

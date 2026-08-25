@@ -1,8 +1,19 @@
-/** Left pad (`pl-1` = 4px) plus reserved right slot for the sort caret (`pr-2.5` ≈ 10px). */
-const HEADER_CHROME_PX = 14;
+/** Symmetric gutter so a centered label clears the edge-pinned sort caret. */
+const HEADER_CHROME_PX = 32;
 
-/** Body cell horizontal padding (`px-1` both sides). */
+/** Locale-formatted body maxima used to size count and date columns. */
+export const HANDLE_TABLE_THREADS_MAX = "9,999";
+export const HANDLE_TABLE_MESSAGES_MAX = "999,999";
+export const HANDLE_TABLE_DATE_SAMPLE = "2020-12-31";
+
+/** Body cell horizontal padding (`px-1` both sides) for Service / Identity / Alias. */
 const CELL_PADDING_PX = 8;
+
+/** Date and count cells use DataCard `px-3` (12px each side). */
+export const HANDLE_TABLE_COUNT_CELL_PADDING_PX = 24;
+
+/** Group Messages: `px-3` left plus `!pr-9` right for the hover trash control. */
+export const HANDLE_TABLE_GROUP_CELL_PADDING_PX = 48;
 
 const HEADER_FONT = '600 11px ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif';
 const BODY_FONT = '400 13px ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif';
@@ -61,12 +72,16 @@ export function headerLabelMinWidth(label: string): number {
 /**
  * Initial column width: at least the header min, otherwise the widest body cell.
  */
-export function columnInitialWidth(headerMinPx: number, cellTexts: string[]): number {
+export function columnInitialWidth(
+  headerMinPx: number,
+  cellTexts: string[],
+  cellPaddingPx = CELL_PADDING_PX,
+): number {
   let widest = 0;
   for (const raw of cellTexts) {
     const text = raw.replace(/\s+/g, " ").trim();
     if (!text) continue;
     widest = Math.max(widest, measureText(text, BODY_FONT, false));
   }
-  return Math.max(headerMinPx, Math.ceil(widest + CELL_PADDING_PX));
+  return Math.max(headerMinPx, Math.ceil(widest + cellPaddingPx));
 }

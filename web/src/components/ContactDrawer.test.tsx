@@ -436,7 +436,7 @@ describe("ContactDrawer", () => {
     });
   });
 
-  it("left-aligns identity headers and shows column resizers", async () => {
+  it("centers identity headers between column markers and keeps Group last", async () => {
     get.mockResolvedValue(detail("a"));
     render(
       <ContactDrawer
@@ -457,22 +457,38 @@ describe("ContactDrawer", () => {
     });
 
     const service = screen.getByRole("columnheader", { name: /Service/i });
-    expect(service.className).toMatch(/text-left/);
-
-    const direct = screen.getByRole("columnheader", { name: /Direct Messages/i });
-    expect(direct.querySelector(".flex-col")).toBeTruthy();
-    const group = screen.getByRole("columnheader", { name: /Group Messages/i });
-    expect(group.querySelector(".flex-col")).toBeTruthy();
+    expect(service.className).toMatch(/text-center/);
+    expect(service.className).not.toMatch(/text-left/);
 
     const firstSeen = screen.getByRole("columnheader", { name: /First Seen/i });
     expect(firstSeen.querySelector(".whitespace-nowrap")).toBeTruthy();
+    expect(firstSeen.className).toMatch(/text-center/);
+    expect(firstSeen.className).not.toMatch(/text-left/);
     const lastSeen = screen.getByRole("columnheader", { name: /Last Seen/i });
     expect(lastSeen.querySelector(".whitespace-nowrap")).toBeTruthy();
+    expect(lastSeen.className).toMatch(/text-center/);
+    expect(lastSeen.className).not.toMatch(/text-left/);
 
     const threads = screen.getByRole("columnheader", { name: /Threads/i });
-    expect(threads.className).toMatch(/text-left/);
+    expect(threads.className).toMatch(/text-center/);
+    expect(threads.className).not.toMatch(/text-right/);
+
+    const direct = screen.getByRole("columnheader", { name: /Direct Messages/i });
+    expect(direct.querySelector(".flex-col")).toBeTruthy();
+    expect(direct.querySelector(".items-center")).toBeTruthy();
+    expect(direct.className).toMatch(/text-center/);
+    expect(direct.className).not.toMatch(/text-right/);
+    const group = screen.getByRole("columnheader", { name: /Group Messages/i });
+    expect(group.querySelector(".flex-col")).toBeTruthy();
+    expect(group.querySelector(".items-center")).toBeTruthy();
+    expect(group.className).toMatch(/text-center/);
+    expect(group.className).not.toMatch(/text-right/);
 
     const table = screen.getByRole("grid", { name: "Contact handles" });
     expect(table.querySelectorAll(".cursor-col-resize").length).toBeGreaterThanOrEqual(8);
+
+    const headers = screen.getAllByRole("columnheader");
+    const groupIndex = headers.findIndex((h) => /Group Messages/i.test(h.textContent ?? ""));
+    expect(groupIndex).toBe(headers.length - 1);
   });
 });

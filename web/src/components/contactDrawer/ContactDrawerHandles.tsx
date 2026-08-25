@@ -1,7 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   Cell,
-  Column,
   ResizableTableContainer,
   Row,
   type SortDescriptor,
@@ -22,19 +21,25 @@ import {
 } from "./contactDrawerTypes";
 import { renderHandleSummaryRow, renderHandleTableRow } from "./HandleTableRow";
 import { SortableColumn } from "./handleTableHelpers";
-import { conversationCount, removeIdentityConfirmBody, sortValue } from "./handleTableLogic";
-import { tdClass, thClass } from "./handleTableStyles";
-import { columnInitialWidth, headerLabelMinWidth } from "./headerLabelMinWidth";
+import { removeIdentityConfirmBody, sortValue } from "./handleTableLogic";
+import { tdClass } from "./handleTableStyles";
+import {
+  columnInitialWidth,
+  HANDLE_TABLE_COUNT_CELL_PADDING_PX,
+  HANDLE_TABLE_DATE_SAMPLE,
+  HANDLE_TABLE_GROUP_CELL_PADDING_PX,
+  HANDLE_TABLE_MESSAGES_MAX,
+  HANDLE_TABLE_THREADS_MAX,
+  headerLabelMinWidth,
+} from "./headerLabelMinWidth";
 import { useHandleMutations } from "./useHandleMutations";
 
 type BrowseFn = (args: { kind: ContactBrowseKind; handle?: string; service?: string }) => void;
 
-const ACTIONS_COL_WIDTH = 40;
-
 const twoLineHeader = (line1: string, line2: string) => (
   <>
     <span className="sr-only">{`${line1} ${line2}`}</span>
-    <span className="flex flex-col items-start leading-tight" aria-hidden="true">
+    <span className="flex flex-col items-center leading-tight" aria-hidden="true">
       <span className="whitespace-nowrap">{line1}</span>
       <span className="whitespace-nowrap">{line2}</span>
     </span>
@@ -67,8 +72,16 @@ function collectColumnWidths(
   const threadsMin = headerLabelMinWidth("Threads");
   // Two-line headers: min from the longest line ("Messages").
   const messagesMin = headerLabelMinWidth("Messages");
-  const dateCol = columnInitialWidth(Math.max(startMin, endMin), ["2020-12-31"]);
-  const totals = sumHandleTotals(handleRows);
+  const dateCol = columnInitialWidth(
+    Math.max(startMin, endMin),
+    [HANDLE_TABLE_DATE_SAMPLE],
+    HANDLE_TABLE_COUNT_CELL_PADDING_PX,
+  );
+  const groupMin = columnInitialWidth(
+    messagesMin,
+    [HANDLE_TABLE_MESSAGES_MAX],
+    HANDLE_TABLE_GROUP_CELL_PADDING_PX,
+  );
 
   const serviceTexts = [
     "Summary",
@@ -76,18 +89,6 @@ function collectColumnWidths(
   ];
   const handleTexts = ["—", ...handleRows.map((h) => h.handle)];
   const aliasTexts = ["—", ...handleRows.map((h) => (loading ? "—" : h.name_alias?.trim() || "—"))];
-  const threadTexts = [
-    conversationCount(totals).toLocaleString(),
-    ...handleRows.map((h) => conversationCount(h).toLocaleString()),
-  ];
-  const directTexts = [
-    totals.individual_message_count.toLocaleString(),
-    ...handleRows.map((h) => h.individual_message_count.toLocaleString()),
-  ];
-  const groupTexts = [
-    totals.group_message_count.toLocaleString(),
-    ...handleRows.map((h) => h.group_message_count.toLocaleString()),
-  ];
 
   return {
     service: { width: columnInitialWidth(serviceMin, serviceTexts), min: serviceMin },
@@ -95,9 +96,26 @@ function collectColumnWidths(
     alias: { width: columnInitialWidth(aliasMin, aliasTexts), min: aliasMin },
     startDate: { width: dateCol, min: startMin },
     endDate: { width: dateCol, min: endMin },
-    conversations: { width: columnInitialWidth(threadsMin, threadTexts), min: threadsMin },
-    directMessages: { width: columnInitialWidth(messagesMin, directTexts), min: messagesMin },
-    groupMessages: { width: columnInitialWidth(messagesMin, groupTexts), min: messagesMin },
+    conversations: {
+      width: columnInitialWidth(
+        threadsMin,
+        [HANDLE_TABLE_THREADS_MAX],
+        HANDLE_TABLE_COUNT_CELL_PADDING_PX,
+      ),
+      min: threadsMin,
+    },
+    directMessages: {
+      width: columnInitialWidth(
+        messagesMin,
+        [HANDLE_TABLE_MESSAGES_MAX],
+        HANDLE_TABLE_COUNT_CELL_PADDING_PX,
+      ),
+      min: messagesMin,
+    },
+    groupMessages: {
+      width: groupMin,
+      min: groupMin,
+    },
   };
 }
 
@@ -197,7 +215,6 @@ export function ContactDrawerHandles({
             <SortableColumn
               id="service"
               isRowHeader
-              align="left"
               allowsResizing
               defaultWidth={columnWidths.service.width}
               minWidth={columnWidths.service.min}
@@ -206,7 +223,6 @@ export function ContactDrawerHandles({
             </SortableColumn>
             <SortableColumn
               id="handle"
-              align="left"
               allowsResizing
               defaultWidth={columnWidths.handle.width}
               minWidth={columnWidths.handle.min}
@@ -215,7 +231,6 @@ export function ContactDrawerHandles({
             </SortableColumn>
             <SortableColumn
               id="name_alias"
-              align="left"
               allowsResizing
               defaultWidth={columnWidths.alias.width}
               minWidth={columnWidths.alias.min}
@@ -224,7 +239,6 @@ export function ContactDrawerHandles({
             </SortableColumn>
             <SortableColumn
               id="start_date"
-              align="left"
               allowsResizing
               defaultWidth={columnWidths.startDate.width}
               minWidth={columnWidths.startDate.min}
@@ -233,7 +247,6 @@ export function ContactDrawerHandles({
             </SortableColumn>
             <SortableColumn
               id="end_date"
-              align="left"
               allowsResizing
               defaultWidth={columnWidths.endDate.width}
               minWidth={columnWidths.endDate.min}
@@ -242,7 +255,6 @@ export function ContactDrawerHandles({
             </SortableColumn>
             <SortableColumn
               id="conversations"
-              align="left"
               allowsResizing
               defaultWidth={columnWidths.conversations.width}
               minWidth={columnWidths.conversations.min}
@@ -251,7 +263,6 @@ export function ContactDrawerHandles({
             </SortableColumn>
             <SortableColumn
               id="direct_messages"
-              align="left"
               allowsResizing
               defaultWidth={columnWidths.directMessages.width}
               minWidth={columnWidths.directMessages.min}
@@ -260,20 +271,12 @@ export function ContactDrawerHandles({
             </SortableColumn>
             <SortableColumn
               id="group_messages"
-              align="left"
               allowsResizing
-              defaultWidth={columnWidths.groupMessages.width}
+              defaultWidth="1fr"
               minWidth={columnWidths.groupMessages.min}
             >
               {twoLineHeader("Group", "Messages")}
             </SortableColumn>
-            <Column
-              id="actions"
-              width={ACTIONS_COL_WIDTH}
-              minWidth={ACTIONS_COL_WIDTH}
-              defaultWidth={ACTIONS_COL_WIDTH}
-              className={`${thClass} !cursor-default`}
-            />
           </TableHeader>
           {handleRows.length === 0 ? (
             <TableBody className="[&_tr]:border-b [&_tr]:border-border">
@@ -281,7 +284,6 @@ export function ContactDrawerHandles({
                 <Cell className={`${tdClass} !text-left text-muted`}>
                   {loading ? "Loading…" : "No handles"}
                 </Cell>
-                <Cell className={tdClass} />
                 <Cell className={tdClass} />
                 <Cell className={tdClass} />
                 <Cell className={tdClass} />

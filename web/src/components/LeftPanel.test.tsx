@@ -6,8 +6,13 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import LeftPanel from "./LeftPanel";
 
+const profileState = vi.hoisted(() => ({
+  profile: null as { is_guest?: boolean } | null,
+}));
+const tauriState = vi.hoisted(() => ({ isTauri: false }));
+
 vi.mock("../lib/useAccountProfile", () => ({
-  useAccountProfile: () => ({ profile: null }),
+  useAccountProfile: () => ({ profile: profileState.profile }),
 }));
 
 vi.mock("../lib/useContactGroups", () => ({
@@ -19,7 +24,7 @@ vi.mock("../lib/useThreadTags", () => ({
 }));
 
 vi.mock("../lib/tauri-check", () => ({
-  isTauri: () => false,
+  isTauri: () => tauriState.isTauri,
 }));
 
 afterEach(() => {
@@ -28,11 +33,13 @@ afterEach(() => {
 
 beforeEach(() => {
   localStorage.clear();
+  profileState.profile = null;
+  tauriState.isTauri = false;
 });
 
-function renderPanel() {
+function renderPanel(initialEntries?: string[]) {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={initialEntries}>
       <LeftPanel onSearchChange={() => {}} onSearch={() => {}} />
     </MemoryRouter>,
   );
@@ -77,5 +84,61 @@ describe("LeftPanel", () => {
     expect(screen.getByRole("button", { name: "Rename…" })).toBeTruthy();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("button", { name: "Rename…" })).toBeNull();
+  });
+
+  describe("desktop Import/Export Messages section", () => {
+    beforeEach(() => {
+      tauriState.isTauri = true;
+      profileState.profile = { is_guest: false };
+    });
+
+    it("shows a left-chevron Messages heading with aria-expanded", () => {
+      renderPanel();
+      const heading = screen.getByRole("button", { name: "Messages", expanded: true });
+      expect(heading.getAttribute("aria-expanded")).toBe("true");
+      expect(heading.querySelector('[class*="size-[15px]"]')).not.toBeNull();
+      expect(heading.className).toContain("col-span-2");
+      expect(heading.querySelector('[class*="motion-reduce:transition-none"]')).not.toBeNull();
+    });
+
+    it("highlights the Messages heading when Import is the current route", () => {
+      renderPanel(["/import"]);
+      const heading = screen.getByRole("button", { name: "Messages", expanded: true });
+      expect(heading.className).toMatch(/bg-hover/);
+    });
+
+    it("indents Import and Export like nested group rows", () => {
+      renderPanel();
+      const importBtn = screen.getByRole("button", { name: "Import" });
+      const exportBtn = screen.getByRole("button", { name: "Export" });
+      for (const btn of [importBtn, exportBtn]) {
+        const nested = btn.querySelector('[class*="pl-[calc(15px+0.5rem)]"]');
+        expect(nested).not.toBeNull();
+        expect(nested?.className).toContain("self-stretch");
+        expect(nested?.querySelector('[class*="size-[15px]"]')).not.toBeNull();
+      }
+    });
+
+    it("hides Import and Export when the Messages heading collapses", async () => {
+      const user = userEvent.setup();
+      renderPanel();
+      expect(screen.getByRole("button", { name: "Import" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Export" })).toBeTruthy();
+
+      await user.click(screen.getByRole("button", { name: "Messages", expanded: true }));
+      expect(screen.queryByRole("button", { name: "Import" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Export" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Messages", expanded: false })).toBeTruthy();
+    });
+
+    it("keeps browse Messages without nested padding", () => {
+      renderPanel();
+      const browse = screen
+        .getAllByRole("button", { name: "Messages" })
+        .find((btn) => btn.getAttribute("aria-expanded") == null);
+      expect(browse).toBeTruthy();
+      expect(browse?.className).not.toContain("pl-[calc(15px+0.5rem)]");
+      expect(browse?.querySelector('[class*="size-[15px]"]')).not.toBeNull();
+    });
   });
 });
