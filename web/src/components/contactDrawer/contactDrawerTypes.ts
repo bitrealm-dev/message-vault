@@ -48,6 +48,30 @@ export function contactPreviewFromListRow(c: ContactListPreviewSource): ContactP
   };
 }
 
+export type ThreadParticipantPreviewSource = {
+  contact_id: string | null;
+  handle: string;
+  name?: string | null;
+  preferred_name?: string | null;
+};
+
+export function contactPreviewFromThreadParticipants(
+  contactId: string,
+  participants: readonly ThreadParticipantPreviewSource[],
+): ContactPreview | null {
+  const matched = participants.filter((p) => p.contact_id === contactId);
+  if (matched.length === 0) return null;
+  const handles = matched.map((p) => p.handle).filter((h) => h.length > 0);
+  const named = matched.find((p) => (p.name ?? p.preferred_name)?.trim());
+  const name = (named?.name ?? named?.preferred_name)?.trim() || matched[0].handle;
+  return {
+    id: contactId,
+    name,
+    handles,
+    handleCount: previewHandleStubRows(handles, undefined).length,
+  };
+}
+
 /** Format an API ISO timestamp as YYYY-MM-DD for the handles table. */
 export function formatHandleDate(iso: string | null | undefined): string | null {
   return formatIsoDateOnly(iso);
