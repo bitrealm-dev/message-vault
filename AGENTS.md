@@ -44,6 +44,8 @@
 - Use `gh pr view <PR_NUMBER>` to see specific PR details
 - Use `gh pr create` to open new PRs
 - Use `gh pr checks <PR_NUMBER>` to see test results
+- Use the **GitHub MCP** (`plugin-github-github`) for issues, PR read/search, reviews, and GitHub code search when the server is authenticated; call `mcp_auth` if discovery fails, otherwise fall back to `gh`. See [`.cursor/rules/github-mcp.mdc`](.cursor/rules/github-mcp.mdc).
+- Use the **Playwright MCP** (`plugin-playwright-playwright`) to verify browser UI after `web/` changes: navigate to the Vite app (prefer `http://127.0.0.1:5173` with the vault on `:8080`), take a snapshot, then click/type as needed. See [`.cursor/rules/playwright-mcp.mdc`](.cursor/rules/playwright-mcp.mdc). Desktop-only screens gated by `isTauri()` still need the Tauri window or unit tests — Playwright against Vite alone cannot exercise them.
 
 ## When Uncertain
 
