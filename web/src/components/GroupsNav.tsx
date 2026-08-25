@@ -12,12 +12,7 @@ import GroupNameDialog from "./GroupNameDialog";
 import { EllipsisIcon, PeopleGroupIcon, PersonIcon } from "./icons";
 import NavCollapsibleSection from "./NavCollapsibleSection";
 import NavGlyphButton from "./NavGlyphButton";
-
-function navRowClass(active: boolean): string {
-  return `group relative grid w-full grid-cols-[minmax(0,1fr)_1.5rem] items-center rounded border-none py-0.5 text-left text-[0.875rem] text-text hover:bg-hover ${
-    active ? "bg-hover font-semibold" : "bg-transparent font-normal"
-  }`;
-}
+import { navGlyphRowClass } from "./navSectionLayout";
 
 function apiErrorMessage(err: unknown, fallback: string): string {
   if (!(err instanceof Error)) return fallback;
@@ -132,7 +127,7 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
           const menuOpen = menuFor === name;
           return (
             <div key={name} className="relative w-full">
-              <div className={navRowClass(active)}>
+              <div className={navGlyphRowClass(active)}>
                 <button
                   type="button"
                   onClick={() => navigate(href)}
@@ -195,7 +190,7 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
         <button
           type="button"
           onClick={() => navigate("/no-group")}
-          className={`${navRowClass(location.pathname === "/no-group")} cursor-pointer bg-transparent`}
+          className={`${navGlyphRowClass(location.pathname === "/no-group")} cursor-pointer bg-transparent`}
         >
           <span className="flex min-w-0 items-center gap-2 pl-3">
             <PersonIcon size={15} />

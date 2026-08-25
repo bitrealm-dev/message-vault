@@ -1,6 +1,7 @@
 import { type ReactNode, useState } from "react";
 import { ChevronRightIcon, PlusIcon } from "./icons";
 import NavGlyphButton from "./NavGlyphButton";
+import { NAV_SECTION_GRID_CLASS } from "./navSectionLayout";
 
 const STORAGE_PREFIX = "mv-left-nav-open:";
 
@@ -45,7 +46,7 @@ export default function NavCollapsibleSection({
 
   return (
     <div className={className}>
-      <div className="mb-1 grid grid-cols-[minmax(0,1fr)_1.5rem] items-center">
+      <div className={`mb-1 ${NAV_SECTION_GRID_CLASS}`}>
         <button
           type="button"
           aria-expanded={open}

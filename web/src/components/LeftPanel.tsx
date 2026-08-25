@@ -20,6 +20,7 @@ import {
 } from "./leftPanelWidth";
 import NavCollapsibleSection from "./NavCollapsibleSection";
 import NavGlyphButton from "./NavGlyphButton";
+import { NAV_SECTION_GRID_CLASS } from "./navSectionLayout";
 import SavedGroupForm from "./SavedGroupForm";
 import ThreadTagsNav from "./ThreadTagsNav";
 import { useColumnResize } from "./useColumnResize";
@@ -217,10 +218,7 @@ export default function LeftPanel({
             <div className="py-1.5 pl-3 text-[0.813rem] text-muted">No saved searches</div>
           ) : (
             groups.map((g) => (
-              <div
-                key={g.id}
-                className="grid w-full grid-cols-[minmax(0,1fr)_1.5rem] items-center"
-              >
+              <div key={g.id} className={NAV_SECTION_GRID_CLASS}>
                 <button
                   type="button"
                   onClick={() => {

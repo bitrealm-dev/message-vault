@@ -1,6 +1,9 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
-/** 24px round hit target for left-nav plus, ellipsis, and delete. */
+/**
+ * 24px (`size-6`) round hit target for left-nav plus, ellipsis, and delete.
+ * Trailing column width in `navSectionLayout` must stay 1.5rem to match.
+ */
 export default function NavGlyphButton({
   children,
   active = false,
