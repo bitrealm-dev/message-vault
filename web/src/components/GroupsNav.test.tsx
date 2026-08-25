@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it } from "vitest";
 import GroupsNav from "./GroupsNav";
@@ -44,9 +45,20 @@ describe("GroupsNav", () => {
     renderNav("/contacts");
     const college = screen.getByRole("button", { name: "College" });
     expect(college.className).toContain("pl-[calc(15px+0.5rem)]");
+    expect(college.className).toContain("self-stretch");
     const noGroupInner = screen
       .getByRole("button", { name: "No group" })
       .querySelector('[class*="pl-[calc(15px+0.5rem)]"]');
     expect(noGroupInner).not.toBeNull();
+    expect(noGroupInner?.className).toContain("self-stretch");
+  });
+
+  it("closes the group options menu on Escape", async () => {
+    const user = userEvent.setup();
+    renderNav("/contacts");
+    await user.click(screen.getByRole("button", { name: "Group options for College" }));
+    expect(screen.getByRole("button", { name: "Rename…" })).toBeTruthy();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("button", { name: "Rename…" })).toBeNull();
   });
 });

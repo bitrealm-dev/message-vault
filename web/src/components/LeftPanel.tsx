@@ -178,8 +178,15 @@ export default function LeftPanel({
       if (t instanceof Element && t.closest("[data-saved-search-row-menu]")) return;
       setMenuFor(null);
     };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuFor(null);
+    };
     document.addEventListener("mousedown", onPointerDown, true);
-    return () => document.removeEventListener("mousedown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
   }, [menuFor]);
 
   return (
@@ -290,6 +297,7 @@ export default function LeftPanel({
                     <NavGlyphButton
                       data-saved-search-row-menu=""
                       aria-label={`Saved search options for ${g.name}`}
+                      aria-haspopup="menu"
                       aria-expanded={menuOpen}
                       active={menuOpen}
                       onClick={(e) => {
@@ -357,6 +365,7 @@ export default function LeftPanel({
       ) : null}
       {editFor ? (
         <SavedGroupForm
+          key={editFor.id}
           initial={{ name: editFor.name, query: editFor.query }}
           onSave={(name, query) => {
             updateGroup(editFor.id, name, query);

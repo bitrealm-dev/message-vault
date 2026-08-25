@@ -11,7 +11,7 @@ export const NAV_LEADING_GLYPH_CLASS = "flex size-[15px] shrink-0 items-center j
 export const NAV_LEADING_ROW_CLASS = "flex min-w-0 items-center gap-2";
 
 /** Nested icon row: indent so the icon lines up with the section title. */
-export const NAV_NESTED_ROW_CLASS = `${NAV_LEADING_ROW_CLASS} pl-[calc(15px+0.5rem)]`;
+export const NAV_NESTED_ROW_CLASS = `${NAV_LEADING_ROW_CLASS} self-stretch pl-[calc(15px+0.5rem)]`;
 
 /** Group / tag row shell: shared grid + hover/active fill. */
 export function navGlyphRowClass(active: boolean): string {

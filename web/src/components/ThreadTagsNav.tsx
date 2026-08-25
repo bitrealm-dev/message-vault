@@ -54,8 +54,15 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
       if (t instanceof Element && t.closest("[data-tag-row-menu]")) return;
       setMenuFor(null);
     };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuFor(null);
+    };
     document.addEventListener("mousedown", onPointerDown, true);
-    return () => document.removeEventListener("mousedown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
   }, [menuFor]);
 
   const createTag = async (name: string) => {
@@ -145,6 +152,7 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
                 <NavGlyphButton
                   data-tag-row-menu=""
                   aria-label={`Tag options for ${name}`}
+                  aria-haspopup="menu"
                   aria-expanded={menuOpen}
                   disabled={busy}
                   active={menuOpen}

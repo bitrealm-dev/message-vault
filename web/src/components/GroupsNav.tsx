@@ -54,8 +54,15 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
       if (t instanceof Element && t.closest("[data-group-row-menu]")) return;
       setMenuFor(null);
     };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuFor(null);
+    };
     document.addEventListener("mousedown", onPointerDown, true);
-    return () => document.removeEventListener("mousedown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
   }, [menuFor]);
 
   const createGroup = async (name: string) => {
@@ -145,6 +152,7 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
                 <NavGlyphButton
                   data-group-row-menu=""
                   aria-label={`Group options for ${name}`}
+                  aria-haspopup="menu"
                   aria-expanded={menuOpen}
                   disabled={busy}
                   active={menuOpen}
