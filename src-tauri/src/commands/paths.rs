@@ -41,14 +41,36 @@ pub fn home_dir() -> Result<HomeDirInfo, String> {
 ///
 /// # Errors
 ///
-/// Returns an error when the path is empty, outside the allowed folder, or the
-/// OS cannot open it.
+/// Returns an error when the path is empty, outside the allowed folder, missing
+/// on disk, or the OS cannot open it.
 #[tauri::command]
 pub fn open_path(path: String) -> Result<(), String> {
     let home = dirs::home_dir()
         .ok_or_else(|| "Could not determine the user home directory".to_string())?;
     let resolved = resolve_openable_path(&path, &home)?;
+    missing_path_error(&resolved)?;
     open::that_detached(&resolved).map_err(|error| format!("Could not open path: {error}"))
+}
+
+/// Error when a resolved staging path is not on disk yet.
+///
+/// The OS opener often reports success for a missing path (for example
+/// `xdg-open` exiting 0), so the UI must fail here to show an inline alert.
+pub(crate) fn missing_path_error(resolved: &Path) -> Result<(), String> {
+    if resolved.exists() {
+        return Ok(());
+    }
+    let name = resolved
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("path");
+    if name == "vault-push.log" {
+        return Err(
+            "vault-push.log is not written until upload starts. Try again after Upload to vault begins."
+                .to_string(),
+        );
+    }
+    Err(format!("Nothing exists at {name} yet"))
 }
 
 /// Collapse `.` and `..` without requiring the path to exist on disk.
@@ -183,5 +205,28 @@ mod tests {
 
         let err = resolve_openable_path(outside.to_str().unwrap(), home).unwrap_err();
         assert!(err.contains("outside"));
+    }
+
+    #[test]
+    fn missing_log_explains_upload_timing() {
+        let log = PathBuf::from("/home/sam/message-vault/staging-x/vault-push.log");
+        let err = missing_path_error(&log).unwrap_err();
+        assert!(err.contains("upload starts"));
+    }
+
+    #[test]
+    fn missing_folder_uses_generic_message() {
+        let staging = PathBuf::from("/home/sam/message-vault/staging-x");
+        let err = missing_path_error(&staging).unwrap_err();
+        assert!(err.contains("Nothing exists"));
+        assert!(err.contains("staging-x"));
+    }
+
+    #[test]
+    fn existing_path_passes_missing_check() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("vault-push.log");
+        fs::write(&file, "ok\n").unwrap();
+        missing_path_error(&file).unwrap();
     }
 }

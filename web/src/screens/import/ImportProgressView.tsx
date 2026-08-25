@@ -32,8 +32,8 @@ export default function ImportProgressView({
   return (
     <>
       <h1 className="m-0 mb-4 text-2xl font-bold">Import Messages</h1>
-      {trimmedStaging ? (
-        <div className="mb-4 text-[0.813rem]">
+      {trimmedStaging && logPath ? (
+        <div className="mb-4 max-w-[min(36rem,70vw)] text-[0.813rem]">
           <div>
             <span className="text-muted">Staging directory</span>
             <div className="mt-0.5">
@@ -45,20 +45,18 @@ export default function ImportProgressView({
               </OpenPathButton>
             </div>
           </div>
-          {logPath ? (
-            <div className="mt-2 border-l border-border pl-3">
-              <span className="text-muted">Import log</span>
-              <div className="mt-0.5">
-                <OpenPathButton
-                  path={logPath}
-                  title={logPath}
-                  className="border-0 bg-transparent p-0 text-left text-[0.813rem] text-accent underline-offset-2 hover:underline"
-                >
-                  {PUSH_LOG_NAME}
-                </OpenPathButton>
-              </div>
+          <div className="mt-2 border-l border-border pl-3">
+            <span className="text-muted">Import log</span>
+            <div className="mt-0.5">
+              <OpenPathButton
+                path={logPath}
+                title={logPath}
+                className="border-0 bg-transparent p-0 text-left text-[0.813rem] text-accent underline-offset-2 hover:underline"
+              >
+                {PUSH_LOG_NAME}
+              </OpenPathButton>
             </div>
-          ) : null}
+          </div>
         </div>
       ) : null}
       <StepProgress steps={steps} completionText={completionText} />
