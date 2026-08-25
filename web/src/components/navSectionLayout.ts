@@ -2,8 +2,7 @@
  * Shared left-nav section layout: label column + trailing glyph column.
  * The trailing column is 1.5rem so it matches NavGlyphButton `size-6` (24px).
  */
-export const NAV_SECTION_GRID_CLASS =
-  "grid w-full grid-cols-[minmax(0,1fr)_1.5rem] items-center";
+export const NAV_SECTION_GRID_CLASS = "grid w-full grid-cols-[minmax(0,1fr)_1.5rem] items-center";
 
 /** Group / tag row shell: shared grid + hover/active fill. */
 export function navGlyphRowClass(active: boolean): string {
