@@ -45,7 +45,7 @@ export default function NavCollapsibleSection({
 
   return (
     <div className={className}>
-      <div className="mb-1 flex items-center gap-1">
+      <div className="mb-1 grid grid-cols-[minmax(0,1fr)_1.5rem] items-center">
         <button
           type="button"
           aria-expanded={open}
@@ -56,7 +56,7 @@ export default function NavCollapsibleSection({
               return next;
             });
           }}
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 border-none bg-transparent p-0 text-left text-[0.875rem] font-bold text-text"
+          className="flex min-w-0 cursor-pointer items-center gap-1.5 border-none bg-transparent p-0 text-left text-[0.875rem] font-bold text-text"
         >
           <ChevronRightIcon
             size={12}

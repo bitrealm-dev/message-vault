@@ -217,14 +217,17 @@ export default function LeftPanel({
             <div className="py-1.5 pl-3 text-[0.813rem] text-muted">No saved searches</div>
           ) : (
             groups.map((g) => (
-              <div key={g.id} className="flex items-center gap-1 pl-3">
+              <div
+                key={g.id}
+                className="grid w-full grid-cols-[minmax(0,1fr)_1.5rem] items-center"
+              >
                 <button
                   type="button"
                   onClick={() => {
                     onSearchChange(g.query);
                     navigate(`/?q=${encodeURIComponent(g.query)}`);
                   }}
-                  className="min-w-0 flex-1 cursor-pointer truncate border-none bg-transparent py-1.5 text-left text-[0.813rem] text-text"
+                  className="min-w-0 cursor-pointer truncate border-none bg-transparent py-1.5 pl-3 text-left text-[0.813rem] text-text"
                 >
                   {g.name}
                 </button>

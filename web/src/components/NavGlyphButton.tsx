@@ -20,7 +20,7 @@ export default function NavGlyphButton({
   return (
     <button
       type="button"
-      className={`flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full border-none bg-transparent text-muted hover:bg-hover focus-visible:bg-hover disabled:cursor-default disabled:opacity-40 ${hoverText} ${
+      className={`box-border flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full border-none bg-transparent p-0 text-muted hover:bg-hover focus-visible:bg-hover disabled:cursor-default disabled:opacity-40 ${hoverText} ${
         active ? "bg-hover text-text" : ""
       } ${className}`.trim()}
       {...rest}

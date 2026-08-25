@@ -14,7 +14,7 @@ import NavCollapsibleSection from "./NavCollapsibleSection";
 import NavGlyphButton from "./NavGlyphButton";
 
 function navRowClass(active: boolean): string {
-  return `group relative flex w-full items-center gap-2 rounded border-none py-0.5 pl-3 text-left text-[0.875rem] text-text hover:bg-hover ${
+  return `group relative grid w-full grid-cols-[minmax(0,1fr)_1.5rem] items-center rounded border-none py-0.5 text-left text-[0.875rem] text-text hover:bg-hover ${
     active ? "bg-hover font-semibold" : "bg-transparent font-normal"
   }`;
 }
@@ -131,12 +131,12 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
           const active = location.pathname === href;
           const menuOpen = menuFor === name;
           return (
-            <div key={name} className="relative">
+            <div key={name} className="relative w-full">
               <div className={navRowClass(active)}>
                 <button
                   type="button"
                   onClick={() => navigate(href)}
-                  className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 border-none bg-transparent p-0 text-left text-inherit"
+                  className="flex min-w-0 cursor-pointer items-center gap-2 border-none bg-transparent p-0 pl-3 text-left text-inherit"
                 >
                   <TagIcon size={15} />
                   <span className="min-w-0 truncate">{name}</span>
@@ -197,8 +197,10 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
           onClick={() => navigate("/no-tag")}
           className={`${navRowClass(location.pathname === "/no-tag")} cursor-pointer bg-transparent`}
         >
-          <TagIcon size={15} />
-          <span className="truncate">No tag</span>
+          <span className="flex min-w-0 items-center gap-2 pl-3">
+            <TagIcon size={15} />
+            <span className="truncate">No tag</span>
+          </span>
         </button>
       </NavCollapsibleSection>
 
