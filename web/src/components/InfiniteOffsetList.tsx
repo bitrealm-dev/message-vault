@@ -15,6 +15,8 @@ import ListRangeHeader from "./ListRangeHeader";
 import VirtualList, { type VisibleRange } from "./VirtualList";
 
 const NEAR_END_THRESHOLD = 10;
+/** Room under the last row so the floating range pill does not cover contacts. */
+const RANGE_PILL_SCROLL_PAD = 56;
 
 type InfiniteOffsetListProps<T> = {
   items: T[];
@@ -142,7 +144,7 @@ function RacVirtualList<T extends object>({
         selectedKeys={selectedId ? new Set([selectedId]) : new Set()}
         onScroll={onScroll}
         className="min-h-0 flex-1 overflow-auto outline-none"
-        style={{ display: "block", padding: 0 }}
+        style={{ display: "block", padding: 0, paddingBottom: RANGE_PILL_SCROLL_PAD }}
       >
         {(item) => {
           const id = getId(item);
@@ -204,6 +206,7 @@ function TanStackVirtualList<T>({
         if (hasMore) requestMore();
       }}
       empty={empty}
+      footer={<div aria-hidden className="shrink-0" style={{ height: RANGE_PILL_SCROLL_PAD }} />}
       renderItem={(index) => {
         const item = items[index];
         if (!item) return null;
@@ -335,6 +338,7 @@ function SectionedLetterList<T>({
           })}
         </section>
       ))}
+      <div aria-hidden className="shrink-0" style={{ height: RANGE_PILL_SCROLL_PAD }} />
     </div>
   );
 }
@@ -379,9 +383,14 @@ export default function InfiniteOffsetList<T extends object>({
       ? "Loading…"
       : formatVisibleRange(visibleRange.start, visibleRange.end, denom, items.length);
 
+  let activitySuffix = "";
+  if (refreshing) activitySuffix = " · updating…";
+  else if (filling) activitySuffix = " · loading more…";
+
   const firstVisibleIndex = visibleRange.start > 0 ? visibleRange.start - 1 : 0;
   const firstVisible = items[firstVisibleIndex];
   const headerLetter = getSectionLetter && firstVisible ? getSectionLetter(firstVisible) : null;
+  const showRangePill = items.length > 0 || (loading && items.length === 0);
 
   if (error && items.length === 0) {
     return (
@@ -408,11 +417,8 @@ export default function InfiniteOffsetList<T extends object>({
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
       <ListRangeHeader
-        rangeLabel={rangeLabel}
-        refreshing={refreshing}
-        filling={filling}
         actions={headerActions}
         selectAllChecked={selectAllChecked}
         selectAllIndeterminate={selectAllIndeterminate}
@@ -448,6 +454,17 @@ export default function InfiniteOffsetList<T extends object>({
       ) : (
         <TanStackVirtualList {...listProps} />
       )}
+      {showRangePill ? (
+        <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
+          <span
+            aria-live="polite"
+            className="rounded-full border border-border bg-elevated px-2.5 py-1 text-[0.688rem] text-text"
+          >
+            {rangeLabel}
+            {activitySuffix}
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }
