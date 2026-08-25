@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AttachmentLightbox, { type LightboxItem } from "../components/AttachmentLightbox";
+import {
+  type ContactPreview,
+  contactPreviewFromThreadParticipants,
+} from "../components/contactDrawer/contactDrawerTypes";
 import SourcesPanel from "../components/SourcesPanel";
 import { personDisplayLabel } from "../lib/nameAliases";
 import type { Conversation, MessageAttachment } from "../lib/types";
@@ -20,7 +24,7 @@ export default function MessageView({
   onOpenContact,
 }: {
   conversation: Conversation;
-  onOpenContact?: (contactId: string) => void;
+  onOpenContact?: (contactId: string, preview: ContactPreview | null) => void;
 }) {
   const {
     messages,
@@ -130,7 +134,13 @@ export default function MessageView({
         activeYear={activeYear}
         onSelectAllYears={selectAllYears}
         onSelectYear={selectYear}
-        onOpenContact={onOpenContact}
+        onOpenContact={(contactId) => {
+          const participants =
+            conversation.participants.length > 0
+              ? conversation.participants
+              : (messages[0]?.conversation.participants ?? []);
+          onOpenContact?.(contactId, contactPreviewFromThreadParticipants(contactId, participants));
+        }}
         onShowSources={() => setShowSources(true)}
       />
 

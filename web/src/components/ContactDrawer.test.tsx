@@ -256,6 +256,57 @@ describe("ContactDrawer", () => {
     });
   });
 
+  it("stubs overlay handles from thread preview while detail is pending", async () => {
+    let resolveDetail!: (d: CachedContactDetail) => void;
+    const pending = new Promise<CachedContactDetail>((resolve) => {
+      resolveDetail = resolve;
+    });
+    get.mockImplementation(() => pending);
+
+    render(
+      <ContactDrawer
+        variant="overlay"
+        contactId="b"
+        preview={{
+          id: "b",
+          name: "Contact b",
+          handles: ["+1555000b"],
+          handleCount: 1,
+        }}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Contact b" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Loading…" })).toBeNull();
+    expect(screen.getByText("+1555000b")).toBeTruthy();
+
+    const table = screen.getByRole("grid", { name: "Contact handles" });
+    expect(table.querySelectorAll('[role="row"]').length).toBe(3);
+
+    resolveDetail(
+      detail("b", {
+        name: "Contact b",
+        handles: [
+          {
+            handle: "+1555000b",
+            service: "phone",
+            name_alias: null,
+            start_date: "2020-01-01T00:00:00Z",
+            end_date: "2024-01-01T00:00:00Z",
+            individual_conversations: 3,
+            group_conversations: 1,
+            individual_message_count: 42,
+            group_message_count: 7,
+          },
+        ],
+      }),
+    );
+    await waitFor(() => {
+      expect(table.querySelectorAll('[role="row"]').length).toBe(3);
+    });
+  });
+
   it("stubs two identities when preview lists raw then normalized for each", async () => {
     let resolveDetail!: (d: CachedContactDetail) => void;
     const pending = new Promise<CachedContactDetail>((resolve) => {

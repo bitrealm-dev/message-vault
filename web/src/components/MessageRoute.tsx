@@ -21,6 +21,7 @@ export default function MessageRoute() {
   const locationState = asMessagesLocationState(location.state);
   const stateConversation = locationState?.conversation ?? null;
   const openContactId = locationState?.openContactId ?? null;
+  const openContactPreview = locationState?.openContactPreview ?? null;
 
   const [fetchedConversation, setFetchedConversation] = useState<Conversation | null>(null);
   const [fetchLoading, setFetchLoading] = useState(false);
@@ -70,7 +71,7 @@ export default function MessageRoute() {
           selectedId={conversationId ?? null}
           onSelect={(c) =>
             navigate(`/messages/${c.id}`, {
-              state: { conversation: c, openContactId },
+              state: { conversation: c, openContactId, openContactPreview },
             })
           }
           query={query}
@@ -81,9 +82,13 @@ export default function MessageRoute() {
           {conversation ? (
             <MessageView
               conversation={conversation}
-              onOpenContact={(contactId: string) => {
+              onOpenContact={(contactId, preview) => {
                 navigate(location.pathname + location.search, {
-                  state: { conversation, openContactId: contactId },
+                  state: {
+                    conversation,
+                    openContactId: contactId,
+                    openContactPreview: preview,
+                  },
                 });
               }}
             />
