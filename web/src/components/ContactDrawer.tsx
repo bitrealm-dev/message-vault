@@ -108,6 +108,7 @@ export default function ContactDrawer({
         : null;
   const detailMatches = !!matchedDetail;
   const previewMatches = !!contactId && !!preview && String(preview.id) === String(contactId);
+  const matchedName = matchedDetail?.name;
 
   const displayName = detailMatches
     ? matchedDetail.name
@@ -184,14 +185,14 @@ export default function ContactDrawer({
       if (e.key !== "Escape") return;
       if (editingName) {
         setEditingName(false);
-        setNameValue(detailMatches ? matchedDetail?.name : nameValue);
+        setNameValue(detailMatches ? (matchedName ?? nameValue) : nameValue);
         return;
       }
       onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [contactId, editingName, detailMatches, matchedDetail, nameValue, onClose]);
+  }, [contactId, editingName, detailMatches, matchedName, nameValue, onClose]);
 
   if (!contactId) return null;
 
@@ -199,11 +200,14 @@ export default function ContactDrawer({
     ? matchedDetail.handles
     : ((previewMatches ? preview?.handles : undefined)?.map((h) => emptyHandleRow(h)) ?? []);
 
-  const displayGroups = detailMatches
+  // null = membership unknown (loading, no preview groups); [] = known empty.
+  const displayGroups: string[] | null = detailMatches
     ? (matchedDetail.groups ?? [])
-    : previewMatches
-      ? (preview?.groups ?? [])
-      : [];
+    : previewMatches && preview?.groups != null
+      ? preview.groups
+      : loading
+        ? null
+        : [];
 
   const browse = (args: { kind: ContactBrowseKind; handle?: string; service?: string }) => {
     if (!onBrowseConversations || !contactId) return;
@@ -242,7 +246,13 @@ export default function ContactDrawer({
       : undefined;
 
   return (
-    <aside role="dialog" aria-label={displayName} className={panelClass} style={panelStyle}>
+    <aside
+      role="dialog"
+      aria-label={displayName}
+      aria-busy={loading || undefined}
+      className={panelClass}
+      style={panelStyle}
+    >
       <ContactDrawerHandles
         contactId={contactId}
         handleRows={handleRows}
@@ -296,7 +306,11 @@ export default function ContactDrawer({
               </span>
             </div>
             <div className="flex min-h-6 flex-wrap items-center gap-1.5">
-              {displayGroups.length > 0 ? (
+              {displayGroups == null ? (
+                <span className="py-0.5 text-[0.75rem] leading-4 text-muted" aria-hidden>
+                  …
+                </span>
+              ) : displayGroups.length > 0 ? (
                 displayGroups.map((name) => (
                   <span
                     key={name}

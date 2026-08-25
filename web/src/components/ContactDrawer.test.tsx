@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
-import { render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CachedContactDetail } from "../lib/contactDetailCache";
 import {
   clearContactDetailCache,
@@ -45,6 +45,10 @@ function detail(id: string, overrides: Partial<CachedContactDetail> = {}): Cache
 }
 
 describe("ContactDrawer", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
   beforeEach(() => {
     clearContactDetailCache();
     get.mockReset();
@@ -96,15 +100,18 @@ describe("ContactDrawer", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: "Contact b" })).toBeTruthy();
+    const dialog = screen.getByRole("dialog", { name: "Contact b" });
+    expect(dialog.getAttribute("aria-busy")).toBe("true");
     expect(screen.getByText("Family")).toBeTruthy();
     expect(screen.getByText("+1555000b")).toBeTruthy();
 
     const table = screen.getByRole("grid", { name: "Contact handles" });
-    expect(table.textContent).not.toMatch(/(^|[^\d])0([^\d]|$)/);
+    const dashes = table.textContent?.match(/—/g) ?? [];
+    expect(dashes.length).toBeGreaterThanOrEqual(4);
 
     resolveB(detail("b", { name: "Contact b", groups: ["Family"] }));
     await waitFor(() => {
+      expect(dialog.getAttribute("aria-busy")).toBeNull();
       expect(screen.getAllByText("42").length).toBeGreaterThan(0);
     });
   });
@@ -165,8 +172,33 @@ describe("ContactDrawer", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Cached Bob" })).toBeTruthy();
+    expect(screen.getByRole("dialog").getAttribute("aria-busy")).toBeNull();
     expect(screen.getByText("Work")).toBeTruthy();
     expect(screen.getAllByText("99").length).toBeGreaterThan(0);
     expect(screen.getAllByText("11").length).toBeGreaterThan(0);
+  });
+
+  it("does not claim No groups while loading without preview groups", async () => {
+    let resolveDetail!: (d: CachedContactDetail) => void;
+    const pending = new Promise<CachedContactDetail>((resolve) => {
+      resolveDetail = resolve;
+    });
+    get.mockImplementation(() => pending);
+
+    render(
+      <ContactDrawer variant="overlay" contactId="z" preview={null} onClose={() => {}} />,
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Loading…" });
+    expect(dialog.getAttribute("aria-busy")).toBe("true");
+    expect(screen.queryByText("No groups")).toBeNull();
+    expect(screen.getByText("…")).toBeTruthy();
+
+    resolveDetail(detail("z", { name: "Zed", groups: ["Work"] }));
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: "Zed" })).toBeTruthy();
+      expect(screen.getByText("Work")).toBeTruthy();
+      expect(screen.queryByText("No groups")).toBeNull();
+    });
   });
 });
