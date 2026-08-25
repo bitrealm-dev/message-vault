@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { apiClient } from "../lib/api";
 import {
   type CachedContactDetail,
@@ -96,6 +96,7 @@ export default function ContactDrawer({
   const [detail, setDetail] = useState<ContactDetail | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
+  const nameInputRef = useRef<HTMLInputElement>(null);
   const drawerLeft = useDrawerLeft(variant === "overlay" && !!contactId);
 
   // Prefer in-state detail only when it matches this contact; otherwise use cache
@@ -179,20 +180,43 @@ export default function ContactDrawer({
     setEditingName(false);
   }, [displayName]);
 
+  const cancelEdit = useCallback(() => {
+    setEditingName(false);
+    if (matchedName != null) {
+      setNameValue(matchedName);
+    }
+  }, [matchedName]);
+
   useEffect(() => {
     if (!contactId) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (editingName) {
-        setEditingName(false);
-        setNameValue(detailMatches ? (matchedName ?? nameValue) : nameValue);
+        cancelEdit();
         return;
       }
       onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [contactId, editingName, detailMatches, matchedName, nameValue, onClose]);
+  }, [contactId, editingName, cancelEdit, onClose]);
+
+  useEffect(() => {
+    if (!contactId || !editingName) return;
+    const onPointerDown = (e: MouseEvent) => {
+      const el = nameInputRef.current;
+      if (!el) return;
+      if (e.target instanceof Node && el.contains(e.target)) return;
+      cancelEdit();
+    };
+    document.addEventListener("mousedown", onPointerDown, true);
+    return () => document.removeEventListener("mousedown", onPointerDown, true);
+  }, [contactId, editingName, cancelEdit]);
+
+  useEffect(() => {
+    if (!editingName) return;
+    requestAnimationFrame(() => nameInputRef.current?.focus());
+  }, [editingName]);
 
   if (!contactId) return null;
 
@@ -263,26 +287,29 @@ export default function ContactDrawer({
         onBrowse={onBrowseConversations ? browse : undefined}
         title={
           editingName && detailMatches ? (
-            <input
-              type="text"
-              value={nameValue}
-              onChange={(e) => setNameValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void saveName();
-                } else if (e.key === "Escape") {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setEditingName(false);
-                  setNameValue(matchedDetail?.name);
-                }
-              }}
-              onBlur={() => {
-                void saveName();
-              }}
-              className="box-border w-full min-w-0 rounded border border-border bg-elevated p-1 text-[1.125rem] font-semibold text-text"
-            />
+            <div className="w-1/2 min-w-0">
+              <input
+                ref={nameInputRef}
+                type="text"
+                value={nameValue}
+                aria-label="Contact name"
+                onChange={(e) => setNameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void saveName();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    cancelEdit();
+                  }
+                }}
+                onBlur={() => {
+                  cancelEdit();
+                }}
+                className="box-border w-full min-w-0 rounded border border-border bg-elevated px-1 py-0 text-[1.125rem] font-semibold text-text"
+              />
+            </div>
           ) : (
             <div className="flex min-w-0 items-center gap-2">
               <h2 className="m-0 min-w-0 truncate text-[1.125rem] font-semibold">{displayName}</h2>
