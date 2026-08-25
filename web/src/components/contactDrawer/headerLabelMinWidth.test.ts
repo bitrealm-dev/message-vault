@@ -44,4 +44,10 @@ describe("columnInitialWidth", () => {
     const wide = columnInitialWidth(headerMin, ["Mary Elizabeth Katherine Thompson"]);
     expect(wide).toBeGreaterThan(headerMin);
   });
+
+  it("grows count columns when a locale-formatted total is wider than the header", () => {
+    const headerMin = headerLabelMinWidth("Threads");
+    const wide = columnInitialWidth(headerMin, ["999,999,999"]);
+    expect(wide).toBeGreaterThan(headerMin);
+  });
 });

@@ -33,15 +33,15 @@ export function renderHandleTableRow(
   const loading = opts.loading;
   return (
     <Row id={h.id} className="group/handle-row outline-none">
-      <Cell className={`${tdLeftClass} overflow-hidden`}>
+      <Cell className={tdLeftClass}>
         <span>{formatHandleServiceLabel(h.handle, h.service)}</span>
       </Cell>
-      <Cell className={`${tdLeftClass} overflow-hidden`}>
+      <Cell className={tdLeftClass}>
         <span className="break-all" title={h.handle}>
           {h.handle}
         </span>
       </Cell>
-      <Cell className={`${tdLeftClass} overflow-hidden text-muted`}>
+      <Cell className={`${tdLeftClass} text-muted`}>
         <span className="break-normal hyphens-none" title={alias || undefined}>
           {loading ? "—" : alias || "—"}
         </span>
@@ -74,7 +74,7 @@ export function renderHandleTableRow(
       <Cell className={tdLeftClass}>
         <CountCell value={h.group_message_count} loading={loading} />
       </Cell>
-      <Cell className={`${tdClass} whitespace-nowrap`}>
+      <Cell className={`${tdClass} !px-1 whitespace-nowrap`}>
         <div className={`flex items-center justify-center ${rowActionsRevealClass}`}>
           <Button
             variant="ghost"

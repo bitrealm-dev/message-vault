@@ -3,9 +3,9 @@ import { dataCardBodyCellClass, dataCardHeaderCellClass } from "../DataCard";
 export const thClass = dataCardHeaderCellClass;
 export const tdClass = dataCardBodyCellClass;
 export const tdCenterClass = tdClass;
-export const tdLeftClass = `${tdClass} !px-1 !text-left`;
+export const tdLeftClass = `${tdClass} !px-1 !text-left overflow-hidden`;
 export const tdRightClass = `${tdClass} text-right`;
-/** Tight right pad so the label sits next to the column separator. */
+/** Tight left pad; inner label keeps `pr-2.5` so the sort caret stays inside the cell. */
 export const thLeftClass = `${thClass} !px-1 !pr-0 !text-left overflow-hidden`;
 export const thRightClass = `${thClass} text-right`;
 /** Always-visible header column spacer / resize grip (absolutely pinned to the column edge). */

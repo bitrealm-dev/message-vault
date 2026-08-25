@@ -22,7 +22,7 @@ import {
 } from "./contactDrawerTypes";
 import { renderHandleSummaryRow, renderHandleTableRow } from "./HandleTableRow";
 import { SortableColumn } from "./handleTableHelpers";
-import { removeIdentityConfirmBody, sortValue } from "./handleTableLogic";
+import { conversationCount, removeIdentityConfirmBody, sortValue } from "./handleTableLogic";
 import { tdClass, thClass } from "./handleTableStyles";
 import { columnInitialWidth, headerLabelMinWidth } from "./headerLabelMinWidth";
 import { useHandleMutations } from "./useHandleMutations";
@@ -41,29 +41,34 @@ const twoLineHeader = (line1: string, line2: string) => (
   </>
 );
 
+type ColumnSize = {
+  width: number;
+  min: number;
+};
+
 function collectColumnWidths(
   handleRows: CachedContactDetail["handles"],
   loading: boolean,
 ): {
-  service: number;
-  handle: number;
-  alias: number;
-  startDate: number;
-  endDate: number;
-  conversations: number;
-  directMessages: number;
-  groupMessages: number;
+  service: ColumnSize;
+  handle: ColumnSize;
+  alias: ColumnSize;
+  startDate: ColumnSize;
+  endDate: ColumnSize;
+  conversations: ColumnSize;
+  directMessages: ColumnSize;
+  groupMessages: ColumnSize;
 } {
   const serviceMin = headerLabelMinWidth("Service");
   const handleMin = headerLabelMinWidth("Identity");
   const aliasMin = headerLabelMinWidth("Alias");
-  // Compact columns: header-sized for counts. Dates share one width (fixed YYYY-MM-DD).
   const startMin = headerLabelMinWidth("First Seen");
   const endMin = headerLabelMinWidth("Last Seen");
   const threadsMin = headerLabelMinWidth("Threads");
   // Two-line headers: min from the longest line ("Messages").
   const messagesMin = headerLabelMinWidth("Messages");
   const dateCol = columnInitialWidth(Math.max(startMin, endMin), ["2020-12-31"]);
+  const totals = sumHandleTotals(handleRows);
 
   const serviceTexts = [
     "Summary",
@@ -71,16 +76,28 @@ function collectColumnWidths(
   ];
   const handleTexts = ["—", ...handleRows.map((h) => h.handle)];
   const aliasTexts = ["—", ...handleRows.map((h) => (loading ? "—" : h.name_alias?.trim() || "—"))];
+  const threadTexts = [
+    conversationCount(totals).toLocaleString(),
+    ...handleRows.map((h) => conversationCount(h).toLocaleString()),
+  ];
+  const directTexts = [
+    totals.individual_message_count.toLocaleString(),
+    ...handleRows.map((h) => h.individual_message_count.toLocaleString()),
+  ];
+  const groupTexts = [
+    totals.group_message_count.toLocaleString(),
+    ...handleRows.map((h) => h.group_message_count.toLocaleString()),
+  ];
 
   return {
-    service: columnInitialWidth(serviceMin, serviceTexts),
-    handle: columnInitialWidth(handleMin, handleTexts),
-    alias: columnInitialWidth(aliasMin, aliasTexts),
-    startDate: dateCol,
-    endDate: dateCol,
-    conversations: threadsMin,
-    directMessages: messagesMin,
-    groupMessages: messagesMin,
+    service: { width: columnInitialWidth(serviceMin, serviceTexts), min: serviceMin },
+    handle: { width: columnInitialWidth(handleMin, handleTexts), min: handleMin },
+    alias: { width: columnInitialWidth(aliasMin, aliasTexts), min: aliasMin },
+    startDate: { width: dateCol, min: startMin },
+    endDate: { width: dateCol, min: endMin },
+    conversations: { width: columnInitialWidth(threadsMin, threadTexts), min: threadsMin },
+    directMessages: { width: columnInitialWidth(messagesMin, directTexts), min: messagesMin },
+    groupMessages: { width: columnInitialWidth(messagesMin, groupTexts), min: messagesMin },
   };
 }
 
@@ -153,7 +170,12 @@ export function ContactDrawerHandles({
   const tableKey = `${contactId}:${loading ? "loading" : "ready"}`;
 
   return (
-    <DataCard title={title} intro={intro} toolbar={toolbarExtra}>
+    <DataCard
+      title={title}
+      intro={intro}
+      toolbar={toolbarExtra}
+      bodyClassName="min-w-0 overflow-x-hidden"
+    >
       <div className="mb-2 flex justify-end">
         <Button
           variant="primary"
@@ -175,65 +197,73 @@ export function ContactDrawerHandles({
             <SortableColumn
               id="service"
               isRowHeader
+              align="left"
               allowsResizing
-              defaultWidth={columnWidths.service}
-              minWidth={headerLabelMinWidth("Service")}
+              defaultWidth={columnWidths.service.width}
+              minWidth={columnWidths.service.min}
             >
               Service
             </SortableColumn>
             <SortableColumn
               id="handle"
+              align="left"
               allowsResizing
-              defaultWidth={columnWidths.handle}
-              minWidth={headerLabelMinWidth("Identity")}
+              defaultWidth={columnWidths.handle.width}
+              minWidth={columnWidths.handle.min}
             >
               Identity
             </SortableColumn>
             <SortableColumn
               id="name_alias"
+              align="left"
               allowsResizing
-              defaultWidth={columnWidths.alias}
-              minWidth={headerLabelMinWidth("Alias")}
+              defaultWidth={columnWidths.alias.width}
+              minWidth={columnWidths.alias.min}
             >
               Alias
             </SortableColumn>
             <SortableColumn
               id="start_date"
+              align="left"
               allowsResizing
-              defaultWidth={columnWidths.startDate}
-              minWidth={headerLabelMinWidth("First Seen")}
+              defaultWidth={columnWidths.startDate.width}
+              minWidth={columnWidths.startDate.min}
             >
               <span className="whitespace-nowrap">First Seen</span>
             </SortableColumn>
             <SortableColumn
               id="end_date"
+              align="left"
               allowsResizing
-              defaultWidth={columnWidths.endDate}
-              minWidth={headerLabelMinWidth("Last Seen")}
+              defaultWidth={columnWidths.endDate.width}
+              minWidth={columnWidths.endDate.min}
             >
               <span className="whitespace-nowrap">Last Seen</span>
             </SortableColumn>
             <SortableColumn
               id="conversations"
+              align="left"
               allowsResizing
-              defaultWidth={columnWidths.conversations}
-              minWidth={headerLabelMinWidth("Threads")}
+              defaultWidth={columnWidths.conversations.width}
+              minWidth={columnWidths.conversations.min}
             >
               Threads
             </SortableColumn>
             <SortableColumn
               id="direct_messages"
+              align="left"
               allowsResizing
-              defaultWidth={columnWidths.directMessages}
-              minWidth={headerLabelMinWidth("Messages")}
+              defaultWidth={columnWidths.directMessages.width}
+              minWidth={columnWidths.directMessages.min}
             >
               {twoLineHeader("Direct", "Messages")}
             </SortableColumn>
             <SortableColumn
               id="group_messages"
+              align="left"
               allowsResizing
-              defaultWidth={columnWidths.groupMessages}
-              minWidth={headerLabelMinWidth("Messages")}
+              defaultWidth={columnWidths.groupMessages.width}
+              minWidth={columnWidths.groupMessages.min}
             >
               {twoLineHeader("Group", "Messages")}
             </SortableColumn>

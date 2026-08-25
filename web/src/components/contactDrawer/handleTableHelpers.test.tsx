@@ -49,6 +49,26 @@ function Harness() {
 }
 
 describe("SortableColumn", () => {
+  it("defaults align to center so callers like CheckedContactsPanel stay unchanged", () => {
+    render(
+      <ResizableTableContainer>
+        <Table aria-label="Checked contacts">
+          <TableHeader>
+            <SortableColumn id="start_date">First Seen</SortableColumn>
+          </TableHeader>
+          <TableBody>
+            <Row id="r1">
+              <Cell>2024-01-15</Cell>
+            </Row>
+          </TableBody>
+        </Table>
+      </ResizableTableContainer>,
+    );
+    const header = screen.getByRole("columnheader", { name: /First Seen/i });
+    expect(header.className).toMatch(/text-center/);
+    expect(header.className).not.toMatch(/text-left/);
+  });
+
   it("renders left-aligned column headers with visible resizers", () => {
     const { container } = render(<Harness />);
     expect(screen.getByRole("grid", { name: "Contact handles" })).toBeTruthy();
@@ -57,6 +77,15 @@ describe("SortableColumn", () => {
     // RAC ColumnResizer uses role="presentation"; identify by resize cursor class.
     const resizers = container.querySelectorAll(".cursor-col-resize");
     expect(resizers.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("keeps an invisible sort caret in the header so width does not jump", () => {
+    render(<Harness />);
+    const service = screen.getByRole("columnheader", { name: /Service/i });
+    const caret = service.querySelector("[aria-hidden='true']");
+    expect(caret?.textContent).toBe("▲");
+    expect(caret?.className).toMatch(/invisible/);
+    expect(caret?.className).toMatch(/right-0/);
   });
 
   it("pins the resizer as the last child of a full-width flex row", () => {

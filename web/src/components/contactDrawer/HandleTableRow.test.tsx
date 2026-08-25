@@ -67,5 +67,8 @@ describe("renderHandleTableRow", () => {
 
     const threadsCell = Array.from(cells).find((c) => c.textContent === "3");
     expect(threadsCell?.className).toMatch(/text-left/);
+
+    const actionsCell = cells[cells.length - 1];
+    expect(actionsCell?.className).toMatch(/px-1/);
   });
 });
