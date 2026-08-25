@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useRef } from "react";
+import { listActivitySuffix } from "../lib/usePagedList";
 
 /** Same height on the sidebar spacer, list toolbar, and right-pane toolbar. */
 export const LIST_TOOLBAR_CLASS =
@@ -35,9 +36,7 @@ export default function ListRangeHeader({
     }
   }, [selectAllIndeterminate]);
 
-  let activitySuffix = "";
-  if (refreshing) activitySuffix = " · updating…";
-  else if (filling) activitySuffix = " · loading more…";
+  const activitySuffix = listActivitySuffix(refreshing, filling);
 
   return (
     <div className={LIST_TOOLBAR_CLASS}>

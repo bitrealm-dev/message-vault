@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatVisibleRange } from "./usePagedList";
+import { formatVisibleRange, listActivitySuffix } from "./usePagedList";
 
 describe("formatVisibleRange", () => {
   it("handles empty totals", () => {
@@ -15,5 +15,14 @@ describe("formatVisibleRange", () => {
   it("formats a clamped inclusive window", () => {
     expect(formatVisibleRange(1, 20, 100, 40)).toBe("1–20 of 100");
     expect(formatVisibleRange(1, 100, 100, 40)).toBe("1–40 of 100");
+  });
+});
+
+describe("listActivitySuffix", () => {
+  it("prefers updating over loading more", () => {
+    expect(listActivitySuffix(true, true)).toBe(" · updating…");
+    expect(listActivitySuffix(true, false)).toBe(" · updating…");
+    expect(listActivitySuffix(false, true)).toBe(" · loading more…");
+    expect(listActivitySuffix(false, false)).toBe("");
   });
 });

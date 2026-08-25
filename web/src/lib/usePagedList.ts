@@ -168,6 +168,13 @@ export function usePagedList<T>(
  * Build a "1–20 of 100" label for the rows currently on screen.
  * Uses 1-based start and end indexes. Shows "… of N" until the list reports a window.
  */
+/** Status suffix appended to a visible-range label. */
+export function listActivitySuffix(refreshing: boolean, filling: boolean): string {
+  if (refreshing) return " · updating…";
+  if (filling) return " · loading more…";
+  return "";
+}
+
 export function formatVisibleRange(
   visibleStart: number,
   visibleEnd: number,
