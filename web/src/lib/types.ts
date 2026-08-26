@@ -130,6 +130,16 @@ export interface ExtractConfig {
   attachment_root?: string;
   /** Path to an Apple AddressBook file (Mac and jailbreak). */
   apple_contacts?: string;
+  /** WhatsApp decryption key (file path or crypt15 hex). Not an Apple backup password. */
+  whatsapp_key?: string;
+  /** WhatsApp contacts database (`wa.db` or ContactsV2.sqlite). */
+  whatsapp_wa?: string;
+  /** WhatsApp media folder override. */
+  whatsapp_media?: string;
+  /** Explicit WhatsApp message database (`msgstore.db`). */
+  whatsapp_db?: string;
+  /** iPhone WhatsApp Business default files (`--business`). */
+  whatsapp_business?: boolean;
 }
 
 export interface ExtractErrorEvent {
