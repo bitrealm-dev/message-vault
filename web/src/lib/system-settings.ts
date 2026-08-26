@@ -251,8 +251,11 @@ export function setImporterExtraPath(
   const row = map[sourceId];
   if (!row) return;
   const nextRow: ImporterExtraRow = {};
-  for (const [key, value] of Object.entries(row)) {
-    if (key !== field && value) nextRow[key as ImporterExtraField] = value;
+  const extraFields: ImporterExtraField[] = ["attachmentRoot", "appleContacts"];
+  for (const extraField of extraFields) {
+    if (extraField === field) continue;
+    const value = row[extraField];
+    if (value) nextRow[extraField] = value;
   }
   const next: Record<string, ImporterExtraRow> = {};
   for (const [key, value] of Object.entries(map)) {

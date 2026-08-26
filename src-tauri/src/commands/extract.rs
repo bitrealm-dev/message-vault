@@ -364,7 +364,7 @@ fn build_exporter_config(
                 conversation_filter: options.conversation_filter.clone(),
                 start_date: options.start_date.clone(),
                 end_date: options.end_date.clone(),
-                obfuscate: options.obfuscate,
+                obfuscate: source == "imessage-ios" && options.obfuscate,
                 // Import and Push read conversation files as JSON Lines (one JSON
                 // object per line).
                 output_format: OutputFormat::Jsonl,
@@ -504,6 +504,7 @@ mod tests {
         let mut options = test_options(Vec::new());
         options.attachment_root = "/mnt/iphone/Library/SMS".into();
         options.apple_contacts = "/mnt/iphone/AddressBook.sqlitedb".into();
+        options.obfuscate = true;
         let config = build_exporter_config(
             "imessage-jailbreak",
             "/mnt/iphone/sms.db",
@@ -526,12 +527,14 @@ mod tests {
             }
             other => panic!("expected Apple, got {other:?}"),
         }
+        assert!(!config.obfuscate.enabled);
     }
 
     #[test]
     fn ios_backup_does_not_forward_attachment_root() {
         let mut options = test_options(Vec::new());
         options.attachment_root = "/ignored".into();
+        options.apple_contacts = "/ignored-contacts".into();
         options.backup_password = "pw".into();
         let config =
             build_exporter_config("imessage-ios", "/backups/iphone", "/tmp/out", &options).unwrap();
@@ -539,10 +542,9 @@ mod tests {
             SourceConfig::Apple(apple) => {
                 assert_eq!(apple.platform, Some(ApplePlatform::Ios));
                 assert_eq!(apple.backup_password.as_deref(), Some("pw"));
-                // Form still copies the string if set; the UI must omit it.
-                // This test documents extract.rs: only fill Form.attachment_root
-                // when the source is macos or jailbreak.
+                // extract.rs blanks both extras for imessage-ios.
                 assert!(apple.attachment_root.is_none());
+                assert!(apple.apple_contacts.is_none());
             }
             other => panic!("expected Apple, got {other:?}"),
         }

@@ -200,7 +200,7 @@ export function imessageCanImport(args: ImessageCanImportArgs): {
   const enabled =
     Object.keys(errors).length === 0 &&
     backupPath !== "" &&
-    (args.method !== "imessage-jailbreak" || attachmentRoot !== "") &&
+    (!imessageAttachmentRootRequired(args.method) || attachmentRoot !== "") &&
     !attachmentCheckPending &&
     !contactsCheckPending;
 

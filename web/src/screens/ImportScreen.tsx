@@ -126,7 +126,13 @@ export default function ImportScreen() {
   }, [source]);
 
   useEffect(() => {
-    if (!isTauri()) return;
+    return () => {
+      sourceChangeGenRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri() || !isImessageMethod(source)) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
       void (async () => {
@@ -150,7 +156,7 @@ export default function ImportScreen() {
           appleContacts: contacts,
           backupEncrypted,
         };
-        setPathStats(isImessageMethod(source) ? imessageStatsForMethod(source, next) : next);
+        setPathStats(imessageStatsForMethod(source, next));
       })();
     }, PATH_PROBE_DEBOUNCE_MS);
     return () => {

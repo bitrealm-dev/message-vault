@@ -11,6 +11,7 @@ import {
   IMESSAGE_METHODS,
   IMESSAGE_SOURCE_ID,
   imessageApplePlatform,
+  imessageAttachmentRootRequired,
   imessageCanImport,
   imessageShowsAppleContacts,
   imessageShowsAttachmentRoot,
@@ -219,6 +220,12 @@ describe("imessageCanImport", () => {
     });
     expect(jail.enabled).toBe(false);
     expect(jail.errors.backupPath).toBe(IMESSAGE_ERR_JAILBREAK_PATH_IS_DIR);
+  });
+
+  it("treats attachment root as required only for jailbreak", () => {
+    expect(imessageAttachmentRootRequired("imessage-jailbreak")).toBe(true);
+    expect(imessageAttachmentRootRequired("imessage-macos")).toBe(false);
+    expect(imessageAttachmentRootRequired("imessage-ios")).toBe(false);
   });
 
   it("requires jailbreak sms.db and attachment folder", () => {

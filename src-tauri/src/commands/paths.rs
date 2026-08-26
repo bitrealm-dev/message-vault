@@ -17,8 +17,11 @@ pub struct HomeDirInfo {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PathStat {
+    /// `true` when this path exists on disk.
     pub exists: bool,
+    /// `true` when the path is a regular file.
     pub is_file: bool,
+    /// `true` when the path is a directory.
     pub is_directory: bool,
 }
 
