@@ -1,6 +1,6 @@
 [package]
 name = "message-vault-server"
-version = "0.8.1"
+version = "0.8.2"
 edition = "2024"
 license = "LicenseRef-FCL-1.0-ALv2"
 

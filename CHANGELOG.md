@@ -11,6 +11,8 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-08-25
+
 ### Fixed
 
 - 2026-08-25: Stop ignoring every `data/` folder in the Docker build context. The release image needs `crates/vault/demo-seed/data/corpus/` so `demo-seed` can write the sample inbox.

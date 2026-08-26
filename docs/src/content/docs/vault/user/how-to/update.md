@@ -40,4 +40,4 @@ If Import is in use, the `.vault-import-state.jsonl` journal in the work directo
 
 The vault and the desktop app share JSONL schema version 3. New versions may add fields but will not remove or rename existing ones.
 
-The Docker tag `latest` points at the most recent release. For a specific version, use `bitrealm/message-vault:0.8.1` (no `v` prefix) or a tag from [Releases](https://github.com/bitrealm-io/message-vault/releases).
+The Docker tag `latest` points at the most recent release. For a specific version, use `bitrealm/message-vault:0.8.2` (no `v` prefix) or a tag from [Releases](https://github.com/bitrealm-io/message-vault/releases).
