@@ -11,6 +11,8 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-08-25
+
 ### Fixed
 
 - 2026-08-25: Copy `vendor/` into the release Docker rust-builder so `cargo` can load the patched `sqlx-sqlite` crate. The `v0.8.0` image build failed without it.
