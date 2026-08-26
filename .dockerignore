@@ -9,9 +9,11 @@
 /package-lock.json
 /package.json
 
-# Local data and machine config (never bake personal vaults)
-data
-**/data
+# Local vault database at the repo root (never bake personal vaults).
+# Do not ignore every `data/` folder — demo-seed reads
+# crates/vault/demo-seed/data/corpus/pride-and-prejudice.txt when the
+# rust-builder stage runs `cargo run -p demo-seed`.
+/data
 *.db
 *.db-journal
 *.db-wal
