@@ -14,6 +14,7 @@ mod personas;
 mod phones;
 
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -254,15 +255,97 @@ fn is_jsonl_file(path: &Path) -> bool {
 /// Returns an error if a rename fails. If the previous files cannot be fully
 /// restored, they are left in the backup folder and the error says so.
 fn replace_generated_paths(active: &Path, prepared: &Path) -> Result<()> {
-    replace_generated_paths_with(active, prepared, |source, destination| {
-        fs::rename(source, destination).with_context(|| {
+    replace_generated_paths_with(active, prepared, rename_generated_path)
+}
+
+/// Rename `source` onto `destination`. When the paths sit on different mounts
+/// (`EXDEV` / `ErrorKind::CrossesDevices`), copy then delete the source.
+///
+/// Docker BuildKit overlay layers trigger that error when `demo-seed` moves
+/// `config/` into a temporary backup directory.
+///
+/// # Errors
+///
+/// Returns an error if neither rename nor copy-then-remove can finish.
+fn rename_generated_path(source: &Path, destination: &Path) -> Result<()> {
+    rename_generated_path_with(source, destination, |from, to| fs::rename(from, to))
+}
+
+/// Same as [`rename_generated_path`], but uses `rename` so tests can return
+/// `ErrorKind::CrossesDevices` without two real filesystems.
+///
+/// # Errors
+///
+/// Returns an error if `rename` fails for a reason other than a cross-device
+/// move, or if the copy-then-remove fallback cannot finish.
+fn rename_generated_path_with<F>(source: &Path, destination: &Path, rename: F) -> Result<()>
+where
+    F: FnOnce(&Path, &Path) -> io::Result<()>,
+{
+    match rename(source, destination) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
+            move_across_devices(source, destination).with_context(|| {
+                format!(
+                    "copy {} to {} after a cross-device rename",
+                    source.display(),
+                    destination.display()
+                )
+            })
+        }
+        Err(error) => Err(error).with_context(|| {
             format!(
                 "rename generated demo path {} to {}",
                 source.display(),
                 destination.display()
             )
-        })
-    })
+        }),
+    }
+}
+
+/// Copy `source` onto `destination`, then delete `source`.
+///
+/// # Errors
+///
+/// Returns an error if a directory cannot be created, a file cannot be copied,
+/// or the source cannot be removed.
+fn move_across_devices(source: &Path, destination: &Path) -> Result<()> {
+    if source.is_dir() {
+        copy_dir_recursive(source, destination)?;
+        fs::remove_dir_all(source)
+            .with_context(|| format!("remove copied directory {}", source.display()))?;
+    } else {
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("create parent {}", parent.display()))?;
+        }
+        fs::copy(source, destination)
+            .with_context(|| format!("copy {} to {}", source.display(), destination.display()))?;
+        fs::remove_file(source)
+            .with_context(|| format!("remove copied file {}", source.display()))?;
+    }
+    Ok(())
+}
+
+/// Copy every file and subdirectory under `source` into `destination`.
+///
+/// # Errors
+///
+/// Returns an error if a directory cannot be created or a file cannot be copied.
+fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
+    fs::create_dir_all(destination).with_context(|| format!("create {}", destination.display()))?;
+    for entry in fs::read_dir(source).with_context(|| format!("read {}", source.display()))? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_recursive(&from, &to)?;
+        } else {
+            fs::copy(&from, &to)
+                .with_context(|| format!("copy {} to {}", from.display(), to.display()))?;
+        }
+    }
+    Ok(())
 }
 
 /// Same as [`replace_generated_paths`], but uses `rename` so tests can fail a move on purpose.
@@ -574,6 +657,79 @@ mod tests {
             fs::read(&existing_file).expect("read existing file"),
             original
         );
+    }
+
+    #[test]
+    fn rename_generated_path_copies_file_when_rename_crosses_devices() {
+        let temp = tempfile::tempdir().expect("create test directory");
+        let source = temp.path().join("README.md");
+        let destination = temp.path().join("backup").join("README.md");
+        fs::write(&source, b"new readme").expect("write source file");
+        fs::create_dir_all(destination.parent().expect("backup parent"))
+            .expect("create backup directory");
+
+        rename_generated_path_with(&source, &destination, |_source, _destination| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::CrossesDevices,
+                "Invalid cross-device link",
+            ))
+        })
+        .expect("copy after cross-device rename");
+
+        assert!(!source.exists(), "source file must be removed after copy");
+        assert_eq!(
+            fs::read(&destination).expect("read destination file"),
+            b"new readme"
+        );
+    }
+
+    #[test]
+    fn rename_generated_path_copies_directory_when_rename_crosses_devices() {
+        let temp = tempfile::tempdir().expect("create test directory");
+        let source = temp.path().join("config");
+        let destination = temp.path().join("backup").join("config");
+        fs::create_dir_all(&source).expect("create source directory");
+        fs::write(source.join("marker"), b"hello").expect("write source file");
+        fs::create_dir_all(destination.parent().expect("backup parent"))
+            .expect("create backup directory");
+
+        rename_generated_path_with(&source, &destination, |_source, _destination| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::CrossesDevices,
+                "Invalid cross-device link",
+            ))
+        })
+        .expect("copy after cross-device rename");
+
+        assert!(
+            !source.exists(),
+            "source directory must be removed after copy"
+        );
+        assert_eq!(
+            fs::read(destination.join("marker")).expect("read destination file"),
+            b"hello"
+        );
+    }
+
+    #[test]
+    fn replace_generated_paths_installs_when_every_rename_crosses_devices() {
+        let temp = tempfile::tempdir().expect("create test directory");
+        let active = temp.path().join("active");
+        let prepared = temp.path().join("prepared");
+        write_bundle_paths(&active, b"old");
+        write_bundle_paths(&prepared, b"new");
+
+        replace_generated_paths_with(&active, &prepared, |source, destination| {
+            rename_generated_path_with(source, destination, |_source, _destination| {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::CrossesDevices,
+                    "Invalid cross-device link",
+                ))
+            })
+        })
+        .expect("install after cross-device renames");
+
+        assert_bundle_paths(&active, b"new");
     }
 
     #[test]
