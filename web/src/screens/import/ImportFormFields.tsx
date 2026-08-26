@@ -23,7 +23,6 @@ import type { AttachmentMediaMode, ContactNameMode } from "../../lib/types";
 import { accentLink } from "../../lib/uiStyles";
 import {
   isWhatsappMethod,
-  WHATSAPP_DEFAULT_METHOD,
   WHATSAPP_METHODS,
   WHATSAPP_SOURCE_ID,
   type WhatsappPathStats,
@@ -351,12 +350,6 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
             }
             onSelectionChange={(k) => {
               const key = String(k);
-              if (key === WHATSAPP_SOURCE_ID) {
-                props.onSourceChange(
-                  isWhatsappMethod(props.source) ? props.source : WHATSAPP_DEFAULT_METHOD,
-                );
-                return;
-              }
               props.onSourceChange(key);
             }}
             aria-label="Import source"

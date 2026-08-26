@@ -8,6 +8,7 @@ import {
   emptyWhatsappPathStats,
   WHATSAPP_ERR_CRYPT_KEY,
   WHATSAPP_ERR_FOLDER_IS_FILE,
+  WHATSAPP_SOURCE_ID,
 } from "../../lib/whatsappImport";
 import ImportFormFields, { type ImportFormFieldsProps } from "./ImportFormFields";
 
@@ -231,6 +232,16 @@ describe("ImportFormFields iMessage methods", () => {
     expect(await screen.findByRole("option", { name: "WhatsApp" })).toBeTruthy();
     await user.click(screen.getByRole("option", { name: "iMessage" }));
     expect(onSourceChange).toHaveBeenCalledWith(IMESSAGE_SOURCE_ID);
+  });
+
+  it("passes the WhatsApp source key through when WhatsApp is chosen", async () => {
+    const onSourceChange = vi.fn();
+    const user = userEvent.setup();
+    renderForm({ source: "imessage-ios", onSourceChange });
+    await user.click(screen.getByLabelText("Import source"));
+    expect(await screen.findByRole("option", { name: "iMessage" })).toBeTruthy();
+    await user.click(screen.getByRole("option", { name: "WhatsApp" }));
+    expect(onSourceChange).toHaveBeenCalledWith(WHATSAPP_SOURCE_ID);
   });
 
   it("shows an Apple Contacts kind error when the path is a directory", () => {

@@ -22,6 +22,14 @@ import {
 import { invokeHomeDir, invokeIosBackupEncrypted, invokePathStat } from "../lib/tauri";
 import { isTauri } from "../lib/tauri-check";
 import type { AttachmentMediaMode, ContactNameMode } from "../lib/types";
+import {
+  emptyWhatsappPathStats,
+  isWhatsappMethod,
+  WHATSAPP_CRYPT_NAMES,
+  WHATSAPP_DEFAULT_METHOD,
+  WHATSAPP_SOURCE_ID,
+  type WhatsappMethodId,
+} from "../lib/whatsappImport";
 import ImportFormFields from "./import/ImportFormFields";
 import ImportProgressView from "./import/ImportProgressView";
 import { useImportJob } from "./import/useImportJob";
@@ -68,6 +76,13 @@ export default function ImportScreen() {
   const [attachmentRoot, setAttachmentRoot] = useState("");
   const [appleContacts, setAppleContacts] = useState("");
   const [pathStats, setPathStats] = useState(emptyImessagePathStats);
+  const [whatsappKey, setWhatsappKey] = useState("");
+  const [showWhatsappKey, setShowWhatsappKey] = useState(false);
+  const [whatsappWa, setWhatsappWa] = useState("");
+  const [whatsappMedia, setWhatsappMedia] = useState("");
+  const [whatsappDb, setWhatsappDb] = useState("");
+  const [whatsappBusiness, setWhatsappBusiness] = useState(false);
+  const [whatsappStats, setWhatsappStats] = useState(emptyWhatsappPathStats);
   const [backupPassword, setBackupPassword] = useState("");
   const [showBackupPassword, setShowBackupPassword] = useState(false);
   const [attachmentMedia, setAttachmentMedia] = useState<AttachmentMediaMode>("copy");
@@ -86,6 +101,7 @@ export default function ImportScreen() {
   const [profilePhonesError, setProfilePhonesError] = useState(false);
   const ownerPhonesSeededRef = useRef(false);
   const lastImessageMethodRef = useRef<ImessageMethodId>(IMESSAGE_DEFAULT_METHOD);
+  const lastWhatsappMethodRef = useRef<WhatsappMethodId>(WHATSAPP_DEFAULT_METHOD);
   const sourceChangeGenRef = useRef(0);
 
   useEffect(() => {
@@ -165,25 +181,82 @@ export default function ImportScreen() {
     };
   }, [source, backupPath, attachmentRoot, appleContacts]);
 
+  useEffect(() => {
+    if (!isTauri() || !isWhatsappMethod(source)) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const root = backupPath.trim();
+        const [backup, contactsDb, media, db, msgstore, cryptHits] = await Promise.all([
+          probePath(backupPath),
+          probePath(whatsappWa),
+          probePath(whatsappMedia),
+          probePath(whatsappDb),
+          probePath(root ? `${root}/msgstore.db` : ""),
+          Promise.all(
+            WHATSAPP_CRYPT_NAMES.map(async (name) => {
+              const stat = await probePath(root ? `${root}/${name}` : "");
+              return stat?.exists && stat.isFile ? name : null;
+            }),
+          ),
+        ]);
+        if (cancelled) return;
+        const cryptName = cryptHits.find((name) => name !== null) ?? null;
+        setWhatsappStats({
+          backup,
+          contactsDb,
+          media,
+          db,
+          hasMsgstoreDb: Boolean(msgstore?.exists && msgstore.isFile),
+          cryptName,
+        });
+      })();
+    }, PATH_PROBE_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [source, backupPath, whatsappWa, whatsappMedia, whatsappDb]);
+
   function applyRememberedPaths(nextSource: string): string {
     const loaded = loadRememberedImportPaths(nextSource);
     setBackupPath(loaded.backupPath);
     if (isImessageMethod(nextSource)) {
       setAttachmentRoot(loaded.attachmentRoot);
       setAppleContacts(loaded.appleContacts);
+      setWhatsappWa("");
+      setWhatsappMedia("");
+      setWhatsappDb("");
+    } else if (isWhatsappMethod(nextSource)) {
+      setAttachmentRoot("");
+      setAppleContacts("");
+      setWhatsappWa(loaded.whatsappWa);
+      setWhatsappMedia(loaded.whatsappMedia);
+      setWhatsappDb(loaded.whatsappDb);
     } else {
       setAttachmentRoot("");
       setAppleContacts("");
+      setWhatsappWa("");
+      setWhatsappMedia("");
+      setWhatsappDb("");
     }
     return loaded.backupPath;
   }
 
   function handleSourceChange(next: string): void {
-    const resolved = next === IMESSAGE_SOURCE_ID ? lastImessageMethodRef.current : next;
+    const resolved =
+      next === IMESSAGE_SOURCE_ID
+        ? lastImessageMethodRef.current
+        : next === WHATSAPP_SOURCE_ID
+          ? lastWhatsappMethodRef.current
+          : next;
     const gen = ++sourceChangeGenRef.current;
     setSource(resolved);
     if (isImessageMethod(resolved)) lastImessageMethodRef.current = resolved;
+    if (isWhatsappMethod(resolved)) lastWhatsappMethodRef.current = resolved;
     setPathStats(emptyImessagePathStats());
+    setWhatsappStats(emptyWhatsappPathStats());
+    if (resolved !== "whatsapp-ios") setWhatsappBusiness(false);
     const loadedBackup = applyRememberedPaths(resolved);
 
     if (resolved !== "imessage-macos" || loadedBackup.trim() !== "" || !isTauri()) {
@@ -233,6 +306,27 @@ export default function ImportScreen() {
     }
   };
 
+  const updateWhatsappWa = (path: string) => {
+    setWhatsappWa(path);
+    if (getRememberImporterPaths() && isWhatsappMethod(source)) {
+      setImporterExtraPath(source, "whatsappWa", path);
+    }
+  };
+
+  const updateWhatsappMedia = (path: string) => {
+    setWhatsappMedia(path);
+    if (getRememberImporterPaths() && isWhatsappMethod(source)) {
+      setImporterExtraPath(source, "whatsappMedia", path);
+    }
+  };
+
+  const updateWhatsappDb = (path: string) => {
+    setWhatsappDb(path);
+    if (getRememberImporterPaths() && isWhatsappMethod(source)) {
+      setImporterExtraPath(source, "whatsappDb", path);
+    }
+  };
+
   const isSbr = source === SBR_SOURCE;
 
   return (
@@ -252,6 +346,19 @@ export default function ImportScreen() {
           appleContacts={appleContacts}
           onAppleContactsChange={updateAppleContacts}
           pathStats={pathStats}
+          whatsappKey={whatsappKey}
+          onWhatsappKeyChange={setWhatsappKey}
+          showWhatsappKey={showWhatsappKey}
+          onToggleWhatsappKey={() => setShowWhatsappKey((v) => !v)}
+          whatsappWa={whatsappWa}
+          onWhatsappWaChange={updateWhatsappWa}
+          whatsappMedia={whatsappMedia}
+          onWhatsappMediaChange={updateWhatsappMedia}
+          whatsappDb={whatsappDb}
+          onWhatsappDbChange={updateWhatsappDb}
+          whatsappBusiness={whatsappBusiness}
+          onWhatsappBusinessChange={setWhatsappBusiness}
+          whatsappStats={whatsappStats}
           attachmentMedia={attachmentMedia}
           onAttachmentMediaChange={setAttachmentMedia}
           maxResolution={maxResolution}
@@ -298,6 +405,11 @@ export default function ImportScreen() {
               isSbr,
               attachmentRoot,
               appleContacts,
+              whatsappKey,
+              whatsappWa,
+              whatsappMedia,
+              whatsappDb,
+              whatsappBusiness,
             })
           }
         />
