@@ -440,8 +440,8 @@ fn build_exporter_config(
                     platform: Some(WhatsappPlatform::Ios),
                     backup: Some(PathBuf::from(path)),
                     wa: nonempty(&options.whatsapp_wa).map(PathBuf::from),
-                    media: nonempty(&options.whatsapp_media).map(PathBuf::from),
-                    db: nonempty(&options.whatsapp_db).map(PathBuf::from),
+                    media: None,
+                    db: None,
                     business: options.whatsapp_business,
                     ..Default::default()
                 }),
@@ -698,6 +698,27 @@ mod tests {
                 assert_eq!(wa.wa.as_deref(), Some(std::path::Path::new("/tmp/wa.db")));
                 assert!(wa.backup.is_none());
                 assert!(!wa.business);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn whatsapp_ios_omits_leftover_android_media_and_db() {
+        let mut options = test_options(Vec::new());
+        options.whatsapp_media = "/tmp/WhatsApp".into();
+        options.whatsapp_db = "/tmp/msgstore.db".into();
+        options.whatsapp_wa = "/tmp/ContactsV2.sqlite".into();
+        let config =
+            build_exporter_config("whatsapp-ios", "/tmp/ios-backup", "/tmp/out", &options).unwrap();
+        match config.source {
+            SourceConfig::Whatsapp(wa) => {
+                assert!(wa.media.is_none());
+                assert!(wa.db.is_none());
+                assert_eq!(
+                    wa.wa.as_deref(),
+                    Some(std::path::Path::new("/tmp/ContactsV2.sqlite"))
+                );
             }
             other => panic!("{other:?}"),
         }

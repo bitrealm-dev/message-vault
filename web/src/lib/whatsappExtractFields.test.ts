@@ -27,6 +27,29 @@ describe("whatsappExtractFields", () => {
     });
   });
 
+  it("omits leftover Android media and db on iPhone", () => {
+    expect(
+      whatsappExtractFields({
+        source: "whatsapp-ios",
+        attachmentMedia: "copy",
+        maxResolution: "720p",
+        maxFps: "30",
+        minSizeMb: "20",
+        key: "",
+        wa: "/backups/ContactsV2.sqlite",
+        media: "/tmp/WhatsApp",
+        db: "/tmp/msgstore.db",
+        business: false,
+      }),
+    ).toEqual({
+      attachment_media: "copy",
+      media_max_resolution: "720p",
+      media_max_fps: "30",
+      media_min_size: "20M",
+      whatsapp_wa: "/backups/ContactsV2.sqlite",
+    });
+  });
+
   it("sets iPhone business and omits leftover key", () => {
     expect(
       whatsappExtractFields({
