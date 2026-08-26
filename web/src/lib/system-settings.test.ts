@@ -1,9 +1,13 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   defaultImportStagingDir,
+  getImporterExtraPaths,
+  getImporterPath,
   isUsableImportStagingParent,
   joinImportStagingPath,
   resolveImportStagingDir,
+  setImporterExtraPath,
+  setImporterPath,
 } from "./system-settings";
 
 const mem = new Map<string, string>();
@@ -128,5 +132,58 @@ describe("resolveImportStagingDir", () => {
     await expect(resolveImportStagingDir("/backup", "imessage-ios")).rejects.toThrow(
       /home directory/i,
     );
+  });
+});
+
+describe("joinImportStagingPath jailbreak slug", () => {
+  const now = new Date(2026, 7, 24, 18, 5, 9);
+
+  it("uses iphone-jailbreak in the staging folder name", () => {
+    expect(joinImportStagingPath("/home/sam/message-vault", "imessage-jailbreak", now)).toBe(
+      "/home/sam/message-vault/staging-iphone-jailbreak-260824-180509",
+    );
+  });
+});
+
+describe("remembered importer extra paths", () => {
+  it("keeps a legacy backup path string for imessage-ios", () => {
+    setImporterPath("imessage-ios", "/backups/old-iphone");
+    expect(getImporterPath("imessage-ios")).toBe("/backups/old-iphone");
+    expect(getImporterExtraPaths("imessage-ios")).toEqual({
+      attachmentRoot: "",
+      appleContacts: "",
+    });
+  });
+
+  it("stores attachment folder and Apple Contacts per method", () => {
+    setImporterPath("imessage-macos", "/Users/sam/Library/Messages/chat.db");
+    setImporterExtraPath("imessage-macos", "attachmentRoot", "/Users/sam/Library/Messages");
+    setImporterExtraPath(
+      "imessage-macos",
+      "appleContacts",
+      "/Users/sam/Library/Application Support/AddressBook/AddressBook-v22.abcddb",
+    );
+    setImporterPath("imessage-jailbreak", "/mnt/iphone/sms.db");
+    setImporterExtraPath("imessage-jailbreak", "attachmentRoot", "/mnt/iphone/Library/SMS");
+
+    expect(getImporterPath("imessage-macos")).toBe("/Users/sam/Library/Messages/chat.db");
+    expect(getImporterExtraPaths("imessage-macos")).toEqual({
+      attachmentRoot: "/Users/sam/Library/Messages",
+      appleContacts:
+        "/Users/sam/Library/Application Support/AddressBook/AddressBook-v22.abcddb",
+    });
+    expect(getImporterPath("imessage-jailbreak")).toBe("/mnt/iphone/sms.db");
+    expect(getImporterExtraPaths("imessage-jailbreak").attachmentRoot).toBe(
+      "/mnt/iphone/Library/SMS",
+    );
+    expect(getImporterExtraPaths("imessage-macos").attachmentRoot).not.toBe(
+      getImporterExtraPaths("imessage-jailbreak").attachmentRoot,
+    );
+  });
+
+  it("clears an extra path when set to blank", () => {
+    setImporterExtraPath("imessage-macos", "attachmentRoot", "/tmp/root");
+    setImporterExtraPath("imessage-macos", "attachmentRoot", "  ");
+    expect(getImporterExtraPaths("imessage-macos").attachmentRoot).toBe("");
   });
 });
