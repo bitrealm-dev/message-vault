@@ -22,6 +22,20 @@ import { parseSelectKey } from "../../lib/selectKey";
 import type { AttachmentMediaMode, ContactNameMode } from "../../lib/types";
 import { accentLink } from "../../lib/uiStyles";
 import {
+  isWhatsappMethod,
+  WHATSAPP_DEFAULT_METHOD,
+  WHATSAPP_METHODS,
+  WHATSAPP_SOURCE_ID,
+  type WhatsappPathStats,
+  whatsappCanImport,
+  whatsappCryptRequired,
+  whatsappShowsBusiness,
+  whatsappShowsContactsDb,
+  whatsappShowsDb,
+  whatsappShowsKey,
+  whatsappShowsMedia,
+} from "../../lib/whatsappImport";
+import {
   ATTACHMENT_OPTIONS,
   CollapsibleSection,
   fieldStyle,
@@ -45,6 +59,19 @@ export type ImportFormFieldsProps = {
   appleContacts: string;
   onAppleContactsChange: (path: string) => void;
   pathStats: ImessagePathStats;
+  whatsappKey: string;
+  onWhatsappKeyChange: (value: string) => void;
+  showWhatsappKey: boolean;
+  onToggleWhatsappKey: () => void;
+  whatsappWa: string;
+  onWhatsappWaChange: (path: string) => void;
+  whatsappMedia: string;
+  onWhatsappMediaChange: (path: string) => void;
+  whatsappDb: string;
+  onWhatsappDbChange: (path: string) => void;
+  whatsappBusiness: boolean;
+  onWhatsappBusinessChange: (value: boolean) => void;
+  whatsappStats: WhatsappPathStats;
   attachmentMedia: AttachmentMediaMode;
   onAttachmentMediaChange: (mode: AttachmentMediaMode) => void;
   maxResolution: string;
@@ -77,7 +104,18 @@ export type ImportFormFieldsProps = {
 };
 
 const SQLITE_DB_FILTERS = [{ name: "SQLite database", extensions: ["db"] }];
+const WHATSAPP_CONTACTS_FILTERS = [{ name: "SQLite database", extensions: ["db", "sqlite"] }];
 const APPLE_CONTACTS_FILTERS = [{ name: "Apple AddressBook", extensions: ["abcddb", "sqlitedb"] }];
+
+const WHATSAPP_FOLDER_HINT_ANDROID =
+  "Folder that contains msgstore.db or msgstore.db.crypt12 / crypt14 / crypt15.";
+const WHATSAPP_FOLDER_HINT_IPHONE = "Path to the root of a device backup";
+const WHATSAPP_KEY_HINT =
+  "Key file or crypt15 hex. Needed when the folder has an encrypted backup and no msgstore.db.";
+const WHATSAPP_CONTACTS_HINT_ANDROID = "Leave empty if wa.db is in the backup folder.";
+const WHATSAPP_CONTACTS_HINT_IPHONE = "Leave empty if ContactsV2.sqlite is in the backup.";
+const WHATSAPP_MEDIA_HINT = "Leave empty if the WhatsApp media folder is in the backup folder.";
+const WHATSAPP_DB_HINT = "Leave empty if msgstore.db is in the backup folder.";
 
 const ATTACHMENT_FOLDER_HINT_MAC =
   "Leave empty if Attachments and StickerCache are next to chat.db. Set this only when those folders live somewhere else.";
@@ -211,6 +249,7 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
   const isIos = props.source === "imessage-ios";
   const isSbr = props.source === "sms-backup-restore";
   const imessageMethod = isImessageMethod(props.source) ? props.source : null;
+  const whatsappMethod = isWhatsappMethod(props.source) ? props.source : null;
   const imessageGate = imessageMethod
     ? imessageCanImport({
         method: imessageMethod,
@@ -221,8 +260,25 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
         stats: props.pathStats,
       })
     : null;
+  const whatsappGate = whatsappMethod
+    ? whatsappCanImport({
+        method: whatsappMethod,
+        backupPath: props.backupPath,
+        key: props.whatsappKey,
+        contactsDb: props.whatsappWa,
+        media: props.whatsappMedia,
+        db: props.whatsappDb,
+        stats: props.whatsappStats,
+      })
+    : null;
   const imessageErrors = imessageGate?.errors ?? {};
-  const showCompress = (imessageMethod !== null || isSbr) && props.attachmentMedia === "compress";
+  const whatsappErrors = whatsappGate?.errors ?? {};
+  const whatsappKeyRequired = whatsappMethod
+    ? whatsappCryptRequired(props.whatsappStats.hasMsgstoreDb, props.whatsappStats.cryptName)
+    : false;
+  const showCompress =
+    (imessageMethod !== null || whatsappMethod !== null || isSbr) &&
+    props.attachmentMedia === "compress";
   const phoneFieldRef = useRef<PhoneTokenFieldHandle>(null);
   const [phoneDraft, setPhoneDraft] = useState("");
   const [mismatchAck, setMismatchAck] = useState(false);
@@ -250,11 +306,13 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
 
   const canImport = imessageGate
     ? imessageGate.enabled && !props.running
-    : Boolean(props.backupPath) &&
-      !props.running &&
-      (!isSbr || props.profilePhonesReady) &&
-      (!isSbr || props.ownerPhones.length > 0 || phoneDraftPending) &&
-      (!phonesMismatch || mismatchAck);
+    : whatsappGate
+      ? whatsappGate.enabled && !props.running
+      : Boolean(props.backupPath) &&
+        !props.running &&
+        (!isSbr || props.profilePhonesReady) &&
+        (!isSbr || props.ownerPhones.length > 0 || phoneDraftPending) &&
+        (!phonesMismatch || mismatchAck);
 
   function handleImport(): void {
     if (isSbr) {
@@ -284,9 +342,22 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
       >
         <div className={sectionGap}>
           <Select
-            selectedKey={imessageMethod ? IMESSAGE_SOURCE_ID : props.source}
+            selectedKey={
+              imessageMethod
+                ? IMESSAGE_SOURCE_ID
+                : whatsappMethod
+                  ? WHATSAPP_SOURCE_ID
+                  : props.source
+            }
             onSelectionChange={(k) => {
-              props.onSourceChange(String(k));
+              const key = String(k);
+              if (key === WHATSAPP_SOURCE_ID) {
+                props.onSourceChange(
+                  isWhatsappMethod(props.source) ? props.source : WHATSAPP_DEFAULT_METHOD,
+                );
+                return;
+              }
+              props.onSourceChange(key);
             }}
             aria-label="Import source"
             triggerClassName="!bg-bg"
@@ -311,6 +382,24 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
               triggerClassName="!bg-bg"
             >
               {imessageVisiblePlatforms(imessageMethod).map((m) => (
+                <ListBoxItem key={m.id} id={m.id} className={selectItemClassName}>
+                  {m.label}
+                </ListBoxItem>
+              ))}
+            </Select>
+          </StackedField>
+        ) : whatsappMethod ? (
+          <StackedField label="Platform">
+            <Select
+              selectedKey={props.source}
+              onSelectionChange={(k) => {
+                const key = String(k);
+                if (isWhatsappMethod(key)) props.onSourceChange(key);
+              }}
+              aria-label="Platform"
+              triggerClassName="!bg-bg"
+            >
+              {WHATSAPP_METHODS.map((m) => (
                 <ListBoxItem key={m.id} id={m.id} className={selectItemClassName}>
                   {m.label}
                 </ListBoxItem>
@@ -401,6 +490,105 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
                 </p>
                 <FieldStatus message={imessageErrors.appleContacts} />
               </StackedField>
+            ) : null}
+
+            <AttachmentFields
+              attachmentMedia={props.attachmentMedia}
+              onAttachmentMediaChange={props.onAttachmentMediaChange}
+              showCompress={showCompress}
+              maxResolution={props.maxResolution}
+              onMaxResolutionChange={props.onMaxResolutionChange}
+              maxFps={props.maxFps}
+              onMaxFpsChange={props.onMaxFpsChange}
+              minSizeMb={props.minSizeMb}
+              onMinSizeMbChange={props.onMinSizeMbChange}
+            />
+
+            <ContactsField
+              contactNameMode={props.contactNameMode}
+              onContactNameModeChange={props.onContactNameModeChange}
+            />
+          </>
+        ) : whatsappMethod ? (
+          <>
+            <StackedField label="Backup folder" required>
+              <PathPicker value={props.backupPath} onChange={props.onBackupPathChange} directory />
+              <p className={hintStyle}>
+                {whatsappMethod === "whatsapp-ios"
+                  ? WHATSAPP_FOLDER_HINT_IPHONE
+                  : WHATSAPP_FOLDER_HINT_ANDROID}
+              </p>
+              <FieldStatus message={whatsappErrors.backupPath} />
+            </StackedField>
+
+            {whatsappShowsKey(whatsappMethod) ? (
+              <StackedField
+                label="Decryption key"
+                required={whatsappKeyRequired}
+                optional={!whatsappKeyRequired}
+              >
+                <PasswordField
+                  aria-label={whatsappKeyRequired ? "Decryption key" : "Decryption key (Optional)"}
+                  value={props.whatsappKey}
+                  onChange={props.onWhatsappKeyChange}
+                  autoComplete="new-password"
+                  showPassword={props.showWhatsappKey}
+                  onToggle={props.onToggleWhatsappKey}
+                />
+                <p className={hintStyle}>{WHATSAPP_KEY_HINT}</p>
+                <FieldStatus message={whatsappErrors.key} />
+              </StackedField>
+            ) : null}
+
+            {whatsappShowsContactsDb(whatsappMethod) ? (
+              <StackedField label="Contacts database" optional>
+                <PathPicker
+                  value={props.whatsappWa}
+                  onChange={props.onWhatsappWaChange}
+                  filters={WHATSAPP_CONTACTS_FILTERS}
+                />
+                <p className={hintStyle}>
+                  {whatsappMethod === "whatsapp-ios"
+                    ? WHATSAPP_CONTACTS_HINT_IPHONE
+                    : WHATSAPP_CONTACTS_HINT_ANDROID}
+                </p>
+                <FieldStatus message={whatsappErrors.contactsDb} />
+              </StackedField>
+            ) : null}
+
+            {whatsappShowsMedia(whatsappMethod) ? (
+              <StackedField label="Media folder" optional>
+                <PathPicker
+                  value={props.whatsappMedia}
+                  onChange={props.onWhatsappMediaChange}
+                  directory
+                />
+                <p className={hintStyle}>{WHATSAPP_MEDIA_HINT}</p>
+                <FieldStatus message={whatsappErrors.media} />
+              </StackedField>
+            ) : null}
+
+            {whatsappShowsDb(whatsappMethod) ? (
+              <StackedField label="Message database" optional>
+                <PathPicker
+                  value={props.whatsappDb}
+                  onChange={props.onWhatsappDbChange}
+                  filters={SQLITE_DB_FILTERS}
+                />
+                <p className={hintStyle}>{WHATSAPP_DB_HINT}</p>
+                <FieldStatus message={whatsappErrors.db} />
+              </StackedField>
+            ) : null}
+
+            {whatsappShowsBusiness(whatsappMethod) ? (
+              <label className="mb-[1.1rem] flex cursor-pointer items-center gap-2 text-[0.875rem]">
+                <input
+                  type="checkbox"
+                  checked={props.whatsappBusiness}
+                  onChange={(e) => props.onWhatsappBusinessChange(e.target.checked)}
+                />
+                WhatsApp Business
+              </label>
             ) : null}
 
             <AttachmentFields
