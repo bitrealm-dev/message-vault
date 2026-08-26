@@ -13,9 +13,9 @@ import {
   shouldPrefillMacMessagesDb,
 } from "../lib/imessageImport";
 import {
-  getImporterExtraPaths,
   getImporterPath,
   getRememberImporterPaths,
+  loadRememberedImportPaths,
   setImporterExtraPath,
   setImporterPath,
 } from "../lib/system-settings";
@@ -160,17 +160,16 @@ export default function ImportScreen() {
   }, [source, backupPath, attachmentRoot, appleContacts]);
 
   function applyRememberedPaths(nextSource: string): string {
-    const loadedBackup = getImporterPath(nextSource);
-    setBackupPath(loadedBackup);
+    const loaded = loadRememberedImportPaths(nextSource);
+    setBackupPath(loaded.backupPath);
     if (isImessageMethod(nextSource)) {
-      const extras = getImporterExtraPaths(nextSource);
-      setAttachmentRoot(extras.attachmentRoot);
-      setAppleContacts(extras.appleContacts);
+      setAttachmentRoot(loaded.attachmentRoot);
+      setAppleContacts(loaded.appleContacts);
     } else {
       setAttachmentRoot("");
       setAppleContacts("");
     }
-    return loadedBackup;
+    return loaded.backupPath;
   }
 
   function handleSourceChange(next: string): void {

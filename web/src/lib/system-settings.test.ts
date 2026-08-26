@@ -5,9 +5,11 @@ import {
   getImporterPath,
   isUsableImportStagingParent,
   joinImportStagingPath,
+  loadRememberedImportPaths,
   resolveImportStagingDir,
   setImporterExtraPath,
   setImporterPath,
+  setRememberImporterPaths,
 } from "./system-settings";
 
 const mem = new Map<string, string>();
@@ -185,5 +187,43 @@ describe("remembered importer extra paths", () => {
     setImporterExtraPath("imessage-macos", "attachmentRoot", "/tmp/root");
     setImporterExtraPath("imessage-macos", "attachmentRoot", "  ");
     expect(getImporterExtraPaths("imessage-macos").attachmentRoot).toBe("");
+  });
+});
+
+describe("loadRememberedImportPaths", () => {
+  it("clears leftover storage when remembering is off", () => {
+    setImporterPath("imessage-macos", "/Users/sam/Library/Messages/chat.db");
+    setImporterPath("whatsapp-android", "/tmp/wa");
+    setImporterExtraPath("imessage-macos", "attachmentRoot", "/Users/sam/Library/Messages");
+    setRememberImporterPaths(false);
+
+    expect(loadRememberedImportPaths("imessage-macos")).toEqual({
+      backupPath: "",
+      attachmentRoot: "",
+      appleContacts: "",
+    });
+    expect(loadRememberedImportPaths("whatsapp-android")).toEqual({
+      backupPath: "",
+      attachmentRoot: "",
+      appleContacts: "",
+    });
+  });
+
+  it("loads per-method paths when remembering is on", () => {
+    setRememberImporterPaths(true);
+    setImporterPath("imessage-ios", "/backups/iphone");
+    setImporterPath("imessage-macos", "/Users/sam/Library/Messages/chat.db");
+    setImporterExtraPath("imessage-macos", "attachmentRoot", "/Users/sam/Library/Messages");
+
+    expect(loadRememberedImportPaths("imessage-ios")).toEqual({
+      backupPath: "/backups/iphone",
+      attachmentRoot: "",
+      appleContacts: "",
+    });
+    expect(loadRememberedImportPaths("imessage-macos")).toEqual({
+      backupPath: "/Users/sam/Library/Messages/chat.db",
+      attachmentRoot: "/Users/sam/Library/Messages",
+      appleContacts: "",
+    });
   });
 });

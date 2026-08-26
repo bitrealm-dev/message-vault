@@ -219,6 +219,23 @@ export function getImporterExtraPaths(sourceId: string): {
   };
 }
 
+/** Last paths to show after a source change. Empty when remembering is off. */
+export function loadRememberedImportPaths(sourceId: string): {
+  backupPath: string;
+  attachmentRoot: string;
+  appleContacts: string;
+} {
+  if (!getRememberImporterPaths()) {
+    return { backupPath: "", attachmentRoot: "", appleContacts: "" };
+  }
+  const extras = getImporterExtraPaths(sourceId);
+  return {
+    backupPath: getImporterPath(sourceId),
+    attachmentRoot: extras.attachmentRoot,
+    appleContacts: extras.appleContacts,
+  };
+}
+
 export function setImporterExtraPath(
   sourceId: string,
   field: ImporterExtraField,
