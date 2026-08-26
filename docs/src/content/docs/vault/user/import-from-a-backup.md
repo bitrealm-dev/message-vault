@@ -21,11 +21,14 @@ JSONL (JSON Lines) folders on disk are a command-line task: [Extract to files](/
 
    | Source in the app | Typical files |
    |---|---|
-   | **iPhone - iOS** | iTunes/Finder backup folder |
-   | **iMessage - macOS** | `chat.db` |
+   | **iMessage** → **iPhone backup** | Finder/iTunes backup folder (device UUID directory), not `sms.db` inside it |
+   | **iMessage** → **Mac Messages** | `chat.db` (optional attachment folder if `Attachments` is not next to the database) |
+   | **iMessage** → **Jailbroken iPhone** | `sms.db` plus the folder that contains `Attachments` and `StickerCache` |
    | **WhatsApp - iOS** | iPhone backup that includes WhatsApp |
    | **WhatsApp - Android** | `msgstore.db` or `msgstore.db.crypt*` plus key |
    | **SMS Backup & Restore** | SyncTech XML |
+
+   When the method is **iPhone backup**, Import shows **Encryption password**. Fill it in when the backup is encrypted.
 
    Rescue sources (GO SMS Pro, iMazing, OpenExtract, SMS Backup+) are documented under [rescue imports](/vault/user/how-to/rescue-imports/).
 

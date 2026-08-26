@@ -24,6 +24,8 @@ export async function invokeExtract(config: ExtractConfig): Promise<void> {
       endDate: config.end_date ?? null,
       obfuscate: config.obfuscate ?? null,
       ownerPhones: config.owner_phones ?? null,
+      attachmentRoot: config.attachment_root ?? null,
+      appleContacts: config.apple_contacts ?? null,
     },
   });
 }
@@ -146,6 +148,22 @@ export interface HomeDirInfo {
 /** User home folder and operating system name from the desktop backend. */
 export async function invokeHomeDir(): Promise<HomeDirInfo> {
   return invoke("home_dir");
+}
+
+export interface PathStat {
+  exists: boolean;
+  isFile: boolean;
+  isDirectory: boolean;
+}
+
+/** Whether a path exists and whether it is a file or directory. */
+export async function invokePathStat(path: string): Promise<PathStat> {
+  return invoke("path_stat", { path });
+}
+
+/** Whether an iOS backup folder is encrypted, or null when unknown. */
+export async function invokeIosBackupEncrypted(path: string): Promise<boolean | null> {
+  return invoke("ios_backup_encrypted", { path });
 }
 
 /**

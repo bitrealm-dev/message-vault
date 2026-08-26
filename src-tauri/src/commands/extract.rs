@@ -156,6 +156,10 @@ pub struct ExtractArgs {
     pub obfuscate: Option<bool>,
     /// Owner phone numbers for Android SMS exporters (SMS Backup & Restore).
     pub owner_phones: Option<Vec<String>>,
+    /// Alternate folder for Attachments and StickerCache (Mac and jailbreak).
+    pub attachment_root: Option<String>,
+    /// Path to an Apple AddressBook file (Mac and jailbreak).
+    pub apple_contacts: Option<String>,
 }
 
 /// Ask this process to parse a phone backup and write conversation files.
@@ -193,6 +197,12 @@ pub async fn extract(
             .map(|p| p.trim().to_string())
             .filter(|p| !p.is_empty())
             .collect(),
+        attachment_root: optional_trimmed(args.attachment_root.as_deref())
+            .map(str::to_string)
+            .unwrap_or_default(),
+        apple_contacts: optional_trimmed(args.apple_contacts.as_deref())
+            .map(str::to_string)
+            .unwrap_or_default(),
     };
 
     let output_dir = args.output_dir;
@@ -266,6 +276,8 @@ struct ExtractOptions {
     end_date: String,
     obfuscate: bool,
     owner_phones: Vec<String>,
+    attachment_root: String,
+    apple_contacts: String,
 }
 
 /// Parse the attachment handling choice from the Extract form.
@@ -321,7 +333,7 @@ fn build_exporter_config(
     options: &ExtractOptions,
 ) -> Result<ExporterConfig, String> {
     match source {
-        "imessage-ios" | "imessage-macos" => {
+        "imessage-ios" | "imessage-macos" | "imessage-jailbreak" => {
             let form = Form {
                 db_path: path.to_string(),
                 output: output_dir.to_string(),
@@ -330,7 +342,21 @@ fn build_exporter_config(
                 } else {
                     ApplePlatform::MacOs
                 },
-                backup_password: options.backup_password.clone(),
+                backup_password: if source == "imessage-ios" {
+                    options.backup_password.clone()
+                } else {
+                    String::new()
+                },
+                attachment_root: if source == "imessage-ios" {
+                    String::new()
+                } else {
+                    options.attachment_root.clone()
+                },
+                apple_contacts: if source == "imessage-ios" {
+                    String::new()
+                } else {
+                    options.apple_contacts.clone()
+                },
                 attachment_media: options.attachment_media,
                 media_max_resolution: options.media_max_resolution,
                 media_max_fps: options.media_max_fps.clone(),
@@ -338,7 +364,7 @@ fn build_exporter_config(
                 conversation_filter: options.conversation_filter.clone(),
                 start_date: options.start_date.clone(),
                 end_date: options.end_date.clone(),
-                obfuscate: options.obfuscate,
+                obfuscate: source == "imessage-ios" && options.obfuscate,
                 // Import and Push read conversation files as JSON Lines (one JSON
                 // object per line).
                 output_format: OutputFormat::Jsonl,
@@ -468,6 +494,82 @@ mod tests {
             end_date: String::new(),
             obfuscate: false,
             owner_phones,
+            attachment_root: String::new(),
+            apple_contacts: String::new(),
+        }
+    }
+
+    #[test]
+    fn jailbreak_uses_macos_platform_and_attachment_root() {
+        let mut options = test_options(Vec::new());
+        options.attachment_root = "/mnt/iphone/Library/SMS".into();
+        options.apple_contacts = "/mnt/iphone/AddressBook.sqlitedb".into();
+        options.obfuscate = true;
+        let config = build_exporter_config(
+            "imessage-jailbreak",
+            "/mnt/iphone/sms.db",
+            "/tmp/out",
+            &options,
+        )
+        .unwrap();
+        match config.source {
+            SourceConfig::Apple(apple) => {
+                assert_eq!(apple.platform, Some(ApplePlatform::MacOs));
+                assert_eq!(
+                    apple.attachment_root.as_deref(),
+                    Some("/mnt/iphone/Library/SMS")
+                );
+                assert_eq!(
+                    apple.apple_contacts.as_deref(),
+                    Some(std::path::Path::new("/mnt/iphone/AddressBook.sqlitedb"))
+                );
+                assert!(apple.backup_password.is_none());
+            }
+            other => panic!("expected Apple, got {other:?}"),
+        }
+        assert!(!config.obfuscate.enabled);
+    }
+
+    #[test]
+    fn ios_backup_does_not_forward_attachment_root() {
+        let mut options = test_options(Vec::new());
+        options.attachment_root = "/ignored".into();
+        options.apple_contacts = "/ignored-contacts".into();
+        options.backup_password = "pw".into();
+        let config =
+            build_exporter_config("imessage-ios", "/backups/iphone", "/tmp/out", &options).unwrap();
+        match config.source {
+            SourceConfig::Apple(apple) => {
+                assert_eq!(apple.platform, Some(ApplePlatform::Ios));
+                assert_eq!(apple.backup_password.as_deref(), Some("pw"));
+                // extract.rs blanks both extras for imessage-ios.
+                assert!(apple.attachment_root.is_none());
+                assert!(apple.apple_contacts.is_none());
+            }
+            other => panic!("expected Apple, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn macos_forwards_optional_attachment_root() {
+        let mut options = test_options(Vec::new());
+        options.attachment_root = "/Users/sam/Library/Messages".into();
+        let config = build_exporter_config(
+            "imessage-macos",
+            "/Users/sam/Library/Messages/chat.db",
+            "/tmp/out",
+            &options,
+        )
+        .unwrap();
+        match config.source {
+            SourceConfig::Apple(apple) => {
+                assert_eq!(apple.platform, Some(ApplePlatform::MacOs));
+                assert_eq!(
+                    apple.attachment_root.as_deref(),
+                    Some("/Users/sam/Library/Messages")
+                );
+            }
+            other => panic!("expected Apple, got {other:?}"),
         }
     }
 

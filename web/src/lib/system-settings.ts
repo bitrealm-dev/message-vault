@@ -7,6 +7,7 @@ import { isTauri } from "./tauri-check";
 const VAULT_WORKING_DIR_KEY = "mv-vault-working-dir";
 const REMEMBER_IMPORTER_PATHS_KEY = "mv-remember-importer-paths";
 const IMPORTER_PATHS_KEY = "mv-importer-paths";
+const IMPORTER_EXTRA_PATHS_KEY = "mv-importer-extra-paths";
 
 let cachedHomeDir: string | null = null;
 let homeDirPromise: Promise<string> | null = null;
@@ -166,6 +167,107 @@ export function setImporterPath(sourceId: string, path: string): void {
   writeImporterPaths(next);
 }
 
+type ImporterExtraRow = {
+  attachmentRoot?: string;
+  appleContacts?: string;
+};
+
+function readImporterExtraPaths(): Record<string, ImporterExtraRow> {
+  try {
+    const raw = localStorage.getItem(IMPORTER_EXTRA_PATHS_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: Record<string, ImporterExtraRow> = {};
+    for (const [sourceId, row] of Object.entries(parsed)) {
+      if (!row || typeof row !== "object") continue;
+      const entry: ImporterExtraRow = {};
+      const record = row as Record<string, unknown>;
+      if (typeof record.attachmentRoot === "string" && record.attachmentRoot.trim()) {
+        entry.attachmentRoot = record.attachmentRoot.trim();
+      }
+      if (typeof record.appleContacts === "string" && record.appleContacts.trim()) {
+        entry.appleContacts = record.appleContacts.trim();
+      }
+      if (Object.keys(entry).length > 0) out[sourceId] = entry;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeImporterExtraPaths(map: Record<string, ImporterExtraRow>): void {
+  try {
+    if (Object.keys(map).length === 0) localStorage.removeItem(IMPORTER_EXTRA_PATHS_KEY);
+    else localStorage.setItem(IMPORTER_EXTRA_PATHS_KEY, JSON.stringify(map));
+  } catch {
+    // Private browsing and full storage can throw.
+  }
+}
+
+export type ImporterExtraField = "attachmentRoot" | "appleContacts";
+
+export function getImporterExtraPaths(sourceId: string): {
+  attachmentRoot: string;
+  appleContacts: string;
+} {
+  const row = readImporterExtraPaths()[sourceId];
+  return {
+    attachmentRoot: row?.attachmentRoot ?? "",
+    appleContacts: row?.appleContacts ?? "",
+  };
+}
+
+/** Last paths to show after a source change. Empty when remembering is off. */
+export function loadRememberedImportPaths(sourceId: string): {
+  backupPath: string;
+  attachmentRoot: string;
+  appleContacts: string;
+} {
+  if (!getRememberImporterPaths()) {
+    return { backupPath: "", attachmentRoot: "", appleContacts: "" };
+  }
+  const extras = getImporterExtraPaths(sourceId);
+  return {
+    backupPath: getImporterPath(sourceId),
+    attachmentRoot: extras.attachmentRoot,
+    appleContacts: extras.appleContacts,
+  };
+}
+
+export function setImporterExtraPath(
+  sourceId: string,
+  field: ImporterExtraField,
+  path: string,
+): void {
+  const map = readImporterExtraPaths();
+  const trimmed = path.trim();
+  if (trimmed) {
+    const row = map[sourceId] ?? {};
+    writeImporterExtraPaths({ ...map, [sourceId]: { ...row, [field]: trimmed } });
+    return;
+  }
+  const row = map[sourceId];
+  if (!row) return;
+  const nextRow: ImporterExtraRow = {};
+  const extraFields: ImporterExtraField[] = ["attachmentRoot", "appleContacts"];
+  for (const extraField of extraFields) {
+    if (extraField === field) continue;
+    const value = row[extraField];
+    if (value) nextRow[extraField] = value;
+  }
+  const next: Record<string, ImporterExtraRow> = {};
+  for (const [key, value] of Object.entries(map)) {
+    if (key === sourceId) {
+      if (Object.keys(nextRow).length > 0) next[key] = nextRow;
+    } else {
+      next[key] = value;
+    }
+  }
+  writeImporterExtraPaths(next);
+}
+
 /**
  * Short name used in staging folder names.
  * Matches the desktop GUI in `crates/message-vault-io-gui/src/staging.rs`.
@@ -173,6 +275,7 @@ export function setImporterPath(sourceId: string, path: string): void {
 function importerSlugForSource(sourceId: string): string {
   if (sourceId === "imessage-ios") return "iphone-ios";
   if (sourceId === "imessage-macos") return "macos";
+  if (sourceId === "imessage-jailbreak") return "iphone-jailbreak";
   return sourceId;
 }
 

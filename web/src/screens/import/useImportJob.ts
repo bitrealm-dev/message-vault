@@ -8,6 +8,8 @@ import { useTauriJob } from "../../hooks/useTauriJob";
 import { apiClient, getBaseUrl } from "../../lib/api";
 import { attachmentStepCopy } from "../../lib/attachmentStepCopy";
 import { useAuth } from "../../lib/auth";
+import { imessageExtractFields } from "../../lib/imessageExtractFields";
+import { isImessageMethod } from "../../lib/imessageImport";
 import { saveImportSavedGroup } from "../../lib/savedGroups";
 import { sbrExtractFields } from "../../lib/sbrExtractFields";
 import { resolveImportStagingDir } from "../../lib/system-settings";
@@ -107,8 +109,9 @@ export type ImportJobFormValues = {
   ownerPhones: string[];
   force: boolean;
   obfuscate: boolean;
-  isIos: boolean;
   isSbr: boolean;
+  attachmentRoot: string;
+  appleContacts: string;
 };
 
 /** Run extract then upload for one import, and keep step progress for the UI. */
@@ -229,15 +232,18 @@ export function useImportJob() {
             source: form.source,
             path: form.backupPath,
             output_dir: outputDir,
-            ...(form.isIos
-              ? {
-                  backup_password: form.backupPassword || undefined,
-                  attachment_media: form.attachmentMedia,
-                  media_max_resolution: form.maxResolution,
-                  media_max_fps: form.maxFps,
-                  media_min_size: `${form.minSizeMb.trim() || "20"}M`,
+            ...(isImessageMethod(form.source)
+              ? imessageExtractFields({
+                  source: form.source,
+                  backupPassword: form.backupPassword,
+                  attachmentMedia: form.attachmentMedia,
+                  maxResolution: form.maxResolution,
+                  maxFps: form.maxFps,
+                  minSizeMb: form.minSizeMb,
                   obfuscate: form.obfuscate,
-                }
+                  attachmentRoot: form.attachmentRoot,
+                  appleContacts: form.appleContacts,
+                })
               : {}),
             ...(form.isSbr
               ? sbrExtractFields({

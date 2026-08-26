@@ -18,6 +18,8 @@ mod options;
 mod run;
 mod session;
 
+pub use backup::ios_backup_encrypted_flag;
+pub use error::ENCRYPTED_BACKUP_PASSWORD_REQUIRED;
 pub use message_vault_io_core::RunResult;
 pub use run::run;
 

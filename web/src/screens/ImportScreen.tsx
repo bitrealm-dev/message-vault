@@ -1,14 +1,52 @@
 import { useEffect, useRef, useState } from "react";
 import type { AccountProfile } from "../lib/account";
 import { apiClient } from "../lib/api";
-import { getImporterPath, getRememberImporterPaths, setImporterPath } from "../lib/system-settings";
+import {
+  emptyImessagePathStats,
+  IMESSAGE_DEFAULT_METHOD,
+  IMESSAGE_SOURCE_ID,
+  type ImessageMethodId,
+  imessageStatsForMethod,
+  isImessageMethod,
+  macMessagesDbPath,
+  type PathStat,
+  shouldPrefillMacMessagesDb,
+} from "../lib/imessageImport";
+import {
+  getImporterPath,
+  getRememberImporterPaths,
+  loadRememberedImportPaths,
+  setImporterExtraPath,
+  setImporterPath,
+} from "../lib/system-settings";
+import { invokeHomeDir, invokeIosBackupEncrypted, invokePathStat } from "../lib/tauri";
+import { isTauri } from "../lib/tauri-check";
 import type { AttachmentMediaMode, ContactNameMode } from "../lib/types";
 import ImportFormFields from "./import/ImportFormFields";
 import ImportProgressView from "./import/ImportProgressView";
 import { useImportJob } from "./import/useImportJob";
 
-const DEFAULT_SOURCE = "imessage-ios";
+const DEFAULT_SOURCE = IMESSAGE_DEFAULT_METHOD;
 const SBR_SOURCE = "sms-backup-restore";
+const PATH_PROBE_DEBOUNCE_MS = 200;
+
+function mapPathStat(raw: { exists: boolean; isFile: boolean; isDirectory: boolean }): PathStat {
+  return {
+    exists: raw.exists,
+    isFile: raw.isFile,
+    isDirectory: raw.isDirectory,
+  };
+}
+
+async function probePath(path: string): Promise<PathStat | null> {
+  const trimmed = path.trim();
+  if (trimmed === "") return null;
+  try {
+    return mapPathStat(await invokePathStat(trimmed));
+  } catch {
+    return { exists: false, isFile: false, isDirectory: false };
+  }
+}
 
 export default function ImportScreen() {
   const {
@@ -27,6 +65,9 @@ export default function ImportScreen() {
   const [backupPath, setBackupPath] = useState(() =>
     getRememberImporterPaths() ? getImporterPath(DEFAULT_SOURCE) : "",
   );
+  const [attachmentRoot, setAttachmentRoot] = useState("");
+  const [appleContacts, setAppleContacts] = useState("");
+  const [pathStats, setPathStats] = useState(emptyImessagePathStats);
   const [backupPassword, setBackupPassword] = useState("");
   const [showBackupPassword, setShowBackupPassword] = useState(false);
   const [attachmentMedia, setAttachmentMedia] = useState<AttachmentMediaMode>("copy");
@@ -44,11 +85,8 @@ export default function ImportScreen() {
   const [profilePhonesReady, setProfilePhonesReady] = useState(false);
   const [profilePhonesError, setProfilePhonesError] = useState(false);
   const ownerPhonesSeededRef = useRef(false);
-
-  useEffect(() => {
-    if (!getRememberImporterPaths()) return;
-    setBackupPath(getImporterPath(source));
-  }, [source]);
+  const lastImessageMethodRef = useRef<ImessageMethodId>(IMESSAGE_DEFAULT_METHOD);
+  const sourceChangeGenRef = useRef(0);
 
   useEffect(() => {
     if (source !== SBR_SOURCE) {
@@ -87,12 +125,114 @@ export default function ImportScreen() {
     };
   }, [source]);
 
+  useEffect(() => {
+    return () => {
+      sourceChangeGenRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri() || !isImessageMethod(source)) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const [backup, attachment, contacts] = await Promise.all([
+          probePath(backupPath),
+          probePath(attachmentRoot),
+          probePath(appleContacts),
+        ]);
+        let backupEncrypted: boolean | null = null;
+        if (source === "imessage-ios" && backup?.exists && backup.isDirectory) {
+          try {
+            backupEncrypted = await invokeIosBackupEncrypted(backupPath.trim());
+          } catch {
+            backupEncrypted = null;
+          }
+        }
+        if (cancelled) return;
+        const next = {
+          backup,
+          attachmentRoot: attachment,
+          appleContacts: contacts,
+          backupEncrypted,
+        };
+        setPathStats(imessageStatsForMethod(source, next));
+      })();
+    }, PATH_PROBE_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [source, backupPath, attachmentRoot, appleContacts]);
+
+  function applyRememberedPaths(nextSource: string): string {
+    const loaded = loadRememberedImportPaths(nextSource);
+    setBackupPath(loaded.backupPath);
+    if (isImessageMethod(nextSource)) {
+      setAttachmentRoot(loaded.attachmentRoot);
+      setAppleContacts(loaded.appleContacts);
+    } else {
+      setAttachmentRoot("");
+      setAppleContacts("");
+    }
+    return loaded.backupPath;
+  }
+
+  function handleSourceChange(next: string): void {
+    const resolved = next === IMESSAGE_SOURCE_ID ? lastImessageMethodRef.current : next;
+    const gen = ++sourceChangeGenRef.current;
+    setSource(resolved);
+    if (isImessageMethod(resolved)) lastImessageMethodRef.current = resolved;
+    setPathStats(emptyImessagePathStats());
+    const loadedBackup = applyRememberedPaths(resolved);
+
+    if (resolved !== "imessage-macos" || loadedBackup.trim() !== "" || !isTauri()) {
+      return;
+    }
+
+    void (async () => {
+      try {
+        const home = await invokeHomeDir();
+        if (gen !== sourceChangeGenRef.current) return;
+        if (home.os !== "macos") return;
+        const chatDb = macMessagesDbPath(home.path);
+        if (chatDb === "") return;
+        const stat = mapPathStat(await invokePathStat(chatDb));
+        if (gen !== sourceChangeGenRef.current) return;
+        const prefill = shouldPrefillMacMessagesDb({
+          os: home.os,
+          homeDir: home.path,
+          chatDbExists: stat.exists && stat.isFile,
+          rememberedPath: loadedBackup,
+        });
+        if (prefill === "") return;
+        setBackupPath(prefill);
+        if (getRememberImporterPaths()) setImporterPath(resolved, prefill);
+      } catch {
+        // Home directory and path checks are best-effort on Mac only.
+      }
+    })();
+  }
+
   const updateBackupPath = (path: string) => {
     setBackupPath(path);
     if (getRememberImporterPaths()) setImporterPath(source, path);
   };
 
-  const isIos = source === "imessage-ios";
+  const updateAttachmentRoot = (path: string) => {
+    setAttachmentRoot(path);
+    if (getRememberImporterPaths() && isImessageMethod(source)) {
+      setImporterExtraPath(source, "attachmentRoot", path);
+    }
+  };
+
+  const updateAppleContacts = (path: string) => {
+    setAppleContacts(path);
+    if (getRememberImporterPaths() && isImessageMethod(source)) {
+      setImporterExtraPath(source, "appleContacts", path);
+    }
+  };
+
   const isSbr = source === SBR_SOURCE;
 
   return (
@@ -100,13 +240,18 @@ export default function ImportScreen() {
       {phase === "form" && (
         <ImportFormFields
           source={source}
-          onSourceChange={setSource}
+          onSourceChange={handleSourceChange}
           backupPath={backupPath}
           onBackupPathChange={updateBackupPath}
           backupPassword={backupPassword}
           onBackupPasswordChange={setBackupPassword}
           showBackupPassword={showBackupPassword}
           onToggleBackupPassword={() => setShowBackupPassword((v) => !v)}
+          attachmentRoot={attachmentRoot}
+          onAttachmentRootChange={updateAttachmentRoot}
+          appleContacts={appleContacts}
+          onAppleContactsChange={updateAppleContacts}
+          pathStats={pathStats}
           attachmentMedia={attachmentMedia}
           onAttachmentMediaChange={setAttachmentMedia}
           maxResolution={maxResolution}
@@ -150,8 +295,9 @@ export default function ImportScreen() {
               ownerPhones: flushedPhones ?? ownerPhones,
               force,
               obfuscate,
-              isIos,
               isSbr,
+              attachmentRoot,
+              appleContacts,
             })
           }
         />
