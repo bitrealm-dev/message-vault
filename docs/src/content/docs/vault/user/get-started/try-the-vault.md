@@ -44,7 +44,7 @@ docker compose up -d
 
 Both commands start the vault and, on an **empty** volume, seed sample conversations. The website and the import API share **port 8080**. The `message-vault-data` volume keeps the database between restarts. Compose and `docker run` use that same volume name, so you can switch methods without copying the database.
 
-Edit the Compose file to change the published port, set `DEMO_DATA=false` for an empty vault, or pin `bitrealm/message-vault:0.8.1` instead of `latest`.
+Edit the Compose file to change the published port, set `DEMO_DATA=false` for an empty vault, or pin `bitrealm/message-vault:0.8.2` instead of `latest`.
 
 `DEMO_DATA=true` only seeds when the volume is new. Changing the variable later does not add or remove accounts.
 
