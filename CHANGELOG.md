@@ -11,6 +11,8 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-08-25
+
 ### Fixed
 
 - 2026-08-25: When `demo-seed` cannot rename the sample inbox into place (Docker overlay `EXDEV`), copy then delete so the release image can finish `cargo run -p demo-seed`.
