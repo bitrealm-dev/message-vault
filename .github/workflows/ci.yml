@@ -277,6 +277,17 @@ jobs:
       - name: Check license metadata agrees on the Fair Core License
         run: ./scripts/check-license.sh
 
+  # ── Always: release Dockerfile copies [patch.crates-io] path crates ──
+  docker-context:
+    name: Docker rust-builder context
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check Docker rust-builder copies patched crates
+        run: ./scripts/check-docker-context.sh
+
   # ── Tag only: Docker image → DockerHub ────────────────────────────────
   docker:
     name: Docker image
