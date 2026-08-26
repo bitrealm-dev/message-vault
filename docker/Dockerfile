@@ -32,6 +32,7 @@ COPY vendor ./vendor
 
 RUN cargo build --release -p message-vault-server
 # Conversation JSONL is not in git. Write it here so the runtime image can seed.
+# Needs crates/vault/demo-seed/data/ (corpus + names). Do not ignore that path.
 RUN cargo run --release -p demo-seed
 
 # -----------------------------------------------------------------------------
