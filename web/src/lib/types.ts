@@ -126,6 +126,10 @@ export interface ExtractConfig {
   obfuscate?: boolean;
   /** Owner phone numbers for Android SMS exporters (repeatable). */
   owner_phones?: string[];
+  /** Alternate folder for Attachments and StickerCache (Mac and jailbreak). */
+  attachment_root?: string;
+  /** Path to an Apple AddressBook file (Mac and jailbreak). */
+  apple_contacts?: string;
 }
 
 export interface ExtractErrorEvent {

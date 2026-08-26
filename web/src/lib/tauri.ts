@@ -24,6 +24,8 @@ export async function invokeExtract(config: ExtractConfig): Promise<void> {
       endDate: config.end_date ?? null,
       obfuscate: config.obfuscate ?? null,
       ownerPhones: config.owner_phones ?? null,
+      attachmentRoot: config.attachment_root ?? null,
+      appleContacts: config.apple_contacts ?? null,
     },
   });
 }
