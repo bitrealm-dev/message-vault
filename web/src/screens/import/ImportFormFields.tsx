@@ -7,13 +7,14 @@ import PhoneTokenField, { type PhoneTokenFieldHandle } from "../../components/Ph
 import Select, { ListBoxItem, selectItemClassName } from "../../components/Select";
 import { EXPORT_SOURCES } from "../../lib/exportSources";
 import {
-  IMESSAGE_METHODS,
   IMESSAGE_SOURCE_ID,
   type ImessagePathStats,
+  imessageAttachmentRootRequired,
   imessageCanImport,
   imessageShowsAppleContacts,
   imessageShowsAttachmentRoot,
   imessageShowsPassword,
+  imessageVisiblePlatforms,
   isImessageMethod,
 } from "../../lib/imessageImport";
 import { ownerPhonesNeedMismatchAck } from "../../lib/phoneTokens";
@@ -78,10 +79,11 @@ export type ImportFormFieldsProps = {
 const SQLITE_DB_FILTERS = [{ name: "SQLite database", extensions: ["db"] }];
 const APPLE_CONTACTS_FILTERS = [{ name: "Apple AddressBook", extensions: ["abcddb", "sqlitedb"] }];
 
-const ATTACHMENT_FOLDER_HINT =
-  "Folder that contains Attachments and StickerCache. Needed when those folders are not next to chat.db.";
+const ATTACHMENT_FOLDER_HINT_MAC =
+  "Leave empty if Attachments and StickerCache are next to chat.db. Set this only when those folders live somewhere else.";
+const ATTACHMENT_FOLDER_HINT_JAILBREAK = "Folder that contains Attachments and StickerCache.";
 const APPLE_CONTACTS_HINT_MAC =
-  "AddressBook-v22.abcddb or AddressBook.sqlitedb. On a live Mac, empty means scan the local AddressBook.";
+  "Default: use the local AddressBook. Pick AddressBook-v22.abcddb or AddressBook.sqlitedb only if that file is not in the usual Contacts location.";
 const APPLE_CONTACTS_HINT_JAILBREAK =
   "AddressBook-v22.abcddb or AddressBook.sqlitedb. A local Mac AddressBook scan will not find a phone copy.";
 
@@ -298,29 +300,29 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
         </div>
 
         {imessageMethod ? (
-          <div className={sectionGap}>
+          <StackedField label="Platform">
             <Select
               selectedKey={props.source}
               onSelectionChange={(k) => {
                 const key = String(k);
                 if (isImessageMethod(key)) props.onSourceChange(key);
               }}
-              aria-label="Extraction method"
+              aria-label="Platform"
               triggerClassName="!bg-bg"
             >
-              {IMESSAGE_METHODS.map((m) => (
+              {imessageVisiblePlatforms(imessageMethod).map((m) => (
                 <ListBoxItem key={m.id} id={m.id} className={selectItemClassName}>
                   {m.label}
                 </ListBoxItem>
               ))}
             </Select>
-          </div>
+          </StackedField>
         ) : null}
 
         {imessageMethod ? (
           <>
             {imessageMethod === "imessage-ios" ? (
-              <StackedField label="iPhone Backup Directory">
+              <StackedField label="iPhone Backup Directory" required>
                 <PathPicker
                   value={props.backupPath}
                   onChange={props.onBackupPathChange}
@@ -330,7 +332,7 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
                 <FieldStatus message={imessageErrors.backupPath} />
               </StackedField>
             ) : (
-              <StackedField label="Messages database">
+              <StackedField label="Messages database" required>
                 <PathPicker
                   value={props.backupPath}
                   onChange={props.onBackupPathChange}
@@ -345,14 +347,16 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
 
             {imessageShowsPassword(imessageMethod) ? (
               <StackedField
-                label={
-                  props.pathStats.backupEncrypted === true
-                    ? "Encryption password"
-                    : "Encryption password (optional)"
-                }
+                label="Encryption password"
+                required={props.pathStats.backupEncrypted === true}
+                optional={props.pathStats.backupEncrypted !== true}
               >
                 <PasswordField
-                  aria-label="Encryption password"
+                  aria-label={
+                    props.pathStats.backupEncrypted === true
+                      ? "Encryption password"
+                      : "Encryption password (Optional)"
+                  }
                   value={props.backupPassword}
                   onChange={props.onBackupPasswordChange}
                   autoComplete="new-password"
@@ -364,19 +368,27 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
             ) : null}
 
             {imessageShowsAttachmentRoot(imessageMethod) ? (
-              <StackedField label="Attachment folder">
+              <StackedField
+                label="Attachment folder"
+                required={imessageAttachmentRootRequired(imessageMethod)}
+                optional={!imessageAttachmentRootRequired(imessageMethod)}
+              >
                 <PathPicker
                   value={props.attachmentRoot}
                   onChange={props.onAttachmentRootChange}
                   directory
                 />
-                <p className={hintStyle}>{ATTACHMENT_FOLDER_HINT}</p>
+                <p className={hintStyle}>
+                  {imessageMethod === "imessage-macos"
+                    ? ATTACHMENT_FOLDER_HINT_MAC
+                    : ATTACHMENT_FOLDER_HINT_JAILBREAK}
+                </p>
                 <FieldStatus message={imessageErrors.attachmentRoot} />
               </StackedField>
             ) : null}
 
             {imessageShowsAppleContacts(imessageMethod) ? (
-              <StackedField label="Apple Contacts file">
+              <StackedField label="Apple Contacts file" optional>
                 <PathPicker
                   value={props.appleContacts}
                   onChange={props.onAppleContactsChange}

@@ -35,4 +35,24 @@ describe("FormField", () => {
     );
     expect(screen.getByLabelText("Attachment folder")).toBeTruthy();
   });
+
+  it("marks a required stacked label with a red asterisk", () => {
+    render(
+      <FormField label="iPhone Backup Directory" layout="stacked" required>
+        <input />
+      </FormField>,
+    );
+    const label = screen.getByText("iPhone Backup Directory").closest("label");
+    expect(label?.textContent).toContain("*");
+    expect(label?.querySelector("[aria-hidden]")?.className).toContain("text-danger");
+  });
+
+  it("marks an optional stacked label with (Optional)", () => {
+    render(
+      <FormField label="Apple Contacts file" layout="stacked" optional>
+        <input />
+      </FormField>,
+    );
+    expect(screen.getByLabelText("Apple Contacts file (Optional)")).toBeTruthy();
+  });
 });

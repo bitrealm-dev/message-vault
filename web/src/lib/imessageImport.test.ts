@@ -17,6 +17,7 @@ import {
   imessageShowsAttachmentRoot,
   imessageShowsPassword,
   imessageStatsForMethod,
+  imessageVisiblePlatforms,
   isImessageMethod,
   macMessagesDbPath,
   shouldPrefillMacMessagesDb,
@@ -79,6 +80,26 @@ describe("iMessage methods", () => {
     expect(isImessageMethod("imessage-ios")).toBe(true);
     expect(isImessageMethod("whatsapp-android")).toBe(false);
     expect(isImessageMethod("imessage")).toBe(false);
+  });
+
+  it("hides jailbreak from the platform list unless it is already selected", () => {
+    expect(imessageVisiblePlatforms("imessage-ios").map((m) => m.id)).toEqual([
+      "imessage-macos",
+      "imessage-ios",
+    ]);
+    expect(imessageVisiblePlatforms("imessage-macos").map((m) => m.id)).toEqual([
+      "imessage-macos",
+      "imessage-ios",
+    ]);
+    expect(imessageVisiblePlatforms("imessage-jailbreak").map((m) => m.id)).toEqual([
+      "imessage-macos",
+      "imessage-ios",
+      "imessage-jailbreak",
+    ]);
+  });
+
+  it("does not tell the user to switch to a hidden jailbreak method", () => {
+    expect(IMESSAGE_ERR_IPHONE_PATH_IS_FILE).toBe("Pick the backup folder.");
   });
 });
 

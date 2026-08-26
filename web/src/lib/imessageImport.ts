@@ -36,6 +36,16 @@ export function imessageAttachmentRootRequired(method: ImessageMethodId): boolea
   return method === "imessage-jailbreak";
 }
 
+/** Platform choices shown in Import. Jailbreak stays off the list unless it is already selected. */
+export function imessageVisiblePlatforms(
+  selected: ImessageMethodId,
+): ReadonlyArray<(typeof IMESSAGE_METHODS)[number]> {
+  if (selected === "imessage-jailbreak") {
+    return IMESSAGE_METHODS;
+  }
+  return IMESSAGE_METHODS.filter((m) => m.id !== "imessage-jailbreak");
+}
+
 export type PathStat = {
   exists: boolean;
   isFile: boolean;
@@ -69,8 +79,7 @@ export function imessageStatsForMethod(
 }
 
 export const IMESSAGE_ERR_PATH_MISSING = "This path does not exist.";
-export const IMESSAGE_ERR_IPHONE_PATH_IS_FILE =
-  "Pick the backup folder, or switch to Jailbroken iPhone.";
+export const IMESSAGE_ERR_IPHONE_PATH_IS_FILE = "Pick the backup folder.";
 export const IMESSAGE_ERR_MAC_PATH_IS_DIR = "Pick chat.db.";
 export const IMESSAGE_ERR_JAILBREAK_PATH_IS_DIR = "Pick sms.db.";
 export const IMESSAGE_ERR_ATTACHMENT_IS_FILE =

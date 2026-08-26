@@ -69,17 +69,60 @@ function renderForm(override: Partial<ImportFormFieldsProps> = {}) {
 }
 
 describe("ImportFormFields iMessage methods", () => {
-  it("shows one iMessage source and an extraction method dropdown", () => {
+  it("shows one iMessage source and a Platform dropdown without jailbreak", async () => {
+    const user = userEvent.setup();
     renderForm();
     expect(screen.getByLabelText("Import source")).toBeTruthy();
-    expect(screen.getByLabelText("Extraction method")).toBeTruthy();
+    expect(screen.getByLabelText("Platform")).toBeTruthy();
     expect(screen.queryByText("iPhone - iOS")).toBeNull();
     expect(screen.queryByText("iMessage - macOS")).toBeNull();
+    await user.click(screen.getByLabelText("Platform"));
+    expect(await screen.findByRole("option", { name: "iPhone backup" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Mac Messages" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "Jailbroken iPhone" })).toBeNull();
+  });
+
+  it("keeps jailbreak in Platform when that method is already selected", async () => {
+    const user = userEvent.setup();
+    renderForm({
+      source: "imessage-jailbreak",
+      backupPath: "/mnt/iphone/sms.db",
+      attachmentRoot: "/mnt/iphone/Library/SMS",
+      pathStats: {
+        backup: presentFile,
+        attachmentRoot: presentDir,
+        appleContacts: null,
+        backupEncrypted: null,
+      },
+    });
+    await user.click(screen.getByLabelText("Platform"));
+    expect(await screen.findByRole("option", { name: "Jailbroken iPhone" })).toBeTruthy();
+  });
+
+  it("marks the iPhone backup folder required and encryption password optional", () => {
+    renderForm();
+    const backupLabel = screen.getByText("iPhone Backup Directory").closest("label");
+    expect(backupLabel?.textContent).toContain("*");
+    expect(screen.getByLabelText("Encryption password (Optional)")).toBeTruthy();
+  });
+
+  it("marks encryption password required when the backup is encrypted", () => {
+    renderForm({
+      pathStats: {
+        backup: presentDir,
+        attachmentRoot: null,
+        appleContacts: null,
+        backupEncrypted: true,
+      },
+    });
+    const passwordLabel = screen.getByText("Encryption password").closest("label");
+    expect(passwordLabel?.textContent).toContain("*");
+    expect(screen.queryByLabelText("Encryption password (Optional)")).toBeNull();
   });
 
   it("shows password and hides attachment folder on iPhone backup", () => {
     renderForm({ source: "imessage-ios" });
-    expect(screen.getByLabelText("Encryption password")).toBeTruthy();
+    expect(screen.getByLabelText("Encryption password (Optional)")).toBeTruthy();
     expect(screen.queryByLabelText("Attachment folder")).toBeNull();
     expect(screen.queryByLabelText("Apple Contacts file")).toBeNull();
     expect(screen.getByRole("button", { name: "Import" })).not.toBeDisabled();
@@ -97,8 +140,18 @@ describe("ImportFormFields iMessage methods", () => {
       },
     });
     expect(screen.queryByLabelText("Encryption password")).toBeNull();
-    expect(screen.getByLabelText("Attachment folder")).toBeTruthy();
-    expect(screen.getByLabelText("Apple Contacts file")).toBeTruthy();
+    expect(screen.getByLabelText("Attachment folder (Optional)")).toBeTruthy();
+    expect(screen.getByLabelText("Apple Contacts file (Optional)")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Leave empty if Attachments and StickerCache are next to chat.db. Set this only when those folders live somewhere else.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Default: use the local AddressBook. Pick AddressBook-v22.abcddb or AddressBook.sqlitedb only if that file is not in the usual Contacts location.",
+      ),
+    ).toBeTruthy();
     expect(screen.getByRole("button", { name: "Import" })).not.toBeDisabled();
   });
 
@@ -114,6 +167,8 @@ describe("ImportFormFields iMessage methods", () => {
         backupEncrypted: null,
       },
     });
+    const attachmentLabel = screen.getByText("Attachment folder").closest("label");
+    expect(attachmentLabel?.textContent).toContain("*");
     expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
   });
 
