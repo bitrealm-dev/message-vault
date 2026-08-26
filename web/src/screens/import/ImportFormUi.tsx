@@ -23,13 +23,23 @@ export function StackedField({
   label,
   children,
   trailing,
+  required,
+  optional,
 }: {
   label: string;
   children: ReactNode;
   trailing?: ReactNode;
+  required?: boolean;
+  optional?: boolean;
 }) {
   return (
-    <FormField label={label} layout="stacked" trailing={trailing}>
+    <FormField
+      label={label}
+      layout="stacked"
+      trailing={trailing}
+      required={required}
+      optional={optional}
+    >
       {children}
     </FormField>
   );
