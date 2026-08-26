@@ -13,9 +13,9 @@ description: Fix common problems with the desktop app and reaching the vault in 
 
 ### Import or Extract fails
 
-**Wrong platform.** If the app guesses the wrong platform for an iPhone backup (iOS vs macOS), set **iPhone - iOS** or **iMessage - macOS** explicitly. For WhatsApp, choose **WhatsApp - iOS** or **WhatsApp - Android**.
+**Wrong source or method.** Choose **iMessage** and the matching method (iPhone backup vs Mac Messages vs Jailbroken iPhone). A `.db` file is not an iPhone backup folder. For WhatsApp, choose **WhatsApp - iOS** or **WhatsApp - Android**.
 
-**Encrypted backup password is wrong.** The app cannot read an encrypted iPhone backup without the correct password.
+**Encrypted backup password is wrong.** The app cannot read an encrypted iPhone backup without the correct password. If Import says the backup is encrypted, fill **Encryption password**. If Import says the backup is not encrypted, clear **Encryption password**.
 
 **Wrong WhatsApp decryption key.** The key must be the full 64-character hex string, or a key file path. Re-export the key if the value is uncertain.
 
@@ -29,7 +29,7 @@ pipx install "whatsapp-chat-exporter[android_backup,crypt15]"
 
 ### Media problems
 
-**ffmpeg or ffprobe not found.** **Convert** and **Compress** need FFmpeg on `PATH`. Install it with the commands on [Install the desktop app](/vault/user/get-started/install-the-desktop-app/).
+**ffmpeg or ffprobe not found.** **Convert** and **Compress** need FFmpeg. Put the tools on `PATH`, or in the desktop app set the ffmpeg directory in **Settings → System**. Install it with the commands on [Install the desktop app](/vault/user/get-started/install-the-desktop-app/).
 
 **"Input and output must differ" (Format).** Choose a new empty output folder.
 

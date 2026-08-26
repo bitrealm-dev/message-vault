@@ -171,8 +171,7 @@ describe("remembered importer extra paths", () => {
     expect(getImporterPath("imessage-macos")).toBe("/Users/sam/Library/Messages/chat.db");
     expect(getImporterExtraPaths("imessage-macos")).toEqual({
       attachmentRoot: "/Users/sam/Library/Messages",
-      appleContacts:
-        "/Users/sam/Library/Application Support/AddressBook/AddressBook-v22.abcddb",
+      appleContacts: "/Users/sam/Library/Application Support/AddressBook/AddressBook-v22.abcddb",
     });
     expect(getImporterPath("imessage-jailbreak")).toBe("/mnt/iphone/sms.db");
     expect(getImporterExtraPaths("imessage-jailbreak").attachmentRoot).toBe(
