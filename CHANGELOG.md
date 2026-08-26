@@ -11,6 +11,8 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-25
+
 ### Added
 
 - 2026-08-25: Show a grey / green / red light next to **Server URL** on login. The light probes `GET /health` (this origin when the field is blank) so it is clear whether the vault is reachable before Connect.
