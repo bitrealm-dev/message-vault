@@ -49,6 +49,25 @@ export type ImessagePathStats = {
   backupEncrypted: boolean | null;
 };
 
+export function emptyImessagePathStats(): ImessagePathStats {
+  return {
+    backup: null,
+    attachmentRoot: null,
+    appleContacts: null,
+    backupEncrypted: null,
+  };
+}
+
+export function imessageStatsForMethod(
+  method: ImessageMethodId,
+  stats: ImessagePathStats,
+): ImessagePathStats {
+  return {
+    ...stats,
+    backupEncrypted: method === "imessage-ios" ? stats.backupEncrypted : null,
+  };
+}
+
 export const IMESSAGE_ERR_PATH_MISSING = "This path does not exist.";
 export const IMESSAGE_ERR_IPHONE_PATH_IS_FILE =
   "Pick the backup folder, or switch to Jailbroken iPhone.";

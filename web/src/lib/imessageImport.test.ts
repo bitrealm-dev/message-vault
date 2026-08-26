@@ -1,16 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   IMESSAGE_DEFAULT_METHOD,
-  IMESSAGE_METHODS,
-  IMESSAGE_SOURCE_ID,
-  imessageApplePlatform,
-  imessageCanImport,
-  imessageShowsAppleContacts,
-  imessageShowsAttachmentRoot,
-  imessageShowsPassword,
-  isImessageMethod,
-  macMessagesDbPath,
-  shouldPrefillMacMessagesDb,
   IMESSAGE_ERR_ATTACHMENT_IS_FILE,
   IMESSAGE_ERR_CONTACTS_IS_DIR,
   IMESSAGE_ERR_ENCRYPTED_PASSWORD,
@@ -18,6 +8,17 @@ import {
   IMESSAGE_ERR_JAILBREAK_PATH_IS_DIR,
   IMESSAGE_ERR_MAC_PATH_IS_DIR,
   IMESSAGE_ERR_PATH_MISSING,
+  IMESSAGE_METHODS,
+  IMESSAGE_SOURCE_ID,
+  imessageApplePlatform,
+  imessageCanImport,
+  imessageShowsAppleContacts,
+  imessageShowsAttachmentRoot,
+  imessageShowsPassword,
+  imessageStatsForMethod,
+  isImessageMethod,
+  macMessagesDbPath,
+  shouldPrefillMacMessagesDb,
 } from "./imessageImport";
 
 const presentFile: { exists: true; isFile: true; isDirectory: false } = {
@@ -356,6 +357,24 @@ describe("imessageCanImport", () => {
       },
     });
     expect(result.enabled).toBe(false);
+  });
+});
+
+describe("imessageStatsForMethod", () => {
+  it("clears encryption state when leaving iPhone backup", () => {
+    expect(
+      imessageStatsForMethod("imessage-macos", {
+        backup: presentFile,
+        attachmentRoot: null,
+        appleContacts: null,
+        backupEncrypted: true,
+      }),
+    ).toEqual({
+      backup: presentFile,
+      attachmentRoot: null,
+      appleContacts: null,
+      backupEncrypted: null,
+    });
   });
 });
 

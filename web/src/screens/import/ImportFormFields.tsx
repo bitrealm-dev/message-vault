@@ -284,12 +284,7 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
           <Select
             selectedKey={imessageMethod ? IMESSAGE_SOURCE_ID : props.source}
             onSelectionChange={(k) => {
-              const key = String(k);
-              if (key === IMESSAGE_SOURCE_ID) {
-                props.onSourceChange(imessageMethod ?? "imessage-ios");
-              } else {
-                props.onSourceChange(key);
-              }
+              props.onSourceChange(String(k));
             }}
             aria-label="Import source"
             triggerClassName="!bg-bg"

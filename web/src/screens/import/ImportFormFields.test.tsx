@@ -1,7 +1,9 @@
 /** @vitest-environment jsdom */
 
 import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { IMESSAGE_SOURCE_ID } from "../../lib/imessageImport";
 import ImportFormFields, { type ImportFormFieldsProps } from "./ImportFormFields";
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -146,6 +148,15 @@ describe("ImportFormFields iMessage methods", () => {
       screen.getByText("Pick the folder that contains Attachments and StickerCache."),
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+  });
+
+  it("passes the iMessage source key through when iMessage is chosen again", async () => {
+    const onSourceChange = vi.fn();
+    const user = userEvent.setup();
+    renderForm({ source: "whatsapp-android", onSourceChange });
+    await user.click(screen.getByLabelText("Import source"));
+    await user.click(await screen.findByRole("option", { name: "iMessage" }));
+    expect(onSourceChange).toHaveBeenCalledWith(IMESSAGE_SOURCE_ID);
   });
 
   it("shows an Apple Contacts kind error when the path is a directory", () => {
