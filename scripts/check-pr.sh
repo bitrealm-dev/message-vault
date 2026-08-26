@@ -18,6 +18,9 @@ cd "${REPO_ROOT}"
 echo "==> license consistency"
 "${SCRIPT_DIR}/check-license.sh"
 
+echo "==> docker rust-builder copies patched crates"
+"${SCRIPT_DIR}/check-docker-context.sh"
+
 echo "==> cargo deny check advisories"
 if cargo deny --version >/dev/null 2>&1; then
   cargo deny check advisories

@@ -26,6 +26,9 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 # Required at compile time by crates/vault/server/src/db/schema.rs include_str!(…).
 COPY schema ./schema
+# [patch.crates-io] sqlx-sqlite lives here (see Cargo.toml). Without this
+# copy, cargo build fails: failed to read /src/vendor/sqlx-sqlite/Cargo.toml.
+COPY vendor ./vendor
 
 RUN cargo build --release -p message-vault-server
 # Conversation JSONL is not in git. Write it here so the runtime image can seed.
