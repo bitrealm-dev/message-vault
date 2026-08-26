@@ -160,6 +160,16 @@ pub struct ExtractArgs {
     pub attachment_root: Option<String>,
     /// Path to an Apple AddressBook file (Mac and jailbreak).
     pub apple_contacts: Option<String>,
+    /// WhatsApp decryption key or key-file path (Android crypt backups).
+    pub whatsapp_key: Option<String>,
+    /// Optional WhatsApp contacts database (`wa.db` / `ContactsV2.sqlite`).
+    pub whatsapp_wa: Option<String>,
+    /// Optional WhatsApp media folder.
+    pub whatsapp_media: Option<String>,
+    /// Optional explicit `msgstore.db` path.
+    pub whatsapp_db: Option<String>,
+    /// WhatsApp Business backup (iPhone only; Android stays false).
+    pub whatsapp_business: Option<bool>,
 }
 
 /// Ask this process to parse a phone backup and write conversation files.
@@ -203,6 +213,19 @@ pub async fn extract(
         apple_contacts: optional_trimmed(args.apple_contacts.as_deref())
             .map(str::to_string)
             .unwrap_or_default(),
+        whatsapp_key: optional_trimmed(args.whatsapp_key.as_deref())
+            .map(str::to_string)
+            .unwrap_or_default(),
+        whatsapp_wa: optional_trimmed(args.whatsapp_wa.as_deref())
+            .map(str::to_string)
+            .unwrap_or_default(),
+        whatsapp_media: optional_trimmed(args.whatsapp_media.as_deref())
+            .map(str::to_string)
+            .unwrap_or_default(),
+        whatsapp_db: optional_trimmed(args.whatsapp_db.as_deref())
+            .map(str::to_string)
+            .unwrap_or_default(),
+        whatsapp_business: args.whatsapp_business.unwrap_or(false),
     };
 
     let output_dir = args.output_dir;
@@ -278,6 +301,11 @@ struct ExtractOptions {
     owner_phones: Vec<String>,
     attachment_root: String,
     apple_contacts: String,
+    whatsapp_key: String,
+    whatsapp_wa: String,
+    whatsapp_media: String,
+    whatsapp_db: String,
+    whatsapp_business: bool,
 }
 
 /// Parse the attachment handling choice from the Extract form.
@@ -400,10 +428,21 @@ fn build_exporter_config(
                 "imazing" => SourceConfig::Imazing(ImazingConfig {}),
                 "whatsapp-android" => SourceConfig::Whatsapp(WhatsappConfig {
                     platform: Some(WhatsappPlatform::Android),
+                    key: nonempty(&options.whatsapp_key).map(str::to_string),
+                    backup: None,
+                    wa: nonempty(&options.whatsapp_wa).map(PathBuf::from),
+                    media: nonempty(&options.whatsapp_media).map(PathBuf::from),
+                    db: nonempty(&options.whatsapp_db).map(PathBuf::from),
+                    business: false,
                     ..Default::default()
                 }),
                 "whatsapp-ios" => SourceConfig::Whatsapp(WhatsappConfig {
                     platform: Some(WhatsappPlatform::Ios),
+                    backup: Some(PathBuf::from(path)),
+                    wa: nonempty(&options.whatsapp_wa).map(PathBuf::from),
+                    media: nonempty(&options.whatsapp_media).map(PathBuf::from),
+                    db: nonempty(&options.whatsapp_db).map(PathBuf::from),
+                    business: options.whatsapp_business,
                     ..Default::default()
                 }),
                 _ => return Err(format!("unsupported source '{source}'")),
@@ -496,6 +535,11 @@ mod tests {
             owner_phones,
             attachment_root: String::new(),
             apple_contacts: String::new(),
+            whatsapp_key: String::new(),
+            whatsapp_wa: String::new(),
+            whatsapp_media: String::new(),
+            whatsapp_db: String::new(),
+            whatsapp_business: false,
         }
     }
 
@@ -629,6 +673,53 @@ mod tests {
                 assert_eq!(s.owner_phones, vec!["+15551111", "+15552222"]);
             }
             other => panic!("expected SmsBackupRestore, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn whatsapp_android_forwards_key_and_optional_paths() {
+        let mut options = test_options(Vec::new());
+        options.whatsapp_key = "deadbeef".into();
+        options.whatsapp_wa = "/tmp/wa.db".into();
+        options.whatsapp_media = "/tmp/WhatsApp".into();
+        options.whatsapp_db = "/tmp/msgstore.db".into();
+        options.whatsapp_business = true;
+        let config = build_exporter_config(
+            "whatsapp-android",
+            "/tmp/android-dump",
+            "/tmp/out",
+            &options,
+        )
+        .unwrap();
+        match config.source {
+            SourceConfig::Whatsapp(wa) => {
+                assert_eq!(wa.platform, Some(WhatsappPlatform::Android));
+                assert_eq!(wa.key.as_deref(), Some("deadbeef"));
+                assert_eq!(wa.wa.as_deref(), Some(std::path::Path::new("/tmp/wa.db")));
+                assert!(wa.backup.is_none());
+                assert!(!wa.business);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn whatsapp_ios_sets_backup_from_folder_and_business() {
+        let mut options = test_options(Vec::new());
+        options.whatsapp_business = true;
+        let config =
+            build_exporter_config("whatsapp-ios", "/tmp/ios-backup", "/tmp/out", &options).unwrap();
+        match config.source {
+            SourceConfig::Whatsapp(wa) => {
+                assert_eq!(wa.platform, Some(WhatsappPlatform::Ios));
+                assert_eq!(
+                    wa.backup.as_deref(),
+                    Some(std::path::Path::new("/tmp/ios-backup"))
+                );
+                assert!(wa.business);
+                assert!(wa.key.is_none());
+            }
+            other => panic!("{other:?}"),
         }
     }
 }
