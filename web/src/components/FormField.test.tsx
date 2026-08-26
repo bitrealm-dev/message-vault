@@ -25,4 +25,14 @@ describe("FormField", () => {
     expect(screen.getByText("show")).toBeInTheDocument();
     expect(screen.getByLabelText("password-input")).toBeInTheDocument();
   });
+
+  it("associates a stacked label with the first control when hints follow it", () => {
+    render(
+      <FormField label="Attachment folder" layout="stacked">
+        <input />
+        <p>Folder that contains Attachments and StickerCache.</p>
+      </FormField>,
+    );
+    expect(screen.getByLabelText("Attachment folder")).toBeTruthy();
+  });
 });

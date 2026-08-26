@@ -1,4 +1,11 @@
-import { cloneElement, isValidElement, type ReactElement, type ReactNode, useId } from "react";
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  type ReactElement,
+  type ReactNode,
+  useId,
+} from "react";
 
 type FormFieldProps = {
   label: string;
@@ -10,11 +17,16 @@ type FormFieldProps = {
 };
 
 function withControlId(children: ReactNode, id: string): ReactNode {
-  if (!isValidElement(children)) {
-    return children;
-  }
-  const el = children as ReactElement<{ id?: string }>;
-  return cloneElement(el, { id: el.props.id ?? id });
+  const list = Children.toArray(children);
+  let assigned = false;
+  return list.map((child) => {
+    if (!assigned && isValidElement(child)) {
+      assigned = true;
+      const el = child as ReactElement<{ id?: string }>;
+      return cloneElement(el, { id: el.props.id ?? id });
+    }
+    return child;
+  });
 }
 
 /** Shared label + control layout for form screens. */

@@ -1,7 +1,8 @@
+import { IMESSAGE_SOURCE_ID } from "./imessageImport";
+
 /** Backup sources offered by Import in the desktop app. */
 export const EXPORT_SOURCES: { id: string; label: string }[] = [
-  { id: "imessage-ios", label: "iPhone - iOS" },
-  { id: "imessage-macos", label: "iMessage - macOS" },
+  { id: IMESSAGE_SOURCE_ID, label: "iMessage" },
   { id: "whatsapp-android", label: "WhatsApp - Android" },
   { id: "whatsapp-ios", label: "WhatsApp - iOS" },
   { id: "sms-backup-restore", label: "SMS Backup & Restore" },

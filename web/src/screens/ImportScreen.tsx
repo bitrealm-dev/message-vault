@@ -107,6 +107,16 @@ export default function ImportScreen() {
           onBackupPasswordChange={setBackupPassword}
           showBackupPassword={showBackupPassword}
           onToggleBackupPassword={() => setShowBackupPassword((v) => !v)}
+          attachmentRoot=""
+          onAttachmentRootChange={() => undefined}
+          appleContacts=""
+          onAppleContactsChange={() => undefined}
+          pathStats={{
+            backup: null,
+            attachmentRoot: null,
+            appleContacts: null,
+            backupEncrypted: null,
+          }}
           attachmentMedia={attachmentMedia}
           onAttachmentMediaChange={setAttachmentMedia}
           maxResolution={maxResolution}

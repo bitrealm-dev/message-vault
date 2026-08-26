@@ -16,9 +16,7 @@ export function isImessageMethod(source: string): source is ImessageMethodId {
   return IMESSAGE_METHOD_IDS.has(source);
 }
 
-export function imessageApplePlatform(
-  method: ImessageMethodId,
-): "macOS" | "iOS" {
+export function imessageApplePlatform(method: ImessageMethodId): "macOS" | "iOS" {
   return method === "imessage-ios" ? "iOS" : "macOS";
 }
 
@@ -34,9 +32,7 @@ export function imessageShowsAppleContacts(method: ImessageMethodId): boolean {
   return method === "imessage-macos" || method === "imessage-jailbreak";
 }
 
-export function imessageAttachmentRootRequired(
-  method: ImessageMethodId,
-): boolean {
+export function imessageAttachmentRootRequired(method: ImessageMethodId): boolean {
   return method === "imessage-jailbreak";
 }
 
@@ -60,8 +56,7 @@ export const IMESSAGE_ERR_MAC_PATH_IS_DIR = "Pick chat.db.";
 export const IMESSAGE_ERR_JAILBREAK_PATH_IS_DIR = "Pick sms.db.";
 export const IMESSAGE_ERR_ATTACHMENT_IS_FILE =
   "Pick the folder that contains Attachments and StickerCache.";
-export const IMESSAGE_ERR_CONTACTS_IS_DIR =
-  "Pick AddressBook-v22.abcddb or AddressBook.sqlitedb.";
+export const IMESSAGE_ERR_CONTACTS_IS_DIR = "Pick AddressBook-v22.abcddb or AddressBook.sqlitedb.";
 export const IMESSAGE_ERR_ENCRYPTED_PASSWORD =
   "The backup is encrypted — fill Encryption password.";
 
@@ -74,11 +69,7 @@ type ImessageCanImportArgs = {
   stats: ImessagePathStats;
 };
 
-type ImessageImportErrorKey =
-  | "backupPath"
-  | "attachmentRoot"
-  | "appleContacts"
-  | "backupPassword";
+type ImessageImportErrorKey = "backupPath" | "attachmentRoot" | "appleContacts" | "backupPassword";
 
 function checkOptionalPath(
   path: string,
@@ -148,10 +139,7 @@ export function imessageCanImport(args: ImessageCanImportArgs): {
 
   const attachmentRoot = args.attachmentRoot.trim();
 
-  if (
-    imessageShowsAttachmentRoot(args.method) &&
-    attachmentRoot !== ""
-  ) {
+  if (imessageShowsAttachmentRoot(args.method) && attachmentRoot !== "") {
     checkOptionalPath(
       attachmentRoot,
       args.stats.attachmentRoot,
