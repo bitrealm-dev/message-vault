@@ -13,6 +13,51 @@ pub struct HomeDirInfo {
     pub os: String,
 }
 
+/// Whether a path exists on disk and what kind of entry it is.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathStat {
+    pub exists: bool,
+    pub is_file: bool,
+    pub is_directory: bool,
+}
+
+/// Stat a path without canonicalizing it (the path may not exist yet).
+pub(crate) fn path_stat_inner(path: &str) -> Result<PathStat, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Ok(PathStat {
+            exists: false,
+            is_file: false,
+            is_directory: false,
+        });
+    }
+    let path = Path::new(trimmed);
+    Ok(PathStat {
+        exists: path.exists(),
+        is_file: path.is_file(),
+        is_directory: path.is_dir(),
+    })
+}
+
+/// Return whether a path exists and whether it is a file or directory.
+#[tauri::command]
+pub fn path_stat(path: String) -> Result<PathStat, String> {
+    path_stat_inner(&path)
+}
+
+/// Read `Manifest.plist` and return whether an iOS backup folder is encrypted.
+#[tauri::command]
+pub fn ios_backup_encrypted(path: String) -> Result<Option<bool>, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    Ok(imessage_ir_exporter::ios_backup_encrypted_flag(Path::new(
+        trimmed,
+    )))
+}
+
 /// Ask this process for the current user's home directory.
 ///
 /// The WebView cannot see the real home folder on its own. Settings uses the
@@ -270,5 +315,30 @@ mod tests {
         let file = temp.path().join("vault-push.log");
         fs::write(&file, "ok\n").unwrap();
         missing_path_error(&file).unwrap();
+    }
+
+    #[test]
+    fn path_stat_missing() {
+        let stat = path_stat_inner("/no/such/message-vault-path-stat").unwrap();
+        assert!(!stat.exists);
+        assert!(!stat.is_file);
+        assert!(!stat.is_directory);
+    }
+
+    #[test]
+    fn path_stat_file_and_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("chat.db");
+        fs::write(&file, b"sqlite").unwrap();
+        let file_stat = path_stat_inner(file.to_str().unwrap()).unwrap();
+        assert!(file_stat.exists && file_stat.is_file && !file_stat.is_directory);
+        let dir_stat = path_stat_inner(dir.path().to_str().unwrap()).unwrap();
+        assert!(dir_stat.exists && dir_stat.is_directory && !dir_stat.is_file);
+    }
+
+    #[test]
+    fn blank_path_is_missing() {
+        let stat = path_stat_inner("  ").unwrap();
+        assert!(!stat.exists);
     }
 }

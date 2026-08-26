@@ -148,6 +148,22 @@ export async function invokeHomeDir(): Promise<HomeDirInfo> {
   return invoke("home_dir");
 }
 
+export interface PathStat {
+  exists: boolean;
+  isFile: boolean;
+  isDirectory: boolean;
+}
+
+/** Whether a path exists and whether it is a file or directory. */
+export async function invokePathStat(path: string): Promise<PathStat> {
+  return invoke("path_stat", { path });
+}
+
+/** Whether an iOS backup folder is encrypted, or null when unknown. */
+export async function invokeIosBackupEncrypted(path: string): Promise<boolean | null> {
+  return invoke("ios_backup_encrypted", { path });
+}
+
 /**
  * Listen for job events from the desktop backend (log lines, progress, errors).
  * Returns one function that removes every listener.
