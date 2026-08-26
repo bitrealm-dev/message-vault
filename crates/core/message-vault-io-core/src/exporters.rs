@@ -27,6 +27,9 @@ pub const EXPORTERS: [Exporter; 7] = [
     Exporter::SmsBackupPlus,
 ];
 
+/// iMessage Import / CLI copy when Convert or Compress is selected and ffmpeg is missing.
+pub const CONVERT_COMPRESS_FFMPEG_REQUIRED: &str = "Convert and Compress need ffmpeg and ffprobe. Put them on PATH, or in the desktop app set the ffmpeg directory in Settings → System.";
+
 /// Which backup type the user selected (iMessage, WhatsApp, SMS Backup & Restore, …).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Exporter {
@@ -554,9 +557,7 @@ impl Form {
         required_text(&self.output, "Output directory", errors);
         let obfuscate_active = self.obfuscate || !self.obfuscate_seed.trim().is_empty();
         if !obfuscate_active && self.attachment_media.needs_ffmpeg() && !media::ffmpeg_available() {
-            errors.push(
-                "Convert/Compress require ffmpeg and ffprobe in lib/ (or beside the program), in MESSAGE_VAULT_IO_BIN, or on PATH.".into(),
-            );
+            errors.push(CONVERT_COMPRESS_FFMPEG_REQUIRED.into());
         }
         let media = self.media_config_for(
             matches!(self.attachment_media, AttachmentMedia::Compress),
@@ -1351,5 +1352,30 @@ mod tests {
                 .any(|error| error.contains("Output directory"))
         );
         assert!(errors.iter().any(|error| error.contains("Obfuscate seed")));
+    }
+
+    struct RestoreToolsDir;
+
+    impl Drop for RestoreToolsDir {
+        fn drop(&mut self) {
+            media::set_tools_dir(None);
+        }
+    }
+
+    #[test]
+    fn imessage_convert_without_ffmpeg_uses_locked_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let _restore = RestoreToolsDir;
+        media::set_tools_dir(Some(dir.path().to_path_buf()));
+        let form = Form {
+            output: "out".into(),
+            attachment_media: AttachmentMedia::Convert,
+            ..Form::default()
+        };
+        let err = form.to_config(Exporter::Imessage).unwrap_err();
+        assert!(
+            err.iter().any(|e| e == CONVERT_COMPRESS_FFMPEG_REQUIRED),
+            "{err:?}"
+        );
     }
 }

@@ -30,7 +30,7 @@ Use with `#[command(flatten)]` in the exporter's `Cli` struct.
 
   Default value: `clone`
 * `--attachment-root <ATTACHMENT_ROOT>` — Custom attachment root (macOS)
-* `--backup-password <BACKUP_PASSWORD>` — iOS backup password (cleartext; prompted elsewhere in GUI)
+* `--backup-password <BACKUP_PASSWORD>` — iOS backup password (required for encrypted backups; the tool does not prompt)
 * `--conversation <CONVERSATION>` — Limit export to one conversation (chat identifier / handle)
 * `--use-caller-id <USE_CALLER_ID>` — Use destination caller id for outgoing From display name (default on)
 

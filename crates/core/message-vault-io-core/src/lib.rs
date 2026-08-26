@@ -26,9 +26,9 @@ pub use config::{
 };
 pub use export_ini::{AppearanceSection, ExportIniState, FormatSection, VaultSection};
 pub use exporters::{
-    APPLE_PLATFORMS, ATTACHMENT_MEDIA, ApplePlatform, AttachmentMedia, ContactsKind, EXPORTERS,
-    Exporter, Form, MAX_RESOLUTIONS, WHATSAPP_PLATFORMS, WhatsappPlatform, contacts_kind_from_path,
-    ensure_output_dir,
+    APPLE_PLATFORMS, ATTACHMENT_MEDIA, ApplePlatform, AttachmentMedia,
+    CONVERT_COMPRESS_FFMPEG_REQUIRED, ContactsKind, EXPORTERS, Exporter, Form, MAX_RESOLUTIONS,
+    WHATSAPP_PLATFORMS, WhatsappPlatform, contacts_kind_from_path, ensure_output_dir,
 };
 pub use pipeline::{
     ExportReport, RunResult, discover_files, export_meta, name_stem, parse_date_range,

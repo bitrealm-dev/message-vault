@@ -1,20 +1,27 @@
 //! Library entry: [`ExporterConfig`] to the shared conversation structure, then
 //! the chosen output format.
 
-use std::path::PathBuf;
+use std::path::Path;
 
-use imessage_database::util::{
-    dates::{TIMESTAMP_FACTOR, get_offset},
-    dirs::default_db_path,
-    platform::Platform,
-    query_context::QueryContext,
+use imessage_database::{
+    tables::table::DEFAULT_PATH_IOS,
+    util::{
+        dates::{TIMESTAMP_FACTOR, get_offset},
+        dirs::default_db_path,
+        platform::Platform,
+        query_context::QueryContext,
+    },
 };
 use message_ir_format::ExportTransforms;
 use message_vault_io_core::{ApplePlatform, ExporterConfig, RunResult, SourceConfig};
 
 use crate::{
+    backup::ios_backup_encrypted_flag,
     emit::run_export,
-    error::RuntimeError,
+    error::{
+        APPLE_CONTACTS_MISSING, ATTACHMENT_FOLDER_MISSING, MESSAGES_DATABASE_MISSING,
+        NOT_AN_IPHONE_BACKUP, RuntimeError,
+    },
     options::{MailOptions, attachment_embed_from_copy_method},
     session::MailSession,
 };
@@ -108,11 +115,10 @@ fn options_from_export_config(config: &ExporterConfig) -> Result<MailOptions, Ru
     }
 
     if let Some(path) = &source.attachment_root {
-        let custom_attachment_path = PathBuf::from(path);
-        if !custom_attachment_path.exists() {
-            return Err(RuntimeError::InvalidOptions(format!(
-                "Supplied attachment-root `{path}` does not exist!"
-            )));
+        if !Path::new(path).exists() {
+            return Err(RuntimeError::InvalidOptions(
+                ATTACHMENT_FOLDER_MISSING.to_string(),
+            ));
         }
         if platform == Platform::iOS {
             config.emit_log(format!(
@@ -124,16 +130,40 @@ fn options_from_export_config(config: &ExporterConfig) -> Result<MailOptions, Ru
 
     if let Some(path) = &source.apple_contacts {
         if !path.exists() {
-            return Err(RuntimeError::InvalidOptions(format!(
-                "Supplied contacts path `{}` does not exist!",
-                path.display()
-            )));
+            return Err(RuntimeError::InvalidOptions(
+                APPLE_CONTACTS_MISSING.to_string(),
+            ));
         }
         if platform == Platform::iOS {
             config.emit_log(format!(
                 "Option contacts path is enabled, but the platform is {}, so the path will have no effect!",
                 Platform::iOS
             ));
+        }
+    }
+
+    match platform {
+        Platform::macOS => {
+            if !db_path.is_file() {
+                return Err(RuntimeError::InvalidOptions(
+                    MESSAGES_DATABASE_MISSING.to_string(),
+                ));
+            }
+        }
+        Platform::iOS => {
+            let manifest = db_path.join("Manifest.plist");
+            if !db_path.is_dir() || !manifest.is_file() {
+                return Err(RuntimeError::InvalidOptions(
+                    NOT_AN_IPHONE_BACKUP.to_string(),
+                ));
+            }
+            if ios_backup_encrypted_flag(&db_path) == Some(false)
+                && !db_path.join(DEFAULT_PATH_IOS).is_file()
+            {
+                return Err(RuntimeError::InvalidOptions(
+                    NOT_AN_IPHONE_BACKUP.to_string(),
+                ));
+            }
         }
     }
 
@@ -178,6 +208,28 @@ fn exclusive_unix_end_to_inclusive_apple_ns(end_secs: i64, offset_ns: i64) -> i6
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::{
+        APPLE_CONTACTS_MISSING, ATTACHMENT_FOLDER_MISSING, MESSAGES_DATABASE_MISSING,
+        NOT_AN_IPHONE_BACKUP,
+    };
+    use message_vault_io_core::{AppleConfig, MediaConfig, OutputFormat, parse_date_range};
+    use std::{fs, path::Path};
+
+    fn apple_cfg(input: &Path, apple: AppleConfig) -> ExporterConfig {
+        ExporterConfig {
+            inputs: vec![input.to_path_buf()],
+            output: input.join("_export_out"),
+            date_range: parse_date_range(None, None).unwrap(),
+            timezone: None,
+            contacts: None,
+            obfuscate: Default::default(),
+            media: MediaConfig::default(),
+            cancel: None,
+            log: None,
+            output_format: OutputFormat::Jsonl,
+            source: SourceConfig::Apple(apple),
+        }
+    }
 
     #[test]
     fn exclusive_end_maps_to_inclusive_sql_bound() {
@@ -188,5 +240,90 @@ mod tests {
         assert_eq!(inclusive, at_bound - 1);
         // A message stamped exactly at the exclusive midnight must fail `<= inclusive`.
         assert!(at_bound > inclusive);
+    }
+
+    #[test]
+    fn missing_chat_db_uses_locked_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("chat.db");
+        let err = options_from_export_config(&apple_cfg(
+            &missing,
+            AppleConfig {
+                platform: Some(ApplePlatform::MacOs),
+                ..AppleConfig::default()
+            },
+        ))
+        .unwrap_err();
+        assert_eq!(err.to_string(), MESSAGES_DATABASE_MISSING);
+    }
+
+    #[test]
+    fn missing_attachment_folder_uses_locked_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let chat = dir.path().join("chat.db");
+        fs::write(&chat, b"sqlite").unwrap();
+        let err = options_from_export_config(&apple_cfg(
+            &chat,
+            AppleConfig {
+                platform: Some(ApplePlatform::MacOs),
+                attachment_root: Some(dir.path().join("no-such-root").display().to_string()),
+                ..AppleConfig::default()
+            },
+        ))
+        .unwrap_err();
+        assert_eq!(err.to_string(), ATTACHMENT_FOLDER_MISSING);
+    }
+
+    #[test]
+    fn missing_apple_contacts_uses_locked_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let chat = dir.path().join("chat.db");
+        fs::write(&chat, b"sqlite").unwrap();
+        let err = options_from_export_config(&apple_cfg(
+            &chat,
+            AppleConfig {
+                platform: Some(ApplePlatform::MacOs),
+                apple_contacts: Some(dir.path().join("no-such.abcddb")),
+                ..AppleConfig::default()
+            },
+        ))
+        .unwrap_err();
+        assert_eq!(err.to_string(), APPLE_CONTACTS_MISSING);
+    }
+
+    #[test]
+    fn empty_folder_is_not_an_iphone_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = options_from_export_config(&apple_cfg(
+            dir.path(),
+            AppleConfig {
+                platform: Some(ApplePlatform::Ios),
+                ..AppleConfig::default()
+            },
+        ))
+        .unwrap_err();
+        assert_eq!(err.to_string(), NOT_AN_IPHONE_BACKUP);
+    }
+
+    #[test]
+    fn unencrypted_backup_missing_messages_uses_locked_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        // Manifest.plist present, IsEncrypted false, hashed sms.db missing.
+        fs::write(
+            dir.path().join("Manifest.plist"),
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>IsEncrypted</key><false/></dict></plist>"#,
+        )
+        .unwrap();
+        let err = options_from_export_config(&apple_cfg(
+            dir.path(),
+            AppleConfig {
+                platform: Some(ApplePlatform::Ios),
+                ..AppleConfig::default()
+            },
+        ))
+        .unwrap_err();
+        assert_eq!(err.to_string(), NOT_AN_IPHONE_BACKUP);
     }
 }

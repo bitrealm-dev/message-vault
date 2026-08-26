@@ -27,7 +27,7 @@ pub struct Cli {
     #[arg(long = "attachment-root")]
     pub attachment_root: Option<String>,
 
-    /// iOS backup password (cleartext; prompted elsewhere in GUI)
+    /// iOS backup password (required for encrypted backups; the tool does not prompt)
     #[arg(long = "backup-password")]
     pub backup_password: Option<String>,
 
