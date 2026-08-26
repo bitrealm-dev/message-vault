@@ -255,16 +255,22 @@ fn resolve_forwarded_paths(args: &WtsexporterArgs) -> Result<ForwardedPaths> {
 
     let backup = match &args.backup {
         Some(p) => Some(absolutize(p)?),
+        None if args.platform == Platform::Android => android_crypt_backup(&search),
         None => None,
     };
 
-    let key = match args.key.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        Some(k) if looks_like_path(k) => {
-            let path = absolutize(Path::new(k))?;
-            Some(path.to_string_lossy().into_owned())
+    // Do not pass `-k` when no backup is forwarded.
+    let key = if backup.is_none() {
+        None
+    } else {
+        match args.key.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(k) if looks_like_path(k) => {
+                let path = absolutize(Path::new(k))?;
+                Some(path.to_string_lossy().into_owned())
+            }
+            Some(k) => Some(k.to_string()),
+            None => None,
         }
-        Some(k) => Some(k.to_string()),
-        None => None,
     };
 
     Ok(ForwardedPaths {
@@ -298,6 +304,21 @@ fn input_search_root(input: &Path) -> Result<PathBuf> {
 /// First candidate path that exists on disk.
 fn first_existing(candidates: &[PathBuf]) -> Option<PathBuf> {
     candidates.iter().find(|p| p.exists()).cloned()
+}
+
+/// Android crypt file in `search` for `-b`, or `None` so wtsexporter defaults apply.
+///
+/// Prefers a decrypted `msgstore.db` file over any crypt name. Crypt names are
+/// checked at the folder root only, in order: crypt12, crypt14, crypt15.
+pub(crate) fn android_crypt_backup(search: &Path) -> Option<PathBuf> {
+    if search.join("msgstore.db").is_file() {
+        return None;
+    }
+    first_existing(&[
+        search.join("msgstore.db.crypt12"),
+        search.join("msgstore.db.crypt14"),
+        search.join("msgstore.db.crypt15"),
+    ])
 }
 
 /// True when `s` looks like a filesystem path rather than a hex key string.
@@ -354,4 +375,30 @@ fn write_key_file(work_dir: &Path, hex_key: &str) -> Result<PathBuf> {
     file.write_all(&raw)
         .with_context(|| format!("write {}", path.display()))?;
     Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::android_crypt_backup;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn prefers_msgstore_db_over_crypt() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("msgstore.db"), b"db").unwrap();
+        fs::write(dir.path().join("msgstore.db.crypt15"), b"crypt").unwrap();
+        assert_eq!(android_crypt_backup(dir.path()), None);
+    }
+
+    #[test]
+    fn finds_crypt15_when_msgstore_missing() {
+        let dir = tempdir().unwrap();
+        let crypt = dir.path().join("msgstore.db.crypt15");
+        fs::write(&crypt, b"crypt").unwrap();
+        assert_eq!(
+            android_crypt_backup(dir.path()).as_deref(),
+            Some(crypt.as_path())
+        );
+    }
 }
