@@ -147,9 +147,6 @@ export function imessageCanImport(args: ImessageCanImportArgs): {
   }
 
   const attachmentRoot = args.attachmentRoot.trim();
-  if (args.method === "imessage-jailbreak" && attachmentRoot === "") {
-    return { enabled: false, errors };
-  }
 
   if (
     imessageShowsAttachmentRoot(args.method) &&

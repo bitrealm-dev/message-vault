@@ -306,6 +306,24 @@ describe("imessageCanImport", () => {
     expect(result.errors.appleContacts).toBe(IMESSAGE_ERR_CONTACTS_IS_DIR);
   });
 
+  it("still validates Apple Contacts when jailbreak attachment root is empty", () => {
+    const result = imessageCanImport({
+      method: "imessage-jailbreak",
+      backupPath: "/mnt/iphone/sms.db",
+      attachmentRoot: "",
+      appleContacts: "/tmp/AddressBook",
+      backupPassword: "",
+      stats: {
+        backup: presentFile,
+        attachmentRoot: null,
+        appleContacts: presentDir,
+        backupEncrypted: null,
+      },
+    });
+    expect(result.enabled).toBe(false);
+    expect(result.errors.appleContacts).toBe(IMESSAGE_ERR_CONTACTS_IS_DIR);
+  });
+
   it("disables Import while a non-empty path has not been checked yet", () => {
     const result = imessageCanImport({
       method: "imessage-ios",
