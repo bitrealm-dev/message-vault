@@ -7,12 +7,13 @@ use std::sync::{Arc, Mutex};
 
 use super::events::ExtractProgressEvent;
 
-/// Whether log lines are still about reading the backup, or already about
+/// Whether log lines are about reading the backup, copying attachments, or
 /// writing conversation files.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub(crate) enum ExtractProgressStage {
     Parse,
-    Convert,
+    Attachments,
+    Prepare,
 }
 
 /// Turn an exporter log line into a progress event, if the line has counts.
@@ -20,16 +21,25 @@ pub(crate) fn extract_progress_from_log(
     line: &str,
     stage: &Arc<Mutex<ExtractProgressStage>>,
 ) -> Option<ExtractProgressEvent> {
-    if is_writing_conversation_files_banner(line) {
+    if let Some(total) = preparing_conversation_files_total(line) {
         if let Ok(mut current_stage) = stage.lock() {
-            *current_stage = ExtractProgressStage::Convert;
+            *current_stage = ExtractProgressStage::Prepare;
         }
         return Some(ExtractProgressEvent {
-            step: "convert".into(),
+            step: "prepare".into(),
             done: 0,
-            total: 0,
-            status: Some("included_in_extract".into()),
+            total,
+            bytes_done: None,
+            bytes_total: None,
+            status: None,
         });
+    }
+
+    if let Some(event) = attachment_progress_from_log(line) {
+        if let Ok(mut current_stage) = stage.lock() {
+            *current_stage = ExtractProgressStage::Attachments;
+        }
+        return Some(event);
     }
 
     let (done, total) = extract_progress_ratio(line)?;
@@ -40,20 +50,54 @@ pub(crate) fn extract_progress_from_log(
     };
     let step = match current_stage {
         ExtractProgressStage::Parse => "parse",
-        ExtractProgressStage::Convert => "convert",
+        ExtractProgressStage::Attachments => "attachments",
+        ExtractProgressStage::Prepare => "prepare",
     };
 
     Some(ExtractProgressEvent {
         step: step.into(),
         done,
         total,
+        bytes_done: None,
+        bytes_total: None,
         status: None,
     })
 }
 
-/// True for the log line that means "finished reading, now writing files".
-fn is_writing_conversation_files_banner(line: &str) -> bool {
-    line.contains("Writing ") && line.contains("conversation file(s)")
+/// `Preparing 3 conversation file(s)...` → 3.
+fn preparing_conversation_files_total(line: &str) -> Option<usize> {
+    if !(line.contains("Preparing ") && line.contains("conversation file(s)")) {
+        return None;
+    }
+    let after = line.split_once("Preparing ")?.1;
+    leading_usize(after)
+}
+
+/// `  attachments 2/3 100/500` → attachments event with byte counts.
+fn attachment_progress_from_log(line: &str) -> Option<ExtractProgressEvent> {
+    let trimmed = line.trim();
+    let rest = trimmed.strip_prefix("attachments ")?;
+    let (files, bytes) = rest.split_once(' ')?;
+    let (done, total) = split_ratio(files)?;
+    let (bytes_done, bytes_total) = split_u64_ratio(bytes)?;
+    Some(ExtractProgressEvent {
+        step: "attachments".into(),
+        done,
+        total,
+        bytes_done: Some(bytes_done),
+        bytes_total: Some(bytes_total),
+        status: None,
+    })
+}
+
+fn split_ratio(text: &str) -> Option<(usize, usize)> {
+    let (left, right) = text.split_once('/')?;
+    Some((left.parse().ok()?, right.parse().ok()?))
+}
+
+fn split_u64_ratio(text: &str) -> Option<(u64, u64)> {
+    let (left, right) = text.split_once('/')?;
+    Some((left.parse().ok()?, right.parse().ok()?))
 }
 
 /// True for backup-setup lines like `[1/5] Deriving backup keys...`.
@@ -81,14 +125,15 @@ fn has_bracketed_step_ratio(line: &str) -> bool {
     false
 }
 
-/// Read `done/total` from a message-progress log line.
+/// Read `done/total` from a message-progress or prepare-progress log line.
 fn extract_progress_ratio(line: &str) -> Option<(usize, usize)> {
     if has_bracketed_step_ratio(line) {
         return None;
     }
 
-    let looks_like_message_progress = line.contains('…') || line.contains("wrote");
-    if !looks_like_message_progress {
+    let looks_like_counts =
+        line.contains('…') || line.contains("wrote") || line.contains("preparing");
+    if !looks_like_counts {
         return None;
     }
 
@@ -134,7 +179,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extract_progress_parser_tracks_parse_and_convert() {
+    fn extract_progress_parser_tracks_parse_attachments_and_prepare() {
         let stage = Arc::new(Mutex::new(ExtractProgressStage::Parse));
 
         let parse = extract_progress_from_log("  …500/12345 messages", &stage).unwrap();
@@ -143,12 +188,12 @@ mod tests {
         assert_eq!(parse.total, 12345);
         assert_eq!(parse.status, None);
 
-        let banner =
-            extract_progress_from_log("Writing 3 conversation file(s)...", &stage).unwrap();
-        assert_eq!(banner.step, "convert");
-        assert_eq!(banner.done, 0);
-        assert_eq!(banner.total, 0);
-        assert_eq!(banner.status.as_deref(), Some("included_in_extract"));
+        let attachments = extract_progress_from_log("  attachments 2/3 100/500", &stage).unwrap();
+        assert_eq!(attachments.step, "attachments");
+        assert_eq!(attachments.done, 2);
+        assert_eq!(attachments.total, 3);
+        assert_eq!(attachments.bytes_done, Some(100));
+        assert_eq!(attachments.bytes_total, Some(500));
 
         let ignored = extract_progress_from_log("[1/5] Deriving backup keys...", &stage);
         assert!(ignored.is_none());
@@ -156,10 +201,17 @@ mod tests {
         let backup_step = extract_progress_from_log("[2/5] Resolving messages database...", &stage);
         assert!(backup_step.is_none());
 
-        let convert = extract_progress_from_log("  wrote 2/3 messages", &stage).unwrap();
-        assert_eq!(convert.step, "convert");
-        assert_eq!(convert.done, 2);
-        assert_eq!(convert.total, 3);
-        assert_eq!(convert.status, None);
+        let banner =
+            extract_progress_from_log("Preparing 3 conversation file(s)...", &stage).unwrap();
+        assert_eq!(banner.step, "prepare");
+        assert_eq!(banner.done, 0);
+        assert_eq!(banner.total, 3);
+        assert_eq!(banner.status, None);
+
+        let prepare = extract_progress_from_log("  preparing 2/3", &stage).unwrap();
+        assert_eq!(prepare.step, "prepare");
+        assert_eq!(prepare.done, 2);
+        assert_eq!(prepare.total, 3);
+        assert_eq!(prepare.status, None);
     }
 }

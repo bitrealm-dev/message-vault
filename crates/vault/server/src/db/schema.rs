@@ -53,7 +53,7 @@ const PG_FKS_DDL: &str = include_str!("../../../../../schema/sql/pg_fks.sql");
 /// `PRAGMA user_version`. Bump this whenever any `schema/sql/*.sql` file
 /// changes; a database at any other version is rebuilt empty (see
 /// [`migrate_vault_schema`]).
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// Bring the database to [`SCHEMA_VERSION`].
 ///

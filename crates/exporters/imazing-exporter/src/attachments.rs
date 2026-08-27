@@ -1,11 +1,18 @@
 //! Locate and copy iMazing attachment files next to CSV exports.
 
-use anyhow::Result;
 use message_csv::AttachmentCell;
-use message_vault_io_core::attachments::{attachment_dest_name, copy_if_missing};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+#[cfg(test)]
+use media::{CompressOptions, MediaMode};
+#[cfg(test)]
+use message_ir::IrAttachment;
+#[cfg(test)]
+use message_vault_io_core::{
+    AttachmentJob, CancelFlag, ExportReport, LogSink, emit_log, run_attachment_jobs,
+};
 
 /// Maximum directory depth for attachment discovery. iMazing export trees are
 /// only a few levels deep; this bounds any pathological nesting.
@@ -99,92 +106,46 @@ pub(crate) struct ResolveAttachmentArgs<'a> {
     pub attachment_type: &'a str,
     pub csv_parent: &'a Path,
     pub index: Option<&'a AttachmentIndex>,
-    pub attachments_dir: &'a Path,
     pub copy_attachments: bool,
-    pub message_secs: i64,
-    pub attachments_saved: &'a mut u64,
-    pub copy_failures: &'a mut u64,
 }
 
-/// Resolve a CSV attachment name into an [`AttachmentCell`].
+/// Resolve a CSV attachment name into an [`AttachmentCell`] and optional source path.
 ///
 /// Lookup order (unchanged):
 /// 1. Files in the CSV's parent directory
 /// 2. Indexed walk under the input tree
 ///
-/// When `copy_attachments` is false, keep the CSV name only. On copy failure or
-/// a missing file, fall back to the CSV name so the row still projects.
-pub(crate) fn resolve_attachment_cell(args: ResolveAttachmentArgs<'_>) -> AttachmentCell {
+/// Does not copy files. When `copy_attachments` is false, keep the CSV name only.
+/// On a missing file, fall back to the CSV name so the row still projects.
+pub(crate) fn resolve_attachment_cell(
+    args: ResolveAttachmentArgs<'_>,
+) -> (AttachmentCell, Option<PathBuf>) {
     let ResolveAttachmentArgs {
         csv_name,
         attachment_type,
         csv_parent,
         index,
-        attachments_dir,
         copy_attachments,
-        message_secs,
-        attachments_saved,
-        copy_failures,
     } = args;
     let mime = mime_hint(attachment_type, csv_name);
     let is_sticker = attachment_type.eq_ignore_ascii_case("sticker");
+    let cell_from_csv = || AttachmentCell {
+        meta: message_ir::AttachmentMeta {
+            path: None,
+            original_name: Some(csv_name.to_string()),
+            mime_type: mime.clone(),
+            digest_sha256: None,
+        },
+        is_sticker,
+        transcription: None,
+        sticker_effect: None,
+    };
     if !copy_attachments {
-        return AttachmentCell {
-            meta: message_ir::AttachmentMeta {
-                path: Some(csv_name.to_string()),
-                original_name: Some(csv_name.to_string()),
-                mime_type: mime,
-                digest_sha256: None,
-            },
-            is_sticker,
-            transcription: None,
-            sticker_effect: None,
-        };
+        return (cell_from_csv(), None);
     }
-    match find_and_copy_attachment(
-        csv_name,
-        csv_parent,
-        index,
-        attachments_dir,
-        message_secs,
-        attachments_saved,
-    ) {
-        Ok(Some((rel_path, digest))) => AttachmentCell {
-            meta: message_ir::AttachmentMeta {
-                path: Some(rel_path),
-                original_name: Some(csv_name.to_string()),
-                mime_type: mime,
-                digest_sha256: Some(digest),
-            },
-            is_sticker,
-            transcription: None,
-            sticker_effect: None,
-        },
-        Ok(None) => AttachmentCell {
-            meta: message_ir::AttachmentMeta {
-                path: Some(csv_name.to_string()),
-                original_name: Some(csv_name.to_string()),
-                mime_type: mime,
-                digest_sha256: None,
-            },
-            is_sticker,
-            transcription: None,
-            sticker_effect: None,
-        },
-        Err(_) => {
-            *copy_failures += 1;
-            AttachmentCell {
-                meta: message_ir::AttachmentMeta {
-                    path: Some(csv_name.to_string()),
-                    original_name: Some(csv_name.to_string()),
-                    mime_type: mime,
-                    digest_sha256: None,
-                },
-                is_sticker,
-                transcription: None,
-                sticker_effect: None,
-            }
-        }
+    match find_attachment_source(csv_name, csv_parent, index) {
+        Some(src) => (cell_from_csv(), Some(src)),
+        None => (cell_from_csv(), None),
     }
 }
 
@@ -235,29 +196,12 @@ fn find_attachment_on_disk(
     index.lookup(csv_name)
 }
 
-fn find_and_copy_attachment(
+fn find_attachment_source(
     csv_name: &str,
     csv_parent: &Path,
     index: Option<&AttachmentIndex>,
-    attachments_dir: &Path,
-    message_secs: i64,
-    attachments_saved: &mut u64,
-) -> Result<Option<(String, String)>> {
-    let Some(src) = index.and_then(|i| find_attachment_on_disk(csv_name, csv_parent, i)) else {
-        return Ok(None);
-    };
-    let digest_hex = media::file_sha256(&src)?;
-    let ext = src
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| format!(".{e}"))
-        .unwrap_or_default();
-    let name = attachment_dest_name(message_secs, &digest_hex, &ext);
-    let dest = attachments_dir.join(&name);
-    if copy_if_missing(&src, &dest)? {
-        *attachments_saved += 1;
-    }
-    Ok(Some((format!("attachments/{name}"), digest_hex)))
+) -> Option<PathBuf> {
+    index.and_then(|i| find_attachment_on_disk(csv_name, csv_parent, i))
 }
 
 fn mime_hint(attachment_type: &str, filename: &str) -> Option<String> {
@@ -288,6 +232,67 @@ fn mime_hint(attachment_type: &str, filename: &str) -> Option<String> {
     }
 }
 
+/// Stage path-backed attachments after parse. Used by unit tests.
+#[cfg(test)]
+pub(crate) fn stage_path_attachments(
+    attachments: &mut [IrAttachment],
+    sources: &[Option<PathBuf>],
+    timestamps: &[i64],
+    attachments_dir: &Path,
+    mode: MediaMode,
+    compress: &CompressOptions,
+    log: Option<&LogSink>,
+    cancel: Option<&CancelFlag>,
+    report: &mut ExportReport,
+) -> Result<(), String> {
+    if attachments.is_empty() {
+        return Ok(());
+    }
+    let mut jobs = Vec::new();
+    for (i, att) in attachments.iter_mut().enumerate() {
+        let hint = att.size_bytes.or_else(|| {
+            sources
+                .get(i)
+                .and_then(|p| p.as_ref())
+                .and_then(|p| fs::metadata(p).ok())
+                .map(|m| m.len())
+        });
+        jobs.push(AttachmentJob {
+            attachment: att,
+            timestamp_unix_ms: timestamps.get(i).copied().unwrap_or(0),
+            size_hint: hint,
+        });
+    }
+    run_attachment_jobs(
+        &mut jobs,
+        attachments_dir,
+        mode,
+        compress,
+        |i| {
+            let Some(path) = sources.get(i).and_then(|p| p.as_ref()) else {
+                return Ok(None);
+            };
+            std::fs::read(path).map(Some).or(Ok(None))
+        },
+        |progress| {
+            emit_log(
+                log,
+                format!(
+                    "  attachments {}/{} {}/{}",
+                    progress.done, progress.total, progress.bytes_done, progress.bytes_total
+                ),
+            );
+        },
+        cancel.map(|flag| flag.as_ref()),
+    )?;
+    for job in &jobs {
+        if job.attachment.path.is_some() && job.attachment.digest_sha256.is_some() {
+            report.attachments_saved += 1;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,30 +319,53 @@ mod tests {
         fs::create_dir_all(&attachments).unwrap();
         fs::write(chat.join("photo.jpg"), b"jpeg-bytes").unwrap();
         let index = AttachmentIndex::build(dir.path());
-        let mut saved = 0;
-        let mut failures = 0;
-        let cell = resolve_attachment_cell(ResolveAttachmentArgs {
+        let (cell, source) = resolve_attachment_cell(ResolveAttachmentArgs {
             csv_name: "photo.jpg",
             attachment_type: "image",
             csv_parent: &chat,
             index: Some(&index),
-            attachments_dir: &attachments,
             copy_attachments: true,
-            message_secs: 1_600_000_000,
-            attachments_saved: &mut saved,
-            copy_failures: &mut failures,
         });
-        assert_eq!(saved, 1);
-        assert_eq!(failures, 0);
-        let digest = cell.meta.digest_sha256.expect("digest set after copy");
-        assert_eq!(digest.len(), 64);
         assert!(
-            cell.meta
-                .path
-                .as_deref()
-                .unwrap()
-                .starts_with("attachments/")
+            cell.meta.digest_sha256.is_none(),
+            "resolve must not hash or write"
         );
+        assert!(cell.meta.path.is_none());
+        assert!(
+            fs::read_dir(&attachments).unwrap().next().is_none(),
+            "resolve must not write files"
+        );
+        let source = source.expect("source path found");
+        let mut att = IrAttachment {
+            path: None,
+            original_name: cell.meta.original_name,
+            mime_type: cell.meta.mime_type,
+            digest_sha256: None,
+            is_sticker: cell.is_sticker,
+            transcription: None,
+            sticker_effect: None,
+            size_bytes: None,
+            missing_reason: None,
+            bytes: None,
+        };
+        let mut report = ExportReport::default();
+        stage_path_attachments(
+            std::slice::from_mut(&mut att),
+            &[Some(source)],
+            &[1_600_000_000_000],
+            &attachments,
+            MediaMode::Clone,
+            &CompressOptions::default(),
+            None,
+            None,
+            &mut report,
+        )
+        .unwrap();
+        assert_eq!(report.attachments_saved, 1);
+        let digest = att.digest_sha256.expect("digest set after runner");
+        assert_eq!(digest.len(), 64);
+        assert!(att.path.as_deref().unwrap().starts_with("attachments/"));
+        assert_eq!(fs::read_dir(&attachments).unwrap().count(), 1);
     }
 
     #[cfg(unix)]

@@ -1,7 +1,7 @@
 //! Media convert/compress and obfuscation applied before writing files.
 
 use crate::util::read_attachment_file;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use media::{CompressOptions, MediaMode, MediaReport};
 use message_ir::{ConversationDocument, IrAttachment, IrDirection, IrParticipant};
 use message_vault_io_core::{LogSink, MediaConfig, ObfuscateConfig, emit_log};
@@ -9,9 +9,14 @@ use obfuscate::{
     Obfuscator, classify_attachment, materialize_placeholders, placeholder_rel_path,
     resolve_obfuscator_with_log,
 };
-use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
+
+#[cfg(test)]
+use anyhow::Context;
+#[cfg(test)]
+use std::collections::HashMap;
+#[cfg(test)]
+use std::fs;
 
 /// Options passed into [`crate::FormatSink`] for media and obfuscation.
 #[derive(Debug, Clone)]
@@ -73,6 +78,7 @@ impl ExportTransforms {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn apply_media_remap(doc: &mut ConversationDocument, remap: &HashMap<String, String>) {
     if remap.is_empty() {
         return;
@@ -182,6 +188,7 @@ fn obfuscate_attachment(att: &mut IrAttachment) {
     att.bytes = None;
 }
 
+#[cfg(test)]
 fn refresh_missing_attachment_digests(
     docs: &mut [ConversationDocument],
     output_dir: &Path,
@@ -209,6 +216,7 @@ fn refresh_missing_attachment_digests(
     Ok(())
 }
 
+#[cfg(test)]
 fn mime_for_rel(rel: &str) -> Option<String> {
     let ext = Path::new(rel)
         .extension()
@@ -249,24 +257,9 @@ pub(crate) fn apply_transforms(
         }
     }
 
-    let (media, remap) = if transforms.obfuscate {
-        (MediaReport::default(), HashMap::new())
-    } else {
-        let mut log_fn = |line: &str| emit_log(transforms.log.as_ref(), line);
-        media::process_attachments_dir_with_log(
-            output_dir,
-            transforms.media,
-            &transforms.compress,
-            Some(&mut log_fn),
-        )?
-    };
-    if !remap.is_empty() {
-        for doc in docs.iter_mut() {
-            apply_media_remap(doc, &remap);
-        }
-        // Recompute fingerprints for remapped attachments so JSON Lines files match bytes on disk.
-        refresh_missing_attachment_digests(docs, output_dir)?;
-    }
+    // Convert/compress runs in `run_attachment_jobs` before documents are
+    // written. Finish only obfuscates and packages.
+    let media = MediaReport::default();
 
     let mut obfuscated_docs = 0usize;
     if transforms.obfuscate {
@@ -459,5 +452,26 @@ mod tests {
             docs[0].messages[0].attachments[0].path.as_deref(),
             Some("attachments/placeholder.jpg")
         );
+    }
+
+    #[test]
+    fn convert_at_finish_leaves_cloned_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let att = tmp.path().join("attachments");
+        fs::create_dir_all(&att).unwrap();
+        fs::write(att.join("keep.bin"), b"already-cloned").unwrap();
+        let mut docs = vec![doc_with_image_attachment()];
+        docs[0].messages[0].attachments[0].path = Some("attachments/keep.bin".into());
+        let transforms = ExportTransforms {
+            media: MediaMode::Convert,
+            ..ExportTransforms::none()
+        };
+        let outcome = apply_transforms(&mut docs, tmp.path(), &transforms, false).unwrap();
+        assert_eq!(outcome.media.processed, 0);
+        assert_eq!(
+            docs[0].messages[0].attachments[0].path.as_deref(),
+            Some("attachments/keep.bin")
+        );
+        assert_eq!(fs::read(att.join("keep.bin")).unwrap(), b"already-cloned");
     }
 }

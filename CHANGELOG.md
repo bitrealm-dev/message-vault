@@ -18,6 +18,7 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ### Changed
 
+- 2026-08-27: Desktop Import shows four steps: parse the backup, copy or convert attachments (file count and size), prepare conversation files, then upload. Attachment work no longer appears as an instant second step. Import history stores `attachments_ms` and `prepare_ms` instead of `convert_ms` (vault schema 2; existing databases are rebuilt empty).
 - 2026-08-26: Import lists one **iMessage** source with methods Mac Messages, iPhone backup, and Jailbroken iPhone. Mac and jailbreak can set an attachment folder and an Apple Contacts file. Encrypted iPhone backups require the password in the form; the app does not prompt in a terminal. Extract errors for missing paths, leftover password, and missing ffmpeg use the locked Import-language sentences.
 - 2026-08-26: iMessage Import labels the method list **Platform** (Mac Messages and iPhone backup). Required paths use a red asterisk; empty optional paths say (Optional). The User Guide Import pages match that form and no longer describe a jailbreak method.
 - 2026-08-26: Import lists one **WhatsApp** source with Platform Android or iPhone. Android can decrypt a crypt12/14/15 file in the backup folder with a key; iPhone forwards the Finder backup as `-b`. Optional contacts, media, and message-database paths stay empty when those files already sit in the folder.

@@ -1,12 +1,17 @@
 //! Convert SMS Backup+ `.eml` trees into the shared conversation structure,
 //! then write the chosen output format via [`FormatSink`].
 
-use crate::attachments_emit::{merge_attachments, pending_attachment_to_ir, write_attachments};
+use crate::attachments_emit::{
+    merge_attachments, pending_attachment_to_ir, queue_attachments, stage_conversation_attachments,
+};
 use crate::identity::{chat_id_for, cover_identity, timestamp_ms};
 use crate::parse_emit::{ParsedEmlKind, collect_eml_paths, parse_one_eml};
 use crate::types::ParsedMessage;
 use anyhow::{Context, Result, bail};
 use contacts::{ContactsBook, NameMapping};
+#[cfg(test)]
+use media::CompressOptions;
+use media::MediaMode;
 use message_csv::{DateRange, format_local_ts, stable_guid};
 use message_ir::{
     ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, HandleType,
@@ -252,6 +257,7 @@ fn pending_to_document(
     convo: &PendingConversation,
     owner_handle: &str,
     report: &mut ExportReport,
+    blob_bytes: &std::collections::HashMap<String, Vec<u8>>,
 ) -> Result<ConversationDocument> {
     let name_by_handle = display_names_for_handles(convo);
     let mut participants: Vec<IrParticipant> = convo
@@ -331,7 +337,7 @@ fn pending_to_document(
         let attachments: Vec<IrAttachment> = msg
             .attachments
             .iter()
-            .map(pending_attachment_to_ir)
+            .map(|a| pending_attachment_to_ir(a, blob_bytes))
             .collect();
         let message_kind = if msg.attachments.is_empty() {
             IrMessageKind::Sms
@@ -515,8 +521,16 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
     let (inputs, output_dir) = prepare_outputs(&input_paths, output_dir)?;
 
     let copy_attachments = transforms.copies_attachments();
+    let media_mode = if copy_attachments {
+        transforms.media
+    } else {
+        MediaMode::Disabled
+    };
+    let compress = transforms.compress.clone();
     let (mut sink, attachments_dir) =
         FormatSink::open_prepared(&output_dir, output_format, transforms)?;
+    let mut blob_bytes: std::collections::HashMap<String, Vec<u8>> =
+        std::collections::HashMap::new();
 
     let input_roots = inputs.clone();
     let file_inputs: HashSet<PathBuf> = input_roots
@@ -574,7 +588,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
                 ParsedEmlKind::Archive {
                     msgs,
                     skipped_dates,
-                    path_display,
+                    _path_display: _,
                 } => {
                     report.bump("archive_eml", 1);
                     report.skipped_invalid_date += skipped_dates;
@@ -586,17 +600,15 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
                         if msg.chat_key.is_empty() {
                             report.bump("unknown_chat_messages", 1);
                         }
-                        let atts = write_attachments(
-                            &msg.attachments,
-                            &attachments_dir,
-                            &mut report,
-                            copy_attachments,
-                            &path_display,
-                        );
+                        let atts =
+                            queue_attachments(&msg.attachments, copy_attachments, &mut blob_bytes);
                         add_message(&mut conversations, &mut by_identity, msg, atts, &mut report);
                     }
                 }
-                ParsedEmlKind::Flat { msg, path_display } => {
+                ParsedEmlKind::Flat {
+                    msg,
+                    _path_display: _,
+                } => {
                     report.bump("flat_eml", 1);
                     if !date_range.contains_secs_f64(msg.timestamp_secs) {
                         report.skipped_out_of_range += 1;
@@ -605,13 +617,8 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
                     if msg.chat_key.is_empty() {
                         report.bump("unknown_chat_messages", 1);
                     }
-                    let atts = write_attachments(
-                        &msg.attachments,
-                        &attachments_dir,
-                        &mut report,
-                        copy_attachments,
-                        &path_display,
-                    );
+                    let atts =
+                        queue_attachments(&msg.attachments, copy_attachments, &mut blob_bytes);
                     add_message(
                         &mut conversations,
                         &mut by_identity,
@@ -652,7 +659,38 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
         ),
     );
 
-    let convo_total = conversations.len() as u64;
+    let mut documents = Vec::new();
+    for (chat_id, mut convo) in conversations {
+        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        if !prepare_conversation(&mut convo, &mut report) {
+            continue;
+        }
+        documents.push(pending_to_document(
+            &chat_id,
+            &convo,
+            &owner_handle,
+            &mut report,
+            &blob_bytes,
+        )?);
+    }
+
+    stage_conversation_attachments(
+        &mut documents,
+        &attachments_dir,
+        media_mode,
+        &compress,
+        log,
+        cancel,
+        &mut report,
+    )
+    .map_err(anyhow::Error::msg)?;
+
+    let convo_total = documents.len() as u64;
+    emit_log(log, "");
+    emit_log(
+        log,
+        format!("Preparing {convo_total} conversation file(s)..."),
+    );
     vlog(
         verbose,
         log,
@@ -662,17 +700,12 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
         ),
     );
     let mut written = 0u64;
-    for (chat_id, mut convo) in conversations {
+    for doc in documents {
         message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
-        if !prepare_conversation(&mut convo, &mut report) {
-            written += 1;
-            report_progress(verbose, log, "wrote", written, convo_total);
-            continue;
-        }
-        let doc = pending_to_document(&chat_id, &convo, &owner_handle, &mut report)?;
         sink.write_document(doc)?;
         report.conversations += 1;
         written += 1;
+        emit_log(log, format!("  preparing {written}/{convo_total}"));
         report_progress(verbose, log, "wrote", written, convo_total);
     }
     let sink_result = sink.finish()?;
@@ -737,37 +770,86 @@ mod tests {
     }
 
     #[test]
-    fn write_attachments_keeps_message_on_single_failure() {
+    fn queue_attachments_keeps_message_on_single_failure() {
         let dir = tempfile::tempdir().unwrap();
         let att_dir = dir.path().join("attachments");
         std::fs::create_dir_all(&att_dir).unwrap();
-        // A NUL byte is never a valid path component, so this write always
-        // fails (EINVAL on Unix, invalid name on Windows).
+        // Empty bytes: the runner records file_missing and continues.
         let blobs = vec![
             AttachmentBlob {
-                filename: "bad\u{0}name.jpg".into(),
+                filename: "missing.jpg".into(),
                 original_name: None,
-                mime_type: None,
+                mime_type: Some("image/jpeg".into()),
                 digest_hex: "aaa".into(),
-                data: vec![1, 2, 3],
+                data: vec![],
             },
             AttachmentBlob {
                 filename: "ok.jpg".into(),
                 original_name: None,
-                mime_type: None,
+                mime_type: Some("image/jpeg".into()),
                 digest_hex: "bbb".into(),
                 data: vec![4, 5, 6],
             },
         ];
+        let mut blob_bytes = std::collections::HashMap::new();
+        let queued = queue_attachments(&blobs, true, &mut blob_bytes);
+        assert_eq!(queued.len(), 2);
+
+        let mut atts: Vec<_> = queued
+            .iter()
+            .map(|a| pending_attachment_to_ir(a, &blob_bytes))
+            .collect();
         let mut report = ExportReport::default();
-        let out = write_attachments(&blobs, &att_dir, &mut report, true, "msg.eml");
-        // The failing attachment is dropped, the good one survives, and the
-        // failure is recorded instead of aborting the whole message.
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].digest_sha256.as_deref(), Some("bbb"));
-        assert!(att_dir.join("ok.jpg").exists());
-        assert_eq!(report.errors.len(), 1);
-        assert!(report.errors[0].contains("failed to write attachment"));
+        let mut doc = ConversationDocument {
+            schema_version: SCHEMA_VERSION,
+            export: ExportMeta {
+                source: String::new(),
+                tool: String::new(),
+                tool_version: String::new(),
+                owner_handle: None,
+                owner_display_name: None,
+            },
+            conversation: ConversationMeta {
+                chat_identifier: "test".into(),
+                conversation_type: IrConversationType::Individual,
+                group_title: None,
+                participants: Vec::new(),
+                stats: ConversationStats::default(),
+            },
+            messages: vec![IrMessage {
+                guid: "g".into(),
+                timestamp_unix_ms: 0,
+                direction: IrDirection::Incoming,
+                service: IrService::Sms,
+                message_kind: IrMessageKind::Mms,
+                sender_handle: None,
+                sender_display_name: None,
+                subject: None,
+                text: "hi".into(),
+                attachments: std::mem::take(&mut atts),
+                imessage: None,
+                source: None,
+            }],
+            packaging_stem_suffix: None,
+        };
+        stage_conversation_attachments(
+            std::slice::from_mut(&mut doc),
+            &att_dir,
+            MediaMode::Clone,
+            &CompressOptions::default(),
+            None,
+            None,
+            &mut report,
+        )
+        .unwrap();
+        // The missing source stays on the message; the good one is staged.
+        assert_eq!(doc.messages[0].attachments.len(), 2);
+        assert_eq!(
+            doc.messages[0].attachments[0].missing_reason.as_deref(),
+            Some("file_missing")
+        );
+        assert!(doc.messages[0].attachments[1].path.is_some());
         assert_eq!(report.attachments_saved, 1);
+        assert_eq!(std::fs::read_dir(&att_dir).unwrap().count(), 1);
     }
 }

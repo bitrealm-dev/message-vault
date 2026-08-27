@@ -20,7 +20,8 @@ export type ImportSummaryView = {
   messagesDeduped?: number;
   messagesFailed?: number;
   parseMs?: number | null;
-  convertMs?: number | null;
+  attachmentsMs?: number | null;
+  prepareMs?: number | null;
   uploadMs?: number | null;
   durationMs: number | null;
   issues: ImportIssue[];
@@ -28,7 +29,7 @@ export type ImportSummaryView = {
 
 type ImportSummaryPanelProps = {
   summary: ImportSummaryView;
-  /** When true (default), show Parse/Convert/Upload with times above the tables. */
+  /** When true (default), show Parse/Attachments/Prepare/Upload with times above the tables. */
   embedStepTimings?: boolean;
 };
 
@@ -61,16 +62,24 @@ export function completionTextFor(
 function historySteps(summary: ImportSummaryView): Step[] {
   const running = summary.status === "running";
 
-  let convertStatus: StepStatus = "done";
+  let attachmentsStatus: StepStatus = "done";
   if (running) {
-    convertStatus = summary.parseMs != null ? "active" : "pending";
+    attachmentsStatus = summary.parseMs != null ? "active" : "pending";
+  }
+
+  let prepareStatus: StepStatus = "done";
+  if (running) {
+    prepareStatus = summary.attachmentsMs != null ? "active" : "pending";
   }
 
   let uploadStatus: StepStatus = "done";
   if (summary.status === "failed") {
     uploadStatus = "error";
   } else if (running) {
-    uploadStatus = summary.convertMs != null || summary.parseMs != null ? "active" : "pending";
+    uploadStatus =
+      summary.prepareMs != null || summary.attachmentsMs != null || summary.parseMs != null
+        ? "active"
+        : "pending";
   }
 
   return [
@@ -80,9 +89,14 @@ function historySteps(summary: ImportSummaryView): Step[] {
       durationMs: summary.parseMs,
     },
     {
-      label: "Convert attachments",
-      status: convertStatus,
-      durationMs: summary.convertMs,
+      label: "Attachments",
+      status: attachmentsStatus,
+      durationMs: summary.attachmentsMs,
+    },
+    {
+      label: "Preparing messages",
+      status: prepareStatus,
+      durationMs: summary.prepareMs,
     },
     {
       label: "Upload to vault",

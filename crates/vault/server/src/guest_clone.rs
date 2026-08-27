@@ -527,7 +527,7 @@ async fn copy_vault_imports(
         r#"
         SELECT id, source, tool, mode, status, started_at, finished_at,
                message_count, attachment_count, bytes_uploaded,
-               duration_ms, parse_ms, convert_ms, upload_ms, summary_json
+               duration_ms, parse_ms, attachments_ms, prepare_ms, upload_ms, summary_json
         FROM vault_imports WHERE account_id = $1
         "#,
         template,
@@ -547,7 +547,8 @@ async fn copy_vault_imports(
                 row.try_get::<Option<i64>, _>(11)?,
                 row.try_get::<Option<i64>, _>(12)?,
                 row.try_get::<Option<i64>, _>(13)?,
-                row.try_get::<Option<String>, _>(14)?,
+                row.try_get::<Option<i64>, _>(14)?,
+                row.try_get::<Option<String>, _>(15)?,
             ))
         },
     )
@@ -566,7 +567,8 @@ async fn copy_vault_imports(
         bytes_uploaded,
         duration_ms,
         parse_ms,
-        convert_ms,
+        attachments_ms,
+        prepare_ms,
         upload_ms,
         summary_json,
     ) in rows
@@ -576,8 +578,8 @@ async fn copy_vault_imports(
             INSERT INTO vault_imports (
                 account_id, source, tool, mode, status, started_at, finished_at,
                 message_count, attachment_count, bytes_uploaded,
-                duration_ms, parse_ms, convert_ms, upload_ms, summary_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                duration_ms, parse_ms, attachments_ms, prepare_ms, upload_ms, summary_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             RETURNING id
             "#,
         )
@@ -593,7 +595,8 @@ async fn copy_vault_imports(
         .bind(bytes_uploaded)
         .bind(duration_ms)
         .bind(parse_ms)
-        .bind(convert_ms)
+        .bind(attachments_ms)
+        .bind(prepare_ms)
         .bind(upload_ms)
         .bind(summary_json)
         .fetch_one(&mut *tx)

@@ -9,13 +9,19 @@ use serde::Serialize;
 /// Progress numbers the UI uses to update the progress bar.
 #[derive(Debug, Clone, Serialize)]
 pub struct ExtractProgressEvent {
-    /// Current pipeline stage, for example `parse`, `convert`, or `upload`.
+    /// Current pipeline stage: `parse`, `attachments`, `prepare`, or `upload`.
     pub step: String,
     /// Number of items finished so far.
     pub done: usize,
     /// Total items, or 0 when the total is unknown.
     pub total: usize,
-    /// Extra step status the UI shows, for example `included_in_extract`.
+    /// Bytes finished on the attachments step.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytes_done: Option<u64>,
+    /// Byte total on the attachments step (grows when a size was unknown).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytes_total: Option<u64>,
+    /// Extra step status the UI shows.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
 }

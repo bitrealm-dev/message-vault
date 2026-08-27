@@ -1,56 +1,46 @@
-//! Attachment helpers: write blobs to disk and map staged attachments onto
-//! the shared [`IrAttachment`] shape.
+//! Attachment helpers: queue blobs during parse, then map staged attachments
+//! onto the shared [`IrAttachment`] shape after the runner writes files.
 
 use crate::types::AttachmentBlob;
+use media::{CompressOptions, MediaMode};
 use message_ir::{IrAttachment, PendingAttachment};
-use message_vault_io_core::{ExportReport, write_if_missing};
-use std::collections::HashSet;
+use message_vault_io_core::{
+    AttachmentJob, CancelFlag, ExportReport, LogSink, emit_log, run_attachment_jobs,
+};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-/// Write attachment blobs, returning the ones that succeeded.
-///
-/// A single failing attachment (disk full, permissions, ENAMETOOLONG) must not
-/// drop the whole message: the failure is recorded in `report.errors` and the
-/// message is kept without that attachment.
-pub(super) fn write_attachments(
+/// Queue attachment blobs as metadata. Bytes stay in `blob_bytes` (keyed by
+/// digest) until the shared runner writes them.
+pub(super) fn queue_attachments(
     blobs: &[AttachmentBlob],
-    attachments_dir: &Path,
-    report: &mut ExportReport,
     copy_attachments: bool,
-    path_display: &str,
+    blob_bytes: &mut HashMap<String, Vec<u8>>,
 ) -> Vec<PendingAttachment> {
-    if !copy_attachments {
-        return Vec::new();
-    }
-    let mut out = Vec::with_capacity(blobs.len());
-    for blob in blobs {
-        let path = attachments_dir.join(&blob.filename);
-        match write_if_missing(&path, &blob.data) {
-            Ok(true) => {
-                report.attachments_saved += 1;
+    blobs
+        .iter()
+        .map(|blob| {
+            if copy_attachments && !blob.data.is_empty() {
+                blob_bytes
+                    .entry(blob.digest_hex.clone())
+                    .or_insert_with(|| blob.data.clone());
             }
-            Ok(false) => {}
-            Err(err) => {
-                report.errors.push(format!(
-                    "{path_display}: failed to write attachment {}: {err}",
-                    blob.filename
-                ));
-                continue;
+            PendingAttachment {
+                rel_path: String::new(),
+                content_type: blob.mime_type.clone().unwrap_or_default(),
+                extension: Path::new(&blob.filename)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_string(),
+                digest_sha256: Some(blob.digest_hex.clone()),
+                name_hint: blob
+                    .original_name
+                    .clone()
+                    .or_else(|| Some(blob.filename.clone())),
             }
-        }
-        out.push(PendingAttachment {
-            rel_path: format!("attachments/{}", blob.filename),
-            content_type: blob.mime_type.clone().unwrap_or_default(),
-            extension: Path::new(&blob.filename)
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-                .to_string(),
-            digest_sha256: Some(blob.digest_hex.clone()),
-            name_hint: blob.original_name.clone(),
-        });
-    }
-    out
+        })
+        .collect()
 }
 
 /// Union attachment lists by content digest so flat↔archive dedupe does not drop media.
@@ -66,18 +56,91 @@ pub(super) fn merge_attachments(into: &mut Vec<PendingAttachment>, from: Vec<Pen
     }
 }
 
-/// Map a staged attachment onto the shared [`IrAttachment`] shape.
-pub(super) fn pending_attachment_to_ir(a: &PendingAttachment) -> IrAttachment {
+/// Map a queued attachment onto the shared [`IrAttachment`] shape.
+pub(super) fn pending_attachment_to_ir(
+    a: &PendingAttachment,
+    blob_bytes: &HashMap<String, Vec<u8>>,
+) -> IrAttachment {
+    let digest = a.digest_sha256.clone();
+    let bytes = digest.as_ref().and_then(|d| blob_bytes.get(d).cloned());
     IrAttachment {
-        path: Some(a.rel_path.clone()),
+        path: None,
         original_name: a.name_hint.clone(),
         mime_type: a.mime_type(),
-        digest_sha256: a.digest_sha256.clone(),
+        digest_sha256: digest,
         is_sticker: false,
         transcription: None,
         sticker_effect: None,
-        size_bytes: None,
+        size_bytes: bytes.as_ref().map(|b| b.len() as u64),
         missing_reason: None,
-        bytes: None,
+        bytes,
     }
+}
+
+/// Write queued attachment bytes after parse and before conversation files.
+pub(super) fn stage_conversation_attachments(
+    documents: &mut [message_ir::ConversationDocument],
+    attachments_dir: &Path,
+    mode: MediaMode,
+    compress: &CompressOptions,
+    log: Option<&LogSink>,
+    cancel: Option<&CancelFlag>,
+    report: &mut ExportReport,
+) -> Result<(), String> {
+    let payloads: Vec<Option<Vec<u8>>> = documents
+        .iter()
+        .flat_map(|doc| {
+            doc.messages
+                .iter()
+                .flat_map(|msg| msg.attachments.iter().map(|att| att.bytes.clone()))
+        })
+        .collect();
+
+    let mut jobs = Vec::new();
+    for doc in documents.iter_mut() {
+        for msg in &mut doc.messages {
+            let ts = msg.timestamp_unix_ms;
+            for att in &mut msg.attachments {
+                let hint = att
+                    .size_bytes
+                    .or_else(|| att.bytes.as_ref().map(|b| b.len() as u64));
+                jobs.push(AttachmentJob {
+                    attachment: att,
+                    timestamp_unix_ms: ts,
+                    size_hint: hint,
+                });
+            }
+        }
+    }
+    run_attachment_jobs(
+        &mut jobs,
+        attachments_dir,
+        mode,
+        compress,
+        |i| Ok(payloads.get(i).cloned().flatten()),
+        |progress| {
+            emit_log(
+                log,
+                format!(
+                    "  attachments {}/{} {}/{}",
+                    progress.done, progress.total, progress.bytes_done, progress.bytes_total
+                ),
+            );
+        },
+        cancel.map(|flag| flag.as_ref()),
+    )?;
+
+    for job in &jobs {
+        if job.attachment.path.is_some() && job.attachment.digest_sha256.is_some() {
+            report.attachments_saved += 1;
+        }
+    }
+    for doc in documents.iter_mut() {
+        for msg in &mut doc.messages {
+            for att in &mut msg.attachments {
+                att.bytes = None;
+            }
+        }
+    }
+    Ok(())
 }

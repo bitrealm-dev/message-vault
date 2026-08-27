@@ -610,7 +610,9 @@ pub(crate) struct CompleteImportBody {
     #[serde(default)]
     pub(crate) parse_ms: Option<i64>,
     #[serde(default)]
-    pub(crate) convert_ms: Option<i64>,
+    pub(crate) attachments_ms: Option<i64>,
+    #[serde(default)]
+    pub(crate) prepare_ms: Option<i64>,
     #[serde(default)]
     pub(crate) upload_ms: Option<i64>,
     #[serde(default)]
@@ -693,7 +695,8 @@ pub(crate) struct ImportDetailResponse {
     bytes_uploaded: i64,
     pub(crate) duration_ms: Option<i64>,
     pub(crate) parse_ms: Option<i64>,
-    pub(crate) convert_ms: Option<i64>,
+    pub(crate) attachments_ms: Option<i64>,
+    pub(crate) prepare_ms: Option<i64>,
     pub(crate) upload_ms: Option<i64>,
     pub(crate) summary: serde_json::Value,
     pub(crate) issues: Vec<ImportDetailIssueResponse>,
@@ -850,7 +853,8 @@ pub(crate) async fn imports_complete_handler(
         bytes_uploaded: body.bytes_uploaded,
         duration_ms: body.duration_ms,
         parse_ms: body.parse_ms,
-        convert_ms: body.convert_ms,
+        attachments_ms: body.attachments_ms,
+        prepare_ms: body.prepare_ms,
         upload_ms: body.upload_ms,
         summary_json,
         issues: body
@@ -918,7 +922,8 @@ fn import_detail_response(detail: crate::db::vault_imports::ImportDetail) -> Imp
         bytes_uploaded: row.bytes_uploaded,
         duration_ms: row.duration_ms,
         parse_ms: row.parse_ms,
-        convert_ms: row.convert_ms,
+        attachments_ms: row.attachments_ms,
+        prepare_ms: row.prepare_ms,
         upload_ms: row.upload_ms,
         summary: parse_summary_json(row.summary_json),
         issues,
