@@ -6,7 +6,8 @@ use std::fmt;
 use anyhow::{Result, bail};
 use chrono::Utc;
 use serde::Serialize;
-use sqlx::{AnyConnection, Connection};
+use sqlx::any::AnyRow;
+use sqlx::{AnyConnection, Connection, Row};
 
 use crate::db::dialect;
 
@@ -40,8 +41,10 @@ pub struct VaultImportRow {
     pub duration_ms: Option<i64>,
     /// Time spent parsing JSONL, when finished.
     pub parse_ms: Option<i64>,
-    /// Time spent converting media, when finished.
-    pub convert_ms: Option<i64>,
+    /// Time spent copying, converting, or skipping attachments, when finished.
+    pub attachments_ms: Option<i64>,
+    /// Time spent preparing conversation files, when finished.
+    pub prepare_ms: Option<i64>,
     /// Time spent uploading assets, when finished.
     pub upload_ms: Option<i64>,
     /// Client-provided summary payload.
@@ -63,8 +66,10 @@ pub struct CompleteImportArgs {
     pub duration_ms: Option<i64>,
     /// Time spent parsing JSONL.
     pub parse_ms: Option<i64>,
-    /// Time spent converting media.
-    pub convert_ms: Option<i64>,
+    /// Time spent copying, converting, or skipping attachments.
+    pub attachments_ms: Option<i64>,
+    /// Time spent preparing conversation files.
+    pub prepare_ms: Option<i64>,
     /// Time spent uploading assets.
     pub upload_ms: Option<i64>,
     /// Client-provided summary payload.
@@ -227,47 +232,28 @@ pub async fn start_import(
 /// Column list for `vault_imports`, in the order reads map to a row.
 const VAULT_IMPORT_COLUMNS: &str = "id, account_id, source, tool, mode, status, started_at, \
      finished_at, message_count, attachment_count, bytes_uploaded, duration_ms, parse_ms, \
-     convert_ms, upload_ms, summary_json";
+     attachments_ms, prepare_ms, upload_ms, summary_json";
 
-/// Row shape of `VAULT_IMPORT_COLUMNS`, in column order.
-type VaultImportRowData = (
-    i64,            // id
-    String,         // account_id
-    String,         // source
-    Option<String>, // tool
-    String,         // mode
-    String,         // status
-    String,         // started_at
-    Option<String>, // finished_at
-    i64,            // message_count
-    i64,            // attachment_count
-    i64,            // bytes_uploaded
-    Option<i64>,    // duration_ms
-    Option<i64>,    // parse_ms
-    Option<i64>,    // convert_ms
-    Option<i64>,    // upload_ms
-    Option<String>, // summary_json
-);
-
-fn vault_import_from_data(d: VaultImportRowData) -> VaultImportRow {
-    VaultImportRow {
-        id: d.0,
-        account_id: d.1,
-        source: d.2,
-        tool: d.3,
-        mode: d.4,
-        status: d.5,
-        started_at: d.6,
-        finished_at: d.7,
-        message_count: d.8,
-        attachment_count: d.9,
-        bytes_uploaded: d.10,
-        duration_ms: d.11,
-        parse_ms: d.12,
-        convert_ms: d.13,
-        upload_ms: d.14,
-        summary_json: d.15,
-    }
+fn vault_import_from_row(row: &AnyRow) -> Result<VaultImportRow, sqlx::Error> {
+    Ok(VaultImportRow {
+        id: row.try_get(0)?,
+        account_id: row.try_get(1)?,
+        source: row.try_get(2)?,
+        tool: row.try_get(3)?,
+        mode: row.try_get(4)?,
+        status: row.try_get(5)?,
+        started_at: row.try_get(6)?,
+        finished_at: row.try_get(7)?,
+        message_count: row.try_get(8)?,
+        attachment_count: row.try_get(9)?,
+        bytes_uploaded: row.try_get(10)?,
+        duration_ms: row.try_get(11)?,
+        parse_ms: row.try_get(12)?,
+        attachments_ms: row.try_get(13)?,
+        prepare_ms: row.try_get(14)?,
+        upload_ms: row.try_get(15)?,
+        summary_json: row.try_get(16)?,
+    })
 }
 
 /// Load an import row owned by `account_id`, or error.
@@ -276,7 +262,7 @@ pub async fn get_owned_import(
     account_id: &str,
     import_id: i64,
 ) -> std::result::Result<VaultImportRow, ImportLookupError> {
-    let row: Option<VaultImportRowData> = sqlx::query_as::<_, VaultImportRowData>(&format!(
+    let row = sqlx::query(&format!(
         "SELECT {VAULT_IMPORT_COLUMNS}
          FROM vault_imports
          WHERE id = $1 AND account_id = $2"
@@ -286,7 +272,7 @@ pub async fn get_owned_import(
     .fetch_optional(&mut *conn)
     .await?;
     match row {
-        Some(data) => Ok(vault_import_from_data(data)),
+        Some(data) => Ok(vault_import_from_row(&data)?),
         None => Err(ImportLookupError::NotFound { import_id }),
     }
 }
@@ -387,10 +373,11 @@ pub async fn complete_import(
             bytes_uploaded = $5,
             duration_ms = $6,
             parse_ms = $7,
-            convert_ms = $8,
-            upload_ms = $9,
-            summary_json = $10
-        WHERE id = $11 AND account_id = $12
+            attachments_ms = $8,
+            prepare_ms = $9,
+            upload_ms = $10,
+            summary_json = $11
+        WHERE id = $12 AND account_id = $13
         "#,
     )
     .bind(status)
@@ -400,7 +387,8 @@ pub async fn complete_import(
     .bind(bytes_uploaded)
     .bind(args.duration_ms)
     .bind(args.parse_ms)
-    .bind(args.convert_ms)
+    .bind(args.attachments_ms)
+    .bind(args.prepare_ms)
     .bind(args.upload_ms)
     .bind(args.summary_json.as_deref())
     .bind(import_id)
@@ -542,7 +530,7 @@ pub async fn list_imports_for_account(
     account_id: &str,
     limit: i64,
 ) -> Result<Vec<VaultImportRow>> {
-    let rows: Vec<VaultImportRowData> = sqlx::query_as::<_, VaultImportRowData>(&format!(
+    let rows = sqlx::query(&format!(
         "SELECT {VAULT_IMPORT_COLUMNS}
          FROM vault_imports
          WHERE account_id = $1
@@ -553,7 +541,10 @@ pub async fn list_imports_for_account(
     .bind(limit)
     .fetch_all(&mut *conn)
     .await?;
-    Ok(rows.into_iter().map(vault_import_from_data).collect())
+    rows.iter()
+        .map(vault_import_from_row)
+        .collect::<Result<_, _>>()
+        .map_err(Into::into)
 }
 
 const ACCOUNT_ATTACHMENTS_FROM: &str = r#"
@@ -711,7 +702,8 @@ mod tests {
                 bytes_uploaded: Some(100),
                 duration_ms: Some(48_000),
                 parse_ms: Some(18_000),
-                convert_ms: Some(22_000),
+                attachments_ms: Some(22_000),
+                prepare_ms: Some(4_000),
                 upload_ms: Some(8_000),
                 summary_json: Some(r#"{"parse":{"messages":10}}"#.into()),
                 issues: vec![ImportIssueInput {
@@ -727,7 +719,8 @@ mod tests {
 
         assert_eq!(row.duration_ms, Some(48_000));
         assert_eq!(row.parse_ms, Some(18_000));
-        assert_eq!(row.convert_ms, Some(22_000));
+        assert_eq!(row.attachments_ms, Some(22_000));
+        assert_eq!(row.prepare_ms, Some(4_000));
         assert_eq!(row.upload_ms, Some(8_000));
         assert_eq!(
             row.summary_json.as_deref(),
@@ -768,7 +761,8 @@ mod tests {
                 bytes_uploaded: None,
                 duration_ms: None,
                 parse_ms: None,
-                convert_ms: None,
+                attachments_ms: None,
+                prepare_ms: None,
                 upload_ms: None,
                 summary_json: None,
                 issues: vec![ImportIssueInput {
@@ -879,7 +873,8 @@ mod tests {
                 bytes_uploaded: Some(100),
                 duration_ms: Some(48_000),
                 parse_ms: Some(18_000),
-                convert_ms: Some(22_000),
+                attachments_ms: Some(22_000),
+                prepare_ms: Some(4_000),
                 upload_ms: Some(8_000),
                 summary_json: Some(r#"{"parse":{"messages":10}}"#.into()),
                 issues: vec![
@@ -937,7 +932,8 @@ mod tests {
                 bytes_uploaded: Some(100),
                 duration_ms: Some(48_000),
                 parse_ms: None,
-                convert_ms: None,
+                attachments_ms: None,
+                prepare_ms: None,
                 upload_ms: None,
                 summary_json: None,
                 issues: vec![],

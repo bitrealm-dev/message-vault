@@ -139,8 +139,10 @@ CREATE TABLE IF NOT EXISTS vault_imports (
     duration_ms INTEGER,
     -- Time spent parsing input in milliseconds.
     parse_ms INTEGER,
-    -- Time spent converting/media work in milliseconds.
-    convert_ms INTEGER,
+    -- Time spent copying, converting, or skipping attachments in milliseconds.
+    attachments_ms INTEGER,
+    -- Time spent preparing conversation files in milliseconds.
+    prepare_ms INTEGER,
     -- Time spent uploading in milliseconds.
     upload_ms INTEGER,
     -- JSON blob with a human-readable run summary for Import History.
