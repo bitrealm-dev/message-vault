@@ -5,11 +5,25 @@ use std::io::{self, Write};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
+use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 use sqlx::AnyConnection;
 use sqlx::Connection;
 
 use crate::db::schema;
+
+/// One production message that still needs a content fingerprint.
+type ContentKeyRow = (
+    i64,
+    i64,
+    String,
+    String,
+    i64,
+    Option<String>,
+    String,
+    Option<String>,
+    Option<String>,
+);
 
 /// Collapse whitespace so minor text differences do not split the same SMS.
 pub fn normalize_body(body: Option<&str>) -> String {
@@ -98,6 +112,55 @@ pub fn compute_content_key(
         hasher.update(sha.as_bytes());
     }
     crate::assets::hex_encode(&hasher.finalize())
+}
+
+fn content_key_for_row(
+    row: &ContentKeyRow,
+    group_handles: &HashMap<i64, Vec<String>>,
+    shas_by_msg: &HashMap<i64, Vec<String>>,
+) -> (i64, String) {
+    let (
+        id,
+        conversation_id,
+        chat_id,
+        conversation_type,
+        is_from_me,
+        ts_utc,
+        ts,
+        body,
+        sender_norm,
+    ) = row;
+    let empty: &[String] = &[];
+    let shas = shas_by_msg.get(id).map(Vec::as_slice).unwrap_or(empty);
+    let group_identity = if conversation_type == "group" {
+        Some(chat_identity_for_content_key(
+            chat_id,
+            group_handles.get(conversation_id).map(Vec::as_slice),
+        ))
+    } else {
+        None
+    };
+    let identity = group_identity.as_deref().unwrap_or(chat_id);
+    let key = compute_content_key(
+        identity,
+        *is_from_me != 0,
+        sender_norm.as_deref(),
+        ts_utc.as_deref(),
+        ts,
+        body.as_deref(),
+        shas,
+    );
+    (*id, key)
+}
+
+fn hash_content_keys(
+    rows: &[ContentKeyRow],
+    group_handles: &HashMap<i64, Vec<String>>,
+    shas_by_msg: &HashMap<i64, Vec<String>>,
+) -> Vec<(i64, String)> {
+    rows.par_iter()
+        .map(|row| content_key_for_row(row, group_handles, shas_by_msg))
+        .collect()
 }
 
 fn resolve_utc_secs(timestamp_utc: Option<&str>, timestamp: &str) -> Option<i64> {
@@ -803,6 +866,8 @@ pub async fn run_dedupe(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
     use crate::db::engine;
 
@@ -856,6 +921,44 @@ mod tests {
         );
         assert_eq!(a, b);
         assert_eq!(a, c);
+    }
+
+    #[test]
+    fn parallel_content_keys_match_serial() {
+        let rows = vec![
+            (
+                1,
+                10,
+                "+14075551212".into(),
+                "individual".into(),
+                1,
+                Some("2015-03-12T18:04:22Z".into()),
+                "x".into(),
+                Some("hi".into()),
+                None,
+            ),
+            (
+                2,
+                11,
+                "chat-group".into(),
+                "group".into(),
+                0,
+                Some("2015-03-12T18:04:23Z".into()),
+                "x".into(),
+                Some("yo".into()),
+                Some("+15555550001".into()),
+            ),
+        ];
+        let mut groups = HashMap::new();
+        groups.insert(11, vec!["+15555550001".into(), "+15555550002".into()]);
+        let mut shas = HashMap::new();
+        shas.insert(2, vec!["abc".into()]);
+        let parallel = hash_content_keys(&rows, &groups, &shas);
+        let serial: Vec<_> = rows
+            .iter()
+            .map(|row| content_key_for_row(row, &groups, &shas))
+            .collect();
+        assert_eq!(parallel, serial);
     }
 
     #[test]
