@@ -44,6 +44,11 @@ describe("ImportSummaryPanel", () => {
       />,
     );
     expect(screen.getByRole("heading", { name: "Import Errors" })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Identical errors are grouped. Error messages show two lines. Click a row to expand the full message and the file list.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText("Import errors")).toBeInTheDocument();
     expect(screen.queryByText("Open import log")).not.toBeInTheDocument();
   });
