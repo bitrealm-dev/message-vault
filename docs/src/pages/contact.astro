@@ -1,0 +1,24 @@
+---
+import LandingLayout from "../layouts/LandingLayout.astro";
+import { landingLinks } from "../lib/landing-links";
+---
+
+<LandingLayout
+  title="Contact · Message Vault"
+  description="How to reach Bitrealm about Message Vault."
+  canonicalPath="/contact/"
+>
+  <main class="mv-stub">
+    <h1>Contact</h1>
+    <p>
+      For bugs, questions, and feature requests, open an issue on GitHub. That is
+      the best place for product discussion today.
+    </p>
+    <div class="mv-stub-block">
+      <h2>GitHub Issues</h2>
+      <p>
+        <a href={landingLinks.githubIssues}>{landingLinks.githubIssues}</a>
+      </p>
+    </div>
+  </main>
+</LandingLayout>

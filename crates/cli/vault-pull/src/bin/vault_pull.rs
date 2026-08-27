@@ -3,70 +3,15 @@
 //! Message Vault is the HTTP server that stores imported messages. Output is a
 //! folder of JSON Lines files (one JSON object per line) plus `attachments/`.
 
-use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::{Result, bail};
 use clap::Parser;
+use vault_pull::cli::Cli;
 use vault_pull::{
-    DEFAULT_ASSET_DOWNLOAD_WORKERS, DEFAULT_PAGE_LIMIT, ProgressEvent, VaultPullConfig,
-    authenticate, compose_query, run,
+    DEFAULT_ASSET_DOWNLOAD_WORKERS, ProgressEvent, VaultPullConfig, authenticate, compose_query,
+    run,
 };
-
-#[derive(Debug, Parser)]
-#[command(
-    name = "vault-pull",
-    about = "Pull messages from Message Vault into a message-ir export folder",
-    long_about = "Calls GET /v1/export/messages with Fastmail-style search, downloads \
-attachments via GET /v1/assets/{sha256}, and writes per-conversation .jsonl files plus \
-attachments/.\n\nPrefer VAULT_KEY for the vault key. Prefer Message Vault → Vault Export \
-for a GUI."
-)]
-struct Cli {
-    /// Vault base URL (e.g. http://127.0.0.1:8080)
-    #[arg(long, env = "VAULT_URL")]
-    url: String,
-
-    /// Vault account username (optional; resolved from the vault key)
-    #[arg(long, default_value = "")]
-    username: String,
-
-    /// App password / Vault key (Settings → Account). Prefer VAULT_KEY env.
-    #[arg(long, env = "VAULT_KEY")]
-    key: String,
-
-    /// Output directory for message-ir JSONL + attachments/
-    #[arg(long)]
-    out: PathBuf,
-
-    /// Fastmail-style search query (optional)
-    #[arg(long, default_value = "")]
-    query: String,
-
-    /// Only messages on or after this date (YYYY-MM-DD); adds after:
-    #[arg(long)]
-    after: Option<String>,
-
-    /// Only messages before this date (YYYY-MM-DD); adds before:
-    #[arg(long)]
-    before: Option<String>,
-
-    /// Restrict to one vault source id
-    #[arg(long)]
-    source: Option<String>,
-
-    /// Skip attachment downloads
-    #[arg(long)]
-    skip_attachments: bool,
-
-    /// Page size for /v1/export/messages
-    #[arg(long, default_value_t = DEFAULT_PAGE_LIMIT)]
-    page_limit: usize,
-
-    /// Authenticate only; do not export
-    #[arg(long)]
-    auth_only: bool,
-}
 
 fn main() -> ExitCode {
     match real_main() {

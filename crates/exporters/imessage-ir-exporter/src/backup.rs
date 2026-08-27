@@ -3,7 +3,7 @@
 use std::{
     env::temp_dir,
     fs::File,
-    io::{BufWriter, IsTerminal, Write, copy, stdin},
+    io::{BufWriter, Write, copy},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
@@ -16,7 +16,14 @@ use crabapple::{
 use imessage_database::{tables::table::DEFAULT_PATH_IOS, util::platform::Platform};
 use message_vault_io_core::{LogSink, emit_log};
 
-use crate::{contacts, error::RuntimeError, options::MailOptions};
+use crate::{
+    contacts,
+    error::{
+        ENCRYPTED_BACKUP_PASSWORD_REQUIRED, IOS_BACKUP_PASSWORD_INCORRECT, NOT_AN_IPHONE_BACKUP,
+        RuntimeError, UNENCRYPTED_BACKUP_CLEAR_PASSWORD,
+    },
+    options::MailOptions,
+};
 
 const MAX_IN_MEMORY_DECRYPT: u64 = 25 * 1024 * 1024;
 
@@ -54,14 +61,15 @@ fn restrict_permissions(_file: &File) -> Result<(), RuntimeError> {
     Ok(())
 }
 
-/// Open the iOS backup, prompting for a password if encrypted and none was provided.
+/// Open the iOS backup using the password from options when encrypted.
 ///
 /// Returns `Ok(None)` for non-iOS platforms or unencrypted iOS backups.
+/// Does not prompt on stdin.
 ///
 /// # Errors
 ///
 /// Returns an error when the backup is unencrypted but a password was given,
-/// the password is wrong, or the backup cannot be opened.
+/// the password is missing or wrong, or the backup cannot be opened.
 pub(crate) fn decrypt_backup(options: &MailOptions) -> Result<Option<Backup>, RuntimeError> {
     if !matches!(options.platform, Platform::iOS) {
         return Ok(None);
@@ -70,19 +78,11 @@ pub(crate) fn decrypt_backup(options: &MailOptions) -> Result<Option<Backup>, Ru
     let manifest_data = ManifestData::from_plist(options.db_path.join("Manifest.plist"))?;
 
     if !manifest_data.is_encrypted {
-        if options.cleartext_password.is_some() {
-            return Err(RuntimeError::InvalidOptions(format!(
-                "--cleartext-password was provided, but the iOS backup at {} is not encrypted.",
-                options.db_path.display()
-            )));
-        }
+        reject_leftover_password(false, options.cleartext_password.as_deref())?;
         return Ok(None);
     }
 
-    let password = match options.cleartext_password.as_deref() {
-        Some(pw) => pw.to_string(),
-        None => prompt_for_password()?,
-    };
+    let password = password_for_encrypted_backup(options.cleartext_password.as_deref())?;
 
     options.emit_log("Decrypting iOS backup...");
     options.emit_log("  [1/5] Deriving backup keys...");
@@ -90,7 +90,7 @@ pub(crate) fn decrypt_backup(options: &MailOptions) -> Result<Option<Backup>, Ru
         Ok(backup) => backup,
         Err(BackupError::PasswordOrKeyIncorrect) => {
             return Err(RuntimeError::InvalidOptions(
-                "The iOS backup password was incorrect.".to_string(),
+                IOS_BACKUP_PASSWORD_INCORRECT.to_string(),
             ));
         }
         Err(other) => return Err(other.into()),
@@ -99,23 +99,42 @@ pub(crate) fn decrypt_backup(options: &MailOptions) -> Result<Option<Backup>, Ru
     Ok(Some(backup))
 }
 
-/// Prompt on a TTY for the iOS backup password.
+/// Whether `backup_root/Manifest.plist` is marked encrypted.
 ///
-/// # Errors
-///
-/// Returns an error when stdin is not a terminal or the password cannot be read.
-fn prompt_for_password() -> Result<String, RuntimeError> {
-    if !stdin().is_terminal() {
+/// Returns `None` when the file is missing or cannot be parsed. That is
+/// intentional: Import then leaves the password optional and the converter
+/// still fails after start if the backup turns out to be encrypted.
+pub fn ios_backup_encrypted_flag(backup_root: &Path) -> Option<bool> {
+    let path = backup_root.join("Manifest.plist");
+    let file = File::open(path).ok()?;
+    let value = plist::Value::from_reader(file).ok()?;
+    let dict = value.as_dictionary()?;
+    match dict.get("IsEncrypted") {
+        Some(plist::Value::Boolean(flag)) => Some(*flag),
+        Some(_) => None,
+        None => Some(false),
+    }
+}
+
+fn password_for_encrypted_backup(provided: Option<&str>) -> Result<String, RuntimeError> {
+    match provided {
+        Some(password) => Ok(password.to_string()),
+        None => Err(RuntimeError::InvalidOptions(
+            ENCRYPTED_BACKUP_PASSWORD_REQUIRED.to_string(),
+        )),
+    }
+}
+
+fn reject_leftover_password(
+    is_encrypted: bool,
+    provided: Option<&str>,
+) -> Result<(), RuntimeError> {
+    if !is_encrypted && provided.is_some() {
         return Err(RuntimeError::InvalidOptions(
-            "No terminal available to prompt for the iOS backup password; pass a backup password for non-interactive use.".to_string(),
+            UNENCRYPTED_BACKUP_CLEAR_PASSWORD.to_string(),
         ));
     }
-    eprintln!("Encrypted iOS backup detected. Enter password (input hidden):");
-    rpassword::prompt_password("> ").map_err(|e| {
-        RuntimeError::InvalidOptions(format!(
-            "Unable to read password interactively ({e}); pass a backup password for non-interactive use."
-        ))
-    })
+    Ok(())
 }
 
 /// Write the decrypted Messages database from the iOS backup to a temp file.
@@ -129,7 +148,15 @@ pub(crate) fn get_decrypted_message_database(
 ) -> Result<PathBuf, RuntimeError> {
     let (_, file_id) = DEFAULT_PATH_IOS.split_at(3);
     emit_log(log, "  [2/5] Resolving messages database...");
-    let file = backup.get_file(file_id)?;
+    let file = match backup.get_file(file_id) {
+        Ok(file) => file,
+        Err(BackupError::FileNotFoundInBackup(_)) => {
+            return Err(RuntimeError::InvalidOptions(
+                NOT_AN_IPHONE_BACKUP.to_string(),
+            ));
+        }
+        Err(other) => return Err(other.into()),
+    };
     let mut decrypted_chat_db = backup.decrypt_entry_stream(&file)?;
 
     let tmp_path = temp_dir().join(format!("crabapple-sms-{}.db", unique_suffix()));
@@ -207,5 +234,69 @@ pub(crate) fn decrypt_file(backup: &Backup, from: &Path) -> Result<PathBuf, Runt
             Ok(temp_path)
         }
         Err(why) => Err(why.into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ios_backup_encrypted_flag, password_for_encrypted_backup, reject_leftover_password,
+    };
+    use crate::error::{ENCRYPTED_BACKUP_PASSWORD_REQUIRED, UNENCRYPTED_BACKUP_CLEAR_PASSWORD};
+    use std::fs;
+
+    fn write_plist(dir: &std::path::Path, is_encrypted: &str) {
+        let body = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>IsEncrypted</key>
+  <{is_encrypted}/>
+</dict>
+</plist>
+"#
+        );
+        fs::write(dir.join("Manifest.plist"), body).unwrap();
+    }
+
+    #[test]
+    fn encrypted_flag_none_when_manifest_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(ios_backup_encrypted_flag(dir.path()), None);
+    }
+
+    #[test]
+    fn encrypted_flag_none_when_manifest_is_garbage() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("Manifest.plist"), b"not a plist").unwrap();
+        assert_eq!(ios_backup_encrypted_flag(dir.path()), None);
+    }
+
+    #[test]
+    fn encrypted_flag_reads_is_encrypted_boolean() {
+        let encrypted = tempfile::tempdir().unwrap();
+        write_plist(encrypted.path(), "true");
+        assert_eq!(ios_backup_encrypted_flag(encrypted.path()), Some(true));
+
+        let plain = tempfile::tempdir().unwrap();
+        write_plist(plain.path(), "false");
+        assert_eq!(ios_backup_encrypted_flag(plain.path()), Some(false));
+    }
+
+    #[test]
+    fn missing_password_does_not_prompt() {
+        let err = password_for_encrypted_backup(None).unwrap_err();
+        assert_eq!(err.to_string(), ENCRYPTED_BACKUP_PASSWORD_REQUIRED);
+        assert!(!err.to_string().contains("Invalid options"));
+        assert!(password_for_encrypted_backup(Some("secret")).is_ok());
+    }
+
+    #[test]
+    fn leftover_password_on_unencrypted_uses_locked_copy() {
+        let err = reject_leftover_password(false, Some("secret")).unwrap_err();
+        assert_eq!(err.to_string(), UNENCRYPTED_BACKUP_CLEAR_PASSWORD);
+        assert!(reject_leftover_password(false, None).is_ok());
+        assert!(reject_leftover_password(true, Some("secret")).is_ok());
     }
 }

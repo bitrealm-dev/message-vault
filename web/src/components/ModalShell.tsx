@@ -1,5 +1,5 @@
-import { type ReactNode } from "react";
-import { Dialog, Modal, ModalOverlay, type DialogProps } from "react-aria-components";
+import type { ReactNode } from "react";
+import { Dialog, type DialogProps, Modal, ModalOverlay } from "react-aria-components";
 
 export default function ModalShell({
   open,

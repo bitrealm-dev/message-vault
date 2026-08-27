@@ -9,18 +9,20 @@ use obfuscate::{
     Obfuscator, classify_attachment, materialize_placeholders, placeholder_rel_path,
     resolve_obfuscator_with_log,
 };
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Read;
 use std::path::Path;
 
 /// Options passed into [`crate::FormatSink`] for media and obfuscation.
 #[derive(Debug, Clone)]
 pub struct ExportTransforms {
+    /// Media mode applied at finish (clone/convert/compress/disabled).
     pub media: MediaMode,
+    /// Video/audio compression options used with Compress mode.
     pub compress: CompressOptions,
+    /// Whether to replace PII and media with obfuscated placeholders.
     pub obfuscate: bool,
+    /// Seed for deterministic obfuscation; `None` generates one.
     pub obfuscate_seed: Option<String>,
     /// Mid-run notes (e.g. generated obfuscate seed). `None` → stderr.
     pub log: Option<LogSink>,
@@ -39,6 +41,8 @@ impl Default for ExportTransforms {
 }
 
 impl ExportTransforms {
+    /// Build transforms from a `MediaConfig` and `ObfuscateConfig`
+    /// (obfuscation is enabled when either obfuscation flag or the seed is set).
     pub fn from_configs(media: &MediaConfig, obfuscate: &ObfuscateConfig) -> Self {
         Self {
             media: media.mode,
@@ -49,15 +53,20 @@ impl ExportTransforms {
         }
     }
 
+    /// All-defaults transform set (clone, no obfuscation, no log).
     pub fn none() -> Self {
         Self::default()
     }
 
+    /// True when ffmpeg/ffprobe will be required (false when obfuscating,
+    /// which replaces media with placeholders).
     pub fn needs_media_tools(&self) -> bool {
         // Obfuscate replaces all media with placeholders — no ffmpeg work.
         !self.obfuscate && self.media.needs_tools()
     }
 
+    /// True when attachment bytes should be staged under `attachments/`
+    /// (false when obfuscating).
     pub fn copies_attachments(&self) -> bool {
         // Obfuscate discards real bytes; skip staging them in the first place.
         !self.obfuscate && self.media.copies_attachments()
@@ -70,16 +79,16 @@ pub(crate) fn apply_media_remap(doc: &mut ConversationDocument, remap: &HashMap<
     }
     for msg in &mut doc.messages {
         for att in &mut msg.attachments {
-            if let Some(path) = att.path.as_mut() {
-                if let Some(new_rel) = remap.get(path.as_str()) {
-                    *path = new_rel.clone();
-                    // Bytes on disk changed (possibly same path); drop stale digests.
-                    att.digest_sha256 = None;
-                    att.size_bytes = None;
-                    att.bytes = None;
-                    if let Some(mime) = mime_for_rel(new_rel) {
-                        att.mime_type = Some(mime);
-                    }
+            if let Some(path) = att.path.as_mut()
+                && let Some(new_rel) = remap.get(path.as_str())
+            {
+                *path = new_rel.clone();
+                // Bytes on disk changed (possibly same path); drop stale digests.
+                att.digest_sha256 = None;
+                att.size_bytes = None;
+                att.bytes = None;
+                if let Some(mime) = mime_for_rel(new_rel) {
+                    att.mime_type = Some(mime);
                 }
             }
         }
@@ -139,10 +148,10 @@ pub(crate) fn obfuscate_document(doc: &mut ConversationDocument, anon: &mut Obfu
             *s = anon.obfuscate_text(s);
         }
         msg.text = anon.obfuscate_text(&msg.text);
-        if let Some(im) = msg.imessage.as_mut() {
-            if let Some(a) = im.announcement.as_mut() {
-                *a = anon.obfuscate_text(a);
-            }
+        if let Some(im) = msg.imessage.as_mut()
+            && let Some(a) = im.announcement.as_mut()
+        {
+            *a = anon.obfuscate_text(a);
         }
         for att in &mut msg.attachments {
             obfuscate_attachment(att);
@@ -193,27 +202,11 @@ fn refresh_missing_attachment_digests(
                 let meta = fs::metadata(&abs)
                     .with_context(|| format!("stat attachment {}", abs.display()))?;
                 att.size_bytes = Some(meta.len());
-                att.digest_sha256 = Some(hash_file_sha256(&abs)?);
+                att.digest_sha256 = Some(media::file_sha256(&abs)?);
             }
         }
     }
     Ok(())
-}
-
-fn hash_file_sha256(path: &Path) -> Result<String> {
-    let mut file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
-    let mut hasher = Sha256::new();
-    let mut buf = [0u8; 64 * 1024];
-    loop {
-        let n = file
-            .read(&mut buf)
-            .with_context(|| format!("read {}", path.display()))?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Ok(hex::encode(hasher.finalize()))
 }
 
 fn mime_for_rel(rel: &str) -> Option<String> {
@@ -307,6 +300,7 @@ mod tests {
         ConversationMeta, ConversationStats, ExportMeta, IrConversationType, IrMessage,
         IrMessageKind, IrParticipant, IrService, SCHEMA_VERSION,
     };
+    use sha2::{Digest, Sha256};
     use std::fs;
 
     fn doc_with_image_attachment() -> ConversationDocument {

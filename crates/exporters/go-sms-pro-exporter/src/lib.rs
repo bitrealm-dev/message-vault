@@ -4,6 +4,8 @@
 //! Library entry: [`run`] for the full pipeline.
 //! The `go-sms-pro-exporter` binary is a thin CLI over [`run`].
 
+mod attachments_emit;
+mod chat_id;
 mod emit;
 mod phone;
 mod run;
@@ -11,6 +13,11 @@ mod xml;
 
 pub use message_vault_io_core::{RunResult, parse_date_range};
 pub use run::run;
+
+#[cfg(feature = "cli")]
+pub mod cli;
+#[cfg(feature = "cli")]
+pub use cli::clap_command;
 
 #[cfg(test)]
 #[path = "../tests/convert_smoke.rs"]

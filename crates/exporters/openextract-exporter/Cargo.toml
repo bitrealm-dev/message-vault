@@ -2,13 +2,13 @@
 name = "openextract-exporter"
 version = "0.1.0"
 edition = "2024"
-license = "AGPL-3.0-only"
+license = "LicenseRef-FCL-1.0-ALv2"
 description = "Convert OpenExtract conversation CSV (+ VCF) to shared per-chat CSV"
 autotests = false
 
 [features]
 default = ["cli"]
-cli = ["dep:clap", "message-vault-io-core/cli"]
+cli = ["dep:clap"]
 
 [[bin]]
 name = "openextract-exporter"
@@ -23,7 +23,7 @@ csv = "1.4.0"
 obfuscate = { path = "../../libs/obfuscate" }
 contacts = { path = "../../libs/contacts" }
 message-csv = { path = "../../libs/csv" }
-message-vault-io-core = { path = "../../core/message-vault-io-core" }
+message-vault-io-core = { path = "../../core/message-vault-io-core", features = ["cli"] }
 message-ir = { path = "../../libs/ir" }
 message-ir-format = { path = "../../libs/ir-format" }
 media = { path = "../../libs/media" }

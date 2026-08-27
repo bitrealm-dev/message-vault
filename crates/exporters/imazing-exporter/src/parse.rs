@@ -1,6 +1,7 @@
 //! Parse iMazing Messages and WhatsApp CSV exports.
 
 use anyhow::{Context, Result, bail};
+use message_csv::{col, field};
 use message_vault_io_core::discover_files;
 use std::fs::File;
 use std::io::Read;
@@ -211,17 +212,6 @@ pub(crate) fn parse_csv_file(path: &Path, kind: SourceKind) -> Result<Vec<RawRow
         });
     }
     Ok(rows)
-}
-
-fn col(headers: &[String], name: &str) -> Result<usize> {
-    headers
-        .iter()
-        .position(|h| h == name)
-        .with_context(|| format!("missing column {name:?} (have {headers:?})"))
-}
-
-fn field(rec: &csv::StringRecord, idx: usize) -> String {
-    rec.get(idx).unwrap_or("").trim().to_string()
 }
 
 #[cfg(test)]

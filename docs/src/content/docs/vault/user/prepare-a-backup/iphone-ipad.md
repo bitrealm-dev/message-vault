@@ -3,7 +3,7 @@ title: iPhone or iPad
 description: Get Messages data from an iPhone or iPad — what you need, where to find it, and what Import expects.
 ---
 
-The desktop app can read iPhone or iPad messages from a device backup or from a Mac. You need the device or a Mac signed into the same Apple Account.
+The desktop app can read iPhone or iPad messages from a device backup or from Messages on a Mac.
 
 ## What you need
 
@@ -27,11 +27,13 @@ If you use Messages on a Mac:
 
 1. Open the Messages app on the Mac — this keeps the database current
 2. The database is at `~/Library/Messages/chat.db`
-3. Point Import at this file (source **iMessage - macOS**)
+3. In Import, choose **iMessage**, then **Platform** **Mac Messages**, and point at this file
+
+On a live Mac, `Attachments` and `StickerCache` sit next to `chat.db`. Leave **Attachment folder** empty. Leave **Apple Contacts file** empty to use the local AddressBook.
 
 ## What Import does with it
 
-The desktop app reads SMS, iMessage, and attachments. It can identify participants and resolve contact names from an Apple AddressBook database when that file is available.
+The desktop app reads SMS, iMessage, and attachments. For an iPhone backup it uses the AddressBook inside the backup. For Mac Messages it can use the local AddressBook, or a Contacts file you pick.
 
 ## Known limitations
 
@@ -40,4 +42,4 @@ The desktop app reads SMS, iMessage, and attachments. It can identify participan
 
 ## Next step
 
-Open the desktop app, sign in to the vault, and go to **Import**. Choose **iPhone - iOS** for a device backup folder, or **iMessage - macOS** for `chat.db`. See [Import from a backup](/vault/user/import-from-a-backup/).
+Open the desktop app, sign in to the vault, and go to **Import**. Choose **iMessage**, then the **Platform** that matches the files. See [Import from a backup](/vault/user/import-from-a-backup/).

@@ -1,13 +1,8 @@
 import type { ReactNode } from "react";
-import {
-  Button,
-  Disclosure,
-  DisclosurePanel,
-} from "react-aria-components";
-import type { AttachmentMediaMode } from "../../lib/types";
+import { Button, Disclosure, DisclosurePanel } from "react-aria-components";
 import FormField from "../../components/FormField";
 import { textInputClassName } from "../../components/TextField";
-export { default as DateField } from "../../components/DateField";
+import type { AttachmentMediaMode } from "../../lib/types";
 
 export const ATTACHMENT_OPTIONS: { id: AttachmentMediaMode; label: string }[] = [
   { id: "copy", label: "Copy" },
@@ -28,13 +23,23 @@ export function StackedField({
   label,
   children,
   trailing,
+  required,
+  optional,
 }: {
   label: string;
   children: ReactNode;
   trailing?: ReactNode;
+  required?: boolean;
+  optional?: boolean;
 }) {
   return (
-    <FormField label={label} layout="stacked" trailing={trailing}>
+    <FormField
+      label={label}
+      layout="stacked"
+      trailing={trailing}
+      required={required}
+      optional={optional}
+    >
       {children}
     </FormField>
   );

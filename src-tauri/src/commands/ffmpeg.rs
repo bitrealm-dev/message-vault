@@ -2,7 +2,11 @@
 //!
 //! Attachment convert and compress need those programs. The WebView cannot
 //! search the disk or set process environment variables, so this process does
-//! both.
+//! both. This process never *writes* environment variables: the tools-folder
+//! override lives in media-crate process state, and `MESSAGE_VAULT_IO_BIN`
+//! stays a user-set fallback that is only ever read here (by the media and
+//! whatsapp-exporter resolution paths, which is sound because nothing in
+//! this process writes the environment).
 
 use std::path::{Path, PathBuf};
 
@@ -11,9 +15,13 @@ use super::optional_trimmed;
 /// Paths the Settings screen shows after looking for ffmpeg and ffprobe.
 #[derive(serde::Serialize)]
 pub struct FfmpegToolsProbeDto {
+    /// Whether both tools were found and pass `-version`.
     pub ok: bool,
+    /// Resolved ffmpeg path, when found.
     pub ffmpeg_path: Option<String>,
+    /// Resolved ffprobe path, when found.
     pub ffprobe_path: Option<String>,
+    /// What was missing, when `ok` is false.
     pub error: Option<String>,
 }
 
@@ -48,7 +56,10 @@ pub fn probe_ffmpeg_tools(dir: Option<String>) -> FfmpegToolsProbeDto {
 
 /// Ask this process to remember where ffmpeg and ffprobe live for this session.
 ///
-/// An empty `dir` clears the override and goes back to searching PATH.
+/// An empty `dir` clears the override and goes back to the default search
+/// path. This process never writes environment variables: the override
+/// lives in media-crate process state, and `MESSAGE_VAULT_IO_BIN` stays a
+/// user-set fallback that is only ever read here.
 ///
 /// # Errors
 ///
@@ -59,10 +70,6 @@ pub fn set_ffmpeg_tools_dir(dir: Option<String>) -> Result<FfmpegToolsProbeDto, 
     let trimmed = optional_trimmed(dir.as_deref());
     match trimmed {
         None => {
-            // SAFETY: this desktop process owns MESSAGE_VAULT_IO_BIN for the
-            // session. Clearing it here is how Settings turns off a custom
-            // tools folder.
-            unsafe { std::env::remove_var("MESSAGE_VAULT_IO_BIN") };
             media::set_tools_dir(None);
             Ok(probe_ffmpeg_tools(None))
         }
@@ -74,9 +81,6 @@ pub fn set_ffmpeg_tools_dir(dir: Option<String>) -> Result<FfmpegToolsProbeDto, 
                     .error
                     .unwrap_or_else(|| "ffmpeg tools not found".into()));
             }
-            // SAFETY: this desktop process owns MESSAGE_VAULT_IO_BIN for the
-            // session. Later ffmpeg lookups in this process read that value.
-            unsafe { std::env::set_var("MESSAGE_VAULT_IO_BIN", &path) };
             media::set_tools_dir(Some(path));
             Ok(probe_to_dto(probe))
         }

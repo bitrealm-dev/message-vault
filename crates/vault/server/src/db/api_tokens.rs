@@ -1,15 +1,20 @@
 //! Named CLI API tokens (`mv-api-…`); many per account, import/export scoped.
 
 use anyhow::{Context, Result, bail};
-use rusqlite::{Connection, OptionalExtension, params};
+use sqlx::AnyConnection;
 
 use super::session_tokens::{generate_prefixed_token, hash_api_token, unix_secs_string};
+use crate::db::dialect;
+use crate::db::engine::DbEngine;
 
 /// Access granted to a named API token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApiTokenScopes {
+    /// Import endpoints only.
     Import,
+    /// Export endpoints only.
     Export,
+    /// Both import and export endpoints.
     Both,
 }
 
@@ -28,6 +33,8 @@ impl ApiTokenScopes {
         }
     }
 
+    /// Canonical scope string (`import`, `export`, or `both`) stored in the
+    /// `scopes` column and returned in the API's `scopes` field.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Import => "import",
@@ -50,16 +57,21 @@ impl ApiTokenScopes {
 /// Metadata for one API token (never includes plaintext or hash).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiTokenRow {
+    /// Token id (the secret itself is stored hashed, never in this row).
     pub id: String,
+    /// User-chosen label shown in Settings.
     pub label: String,
+    /// Access granted to the token.
     pub scopes: ApiTokenScopes,
     /// Masked secret for Settings, e.g. `mv-api-Sd..mE`.
     pub token_hint: String,
+    /// Creation time as a Unix-seconds string.
     pub created_at: String,
     /// Unix-seconds string when the token was last used; `None` if never.
     pub last_accessed_at: Option<String>,
     /// Unix-seconds expiry; `None` means no expiry.
     pub expires_at: Option<String>,
+    /// True when the token is disabled and rejects requests.
     pub disabled: bool,
 }
 
@@ -92,8 +104,58 @@ pub fn mask_api_token(token: &str) -> String {
 /// Account + scopes for a presented API token Bearer value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiTokenAuth {
+    /// Account the token belongs to.
     pub account_id: String,
+    /// Access granted to the token.
     pub scopes: ApiTokenScopes,
+}
+
+/// Label validation failures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApiTokenLabelError {
+    /// The trimmed label is empty.
+    Required,
+    /// The label is longer than 120 characters.
+    TooLong,
+}
+
+impl std::fmt::Display for ApiTokenLabelError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Required => write!(f, "label is required"),
+            Self::TooLong => write!(f, "label must be at most 120 characters"),
+        }
+    }
+}
+
+impl std::error::Error for ApiTokenLabelError {}
+
+/// Failures from creating or renaming an API token: a typed label error, or
+/// any other database error.
+#[derive(Debug)]
+pub enum ApiTokenMutationError {
+    /// The label failed validation.
+    InvalidLabel(ApiTokenLabelError),
+    /// Any other database failure.
+    Other(anyhow::Error),
+}
+
+impl From<ApiTokenLabelError> for ApiTokenMutationError {
+    fn from(e: ApiTokenLabelError) -> Self {
+        Self::InvalidLabel(e)
+    }
+}
+
+impl From<anyhow::Error> for ApiTokenMutationError {
+    fn from(e: anyhow::Error) -> Self {
+        Self::Other(e)
+    }
+}
+
+impl From<sqlx::Error> for ApiTokenMutationError {
+    fn from(e: sqlx::Error) -> Self {
+        Self::Other(anyhow::Error::new(e))
+    }
 }
 
 /// Generate a new API token (`mv-api-` + 32 alphanumeric characters).
@@ -112,19 +174,18 @@ pub fn generate_api_token() -> Result<String> {
 /// # Errors
 ///
 /// Returns an error when the lookup or last-accessed update fails.
-pub fn lookup_account_for_api_token(
-    conn: &Connection,
+pub async fn lookup_account_for_api_token(
+    conn: &mut AnyConnection,
     token: &str,
 ) -> Result<Option<ApiTokenAuth>> {
     let token_hash = hash_api_token(token);
-    let found: Option<(String, String, Option<String>, i64)> = conn
-        .query_row(
-            "SELECT account_id, scopes, expires_at, disabled
-             FROM account_api_tokens WHERE token_hash = ?1",
-            params![token_hash],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
-        .optional()?;
+    let found: Option<(String, String, Option<String>, i64)> = sqlx::query_as(
+        "SELECT account_id, scopes, expires_at, disabled
+         FROM account_api_tokens WHERE token_hash = $1",
+    )
+    .bind(token_hash.as_str())
+    .fetch_optional(&mut *conn)
+    .await?;
     match found {
         Some((account_id, scopes_raw, expires_at, disabled)) => {
             if disabled != 0 {
@@ -138,10 +199,13 @@ pub fn lookup_account_for_api_token(
                     return Ok(None);
                 }
             }
-            conn.execute(
-                "UPDATE account_api_tokens SET last_accessed_at = ?1 WHERE token_hash = ?2",
-                params![unix_secs_string(), token_hash],
+            sqlx::query(
+                "UPDATE account_api_tokens SET last_accessed_at = $1 WHERE token_hash = $2",
             )
+            .bind(unix_secs_string())
+            .bind(token_hash)
+            .execute(&mut *conn)
+            .await
             .with_context(|| "update API token last_accessed_at")?;
             Ok(Some(ApiTokenAuth {
                 account_id,
@@ -154,23 +218,26 @@ pub fn lookup_account_for_api_token(
 
 /// Create a named API token. Returns `(id, label, scopes, created_at, expires_at, plaintext_token)`.
 ///
-/// # Errors
-///
-/// Returns an error when the label is invalid or the insert fails.
-pub fn create_api_token(
-    conn: &Connection,
+/// Returns `ApiTokenMutationError::InvalidLabel` when the label is empty
+/// or longer than 120 characters, and `Other` for database failures.
+#[allow(clippy::type_complexity)]
+pub async fn create_api_token(
+    conn: &mut AnyConnection,
     account_id: &str,
     label: &str,
     scopes: ApiTokenScopes,
     expires_in_days: Option<u64>,
-) -> Result<(
-    String,
-    String,
-    ApiTokenScopes,
-    String,
-    Option<String>,
-    String,
-)> {
+) -> Result<
+    (
+        String,
+        String,
+        ApiTokenScopes,
+        String,
+        Option<String>,
+        String,
+    ),
+    ApiTokenMutationError,
+> {
     let label = validate_api_token_label(label)?;
     let id = uuid::Uuid::new_v4().to_string();
     let token = generate_api_token()?;
@@ -179,56 +246,64 @@ pub fn create_api_token(
     let created_at = unix_secs_string();
     let expires_at = api_token_expiry(expires_in_days, &created_at);
     let label_owned = label.to_string();
-    conn.execute(
+    sqlx::query(
         r#"
         INSERT INTO account_api_tokens
             (id, account_id, label, token_hash, scopes, token_hint, created_at, expires_at, disabled)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0)
         "#,
-        params![
-            id,
-            account_id,
-            label_owned,
-            token_hash,
-            scopes.as_str(),
-            token_hint,
-            created_at,
-            expires_at
-        ],
     )
+    .bind(id.as_str())
+    .bind(account_id)
+    .bind(label_owned.as_str())
+    .bind(token_hash.as_str())
+    .bind(scopes.as_str())
+    .bind(token_hint.as_str())
+    .bind(created_at.as_str())
+    .bind(expires_at.as_deref())
+    .execute(&mut *conn)
+    .await
     .with_context(|| format!("insert API token for {account_id}"))?;
     Ok((id, label_owned, scopes, created_at, expires_at, token))
 }
+
+/// Raw row for [`list_api_tokens`] before scope parsing and disabled/expiry
+/// mapping into [`ApiTokenRow`].
+type ApiTokenRowRaw = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    i64,
+);
 
 /// List API tokens for an account (no secrets).
 ///
 /// # Errors
 ///
 /// Returns an error when the query fails or a stored scope value is invalid.
-pub fn list_api_tokens(conn: &Connection, account_id: &str) -> Result<Vec<ApiTokenRow>> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT id, label, scopes, token_hint, created_at, last_accessed_at, expires_at, disabled
-        FROM account_api_tokens
-        WHERE account_id = ?1
-        ORDER BY created_at DESC, label COLLATE NOCASE
-        "#,
-    )?;
-    let rows = stmt
-        .query_map(params![account_id], |row| {
-            let scopes_raw: String = row.get(2)?;
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                scopes_raw,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, Option<String>>(5)?,
-                row.get::<_, Option<String>>(6)?,
-                row.get::<_, i64>(7)?,
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+pub async fn list_api_tokens(
+    conn: &mut AnyConnection,
+    account_id: &str,
+) -> Result<Vec<ApiTokenRow>> {
+    // `COLLATE NOCASE` is SQLite-only; Postgres lowercases the label instead.
+    let order_by = if dialect::engine_of(conn) == DbEngine::Postgres {
+        "ORDER BY created_at DESC, lower(label)"
+    } else {
+        "ORDER BY created_at DESC, label COLLATE NOCASE"
+    };
+    let rows: Vec<ApiTokenRowRaw> = sqlx::query_as(&format!(
+        "SELECT id, label, scopes, token_hint, created_at, last_accessed_at, expires_at, disabled
+         FROM account_api_tokens
+         WHERE account_id = $1
+         {order_by}"
+    ))
+    .bind(account_id)
+    .fetch_all(&mut *conn)
+    .await?;
     let mut out = Vec::with_capacity(rows.len());
     for (id, label, scopes_raw, token_hint, created_at, last_accessed_at, expires_at, disabled) in
         rows
@@ -252,13 +327,18 @@ pub fn list_api_tokens(conn: &Connection, account_id: &str) -> Result<Vec<ApiTok
 /// # Errors
 ///
 /// Returns an error when the delete statement fails.
-pub fn delete_api_token(conn: &Connection, account_id: &str, id: &str) -> Result<bool> {
-    let n = conn
-        .execute(
-            "DELETE FROM account_api_tokens WHERE id = ?1 AND account_id = ?2",
-            params![id, account_id],
-        )
-        .with_context(|| format!("delete API token {id} for {account_id}"))?;
+pub async fn delete_api_token(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    id: &str,
+) -> Result<bool> {
+    let n = sqlx::query("DELETE FROM account_api_tokens WHERE id = $1 AND account_id = $2")
+        .bind(id)
+        .bind(account_id)
+        .execute(&mut *conn)
+        .await
+        .with_context(|| format!("delete API token {id} for {account_id}"))?
+        .rows_affected();
     Ok(n > 0)
 }
 
@@ -267,34 +347,36 @@ pub fn delete_api_token(conn: &Connection, account_id: &str, id: &str) -> Result
 /// # Errors
 ///
 /// Returns an error when the delete statement fails.
-pub fn delete_all_api_tokens(conn: &Connection, account_id: &str) -> Result<u64> {
-    let deleted = conn
-        .execute(
-            "DELETE FROM account_api_tokens WHERE account_id = ?1",
-            params![account_id],
-        )
-        .with_context(|| format!("delete all API tokens for {account_id}"))?;
-    Ok(deleted as u64)
+pub async fn delete_all_api_tokens(conn: &mut AnyConnection, account_id: &str) -> Result<u64> {
+    let deleted = sqlx::query("DELETE FROM account_api_tokens WHERE account_id = $1")
+        .bind(account_id)
+        .execute(&mut *conn)
+        .await
+        .with_context(|| format!("delete all API tokens for {account_id}"))?
+        .rows_affected();
+    Ok(deleted)
 }
 
 /// Rename an API token label if it belongs to the account.
 ///
-/// # Errors
-///
-/// Returns an error when the label is invalid or the update fails.
-pub fn update_api_token_label(
-    conn: &Connection,
+/// Returns `ApiTokenMutationError::InvalidLabel` when the label is empty
+/// or longer than 120 characters, and `Other` for database failures.
+pub async fn update_api_token_label(
+    conn: &mut AnyConnection,
     account_id: &str,
     id: &str,
     label: &str,
-) -> Result<bool> {
+) -> Result<bool, ApiTokenMutationError> {
     let label = validate_api_token_label(label)?;
-    let n = conn
-        .execute(
-            "UPDATE account_api_tokens SET label = ?1 WHERE id = ?2 AND account_id = ?3",
-            params![label, id, account_id],
-        )
-        .with_context(|| format!("rename API token {id} for {account_id}"))?;
+    let n =
+        sqlx::query("UPDATE account_api_tokens SET label = $1 WHERE id = $2 AND account_id = $3")
+            .bind(label)
+            .bind(id)
+            .bind(account_id)
+            .execute(&mut *conn)
+            .await
+            .with_context(|| format!("rename API token {id} for {account_id}"))?
+            .rows_affected();
     Ok(n > 0)
 }
 
@@ -313,13 +395,13 @@ fn api_token_expiry(expires_in_days: Option<u64>, created_at: &str) -> Option<St
     }
 }
 
-fn validate_api_token_label(label: &str) -> Result<&str> {
+fn validate_api_token_label(label: &str) -> Result<&str, ApiTokenLabelError> {
     let label = label.trim();
     if label.is_empty() {
-        bail!("label is required");
+        return Err(ApiTokenLabelError::Required);
     }
     if label.len() > 120 {
-        bail!("label must be at most 120 characters");
+        return Err(ApiTokenLabelError::TooLong);
     }
     Ok(label)
 }
@@ -329,29 +411,31 @@ mod tests {
     use super::*;
     use crate::db::schema;
 
-    fn setup() -> (Connection, String) {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        schema::ensure_accounts_schema(&conn).unwrap();
+    async fn setup() -> (sqlx::AnyPool, tempfile::TempDir, String) {
+        let (pool, dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        schema::ensure_accounts_schema(&mut conn).await.unwrap();
         let account_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-        conn.execute(
-            "INSERT INTO accounts (id, username) VALUES (?1, 'alice')",
-            params![account_id],
-        )
-        .unwrap();
-        (conn, account_id.to_string())
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'alice')")
+            .bind(account_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        (pool, dir, account_id.to_string())
     }
 
-    #[test]
-    fn create_list_lookup_delete() {
-        let (conn, account_id) = setup();
+    #[tokio::test]
+    async fn create_list_lookup_delete() {
+        let (pool, _dir, account_id) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
         let (id, _label, scopes, _created_at, _expires_at, token) = create_api_token(
-            &conn,
+            &mut conn,
             &account_id,
             " laptop CLI ",
             ApiTokenScopes::Export,
             None,
         )
+        .await
         .unwrap();
         assert!(token.starts_with("mv-api-"));
         assert_eq!(scopes, ApiTokenScopes::Export);
@@ -364,7 +448,7 @@ mod tests {
             "mv-app-Sd..mE"
         );
 
-        let listed = list_api_tokens(&conn, &account_id).unwrap();
+        let listed = list_api_tokens(&mut conn, &account_id).await.unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, id);
         assert_eq!(listed[0].label, "laptop CLI");
@@ -372,52 +456,122 @@ mod tests {
         assert_eq!(listed[0].token_hint, mask_api_token(&token));
         assert!(listed[0].last_accessed_at.is_none());
 
-        let auth = lookup_account_for_api_token(&conn, &token)
+        let auth = lookup_account_for_api_token(&mut conn, &token)
+            .await
             .unwrap()
             .unwrap();
         assert_eq!(auth.account_id, account_id);
         assert_eq!(auth.scopes, ApiTokenScopes::Export);
 
-        let listed_after = list_api_tokens(&conn, &account_id).unwrap();
+        let listed_after = list_api_tokens(&mut conn, &account_id).await.unwrap();
         assert!(listed_after[0].last_accessed_at.is_some());
 
         assert!(
-            lookup_account_for_api_token(&conn, "mv-api-nope")
+            lookup_account_for_api_token(&mut conn, "mv-api-nope")
+                .await
                 .unwrap()
                 .is_none()
         );
 
-        assert!(delete_api_token(&conn, &account_id, &id).unwrap());
-        assert!(list_api_tokens(&conn, &account_id).unwrap().is_empty());
+        assert!(delete_api_token(&mut conn, &account_id, &id).await.unwrap());
         assert!(
-            lookup_account_for_api_token(&conn, &token)
+            list_api_tokens(&mut conn, &account_id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            lookup_account_for_api_token(&mut conn, &token)
+                .await
                 .unwrap()
                 .is_none()
         );
     }
 
-    #[test]
-    fn empty_label_rejected() {
-        let (conn, account_id) = setup();
-        assert!(create_api_token(&conn, &account_id, "  ", ApiTokenScopes::Both, None).is_err());
+    #[tokio::test]
+    async fn empty_label_rejected() {
+        let (pool, _dir, account_id) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        assert!(
+            create_api_token(&mut conn, &account_id, "  ", ApiTokenScopes::Both, None)
+                .await
+                .is_err()
+        );
     }
 
-    #[test]
-    fn rename_label() {
-        let (conn, account_id) = setup();
-        let (id, _, _, _, _, _) =
-            create_api_token(&conn, &account_id, "old name", ApiTokenScopes::Both, None).unwrap();
-        assert!(update_api_token_label(&conn, &account_id, &id, " new name ").unwrap());
-        let listed = list_api_tokens(&conn, &account_id).unwrap();
+    #[tokio::test]
+    async fn rename_label() {
+        let (pool, _dir, account_id) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let (id, _, _, _, _, _) = create_api_token(
+            &mut conn,
+            &account_id,
+            "old name",
+            ApiTokenScopes::Both,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            update_api_token_label(&mut conn, &account_id, &id, " new name ")
+                .await
+                .unwrap()
+        );
+        let listed = list_api_tokens(&mut conn, &account_id).await.unwrap();
         assert_eq!(listed[0].label, "new name");
-        assert!(update_api_token_label(&conn, &account_id, &id, "  ").is_err());
         assert!(
-            !update_api_token_label(&conn, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", &id, "stolen")
-                .unwrap()
+            update_api_token_label(&mut conn, &account_id, &id, "  ")
+                .await
+                .is_err()
+        );
+        assert!(
+            !update_api_token_label(
+                &mut conn,
+                "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                &id,
+                "stolen"
+            )
+            .await
+            .unwrap()
         );
         assert_eq!(
-            list_api_tokens(&conn, &account_id).unwrap()[0].label,
+            list_api_tokens(&mut conn, &account_id).await.unwrap()[0].label,
             "new name"
         );
+    }
+
+    #[tokio::test]
+    async fn label_validation_errors_are_typed() {
+        let (pool, _dir, account_id) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let err = create_api_token(&mut conn, &account_id, "  ", ApiTokenScopes::Both, None)
+            .await
+            .unwrap_err();
+        match err {
+            ApiTokenMutationError::InvalidLabel(label_err) => {
+                assert_eq!(label_err.to_string(), "label is required");
+            }
+            other => panic!("expected InvalidLabel, got {other:?}"),
+        }
+
+        let err = create_api_token(
+            &mut conn,
+            &account_id,
+            &"x".repeat(121),
+            ApiTokenScopes::Both,
+            None,
+        )
+        .await
+        .unwrap_err();
+        match err {
+            ApiTokenMutationError::InvalidLabel(label_err) => {
+                assert_eq!(
+                    label_err.to_string(),
+                    "label must be at most 120 characters"
+                );
+            }
+            other => panic!("expected InvalidLabel, got {other:?}"),
+        }
     }
 }

@@ -18,9 +18,70 @@ export type ContactPreview = {
   id: string;
   name: string;
   handles?: string[];
+  /**
+   * True linked-identity count from the list API (`handle_count`).
+   * List `handles` may include both raw and normalized forms of one identity;
+   * stub rows while loading should match this count, not `handles.length`.
+   */
+  handleCount?: number;
+  groups?: string[];
+};
+
+/** List-API contact row (snake_case `handle_count`) mapped into `ContactPreview`. */
+export type ContactListPreviewSource = {
+  id: string;
+  name: string;
+  handles?: string[];
+  handle_count?: number;
+  groups?: string[];
 };
 
 export type ContactBrowseKind = "all" | "direct" | "group";
+
+export function contactPreviewFromListRow(c: ContactListPreviewSource): ContactPreview {
+  return {
+    id: c.id,
+    name: c.name,
+    handles: c.handles,
+    handleCount: c.handle_count,
+    groups: c.groups,
+  };
+}
+
+export type ThreadParticipantPreviewSource = {
+  contact_id: string | null;
+  handle: string;
+  name?: string | null;
+  preferred_name?: string | null;
+  name_alias?: string | null;
+};
+
+/** Preferred name, then identity alias, then handle — same order as chips with aliases off. */
+function threadParticipantDisplayName(p: ThreadParticipantPreviewSource): string {
+  return (
+    (p.name ?? p.preferred_name)?.trim() || p.name_alias?.trim() || p.handle.trim() || "Contact"
+  );
+}
+
+export function contactPreviewFromThreadParticipants(
+  contactId: string,
+  participants: readonly ThreadParticipantPreviewSource[],
+): ContactPreview | null {
+  const matched = participants.filter((p) => p.contact_id === contactId);
+  if (matched.length === 0) return null;
+  const handles = matched.map((p) => p.handle).filter((h) => h.length > 0);
+  const named = matched.find((p) =>
+    Boolean((p.name ?? p.preferred_name)?.trim() || p.name_alias?.trim()),
+  );
+  const uniqueCount = previewHandleStubRows(handles, undefined).length;
+  return {
+    id: contactId,
+    name: threadParticipantDisplayName(named ?? matched[0]),
+    handles,
+    // At least one stub row so an empty handle list does not take the empty-table Loading path.
+    handleCount: Math.max(1, uniqueCount),
+  };
+}
 
 /** Format an API ISO timestamp as YYYY-MM-DD for the handles table. */
 export function formatHandleDate(iso: string | null | undefined): string | null {
@@ -39,6 +100,43 @@ export function emptyHandleRow(handle: string): CachedContactHandle {
     individual_message_count: 0,
     group_message_count: 0,
   };
+}
+
+/** Shown in the Identity cell when stubbing more rows than preview strings. */
+export const HANDLE_STUB_PLACEHOLDER = "…";
+
+/** Collapse raw/normalized forms of the same phone so stub labels stay unique. */
+function handleStubKey(handle: string): string {
+  const digits = handle.replace(/\D/g, "");
+  return digits.length >= 7 ? digits : handle.trim().toLowerCase();
+}
+
+/**
+ * Build loading stub rows for the handles table.
+ * Prefer `handleCount` (one row per linked identity) over the full preview
+ * string list, which can list both raw and normalized forms of the same phone.
+ */
+export function previewHandleStubRows(
+  handles: string[] | undefined,
+  handleCount: number | undefined,
+): CachedContactHandle[] {
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const handle of handles ?? []) {
+    const key = handleStubKey(handle);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(handle);
+  }
+  const count =
+    handleCount != null && Number.isFinite(handleCount)
+      ? Math.max(0, Math.floor(handleCount))
+      : unique.length;
+  const rows: CachedContactHandle[] = [];
+  for (let i = 0; i < count; i++) {
+    rows.push(emptyHandleRow(unique[i] ?? HANDLE_STUB_PLACEHOLDER));
+  }
+  return rows;
 }
 
 export function sumHandleTotals(handles: CachedContactDetail["handles"]): {

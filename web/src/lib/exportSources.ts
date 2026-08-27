@@ -1,9 +1,10 @@
-/** Backup sources offered by Extract and Import in the desktop app. */
+import { IMESSAGE_SOURCE_ID } from "./imessageImport";
+import { WHATSAPP_SOURCE_ID } from "./whatsappImport";
+
+/** Backup sources offered by Import in the desktop app. */
 export const EXPORT_SOURCES: { id: string; label: string }[] = [
-  { id: "imessage-ios", label: "iPhone - iOS" },
-  { id: "imessage-macos", label: "iMessage - macOS" },
-  { id: "whatsapp-android", label: "WhatsApp - Android" },
-  { id: "whatsapp-ios", label: "WhatsApp - iOS" },
+  { id: IMESSAGE_SOURCE_ID, label: "iMessage" },
+  { id: WHATSAPP_SOURCE_ID, label: "WhatsApp" },
   { id: "sms-backup-restore", label: "SMS Backup & Restore" },
   { id: "go-sms-pro", label: "GO SMS Pro" },
   { id: "imazing", label: "iMazing" },

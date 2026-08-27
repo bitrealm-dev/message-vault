@@ -5,45 +5,76 @@ use std::fmt;
 
 use anyhow::{Result, bail};
 use chrono::Utc;
-use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
+use sqlx::{AnyConnection, Connection};
+
+use crate::db::dialect;
 
 #[derive(Debug, Clone, Serialize)]
+/// One row of `vault_imports`: a per-account import session record.
 #[allow(dead_code)]
 pub struct VaultImportRow {
+    /// Import session id.
     pub id: i64,
+    /// Vault account that owns the session.
     pub account_id: String,
+    /// Source id the session imports.
     pub source: String,
+    /// Importing tool, e.g. `vault-push`.
     pub tool: Option<String>,
+    /// Import mode (`replace` or `append`).
     pub mode: String,
+    /// Lifecycle status (`running`, `completed`, or `failed`).
     pub status: String,
+    /// UTC time the session started.
     pub started_at: String,
+    /// UTC time the session finished, when it has.
     pub finished_at: Option<String>,
+    /// Messages counted for the session.
     pub message_count: i64,
+    /// Attachments counted for the session.
     pub attachment_count: i64,
+    /// Bytes uploaded so far.
     pub bytes_uploaded: i64,
+    /// Total wall-clock duration, when finished.
     pub duration_ms: Option<i64>,
+    /// Time spent parsing JSONL, when finished.
     pub parse_ms: Option<i64>,
+    /// Time spent converting media, when finished.
     pub convert_ms: Option<i64>,
+    /// Time spent uploading assets, when finished.
     pub upload_ms: Option<i64>,
+    /// Client-provided summary payload.
     pub summary_json: Option<String>,
 }
 
+/// Outcome fields written when a session completes.
 #[derive(Debug, Clone, Default)]
 pub struct CompleteImportArgs {
+    /// True when the import finished successfully.
     pub ok: bool,
+    /// Messages imported; counted from the database when omitted.
     pub message_count: Option<i64>,
+    /// Attachments imported; counted from the database when omitted.
     pub attachment_count: Option<i64>,
+    /// Bytes uploaded.
     pub bytes_uploaded: Option<i64>,
+    /// Total wall-clock duration.
     pub duration_ms: Option<i64>,
+    /// Time spent parsing JSONL.
     pub parse_ms: Option<i64>,
+    /// Time spent converting media.
     pub convert_ms: Option<i64>,
+    /// Time spent uploading assets.
     pub upload_ms: Option<i64>,
+    /// Client-provided summary payload.
     pub summary_json: Option<String>,
+    /// Per-file issues to record against the session.
     pub issues: Vec<ImportIssueInput>,
 }
 
 impl CompleteImportArgs {
+    /// Build a success outcome from message and attachment counts.
     pub fn succeeded(messages: u64, attachments: u64) -> Self {
         Self {
             ok: true,
@@ -53,6 +84,7 @@ impl CompleteImportArgs {
         }
     }
 
+    /// Build a failure outcome; nothing else is recorded.
     pub fn failed() -> Self {
         Self {
             ok: false,
@@ -61,69 +93,73 @@ impl CompleteImportArgs {
     }
 }
 
-fn with_immediate_tx<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
-    conn.execute_batch("BEGIN IMMEDIATE TRANSACTION;")?;
-    match f() {
-        Ok(value) => {
-            if let Err(e) = conn.execute_batch("COMMIT;") {
-                let _ = conn.execute_batch("ROLLBACK;");
-                return Err(e.into());
-            }
-            Ok(value)
-        }
-        Err(err) => {
-            let _ = conn.execute_batch("ROLLBACK;");
-            Err(err)
-        }
-    }
-}
-
 /// Finish an import session, logging a warning if the row update fails.
-pub fn complete_import_or_warn(
-    conn: &Connection,
+pub async fn complete_import_or_warn(
+    conn: &mut AnyConnection,
     account_id: &str,
     import_id: i64,
     args: &CompleteImportArgs,
 ) {
-    if let Err(e) = complete_import(conn, account_id, import_id, args) {
+    if let Err(e) = complete_import(conn, account_id, import_id, args).await {
         eprintln!("warning: complete_import({import_id}) failed: {e}");
     }
 }
 
+/// One problem to record against an import session.
 #[derive(Debug, Clone)]
 pub struct ImportIssueInput {
+    /// Issue category, e.g. `file_missing`.
     pub kind: String,
+    /// Pipeline stage that reported it.
     pub step: String,
+    /// The file or message the issue is about.
     pub item: String,
+    /// Human-readable explanation.
     pub reason: String,
 }
 
+/// One stored `vault_import_issues` row.
 #[derive(Debug, Clone, Serialize)]
 pub struct ImportIssueRow {
+    /// Issue row id.
     pub id: i64,
+    /// Session the issue belongs to.
     pub import_id: i64,
+    /// Issue category, e.g. `file_missing`.
     pub kind: String,
+    /// Pipeline stage that reported it.
     pub step: String,
+    /// The file or message the issue is about.
     pub item: String,
+    /// Human-readable explanation.
     pub reason: String,
+    /// UTC time the issue was recorded.
     pub created_at: String,
 }
 
+/// An import session row plus its recorded issues.
 #[derive(Debug, Clone, Serialize)]
 pub struct ImportDetail {
+    /// The session.
     pub row: VaultImportRow,
+    /// Issues recorded for it.
     pub issues: Vec<ImportIssueRow>,
 }
 
+/// Failure looking up or reusing an import session.
 #[derive(Debug)]
 pub enum ImportLookupError {
+    /// No session with this id for this account.
     NotFound {
+        /// The session id that was looked up.
         import_id: i64,
     },
     /// Session exists but cannot be reused (wrong status/source/mode).
     InvalidSession {
+        /// Why the session cannot be reused.
         message: String,
     },
+    /// Database failure.
     Db(anyhow::Error),
 }
 
@@ -148,8 +184,8 @@ impl Error for ImportLookupError {
     }
 }
 
-impl From<rusqlite::Error> for ImportLookupError {
-    fn from(value: rusqlite::Error) -> Self {
+impl From<sqlx::Error> for ImportLookupError {
+    fn from(value: sqlx::Error) -> Self {
         Self::Db(value.into())
     }
 }
@@ -161,85 +197,110 @@ impl From<anyhow::Error> for ImportLookupError {
 }
 
 /// Start a running import session for `account_id`.
-pub fn start_import(
-    conn: &Connection,
+pub async fn start_import(
+    conn: &mut AnyConnection,
     account_id: &str,
     source: &str,
     mode: &str,
     tool: Option<&str>,
 ) -> Result<i64> {
     let started_at = Utc::now().to_rfc3339();
-    conn.execute(
+    let id: i64 = sqlx::query_scalar(
         r#"
         INSERT INTO vault_imports (
             account_id, source, tool, mode, status, started_at,
             message_count, attachment_count, bytes_uploaded
-        ) VALUES (?1, ?2, ?3, ?4, 'running', ?5, 0, 0, 0)
+        ) VALUES ($1, $2, $3, $4, 'running', $5, 0, 0, 0)
+        RETURNING id
         "#,
-        params![account_id, source, tool, mode, started_at],
-    )?;
-    Ok(conn.last_insert_rowid())
+    )
+    .bind(account_id)
+    .bind(source)
+    .bind(tool)
+    .bind(mode)
+    .bind(started_at)
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(id)
 }
 
-/// Column list for `vault_imports`, in the order [`map_vault_import_row`] reads them.
+/// Column list for `vault_imports`, in the order reads map to a row.
 const VAULT_IMPORT_COLUMNS: &str = "id, account_id, source, tool, mode, status, started_at, \
      finished_at, message_count, attachment_count, bytes_uploaded, duration_ms, parse_ms, \
      convert_ms, upload_ms, summary_json";
 
-fn map_vault_import_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<VaultImportRow> {
-    Ok(VaultImportRow {
-        id: row.get(0)?,
-        account_id: row.get(1)?,
-        source: row.get(2)?,
-        tool: row.get(3)?,
-        mode: row.get(4)?,
-        status: row.get(5)?,
-        started_at: row.get(6)?,
-        finished_at: row.get(7)?,
-        message_count: row.get(8)?,
-        attachment_count: row.get(9)?,
-        bytes_uploaded: row.get(10)?,
-        duration_ms: row.get(11)?,
-        parse_ms: row.get(12)?,
-        convert_ms: row.get(13)?,
-        upload_ms: row.get(14)?,
-        summary_json: row.get(15)?,
-    })
+/// Row shape of `VAULT_IMPORT_COLUMNS`, in column order.
+type VaultImportRowData = (
+    i64,            // id
+    String,         // account_id
+    String,         // source
+    Option<String>, // tool
+    String,         // mode
+    String,         // status
+    String,         // started_at
+    Option<String>, // finished_at
+    i64,            // message_count
+    i64,            // attachment_count
+    i64,            // bytes_uploaded
+    Option<i64>,    // duration_ms
+    Option<i64>,    // parse_ms
+    Option<i64>,    // convert_ms
+    Option<i64>,    // upload_ms
+    Option<String>, // summary_json
+);
+
+fn vault_import_from_data(d: VaultImportRowData) -> VaultImportRow {
+    VaultImportRow {
+        id: d.0,
+        account_id: d.1,
+        source: d.2,
+        tool: d.3,
+        mode: d.4,
+        status: d.5,
+        started_at: d.6,
+        finished_at: d.7,
+        message_count: d.8,
+        attachment_count: d.9,
+        bytes_uploaded: d.10,
+        duration_ms: d.11,
+        parse_ms: d.12,
+        convert_ms: d.13,
+        upload_ms: d.14,
+        summary_json: d.15,
+    }
 }
 
 /// Load an import row owned by `account_id`, or error.
-pub fn get_owned_import(
-    conn: &Connection,
+pub async fn get_owned_import(
+    conn: &mut AnyConnection,
     account_id: &str,
     import_id: i64,
 ) -> std::result::Result<VaultImportRow, ImportLookupError> {
-    match conn
-        .query_row(
-            &format!(
-                "SELECT {VAULT_IMPORT_COLUMNS}
-                 FROM vault_imports
-                 WHERE id = ?1 AND account_id = ?2"
-            ),
-            params![import_id, account_id],
-            map_vault_import_row,
-        )
-        .optional()?
-    {
-        Some(row) => Ok(row),
+    let row: Option<VaultImportRowData> = sqlx::query_as::<_, VaultImportRowData>(&format!(
+        "SELECT {VAULT_IMPORT_COLUMNS}
+         FROM vault_imports
+         WHERE id = $1 AND account_id = $2"
+    ))
+    .bind(import_id)
+    .bind(account_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    match row {
+        Some(data) => Ok(vault_import_from_data(data)),
         None => Err(ImportLookupError::NotFound { import_id }),
     }
 }
 
 /// Like [`get_owned_import`], but the session must still be `running` and match
 /// the source/mode the client is about to import with.
-pub fn require_reusable_import(
-    conn: &Connection,
+pub async fn require_reusable_import(
+    conn: &mut AnyConnection,
     account_id: &str,
     import_id: i64,
     source: &str,
     mode: &str,
 ) -> std::result::Result<VaultImportRow, ImportLookupError> {
-    let row = get_owned_import(conn, account_id, import_id)?;
+    let row = get_owned_import(conn, account_id, import_id).await?;
     if row.status != "running" {
         return Err(ImportLookupError::InvalidSession {
             message: format!("import {import_id} is not running (status={})", row.status),
@@ -265,13 +326,13 @@ pub fn require_reusable_import(
 }
 
 /// Finish an import: prefer client counts, else derive from linked messages.
-pub fn complete_import(
-    conn: &Connection,
+pub async fn complete_import(
+    conn: &mut AnyConnection,
     account_id: &str,
     import_id: i64,
     args: &CompleteImportArgs,
 ) -> Result<VaultImportRow> {
-    let existing = get_owned_import(conn, account_id, import_id)?;
+    let existing = get_owned_import(&mut *conn, account_id, import_id).await?;
     let finished_at = Utc::now().to_rfc3339();
     let status = if args.ok { "completed" } else { "failed" };
 
@@ -282,81 +343,97 @@ pub fn complete_import(
     let message_count = if let Some(n) = args.message_count {
         n
     } else {
-        conn.query_row(
-            "SELECT COUNT(*) FROM messages WHERE import_id = ?1 AND account_id = ?2",
-            params![import_id, account_id],
-            |r| r.get(0),
-        )?
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM messages WHERE import_id = $1 AND account_id = $2",
+        )
+        .bind(import_id)
+        .bind(account_id)
+        .fetch_one(&mut *conn)
+        .await?;
+        n
     };
     let attachment_count = if let Some(n) = args.attachment_count {
         n
     } else {
-        conn.query_row(
+        let n: i64 = sqlx::query_scalar(
             r#"
             SELECT COUNT(*) FROM attachments a
             JOIN messages m ON m.id = a.message_id
-            WHERE m.import_id = ?1 AND m.account_id = ?2
+            WHERE m.import_id = $1 AND m.account_id = $2
             "#,
-            params![import_id, account_id],
-            |r| r.get(0),
-        )?
+        )
+        .bind(import_id)
+        .bind(account_id)
+        .fetch_one(&mut *conn)
+        .await?;
+        n
     };
     let bytes_uploaded = args.bytes_uploaded.unwrap_or(existing.bytes_uploaded);
 
-    with_immediate_tx(conn, || {
-        conn.execute(
-            r#"
-            UPDATE vault_imports
-            SET status = ?1,
-                finished_at = ?2,
-                message_count = ?3,
-                attachment_count = ?4,
-                bytes_uploaded = ?5,
-                duration_ms = ?6,
-                parse_ms = ?7,
-                convert_ms = ?8,
-                upload_ms = ?9,
-                summary_json = ?10
-            WHERE id = ?11 AND account_id = ?12
-            "#,
-            params![
-                status,
-                finished_at,
-                message_count,
-                attachment_count,
-                bytes_uploaded,
-                args.duration_ms,
-                args.parse_ms,
-                args.convert_ms,
-                args.upload_ms,
-                args.summary_json.as_deref(),
-                import_id,
-                account_id
-            ],
-        )?;
-        insert_issues(conn, import_id, &args.issues)
-    })?;
+    // `BEGIN IMMEDIATE` on SQLite matches today's write lock; Postgres uses a
+    // plain BEGIN (no statement-level equivalent). Either way the update and
+    // the issue inserts land as one unit, and a failed commit rolls back
+    // (sqlx drops the transaction).
+    let mut tx = conn
+        .begin_with(dialect::begin_immediate_sql(dialect::engine_of(conn)))
+        .await?;
+    sqlx::query(
+        r#"
+        UPDATE vault_imports
+        SET status = $1,
+            finished_at = $2,
+            message_count = $3,
+            attachment_count = $4,
+            bytes_uploaded = $5,
+            duration_ms = $6,
+            parse_ms = $7,
+            convert_ms = $8,
+            upload_ms = $9,
+            summary_json = $10
+        WHERE id = $11 AND account_id = $12
+        "#,
+    )
+    .bind(status)
+    .bind(finished_at)
+    .bind(message_count)
+    .bind(attachment_count)
+    .bind(bytes_uploaded)
+    .bind(args.duration_ms)
+    .bind(args.parse_ms)
+    .bind(args.convert_ms)
+    .bind(args.upload_ms)
+    .bind(args.summary_json.as_deref())
+    .bind(import_id)
+    .bind(account_id)
+    .execute(&mut *tx)
+    .await?;
+    insert_issues(&mut tx, import_id, &args.issues).await?;
+    tx.commit().await?;
 
-    Ok(get_owned_import(conn, account_id, import_id)?)
+    Ok(get_owned_import(&mut *conn, account_id, import_id).await?)
 }
 
-fn insert_issues(conn: &Connection, import_id: i64, issues: &[ImportIssueInput]) -> Result<()> {
+async fn insert_issues(
+    conn: &mut AnyConnection,
+    import_id: i64,
+    issues: &[ImportIssueInput],
+) -> Result<()> {
     for issue in issues {
-        conn.execute(
+        sqlx::query(
             r#"
             INSERT INTO vault_import_issues (
                 import_id, kind, step, item, reason, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ) VALUES ($1, $2, $3, $4, $5, $6)
             "#,
-            params![
-                import_id,
-                &issue.kind,
-                &issue.step,
-                &issue.item,
-                &issue.reason,
-                Utc::now().to_rfc3339()
-            ],
-        )?;
+        )
+        .bind(import_id)
+        .bind(&issue.kind)
+        .bind(&issue.step)
+        .bind(&issue.item)
+        .bind(&issue.reason)
+        .bind(Utc::now().to_rfc3339())
+        .execute(&mut *conn)
+        .await?;
     }
     Ok(())
 }
@@ -369,48 +446,64 @@ fn validate_issue_kind(kind: &str) -> Result<()> {
 }
 
 /// Load one import row and its issue list.
-pub fn get_import_detail(
-    conn: &Connection,
+pub async fn get_import_detail(
+    conn: &mut AnyConnection,
     account_id: &str,
     import_id: i64,
 ) -> std::result::Result<ImportDetail, ImportLookupError> {
-    let row = get_owned_import(conn, account_id, import_id)?;
-    let mut stmt = conn.prepare(
+    let row = get_owned_import(conn, account_id, import_id).await?;
+    let issue_rows: Vec<(i64, i64, String, String, String, String, String)> = sqlx::query_as(
         r#"
         SELECT id, import_id, kind, step, item, reason, created_at
         FROM vault_import_issues
-        WHERE import_id = ?1
+        WHERE import_id = $1
         ORDER BY id ASC
         "#,
-    )?;
-    let issues = stmt
-        .query_map(params![import_id], |row| {
-            Ok(ImportIssueRow {
-                id: row.get(0)?,
-                import_id: row.get(1)?,
-                kind: row.get(2)?,
-                step: row.get(3)?,
-                item: row.get(4)?,
-                reason: row.get(5)?,
-                created_at: row.get(6)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+    )
+    .bind(import_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    let issues = issue_rows
+        .into_iter()
+        .map(
+            |(id, import_id, kind, step, item, reason, created_at)| ImportIssueRow {
+                id,
+                import_id,
+                kind,
+                step,
+                item,
+                reason,
+                created_at,
+            },
+        )
+        .collect();
     Ok(ImportDetail { row, issues })
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// Serializable slice of a session used in list responses.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct ImportSummary {
+    /// Import session id.
     pub id: i64,
+    /// Source id the session imports.
     pub source: String,
+    /// Importing tool, e.g. `vault-push`.
     pub tool: Option<String>,
+    /// Import mode (`replace` or `append`).
     pub mode: String,
+    /// Lifecycle status (`running`, `completed`, or `failed`).
     pub status: String,
+    /// UTC time the session started.
     pub started_at: String,
+    /// UTC time the session finished, when it has.
     pub finished_at: Option<String>,
+    /// Messages counted for the session.
     pub message_count: i64,
+    /// Attachments counted for the session.
     pub attachment_count: i64,
+    /// Bytes uploaded so far.
     pub bytes_uploaded: i64,
+    /// Total wall-clock duration, when finished.
     pub duration_ms: Option<i64>,
 }
 
@@ -433,108 +526,143 @@ impl From<VaultImportRow> for ImportSummary {
 }
 
 /// List imports for an account, newest first. Returns serializable summaries.
-pub fn list_imports(conn: &Connection, account_id: &str) -> Result<Vec<ImportSummary>> {
+pub async fn list_imports(
+    conn: &mut AnyConnection,
+    account_id: &str,
+) -> Result<Vec<ImportSummary>> {
     list_imports_for_account(conn, account_id, 100)
+        .await
         .map(|rows| rows.into_iter().map(Into::into).collect())
 }
 
 /// List imports for an account, newest first.
 #[allow(dead_code)] // used by unit tests; storage UI queries SQLite from Next.js
-pub fn list_imports_for_account(
-    conn: &Connection,
+pub async fn list_imports_for_account(
+    conn: &mut AnyConnection,
     account_id: &str,
     limit: i64,
 ) -> Result<Vec<VaultImportRow>> {
-    let mut stmt = conn.prepare(&format!(
+    let rows: Vec<VaultImportRowData> = sqlx::query_as::<_, VaultImportRowData>(&format!(
         "SELECT {VAULT_IMPORT_COLUMNS}
          FROM vault_imports
-         WHERE account_id = ?1
+         WHERE account_id = $1
          ORDER BY started_at DESC, id DESC
-         LIMIT ?2"
-    ))?;
-    let rows = stmt
-        .query_map(params![account_id, limit], map_vault_import_row)?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+         LIMIT $2"
+    ))
+    .bind(account_id)
+    .bind(limit)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows.into_iter().map(vault_import_from_data).collect())
 }
 
 const ACCOUNT_ATTACHMENTS_FROM: &str = r#"
         FROM attachments a
         JOIN messages m ON m.id = a.message_id
-        WHERE m.account_id = ?1
+        WHERE m.account_id = $1
         "#;
 
 /// Total attachment bytes for an account (original size_bytes).
-pub fn account_attachment_bytes(conn: &Connection, account_id: &str) -> Result<i64> {
-    let n: i64 = conn.query_row(
-        &format!("SELECT COALESCE(SUM(a.size_bytes), 0) {ACCOUNT_ATTACHMENTS_FROM}"),
-        params![account_id],
-        |r| r.get(0),
-    )?;
+pub async fn account_attachment_bytes(conn: &mut AnyConnection, account_id: &str) -> Result<i64> {
+    let n: i64 = sqlx::query_scalar(&format!(
+        "SELECT COALESCE(SUM(a.size_bytes), 0) {ACCOUNT_ATTACHMENTS_FROM}"
+    ))
+    .bind(account_id)
+    .fetch_one(&mut *conn)
+    .await?;
     Ok(n)
 }
 
 /// Attachment row count for an account.
-pub fn account_attachment_count(conn: &Connection, account_id: &str) -> Result<i64> {
-    let n: i64 = conn.query_row(
-        &format!("SELECT COUNT(*) {ACCOUNT_ATTACHMENTS_FROM}"),
-        params![account_id],
-        |r| r.get(0),
-    )?;
+pub async fn account_attachment_count(conn: &mut AnyConnection, account_id: &str) -> Result<i64> {
+    let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) {ACCOUNT_ATTACHMENTS_FROM}"))
+        .bind(account_id)
+        .fetch_one(&mut *conn)
+        .await?;
     Ok(n)
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+/// One of an account's largest attachments by byte size.
+#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
 pub struct TopAttachment {
+    /// Attachment id.
     pub id: i64,
+    /// File name from the export.
     pub original_name: Option<String>,
+    /// MIME type, when known.
     pub mime_type: Option<String>,
+    /// Attachment byte size.
     pub size_bytes: i64,
+    /// Conversation that holds the attachment.
     pub conversation_id: i64,
+    /// Conversation label, when set.
     pub conversation_title: Option<String>,
     /// Raw text of the conversation's chat handle (via `handles`).
     pub chat_identifier: String,
 }
 
+/// Raw row for [`top_attachments_by_size`] before mapping to [`TopAttachment`].
+type TopAttachmentRow = (
+    i64,
+    Option<String>,
+    Option<String>,
+    i64,
+    i64,
+    Option<String>,
+    String,
+);
+
 /// Largest attachments for an account.
-pub fn top_attachments_by_size(
-    conn: &Connection,
+pub async fn top_attachments_by_size(
+    conn: &mut AnyConnection,
     account_id: &str,
     limit: i64,
 ) -> Result<Vec<TopAttachment>> {
-    let mut stmt = conn.prepare(
+    let rows: Vec<TopAttachmentRow> = sqlx::query_as(
         r#"
-        SELECT a.id,
-               a.original_name,
-               a.mime_type,
-               COALESCE(a.size_bytes, 0),
-               c.id,
-               c.group_title,
-               h.raw
-        FROM attachments a
-        JOIN messages m ON m.id = a.message_id
-        JOIN conversations c ON c.id = m.conversation_id
-        JOIN handles h ON h.id = c.chat_handle_id
-        WHERE m.account_id = ?1
-          AND COALESCE(a.size_bytes, 0) > 0
-        ORDER BY a.size_bytes DESC, a.id DESC
-        LIMIT ?2
-        "#,
-    )?;
-    let rows = stmt
-        .query_map(params![account_id, limit], |row| {
-            Ok(TopAttachment {
-                id: row.get(0)?,
-                original_name: row.get(1)?,
-                mime_type: row.get(2)?,
-                size_bytes: row.get(3)?,
-                conversation_id: row.get(4)?,
-                conversation_title: row.get(5)?,
-                chat_identifier: row.get(6)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+            SELECT a.id,
+                   a.original_name,
+                   a.mime_type,
+                   COALESCE(a.size_bytes, 0),
+                   c.id,
+                   c.group_title,
+                   h.raw
+            FROM attachments a
+            JOIN messages m ON m.id = a.message_id
+            JOIN conversations c ON c.id = m.conversation_id
+            JOIN handles h ON h.id = c.chat_handle_id
+            WHERE m.account_id = $1
+              AND COALESCE(a.size_bytes, 0) > 0
+            ORDER BY a.size_bytes DESC, a.id DESC
+            LIMIT $2
+            "#,
+    )
+    .bind(account_id)
+    .bind(limit)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(
+                id,
+                original_name,
+                mime_type,
+                size_bytes,
+                conversation_id,
+                conversation_title,
+                chat_identifier,
+            )| TopAttachment {
+                id,
+                original_name,
+                mime_type,
+                size_bytes,
+                conversation_id,
+                conversation_title,
+                chat_identifier,
+            },
+        )
+        .collect())
 }
 
 #[cfg(test)]
@@ -543,26 +671,37 @@ mod tests {
 
     const ACCOUNT_ID: &str = "11111111-1111-1111-1111-111111111111";
 
-    fn setup_accounts_only() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        crate::db::schema::ensure_accounts_schema(&conn).unwrap();
-        conn.execute(
-            "INSERT INTO accounts (id, username) VALUES (?1, ?2)",
-            params![ACCOUNT_ID, "alice"],
-        )
-        .unwrap();
-        conn
+    async fn setup_accounts_only() -> (sqlx::AnyPool, tempfile::TempDir) {
+        let (pool, dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        crate::db::schema::ensure_accounts_schema(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, $2)")
+            .bind(ACCOUNT_ID)
+            .bind("alice")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        (pool, dir)
     }
 
-    #[test]
-    fn complete_import_persists_timings_and_issues() {
-        let conn = setup_accounts_only();
-        let import_id =
-            start_import(&conn, ACCOUNT_ID, "ios", "append", Some("message-vault-io")).unwrap();
+    #[tokio::test]
+    async fn complete_import_persists_timings_and_issues() {
+        let (pool, _dir) = setup_accounts_only().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let import_id = start_import(
+            &mut conn,
+            ACCOUNT_ID,
+            "ios",
+            "append",
+            Some("message-vault-io"),
+        )
+        .await
+        .unwrap();
 
         let row = complete_import(
-            &conn,
+            &mut conn,
             ACCOUNT_ID,
             import_id,
             &CompleteImportArgs {
@@ -583,6 +722,7 @@ mod tests {
                 }],
             },
         )
+        .await
         .unwrap();
 
         assert_eq!(row.duration_ms, Some(48_000));
@@ -594,24 +734,31 @@ mod tests {
             Some(r#"{"parse":{"messages":10}}"#)
         );
 
-        let issue_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM vault_import_issues WHERE import_id = ?1",
-                params![import_id],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let issue_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM vault_import_issues WHERE import_id = $1")
+                .bind(import_id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
         assert_eq!(issue_count, 1);
     }
 
-    #[test]
-    fn complete_import_rejects_invalid_issue_kind() {
-        let conn = setup_accounts_only();
-        let import_id =
-            start_import(&conn, ACCOUNT_ID, "ios", "append", Some("message-vault-io")).unwrap();
+    #[tokio::test]
+    async fn complete_import_rejects_invalid_issue_kind() {
+        let (pool, _dir) = setup_accounts_only().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let import_id = start_import(
+            &mut conn,
+            ACCOUNT_ID,
+            "ios",
+            "append",
+            Some("message-vault-io"),
+        )
+        .await
+        .unwrap();
 
         let err = complete_import(
-            &conn,
+            &mut conn,
             ACCOUNT_ID,
             import_id,
             &CompleteImportArgs {
@@ -632,68 +779,97 @@ mod tests {
                 }],
             },
         )
+        .await
         .unwrap_err()
         .to_string();
 
         assert!(err.contains("invalid import issue kind"));
 
-        let issue_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM vault_import_issues WHERE import_id = ?1",
-                params![import_id],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let issue_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM vault_import_issues WHERE import_id = $1")
+                .bind(import_id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
         assert_eq!(issue_count, 0);
 
-        let status: String = conn
-            .query_row(
-                "SELECT status FROM vault_imports WHERE id = ?1",
-                params![import_id],
-                |r| r.get(0),
-            )
+        let status: String = sqlx::query_scalar("SELECT status FROM vault_imports WHERE id = $1")
+            .bind(import_id)
+            .fetch_one(&mut *conn)
+            .await
             .unwrap();
         assert_eq!(status, "running");
     }
 
-    #[test]
-    fn require_reusable_import_rejects_completed_and_mismatched() {
-        let conn = setup_accounts_only();
-        let import_id =
-            start_import(&conn, ACCOUNT_ID, "ios", "append", Some("message-vault-io")).unwrap();
+    #[tokio::test]
+    async fn require_reusable_import_rejects_completed_and_mismatched() {
+        let (pool, _dir) = setup_accounts_only().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let import_id = start_import(
+            &mut conn,
+            ACCOUNT_ID,
+            "ios",
+            "append",
+            Some("message-vault-io"),
+        )
+        .await
+        .unwrap();
         complete_import(
-            &conn,
+            &mut conn,
             ACCOUNT_ID,
             import_id,
             &CompleteImportArgs::succeeded(1, 0),
         )
+        .await
         .unwrap();
 
-        let err = require_reusable_import(&conn, ACCOUNT_ID, import_id, "ios", "append")
+        let err = require_reusable_import(&mut conn, ACCOUNT_ID, import_id, "ios", "append")
+            .await
             .unwrap_err()
             .to_string();
         assert!(err.contains("not running"), "{err}");
 
-        let running =
-            start_import(&conn, ACCOUNT_ID, "ios", "append", Some("message-vault-io")).unwrap();
-        let src_err = require_reusable_import(&conn, ACCOUNT_ID, running, "android", "append")
+        let running = start_import(
+            &mut conn,
+            ACCOUNT_ID,
+            "ios",
+            "append",
+            Some("message-vault-io"),
+        )
+        .await
+        .unwrap();
+        let src_err = require_reusable_import(&mut conn, ACCOUNT_ID, running, "android", "append")
+            .await
             .unwrap_err()
             .to_string();
         assert!(src_err.contains("source mismatch"), "{src_err}");
-        let mode_err = require_reusable_import(&conn, ACCOUNT_ID, running, "ios", "replace")
+        let mode_err = require_reusable_import(&mut conn, ACCOUNT_ID, running, "ios", "replace")
+            .await
             .unwrap_err()
             .to_string();
         assert!(mode_err.contains("mode mismatch"), "{mode_err}");
-        assert!(require_reusable_import(&conn, ACCOUNT_ID, running, "ios", "append").is_ok());
+        assert!(
+            require_reusable_import(&mut conn, ACCOUNT_ID, running, "ios", "append")
+                .await
+                .is_ok()
+        );
     }
 
-    #[test]
-    fn get_import_detail_returns_issues() {
-        let conn = setup_accounts_only();
-        let import_id =
-            start_import(&conn, ACCOUNT_ID, "ios", "append", Some("message-vault-io")).unwrap();
+    #[tokio::test]
+    async fn get_import_detail_returns_issues() {
+        let (pool, _dir) = setup_accounts_only().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let import_id = start_import(
+            &mut conn,
+            ACCOUNT_ID,
+            "ios",
+            "append",
+            Some("message-vault-io"),
+        )
+        .await
+        .unwrap();
         complete_import(
-            &conn,
+            &mut conn,
             ACCOUNT_ID,
             import_id,
             &CompleteImportArgs {
@@ -722,9 +898,12 @@ mod tests {
                 ],
             },
         )
+        .await
         .unwrap();
 
-        let detail = get_import_detail(&conn, ACCOUNT_ID, import_id).unwrap();
+        let detail = get_import_detail(&mut conn, ACCOUNT_ID, import_id)
+            .await
+            .unwrap();
         assert_eq!(detail.row.duration_ms, Some(48_000));
         assert_eq!(detail.row.parse_ms, Some(18_000));
         assert_eq!(detail.issues.len(), 2);
@@ -734,13 +913,21 @@ mod tests {
         assert_eq!(detail.issues[1].step, "upload");
     }
 
-    #[test]
-    fn list_imports_includes_duration_ms() {
-        let conn = setup_accounts_only();
-        let import_id =
-            start_import(&conn, ACCOUNT_ID, "ios", "append", Some("message-vault-io")).unwrap();
+    #[tokio::test]
+    async fn list_imports_includes_duration_ms() {
+        let (pool, _dir) = setup_accounts_only().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let import_id = start_import(
+            &mut conn,
+            ACCOUNT_ID,
+            "ios",
+            "append",
+            Some("message-vault-io"),
+        )
+        .await
+        .unwrap();
         complete_import(
-            &conn,
+            &mut conn,
             ACCOUNT_ID,
             import_id,
             &CompleteImportArgs {
@@ -756,9 +943,10 @@ mod tests {
                 issues: vec![],
             },
         )
+        .await
         .unwrap();
 
-        let imports = list_imports(&conn, ACCOUNT_ID).unwrap();
+        let imports = list_imports(&mut conn, ACCOUNT_ID).await.unwrap();
         assert_eq!(imports.len(), 1);
         assert_eq!(imports[0].duration_ms, Some(48_000));
     }

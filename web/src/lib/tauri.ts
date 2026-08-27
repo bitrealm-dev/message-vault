@@ -10,39 +10,34 @@ import type {
 /** Start extracting a phone backup on the desktop backend. */
 export async function invokeExtract(config: ExtractConfig): Promise<void> {
   return invoke("extract", {
-    source: config.source,
-    path: config.path,
-    outputDir: config.output_dir,
-    backupPassword: config.backup_password ?? null,
-    attachmentMedia: config.attachment_media ?? null,
-    mediaMaxResolution: config.media_max_resolution ?? null,
-    mediaMaxFps: config.media_max_fps ?? null,
-    mediaMinSize: config.media_min_size ?? null,
-    conversationFilter: config.conversation_filter ?? null,
-    startDate: config.start_date ?? null,
-    endDate: config.end_date ?? null,
-    obfuscate: config.obfuscate ?? null,
+    args: {
+      source: config.source,
+      path: config.path,
+      outputDir: config.output_dir,
+      backupPassword: config.backup_password ?? null,
+      attachmentMedia: config.attachment_media ?? null,
+      mediaMaxResolution: config.media_max_resolution ?? null,
+      mediaMaxFps: config.media_max_fps ?? null,
+      mediaMinSize: config.media_min_size ?? null,
+      conversationFilter: config.conversation_filter ?? null,
+      startDate: config.start_date ?? null,
+      endDate: config.end_date ?? null,
+      obfuscate: config.obfuscate ?? null,
+      ownerPhones: config.owner_phones ?? null,
+      attachmentRoot: config.attachment_root ?? null,
+      appleContacts: config.apple_contacts ?? null,
+      whatsappKey: config.whatsapp_key ?? null,
+      whatsappWa: config.whatsapp_wa ?? null,
+      whatsappMedia: config.whatsapp_media ?? null,
+      whatsappDb: config.whatsapp_db ?? null,
+      whatsappBusiness: config.whatsapp_business ?? null,
+    },
   });
 }
 
 /** Ask the desktop backend to stop the job that is currently running. */
 export async function invokeCancel(): Promise<void> {
   return invoke("cancel");
-}
-
-export interface FormatConfig {
-  input_dir: string;
-  output_dir: string;
-  output_format: string;
-}
-
-/** Convert an extracted folder into another file format. */
-export async function invokeFormat(config: FormatConfig): Promise<void> {
-  return invoke("format", {
-    inputDir: config.input_dir,
-    outputDir: config.output_dir,
-    outputFormat: config.output_format,
-  });
 }
 
 export interface PushConfig {
@@ -94,17 +89,19 @@ export interface TauriJobResult {
 /** Upload extracted conversations to a vault server. */
 export async function invokePush(config: PushConfig): Promise<void> {
   return invoke("push", {
-    baseUrl: config.base_url,
-    username: config.username,
-    key: config.key,
-    inputDir: config.input_dir,
-    mode: config.mode,
-    force: config.force,
-    continueOnError: config.continue_on_error,
-    skipAttachments: config.skip_attachments,
-    trustExport: config.trust_export,
-    contactNameMode: config.contact_name_mode ?? "fill_missing",
-    importId: config.import_id ?? null,
+    args: {
+      baseUrl: config.base_url,
+      username: config.username,
+      key: config.key,
+      inputDir: config.input_dir,
+      mode: config.mode,
+      force: config.force,
+      continueOnError: config.continue_on_error,
+      skipAttachments: config.skip_attachments,
+      trustExport: config.trust_export,
+      contactNameMode: config.contact_name_mode ?? "fill_missing",
+      importId: config.import_id ?? null,
+    },
   });
 }
 
@@ -120,12 +117,14 @@ export interface PullConfig {
 /** Download conversations from a vault server into a folder. */
 export async function invokePull(config: PullConfig): Promise<void> {
   return invoke("pull", {
-    baseUrl: config.base_url,
-    username: config.username,
-    key: config.key,
-    outDir: config.out_dir,
-    query: config.query,
-    skipAttachments: config.skip_attachments,
+    args: {
+      baseUrl: config.base_url,
+      username: config.username,
+      key: config.key,
+      outDir: config.out_dir,
+      query: config.query,
+      skipAttachments: config.skip_attachments,
+    },
   });
 }
 
@@ -156,6 +155,22 @@ export async function invokeHomeDir(): Promise<HomeDirInfo> {
   return invoke("home_dir");
 }
 
+export interface PathStat {
+  exists: boolean;
+  isFile: boolean;
+  isDirectory: boolean;
+}
+
+/** Whether a path exists and whether it is a file or directory. */
+export async function invokePathStat(path: string): Promise<PathStat> {
+  return invoke("path_stat", { path });
+}
+
+/** Whether an iOS backup folder is encrypted, or null when unknown. */
+export async function invokeIosBackupEncrypted(path: string): Promise<boolean | null> {
+  return invoke("ios_backup_encrypted", { path });
+}
+
 /**
  * Listen for job events from the desktop backend (log lines, progress, errors).
  * Returns one function that removes every listener.
@@ -175,7 +190,9 @@ export function onExtractEvents(callbacks: {
     listen<ExtractErrorEvent>("extract:error", (e) => callbacks.onError(e.payload)),
   ]).then((unlisteners) => {
     return () => {
-      unlisteners.forEach((u) => u());
+      for (const u of unlisteners) {
+        u();
+      }
     };
   });
 }
@@ -201,8 +218,7 @@ export async function awaitTauriJob(
             onProgress,
             onIssue,
             onFinished: (summary) => resolve(parseTauriJobResult(summary)),
-            onError: (err) =>
-              reject(new Error(err.user_message ?? err.detail)),
+            onError: (err) => reject(new Error(err.user_message ?? err.detail)),
           });
           await invokeFn();
         } catch (e: unknown) {

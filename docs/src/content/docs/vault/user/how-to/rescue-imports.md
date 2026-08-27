@@ -7,7 +7,7 @@ import { Aside } from '@astrojs/starlight/components';
 
 These sources are rescue paths. They read incomplete or reverse-engineered formats and may produce less complete results than a supported backup. Use them only when the export is the only copy you have.
 
-On the **Import** (or offline **Extract**) source list they appear as **GO SMS Pro**, **iMazing**, **OpenExtract**, and **SMS Backup+**.
+On the **Import** source list they appear as **GO SMS Pro**, **iMazing**, **OpenExtract**, and **SMS Backup+**.
 
 <Aside type="caution" title="Prefer a supported backup when possible">
 Use SMS Backup & Restore XML over GO SMS Pro or SMS Backup+. Use an iPhone backup or `chat.db` over iMazing Messages CSV. Use a native WhatsApp database or backup over iMazing WhatsApp CSV.

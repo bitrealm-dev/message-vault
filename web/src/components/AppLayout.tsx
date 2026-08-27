@@ -1,23 +1,27 @@
 import { useCallback, useState } from "react";
 import { Outlet, useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import AppHeader from "./AppHeader";
-import LeftPanel from "./LeftPanel";
-import ListColumn from "./ListColumn";
-import ConversationList from "../screens/ConversationList";
-import ContactDrawer, {
-  type ContactBrowseKind,
-  type ContactPreview,
-} from "./ContactDrawer";
-import ContactList from "../screens/ContactList";
-import CheckedContactsPanel from "./CheckedContactsPanel";
-import RightPane from "./RightPane";
-import { RightToolbarProvider } from "./RightToolbarContext";
-import type { Conversation } from "../lib/types";
-import { asMessagesLocationState } from "../lib/messagesLocationState";
 import { groupFromSlug } from "../lib/contactGroups";
+import { asMessagesLocationState } from "../lib/messagesLocationState";
 import { tagFromSlug, tagListQuery } from "../lib/threadTags";
+import type { Conversation } from "../lib/types";
 import { useContactGroups } from "../lib/useContactGroups";
 import { useThreadTags } from "../lib/useThreadTags";
+import ContactList from "../screens/ContactList";
+import ConversationList from "../screens/ConversationList";
+import AppHeader from "./AppHeader";
+import CheckedContactsPanel from "./CheckedContactsPanel";
+import { ColumnResizeProvider } from "./ColumnResizeContext";
+import ContactDrawer from "./ContactDrawer";
+import {
+  type ContactBrowseKind,
+  type ContactListPreviewSource,
+  type ContactPreview,
+  contactPreviewFromListRow,
+} from "./contactDrawer/contactDrawerTypes";
+import LeftPanel from "./LeftPanel";
+import ListColumn from "./ListColumn";
+import RightPane from "./RightPane";
+import { RightToolbarProvider } from "./RightToolbarContext";
 
 /** Search query used when browsing a contact's conversations from the drawer. */
 function contactBrowseQuery(
@@ -46,11 +50,7 @@ type ColumnMode = "conversations" | "contacts" | "trash" | "import" | "export" |
 /** Which left-column list to show for this URL. */
 function modeFromPathname(pathname: string): ColumnMode {
   if (pathname.startsWith("/messages/")) return "conversations";
-  if (
-    pathname === "/contacts" ||
-    pathname === "/no-group" ||
-    pathname.startsWith("/group/")
-  ) {
+  if (pathname === "/contacts" || pathname === "/no-group" || pathname.startsWith("/group/")) {
     return "contacts";
   }
   if (pathname === "/no-tag" || pathname.startsWith("/tag/")) {
@@ -77,8 +77,8 @@ export default function AppLayout() {
   const [selectedContact, setSelectedContact] = useState<ContactPreview | null>(null);
   const [checkedContacts, setCheckedContacts] = useState<ContactPreview[]>([]);
   const [clearCheckedRev, setClearCheckedRev] = useState(0);
-  const handleCheckedContacts = useCallback((contacts: ContactPreview[]) => {
-    setCheckedContacts(contacts);
+  const handleCheckedContacts = useCallback((contacts: ContactListPreviewSource[]) => {
+    setCheckedContacts(contacts.map(contactPreviewFromListRow));
   }, []);
   const clearCheckedContacts = useCallback(() => {
     setClearCheckedRev((n) => n + 1);
@@ -112,7 +112,8 @@ export default function AppLayout() {
   function updateSearchParams(updates: Record<string, string>) {
     const next = new URLSearchParams(searchParams);
     for (const [k, v] of Object.entries(updates)) {
-      if (v) next.set(k, v); else next.delete(k);
+      if (v) next.set(k, v);
+      else next.delete(k);
     }
     setSearchParams(next, { replace: true });
   }
@@ -153,23 +154,21 @@ export default function AppLayout() {
     updateSearchParams({ q: q, f: "" });
   };
 
-  const threadListQuery = tagListQuery(
-    tagFilter,
-    conversationFilter || conversationSearch,
-  );
+  const threadListQuery = tagListQuery(tagFilter, conversationFilter || conversationSearch);
 
   const handleConversationSelect = (c: Conversation) => {
-    const params = tagFilter
-      ? `?q=${encodeURIComponent(threadListQuery)}`
-      : "";
+    const params = tagFilter ? `?q=${encodeURIComponent(threadListQuery)}` : "";
     navigate(`/messages/${c.id}${params}`, { state: { conversation: c } });
   };
 
+  const locationState = asMessagesLocationState(location.state);
+  const openContactId = locationState?.openContactId ?? null;
+  const openContactPreview = locationState?.openContactPreview ?? null;
+
   const closeContactDrawer = () => {
     setSelectedContact(null);
-    const state = asMessagesLocationState(location.state);
-    if (!state?.openContactId) return;
-    const { openContactId: _closed, ...rest } = state;
+    if (!openContactId || !locationState) return;
+    const { openContactId: _closed, openContactPreview: _preview, ...rest } = locationState;
     navigate(`${location.pathname}${location.search}`, {
       replace: true,
       state: Object.keys(rest).length > 0 ? rest : null,
@@ -196,124 +195,119 @@ export default function AppLayout() {
   const isFullScreen = mode === "import" || mode === "export" || mode === "settings";
   const isTrash = mode === "trash";
 
-  // Contact drawer: MessageRoute stores the contact id on location state.
-  const openContactId = asMessagesLocationState(location.state)?.openContactId ?? null;
-
   return (
     <RightToolbarProvider>
-    <div className="flex h-screen flex-col bg-bg font-sans text-text">
-      <AppHeader
-        searchQuery={searchQuery}
-        searchMode={contactsMode ? "contacts" : "messages"}
-        onSearchChange={handleSearchChange}
-        onSearch={handleSearch}
-      />
-      <div className="flex min-h-0 flex-1">
-      <LeftPanel
-        onSearchChange={handleSearchChange}
-        onSearch={handleSearch}
-      />
+      <div className="flex h-screen flex-col bg-bg font-sans text-text">
+        <AppHeader
+          searchQuery={searchQuery}
+          searchMode={contactsMode ? "contacts" : "messages"}
+          onSearchChange={handleSearchChange}
+          onSearch={handleSearch}
+        />
+        <ColumnResizeProvider>
+          <div className="flex min-h-0 flex-1 overflow-hidden">
+            <LeftPanel onSearchChange={handleSearchChange} onSearch={handleSearch} />
 
-      {/* Conversations: render list component directly with props */}
-      {mode === "conversations" && !isMessageRoute && (
-        <>
-          <ListColumn>
-            <ConversationList
-              selectedId={null}
-              onSelect={handleConversationSelect}
-              query={threadListQuery}
-            />
-          </ListColumn>
-          <RightPane>
-            <main className={mainPane}>
-              <div className={emptyMain}>Select a conversation to view messages</div>
-            </main>
-          </RightPane>
-        </>
-      )}
+            {/* Conversations: render list component directly with props */}
+            {mode === "conversations" && !isMessageRoute && (
+              <>
+                <ListColumn>
+                  <ConversationList
+                    selectedId={null}
+                    onSelect={handleConversationSelect}
+                    query={threadListQuery}
+                  />
+                </ListColumn>
+                <RightPane>
+                  <main className={mainPane}>
+                    <div className={emptyMain}>Select a conversation to view messages</div>
+                  </main>
+                </RightPane>
+              </>
+            )}
 
-      {/* Contacts: render list component directly with props */}
-      {mode === "contacts" && (
-        <>
-          <ListColumn>
-            <ContactList
-              filter={contactSearch}
-              groupFilter={groupFilter}
-              selectedId={selectedContact?.id ?? null}
-              onSelect={(c) =>
-                setSelectedContact({ id: c.id, name: c.name, handles: c.handles })
-              }
-              onCheckedChange={handleCheckedContacts}
-              clearCheckedRev={clearCheckedRev}
-            />
-          </ListColumn>
-          <RightPane>
-            {checkedContacts.length > 0 ? (
-              <CheckedContactsPanel
-                contacts={checkedContacts}
-                onClear={clearCheckedContacts}
-              />
-            ) : selectedContact ? (
+            {/* Contacts: render list component directly with props */}
+            {mode === "contacts" && (
+              <>
+                <ListColumn>
+                  <ContactList
+                    filter={contactSearch}
+                    groupFilter={groupFilter}
+                    selectedId={selectedContact?.id ?? null}
+                    onSelect={(c) => setSelectedContact(contactPreviewFromListRow(c))}
+                    onCheckedChange={handleCheckedContacts}
+                    clearCheckedRev={clearCheckedRev}
+                  />
+                </ListColumn>
+                <RightPane>
+                  {checkedContacts.length > 0 ? (
+                    <CheckedContactsPanel
+                      contacts={checkedContacts}
+                      onClear={clearCheckedContacts}
+                    />
+                  ) : selectedContact ? (
+                    <ContactDrawer
+                      variant="docked"
+                      contactId={selectedContact.id}
+                      preview={selectedContact}
+                      onClose={closeContactDrawer}
+                      onBrowseConversations={handleBrowseContactConversations}
+                    />
+                  ) : (
+                    <main className={mainPane}>
+                      <div className={emptyMain}>Select a contact to view details</div>
+                    </main>
+                  )}
+                </RightPane>
+              </>
+            )}
+
+            {/* Trash: ListColumn shows ConversationList with trash query; main shows TrashScreen via <Outlet /> */}
+            {isTrash && (
+              <>
+                <ListColumn>
+                  <ConversationList
+                    selectedId={null}
+                    // Trash thread selection is handled by TrashScreen in the outlet.
+                    onSelect={() => {}}
+                    query="is:trash"
+                  />
+                </ListColumn>
+                <RightPane>
+                  <main className={mainPane}>
+                    <Outlet />
+                  </main>
+                </RightPane>
+              </>
+            )}
+
+            {/* Message route: single <Outlet /> — MessageRoute renders both ListColumn + main */}
+            {isMessageRoute && (
+              <div className="flex min-w-0 flex-1 overflow-hidden">
+                <Outlet />
+              </div>
+            )}
+
+            {/* Full-screen views: no ListColumn, just main */}
+            {isFullScreen && (
+              <main className={mainPane}>
+                <Outlet />
+              </main>
+            )}
+
+            {/* Overlay contact panel (e.g. opened from a message thread). */}
+            {openContactId ? (
               <ContactDrawer
-                variant="docked"
-                contactId={selectedContact.id}
-                preview={selectedContact}
+                variant="overlay"
+                contactId={openContactId}
+                preview={openContactPreview}
                 onClose={closeContactDrawer}
                 onBrowseConversations={handleBrowseContactConversations}
               />
-            ) : (
-              <main className={mainPane}>
-                <div className={emptyMain}>Select a contact to view details</div>
-              </main>
-            )}
-          </RightPane>
-        </>
-      )}
-
-      {/* Trash: ListColumn shows ConversationList with trash query; main shows TrashScreen via <Outlet /> */}
-      {isTrash && (
-        <>
-          <ListColumn>
-            <ConversationList
-              selectedId={null}
-              // Trash thread selection is handled by TrashScreen in the outlet.
-              onSelect={() => {}}
-              query="is:trash"
-            />
-          </ListColumn>
-          <RightPane>
-            <main className={mainPane}>
-              <Outlet />
-            </main>
-          </RightPane>
-        </>
-      )}
-
-      {/* Message route: single <Outlet /> — MessageRoute renders both ListColumn + main */}
-      {isMessageRoute && (
-        <div className="flex min-w-0 flex-1">
-          <Outlet />
-        </div>
-      )}
-
-      {/* Full-screen views: no ListColumn, just main */}
-      {isFullScreen && (
-        <main className={mainPane}>
-          <Outlet />
-        </main>
-      )}
-
-      {/* Overlay contact panel (e.g. opened from a message thread). */}
-      {openContactId ? (
-        <ContactDrawer
-          variant="overlay"
-          contactId={openContactId}
-          onClose={closeContactDrawer}
-          onBrowseConversations={handleBrowseContactConversations}
-        />
-      ) : null}
+            ) : null}
+          </div>
+        </ColumnResizeProvider>
       </div>
-    </div>
     </RightToolbarProvider>
   );
 }

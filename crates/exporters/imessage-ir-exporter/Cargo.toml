@@ -2,9 +2,9 @@
 name = "imessage-ir-exporter"
 version = "0.1.0"
 edition = "2024"
-license = "AGPL-3.0-only"
+license = "LicenseRef-FCL-1.0-ALv2"
 description = "Export iMessage data to per-conversation CSV / EML / MBOX / JSON via message-ir"
-repository = "https://github.com/bitrealm-dev/message-vault-io"
+repository = "https://github.com/bitrealm-io/message-vault"
 
 [lib]
 name = "imessage_ir_exporter"
@@ -12,7 +12,7 @@ path = "src/lib.rs"
 
 [features]
 default = ["cli"]
-cli = ["dep:clap", "message-vault-io-core/cli"]
+cli = ["dep:clap"]
 
 [[bin]]
 name = "imessage-ir-exporter"
@@ -27,11 +27,12 @@ crabapple = { version = "=0.4.7" }
 hex = "0.4.3"
 imessage-database = "4.2.0"
 message-csv = { path = "../../libs/csv" }
-message-vault-io-core = { path = "../../core/message-vault-io-core" }
+message-vault-io-core = { path = "../../core/message-vault-io-core", features = ["cli"] }
 message-ir = { path = "../../libs/ir" }
 message-ir-format = { path = "../../libs/ir-format" }
+media = { path = "../../libs/media" }
 mail = { path = "../../libs/mail" }
-rpassword = "=7.5.3"
+plist = "1.9.0"
 rusqlite = { version = "=0.40.0", features = ["blob", "bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

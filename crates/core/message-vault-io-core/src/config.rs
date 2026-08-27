@@ -17,11 +17,11 @@ use crate::process::{CancelFlag, LogSink, emit_log};
 pub enum OutputFormat {
     /// Per-conversation CSV.
     Csv,
-    /// Per-conversation folder of `.eml` files (see https://bitrealm.io/vault/developer/formats/mail-archive/).
+    /// Per-conversation folder of `.eml` files (see <https://bitrealm.io/vault/developer/formats/mail-archive/>).
     Eml,
     /// Per-conversation `.mbox` (mboxrd) mailbox file.
     Mbox,
-    /// Per-conversation common message JSON (default; see docs/maintainers/architecture/message-ir.md).
+    /// Per-conversation common message JSON (default; see <https://bitrealm.io/vault/developer/architecture/common-message/>).
     #[default]
     Json,
     /// Per-conversation common message as JSON Lines (header + one message per line).
@@ -80,7 +80,7 @@ impl OutputFormat {
         matches!(self, Self::Eml | Self::Mbox)
     }
 
-    /// True when export writes a single SyncTech `smses.xml` (use [`message_ir_format::FormatSink`]).
+    /// True when export writes a single SyncTech `smses.xml` (the FormatSink XML path).
     pub fn is_sbr_xml(self) -> bool {
         matches!(self, Self::Xml)
     }
@@ -101,20 +101,30 @@ pub const OUTPUT_FORMATS_MAIL: [OutputFormat; 6] = [
 pub struct ExporterConfig {
     /// Input paths (usually one). SMS Backup+ CLI may pass several; WhatsApp may leave empty.
     pub inputs: Vec<PathBuf>,
+    /// Output directory the export is written to (packaging plus `attachments/`).
+    /// Set from the CLI `--output` flag.
     pub output: PathBuf,
+    /// Optional `[start, end)` message window (`YYYY-MM-DD`, local midnight).
+    /// Set from the CLI `--start-date` / `--end-date` flags.
     pub date_range: DateRange,
     /// Optional fixed UTC offset for naive timestamps, e.g. `UTC-05:00`.
     /// When `None`, dates are interpreted in host-local time.
     pub timezone: Option<String>,
+    /// Optional contacts file used to resolve phone numbers to names.
+    /// Set from the CLI `--contacts` / `--vcf` flags.
     pub contacts: Option<ContactsConfig>,
+    /// Fake-name rewrite settings; `None`-equivalent when disabled.
+    /// Set from the CLI `--obfuscate` / `--obfuscate-seed` flags.
     pub obfuscate: ObfuscateConfig,
     /// Attachment handling for FormatSink (none / copy / convert / compress).
     pub media: MediaConfig,
+    /// Shared cancel flag for in-process jobs; CLI runs leave it unset.
     pub cancel: Option<CancelFlag>,
     /// Mid-run progress / warnings. `None` → stderr (CLI); GUI sets a sink.
     pub log: Option<LogSink>,
     /// Packaging format (`csv` / `eml` / `mbox` / `json` / `jsonl` / `xml`).
     pub output_format: OutputFormat,
+    /// Exporter-specific options; exactly one variant is set per run.
     pub source: SourceConfig,
 }
 
@@ -159,7 +169,9 @@ impl ExporterConfig {
 /// Path and kind of an optional contacts file used to resolve phone numbers to names.
 #[derive(Debug, Clone)]
 pub struct ContactsConfig {
+    /// Contacts file path (CSV or VCF).
     pub path: PathBuf,
+    /// How the contacts file is parsed.
     pub kind: ContactsKind,
 }
 
@@ -177,14 +189,18 @@ impl ContactsConfig {
 #[derive(Debug, Clone, Default)]
 /// Fake-name rewrite: on/off plus an optional hex seed for repeatable output.
 pub struct ObfuscateConfig {
+    /// Whether fake-name rewrite is enabled.
     pub enabled: bool,
+    /// Optional hex seed for repeatable obfuscation.
     pub seed: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 /// How attachments are copied, converted, or compressed when writing output.
 pub struct MediaConfig {
+    /// Attachment handling mode (none / copy / convert / compress).
     pub mode: MediaMode,
+    /// Compress-mode options (long-edge cap, max fps, min size).
     pub compress: CompressOptions,
 }
 
@@ -200,12 +216,19 @@ impl Default for MediaConfig {
 /// Exporter-specific options. Exactly one variant is set per run.
 #[derive(Debug, Clone)]
 pub enum SourceConfig {
+    /// GO SMS Pro backup source.
     GoSmsPro(GoSmsProConfig),
+    /// SMS Backup & Restore XML backup source.
     SmsBackupRestore(SmsBackupRestoreConfig),
+    /// SMS Backup+ archive source.
     SmsBackupPlus(SmsBackupPlusConfig),
+    /// OpenExtract backup source.
     OpenExtract(OpenExtractConfig),
+    /// iMazing backup source.
     Imazing(ImazingConfig),
+    /// iMessage / iPhone backup source.
     Apple(AppleConfig),
+    /// WhatsApp backup source.
     Whatsapp(WhatsappConfig),
     /// Existing Message Vault output → another IR format (`message-reexporter`).
     /// Not listed in [`crate::exporters::EXPORTERS`] (own GUI Format tab).
@@ -235,22 +258,29 @@ pub struct FormatConfig {}
 #[derive(Debug, Clone)]
 /// GO SMS Pro extras: owner phone numbers used to mark outgoing messages.
 pub struct GoSmsProConfig {
+    /// Owner phone numbers used to mark outgoing messages.
     pub owner_phones: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
 /// SMS Backup & Restore extras: owner phone numbers used to mark outgoing messages.
 pub struct SmsBackupRestoreConfig {
+    /// Owner phone numbers used to mark outgoing messages.
     pub owner_phones: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
 /// SMS Backup+ extras: owner phones/emails, optional name-mapping file, log flags.
 pub struct SmsBackupPlusConfig {
+    /// Owner phone numbers used to mark outgoing messages.
     pub owner_phones: Vec<String>,
+    /// Owner email addresses used to mark outgoing messages.
     pub owner_emails: Vec<String>,
+    /// Optional incorrect-name mapping file path (CSV).
     pub name_mapping: Option<PathBuf>,
+    /// Whether to emit verbose log lines.
     pub verbose: bool,
+    /// Whether to print the end-of-run summary.
     pub include_summary: bool,
 }
 
@@ -265,15 +295,23 @@ pub struct ImazingConfig {}
 #[derive(Debug, Clone)]
 /// iMessage / iPhone backup extras: platform, copy method, contacts, password.
 pub struct AppleConfig {
+    /// iPhone vs Mac backup layout; `None` means auto-detect.
     pub platform: Option<ApplePlatform>,
+    /// Custom attachment root (macOS backups).
     pub attachment_root: Option<String>,
     /// `disabled`, `clone`, `basic`, or `full`.
     pub copy_method: String,
+    /// macOS AddressBook path.
     pub apple_contacts: Option<PathBuf>,
+    /// Apple backup decryption password (never written to `export.ini`).
     pub backup_password: Option<String>,
+    /// iMessage conversation filter (chat id).
     pub conversation_filter: Option<String>,
+    /// Use the destination caller id as the outgoing From display name.
     pub use_caller_id: bool,
+    /// Whether to show per-message progress lines (GUI-only).
     pub show_progress: bool,
+    /// Whether to skip the free-disk-space check (GUI-only).
     pub ignore_disk_space: bool,
 }
 
@@ -296,12 +334,20 @@ impl Default for AppleConfig {
 #[derive(Debug, Clone, Default)]
 /// WhatsApp extras: Android vs iOS, key, backup folder, and optional media/db paths.
 pub struct WhatsappConfig {
+    /// Android vs iOS backup layout.
     pub platform: Option<WhatsappPlatform>,
+    /// Optional path to an existing `result.json` to convert (skips wtsexporter).
     pub json: Option<PathBuf>,
+    /// WhatsApp backup decryption key (never written to `export.ini`).
     pub key: Option<String>,
+    /// Encrypted backup or iOS backup path.
     pub backup: Option<PathBuf>,
+    /// Contacts database (`wa.db` / `ContactsV2.sqlite`) path.
     pub wa: Option<PathBuf>,
+    /// WhatsApp media folder path.
     pub media: Option<PathBuf>,
+    /// Explicit `msgstore.db` path.
     pub db: Option<PathBuf>,
+    /// Whether the backup is a WhatsApp Business backup.
     pub business: bool,
 }

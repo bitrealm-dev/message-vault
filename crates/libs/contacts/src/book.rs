@@ -19,6 +19,7 @@ pub struct ContactsBook {
 }
 
 impl ContactsBook {
+    /// Construct an empty index.
     pub fn empty() -> Self {
         Self {
             by_name: HashMap::new(),
@@ -27,6 +28,11 @@ impl ContactsBook {
     }
 
     /// Load a contacts file using the same format rules as contacts-validate.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the format cannot be detected or the file cannot
+    /// be read or parsed.
     pub fn load_contacts_file(path: &Path) -> Result<Self> {
         use crate::validate::{ContactsFormat, detect_contacts_format};
         let format = detect_contacts_format(path).map_err(|e| {
@@ -43,6 +49,10 @@ impl ContactsBook {
     }
 
     /// Load contacts from a VCF file (FN/N + TEL).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file cannot be read or parsed.
     pub fn load_vcf(path: &Path) -> Result<Self> {
         let cards = vcf::parse_vcf(path)?;
         let mut book = Self::empty();
@@ -80,6 +90,10 @@ impl ContactsBook {
     ///
     /// Phones come from phone/fax columns, plus `+E.164` tokens scraped from
     /// `Notes` (including `PROP-ID: +…`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file cannot be read or parsed.
     pub fn load_vcard_csv(path: &Path) -> Result<Self> {
         let rows = read_vcard_csv_rows(path)?;
         let mut book = Self::empty();
@@ -174,10 +188,12 @@ impl ContactsBook {
             .map(str::to_string)
     }
 
+    /// Number of (handle, type) entries indexed.
     pub fn len(&self) -> usize {
         self.by_handle.len()
     }
 
+    /// Whether the book has no entries.
     pub fn is_empty(&self) -> bool {
         self.by_handle.is_empty() && self.by_name.is_empty()
     }
@@ -200,6 +216,11 @@ fn normalize_handle(raw: &str, handle_type: HandleType) -> String {
 ///
 /// When neither is passed, returns an empty book and writes a warning via `log`
 /// (or stderr when `log` is `None`).
+///
+/// # Errors
+///
+/// Returns an error when both flags are passed, or when the contacts file
+/// cannot be loaded.
 pub fn resolve_contacts_cli(
     contacts: Option<PathBuf>,
     vcf: Option<PathBuf>,
@@ -257,10 +278,10 @@ pub(crate) fn split_csv_line(line: &str) -> Vec<String> {
 /// Collect sanitized digit strings from semicolon-separated fields and `+E.164` tokens in free text.
 fn push_phones_from_raw(raw: &str, out: &mut Vec<String>) {
     for part in raw.split([';', ',', '|']) {
-        if let Some(digits) = sanitize_number(part.trim()) {
-            if !out.contains(&digits) {
-                out.push(digits);
-            }
+        if let Some(digits) = sanitize_number(part.trim())
+            && !out.contains(&digits)
+        {
+            out.push(digits);
         }
     }
     // Scrape bare +digits runs (PROP-ID notes, trailing phones in Notes blobs).
@@ -273,12 +294,11 @@ fn push_phones_from_raw(raw: &str, out: &mut Vec<String>) {
             while i < bytes.len() && bytes[i].is_ascii_digit() {
                 i += 1;
             }
-            if i > start + 1 {
-                if let Some(digits) = sanitize_number(&raw[start..i]) {
-                    if !out.contains(&digits) {
-                        out.push(digits);
-                    }
-                }
+            if i > start + 1
+                && let Some(digits) = sanitize_number(&raw[start..i])
+                && !out.contains(&digits)
+            {
+                out.push(digits);
             }
         } else {
             i += 1;

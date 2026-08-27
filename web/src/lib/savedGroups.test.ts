@@ -1,10 +1,12 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
+  addGroup,
   listGroups,
-  uniqueImportGroupName,
-  shouldSaveImportGroup,
-  saveImportSavedGroup,
   SAVED_GROUPS_CHANGED_EVENT,
+  saveImportSavedGroup,
+  shouldSaveImportGroup,
+  uniqueImportGroupName,
+  updateGroup,
 } from "./savedGroups.ts";
 
 const mem = new Map<string, string>();
@@ -29,6 +31,19 @@ beforeEach(() => {
   globalThis.removeEventListener = events.removeEventListener.bind(events);
   globalThis.dispatchEvent = events.dispatchEvent.bind(events);
   (globalThis as { window?: Window }).window = globalThis as unknown as Window;
+});
+
+describe("updateGroup", () => {
+  it("keeps the id and writes name and query", () => {
+    const created = addGroup("Old name", "from:alice");
+    const next = updateGroup(created.id, "New name", "from:bob");
+    expect(next).toEqual({ id: created.id, name: "New name", query: "from:bob" });
+    expect(listGroups()).toEqual([next]);
+  });
+
+  it("returns null when the id is missing", () => {
+    expect(updateGroup("missing", "Name", "query")).toBeNull();
+  });
 });
 
 describe("uniqueImportGroupName", () => {
@@ -74,8 +89,8 @@ describe("saveImportSavedGroup", () => {
     });
     window.removeEventListener(SAVED_GROUPS_CHANGED_EVENT, onChange);
     expect(g).toBeTruthy();
-    expect(g!.name).toBe("Import imessage-ios 2026-08-11");
-    expect(g!.query).toBe("import:7");
+    expect(g?.name).toBe("Import imessage-ios 2026-08-11");
+    expect(g?.query).toBe("import:7");
     expect(listGroups()).toHaveLength(1);
     expect(notified).toBe(1);
   });

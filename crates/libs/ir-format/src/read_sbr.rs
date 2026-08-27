@@ -7,9 +7,11 @@ use message_ir::{
     IrAttachment, IrConversationType, IrDirection, IrMessage, IrMessageKind, IrParticipant,
     IrService, IrSource, SCHEMA_VERSION, owner_sender,
 };
-use message_vault_io_core::{CancelFlag, check_cancel, discover_files};
+use message_vault_io_core::{CancelFlag, check_cancel, discover_files, is_cancelled};
 use phone::OwnerHandleSet;
-use sbr::{AttachmentBlob, ConversationKind, ParseStats, Record, infer_owner_phones, parse_file};
+use sbr::{
+    AttachmentBlob, ConversationKind, ParseStats, Record, infer_owner_phones, parse_file_with,
+};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -22,29 +24,49 @@ const EXPORT_TOOL_VERSION: &str = "10.26.003";
 /// Counts from parsing SMS Backup & Restore XML into conversation documents.
 #[derive(Debug, Default)]
 pub struct SbrReadReport {
+    /// Number of conversation documents produced.
     pub conversations: u64,
+    /// SMS elements parsed.
     pub sms_seen: u64,
+    /// MMS elements parsed.
     pub mms_seen: u64,
+    /// Attachment files staged under `attachments/`.
     pub attachments_saved: u64,
+    /// Outgoing messages in produced documents.
     pub sent: u64,
+    /// Incoming messages in produced documents.
     pub received: u64,
+    /// Messages dropped for an invalid date.
     pub skipped_invalid_date: u64,
+    /// Messages dropped outside the configured date range.
     pub skipped_out_of_range: u64,
+    /// Messages dropped with no usable address.
     pub skipped_unknown_address: u64,
+    /// SMS dropped for an unknown `type`.
     pub skipped_unknown_type: u64,
+    /// Draft/outbox/failed/queued messages dropped.
     pub skipped_draft_or_outbox: u64,
+    /// MMS dropped with no participants.
     pub skipped_empty_participants: u64,
+    /// Parts with undecodable base64.
     pub skipped_bad_attachment: u64,
+    /// Per-file error messages from parsing/staging.
     pub errors: Vec<String>,
 }
 
 /// Options for [`read_sbr_documents`].
 pub struct SbrReadOptions<'a> {
+    /// Known owner phone numbers (empty triggers inference).
     pub owner_phones: &'a [String],
+    /// Date window messages must fall inside.
     pub date_range: &'a DateRange,
+    /// Directory staged attachments are written to.
     pub attachments_dir: Option<&'a Path>,
+    /// Whether to write staged attachment files.
     pub copy_attachments: bool,
+    /// Whether to retain decoded bytes in memory on the records.
     pub keep_attachment_bytes: bool,
+    /// Cancellation flag checked between files.
     pub cancel: Option<&'a CancelFlag>,
 }
 
@@ -54,6 +76,7 @@ struct PendingAttachment {
     original_name: Option<String>,
     mime_type: Option<String>,
     digest: String,
+    size_bytes: u64,
     bytes: Option<Arc<[u8]>>,
 }
 
@@ -122,20 +145,20 @@ fn stage_attachments(
     }
     let mut out = Vec::with_capacity(blobs.len());
     for blob in blobs {
-        if options.copy_attachments {
-            if let Some(dir) = options.attachments_dir {
-                let path = dir.join(&blob.filename);
-                if !path.exists() {
-                    // Stage atomically: a crash mid-write would otherwise leave
-                    // a truncated file under the content-addressed name, which
-                    // every later run would see as already staged and reuse
-                    // forever. Media transforms skip *.tmp names, and the next
-                    // run's cleanup drops the whole attachments/ directory.
-                    let tmp = path.with_extension("tmp");
-                    fs::write(&tmp, blob.data.as_ref())?;
-                    fs::rename(&tmp, &path)?;
-                    report.attachments_saved += 1;
-                }
+        if options.copy_attachments
+            && let Some(dir) = options.attachments_dir
+        {
+            let path = dir.join(&blob.filename);
+            if !path.exists() {
+                // Stage atomically: a crash mid-write would otherwise leave
+                // a truncated file under the content-addressed name, which
+                // every later run would see as already staged and reuse
+                // forever. Media transforms skip *.tmp names, and the next
+                // run's cleanup drops the whole attachments/ directory.
+                let tmp = path.with_extension("tmp");
+                fs::write(&tmp, blob.data.as_ref())?;
+                fs::rename(&tmp, &path)?;
+                report.attachments_saved += 1;
             }
         }
         out.push(PendingAttachment {
@@ -143,6 +166,7 @@ fn stage_attachments(
             original_name: blob.original_name.clone(),
             mime_type: blob.mime_type.clone(),
             digest: blob.digest_hex.clone(),
+            size_bytes: blob.data.len() as u64,
             bytes: options
                 .keep_attachment_bytes
                 .then(|| Arc::clone(&blob.data)),
@@ -334,7 +358,7 @@ fn to_document(
                     is_sticker: false,
                     transcription: None,
                     sticker_effect: None,
-                    size_bytes: None,
+                    size_bytes: Some(a.size_bytes),
                     missing_reason: None,
                     bytes: a.bytes.as_ref().map(|b| b.as_ref().to_vec()),
                 })
@@ -424,33 +448,45 @@ pub fn read_sbr_documents(
         let guarded = phone::normalize_guarded(primary, phone::PhoneRegion::Usa);
         (owners.all_phone_digits(), Some(guarded.normalized))
     };
-    if options.copy_attachments {
-        if let Some(dir) = options.attachments_dir {
-            fs::create_dir_all(dir)?;
-        }
+    if options.copy_attachments
+        && let Some(dir) = options.attachments_dir
+    {
+        fs::create_dir_all(dir)?;
     }
 
     let mut report = SbrReadReport::default();
     let mut conversations = BTreeMap::new();
     for path in paths {
         check_cancel(options.cancel).map_err(anyhow::Error::msg)?;
-        match parse_file(&path, &owners) {
-            Ok((records, stats)) => {
-                merge_stats(&mut report, stats);
-                for record in records {
-                    if !options.date_range.contains_secs_f64(record.timestamp_secs) {
-                        report.skipped_out_of_range += 1;
-                        continue;
-                    }
-                    match stage_attachments(&record.attachments, &options, &mut report)
-                        .and_then(|attachments| add_record(&mut conversations, record, attachments))
-                    {
-                        Ok(()) => {}
-                        Err(error) => report.errors.push(format!("{}: {error:#}", path.display())),
-                    }
+        // Stage each message as it is parsed so decoded attachment bytes can
+        // be dropped before the next MMS is read. Peak RAM is one message's
+        // payloads, not the whole backup. Messages that parse before an XML
+        // error are kept; stats are merged even when the file is truncated.
+        let mut stats = ParseStats::default();
+        let parse_result = parse_file_with(&path, &owners, &mut stats, |record| {
+            check_cancel(options.cancel).map_err(anyhow::Error::msg)?;
+            if !options.date_range.contains_secs_f64(record.timestamp_secs) {
+                report.skipped_out_of_range += 1;
+                return Ok(());
+            }
+            match stage_attachments(&record.attachments, &options, &mut report)
+                .and_then(|attachments| add_record(&mut conversations, record, attachments))
+            {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    // Keep parsing the rest of the file; one bad attachment
+                    // must not abort the whole backup.
+                    report.errors.push(format!("{}: {error:#}", path.display()));
+                    Ok(())
                 }
             }
-            Err(error) => report.errors.push(format!("{}: {error:#}", path.display())),
+        });
+        merge_stats(&mut report, stats);
+        if let Err(error) = parse_result {
+            if is_cancelled(options.cancel) || error.to_string() == "cancelled" {
+                return Err(error);
+            }
+            report.errors.push(format!("{}: {error:#}", path.display()));
         }
     }
     check_cancel(options.cancel).map_err(anyhow::Error::msg)?;
@@ -503,7 +539,18 @@ mod tests {
         )
         .unwrap();
         assert_eq!(report.attachments_saved, 1);
+        let staged: Vec<_> = fs::read_dir(&stage)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert_eq!(staged.len(), 1);
+        assert_eq!(fs::metadata(&staged[0]).unwrap().len(), 5);
         assert_eq!(docs[0].export.owner_handle.as_deref(), Some("+15555550100"));
+        assert_eq!(
+            docs[0].messages[0].attachments[0].size_bytes,
+            Some(5),
+            "decoded aGVsbG8= is five bytes; size_bytes lets vault-push skip re-hashing"
+        );
         assert_eq!(
             docs[0].messages[0].source.as_ref().unwrap().fields["attrs"]["extra"],
             "yes"
@@ -573,6 +620,37 @@ mod tests {
         )
         .unwrap();
         assert_eq!(docs[0].export.owner_handle.as_deref(), Some("+15555550100"));
+        assert_eq!(report.errors.len(), 1);
+    }
+
+    #[test]
+    fn truncated_xml_keeps_messages_parsed_before_the_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("input.xml");
+        fs::write(
+            &input,
+            r#"<smses><sms protocol="0" address="+15555550101" date="1400773261000" type="1" body="kept"/><sms date=""#,
+        )
+        .unwrap();
+        let (docs, report) = read_sbr_documents(
+            &input,
+            SbrReadOptions {
+                owner_phones: &["+15555550100".into()],
+                date_range: &DateRange::default(),
+                attachments_dir: None,
+                copy_attachments: false,
+                keep_attachment_bytes: false,
+                cancel: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].messages.len(), 1);
+        assert_eq!(docs[0].messages[0].text, "kept");
+        assert_eq!(
+            report.sms_seen, 1,
+            "stats from the completed message must survive the XML error"
+        );
         assert_eq!(report.errors.len(), 1);
     }
 }

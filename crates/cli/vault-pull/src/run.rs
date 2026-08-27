@@ -16,9 +16,10 @@ use message_vault_io_core::{CancelFlag, check_cancel};
 use serde::Serialize;
 use vault_push::authenticate;
 
-use crate::http::{ExportMessage, HttpSession};
+use crate::http::{ExportMessage, ExportMessagesArgs, HttpSession};
 use crate::project::{build_document, conversation_key, to_ir_message};
 
+/// Default page size for GET /v1/export/messages.
 pub const DEFAULT_PAGE_LIMIT: usize = 100;
 /// Default number of parallel asset download workers.
 pub const DEFAULT_ASSET_DOWNLOAD_WORKERS: usize = 8;
@@ -206,15 +207,15 @@ fn query_stats_by_paging(
 
     loop {
         check_cancel(cfg.cancel.as_ref()).map_err(|e| anyhow::anyhow!("{e}"))?;
-        let page = session.export_messages(
-            &cfg.base_url,
-            &cfg.key,
+        let page = session.export_messages(ExportMessagesArgs {
+            base_url: &cfg.base_url,
+            key: &cfg.key,
             q,
-            cfg.page_limit.max(1),
-            cursor.as_deref(),
+            limit: cfg.page_limit.max(1),
+            cursor: cursor.as_deref(),
             account,
-            cfg.source.as_deref(),
-        )?;
+            source: cfg.source.as_deref(),
+        })?;
         total_messages += page.messages.len() as u64;
         emit(
             on_progress,
@@ -351,15 +352,15 @@ pub fn run(
 
     loop {
         check_cancel(cfg.cancel.as_ref()).map_err(|e| anyhow::anyhow!("{e}"))?;
-        let page = session.export_messages(
-            &cfg.base_url,
-            &cfg.key,
-            &q,
-            cfg.page_limit.max(1),
-            cursor.as_deref(),
-            &account,
-            cfg.source.as_deref(),
-        )?;
+        let page = session.export_messages(ExportMessagesArgs {
+            base_url: &cfg.base_url,
+            key: &cfg.key,
+            q: &q,
+            limit: cfg.page_limit.max(1),
+            cursor: cursor.as_deref(),
+            account: &account,
+            source: cfg.source.as_deref(),
+        })?;
         total_messages += page.messages.len() as u64;
         emit(
             &mut on_progress,
@@ -437,16 +438,16 @@ pub fn run(
                     skipped_by_journal
                 )),
             );
-            let dl_stats = download_assets_parallel(
-                &session,
-                &cfg.base_url,
-                &cfg.key,
-                &account,
-                &to_download,
-                &cfg.out_dir,
-                cfg.asset_download_workers,
-                cfg.cancel.as_ref(),
-            )?;
+            let dl_stats = download_assets_parallel(DownloadAssetsParallelArgs {
+                session: &session,
+                base_url: &cfg.base_url,
+                key: &cfg.key,
+                account: &account,
+                assets: &to_download,
+                out_dir: &cfg.out_dir,
+                workers: cfg.asset_download_workers,
+                cancel: cfg.cancel.as_ref(),
+            })?;
             attachments_downloaded = dl_stats.downloaded;
             attachments_skipped = dl_stats.skipped + skipped_by_journal;
 
@@ -571,16 +572,28 @@ fn assets_needing_download(
 ///
 /// Returns an error when a download fails, a dest path cannot be created, or
 /// cancel is requested.
-fn download_assets_parallel(
-    session: &crate::http::HttpSession,
-    base_url: &str,
-    key: &str,
-    account: &str,
-    assets: &HashMap<String, (String, String)>, // sha256 -> (source, rel_path)
-    out_dir: &Path,
+struct DownloadAssetsParallelArgs<'a> {
+    session: &'a crate::http::HttpSession,
+    base_url: &'a str,
+    key: &'a str,
+    account: &'a str,
+    assets: &'a HashMap<String, (String, String)>, // sha256 -> (source, rel_path)
+    out_dir: &'a Path,
     workers: usize,
-    cancel: Option<&CancelFlag>,
-) -> Result<AssetDownloadStats> {
+    cancel: Option<&'a CancelFlag>,
+}
+
+fn download_assets_parallel(args: DownloadAssetsParallelArgs<'_>) -> Result<AssetDownloadStats> {
+    let DownloadAssetsParallelArgs {
+        session,
+        base_url,
+        key,
+        account,
+        assets,
+        out_dir,
+        workers,
+        cancel,
+    } = args;
     let mut jobs: Vec<AssetDownloadJob> = Vec::with_capacity(assets.len());
     let mut stats = AssetDownloadStats::default();
 

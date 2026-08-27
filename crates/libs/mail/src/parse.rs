@@ -9,7 +9,6 @@ use std::path::Path;
 
 #[derive(Debug, Deserialize)]
 struct AttachmentMetaCell {
-    path: Option<String>,
     original_name: Option<String>,
     mime_type: Option<String>,
     #[serde(default)]
@@ -208,18 +207,19 @@ fn extract_text_body(mail: &ParsedMail<'_>) -> Option<String> {
     }
     for part in mail.parts() {
         let mime = part.ctype.mimetype.to_ascii_lowercase();
-        if mime == "text/plain" {
-            if let Ok(body) = part.get_body() {
-                return Some(trim_body(&body));
-            }
+        if mime == "text/plain"
+            && let Ok(body) = part.get_body()
+        {
+            return Some(trim_body(&body));
         }
     }
     // Fallback: first non-multipart body.
     for part in mail.parts() {
-        if part.subparts.is_empty() && part.ctype.mimetype.starts_with("text/") {
-            if let Ok(body) = part.get_body() {
-                return Some(trim_body(&body));
-            }
+        if part.subparts.is_empty()
+            && part.ctype.mimetype.starts_with("text/")
+            && let Ok(body) = part.get_body()
+        {
+            return Some(trim_body(&body));
         }
     }
     None
@@ -250,15 +250,16 @@ fn merge_attachments(
             .unwrap_or_else(|| (Vec::new(), None, None));
         out.push(MailAttachment {
             bytes,
-            original_name: m.and_then(|c| c.original_name.clone()).or(name_fallback),
-            mime_type: m.and_then(|c| c.mime_type.clone()).or(mime_fallback),
-            digest_sha256: m.and_then(|c| c.digest_sha256.clone()),
+            meta: message_ir::AttachmentMeta {
+                path: None,
+                original_name: m.and_then(|c| c.original_name.clone()).or(name_fallback),
+                mime_type: m.and_then(|c| c.mime_type.clone()).or(mime_fallback),
+                digest_sha256: m.and_then(|c| c.digest_sha256.clone()),
+            },
             is_sticker: m.map(|c| c.is_sticker).unwrap_or(false),
             transcription: m.and_then(|c| c.transcription.clone()),
             sticker_effect: m.and_then(|c| c.sticker_effect.clone()),
         });
-        // path from meta is unused on MailAttachment (IR restores path separately)
-        let _ = m.and_then(|c| c.path.clone());
     }
     Ok(out)
 }

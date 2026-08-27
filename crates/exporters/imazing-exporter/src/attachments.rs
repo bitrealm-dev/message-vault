@@ -1,12 +1,10 @@
 //! Locate and copy iMazing attachment files next to CSV exports.
 
-use anyhow::{Context, Result};
-use chrono::{Local, TimeZone};
+use anyhow::Result;
 use message_csv::AttachmentCell;
-use sha2::{Digest, Sha256};
+use message_vault_io_core::attachments::{attachment_dest_name, copy_if_missing};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// Maximum directory depth for attachment discovery. iMazing export trees are
@@ -95,6 +93,19 @@ fn collect_files(dir: &Path, depth: usize, out: &mut Vec<(String, PathBuf)>) {
     }
 }
 
+/// Inputs for [`resolve_attachment_cell`].
+pub(crate) struct ResolveAttachmentArgs<'a> {
+    pub csv_name: &'a str,
+    pub attachment_type: &'a str,
+    pub csv_parent: &'a Path,
+    pub index: Option<&'a AttachmentIndex>,
+    pub attachments_dir: &'a Path,
+    pub copy_attachments: bool,
+    pub message_secs: i64,
+    pub attachments_saved: &'a mut u64,
+    pub copy_failures: &'a mut u64,
+}
+
 /// Resolve a CSV attachment name into an [`AttachmentCell`].
 ///
 /// Lookup order (unchanged):
@@ -103,25 +114,28 @@ fn collect_files(dir: &Path, depth: usize, out: &mut Vec<(String, PathBuf)>) {
 ///
 /// When `copy_attachments` is false, keep the CSV name only. On copy failure or
 /// a missing file, fall back to the CSV name so the row still projects.
-pub(crate) fn resolve_attachment_cell(
-    csv_name: &str,
-    attachment_type: &str,
-    csv_parent: &Path,
-    index: Option<&AttachmentIndex>,
-    attachments_dir: &Path,
-    copy_attachments: bool,
-    message_secs: i64,
-    attachments_saved: &mut u64,
-    copy_failures: &mut u64,
-) -> AttachmentCell {
+pub(crate) fn resolve_attachment_cell(args: ResolveAttachmentArgs<'_>) -> AttachmentCell {
+    let ResolveAttachmentArgs {
+        csv_name,
+        attachment_type,
+        csv_parent,
+        index,
+        attachments_dir,
+        copy_attachments,
+        message_secs,
+        attachments_saved,
+        copy_failures,
+    } = args;
     let mime = mime_hint(attachment_type, csv_name);
     let is_sticker = attachment_type.eq_ignore_ascii_case("sticker");
     if !copy_attachments {
         return AttachmentCell {
-            path: Some(csv_name.to_string()),
-            original_name: Some(csv_name.to_string()),
-            mime_type: mime,
-            digest_sha256: None,
+            meta: message_ir::AttachmentMeta {
+                path: Some(csv_name.to_string()),
+                original_name: Some(csv_name.to_string()),
+                mime_type: mime,
+                digest_sha256: None,
+            },
             is_sticker,
             transcription: None,
             sticker_effect: None,
@@ -136,19 +150,23 @@ pub(crate) fn resolve_attachment_cell(
         attachments_saved,
     ) {
         Ok(Some((rel_path, digest))) => AttachmentCell {
-            path: Some(rel_path),
-            original_name: Some(csv_name.to_string()),
-            mime_type: mime,
-            digest_sha256: Some(digest),
+            meta: message_ir::AttachmentMeta {
+                path: Some(rel_path),
+                original_name: Some(csv_name.to_string()),
+                mime_type: mime,
+                digest_sha256: Some(digest),
+            },
             is_sticker,
             transcription: None,
             sticker_effect: None,
         },
         Ok(None) => AttachmentCell {
-            path: Some(csv_name.to_string()),
-            original_name: Some(csv_name.to_string()),
-            mime_type: mime,
-            digest_sha256: None,
+            meta: message_ir::AttachmentMeta {
+                path: Some(csv_name.to_string()),
+                original_name: Some(csv_name.to_string()),
+                mime_type: mime,
+                digest_sha256: None,
+            },
             is_sticker,
             transcription: None,
             sticker_effect: None,
@@ -156,10 +174,12 @@ pub(crate) fn resolve_attachment_cell(
         Err(_) => {
             *copy_failures += 1;
             AttachmentCell {
-                path: Some(csv_name.to_string()),
-                original_name: Some(csv_name.to_string()),
-                mime_type: mime,
-                digest_sha256: None,
+                meta: message_ir::AttachmentMeta {
+                    path: Some(csv_name.to_string()),
+                    original_name: Some(csv_name.to_string()),
+                    mime_type: mime,
+                    digest_sha256: None,
+                },
                 is_sticker,
                 transcription: None,
                 sticker_effect: None,
@@ -226,43 +246,18 @@ fn find_and_copy_attachment(
     let Some(src) = index.and_then(|i| find_attachment_on_disk(csv_name, csv_parent, i)) else {
         return Ok(None);
     };
-    let digest_hex = stream_sha256(&src)?;
-    let digest_prefix = &digest_hex[..16.min(digest_hex.len())];
+    let digest_hex = media::file_sha256(&src)?;
     let ext = src
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| format!(".{e}"))
         .unwrap_or_default();
-    let date_prefix = Local
-        .timestamp_opt(message_secs, 0)
-        .single()
-        .map(|t| t.format("%Y%m%d_%H%M%S").to_string())
-        .unwrap_or_else(|| message_secs.to_string());
-    let name = format!("{date_prefix}-{digest_prefix}{ext}");
+    let name = attachment_dest_name(message_secs, &digest_hex, &ext);
     let dest = attachments_dir.join(&name);
-    if !dest.exists() {
-        fs::copy(&src, &dest)
-            .with_context(|| format!("copy {} to {}", src.display(), dest.display()))?;
+    if copy_if_missing(&src, &dest)? {
         *attachments_saved += 1;
     }
     Ok(Some((format!("attachments/{name}"), digest_hex)))
-}
-
-/// Stream a file through SHA-256 in 64 KB chunks (no full read into memory).
-fn stream_sha256(path: &Path) -> Result<String> {
-    let mut file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
-    let mut hasher = Sha256::new();
-    let mut buf = [0u8; 64 * 1024];
-    loop {
-        let n = file
-            .read(&mut buf)
-            .with_context(|| format!("read {}", path.display()))?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Ok(hex::encode(hasher.finalize()))
 }
 
 fn mime_hint(attachment_type: &str, filename: &str) -> Option<String> {
@@ -321,22 +316,28 @@ mod tests {
         let index = AttachmentIndex::build(dir.path());
         let mut saved = 0;
         let mut failures = 0;
-        let cell = resolve_attachment_cell(
-            "photo.jpg",
-            "image",
-            &chat,
-            Some(&index),
-            &attachments,
-            true,
-            1_600_000_000,
-            &mut saved,
-            &mut failures,
-        );
+        let cell = resolve_attachment_cell(ResolveAttachmentArgs {
+            csv_name: "photo.jpg",
+            attachment_type: "image",
+            csv_parent: &chat,
+            index: Some(&index),
+            attachments_dir: &attachments,
+            copy_attachments: true,
+            message_secs: 1_600_000_000,
+            attachments_saved: &mut saved,
+            copy_failures: &mut failures,
+        });
         assert_eq!(saved, 1);
         assert_eq!(failures, 0);
-        let digest = cell.digest_sha256.expect("digest set after copy");
+        let digest = cell.meta.digest_sha256.expect("digest set after copy");
         assert_eq!(digest.len(), 64);
-        assert!(cell.path.as_deref().unwrap().starts_with("attachments/"));
+        assert!(
+            cell.meta
+                .path
+                .as_deref()
+                .unwrap()
+                .starts_with("attachments/")
+        );
     }
 
     #[cfg(unix)]

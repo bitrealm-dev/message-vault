@@ -1,12 +1,15 @@
 //! Convert iMazing Messages / WhatsApp rows into the shared conversation
 //! structure, then write the chosen output format via [`FormatSink`].
 
-use crate::attachments::{AttachmentIndex, resolve_attachment_cell};
+use crate::attachments::{AttachmentIndex, ResolveAttachmentArgs, resolve_attachment_cell};
+use crate::attachments_emit::{attachment_guid_materials, pending_attachment_to_ir};
 use crate::parse::{RawRow, SourceKind, discover_csv_files, parse_csv_file};
-use anyhow::{Context, Result, bail};
-use chrono::{FixedOffset, Local, LocalResult, NaiveDateTime, TimeZone};
+use crate::parse_emit::{
+    collect_peer_info, is_notification, is_outgoing, parse_message_date, resolve_sender, resolve_tz,
+};
+use anyhow::Result;
 use contacts::ContactsBook;
-use message_csv::{DateRange, format_local_ts, parse_utc_offset, stable_guid};
+use message_csv::{DateRange, format_local_ts, stable_guid};
 use message_ir::{
     ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, HandleType,
     IrAttachment, IrConversationType, IrDirection, IrMessage, IrMessageKind, IrParticipant,
@@ -14,21 +17,14 @@ use message_ir::{
     owner_sender,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
-use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
-use phone::sanitize_number;
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat, prepare_outputs};
 use serde_json::Map;
 use std::collections::{BTreeMap, HashSet};
-use std::fs;
 use std::path::Path;
 
 const EXPORT_SOURCE: &str = "imazing";
 const EXPORT_TOOL: &str = "iMazing";
 const EXPORT_TOOL_VERSION: &str = "3.5.5";
-
-/// Bump a per-exporter counter in the report's `extra` map.
-fn bump(report: &mut ExportReport, key: &str, by: u64) {
-    *report.extra.entry(key.to_string()).or_insert(0) += by;
-}
 
 /// Read a per-exporter counter from the report's `extra` map (test assertions).
 #[cfg(test)]
@@ -37,25 +33,30 @@ fn count(report: &ExportReport, key: &str) -> u64 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TransportFamily {
+pub(super) enum TransportFamily {
     Messages,
     WhatsApp,
 }
 
 impl TransportFamily {
-    fn from_kind(kind: SourceKind) -> Self {
-        match kind {
-            SourceKind::Messages => Self::Messages,
-            SourceKind::WhatsApp => Self::WhatsApp,
-        }
-    }
-
     fn key_prefix(self) -> &'static str {
         match self {
             Self::Messages => "messages",
             Self::WhatsApp => "whatsapp",
         }
     }
+}
+
+/// Inputs for [`convert_export`].
+pub(crate) struct ConvertExportArgs<'a> {
+    pub input: &'a Path,
+    pub output: &'a Path,
+    pub book: &'a ContactsBook,
+    pub timezone: Option<&'a str>,
+    pub date_range: &'a DateRange,
+    pub transforms: ExportTransforms,
+    pub output_format: OutputFormat,
+    pub cancel: Option<&'a CancelFlag>,
 }
 
 /// Convert iMazing Messages / WhatsApp CSV(s) under `input` using `book` from a contacts VCF/vCard CSV.
@@ -69,36 +70,28 @@ impl TransportFamily {
 /// Returns an error when output overlaps input, a CSV cannot be parsed, or the
 /// user cancels.
 pub(crate) fn convert_export(
-    input: &Path,
-    output: &Path,
-    book: &ContactsBook,
-    timezone: Option<&str>,
-    date_range: &DateRange,
-    transforms: ExportTransforms,
-    output_format: OutputFormat,
-    cancel: Option<&CancelFlag>,
+    args: ConvertExportArgs<'_>,
 ) -> Result<(ExportReport, FormatSinkResult)> {
+    let ConvertExportArgs {
+        input,
+        output,
+        book,
+        timezone,
+        date_range,
+        transforms,
+        output_format,
+        cancel,
+    } = args;
     let tz = resolve_tz(timezone)?;
-    fs::create_dir_all(output).with_context(|| format!("create {}", output.display()))?;
-    // Resolve to absolute paths so relative inputs work, `parent()` below is
-    // absolute, and the output/input overlap check uses the same path form.
-    let input = fs::canonicalize(input).with_context(|| format!("resolve {}", input.display()))?;
-    let output =
-        fs::canonicalize(output).with_context(|| format!("resolve {}", output.display()))?;
-    if output == input || input.starts_with(&output) {
-        bail!(
-            "output {} must not be the same as, or contain, the input {}",
-            output.display(),
-            input.display()
-        );
-    }
+    let (inputs, output) = prepare_outputs(&[input.to_path_buf()], output)?;
+    let input = &inputs[0];
     let copy_attachments = transforms.copies_attachments();
     let (mut sink, attachments_dir) =
         FormatSink::open_prepared(&output, output_format, transforms)?;
     // Walk the input tree once; per-attachment lookups hit this index.
-    let attachment_index = copy_attachments.then(|| AttachmentIndex::build(&input));
+    let attachment_index = copy_attachments.then(|| AttachmentIndex::build(input));
 
-    let files = discover_csv_files(&input)?;
+    let files = discover_csv_files(input)?;
     let mut report = ExportReport::default();
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
     // Parse-time dedupe state keyed by conversation key (the shared
@@ -108,8 +101,8 @@ pub(crate) fn convert_export(
     for discovered in &files {
         message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
         match discovered.kind {
-            SourceKind::Messages => bump(&mut report, "messages_files", 1),
-            SourceKind::WhatsApp => bump(&mut report, "whatsapp_files", 1),
+            SourceKind::Messages => report.bump("messages_files", 1),
+            SourceKind::WhatsApp => report.bump("whatsapp_files", 1),
         }
         let rows = match parse_csv_file(&discovered.path, discovered.kind) {
             Ok(r) => r,
@@ -136,10 +129,9 @@ pub(crate) fn convert_export(
         for (session, session_rows) in by_session {
             let peer = collect_peer_info(book, discovered.kind, &session, &session_rows);
             if peer.unresolved_chat {
-                bump(&mut report, "unresolved_chat_phone", 1);
+                report.bump("unresolved_chat_phone", 1);
             }
-            bump(
-                &mut report,
+            report.bump(
                 "unresolved_group_participants",
                 peer.unresolved_roster_labels,
             );
@@ -191,31 +183,31 @@ pub(crate) fn convert_export(
                 if !row.attachment.is_empty() {
                     let csv_parent = discovered.path.parent().unwrap_or_else(|| Path::new("."));
                     let mut copy_failures = 0u64;
-                    let cell = resolve_attachment_cell(
-                        &row.attachment,
-                        &row.attachment_type,
+                    let cell = resolve_attachment_cell(ResolveAttachmentArgs {
+                        csv_name: &row.attachment,
+                        attachment_type: &row.attachment_type,
                         csv_parent,
-                        attachment_index.as_ref(),
-                        &attachments_dir,
+                        index: attachment_index.as_ref(),
+                        attachments_dir: &attachments_dir,
                         copy_attachments,
-                        secs,
-                        &mut report.attachments_saved,
-                        &mut copy_failures,
-                    );
+                        message_secs: secs,
+                        attachments_saved: &mut report.attachments_saved,
+                        copy_failures: &mut copy_failures,
+                    });
                     if copy_failures > 0 {
-                        bump(&mut report, "attachment-copy-failures", copy_failures);
+                        report.bump("attachment-copy-failures", copy_failures);
                     }
-                    let rel_path = cell.path.clone().unwrap_or_default();
+                    let rel_path = cell.meta.path.clone().unwrap_or_default();
                     attachments.push(PendingAttachment {
                         rel_path: rel_path.clone(),
-                        content_type: cell.mime_type.clone().unwrap_or_default(),
+                        content_type: cell.meta.mime_type.clone().unwrap_or_default(),
                         extension: Path::new(&rel_path)
                             .extension()
                             .and_then(|e| e.to_str())
                             .unwrap_or("")
                             .to_string(),
-                        digest_sha256: cell.digest_sha256.clone(),
-                        name_hint: cell.original_name.clone(),
+                        digest_sha256: cell.meta.digest_sha256.clone(),
+                        name_hint: cell.meta.original_name.clone(),
                     });
                     // iMazing rows carry at most one attachment, so sticker
                     // metadata fits on the message.
@@ -319,316 +311,12 @@ pub(crate) fn convert_export(
     Ok((report, sink_result))
 }
 
-#[derive(Debug)]
-struct PeerInfo {
-    chat_id: String,
-    contact_name: String,
-    group: bool,
-    unresolved_chat: bool,
-    unresolved_roster_labels: u64,
-}
-
-fn collect_peer_info(
-    book: &ContactsBook,
-    kind: SourceKind,
-    session: &str,
-    rows: &[&RawRow],
-) -> PeerInfo {
-    let mut handles: HashSet<String> = HashSet::new();
-    for row in rows {
-        let sid = row.sender_id.trim();
-        // Email first: a sender like `bob2024@gmail.com` has 4+ digits and
-        // must never be reduced to a phone number.
-        if sid.contains('@') {
-            handles.insert(sid.to_string());
-        } else if sanitize_number(sid).is_some() {
-            // Format as E.164 (the international phone-number format that starts
-            // with +) when unambiguous. Otherwise keep digits as-is. Never invent `+0…`.
-            handles
-                .insert(phone::normalize_guarded(sid, phone::PhoneRegion::for_raw(sid)).normalized);
-        }
-        for phone in phones_in_text(&row.chat_session) {
-            handles.insert(phone);
-        }
-    }
-
-    let mut unresolved_roster_labels = 0u64;
-    // Messages group rosters encode members as "A & B & C". Resolve silent members via contacts.
-    if kind == SourceKind::Messages && session.contains(" & ") {
-        for part in session.split(" & ") {
-            let label = part.trim();
-            if label.is_empty() {
-                continue;
-            }
-            if label.contains('@') {
-                handles.insert(label.to_string());
-                continue;
-            }
-            if sanitize_number(label).is_some() {
-                handles.insert(
-                    phone::normalize_guarded(label, phone::PhoneRegion::for_raw(label)).normalized,
-                );
-                continue;
-            }
-            if let Some((e164, _)) = book.lookup_handle_by_name(label) {
-                handles.insert(e164);
-            } else {
-                unresolved_roster_labels += 1;
-            }
-        }
-    }
-
-    let mut peer_handles: Vec<String> = handles.into_iter().collect();
-    peer_handles.sort();
-
-    let group = match kind {
-        SourceKind::Messages => session.contains(" & ") || peer_handles.len() >= 2,
-        // WhatsApp has no roster column; multiple distinct senders imply a group.
-        SourceKind::WhatsApp => peer_handles.len() >= 2,
-    };
-
-    let (chat_id, contact_name, unresolved_chat) =
-        resolve_chat_identifier(book, session, &peer_handles, group);
-    PeerInfo {
-        chat_id,
-        contact_name,
-        group,
-        unresolved_chat,
-        unresolved_roster_labels,
-    }
-}
-
-#[derive(Debug)]
-enum TzMode {
-    Local,
-    Fixed(FixedOffset),
-}
-
-fn resolve_tz(timezone: Option<&str>) -> Result<TzMode> {
-    match timezone.map(str::trim).filter(|s| !s.is_empty()) {
-        None => Ok(TzMode::Local),
-        Some(name) => {
-            let offset = parse_utc_offset(name).map_err(anyhow::Error::msg)?;
-            Ok(TzMode::Fixed(offset))
-        }
-    }
-}
-
-fn parse_message_date(raw: &str, tz: &TzMode) -> Option<(i64, String)> {
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return None;
-    }
-    let naive = NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S")
-        .or_else(|_| NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M"))
-        .ok()?;
-    let secs = match tz {
-        // Ambiguous (DST fall-back) hours resolve to the earliest instant
-        // instead of silently dropping the message.
-        TzMode::Local => match Local.from_local_datetime(&naive) {
-            LocalResult::Single(dt) => dt.timestamp(),
-            LocalResult::Ambiguous(earliest, _latest) => earliest.timestamp(),
-            LocalResult::None => return None,
-        },
-        TzMode::Fixed(offset) => match offset.from_local_datetime(&naive) {
-            LocalResult::Single(dt) => dt.timestamp(),
-            LocalResult::Ambiguous(earliest, _latest) => earliest.timestamp(),
-            LocalResult::None => return None,
-        },
-    };
-    Some((secs, (secs * 1000).to_string()))
-}
-
-fn is_outgoing(msg_type: &str) -> bool {
-    matches!(
-        msg_type.trim().to_ascii_lowercase().as_str(),
-        "outgoing" | "sent"
-    )
-}
-
-fn is_notification(msg_type: &str) -> bool {
-    msg_type.trim().eq_ignore_ascii_case("notification")
-}
-
-fn phones_in_text(text: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let bytes = text.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'+' {
-            let start = i;
-            i += 1;
-            while i < bytes.len() && bytes[i].is_ascii_digit() {
-                i += 1;
-            }
-            if i > start + 1 {
-                if sanitize_number(&text[start..i]).is_some() {
-                    let e164 = phone::normalize_guarded(
-                        &text[start..i],
-                        phone::PhoneRegion::for_raw(&text[start..i]),
-                    )
-                    .normalized;
-                    if !out.contains(&e164) {
-                        out.push(e164);
-                    }
-                }
-            }
-        } else {
-            i += 1;
-        }
-    }
-    out
-}
-
-/// Returns `(chat_identifier, contact_name, unresolved_phone)`.
-fn resolve_chat_identifier(
-    book: &ContactsBook,
-    session: &str,
-    peer_handles: &[String],
-    group: bool,
-) -> (String, String, bool) {
-    if group {
-        if !peer_handles.is_empty() {
-            let title = session.trim().to_string();
-            return (peer_handles.join(","), title, false);
-        }
-        return (
-            message_vault_io_core::name_stem(session),
-            session.trim().to_string(),
-            true,
-        );
-    }
-
-    if let Some(handle) = peer_handles.first() {
-        let contact_name = if let Some(digits) = sanitize_number(handle) {
-            // The book keys entries by its own US-digit form.
-            book.lookup_name_by_handle(
-                &phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized,
-                HandleType::Phone,
-            )
-            .unwrap_or("")
-            .to_string()
-        } else {
-            String::new()
-        };
-        let contact_name = if contact_name.is_empty() {
-            session.trim().to_string()
-        } else {
-            contact_name
-        };
-        return (handle.clone(), contact_name, false);
-    }
-
-    let session = session.trim();
-    if session.is_empty() {
-        return ("unknown".to_string(), String::new(), true);
-    }
-    // Email first: an address like `bob2024@gmail.com` has 4+ digits and must
-    // not be treated as a phone number.
-    if session.contains('@') {
-        return (session.to_string(), String::new(), false);
-    }
-    if let Some(digits) = sanitize_number(session) {
-        // Format as E.164 when unambiguous. Otherwise keep digits as-is. Never
-        // invent `+0…`. The contacts book looks up its own US-digit form.
-        let handle =
-            phone::normalize_guarded(session, phone::PhoneRegion::for_raw(session)).normalized;
-        let book_form = phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized;
-        let name = book
-            .lookup_name_by_handle(&book_form, HandleType::Phone)
-            .unwrap_or("")
-            .to_string();
-        return (handle, name, false);
-    }
-    if let Some((e164, _)) = book.lookup_handle_by_name(session) {
-        return (e164, session.to_string(), false);
-    }
-    (
-        message_vault_io_core::name_stem(session),
-        session.to_string(),
-        true,
-    )
-}
-
-fn resolve_sender(
-    book: &ContactsBook,
-    row: &RawRow,
-    is_from_me: bool,
-    is_notification: bool,
-    chat_id: &str,
-    contact_name: &str,
-) -> (String, String) {
-    if is_from_me {
-        return (String::new(), String::new());
-    }
-    if is_notification {
-        // Keep any available identity from the notification row; often empty.
-        // Email first: an address like `bob2024@gmail.com` has 4+ digits and
-        // must not be reduced to a phone number.
-        let handle = if row.sender_id.contains('@') {
-            row.sender_id.trim().to_string()
-        } else if sanitize_number(&row.sender_id).is_some() {
-            phone::normalize_guarded(&row.sender_id, phone::PhoneRegion::for_raw(&row.sender_id))
-                .normalized
-        } else {
-            String::new()
-        };
-        return (handle, row.sender_name.trim().to_string());
-    }
-
-    let mut handle = String::new();
-    if row.sender_id.contains('@') {
-        handle = row.sender_id.trim().to_string();
-    } else if sanitize_number(&row.sender_id).is_some() {
-        // Format as E.164 when unambiguous. Otherwise keep digits as-is. Never invent `+0…`.
-        handle =
-            phone::normalize_guarded(&row.sender_id, phone::PhoneRegion::for_raw(&row.sender_id))
-                .normalized;
-    } else if !chat_id.contains('@')
-        && (chat_id.starts_with('+') || sanitize_number(chat_id).is_some())
-    {
-        handle = phone::normalize_guarded(chat_id, phone::PhoneRegion::for_raw(chat_id)).normalized;
-    } else if !row.sender_name.is_empty() {
-        if let Some((e164, _)) = book.lookup_handle_by_name(&row.sender_name) {
-            handle = e164;
-        }
-    }
-
-    let mut display = row.sender_name.trim().to_string();
-    if display.is_empty() {
-        if let Some(digits) = sanitize_number(&handle) {
-            // The book keys entries by its own US-digit form.
-            display = book
-                .lookup_name_by_handle(
-                    &phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized,
-                    HandleType::Phone,
-                )
-                .unwrap_or("")
-                .to_string();
-        }
-    }
-    if display.is_empty() && !contact_name.is_empty() {
-        display = contact_name.to_string();
-    }
-
-    (handle, display)
-}
-
 fn prepare_conversation(convo: &mut PendingConversation, report: &mut ExportReport) -> bool {
     if convo.messages.is_empty() {
         return false;
     }
     convo.messages.sort_by_key(|m| m.sort_key);
-    convo.messages.retain(|m| {
-        if format_local_ts(m.sort_key).is_some() {
-            true
-        } else {
-            report.skipped_invalid_date += 1;
-            false
-        }
-    });
-    convo.has_attachments = convo.messages.iter().any(|m| !m.attachments.is_empty());
-    !convo.messages.is_empty()
+    message_vault_io_core::prune_and_finish_conversation(convo, report, |k| k)
 }
 
 /// iMazing identifiers are E.164 phones, emails, or (rarely) name stems;
@@ -661,21 +349,6 @@ fn imazing_packaging_stem_suffix(source_kind: &str) -> Option<String> {
     }
 }
 
-/// Materials for [`stable_guid`]: prefer content digests so a later run that
-/// finds and copies a previously missing file does not change the message id.
-fn attachment_guid_materials(attachments: &[PendingAttachment]) -> Vec<String> {
-    let mut digests: Vec<String> = attachments
-        .iter()
-        .map(|a| {
-            a.digest_sha256
-                .clone()
-                .unwrap_or_else(|| a.rel_path.clone())
-        })
-        .collect();
-    digests.sort();
-    digests
-}
-
 /// First non-empty `contact_name` extra on a message in this conversation.
 fn first_contact_name(convo: &PendingConversation) -> Option<String> {
     convo
@@ -684,22 +357,6 @@ fn first_contact_name(convo: &PendingConversation) -> Option<String> {
         .map(|m| m.extra_str("contact_name").trim())
         .find(|n| !n.is_empty())
         .map(str::to_string)
-}
-
-/// Map a staged attachment onto the shared [`IrAttachment`] shape.
-fn pending_attachment_to_ir(a: &PendingAttachment, msg: &PendingMessage) -> IrAttachment {
-    IrAttachment {
-        path: Some(a.rel_path.clone()),
-        original_name: a.name_hint.clone(),
-        mime_type: a.mime_type(),
-        digest_sha256: a.digest_sha256.clone(),
-        is_sticker: msg.extra_flag("is_sticker"),
-        transcription: msg.extra_opt("transcription"),
-        sticker_effect: msg.extra_opt("sticker_effect"),
-        size_bytes: None,
-        missing_reason: None,
-        bytes: None,
-    }
 }
 
 /// Build a [`ConversationDocument`] from one pending conversation.
@@ -731,20 +388,26 @@ fn pending_to_document(
     // (session string is not a real group title).
     let session_title = convo.display_name.as_deref().unwrap_or("");
 
-    let export = ExportMeta {
-        source: EXPORT_SOURCE.into(),
-        tool: EXPORT_TOOL.into(),
-        tool_version: EXPORT_TOOL_VERSION.into(),
+    let owner_meta = ExportMeta {
+        source: String::new(),
+        tool: String::new(),
+        tool_version: String::new(),
         owner_handle: None,
         owner_display_name: None,
     };
+    let export = message_vault_io_core::export_meta(
+        EXPORT_SOURCE,
+        EXPORT_TOOL,
+        EXPORT_TOOL_VERSION,
+        &owner_meta,
+    );
     let (owner_handle, owner_display) = owner_sender(&export);
 
     let mut messages = Vec::with_capacity(convo.messages.len());
     for msg in &convo.messages {
         let is_notification = msg.extra_flag("is_notification");
         if is_notification {
-            bump(report, "notifications", 1);
+            report.bump("notifications", 1);
         } else if msg.is_from_me {
             report.sent += 1;
         } else {
@@ -858,7 +521,7 @@ fn pending_to_document(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::File;
+    use std::fs::{self, File};
     use std::io::Write;
     use std::path::PathBuf;
 
@@ -870,6 +533,23 @@ mod tests {
         let mut f = File::create(&path).unwrap();
         write!(f, "{body}").unwrap();
         path
+    }
+
+    fn convert(
+        input: &std::path::Path,
+        output: &std::path::Path,
+        book: &ContactsBook,
+    ) -> Result<(ExportReport, FormatSinkResult)> {
+        convert_export(ConvertExportArgs {
+            input,
+            output,
+            book,
+            timezone: Some("UTC"),
+            date_range: &DateRange::default(),
+            transforms: ExportTransforms::none(),
+            output_format: OutputFormat::Csv,
+            cancel: None,
+        })
     }
 
     fn pending_att(rel_path: &str, digest: Option<&str>) -> PendingAttachment {
@@ -929,17 +609,7 @@ Bob,,McRoy,+13212462167,\n",
         );
         let book = ContactsBook::load_vcard_csv(&contacts).unwrap();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            Some("UTC"),
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book).unwrap();
         assert_eq!(report.conversations, 1);
         assert_eq!(count(&report, "unresolved_chat_phone"), 0);
         assert_eq!(report.messages, 2);
@@ -969,17 +639,7 @@ Other,,Person,+15555550999,\n",
         );
         let book = ContactsBook::load_vcard_csv(&contacts).unwrap();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            Some("UTC"),
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book).unwrap();
         assert!(count(&report, "unresolved_chat_phone") >= 1);
         assert_eq!(report.conversations, 1);
         assert!(out.join("Mystery_Person.csv").is_file());
@@ -1003,17 +663,7 @@ Bob,,,+15555550100,\n",
         );
         let book = ContactsBook::load_vcard_csv(&contacts).unwrap();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            Some("UTC"),
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book).unwrap();
         assert_eq!(report.messages, 1);
         assert_eq!(report.duplicates_dropped, 1);
     }
@@ -1036,17 +686,7 @@ Bob,,,+15555550100,\n",
         );
         let book = ContactsBook::load_vcard_csv(&contacts).unwrap();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            Some("UTC"),
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book).unwrap();
         assert_eq!(report.messages, 2);
         assert_eq!(report.duplicates_dropped, 0);
     }
@@ -1071,17 +711,7 @@ Carol,,Silent,+15555550133,\n",
         );
         let book = ContactsBook::load_vcard_csv(&contacts).unwrap();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            Some("UTC"),
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book).unwrap();
         assert_eq!(report.conversations, 1);
         assert_eq!(count(&report, "unresolved_group_participants"), 0);
         let body = fs::read_to_string(out.join("group_+15555550111_+15555550122_+15555550133.csv"))
@@ -1109,17 +739,7 @@ Bob,,Example,+15555550122,\n",
         );
         let book = ContactsBook::load_vcard_csv(&contacts).unwrap();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            Some("UTC"),
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book).unwrap();
         assert_eq!(report.conversations, 1);
         assert_eq!(count(&report, "unresolved_group_participants"), 1);
     }
@@ -1147,17 +767,7 @@ Bob,,,+15555550100,\n",
         );
         let book = ContactsBook::load_vcard_csv(&contacts).unwrap();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            Some("UTC"),
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book).unwrap();
         assert_eq!(report.conversations, 2);
         assert_eq!(count(&report, "messages_files"), 1);
         assert_eq!(count(&report, "whatsapp_files"), 1);
@@ -1188,17 +798,7 @@ Bob McRoy,2020-01-01 12:00:00,,,,,SMS,Incoming,+15555550100,Bob,Read,,,Hi,,image
         fs::write(chat.join("ABC123_image000000.jpg"), b"fake-jpeg-bytes").unwrap();
         let book = ContactsBook::empty();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            &chat,
-            &out,
-            &book,
-            Some("UTC"),
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(&chat, &out, &book).unwrap();
         assert_eq!(report.attachments_saved, 1);
         assert_eq!(report.messages, 1);
         let att_dir = out.join("attachments");
@@ -1221,17 +821,7 @@ Bob McRoy,2020-01-01 12:01:00,iMessage,Outgoing,,,Read,,,Hi,,,\n",
         );
         let book = ContactsBook::empty();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            Some("UTC"),
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book).unwrap();
         assert_eq!(report.conversations, 1);
         assert_eq!(report.messages, 2);
         // Chat id stays the full email; the CSV filename stems `@` to `_`.
@@ -1262,17 +852,7 @@ Group Chat,2020-01-01 12:00:00,iMessage,Incoming,+15555550122,Bob,Read,,,Same,,,
         );
         let book = ContactsBook::empty();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            Some("UTC"),
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book).unwrap();
         assert_eq!(report.messages, 2);
         assert_eq!(report.duplicates_dropped, 0);
     }
@@ -1287,17 +867,7 @@ Group Chat,2020-01-01 12:00:00,iMessage,Incoming,+15555550122,Bob,Read,,,Same,,,
 Bob,2020-01-01 12:00:00,SMS,Incoming,+13212462167,Bob,Read,,,Hello,,,\n",
         );
         let book = ContactsBook::empty();
-        let err = convert_export(
-            dir.path(),
-            dir.path(),
-            &book,
-            Some("UTC"),
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap_err();
+        let err = convert(dir.path(), dir.path(), &book).unwrap_err();
         assert!(err.to_string().contains("must not be the same as"), "{err}");
         // Source CSV must survive the refused run.
         assert!(dir.path().join("Messages - Bob.csv").is_file());

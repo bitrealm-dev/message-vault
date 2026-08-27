@@ -1,7 +1,7 @@
 # Published vault image. Save this file and run: docker compose up -d
 # Docs: https://bitrealm.io/vault/user/get-started/try-the-vault/
 #
-# Pin a release: change :latest to :0.7.3 (no "v").
+# Pin a release: change :latest to :0.8.3 (no "v").
 # Empty vault: DEMO_DATA=false docker compose up -d
 # Hosted Try it (private sample copies): GUEST_DEMO_POOL=true docker compose up -d
 # JSONL drop: copy files into ./staging

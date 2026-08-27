@@ -1,25 +1,24 @@
 import {
+  type ReactNode,
+  type UIEvent,
   useCallback,
   useLayoutEffect,
   useRef,
   useState,
-  type ReactNode,
-  type UIEvent,
 } from "react";
-import {
-  ListBox,
-  ListBoxItem,
-  ListLayout,
-  Virtualizer,
-} from "react-aria-components";
+import { ListBox, ListBoxItem, ListLayout, Virtualizer } from "react-aria-components";
 import { groupByLetter } from "../lib/contactSort";
-import { formatVisibleRange } from "../lib/usePagedList";
 import { isTauri } from "../lib/tauri-check";
 import { listRowDividersThin } from "../lib/tw";
+import { formatVisibleRange, listActivitySuffix } from "../lib/usePagedList";
 import ListRangeHeader from "./ListRangeHeader";
 import VirtualList, { type VisibleRange } from "./VirtualList";
 
 const NEAR_END_THRESHOLD = 10;
+/** Room under the last row so the floating range pill does not cover contacts. */
+const RANGE_PILL_SCROLL_PAD = 56;
+/** Viewport pixels covered by the chip (`bottom-3` + pill). Used so range math ignores the overlay. */
+const RANGE_PILL_OVERLAY_INSET = 40;
 
 type InfiniteOffsetListProps<T> = {
   items: T[];
@@ -72,15 +71,14 @@ function rangeFromScroll(
   clientHeight: number,
   estimateSize: number,
   count: number,
+  bottomInset = 0,
 ): VisibleRange {
   if (count === 0 || clientHeight <= 0 || estimateSize <= 0) {
     return { start: 0, end: 0 };
   }
+  const visibleHeight = Math.max(0, clientHeight - bottomInset);
   const startIdx = Math.floor(scrollTop / estimateSize);
-  const endIdx = Math.min(
-    count - 1,
-    Math.ceil((scrollTop + clientHeight) / estimateSize) - 1,
-  );
+  const endIdx = Math.min(count - 1, Math.ceil((scrollTop + visibleHeight) / estimateSize) - 1);
   return { start: startIdx + 1, end: Math.max(startIdx, endIdx) + 1 };
 }
 
@@ -132,6 +130,7 @@ function RacVirtualList<T extends object>({
       el.clientHeight,
       estimateSize,
       items.length,
+      RANGE_PILL_OVERLAY_INSET,
     );
     onVisibleRangeChange(range);
     maybeRequestMore(range.end);
@@ -155,7 +154,13 @@ function RacVirtualList<T extends object>({
         selectedKeys={selectedId ? new Set([selectedId]) : new Set()}
         onScroll={onScroll}
         className="min-h-0 flex-1 overflow-auto outline-none"
-        style={{ display: "block", padding: 0 }}
+        style={{
+          display: "block",
+          paddingTop: 0,
+          paddingRight: 0,
+          paddingBottom: RANGE_PILL_SCROLL_PAD,
+          paddingLeft: 0,
+        }}
       >
         {(item) => {
           const id = getId(item);
@@ -167,11 +172,7 @@ function RacVirtualList<T extends object>({
               className={({ isSelected, isHovered }) =>
                 rowClass(isRowHighlighted?.(item) ?? isSelected, isHovered)
               }
-              style={
-                dynamicSize
-                  ? { minHeight: estimateSize }
-                  : { height: "100%", minHeight: 0 }
-              }
+              style={dynamicSize ? { minHeight: estimateSize } : { height: "100%", minHeight: 0 }}
             >
               {renderRow(item)}
             </ListBoxItem>
@@ -221,6 +222,8 @@ function TanStackVirtualList<T>({
         if (hasMore) requestMore();
       }}
       empty={empty}
+      footer={<div aria-hidden className="shrink-0" style={{ height: RANGE_PILL_SCROLL_PAD }} />}
+      visibleBottomInset={RANGE_PILL_OVERLAY_INSET}
       renderItem={(index) => {
         const item = items[index];
         if (!item) return null;
@@ -244,8 +247,7 @@ function TanStackVirtualList<T>({
   );
 }
 
-const LETTER_DIVIDER =
-  "flex items-center border-b border-border bg-panel px-3 py-1";
+const LETTER_DIVIDER = "flex items-center border-b border-border bg-panel px-3 py-1";
 
 function SectionedLetterList<T>({
   items,
@@ -286,35 +288,35 @@ function SectionedLetterList<T>({
   const hasMoreRef = useRef(hasMore);
   hasMoreRef.current = hasMore;
 
-  const publishVisibleRange = (root: HTMLElement) => {
-    const rootRect = root.getBoundingClientRect();
-    const rows = root.querySelectorAll("[data-contact-index]");
-    let start = 0;
-    let end = 0;
-    for (const row of rows) {
-      const rect = row.getBoundingClientRect();
-      if (rect.bottom <= rootRect.top || rect.top >= rootRect.bottom) continue;
-      const raw = row.getAttribute("data-contact-index");
-      const idx = raw == null ? Number.NaN : Number(raw);
-      if (!Number.isFinite(idx)) continue;
-      const oneBased = idx + 1;
-      if (start === 0) start = oneBased;
-      end = oneBased;
-    }
-    onRangeRef.current({ start, end });
-    if (
-      hasMoreRef.current &&
-      items.length > 0 &&
-      end >= items.length - NEAR_END_THRESHOLD
-    ) {
-      requestMoreRef.current();
-    }
-  };
+  const publishVisibleRange = useCallback(
+    (root: HTMLElement) => {
+      const rootRect = root.getBoundingClientRect();
+      const viewBottom = rootRect.bottom - RANGE_PILL_OVERLAY_INSET;
+      const rows = root.querySelectorAll("[data-contact-index]");
+      let start = 0;
+      let end = 0;
+      for (const row of rows) {
+        const rect = row.getBoundingClientRect();
+        if (rect.bottom <= rootRect.top || rect.top >= viewBottom) continue;
+        const raw = row.getAttribute("data-contact-index");
+        const idx = raw == null ? Number.NaN : Number(raw);
+        if (!Number.isFinite(idx)) continue;
+        const oneBased = idx + 1;
+        if (start === 0) start = oneBased;
+        end = oneBased;
+      }
+      onRangeRef.current({ start, end });
+      if (hasMoreRef.current && items.length > 0 && end >= items.length - NEAR_END_THRESHOLD) {
+        requestMoreRef.current();
+      }
+    },
+    [items],
+  );
 
   useLayoutEffect(() => {
     const root = scrollerRef.current;
     if (root) publishVisibleRange(root);
-  }, [items]);
+  }, [publishVisibleRange]);
 
   const onScroll = (e: UIEvent<HTMLDivElement>) => {
     publishVisibleRange(e.currentTarget);
@@ -325,13 +327,9 @@ function SectionedLetterList<T>({
   }
 
   return (
-    <div
-      ref={scrollerRef}
-      className="min-h-0 flex-1 overflow-auto"
-      onScroll={onScroll}
-    >
-      {groups.map(([letter, groupItems], groupIndex) => (
-        <section key={`${letter}-${groupIndex}`} aria-label={`Names starting with ${letter}`}>
+    <div ref={scrollerRef} className="min-h-0 flex-1 overflow-auto" onScroll={onScroll}>
+      {groups.map(([letter, groupItems]) => (
+        <section key={letter} aria-label={`Names starting with ${letter}`}>
           {letter !== currentLetter ? (
             <div className={`${LETTER_DIVIDER} gap-2.5`}>
               {sectionLead}
@@ -358,6 +356,7 @@ function SectionedLetterList<T>({
           })}
         </section>
       ))}
+      <div aria-hidden className="shrink-0" style={{ height: RANGE_PILL_SCROLL_PAD }} />
     </div>
   );
 }
@@ -400,20 +399,14 @@ export default function InfiniteOffsetList<T extends object>({
   const rangeLabel =
     loading && items.length === 0
       ? "Loading…"
-      : formatVisibleRange(
-          visibleRange.start,
-          visibleRange.end,
-          denom,
-          items.length,
-        );
+      : formatVisibleRange(visibleRange.start, visibleRange.end, denom, items.length);
 
-  const firstVisibleIndex =
-    visibleRange.start > 0 ? visibleRange.start - 1 : 0;
+  const activitySuffix = listActivitySuffix(refreshing, filling);
+
+  const firstVisibleIndex = visibleRange.start > 0 ? visibleRange.start - 1 : 0;
   const firstVisible = items[firstVisibleIndex];
-  const headerLetter =
-    getSectionLetter && firstVisible
-      ? getSectionLetter(firstVisible)
-      : null;
+  const headerLetter = getSectionLetter && firstVisible ? getSectionLetter(firstVisible) : null;
+  const showRangePill = items.length > 0;
 
   if (error && items.length === 0) {
     return (
@@ -440,11 +433,13 @@ export default function InfiniteOffsetList<T extends object>({
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
       <ListRangeHeader
-        rangeLabel={rangeLabel}
-        refreshing={refreshing}
-        filling={filling}
+        rangeLabel={
+          showRangePill ? undefined : loading && items.length === 0 ? rangeLabel : undefined
+        }
+        refreshing={!showRangePill && refreshing}
+        filling={!showRangePill && filling}
         actions={headerActions}
         selectAllChecked={selectAllChecked}
         selectAllIndeterminate={selectAllIndeterminate}
@@ -480,6 +475,17 @@ export default function InfiniteOffsetList<T extends object>({
       ) : (
         <TanStackVirtualList {...listProps} />
       )}
+      {showRangePill ? (
+        <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
+          <span
+            data-testid="contact-list-range-pill"
+            className="rounded-full border border-border bg-elevated px-2.5 py-1 text-[0.688rem] tabular-nums text-text shadow-[0_2px_10px_rgba(0,0,0,0.18)]"
+          >
+            {rangeLabel}
+            {activitySuffix}
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }

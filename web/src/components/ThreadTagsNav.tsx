@@ -9,15 +9,14 @@ import {
   tagSlug,
 } from "../lib/threadTags";
 import GroupNameDialog from "./GroupNameDialog";
+import { EllipsisIcon, TagIcon } from "./icons";
 import NavCollapsibleSection from "./NavCollapsibleSection";
 import NavGlyphButton from "./NavGlyphButton";
-import { EllipsisIcon, TagIcon } from "./icons";
-
-function navRowClass(active: boolean): string {
-  return `group relative flex w-full items-center gap-2 rounded border-none py-0.5 pl-3 text-left text-[0.875rem] text-text hover:bg-hover ${
-    active ? "bg-hover font-semibold" : "bg-transparent font-normal"
-  }`;
-}
+import {
+  NAV_LEADING_GLYPH_CLASS,
+  NAV_NESTED_ROW_CLASS,
+  navGlyphRowClass,
+} from "./navSectionLayout";
 
 function apiErrorMessage(err: unknown, fallback: string): string {
   if (!(err instanceof Error)) return fallback;
@@ -55,8 +54,15 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
       if (t instanceof Element && t.closest("[data-tag-row-menu]")) return;
       setMenuFor(null);
     };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuFor(null);
+    };
     document.addEventListener("mousedown", onPointerDown, true);
-    return () => document.removeEventListener("mousedown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
   }, [menuFor]);
 
   const createTag = async (name: string) => {
@@ -115,96 +121,103 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
 
   return (
     <>
-    <NavCollapsibleSection
-      id="thread-tags"
-      title="Thread Tags"
-      addLabel="Create thread tag"
-      addDisabled={busy}
-      onAdd={() => {
-        setMenuFor(null);
-        setError(null);
-        setCreateOpen(true);
-      }}
-    >
-      {tags.map((name) => {
-        const href = `/tag/${tagSlug(name)}`;
-        const active = location.pathname === href;
-        const menuOpen = menuFor === name;
-        return (
-          <div key={name} className="relative">
-            <div className={navRowClass(active)}>
-              <button
-                type="button"
-                onClick={() => navigate(href)}
-                className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 border-none bg-transparent p-0 text-left text-inherit"
-              >
-                <TagIcon size={15} />
-                <span className="min-w-0 truncate">{name}</span>
-              </button>
-              <NavGlyphButton
-                data-tag-row-menu=""
-                aria-label={`Tag options for ${name}`}
-                aria-expanded={menuOpen}
-                disabled={busy}
-                active={menuOpen}
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setMenuFor(menuOpen ? null : name);
-                }}
-                className={
-                  active || menuOpen
-                    ? ""
-                    : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-                }
-              >
-                <EllipsisIcon size={15} />
-              </NavGlyphButton>
-            </div>
-            {menuOpen ? (
-              <div
-                data-tag-row-menu=""
-                data-mv-overlay=""
-                className="absolute top-full right-0 z-[80] mt-0.5 min-w-[7.5rem] rounded-lg border border-border bg-popover py-1 shadow-xl"
-              >
-                <button
-                  type="button"
-                  className="block w-full cursor-pointer border-none bg-transparent px-3 py-1.5 text-left text-[0.813rem] text-text hover:bg-hover"
-                  onClick={() => {
-                    setMenuFor(null);
-                    setError(null);
-                    setRenameFor(name);
-                  }}
-                >
-                  Rename…
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  className="block w-full cursor-pointer border-none bg-transparent px-3 py-1.5 text-left text-[0.813rem] text-text hover:bg-hover disabled:opacity-40"
-                  onClick={() => void removeTag(name)}
-                >
-                  Delete
-                </button>
-              </div>
-            ) : null}
-          </div>
-        );
-      })}
-
-      <button
-        type="button"
-        onClick={() => navigate("/no-tag")}
-        className={`${navRowClass(location.pathname === "/no-tag")} cursor-pointer bg-transparent`}
+      <NavCollapsibleSection
+        id="thread-tags"
+        title="Message Tags"
+        addLabel="Create message tag"
+        addDisabled={busy}
+        onAdd={() => {
+          setMenuFor(null);
+          setError(null);
+          setCreateOpen(true);
+        }}
       >
-        <TagIcon size={15} />
-        <span className="truncate">No tag</span>
-      </button>
-    </NavCollapsibleSection>
+        {tags.map((name) => {
+          const href = `/tag/${tagSlug(name)}`;
+          const active = location.pathname === href;
+          const menuOpen = menuFor === name;
+          return (
+            <div key={name} className="relative w-full">
+              <div className={navGlyphRowClass(active)}>
+                <button
+                  type="button"
+                  onClick={() => navigate(href)}
+                  className={`${NAV_NESTED_ROW_CLASS} cursor-pointer border-none bg-transparent p-0 text-left text-inherit`}
+                >
+                  <span className={NAV_LEADING_GLYPH_CLASS}>
+                    <TagIcon size={15} />
+                  </span>
+                  <span className="min-w-0 truncate">{name}</span>
+                </button>
+                <NavGlyphButton
+                  data-tag-row-menu=""
+                  aria-label={`Tag options for ${name}`}
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  disabled={busy}
+                  active={menuOpen}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setMenuFor(menuOpen ? null : name);
+                  }}
+                  className={
+                    active || menuOpen
+                      ? ""
+                      : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                  }
+                >
+                  <EllipsisIcon size={15} />
+                </NavGlyphButton>
+              </div>
+              {menuOpen ? (
+                <div
+                  data-tag-row-menu=""
+                  data-mv-overlay=""
+                  className="absolute top-full right-0 z-[80] mt-0.5 min-w-[7.5rem] rounded-lg border border-border bg-popover py-1 shadow-xl"
+                >
+                  <button
+                    type="button"
+                    className="block w-full cursor-pointer border-none bg-transparent px-3 py-1.5 text-left text-[0.813rem] text-text hover:bg-hover"
+                    onClick={() => {
+                      setMenuFor(null);
+                      setError(null);
+                      setRenameFor(name);
+                    }}
+                  >
+                    Rename…
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    className="block w-full cursor-pointer border-none bg-transparent px-3 py-1.5 text-left text-[0.813rem] text-text hover:bg-hover disabled:opacity-40"
+                    onClick={() => void removeTag(name)}
+                  >
+                    Delete
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+
+        <button
+          type="button"
+          onClick={() => navigate("/no-tag")}
+          className={`${navGlyphRowClass(location.pathname === "/no-tag")} cursor-pointer`}
+        >
+          <span className={NAV_NESTED_ROW_CLASS}>
+            <span className={NAV_LEADING_GLYPH_CLASS}>
+              <TagIcon size={15} />
+            </span>
+            <span className="truncate">No tag</span>
+          </span>
+        </button>
+      </NavCollapsibleSection>
 
       {createOpen ? (
         <GroupNameDialog
-          title="Create thread tag"
+          title="Create message tag"
           placeholder="Tag name"
           confirmLabel="Create"
           error={error}

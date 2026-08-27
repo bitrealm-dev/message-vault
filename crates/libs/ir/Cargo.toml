@@ -3,9 +3,13 @@ name = "message-ir"
 version = "0.1.0"
 edition = "2024"
 description = "Schema types for the common-message ConversationDocument intermediate representation"
-license = "AGPL-3.0-only"
+license = "LicenseRef-FCL-1.0-ALv2"
 
 [dependencies]
-message-csv = { path = "../csv" }
+hex = "0.4.3"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
+sha2 = "0.11.0"
+
+[features]
+testutil = []

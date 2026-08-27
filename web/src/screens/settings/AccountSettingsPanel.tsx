@@ -1,10 +1,10 @@
 import { useState } from "react";
+import Button from "../../components/Button";
 import { apiClient } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { useAccountProfile } from "../../lib/useAccountProfile";
-import Button from "../../components/Button";
-import { ProfileDangerZone } from "./ProfileDangerZone";
 import { ApiTokensSection } from "./ApiTokensSection";
+import { ProfileDangerZone } from "./ProfileDangerZone";
 import { inputClassName, sectionTitleClass } from "./profileStyles";
 
 /** Account settings: username, password, API tokens, danger zone. */
@@ -19,11 +19,7 @@ export function AccountSettingsPanel() {
   const [pwOk, setPwOk] = useState(false);
 
   if (loadError) {
-    return (
-      <div className="text-danger">
-        Could not load account: {loadError}
-      </div>
-    );
+    return <div className="text-danger">Could not load account: {loadError}</div>;
   }
 
   if (loading || !profile) {
@@ -45,13 +41,10 @@ export function AccountSettingsPanel() {
       return;
     }
     try {
-      const res = await apiClient.post<{ ok: boolean; token: string }>(
-        "/v1/auth/change-password",
-        {
-          current_password: currentPw,
-          new_password: newPw,
-        },
-      );
+      const res = await apiClient.post<{ ok: boolean; token: string }>("/v1/auth/change-password", {
+        current_password: currentPw,
+        new_password: newPw,
+      });
       if (res.token) updateToken(res.token);
       setPwOk(true);
       setPwMsg("Password changed.");
@@ -82,39 +75,39 @@ export function AccountSettingsPanel() {
         <>
           <h3 className={sectionTitleClass}>Change Password</h3>
           <div className="mb-6 max-w-[360px]">
-            <label className="mb-1 block text-[0.813rem] font-medium">
-              Current password
+            <label className="mb-2 block">
+              <span className="mb-1 block text-[0.813rem] font-medium">Current password</span>
+              <input
+                type="password"
+                value={currentPw}
+                onChange={(e) => setCurrentPw(e.target.value)}
+                autoComplete="current-password"
+                disabled={isDemo}
+                className={inputClassName}
+              />
             </label>
-            <input
-              type="password"
-              value={currentPw}
-              onChange={(e) => setCurrentPw(e.target.value)}
-              autoComplete="current-password"
-              disabled={isDemo}
-              className={`${inputClassName} mb-2`}
-            />
-            <label className="mb-1 block text-[0.813rem] font-medium">
-              New password
+            <label className="mb-2 block">
+              <span className="mb-1 block text-[0.813rem] font-medium">New password</span>
+              <input
+                type="password"
+                value={newPw}
+                onChange={(e) => setNewPw(e.target.value)}
+                autoComplete="new-password"
+                disabled={isDemo}
+                className={inputClassName}
+              />
             </label>
-            <input
-              type="password"
-              value={newPw}
-              onChange={(e) => setNewPw(e.target.value)}
-              autoComplete="new-password"
-              disabled={isDemo}
-              className={`${inputClassName} mb-2`}
-            />
-            <label className="mb-1 block text-[0.813rem] font-medium">
-              Confirm new password
+            <label className="mb-2 block">
+              <span className="mb-1 block text-[0.813rem] font-medium">Confirm new password</span>
+              <input
+                type="password"
+                value={confirmPw}
+                onChange={(e) => setConfirmPw(e.target.value)}
+                autoComplete="new-password"
+                disabled={isDemo}
+                className={inputClassName}
+              />
             </label>
-            <input
-              type="password"
-              value={confirmPw}
-              onChange={(e) => setConfirmPw(e.target.value)}
-              autoComplete="new-password"
-              disabled={isDemo}
-              className={`${inputClassName} mb-2`}
-            />
             <Button
               variant="primary"
               onClick={handleChangePassword}

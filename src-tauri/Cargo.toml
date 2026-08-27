@@ -1,8 +1,8 @@
 [package]
 name = "message-vault-io-tauri"
-version = "0.7.3"
+version = "0.8.3"
 edition = "2024"
-license = "AGPL-3.0-only"
+license = "LicenseRef-FCL-1.0-ALv2"
 description = "Tauri desktop app for message-vault-io"
 
 [lib]
@@ -22,6 +22,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1.0"
 dirs = "6"
+open = "5"
 message-vault-io-core = { path = "../crates/core/message-vault-io-core" }
 media = { path = "../crates/libs/media" }
 sms-backup-restore-exporter = { path = "../crates/exporters/sms-backup-restore-exporter", default-features = false }
@@ -34,3 +35,6 @@ imessage-ir-exporter = { path = "../crates/exporters/imessage-ir-exporter", defa
 message-reexport = { path = "../crates/libs/reexport" }
 vault-push = { path = "../crates/cli/vault-push" }
 vault-pull = { path = "../crates/cli/vault-pull" }
+
+[dev-dependencies]
+tempfile = "3"

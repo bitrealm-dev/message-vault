@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { parseSelectKey } from "./selectKey.ts";
 
 const MODES = ["copy", "convert", "skip"] as const;

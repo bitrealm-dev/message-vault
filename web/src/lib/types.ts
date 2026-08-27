@@ -57,7 +57,7 @@ export interface MessageTapback {
 export interface Reaction {
   emoji: string;
   count: number;
-  users: string[];  // display names
+  users: string[]; // display names
 }
 
 export interface MessageRef {
@@ -95,15 +95,15 @@ export interface Message {
   tapbacks: MessageTapback[];
 
   // Extra fields that only some messaging apps send.
-  reactions?: Reaction[];        // iMessage tapbacks, Discord reactions
+  reactions?: Reaction[]; // iMessage tapbacks, Discord reactions
   reply_to_message?: MessageRef; // WhatsApp reply chains
-  embeds?: Embed[];              // Discord embeds
-  edit_history?: EditEntry[];    // iMessage edit history
-  deleted_indicator?: boolean;   // WhatsApp "this message was deleted"
-  effect?: string;               // iMessage screen effect
-  role_color?: string;           // Discord role color
-  is_story_reply?: boolean;      // Instagram story reply
-  forwarded?: boolean;           // Instagram forwarding indicator
+  embeds?: Embed[]; // Discord embeds
+  edit_history?: EditEntry[]; // iMessage edit history
+  deleted_indicator?: boolean; // WhatsApp "this message was deleted"
+  effect?: string; // iMessage screen effect
+  role_color?: string; // Discord role color
+  is_story_reply?: boolean; // Instagram story reply
+  forwarded?: boolean; // Instagram forwarding indicator
 }
 
 export type AttachmentMediaMode = "copy" | "convert" | "compress" | "skip";
@@ -124,6 +124,22 @@ export interface ExtractConfig {
   start_date?: string;
   end_date?: string;
   obfuscate?: boolean;
+  /** Owner phone numbers for Android SMS exporters (repeatable). */
+  owner_phones?: string[];
+  /** Alternate folder for Attachments and StickerCache (Mac and jailbreak). */
+  attachment_root?: string;
+  /** Path to an Apple AddressBook file (Mac and jailbreak). */
+  apple_contacts?: string;
+  /** WhatsApp decryption key (file path or crypt15 hex). Not an Apple backup password. */
+  whatsapp_key?: string;
+  /** WhatsApp contacts database (`wa.db` or ContactsV2.sqlite). */
+  whatsapp_wa?: string;
+  /** WhatsApp media folder override. */
+  whatsapp_media?: string;
+  /** Explicit WhatsApp message database (`msgstore.db`). */
+  whatsapp_db?: string;
+  /** iPhone WhatsApp Business default files (`--business`). */
+  whatsapp_business?: boolean;
 }
 
 export interface ExtractErrorEvent {

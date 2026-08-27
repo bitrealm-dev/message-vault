@@ -14,8 +14,8 @@ Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
 
 ## Docs
 
-This crate is a library. Contributor notes: [shared message model](../../../docs/maintainers/architecture/message-ir.md). Mail archives: https://bitrealm.io/vault/developer/formats/mail-archive/ . XML output: https://bitrealm.io/vault/developer/formats/sms-backup-restore-xml/
+This crate is a library. Contributor notes: [Common message](https://bitrealm.io/vault/developer/architecture/common-message/). Mail archives: https://bitrealm.io/vault/developer/formats/mail-archive/ . XML output: https://bitrealm.io/vault/developer/formats/sms-backup-restore-xml/
 
 ## License
 
-AGPL-3.0. See the repository root `LICENSE`.
+Fair Core License. See the repository root `LICENSE.md`.

@@ -1,13 +1,14 @@
-import Select, { ListBoxItem as SelectListBoxItem } from "../Select";
+import { useId } from "react";
 import { parseSelectKey } from "../../lib/selectKey";
-import type { CountFilterInput } from "./buildAdvancedQuery";
-import CountField from "./CountField";
+import Select, { ListBoxItem as SelectListBoxItem } from "../Select";
 import {
   compactSelectItemClassName,
   inputClass,
   labelClass,
   selectTriggerClass,
 } from "./advancedSearchStyles";
+import type { CountFilterInput } from "./buildAdvancedQuery";
+import CountField from "./CountField";
 
 export default function MessagesSearchFields({
   nameOrHandle,
@@ -28,29 +29,38 @@ export default function MessagesSearchFields({
   participants: CountFilterInput;
   onParticipantsChange: (value: CountFilterInput) => void;
 }) {
+  const msgTypeId = useId();
+
   return (
     <div className="grid grid-cols-2 gap-3">
       <div className="col-span-2">
-        <label className={labelClass}>Name or title</label>
-        <input
-          className={inputClass}
-          value={nameOrHandle}
-          onChange={(e) => onNameOrHandleChange(e.target.value)}
-          placeholder="Gregory Coleman"
-        />
+        <label className="block">
+          <span className={labelClass}>Name or title</span>
+          <input
+            className={inputClass}
+            value={nameOrHandle}
+            onChange={(e) => onNameOrHandleChange(e.target.value)}
+            placeholder="Gregory Coleman"
+          />
+        </label>
       </div>
       <div>
-        <label className={labelClass}>Identity</label>
-        <input
-          className={inputClass}
-          value={handle}
-          onChange={(e) => onHandleChange(e.target.value)}
-          placeholder="+15555550100"
-        />
+        <label className="block">
+          <span className={labelClass}>Identity</span>
+          <input
+            className={inputClass}
+            value={handle}
+            onChange={(e) => onHandleChange(e.target.value)}
+            placeholder="+15555550100"
+          />
+        </label>
       </div>
       <div>
-        <label className={labelClass}>Conversation type</label>
+        <label htmlFor={msgTypeId} className={labelClass}>
+          Conversation type
+        </label>
         <Select
+          id={msgTypeId}
           selectedKey={msgType}
           onSelectionChange={(k) => {
             const next = parseSelectKey(k, ["all", "direct", "group"] as const);
@@ -59,16 +69,18 @@ export default function MessagesSearchFields({
           aria-label="Conversation type"
           triggerClassName={selectTriggerClass}
         >
-          <SelectListBoxItem id="all" className={compactSelectItemClassName}>All</SelectListBoxItem>
-          <SelectListBoxItem id="direct" className={compactSelectItemClassName}>Direct</SelectListBoxItem>
-          <SelectListBoxItem id="group" className={compactSelectItemClassName}>Group</SelectListBoxItem>
+          <SelectListBoxItem id="all" className={compactSelectItemClassName}>
+            All
+          </SelectListBoxItem>
+          <SelectListBoxItem id="direct" className={compactSelectItemClassName}>
+            Direct
+          </SelectListBoxItem>
+          <SelectListBoxItem id="group" className={compactSelectItemClassName}>
+            Group
+          </SelectListBoxItem>
         </Select>
       </div>
-      <CountField
-        label="Group participants"
-        value={participants}
-        onChange={onParticipantsChange}
-      />
+      <CountField label="Group participants" value={participants} onChange={onParticipantsChange} />
     </div>
   );
 }

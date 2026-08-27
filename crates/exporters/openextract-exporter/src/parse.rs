@@ -1,6 +1,7 @@
 //! Parse OpenExtract conversation CSV (per-chat or all-conversations).
 
 use anyhow::{Context, Result, bail};
+use message_csv::{col, field};
 use message_vault_io_core::discover_files;
 use std::fs::File;
 use std::io::Read;
@@ -135,17 +136,6 @@ pub(crate) fn parse_csv_file(path: &Path) -> Result<Vec<RawRow>> {
         });
     }
     Ok(rows)
-}
-
-fn col(headers: &[String], name: &str) -> Result<usize> {
-    headers
-        .iter()
-        .position(|h| h == name)
-        .with_context(|| format!("missing column {name:?} (have {headers:?})"))
-}
-
-fn field(rec: &csv::StringRecord, idx: usize) -> String {
-    rec.get(idx).unwrap_or("").trim().to_string()
 }
 
 fn parse_bool(raw: &str) -> bool {

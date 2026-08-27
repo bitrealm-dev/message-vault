@@ -13,6 +13,11 @@ export function setToken(token: string | null) {
   authToken = token;
 }
 
+/** Current session token on the API client, or null when signed out. */
+export function getToken(): string | null {
+  return authToken;
+}
+
 export function getBaseUrl(): string {
   return baseUrl;
 }
@@ -27,7 +32,7 @@ async function request<T>(
     "Content-Type": "application/json",
   };
   if (authToken) {
-    headers["Authorization"] = `Bearer ${authToken}`;
+    headers.Authorization = `Bearer ${authToken}`;
   }
 
   const res = await fetch(`${baseUrl}${path}`, {
@@ -57,7 +62,7 @@ export async function fetchAssetObjectUrl(
   const path = buildAssetPath(sha256, source);
   const headers: Record<string, string> = {};
   if (authToken) {
-    headers["Authorization"] = `Bearer ${authToken}`;
+    headers.Authorization = `Bearer ${authToken}`;
   }
   const res = await fetch(`${baseUrl}${path}`, { method: "GET", headers, signal });
   if (!res.ok) {

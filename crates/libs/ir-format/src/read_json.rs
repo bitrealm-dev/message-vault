@@ -9,7 +9,7 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
-/// Read a conversation JSON file written by [`crate::write_conversation_json`].
+/// Read a conversation JSON file written by `write_conversation_json`.
 ///
 /// # Errors
 ///
@@ -37,7 +37,7 @@ pub fn read_conversation_json(path: &Path) -> Result<ConversationDocument> {
     Ok(doc)
 }
 
-/// Read a conversation JSON Lines file written by [`crate::write_conversation_jsonl`].
+/// Read a conversation JSON Lines file written by `write_conversation_jsonl`.
 ///
 /// Line 1 is a [`ConversationHeader`]. Each following line is one [`IrMessage`].
 ///

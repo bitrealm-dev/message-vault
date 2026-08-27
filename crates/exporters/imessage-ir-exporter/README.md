@@ -2,7 +2,7 @@
 
 Export Apple Messages from a Mac `chat.db` or an iPhone backup into JSON Lines, JSON, CSV, EML, MBOX, or XML.
 
-The desktop app Extract Messages screen uses this crate as a library. The `imessage-ir-exporter` command is the same converter from a terminal.
+The desktop app Import screen uses this crate as a library. The `imessage-ir-exporter` command is the same converter from a terminal.
 
 ## Build and test
 
@@ -19,4 +19,4 @@ Command-line options: https://bitrealm.io/vault/developer/reference/cli/imessage
 
 ## License
 
-AGPL-3.0. `imessage-database` remains GPL-3.0-or-later; the combined desktop app is AGPL-3.0.
+Fair Core License. See the repository root `LICENSE.md`. This crate depends on `imessage-database` (GPL-3.0-or-later), so distributing a binary that includes it must also satisfy the GPL.

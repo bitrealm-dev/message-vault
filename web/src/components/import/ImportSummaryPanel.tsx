@@ -1,4 +1,3 @@
-import OpenPathButton from "../OpenPathButton";
 import StepProgress, { type Step, type StepStatus } from "../StepProgress";
 import VirtualizedImportIssuesTable from "./VirtualizedImportIssuesTable";
 
@@ -31,8 +30,6 @@ type ImportSummaryPanelProps = {
   summary: ImportSummaryView;
   /** When true (default), show Parse/Convert/Upload with times above the tables. */
   embedStepTimings?: boolean;
-  /** Staging vault-push.log path; opens in the OS file explorer when set. */
-  logPath?: string | null;
 };
 
 type MessageRow = {
@@ -47,10 +44,7 @@ function formatCount(value: number | undefined): string {
   return value.toLocaleString();
 }
 
-function difference(
-  total: number | undefined,
-  accounted: number | undefined,
-): number | undefined {
+function difference(total: number | undefined, accounted: number | undefined): number | undefined {
   if (total == null || accounted == null) return undefined;
   return total - accounted;
 }
@@ -76,8 +70,7 @@ function historySteps(summary: ImportSummaryView): Step[] {
   if (summary.status === "failed") {
     uploadStatus = "error";
   } else if (running) {
-    uploadStatus =
-      summary.convertMs != null || summary.parseMs != null ? "active" : "pending";
+    uploadStatus = summary.convertMs != null || summary.parseMs != null ? "active" : "pending";
   }
 
   return [
@@ -102,7 +95,6 @@ function historySteps(summary: ImportSummaryView): Step[] {
 export default function ImportSummaryPanel({
   summary,
   embedStepTimings = true,
-  logPath = null,
 }: ImportSummaryPanelProps) {
   const messagesSkipped = difference(summary.messagesParsed, summary.messagesAttempted);
   const attemptedAccounted =
@@ -117,8 +109,6 @@ export default function ImportSummaryPanel({
     summary.messagesAttempted !== attemptedAccounted;
   const parseMismatch = messagesSkipped != null && messagesSkipped < 0;
   const hasIssues = summary.issues.length > 0;
-  const trimmedLogPath = logPath?.trim() || null;
-  const showErrorsColumn = hasIssues || trimmedLogPath != null;
 
   const messageRows: MessageRow[] = [
     { key: "parsed", label: "Parsed", value: summary.messagesParsed },
@@ -140,7 +130,7 @@ export default function ImportSummaryPanel({
 
       <div
         className={`${embedStepTimings ? "mt-4" : ""} grid min-w-0 grid-cols-1 gap-4 ${
-          showErrorsColumn ? "lg:grid-cols-2" : ""
+          hasIssues ? "lg:grid-cols-2" : ""
         }`}
       >
         <div className="min-w-0 overflow-hidden rounded-lg border border-border">
@@ -154,9 +144,7 @@ export default function ImportSummaryPanel({
             <tbody>
               {messageRows.map((row) => (
                 <tr key={row.key} className="border-b border-border last:border-b-0">
-                  <td
-                    className={`px-3 py-2 text-text ${row.indent ? "pl-8 text-muted" : ""}`}
-                  >
+                  <td className={`px-3 py-2 text-text ${row.indent ? "pl-8 text-muted" : ""}`}>
                     {row.label}
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums text-text">
@@ -168,34 +156,20 @@ export default function ImportSummaryPanel({
           </table>
         </div>
 
-        {showErrorsColumn ? (
+        {hasIssues ? (
           <section className="min-w-0 overflow-hidden">
             <h2 className="m-0 text-base font-semibold">Import Errors</h2>
-            {hasIssues ? (
-              <>
-                <p className="mb-0 mt-1 text-[0.75rem] text-muted">
-                  Error messages show two lines. Click a row to expand or collapse the full
-                  message.
-                </p>
-                <VirtualizedImportIssuesTable issues={summary.issues} />
-              </>
-            ) : null}
-            {trimmedLogPath ? (
-              <OpenPathButton
-                path={trimmedLogPath}
-                className="mt-2 border-0 bg-transparent p-0 text-[0.813rem] text-accent underline-offset-2 hover:underline"
-              >
-                Open import log
-              </OpenPathButton>
-            ) : null}
+            <p className="mb-0 mt-1 text-[0.75rem] text-muted">
+              Error messages show two lines. Click a row to expand or collapse the full message.
+            </p>
+            <VirtualizedImportIssuesTable issues={summary.issues} />
           </section>
         ) : null}
       </div>
 
       {attemptMismatch ? (
         <p className="mt-2 text-[0.813rem] text-danger">
-          Message accounting mismatch: attempted does not equal new uploaded + duplicate +
-          failed.
+          Message accounting mismatch: attempted does not equal new uploaded + duplicate + failed.
         </p>
       ) : null}
       {parseMismatch ? (

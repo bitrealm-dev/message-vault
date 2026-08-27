@@ -1,11 +1,4 @@
-import {
-  Table,
-  TableHeader,
-  TableBody,
-  Column,
-  Row,
-  Cell,
-} from "react-aria-components";
+import { Cell, Column, Row, Table, TableBody, TableHeader } from "react-aria-components";
 import Button from "../../components/Button";
 import { PencilIcon, TrashIcon } from "../../components/icons";
 import type { ApiTokenItem } from "./apiTokensUtils";
@@ -60,10 +53,7 @@ export default function ApiTokensTable({
           className="outline-none"
         >
           {(item) => (
-            <Row
-              id={item.id}
-              className="border-b border-border last:border-b-0 outline-none"
-            >
+            <Row id={item.id} className="border-b border-border last:border-b-0 outline-none">
               <Cell className={`${tdClass} truncate font-medium`}>
                 <span className="block truncate" title={item.label}>
                   {item.label}

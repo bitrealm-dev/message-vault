@@ -18,4 +18,4 @@ This crate is a library. XML output: https://bitrealm.io/vault/developer/formats
 
 ## License
 
-AGPL-3.0. See the repository root `LICENSE`.
+Fair Core License. See the repository root `LICENSE.md`.

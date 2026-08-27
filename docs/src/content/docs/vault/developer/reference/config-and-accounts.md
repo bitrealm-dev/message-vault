@@ -5,10 +5,10 @@ description: Instance config.toml, per-account data paths, and multi-tenant acco
 
 ## Instance config
 
-Copy [`config/config.toml.example`](https://github.com/bitrealm-dev/message-vault/blob/main/config/config.toml.example)
+Copy [`config/config.toml.example`](https://github.com/bitrealm-io/message-vault/blob/main/config/config.toml.example)
 to `config/config.toml` (gitignored).
 
-```toml
+```toml title="config/config.toml"
 [paths]
 db = "data/vault.db"
 data_dir = "data"
@@ -17,10 +17,18 @@ assets_converted_dir = "assets_converted"
 
 [server]
 bind = "127.0.0.1:8080"
+cors_origins = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "https://tauri.localhost",
+  "http://tauri.localhost",
+  "tauri://localhost",
+]
 ```
 
 - Paths resolve relative to the repo root (parent of `config/`).
 - `[server]` is required for `serve`. The demo config comments it out.
+- `cors_origins` is empty by default (same-origin only). The desktop app loads from a different origin than the API, so Connect fails until this list includes the Vite `:5173` origins (dev) and the three packaged origins (`tauri://localhost`, `http://tauri.localhost`, `https://tauri.localhost`).
 - Source names are **not** listed in TOML — each import registers its own
   source slug for that account under `data/<account_id>/<source_id>/`.
 

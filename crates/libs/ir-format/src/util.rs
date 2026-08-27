@@ -57,6 +57,11 @@ pub(crate) fn load_attachment_bytes_strict(
     }
 }
 
+/// Shared message prefix for unsafe-attachment-path errors. The ir-format path
+/// check and the server's `safe_rel_path` both format their bail from this
+/// const, and the server's import tests match it — keep the exact text stable.
+pub const UNSAFE_ATTACHMENT_PATH_PREFIX: &str = "unsafe attachment path";
+
 /// Read attachment bytes from disk when the relative path exists.
 ///
 /// Missing paths yield `Ok(None)`. IO failures return an error (strict) — callers
@@ -79,7 +84,7 @@ pub(crate) fn read_attachment_file(
     }
     for comp in rel_path.components() {
         if matches!(comp, std::path::Component::ParentDir) {
-            anyhow::bail!("unsafe attachment path (contains ..): {rel}");
+            anyhow::bail!("{UNSAFE_ATTACHMENT_PATH_PREFIX} (contains ..): {rel}");
         }
     }
     let path = output_dir.join(rel);

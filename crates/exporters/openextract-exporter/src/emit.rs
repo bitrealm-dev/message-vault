@@ -2,7 +2,7 @@
 //! the chosen output format via [`FormatSink`].
 
 use crate::parse::{RawRow, SourceKind, discover_csv_files, parse_csv_file};
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use chrono::DateTime;
 use contacts::ContactsBook;
 use message_csv::{DateRange, format_local_ts, stable_guid};
@@ -12,26 +12,31 @@ use message_ir::{
     PendingConversation, PendingMessage, SCHEMA_VERSION, owner_sender,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
-use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat, prepare_outputs};
 use phone::sanitize_number;
 use serde_json::{Map, json};
 use std::collections::{BTreeMap, HashSet};
-use std::fs;
 use std::path::Path;
 
 const EXPORT_SOURCE: &str = "openextract";
 const EXPORT_TOOL: &str = "OpenExtract";
 const EXPORT_TOOL_VERSION: &str = "0.5.1";
 
-/// Bump a per-exporter counter in the report's `extra` map.
-fn bump(report: &mut ExportReport, key: &str, by: u64) {
-    *report.extra.entry(key.to_string()).or_insert(0) += by;
-}
-
 /// Read a per-exporter counter from the report's `extra` map (test assertions).
 #[cfg(test)]
 fn count(report: &ExportReport, key: &str) -> u64 {
     report.extra.get(key).copied().unwrap_or(0)
+}
+
+/// Inputs for [`convert_export`].
+pub(crate) struct ConvertExportArgs<'a> {
+    pub input: &'a Path,
+    pub output: &'a Path,
+    pub book: &'a ContactsBook,
+    pub date_range: &'a DateRange,
+    pub transforms: ExportTransforms,
+    pub output_format: OutputFormat,
+    pub cancel: Option<&'a CancelFlag>,
 }
 
 /// Convert OpenExtract CSV(s) under `input` using `book` (from VCF/contacts).
@@ -44,34 +49,24 @@ fn count(report: &ExportReport, key: &str) -> u64 {
 /// Returns an error when output overlaps input, a CSV cannot be parsed, or the
 /// user cancels.
 pub(crate) fn convert_export(
-    input: &Path,
-    output: &Path,
-    book: &ContactsBook,
-    date_range: &DateRange,
-    transforms: ExportTransforms,
-    output_format: OutputFormat,
-    cancel: Option<&CancelFlag>,
+    args: ConvertExportArgs<'_>,
 ) -> Result<(ExportReport, FormatSinkResult)> {
-    fs::create_dir_all(output).with_context(|| format!("create {}", output.display()))?;
-    // Resolve to absolute paths so relative inputs work and so the output/input
-    // overlap check uses the same path form. Cleaning the output before reading
-    // the input would otherwise delete source CSVs when both paths are the same
-    // (or the input file lives inside the output directory).
-    let input = fs::canonicalize(input).with_context(|| format!("resolve {}", input.display()))?;
-    let output =
-        fs::canonicalize(output).with_context(|| format!("resolve {}", output.display()))?;
-    if output == input || input.starts_with(&output) {
-        bail!(
-            "output {} must not be the same as, or contain, the input {}",
-            output.display(),
-            input.display()
-        );
-    }
+    let ConvertExportArgs {
+        input,
+        output,
+        book,
+        date_range,
+        transforms,
+        output_format,
+        cancel,
+    } = args;
+    let (inputs, output) = prepare_outputs(&[input.to_path_buf()], output)?;
+    let input = &inputs[0];
 
     let (mut sink, _attachments_dir) =
         FormatSink::open_prepared(&output, output_format, transforms)?;
 
-    let files = discover_csv_files(&input)?;
+    let files = discover_csv_files(input)?;
     let mut report = ExportReport::default();
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
     // Dedupe duplicate CSV rows: same chat + second + direction + text.
@@ -114,7 +109,7 @@ pub(crate) fn convert_export(
 
             let (chat_id, contact_name, unresolved) = resolve_chat(book, &peer_label);
             if unresolved {
-                bump(&mut report, "unresolved_chat_phone", 1);
+                report.bump("unresolved_chat_phone", 1);
             }
 
             let Some((secs, date_ms)) = parse_timestamp(&row.date) else {
@@ -200,16 +195,7 @@ fn prepare_conversation(convo: &mut PendingConversation, report: &mut ExportRepo
         return false;
     }
     convo.messages.sort_by_key(|m| m.sort_key);
-    convo.messages.retain(|m| {
-        if format_local_ts(m.sort_key).is_some() {
-            true
-        } else {
-            report.skipped_invalid_date += 1;
-            false
-        }
-    });
-    convo.has_attachments = convo.messages.iter().any(|m| !m.attachments.is_empty());
-    !convo.messages.is_empty()
+    message_vault_io_core::prune_and_finish_conversation(convo, report, |k| k)
 }
 
 fn is_me(s: &str) -> bool {
@@ -368,13 +354,19 @@ fn pending_to_document(
         }]
     };
 
-    let export = ExportMeta {
-        source: EXPORT_SOURCE.into(),
-        tool: EXPORT_TOOL.into(),
-        tool_version: EXPORT_TOOL_VERSION.into(),
+    let owner_meta = ExportMeta {
+        source: String::new(),
+        tool: String::new(),
+        tool_version: String::new(),
         owner_handle: None,
         owner_display_name: None,
     };
+    let export = message_vault_io_core::export_meta(
+        EXPORT_SOURCE,
+        EXPORT_TOOL,
+        EXPORT_TOOL_VERSION,
+        &owner_meta,
+    );
     let (owner_handle, owner_display) = owner_sender(&export);
 
     let mut messages = Vec::with_capacity(convo.messages.len());
@@ -468,6 +460,23 @@ mod tests {
         path
     }
 
+    fn convert(
+        input: &std::path::Path,
+        output: &std::path::Path,
+        book: &ContactsBook,
+        date_range: &DateRange,
+    ) -> Result<(ExportReport, FormatSinkResult)> {
+        convert_export(ConvertExportArgs {
+            input,
+            output,
+            book,
+            date_range,
+            transforms: ExportTransforms::none(),
+            output_format: OutputFormat::Csv,
+            cancel: None,
+        })
+    }
+
     #[test]
     fn phone_peer_gets_vcf_name() {
         let dir = tempfile::tempdir().unwrap();
@@ -486,16 +495,7 @@ TEL;TYPE=CELL:+1-555-555-0122\nEND:VCARD\n",
         );
         let book = ContactsBook::load_vcf(&vcf).unwrap();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book, &DateRange::default()).unwrap();
         assert_eq!(report.conversations, 1);
         assert_eq!(count(&report, "unresolved_chat_phone"), 0);
         let csv_path = out.join("+15555550122.csv");
@@ -522,16 +522,7 @@ TEL:+15555550999\nEND:VCARD\n",
         );
         let book = ContactsBook::load_vcf(&vcf).unwrap();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book, &DateRange::default()).unwrap();
         assert!(count(&report, "unresolved_chat_phone") >= 1);
         assert_eq!(report.conversations, 1);
         let csv_path = out.join("Cathy_Arp.csv");
@@ -554,16 +545,7 @@ TEL:+15555550999\nEND:VCARD\n",
         let range =
             DateRange::parse_optional_tz(Some("2020-01-01"), Some("2020-01-02"), Some("UTC"))
                 .unwrap();
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            &range,
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book, &range).unwrap();
         assert_eq!(report.skipped_out_of_range, 2);
         assert_eq!(report.messages, 1);
         let body = fs::read_to_string(out.join("+15555550122.csv")).unwrap();
@@ -585,16 +567,7 @@ TEL:+15555550999\nEND:VCARD\n",
         );
         let book = ContactsBook::empty();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book, &DateRange::default()).unwrap();
         assert_eq!(report.duplicates_dropped, 1);
         assert_eq!(report.messages, 2);
         assert_eq!(report.conversations, 1);

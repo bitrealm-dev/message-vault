@@ -1,9 +1,8 @@
 //! Full export pipeline for CLI and in-process GUI.
 
-use crate::emit::convert_export;
+use crate::emit::{ConvertExportArgs, convert_export};
 use anyhow::{Result, bail};
 use contacts::resolve_contacts_cli;
-use message_ir_format::ExportTransforms;
 use message_vault_io_core::{ExporterConfig, RunResult, SourceConfig};
 
 /// Resolve contacts, convert, then apply media transforms and obfuscation.
@@ -18,27 +17,23 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
     };
     message_vault_io_core::check_cancel(config.cancel.as_ref()).map_err(anyhow::Error::msg)?;
     let input = config.require_input().map_err(anyhow::Error::msg)?;
-    let mut messages = Vec::new();
-    let (contacts_path, vcf) = config.contacts_csv_vcf();
-    let log_fn = |line: &str| config.emit_log(line);
-    let (contacts, _) = resolve_contacts_cli(contacts_path, vcf, Some(&log_fn))?;
-    let mut transforms = ExportTransforms::from_configs(&config.media, &config.obfuscate);
-    transforms.log = config.log.clone();
-    let (report, sink) = convert_export(
-        input,
-        &config.output,
-        &source.owner_phones,
-        &contacts,
-        &config.date_range,
-        transforms,
-        config.output_format,
-        config.cancel.as_ref(),
-    )?;
-    if !sink.media.errors.is_empty() && sink.media.processed == 0 && config.media.mode.needs_tools()
-    {
-        anyhow::bail!("media processing failed for all candidate files");
-    }
-    messages.extend(sink.log_lines());
-    report.summary_lines(&config.output, &mut messages);
-    Ok(RunResult { messages })
+    message_ir_format::run_pipeline(
+        config,
+        |config, log_fn| {
+            let (contacts_path, vcf) = config.contacts_csv_vcf();
+            resolve_contacts_cli(contacts_path, vcf, Some(log_fn)).map(|(b, _)| b)
+        },
+        |contacts, transforms| {
+            convert_export(ConvertExportArgs {
+                input,
+                output_dir: &config.output,
+                owner_phones: &source.owner_phones,
+                contacts,
+                date_range: &config.date_range,
+                transforms,
+                output_format: config.output_format,
+                cancel: config.cancel.as_ref(),
+            })
+        },
+    )
 }

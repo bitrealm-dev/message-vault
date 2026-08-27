@@ -4,6 +4,8 @@
 //! key always yields the same remaps; fakes do not embed or encrypt the
 //! original, and no mapping sidecar is written.
 
+#![warn(missing_docs)]
+
 mod names;
 
 use std::collections::HashMap;
@@ -13,8 +15,8 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use anyhow::{Context, Result, bail};
-use hmac::{Hmac, Mac};
-use rand::RngCore;
+use hmac::{Hmac, KeyInit, Mac};
+use rand::Rng;
 use regex::Regex;
 #[cfg(test)]
 use serde_json::{Value, json};
@@ -95,14 +97,17 @@ fn split_country_calling_code(digits: &str, had_plus: bool) -> (&str, &str) {
 
 /// Trim trailing sentence punctuation often glued to URLs/emails in message text.
 fn trim_trailing_glue(s: &str) -> &str {
-    s.trim_end_matches(|c: char| matches!(c, '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '\''))
+    s.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '\''])
 }
 
 /// Media class for placeholder substitution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediaClass {
+    /// Image placeholder bucket.
     Image,
+    /// Video placeholder bucket.
     Video,
+    /// Everything-else placeholder bucket.
     Other,
 }
 
@@ -125,6 +130,7 @@ pub struct Obfuscator {
 }
 
 impl Obfuscator {
+    /// Build an obfuscator from a 32-byte HMAC key.
     pub fn new(key: [u8; 32]) -> Self {
         Self {
             key,
@@ -234,6 +240,7 @@ impl Obfuscator {
         self.obfuscate_display_name(h)
     }
 
+    /// Map an email to `first.last@example.invalid`, keyed case-insensitively.
     pub fn obfuscate_email(&mut self, raw: &str) -> String {
         let key = raw.trim().to_ascii_lowercase();
         if key.is_empty() {
@@ -495,6 +502,8 @@ pub fn classify_attachment(mime: Option<&str>, path: Option<&str>) -> MediaClass
     MediaClass::Other
 }
 
+/// Shared placeholder relative path for a `MediaClass`
+/// (`attachments/placeholder.jpg|.mp4|.bin`).
 pub fn placeholder_rel_path(class: MediaClass) -> &'static str {
     match class {
         MediaClass::Image => REL_IMAGE,
@@ -537,6 +546,7 @@ pub fn materialize_placeholders(output_dir: &Path) -> Result<()> {
 /// Backward-compatible: shorter hex seeds (e.g. legacy 8-char) are still
 /// accepted; their bytes are hashed into the 32-byte working key.
 pub const OBFUSCATE_SEED_BYTES: usize = 32;
+/// Hex length of a 32-byte seed.
 pub const OBFUSCATE_SEED_HEX_LEN: usize = 64;
 
 fn key_from_seed_bytes(bytes: &[u8]) -> [u8; 32] {
@@ -800,10 +810,10 @@ fn obfuscate_attachments_json(raw: &str) -> String {
                     let _ = stem;
                     obj.insert("original_name".into(), json!(format!("attachment.{ext}")));
                 }
-                if let Some(t) = obj.get_mut("transcription") {
-                    if t.as_str().is_some_and(|s| !s.is_empty()) {
-                        *t = json!("[redacted]");
-                    }
+                if let Some(t) = obj.get_mut("transcription")
+                    && t.as_str().is_some_and(|s| !s.is_empty())
+                {
+                    *t = json!("[redacted]");
                 }
             }
         }

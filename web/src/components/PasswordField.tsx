@@ -1,4 +1,4 @@
-import { TextField, Input, type TextFieldProps } from "react-aria-components";
+import { Input, Label, TextField, type TextFieldProps } from "react-aria-components";
 import Button from "./Button";
 import { textInputClassName } from "./TextField";
 
@@ -43,23 +43,32 @@ function EyeIcon({ open }: { open: boolean }) {
 
 /** Masked password input matching shared form chrome, with show/hide toggle. */
 export default function PasswordField(
-  props: TextFieldProps & { showPassword: boolean; onToggle: () => void },
+  props: TextFieldProps & {
+    label?: string;
+    showPassword: boolean;
+    onToggle: () => void;
+  },
 ) {
-  const { showPassword, onToggle, className, ...rest } = props;
+  const { label, showPassword, onToggle, className, ...rest } = props;
   return (
-    <TextField {...rest} className={`relative block w-full ${className ?? ""}`}>
-      <Input
-        type={showPassword ? "text" : "password"}
-        className={`${textInputClassName} pr-11`}
-      />
-      <Button
-        variant="ghost"
-        onPress={onToggle}
-        className="!absolute top-1/2 right-1.5 !-translate-y-1/2 !border-none !p-1.5 text-muted hover:text-text"
-        aria-label={showPassword ? "Hide password" : "Show password"}
-      >
-        <EyeIcon open={showPassword} />
-      </Button>
+    <TextField {...rest} className={`block w-full ${className ?? ""}`}>
+      {label ? (
+        <Label className="mb-1 block text-[0.875rem] font-medium text-text">{label}</Label>
+      ) : null}
+      <div className="relative">
+        <Input
+          type={showPassword ? "text" : "password"}
+          className={`${textInputClassName} pr-11`}
+        />
+        <Button
+          variant="ghost"
+          onPress={onToggle}
+          className="!absolute top-1/2 right-1.5 !-translate-y-1/2 !border-none !p-1.5 text-muted hover:text-text"
+          aria-label={showPassword ? "Hide password" : "Show password"}
+        >
+          <EyeIcon open={showPassword} />
+        </Button>
+      </div>
     </TextField>
   );
 }

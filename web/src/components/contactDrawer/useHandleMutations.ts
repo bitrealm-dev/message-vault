@@ -1,14 +1,8 @@
 import { useEffect, useState } from "react";
 import { apiClient } from "../../lib/api";
 import type { CachedContactHandle } from "../../lib/contactDetailCache";
-import {
-  formatHandleServiceLabel,
-  handleServiceSelectValue,
-} from "./contactDrawerTypes";
-import {
-  conversationCount,
-  type RemoveIdentityTarget,
-} from "./handleTableLogic";
+import { formatHandleServiceLabel, handleServiceSelectValue } from "./contactDrawerTypes";
+import { conversationCount, type RemoveIdentityTarget } from "./handleTableLogic";
 
 export function useHandleMutations({
   contactId,
@@ -22,6 +16,7 @@ export function useHandleMutations({
   const [removeTarget, setRemoveTarget] = useState<RemoveIdentityTarget | null>(null);
 
   useEffect(() => {
+    void contactId;
     setAdding(false);
     setBusy(false);
     setRemoveTarget(null);

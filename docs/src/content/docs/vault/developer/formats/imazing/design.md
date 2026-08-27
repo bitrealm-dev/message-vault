@@ -10,7 +10,7 @@ The observed iMazing 3.5.5 directory layout, CSV headers, and source limitations
 ## Goals
 
 - Accept either one iMazing Messages/WhatsApp CSV **or** a folder at any level of a device export tree.
-- Emit the common message → packaging via `FormatSink` (CSV uses shared [`CSV_HEADERS`](https://github.com/bitrealm-dev/message-vault/blob/main/crates/libs/ir-format/src/write.rs); default JSON), with WhatsApp kept separate from SMS/iMessage.
+- Emit the common message → packaging via `FormatSink` (CSV uses shared [`CSV_HEADERS`](https://github.com/bitrealm-io/message-vault/blob/main/crates/libs/ir-format/src/write.rs); default JSON), with WhatsApp kept separate from SMS/iMessage.
 - Resolve phones/names through an optional vCard CSV.
 
 ## Input discovery
@@ -19,7 +19,7 @@ Discovery walks the selected path recursively without following directory symbol
 
 ## Output policy
 
-- Pipeline: iMazing CSV → `ConversationDocument` → [`message_ir_format::FormatSink`](../../../libs/ir-format/src/format_sink.rs) (`--format csv|eml|mbox|json|jsonl|xml`). Shared header: [`CSV_HEADERS`](https://github.com/bitrealm-dev/message-vault/blob/main/crates/libs/ir-format/src/write.rs) / [CSV columns](/vault/developer/reference/csv-columns/).
+- Pipeline: iMazing CSV → `ConversationDocument` → [`message_ir_format::FormatSink`](../../../libs/ir-format/src/format_sink.rs) (`--format csv|eml|mbox|json|jsonl|xml`). Shared header: [`CSV_HEADERS`](https://github.com/bitrealm-io/message-vault/blob/main/crates/libs/ir-format/src/write.rs) / [CSV columns](/vault/developer/reference/csv-columns/).
 - SMS + iMessage for the same peer merge into one conversation (Messages family).
 - WhatsApp for the same peer is a **separate** file (`…__whatsapp.csv` / matching stem suffix for other formats).
 - Notification rows keep `imazing_type=Notification` in `source_fields_json`; direction is emitted as `incoming`.
@@ -72,4 +72,4 @@ Non-senders are invisible in the CSV.
 - CLI: [iMazing CLI page](/vault/developer/reference/cli/imazing-exporter/)
 - Input format and source limitations: [`INPUT_FORMAT.md`](INPUT_FORMAT.md)
 - Contacts helper: [`../../../libs/contacts/README.md`](../../../libs/contacts/README.md)
-- Shared model and output contracts: [message-ir architecture](https://github.com/bitrealm-dev/message-vault/blob/main/docs/maintainers/architecture/message-ir.md), [export structure](/vault/developer/reference/export-structure/), [CSV columns](/vault/developer/reference/csv-columns/)
+- Shared model and output contracts: [message-ir architecture](/vault/developer/architecture/common-message/), [export structure](/vault/developer/reference/export-structure/), [CSV columns](/vault/developer/reference/csv-columns/)

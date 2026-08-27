@@ -1,11 +1,5 @@
-import { useEffect, useRef, useState, type Key } from "react";
-import {
-  ComboBox,
-  Input,
-  ListBox,
-  ListBoxItem,
-  Popover,
-} from "react-aria-components";
+import { type Key, useEffect, useRef, useState } from "react";
+import { ComboBox, Input, ListBox, ListBoxItem, Popover } from "react-aria-components";
 import { apiClient } from "../lib/api";
 import { popupShadow } from "../lib/uiStyles";
 
@@ -42,9 +36,11 @@ function buildSearchSuggestions(args: {
     }));
   }
   if (!args.completingValue && args.lastToken.length > 0) {
-    return OPERATORS.filter((op) => op.startsWith(args.lastToken.toLowerCase())).map(
-      (op) => ({ id: op, label: op, insert: `${op} ` }),
-    );
+    return OPERATORS.filter((op) => op.startsWith(args.lastToken.toLowerCase())).map((op) => ({
+      id: op,
+      label: op,
+      insert: `${op} `,
+    }));
   }
   return [];
 }
@@ -72,9 +68,7 @@ export default function GlobalSearch({
   const completingValue = colonIdx !== -1;
   const opPrefix = completingValue ? lastToken.slice(0, colonIdx + 1) : "";
   const opLower = opPrefix.toLowerCase();
-  const valuePart = completingValue
-    ? lastToken.slice(colonIdx + 1).replace(/^"|"$/g, "")
-    : "";
+  const valuePart = completingValue ? lastToken.slice(colonIdx + 1).replace(/^"|"$/g, "") : "";
 
   useEffect(() => {
     // Suggest contact names only for handle: and contact:, not for is: or participants:.
@@ -168,7 +162,9 @@ export default function GlobalSearch({
           className="flex-1 border-none bg-transparent px-3 py-2.5 text-[0.875rem] text-text outline-none"
         />
       </div>
-      <Popover className={`z-[100] box-border w-[var(--trigger-width)] max-w-[var(--trigger-width)] rounded-md border border-border bg-popover p-1 outline-none ${popupShadow}`}>
+      <Popover
+        className={`z-[100] box-border w-[var(--trigger-width)] max-w-[var(--trigger-width)] rounded-md border border-border bg-popover p-1 outline-none ${popupShadow}`}
+      >
         <ListBox className="max-h-72 overflow-auto outline-none">
           {suggestions.map((s) => (
             <ListBoxItem

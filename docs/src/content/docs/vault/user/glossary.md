@@ -3,11 +3,11 @@ title: Glossary
 description: Plain-language definitions of the formats and terms you will meet in this guide.
 ---
 
-Short definitions of terms used in the User Guide. Command flags and vendor field names live under [Developer](/vault/developer/run-from-source/).
+Short definitions of terms used in the User Guide. Command flags and vendor field names live under [Developer](/vault/developer/).
 
 ## Formats
 
-**JSONL (JSON Lines)** — One JSON object per line of text. Each conversation in a file export is one `.jsonl` file. [JSON Lines](https://jsonlines.org/) calls it a convenient format for data processed one record at a time. Happy-path Import does not ask you to produce this folder; [Extract to files](/vault/user/how-to/extract-to-files/) does.
+**JSONL (JSON Lines)** — One JSON object per line of text. Each conversation in a file export is one `.jsonl` file. [JSON Lines](https://jsonlines.org/) calls it a convenient format for data processed one record at a time. Happy-path Import does not ask you to produce this folder; the [Extract to files](/vault/user/how-to/extract-to-files/) command-line exporters do.
 
 **JSON** — Pretty-printed JSON with indentation. The same data as JSONL, easier for a human to read. One `.json` file per conversation.
 

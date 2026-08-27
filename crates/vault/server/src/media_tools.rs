@@ -6,18 +6,28 @@ use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 
+/// JPEGs at or below this size are left as-is (converting would not save space).
 pub const JPEG_MIN_BYTES: u64 = 500 * 1024;
+/// MP3s at or below this size are left as-is (converting would not save space).
 pub const MP3_MIN_BYTES: u64 = 100 * 1024;
+/// MP4s at or below this size are left as-is (converting would not save space).
 pub const MP4_MIN_BYTES: u64 = 10 * 1024 * 1024;
 
+/// Media category of a file, used to pick the conversion target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediaKind {
+    /// Image, converted to JPEG.
     Image,
+    /// Video, converted to MP4.
     Video,
+    /// Audio, converted to MP3.
     Audio,
+    /// Anything else (e.g. GIFs), left as-is.
     Other,
 }
 
+/// Lowercase file extension including the dot (`.jpg`), or empty when the
+/// path has no extension.
 pub fn ext_of(path: &Path) -> String {
     path.extension()
         .and_then(|e| e.to_str())
@@ -25,6 +35,8 @@ pub fn ext_of(path: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// Media category for a file: extension first, then MIME type. `.gif` is
+/// always [`MediaKind::Other`] so animated images are never converted.
 pub fn kind_of(path: &Path, mime: Option<&str>) -> MediaKind {
     let ext = ext_of(path);
     if ext == ".gif" || mime == Some("image/gif") {
@@ -49,11 +61,13 @@ pub fn kind_of(path: &Path, mime: Option<&str>) -> MediaKind {
     MediaKind::Other
 }
 
+/// The path as `&str`, or an error when it is not valid UTF-8.
 pub fn path_str(path: &Path) -> Result<&str> {
     path.to_str()
         .ok_or_else(|| anyhow::anyhow!("non-utf8 path {}", path.display()))
 }
 
+/// True when an executable named `name` is on `PATH` and runs with `-version`.
 pub fn tool_on_path(name: &str) -> bool {
     Command::new(name)
         .arg("-version")
@@ -64,6 +78,8 @@ pub fn tool_on_path(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Run ffmpeg with `args` (`-y` and quiet logging are added). On failure,
+/// delete `cleanup_on_fail` if given and return ffmpeg's stderr as the error.
 pub fn run_ffmpeg(args: &[&str], cleanup_on_fail: Option<&Path>) -> Result<()> {
     let output = Command::new("ffmpeg")
         .args(["-hide_banner", "-loglevel", "error", "-y"])

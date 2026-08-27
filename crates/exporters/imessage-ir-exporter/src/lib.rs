@@ -6,6 +6,7 @@
 //! JSON, CSV, EML, MBOX, or XML).
 
 mod attachments;
+mod attachments_emit;
 mod backup;
 mod body;
 mod contacts;
@@ -17,5 +18,12 @@ mod options;
 mod run;
 mod session;
 
+pub use backup::ios_backup_encrypted_flag;
+pub use error::ENCRYPTED_BACKUP_PASSWORD_REQUIRED;
 pub use message_vault_io_core::RunResult;
 pub use run::run;
+
+#[cfg(feature = "cli")]
+pub mod cli;
+#[cfg(feature = "cli")]
+pub use cli::clap_command;

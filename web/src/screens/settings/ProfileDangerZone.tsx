@@ -1,18 +1,12 @@
 import { useState } from "react";
-import { useAuth } from "../../lib/auth";
-import { apiClient } from "../../lib/api";
-import DeleteAccountDialog from "../../components/DeleteAccountDialog";
-import ConfirmDialog from "../../components/ConfirmDialog";
 import Button from "../../components/Button";
+import ConfirmDialog from "../../components/ConfirmDialog";
+import DeleteAccountDialog from "../../components/DeleteAccountDialog";
+import { apiClient } from "../../lib/api";
+import { useAuth } from "../../lib/auth";
 import { dangerButtonClass } from "./profileStyles";
 
-export function ProfileDangerZone({
-  isDemo,
-  username,
-}: {
-  isDemo: boolean;
-  username: string;
-}) {
+export function ProfileDangerZone({ isDemo, username }: { isDemo: boolean; username: string }) {
   const { logout } = useAuth();
   const [dangerZoneOpen, setDangerZoneOpen] = useState(false);
   const [confirmDeleteMessagesOpen, setConfirmDeleteMessagesOpen] = useState(false);
@@ -104,12 +98,10 @@ export function ProfileDangerZone({
               </div>
 
               <div className="min-w-0">
-                <p className="m-0 text-[0.813rem] font-bold text-text">
-                  Delete your account
-                </p>
+                <p className="m-0 text-[0.813rem] font-bold text-text">Delete your account</p>
                 <p className="m-0 mt-0.5 text-[0.813rem] text-muted">
-                  Permanently delete all contacts, messages, and attachments. This
-                  can&apos;t be undone.
+                  Permanently delete all contacts, messages, and attachments. This can&apos;t be
+                  undone.
                 </p>
               </div>
               <div className="justify-self-end p-px">

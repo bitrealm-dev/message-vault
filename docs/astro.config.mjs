@@ -1,6 +1,7 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightSidebarTopics from 'starlight-sidebar-topics';
+import mermaid from 'astro-mermaid';
 
 const limitedBadge = {
   text: 'Limited',
@@ -53,25 +54,72 @@ const userGuideItems = [
 
 const developerItems = [
   'vault/developer',
-  'vault/developer/run-from-source',
-  'vault/developer/docker-compose',
+  'vault/developer/contributing',
+  'vault/developer/release',
+  'vault/developer/rustdoc-style',
+  {
+    label: 'Architecture',
+    items: [
+      'vault/developer/vault-design',
+      'vault/developer/message-transfer',
+      'vault/developer/architecture/common-message',
+    ],
+  },
+  'vault/developer/docker',
   {
     label: 'CLI tools',
     items: [
       'vault/developer/reference/cli',
-      'vault/developer/reference/cli/imessage-ir-exporter',
-      'vault/developer/reference/cli/sms-backup-restore-exporter',
-      'vault/developer/reference/cli/whatsapp-exporter',
-      'vault/developer/reference/cli/message-reexporter',
-      'vault/developer/reference/cli/vault-push',
-      'vault/developer/reference/cli/vault-pull',
-      'vault/developer/reference/cli/go-sms-pro-exporter',
-      'vault/developer/reference/cli/imazing-exporter',
-      'vault/developer/reference/cli/openextract-exporter',
-      'vault/developer/reference/cli/sms-backup-plus-exporter',
+      {
+        label: 'Supported',
+        items: [
+          'vault/developer/reference/cli/imessage-ir-exporter',
+          'vault/developer/reference/cli/sms-backup-restore-exporter',
+          'vault/developer/reference/cli/whatsapp-exporter',
+        ],
+      },
+      {
+        label: 'Rescue / experimental',
+        items: [
+          {
+            slug: 'vault/developer/reference/cli/go-sms-pro-exporter',
+            badge: limitedBadge,
+          },
+          {
+            slug: 'vault/developer/reference/cli/imazing-exporter',
+            badge: limitedBadge,
+          },
+          {
+            slug: 'vault/developer/reference/cli/openextract-exporter',
+            badge: limitedBadge,
+          },
+          {
+            slug: 'vault/developer/reference/cli/sms-backup-plus-exporter',
+            badge: limitedBadge,
+          },
+        ],
+      },
+      {
+        label: 'Vault JSONL',
+        items: [
+          'vault/developer/reference/cli/message-reexporter',
+          'vault/developer/reference/cli/vault-push',
+          'vault/developer/reference/cli/vault-pull',
+        ],
+      },
     ],
   },
   'vault/developer/reference/api',
+  {
+    label: 'HTTP API reference',
+    link: '/vault/developer/rustdoc/http/',
+    attrs: { target: '_self' },
+  },
+  {
+    label: 'Rust crate docs',
+    link: '/vault/developer/rustdoc/',
+    attrs: { target: '_self' },
+  },
   {
     label: 'Formats',
     items: [
@@ -121,38 +169,56 @@ const developerItems = [
 
 export default defineConfig({
   site: 'https://bitrealm.io',
+  redirects: {
+    '/vault/developer/docker-compose/': '/vault/developer/docker/',
+  },
   integrations: [
+    mermaid({
+      autoTheme: true,
+      enableLog: false,
+    }),
     starlight({
       title: 'Message Vault',
       description:
         'Extract messages from phone backups, import them into a local vault, and browse them in a website you control.',
       editLink: {
         baseUrl:
-          'https://github.com/bitrealm-dev/message-vault/edit/main/docs/',
+          'https://github.com/bitrealm-io/message-vault/edit/main/docs/',
       },
       social: [
         {
           icon: 'github',
           label: 'GitHub',
-          href: 'https://github.com/bitrealm-dev/message-vault',
+          href: 'https://github.com/bitrealm-io/message-vault',
         },
       ],
       customCss: ['./src/styles/custom.css'],
       plugins: [
-        starlightSidebarTopics([
+        starlightSidebarTopics(
+          [
+            {
+              label: 'User Guide',
+              link: '/vault/user/',
+              icon: 'open-book',
+              items: userGuideItems,
+            },
+            {
+              label: 'Developer',
+              id: 'developer',
+              link: '/vault/developer/',
+              icon: 'laptop',
+              items: developerItems,
+            },
+          ],
           {
-            label: 'User Guide',
-            link: '/vault/user/',
-            icon: 'open-book',
-            items: userGuideItems,
+            topics: {
+              developer: [
+                '/vault/developer/rustdoc',
+                '/vault/developer/rustdoc/**',
+              ],
+            },
           },
-          {
-            label: 'Developer',
-            link: '/vault/developer/',
-            icon: 'laptop',
-            items: developerItems,
-          },
-        ]),
+        ),
       ],
     }),
   ],

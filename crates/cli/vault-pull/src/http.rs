@@ -10,6 +10,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use reqwest::blocking::Client;
 use serde::Deserialize;
+use vault_http::truncate;
 
 #[derive(Debug, Deserialize)]
 /// One page from `GET /v1/export/messages`.
@@ -178,6 +179,17 @@ fn export_url(request: ExportUrl<'_>) -> Result<reqwest::Url> {
     Ok(url)
 }
 
+/// Arguments for [`HttpSession::export_messages`].
+pub(crate) struct ExportMessagesArgs<'a> {
+    pub base_url: &'a str,
+    pub key: &'a str,
+    pub q: &'a str,
+    pub limit: usize,
+    pub cursor: Option<&'a str>,
+    pub account: &'a str,
+    pub source: Option<&'a str>,
+}
+
 impl HttpSession {
     /// Blocking HTTP client with a connection pool for worker threads.
     ///
@@ -185,11 +197,9 @@ impl HttpSession {
     ///
     /// Returns an error when the reqwest client cannot be built.
     pub fn new() -> Result<Self> {
-        let client = Client::builder()
-            .pool_max_idle_per_host(16)
-            .build()
-            .context("build HTTP client")?;
-        Ok(Self { client })
+        Ok(Self {
+            client: vault_http::build_client()?,
+        })
     }
 
     /// Fetch one page of messages from `GET /v1/export/messages`.
@@ -197,16 +207,16 @@ impl HttpSession {
     /// # Errors
     ///
     /// Returns an error when the request fails or the body is not valid JSON.
-    pub fn export_messages(
-        &self,
-        base_url: &str,
-        key: &str,
-        q: &str,
-        limit: usize,
-        cursor: Option<&str>,
-        account: &str,
-        source: Option<&str>,
-    ) -> Result<ExportMessagesResponse> {
+    pub fn export_messages(&self, args: ExportMessagesArgs<'_>) -> Result<ExportMessagesResponse> {
+        let ExportMessagesArgs {
+            base_url,
+            key,
+            q,
+            limit,
+            cursor,
+            account,
+            source,
+        } = args;
         let url = export_url(ExportUrl {
             base_url,
             path: "/v1/export/messages",
@@ -377,14 +387,5 @@ impl HttpSession {
         std::fs::rename(&tmp, dest)
             .with_context(|| format!("rename {} -> {}", tmp.display(), dest.display()))?;
         Ok(())
-    }
-}
-
-/// Copy `s`, cutting it to `max` bytes and adding an ellipsis when longer.
-fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}…", &s[..max])
     }
 }

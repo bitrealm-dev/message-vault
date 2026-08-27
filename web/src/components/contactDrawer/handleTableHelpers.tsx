@@ -1,47 +1,77 @@
 import type { ReactNode } from "react";
-import { Column } from "react-aria-components";
+import { Column, ColumnResizer, Group } from "react-aria-components";
 import {
+  columnResizerClass,
   linkClass,
   mutedClass,
   thClass,
+  thLeftClass,
   thRightClass,
 } from "./handleTableStyles";
+import { headerLabelMinWidth } from "./headerLabelMinWidth";
 
 export function SortableColumn({
   id,
-  widthClass,
+  widthClass = "",
   align = "center",
   isRowHeader,
+  allowsResizing = false,
+  defaultWidth,
+  minWidth,
   children,
 }: {
   id: string;
-  widthClass: string;
-  align?: "center" | "right";
+  widthClass?: string;
+  align?: "left" | "center" | "right";
   isRowHeader?: boolean;
+  allowsResizing?: boolean;
+  defaultWidth?: number | `${number}%` | `${number}fr`;
+  minWidth?: number;
   children: ReactNode;
 }) {
-  const justify = align === "right" ? "justify-end" : "justify-center";
-  const textAlign = align === "right" ? "text-right" : "text-center";
-  const headerAlign = align === "right" ? thRightClass : thClass;
+  const justify =
+    align === "right" ? "justify-end" : align === "left" ? "justify-start" : "justify-center";
+  const textAlign =
+    align === "right" ? "text-right" : align === "left" ? "text-left" : "text-center";
+  const headerAlign = align === "right" ? thRightClass : align === "left" ? thLeftClass : thClass;
+  const resolvedMinWidth =
+    minWidth ??
+    (allowsResizing && typeof children === "string" ? headerLabelMinWidth(children) : undefined);
+
   return (
     <Column
       id={id}
       isRowHeader={isRowHeader}
       allowsSorting
-      className={`${headerAlign} ${widthClass}`}
+      defaultWidth={defaultWidth}
+      minWidth={resolvedMinWidth}
+      className={`${headerAlign} ${widthClass}`.trim()}
     >
       {({ sortDirection }) => (
-        <span className={`relative mx-auto inline-flex max-w-full items-center ${justify}`}>
-          <span className={`${textAlign} leading-tight`}>{children}</span>
+        <div className="relative flex w-full min-w-0 items-center">
+          <Group
+            className={`flex min-w-0 flex-1 items-center outline-none ${justify} ${
+              align === "right" ? "pr-4" : align === "left" ? "" : "px-4"
+            }`}
+          >
+            <span
+              className={`max-w-full leading-tight ${textAlign} ${
+                sortDirection ? "text-accent" : "text-text"
+              }`}
+            >
+              {children}
+            </span>
+          </Group>
           <span
             aria-hidden="true"
-            className={`absolute top-1/2 left-[calc(100%+0.25rem)] -translate-y-1/2 text-[0.55rem] leading-none ${
+            className={`pointer-events-none absolute top-1/2 right-1 -translate-y-1/2 text-[0.55rem] leading-none ${
               sortDirection ? "text-accent" : "invisible"
             }`}
           >
             {sortDirection === "descending" ? "▼" : "▲"}
           </span>
-        </span>
+          {allowsResizing ? <ColumnResizer className={columnResizerClass} /> : null}
+        </div>
       )}
     </Column>
   );
@@ -50,10 +80,16 @@ export function SortableColumn({
 export function CountCell({
   value,
   onClick,
+  loading = false,
 }: {
   value: number;
   onClick?: () => void;
+  /** When true, show an em dash instead of a zeroed stub count. */
+  loading?: boolean;
 }) {
+  if (loading) {
+    return <span className={mutedClass}>—</span>;
+  }
   const text = value.toLocaleString();
   if (value > 0 && onClick) {
     return (

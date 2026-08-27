@@ -97,9 +97,11 @@ export function toImportSummaryView(detail: ImportDetailResponse): ImportSummary
       : {};
   const hasAnyStageTiming =
     detail.parse_ms != null || detail.convert_ms != null || detail.upload_ms != null;
-  const durationMs = detail.duration_ms ?? (hasAnyStageTiming
-    ? (detail.parse_ms ?? 0) + (detail.convert_ms ?? 0) + (detail.upload_ms ?? 0)
-    : null);
+  const durationMs =
+    detail.duration_ms ??
+    (hasAnyStageTiming
+      ? (detail.parse_ms ?? 0) + (detail.convert_ms ?? 0) + (detail.upload_ms ?? 0)
+      : null);
 
   return {
     status: toSummaryStatus(detail.status),

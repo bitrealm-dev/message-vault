@@ -1,0 +1,34 @@
+---
+import LandingLayout from "../layouts/LandingLayout.astro";
+import { landingLinks } from "../lib/landing-links";
+---
+
+<LandingLayout
+  title="About · Message Vault"
+  description="About Bitrealm and Message Vault."
+  canonicalPath="/about/"
+>
+  <main class="mv-stub">
+    <h1>About</h1>
+    <p>
+      Bitrealm builds local software you run on a machine you control—not a cloud
+      account that owns your archive.
+    </p>
+    <div class="mv-stub-block">
+      <h2>Message Vault</h2>
+      <p>
+        Message Vault is Bitrealm’s product for turning phone-backup chat history
+        into a searchable vault: extract, import, browse, search, and export in
+        formats you can keep.
+      </p>
+      <p>
+        Guides:
+        <a href={landingLinks.docs}>user</a>
+        ·
+        <a href={landingLinks.developer}>developer</a>
+        ·
+        <a href={landingLinks.github}>GitHub</a>
+      </p>
+    </div>
+  </main>
+</LandingLayout>

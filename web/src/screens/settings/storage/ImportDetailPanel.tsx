@@ -2,12 +2,7 @@ import ImportSummaryPanel, {
   type ImportSummaryView,
 } from "../../../components/import/ImportSummaryPanel";
 import type { ImportDetailResponse } from "./storageUtils";
-import {
-  formatBytes,
-  formatImportDate,
-  sectionHint,
-  sectionTitle,
-} from "./storageUtils";
+import { formatBytes, formatImportDate, sectionHint, sectionTitle } from "./storageUtils";
 
 export default function ImportDetailPanel({
   detailId,
@@ -57,9 +52,7 @@ export default function ImportDetailPanel({
       </div>
 
       {selectedImportLoading ? (
-        <p className="mt-4 text-[0.813rem] text-muted">
-          Loading import summary…
-        </p>
+        <p className="mt-4 text-[0.813rem] text-muted">Loading import summary…</p>
       ) : null}
 
       {selectedImportError ? (
@@ -73,36 +66,25 @@ export default function ImportDetailPanel({
           <dl className="mt-4 grid gap-3 text-[0.813rem] text-text sm:grid-cols-2 lg:grid-cols-3">
             <div>
               <dt className="text-muted">Started</dt>
-              <dd className="mt-1">
-                {formatImportDate(selectedImport.started_at)}
-              </dd>
+              <dd className="mt-1">{formatImportDate(selectedImport.started_at)}</dd>
             </div>
             <div>
               <dt className="text-muted">Finished</dt>
               <dd className="mt-1">
-                {formatImportDate(
-                  selectedImport.finished_at ??
-                    selectedImport.started_at,
-                )}
+                {formatImportDate(selectedImport.finished_at ?? selectedImport.started_at)}
               </dd>
             </div>
             <div>
               <dt className="text-muted">Messages</dt>
-              <dd className="mt-1">
-                {selectedImport.message_count.toLocaleString()}
-              </dd>
+              <dd className="mt-1">{selectedImport.message_count.toLocaleString()}</dd>
             </div>
             <div>
               <dt className="text-muted">Attachments</dt>
-              <dd className="mt-1">
-                {selectedImport.attachment_count.toLocaleString()}
-              </dd>
+              <dd className="mt-1">{selectedImport.attachment_count.toLocaleString()}</dd>
             </div>
             <div>
               <dt className="text-muted">Bytes uploaded</dt>
-              <dd className="mt-1">
-                {formatBytes(selectedImport.bytes_uploaded)}
-              </dd>
+              <dd className="mt-1">{formatBytes(selectedImport.bytes_uploaded)}</dd>
             </div>
           </dl>
           <ImportSummaryPanel summary={selectedImportSummary} />

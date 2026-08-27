@@ -1,17 +1,19 @@
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   createContext,
-  useContext,
-  useState,
+  type ReactNode,
   useCallback,
+  useContext,
   useEffect,
   useRef,
-  type ReactNode,
+  useState,
 } from "react";
-import { setBaseUrl, setToken, apiClient } from "./api";
+import { apiClient, getToken, setBaseUrl, setToken } from "./api";
+import { parsePersistedAuth } from "./authGuards";
 import { clearContactDetailCache } from "./contactDetailCache";
 import { invalidateContactGroups } from "./contactGroups";
+import { isTauri } from "./tauri-check";
 import { invalidateThreadTags } from "./threadTags";
-import { parsePersistedAuth } from "./authGuards";
 
 interface AuthState {
   serverUrl: string;
@@ -39,13 +41,27 @@ interface AuthContextValue extends AuthState {
   login: (serverUrl: string, token: string, accountId: string) => Promise<void>;
   /** Save a new session token after the user changes their password. */
   updateToken: (token: string) => void;
-  logout: () => void;
+  /** Revoke the vault session (best-effort) and clear the saved login. */
+  logout: () => Promise<void>;
   setServer: (url: string) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 const STORAGE_KEY = "message-vault-auth";
+
+/** Max time to wait for the vault logout request before clearing local state. */
+const LOGOUT_TIMEOUT_MS = 2000;
+
+/** AbortSignal that fires after {@link LOGOUT_TIMEOUT_MS}. */
+function logoutTimeoutSignal(): AbortSignal {
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    return AbortSignal.timeout(LOGOUT_TIMEOUT_MS);
+  }
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), LOGOUT_TIMEOUT_MS);
+  return controller.signal;
+}
 
 /** Read the last saved login from browser storage. */
 function loadPersisted(): Partial<AuthState> | null {
@@ -99,11 +115,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>(() => {
     const persisted = loadPersisted();
     // An empty server URL is allowed: it means "same host as this page".
-    if (
-      persisted?.token &&
-      persisted?.accountId &&
-      typeof persisted.serverUrl === "string"
-    ) {
+    if (persisted?.token && persisted?.accountId && typeof persisted.serverUrl === "string") {
       // Apply before children mount. Otherwise Contact Groups loads without
       // a token, fails, and the sidebar stays on "No group" only.
       setBaseUrl(persisted.serverUrl);
@@ -187,39 +199,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setState((s) => ({ ...s, serverUrl: url }));
   }, []);
 
-  const login = useCallback(
-    async (serverUrl: string, token: string, accountId: string) => {
-      const epoch = ++authEpoch.current;
-      clearContactDetailCache();
-      invalidateContactGroups();
-      invalidateThreadTags();
-      setBaseUrl(serverUrl);
-      setToken(token);
+  const login = useCallback(async (serverUrl: string, token: string, accountId: string) => {
+    const epoch = ++authEpoch.current;
+    clearContactDetailCache();
+    invalidateContactGroups();
+    invalidateThreadTags();
+    setBaseUrl(serverUrl);
+    setToken(token);
 
-      // New accounts have no profile yet, so send them through setup.
-      let needsOnboarding = false;
-      try {
-        const profile = await apiClient.get<Profile>("/v1/account/profile");
-        needsOnboarding = profileNeedsOnboarding(profile);
-      } catch {
-        // Profile request failed. Assume a profile exists so the user is not locked out.
-      }
+    // New accounts have no profile yet, so send them through setup.
+    let needsOnboarding = false;
+    try {
+      const profile = await apiClient.get<Profile>("/v1/account/profile");
+      needsOnboarding = profileNeedsOnboarding(profile);
+    } catch {
+      // Profile request failed. Assume a profile exists so the user is not locked out.
+    }
 
-      if (authEpoch.current !== epoch) return; // A later login or logout replaced this one.
+    if (authEpoch.current !== epoch) return; // A later login or logout replaced this one.
 
-      const newState: AuthState = {
-        serverUrl,
-        token,
-        accountId,
-        isAuthenticated: true,
-        needsOnboarding,
-      };
-      persistState(newState);
-      setState(newState);
-      setRestored(true);
-    },
-    [],
-  );
+    const newState: AuthState = {
+      serverUrl,
+      token,
+      accountId,
+      isAuthenticated: true,
+      needsOnboarding,
+    };
+    persistState(newState);
+    setState(newState);
+    setRestored(true);
+  }, []);
 
   const updateToken = useCallback((token: string) => {
     setToken(token);
@@ -231,10 +240,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
     authEpoch.current++;
     // Tell the server to end the session while the token is still set on the API client.
-    void apiClient.post("/v1/auth/logout", {}).catch(() => {});
+    // Await so close-to-quit can finish (or time out) before the WebView dies.
+    if (getToken()) {
+      try {
+        await apiClient.post("/v1/auth/logout", {}, { signal: logoutTimeoutSignal() });
+      } catch {
+        // Vault unreachable, 401, or timeout — still clear the local session.
+      }
+    }
     setToken(null);
     clearContactDetailCache();
     invalidateContactGroups();
@@ -248,6 +264,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       needsOnboarding: false,
     }));
   }, []);
+
+  // Desktop only: on window close, revoke the session then quit.
+  const closingRef = useRef(false);
+  useEffect(() => {
+    if (!isTauri()) return;
+
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const win = getCurrentWindow();
+        unlisten = await win.onCloseRequested(async (event) => {
+          event.preventDefault();
+          if (closingRef.current) return;
+          closingRef.current = true;
+          try {
+            await logout();
+            await win.destroy();
+          } catch {
+            // Destroy failed or window already gone — allow another close attempt.
+            closingRef.current = false;
+          }
+        });
+        if (cancelled) {
+          unlisten();
+          unlisten = undefined;
+        }
+      } catch {
+        // Missing window permissions or not a real Tauri window — leave close alone.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [logout]);
 
   return (
     <AuthContext.Provider value={{ ...state, login, logout, updateToken, setServer }}>

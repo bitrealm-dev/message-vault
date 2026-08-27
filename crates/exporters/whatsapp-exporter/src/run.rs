@@ -120,11 +120,7 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
     // Drop tempdir after convert (media files already copied).
     drop(_work_keep_alive);
 
-    if !sink.media.errors.is_empty() && sink.media.processed == 0 && needs_media_tools {
-        bail!("media processing failed for all candidate files");
-    }
-    messages.extend(sink.log_lines());
-
-    report.summary_lines(&config.output, &mut messages);
+    let result = message_ir_format::finish_run(config, &report, &sink, needs_media_tools)?;
+    messages.extend(result.messages);
     Ok(RunResult { messages })
 }

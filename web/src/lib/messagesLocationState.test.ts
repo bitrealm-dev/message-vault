@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { asMessagesLocationState } from "./messagesLocationState.ts";
 
 const conversation = {
@@ -11,6 +11,13 @@ const conversation = {
   service: "imessage",
   is_group: false,
   label: null,
+};
+
+const preview = {
+  id: "c1",
+  name: "Ada",
+  handles: ["+15550001"],
+  handleCount: 1,
 };
 
 describe("asMessagesLocationState", () => {
@@ -35,5 +42,63 @@ describe("asMessagesLocationState", () => {
     expect(asMessagesLocationState({ conversation: { id: 1 } })).toBeNull();
     expect(asMessagesLocationState({ openContactId: 5 })).toBeNull();
     expect(asMessagesLocationState({})).toBeNull();
+  });
+
+  it("accepts openContactPreview when it matches openContactId", () => {
+    expect(
+      asMessagesLocationState({
+        conversation,
+        openContactId: "c1",
+        openContactPreview: preview,
+      }),
+    ).toEqual({ conversation, openContactId: "c1", openContactPreview: preview });
+  });
+
+  it("drops openContactPreview when id does not match openContactId", () => {
+    expect(
+      asMessagesLocationState({
+        openContactId: "c1",
+        openContactPreview: { ...preview, id: "other" },
+      }),
+    ).toEqual({ openContactId: "c1" });
+  });
+
+  it("drops malformed openContactPreview without rejecting the rest of state", () => {
+    expect(
+      asMessagesLocationState({
+        openContactId: "c1",
+        openContactPreview: { id: "c1" },
+      }),
+    ).toEqual({ openContactId: "c1" });
+  });
+
+  it("drops openContactPreview when name is empty", () => {
+    expect(
+      asMessagesLocationState({
+        openContactId: "c1",
+        openContactPreview: { ...preview, name: "" },
+      }),
+    ).toEqual({ openContactId: "c1" });
+  });
+
+  it("drops openContactPreview when handleCount is negative or not an integer", () => {
+    expect(
+      asMessagesLocationState({
+        openContactId: "c1",
+        openContactPreview: { ...preview, handleCount: -1 },
+      }),
+    ).toEqual({ openContactId: "c1" });
+    expect(
+      asMessagesLocationState({
+        openContactId: "c1",
+        openContactPreview: { ...preview, handleCount: 1.5 },
+      }),
+    ).toEqual({ openContactId: "c1" });
+    expect(
+      asMessagesLocationState({
+        openContactId: "c1",
+        openContactPreview: { ...preview, handleCount: 501 },
+      }),
+    ).toEqual({ openContactId: "c1" });
   });
 });

@@ -6,15 +6,22 @@
 
 mod archive;
 mod assets;
+mod attachments_emit;
 mod contacts;
 mod emit;
 mod flat_eml;
 mod identity;
+mod parse_emit;
 mod run;
 mod types;
 
 pub use message_vault_io_core::{RunResult, parse_date_range};
 pub use run::run;
+
+#[cfg(feature = "cli")]
+pub mod cli;
+#[cfg(feature = "cli")]
+pub use cli::clap_command;
 
 #[cfg(test)]
 #[path = "../tests/convert_smoke.rs"]

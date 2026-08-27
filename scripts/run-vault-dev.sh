@@ -80,6 +80,8 @@ write_host_dev_config() {
     exit 1
   fi
   # Loopback bind (no Docker port publish) and Vite/Tauri CORS.
+  # Uncomments the single-line cors_origins array in the example. Keep that
+  # array on one line or this substitution leaves invalid TOML.
   sed \
     -e 's/^# cors_origins =/cors_origins =/' \
     "${CONFIG_EXAMPLE}" >"${CONFIG}"

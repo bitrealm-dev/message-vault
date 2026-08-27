@@ -1,13 +1,14 @@
+import { useId } from "react";
+import { parseSelectKey } from "../../lib/selectKey";
 import DateField from "../DateField";
 import Select, { ListBoxItem as SelectListBoxItem } from "../Select";
-import { parseSelectKey } from "../../lib/selectKey";
-import type { DateBoundFilter, DateBoundOp } from "./buildAdvancedQuery";
 import {
   compactFieldTriggerClass,
   compactSelectItemClassName,
   dateGroupClass,
   labelClass,
 } from "./advancedSearchStyles";
+import type { DateBoundFilter, DateBoundOp } from "./buildAdvancedQuery";
 
 /** Compact DateField used under First/Last Seen operators (label is sr-only). */
 function BoundDateInput({
@@ -46,6 +47,8 @@ export default function DateBoundField({
   onChange: (next: DateBoundFilter) => void;
   isDisabled?: boolean;
 }) {
+  const selectId = useId();
+
   function setOp(op: DateBoundOp): void {
     if (op === "any") {
       onChange({ op: "any", start: "", end: "" });
@@ -91,8 +94,11 @@ export default function DateBoundField({
 
   return (
     <div className={`min-w-0 ${isDisabled ? "opacity-40" : ""}`}>
-      <label className={labelClass}>{label}</label>
+      <label htmlFor={selectId} className={labelClass}>
+        {label}
+      </label>
       <Select
+        id={selectId}
         selectedKey={value.op}
         onSelectionChange={(k) => {
           const op = parseSelectKey(k, ["any", "after", "before", "between"] as const);

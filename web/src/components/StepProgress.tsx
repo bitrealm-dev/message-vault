@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import OpenPathButton from "./OpenPathButton";
 
 export type StepStatus = "pending" | "active" | "done" | "error";
 
@@ -8,8 +7,6 @@ export type Step = {
   status: StepStatus;
   /** Status line under the label (e.g. "Extraction complete"). */
   detail?: string;
-  /** Staging/output directory shown under the label; opens in the OS file explorer. */
-  pathLink?: string;
   /** Wall-clock duration for a finished step, shown beside the label. */
   durationMs?: number | null;
 };
@@ -97,23 +94,13 @@ export default function StepProgress({ steps, completionText }: StepProgressProp
       <ol className="m-0 grid w-fit max-w-full grid-cols-[1.5rem_minmax(0,max-content)_max-content] gap-x-2 gap-y-3 p-0">
         {steps.map((step, i) => (
           <li
-            key={i}
+            key={step.label}
             aria-current={step.status === "active" ? "step" : undefined}
             className="col-span-3 grid grid-cols-subgrid items-start"
           >
             <StepGlyph status={step.status} index={i} />
             <div className="min-w-0 max-w-[min(36rem,70vw)]">
-              <div className={`text-[0.875rem] ${stepLabelClass(step.status)}`}>
-                {step.label}
-              </div>
-              {step.pathLink ? (
-                <OpenPathButton
-                  path={step.pathLink}
-                  className="mt-0.5 block max-w-full truncate border-0 bg-transparent p-0 text-left text-[0.75rem] text-accent underline-offset-2 hover:underline"
-                >
-                  {step.pathLink}
-                </OpenPathButton>
-              ) : null}
+              <div className={`text-[0.875rem] ${stepLabelClass(step.status)}`}>{step.label}</div>
               {step.detail ? (
                 <div className="mt-0.5 text-[0.75rem] text-muted">{step.detail}</div>
               ) : null}

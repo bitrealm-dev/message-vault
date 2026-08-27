@@ -31,7 +31,15 @@ bind = "127.0.0.1:8080"
 # asset_part_size = 67108864
 
 # CORS allowed origins. Empty = same-origin only (website served from this process).
-# The desktop app in `cargo tauri dev` loads http://localhost:5173 and calls this
-# API on 8080 — list those origins or Connect fails in the WebKit window.
-# Use ["*"] only for local debugging.
-# cors_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+# List every UI origin that calls this API on a different host/port:
+# - Vite / `cargo tauri dev`: http://localhost:5173 and http://127.0.0.1:5173
+# - Packaged desktop: tauri://localhost (Linux AppImage / macOS),
+#   http://tauri.localhost (Windows), https://tauri.localhost (Windows HTTPS scheme)
+# Without those entries the desktop app reports it cannot reach the server even
+# when curl to :8080 works. Use ["*"] only for local debugging.
+# Keep this array on one line: scripts/run-vault-dev.sh uncomments only this line.
+# cors_origins = ["http://localhost:5173", "http://127.0.0.1:5173", "https://tauri.localhost", "http://tauri.localhost", "tauri://localhost"]
+
+# Serve an interactive OpenAPI explorer at /docs (and /openapi.json).
+# Default false. Calls from the explorer still need a Bearer token.
+# openapi_ui = false

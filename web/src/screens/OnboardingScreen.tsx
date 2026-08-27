@@ -1,48 +1,36 @@
 import { useState } from "react";
-import { useAuth } from "../lib/auth";
-import { apiClient } from "../lib/api";
-import { useAsyncAction } from "../lib/useAsyncAction";
-import {
-  accentLink,
-  authCard,
-  authInput,
-  authLabel,
-  authTitle,
-  pageCenter,
-} from "../lib/uiStyles";
 import AuthErrorFooter from "../components/AuthErrorFooter";
 import AuthSubmitButton from "../components/AuthSubmitButton";
 import Select, { ListBoxItem, selectItemClassName } from "../components/Select";
 import TextField from "../components/TextField";
-import {
-  HANDLE_SERVICE_OPTIONS,
-  HANDLE_SERVICES,
-  type HandleService,
-} from "../lib/handleService";
+import { apiClient } from "../lib/api";
+import { useAuth } from "../lib/auth";
+import { HANDLE_SERVICE_OPTIONS, HANDLE_SERVICES, type HandleService } from "../lib/handleService";
 import { parseSelectKey } from "../lib/selectKey";
+import { accentLink, authCard, authInput, authLabel, authTitle, pageCenter } from "../lib/uiStyles";
+import { useAsyncAction } from "../lib/useAsyncAction";
 
 interface HandleInput {
+  id: string;
   handle: string;
   service: HandleService;
+}
+
+function newHandleRow(): HandleInput {
+  return { id: crypto.randomUUID(), handle: "", service: "phone" };
 }
 
 export default function OnboardingScreen() {
   const { login, logout, token, serverUrl, accountId } = useAuth();
   const [displayName, setDisplayName] = useState("");
-  const [handles, setHandles] = useState<HandleInput[]>([
-    { handle: "", service: "phone" },
-  ]);
+  const [handles, setHandles] = useState<HandleInput[]>(() => [newHandleRow()]);
   const { busy, error, run } = useAsyncAction();
 
   const addHandle = () => {
-    setHandles([...handles, { handle: "", service: "phone" }]);
+    setHandles([...handles, newHandleRow()]);
   };
 
-  const updateHandle = (
-    index: number,
-    field: "handle" | "service",
-    value: string,
-  ) => {
+  const updateHandle = (index: number, field: "handle" | "service", value: string) => {
     const next = [...handles];
     if (field === "service") {
       const service = parseSelectKey(value, HANDLE_SERVICES);
@@ -61,6 +49,9 @@ export default function OnboardingScreen() {
 
   const handleSubmit = () => {
     void run(async () => {
+      if (!token || !accountId) {
+        throw new Error("Not signed in");
+      }
       await apiClient.post("/v1/account/profile", {
         preferred_name: displayName.trim(),
         handles: handles
@@ -71,12 +62,11 @@ export default function OnboardingScreen() {
           })),
       });
       // Log in again so "needs setup" is recomputed from the saved profile.
-      await login(serverUrl, token!, accountId!);
+      await login(serverUrl, token, accountId);
     });
   };
 
-  const canSubmit =
-    displayName.trim() && handles.some((h) => h.handle.trim());
+  const canSubmit = displayName.trim() && handles.some((h) => h.handle.trim());
 
   return (
     <div className={pageCenter}>
@@ -87,26 +77,23 @@ export default function OnboardingScreen() {
           Set up your profile so we can match imported message data to you.
         </p>
 
-        <label className={authLabel}>Display Name</label>
+        <label className={authLabel} htmlFor="onboarding-display-name">
+          Display Name
+        </label>
         <input
+          id="onboarding-display-name"
           type="text"
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
           placeholder="Your name"
           className={authInput}
-          autoFocus
         />
 
-        <label className={`${authLabel} mt-4`}>Source Accounts</label>
-        <p className={helpStyle}>
-          Add the accounts or phone numbers you import data from.
-        </p>
+        <div className={`${authLabel} mt-4`}>Source Accounts</div>
+        <p className={helpStyle}>Add the accounts or phone numbers you import data from.</p>
 
         {handles.map((h, i) => (
-          <div
-            key={i}
-            className="mb-2 flex gap-2"
-          >
+          <div key={h.id} className="mb-2 flex gap-2">
             <Select
               selectedKey={h.service}
               onSelectionChange={(k) => {
@@ -114,6 +101,7 @@ export default function OnboardingScreen() {
                 if (service) updateHandle(i, "service", service);
               }}
               className="w-[140px] shrink-0"
+              aria-label={`Account ${i + 1} type`}
             >
               {HANDLE_SERVICE_OPTIONS.map((s) => (
                 <ListBoxItem key={s.value} id={s.value} className={selectItemClassName}>
@@ -124,12 +112,9 @@ export default function OnboardingScreen() {
             <TextField
               value={h.handle}
               onChange={(v) => updateHandle(i, "handle", v)}
-              placeholder={
-                h.service === "email"
-                  ? "you@example.com"
-                  : "+1 555-123-4567"
-              }
+              placeholder={h.service === "email" ? "you@example.com" : "+1 555-123-4567"}
               className="flex-1 min-w-0"
+              aria-label={`Account ${i + 1} value`}
             />
             <button
               type="button"
@@ -156,7 +141,11 @@ export default function OnboardingScreen() {
           {busy ? "Saving…" : "Continue to Vault"}
         </AuthSubmitButton>
 
-        <button type="button" onClick={logout} className={`${accentLink} mt-3 block w-full text-center`}>
+        <button
+          type="button"
+          onClick={logout}
+          className={`${accentLink} mt-3 block w-full text-center`}
+        >
           ← Back to login
         </button>
 

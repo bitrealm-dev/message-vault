@@ -40,11 +40,7 @@ export function displaySourceLabel(source: string): string {
  * Footer count line. A year filter loads that year in full, so it always shows
  * the whole range. Unfiltered browsing shows the current page window.
  */
-export function buildFooterLabel(
-  activeYear: number | null,
-  total: number,
-  offset: number,
-): string {
+export function buildFooterLabel(activeYear: number | null, total: number, offset: number): string {
   if (activeYear !== null) {
     if (total === 0) return `${activeYear}: 0 of 0`;
     return `${activeYear}: 1–${total} of ${total}`;
@@ -54,7 +50,9 @@ export function buildFooterLabel(
 }
 
 /** Load every message matching this search, paging until the server has no more. */
-async function fetchAllMessagesForQuery(q: string): Promise<{ messages: Message[]; total: number }> {
+async function fetchAllMessagesForQuery(
+  q: string,
+): Promise<{ messages: Message[]; total: number }> {
   const countRes = await apiClient.get<{ messages: number }>(
     `/v1/export/messages/count?q=${encodeURIComponent(q)}`,
   );
@@ -138,7 +136,7 @@ export function useConversationMessages(conversationId: string) {
     setFindTerm("");
     setActiveMatch(0);
     void fetchConversationPage(0);
-  }, [conversationId, fetchConversationPage]);
+  }, [fetchConversationPage]);
 
   const selectAllYears = () => {
     setActiveYear(null);

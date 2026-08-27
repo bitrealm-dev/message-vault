@@ -5,7 +5,7 @@ description: "How SyncTech SMS and MMS fields become the shared conversation str
 
 How SyncTech `<sms>` and `<mms>` elements become `ConversationDocument` values, including validation, skipped records, and the source-specific data retained for later output.
 
-Input structure and attribute meanings: [input format](/vault/developer/formats/sms-backup-restore/input/). Shared model: [message-ir](https://github.com/bitrealm-dev/message-vault/blob/main/docs/maintainers/architecture/message-ir.md). CSV projection: [CSV columns](/vault/developer/reference/csv-columns/).
+Input structure and attribute meanings: [input format](/vault/developer/formats/sms-backup-restore/input/). Shared model: [message-ir](/vault/developer/architecture/common-message/). CSV projection: [CSV columns](/vault/developer/reference/csv-columns/).
 
 ## Pipeline
 
@@ -68,13 +68,13 @@ Example group address string: `+15555550101~+15555550102` with two From/To addrs
 
 ### SMS
 
-```json
+```json title="SMS source_fields_json"
 { "kind": "sms", "attrs": { /* every <sms> attribute */ } }
 ```
 
 ### MMS
 
-```json
+```json title="MMS source_fields_json"
 {
   "kind": "mms",
   "attrs": { /* every <mms> attribute */ },

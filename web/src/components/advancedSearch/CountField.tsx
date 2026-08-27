@@ -1,12 +1,13 @@
-import Select, { ListBoxItem as SelectListBoxItem } from "../Select";
+import { useId } from "react";
 import { parseSelectKey } from "../../lib/selectKey";
-import type { CountFilterInput } from "./buildAdvancedQuery";
+import Select, { ListBoxItem as SelectListBoxItem } from "../Select";
 import {
   compactSelectItemClassName,
   inputClass,
   labelClass,
   selectTriggerClass,
 } from "./advancedSearchStyles";
+import type { CountFilterInput } from "./buildAdvancedQuery";
 
 export default function CountField({
   label,
@@ -17,9 +18,13 @@ export default function CountField({
   value: CountFilterInput;
   onChange: (next: CountFilterInput) => void;
 }) {
+  const valueId = useId();
+
   return (
     <div>
-      <label className={labelClass}>{label}</label>
+      <label htmlFor={valueId} className={labelClass}>
+        {label}
+      </label>
       <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-1.5">
         <Select
           selectedKey={value.comparator}
@@ -34,12 +39,21 @@ export default function CountField({
             });
           }}
         >
-          <SelectListBoxItem id="any" className={compactSelectItemClassName}>Any</SelectListBoxItem>
-          <SelectListBoxItem id="=" className={compactSelectItemClassName}>Equal to</SelectListBoxItem>
-          <SelectListBoxItem id=">" className={compactSelectItemClassName}>More than</SelectListBoxItem>
-          <SelectListBoxItem id="<" className={compactSelectItemClassName}>Less than</SelectListBoxItem>
+          <SelectListBoxItem id="any" className={compactSelectItemClassName}>
+            Any
+          </SelectListBoxItem>
+          <SelectListBoxItem id="=" className={compactSelectItemClassName}>
+            Equal to
+          </SelectListBoxItem>
+          <SelectListBoxItem id=">" className={compactSelectItemClassName}>
+            More than
+          </SelectListBoxItem>
+          <SelectListBoxItem id="<" className={compactSelectItemClassName}>
+            Less than
+          </SelectListBoxItem>
         </Select>
         <input
+          id={valueId}
           type="number"
           min={0}
           step={1}

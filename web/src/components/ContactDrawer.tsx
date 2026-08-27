@@ -1,27 +1,25 @@
-import { useState, useEffect, useLayoutEffect } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { apiClient } from "../lib/api";
 import {
+  type CachedContactDetail,
   CONTACT_DETAIL_CHANGED_EVENT,
   fetchContactDetail,
   getCachedContactDetail,
   invalidateContactDetail,
-  type CachedContactDetail,
 } from "../lib/contactDetailCache";
 import Button from "./Button";
-import { PencilIcon } from "./icons";
 import { ContactDrawerHandles } from "./contactDrawer/ContactDrawerHandles";
 import {
-  type ContactPreview,
   type ContactBrowseKind,
-  emptyHandleRow,
+  type ContactPreview,
+  previewHandleStubRows,
 } from "./contactDrawer/contactDrawerTypes";
-
-export type { ContactPreview, ContactBrowseKind };
+import { PencilIcon } from "./icons";
 
 type ContactDetail = CachedContactDetail;
 
 const iconBtnClass =
-  "!inline-flex !aspect-square !h-7 !w-7 !min-h-7 !min-w-7 !shrink-0 !items-center !justify-center !rounded-sm !border-transparent !bg-transparent !p-0 !font-normal !leading-none !text-muted hover:!border-border hover:!bg-elevated hover:!text-text data-hovered:!border-border data-hovered:!bg-elevated data-hovered:!text-text data-pressed:!border-border data-pressed:!bg-hover";
+  "!inline-flex !aspect-square !h-7 !w-7 !min-h-7 !min-w-7 !shrink-0 !items-center !justify-center !rounded-sm !border-transparent !bg-transparent !p-0 !font-normal !leading-none !text-muted hover:!border-border hover:!bg-elevated hover:!text-text data-hovered:!border-border data-hovered:!bg-elevated data-hovered:!text-text data-pressed:!border-border data-pressed:!bg-hover disabled:pointer-events-none disabled:hover:!border-transparent disabled:hover:!bg-transparent disabled:hover:!text-muted";
 
 /**
  * Overlay mode only: dock to the right edge of the list column.
@@ -98,26 +96,34 @@ export default function ContactDrawer({
   const [detail, setDetail] = useState<ContactDetail | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
+  const nameEditorRef = useRef<HTMLDivElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const savingNameRef = useRef(false);
   const drawerLeft = useDrawerLeft(variant === "overlay" && !!contactId);
 
-  const detailMatches =
-    !!contactId && !!detail && String(detail.id) === String(contactId);
-  const previewMatches =
-    !!contactId && !!preview && String(preview.id) === String(contactId);
+  // Prefer in-state detail only when it matches this contact; otherwise use cache
+  // during render so a cache hit never paints a loading flash.
+  const matchedDetail =
+    contactId && detail && String(detail.id) === String(contactId)
+      ? detail
+      : contactId
+        ? getCachedContactDetail(contactId)
+        : null;
+  const detailMatches = !!matchedDetail;
+  const previewMatches = !!contactId && !!preview && String(preview.id) === String(contactId);
+  const matchedName = matchedDetail?.name;
 
   const displayName = detailMatches
-    ? detail!.name
+    ? matchedDetail.name
     : previewMatches
-      ? preview!.name
+      ? preview?.name
       : "Loading…";
   const loading = !detailMatches;
 
   const loadDetail = () => {
     if (!contactId) return;
     invalidateContactDetail(contactId);
-    void fetchContactDetail(contactId, (path, opts) =>
-      apiClient.get<ContactDetail>(path, opts),
-    )
+    void fetchContactDetail(contactId, (path, opts) => apiClient.get<ContactDetail>(path, opts))
       .then((next) => {
         if (String(next.id) !== String(contactId)) return;
         setDetail(next);
@@ -168,42 +174,82 @@ export default function ContactDrawer({
       });
     };
     globalThis.addEventListener(CONTACT_DETAIL_CHANGED_EVENT, onChange);
-    return () =>
-      globalThis.removeEventListener(CONTACT_DETAIL_CHANGED_EVENT, onChange);
+    return () => globalThis.removeEventListener(CONTACT_DETAIL_CHANGED_EVENT, onChange);
   }, [contactId]);
 
   useEffect(() => {
     setNameValue(displayName === "Loading…" ? "" : displayName);
     setEditingName(false);
-  }, [displayName, contactId]);
+  }, [displayName]);
+
+  const cancelEdit = useCallback(() => {
+    if (savingNameRef.current) return;
+    setEditingName(false);
+    if (matchedName != null) {
+      setNameValue(matchedName);
+    }
+  }, [matchedName]);
+
+  useEffect(() => {
+    if (!editingName) savingNameRef.current = false;
+  }, [editingName]);
 
   useEffect(() => {
     if (!contactId) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (editingName) {
-        setEditingName(false);
-        setNameValue(detailMatches ? detail!.name : nameValue);
+        cancelEdit();
         return;
       }
       onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [contactId, editingName, detailMatches, detail, nameValue, onClose]);
+  }, [contactId, editingName, cancelEdit, onClose]);
+
+  useEffect(() => {
+    if (!contactId || !editingName) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (savingNameRef.current) return;
+      const root = nameEditorRef.current;
+      if (!root) return;
+      if (e.target instanceof Node && root.contains(e.target)) return;
+      cancelEdit();
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [contactId, editingName, cancelEdit]);
+
+  useEffect(() => {
+    if (!editingName) return;
+    const frame = requestAnimationFrame(() => {
+      const input = nameInputRef.current;
+      if (!input) return;
+      input.focus();
+      input.select();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [editingName]);
 
   if (!contactId) return null;
 
   const handleRows: ContactDetail["handles"] = detailMatches
-    ? detail!.handles
-    : (previewMatches ? preview!.handles : undefined)?.map((h) => emptyHandleRow(h)) ??
-      [];
+    ? matchedDetail.handles
+    : previewMatches
+      ? previewHandleStubRows(preview?.handles, preview?.handleCount)
+      : [];
 
-  const browse = (args: {
-    kind: ContactBrowseKind;
-    handle?: string;
-    service?: string;
-  }) => {
+  // null = membership unknown (loading, no preview groups); [] = known empty.
+  const displayGroups: string[] | null = detailMatches
+    ? (matchedDetail.groups ?? [])
+    : previewMatches && preview?.groups != null
+      ? preview.groups
+      : loading
+        ? null
+        : [];
+
+  const browse = (args: { kind: ContactBrowseKind; handle?: string; service?: string }) => {
     if (!onBrowseConversations || !contactId) return;
     onBrowseConversations({
       contactId,
@@ -215,21 +261,27 @@ export default function ContactDrawer({
   };
 
   const saveName = async () => {
-    if (!detailMatches || nameValue === detail!.name) {
+    if (savingNameRef.current) return;
+    savingNameRef.current = true;
+    try {
+      if (!detailMatches || nameValue === matchedDetail?.name) {
+        setEditingName(false);
+        return;
+      }
+      await apiClient.post(`/v1/export/contacts/${contactId}`, {
+        name: nameValue,
+      });
       setEditingName(false);
-      return;
+      loadDetail();
+    } catch {
+      savingNameRef.current = false;
     }
-    await apiClient.post(`/v1/export/contacts/${contactId}`, {
-      name: nameValue,
-    });
-    setEditingName(false);
-    loadDetail();
   };
 
   const panelClass =
     variant === "docked"
-      ? "flex h-full min-h-0 min-w-0 flex-col overflow-auto bg-panel px-6 pb-6 pt-2 outline-none"
-      : "fixed top-0 bottom-0 z-40 w-[min(920px,calc(100vw-14rem))] overflow-auto border-l border-border bg-panel p-6 shadow-[2px_0_12px_rgba(0,0,0,0.18)] outline-none";
+      ? "flex h-full min-h-0 min-w-0 flex-col overflow-auto [scrollbar-gutter:stable] bg-panel px-6 pb-6 pt-2 outline-none"
+      : "fixed top-0 bottom-0 z-40 w-[min(920px,calc(100vw-14rem))] overflow-auto [scrollbar-gutter:stable] border-l border-border bg-panel p-6 shadow-[2px_0_12px_rgba(0,0,0,0.18)] outline-none";
 
   const panelStyle =
     variant === "overlay"
@@ -243,6 +295,7 @@ export default function ContactDrawer({
     <aside
       role="dialog"
       aria-label={displayName}
+      aria-busy={loading || undefined}
       className={panelClass}
       style={panelStyle}
     >
@@ -254,72 +307,73 @@ export default function ContactDrawer({
         onBrowse={onBrowseConversations ? browse : undefined}
         title={
           editingName && detailMatches ? (
-            <input
-              type="text"
-              value={nameValue}
-              onChange={(e) => setNameValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void saveName();
-                } else if (e.key === "Escape") {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setEditingName(false);
-                  setNameValue(detail!.name);
-                }
-              }}
-              onBlur={() => {
-                void saveName();
-              }}
-              autoFocus
-              className="box-border w-full min-w-0 rounded border border-border bg-elevated p-1 text-[1.125rem] font-semibold text-text"
-            />
+            <div ref={nameEditorRef} className="w-max min-w-[8rem] max-w-[50%]">
+              <input
+                ref={nameInputRef}
+                type="text"
+                value={nameValue}
+                size={Math.max(nameValue.length + 1, 8)}
+                aria-label="Contact name"
+                title="Press Enter to save, Escape to cancel"
+                onChange={(e) => setNameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void saveName();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    cancelEdit();
+                  }
+                }}
+                onBlur={() => {
+                  cancelEdit();
+                }}
+                className="box-border h-7 w-full min-w-0 rounded border border-border bg-elevated px-1.5 py-0 text-[1.125rem] font-semibold leading-none text-text"
+              />
+            </div>
           ) : (
             <div className="flex min-w-0 items-center gap-2">
-              <h2 className="m-0 min-w-0 truncate text-[1.125rem] font-semibold">
-                {displayName}
-              </h2>
-              {detailMatches ? (
-                <Button
-                  variant="ghost"
-                  title="Edit name"
-                  aria-label="Edit name"
-                  onClick={() => setEditingName(true)}
-                  className={iconBtnClass}
-                >
-                  <PencilIcon />
-                </Button>
-              ) : null}
+              <h2 className="m-0 min-w-0 truncate text-[1.125rem] font-semibold">{displayName}</h2>
+              <Button
+                variant="ghost"
+                title="Edit name"
+                aria-label="Edit name"
+                disabled={!detailMatches}
+                onClick={() => setEditingName(true)}
+                className={iconBtnClass}
+              >
+                <PencilIcon />
+              </Button>
             </div>
           )
         }
         intro={
-          detailMatches ? (
-            <div>
-              <div className="mb-1.5">
-                <span className="text-[0.75rem] font-semibold uppercase tracking-[0.04em] text-muted">
-                  Contact groups
-                </span>
-              </div>
-              <div className="flex min-h-6 flex-wrap items-center gap-1.5">
-                {(detail!.groups ?? []).length > 0 ? (
-                  (detail!.groups ?? []).map((name) => (
-                    <span
-                      key={name}
-                      className="rounded-full bg-elevated px-2 py-0.5 text-[0.75rem] leading-4 text-text"
-                    >
-                      {name}
-                    </span>
-                  ))
-                ) : (
-                  <span className="py-0.5 text-[0.75rem] leading-4 text-muted">
-                    No groups
-                  </span>
-                )}
-              </div>
+          <div>
+            <div className="mb-1.5">
+              <span className="text-[0.75rem] font-semibold uppercase tracking-[0.04em] text-muted">
+                Contact groups
+              </span>
             </div>
-          ) : null
+            <div className="flex min-h-6 flex-wrap items-center gap-1.5">
+              {displayGroups == null ? (
+                <span className="py-0.5 text-[0.75rem] leading-4 text-muted" aria-hidden>
+                  …
+                </span>
+              ) : displayGroups.length > 0 ? (
+                displayGroups.map((name) => (
+                  <span
+                    key={name}
+                    className="rounded-full bg-elevated px-2 py-0.5 text-[0.75rem] leading-4 text-text"
+                  >
+                    {name}
+                  </span>
+                ))
+              ) : (
+                <span className="py-0.5 text-[0.75rem] leading-4 text-muted">No groups</span>
+              )}
+            </div>
+          </div>
         }
         toolbarExtra={
           <button

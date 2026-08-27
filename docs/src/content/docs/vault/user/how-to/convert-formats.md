@@ -3,11 +3,11 @@ title: Convert formats
 description: Change an export folder from one format to another without re-reading the original backup.
 ---
 
-**Format** reads a Message Vault export folder and writes it in a different format. Open Format from the desktop app **login screen** without signing into a vault (offline Format action).
+[`message-reexporter`](/vault/developer/reference/cli/message-reexporter/) reads a Message Vault export folder and writes it in a different format. There is no Format action on the login screen.
 
 Happy-path [Import](/vault/user/import-from-a-backup/) does not require this step.
 
-## What Format reads
+## What it reads
 
 The input folder must contain exports in one of these formats:
 
@@ -20,7 +20,7 @@ The input folder must contain exports in one of these formats:
 
 Create an empty output folder. Input and output cannot be the same.
 
-## What Format writes
+## What it writes
 
 | Format | Shape | Media |
 |---|---|---|
@@ -33,19 +33,15 @@ Create an empty output folder. Input and output cannot be the same.
 
 ## Run a conversion
 
-1. Open the desktop app and choose **Format** from the login screen
-2. Select the **Input directory**
-3. Choose the **Output format**
-4. Choose a different **Output directory**
-5. Pick the attachment mode — **Copy** keeps media when present. Details: [Media and privacy](/vault/user/how-to/media-and-privacy/)
-6. Optionally enable obfuscation
-7. Start the run and watch the on-screen log
+1. Build the workspace so `message-reexporter` is available
+2. Point `--input` at the existing export folder
+3. Point `--output` at a different empty folder
+4. Set `--format` to `json`, `jsonl`, `csv`, `eml`, `mbox`, or `xml`
+5. Optional: `--media-mode` (`clone` keeps media when present; details: [Media and privacy](/vault/user/how-to/media-and-privacy/)) and `--obfuscate`
 
-The detector identifies the input format automatically. It ignores `attachments/` folders and old metadata files.
+The detector identifies the input format automatically. It ignores `attachments/` folders and old metadata files. Full flags: [`message-reexporter`](/vault/developer/reference/cli/message-reexporter/).
 
 ## Limitations
 
 - Conversion can only carry media that is still present in the source folder
 - Android XML cannot store Apple-only fields — use JSON or JSONL when preserving iMessage detail matters
-
-Command line: [`message-reexporter`](/vault/developer/reference/cli/message-reexporter/).

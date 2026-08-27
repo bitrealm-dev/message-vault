@@ -5,33 +5,45 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use message_ir::HandleType;
-use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use sqlx::AnyConnection;
+use sqlx::Connection;
 
-use crate::db::{account_profile, schema};
-use crate::server::{ApiError, AppState, JoinBlocking, require_full_access, resolve_auth};
+use crate::db::account_profile;
+use crate::server::{ApiError, AppState, require_full_access, resolve_auth};
 
-#[derive(Debug, Serialize)]
+/// The signed-in account's profile.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AccountProfileResponse {
+    /// The signed-in account id.
     pub account_id: String,
+    /// Account username (falls back to the account id).
     pub username: String,
+    /// Display name, when set.
     pub preferred_name: Option<String>,
+    /// Phone handles linked to the account.
     pub phones: Vec<String>,
+    /// Email addresses linked to the account.
     pub emails: Vec<String>,
     /// True for the seeded demo account (cannot be deleted).
     pub is_demo: bool,
     /// True when `accounts.guest_status` is set (ready or assigned sample copy).
     pub is_guest: bool,
+    /// True when the account is marked read-only.
     pub read_only: bool,
 }
 
 /// Load the profile JSON for `account_id`.
-fn load_response(conn: &Connection, account_id: &str) -> Result<AccountProfileResponse> {
-    let username = account_profile::username_for_account(conn, account_id)?
+async fn load_response(
+    conn: &mut AnyConnection,
+    account_id: &str,
+) -> Result<AccountProfileResponse> {
+    let username = account_profile::username_for_account(conn, account_id)
+        .await?
         .unwrap_or_else(|| account_id.to_string());
-    let preferred_name = account_profile::load_preferred_name(conn, account_id)?;
-    let profile = account_profile::load_account_profile(conn, account_id)?;
-    let read_only = account_profile::account_is_read_only(conn, account_id)?;
+    let preferred_name = account_profile::load_preferred_name(conn, account_id).await?;
+    let profile = account_profile::load_account_profile(conn, account_id).await?;
+    let read_only = account_profile::account_is_read_only(conn, account_id).await?;
     Ok(AccountProfileResponse {
         account_id: account_id.to_string(),
         username,
@@ -39,17 +51,24 @@ fn load_response(conn: &Connection, account_id: &str) -> Result<AccountProfileRe
         phones: profile.phones,
         emails: profile.emails,
         is_demo: account_profile::is_demo_account(account_id),
-        is_guest: account_profile::is_guest_account(conn, account_id)?,
+        is_guest: account_profile::is_guest_account(conn, account_id).await?,
         read_only,
     })
 }
 
-/// `GET /v1/account/profile`
-///
-/// # Errors
-///
-/// Returns an API error when the caller is not a signed-in session or the
-/// profile cannot be loaded.
+/// Load the signed-in account's profile: username, display name, linked
+/// handles, and demo/guest flags.
+#[utoipa::path(
+    get,
+    path = "/v1/account/profile",
+    tag = "Account",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = AccountProfileResponse),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
 pub async fn account_profile_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -58,23 +77,28 @@ pub async fn account_profile_handler(
     require_full_access(&auth)?;
     let account_id = auth.account_id;
 
-    let db = state.cfg.paths.db.clone();
-    let result = crate::server::with_configured_db(&db, "profile load task", move |conn| {
-        load_response(conn, &account_id)
-    })
-    .await?;
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    let result = load_response(&mut conn, &account_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     Ok(Json(result))
 }
 
-#[derive(Debug, Deserialize)]
+/// One handle to link or unlink, with its platform service.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ProfileHandleInput {
+    /// Raw handle value, e.g. `+15555550100` or `alex@example.com`.
     pub handle: String,
+    /// Platform the handle belongs to: `phone`, `email`, or `whatsapp`.
     pub service: String,
 }
 
-#[derive(Debug, Deserialize)]
+/// Display name and handle changes.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct AccountProfileUpdateRequest {
+    /// Display name to set; `None` (or empty) leaves the current name unchanged.
     #[serde(default)]
     pub preferred_name: Option<String>,
     /// Handles to add/link onto the account profile.
@@ -86,8 +110,8 @@ pub struct AccountProfileUpdateRequest {
 }
 
 /// Apply name and handle changes on an open connection.
-fn apply_profile_update(
-    conn: &Connection,
+async fn apply_profile_update(
+    conn: &mut AnyConnection,
     account_id: &str,
     preferred_name: Option<&str>,
     handles: &[ProfileHandleInput],
@@ -100,10 +124,11 @@ fn apply_profile_update(
         } else {
             Some(name)
         };
-        conn.execute(
-            "UPDATE accounts SET preferred_name = ?1 WHERE id = ?2",
-            rusqlite::params![stored_name, account_id],
-        )?;
+        sqlx::query("UPDATE accounts SET preferred_name = $1 WHERE id = $2")
+            .bind(stored_name)
+            .bind(account_id)
+            .execute(&mut *conn)
+            .await?;
     }
 
     for entry in remove_handles {
@@ -113,10 +138,12 @@ fn apply_profile_update(
         }
         match parse_profile_service(&entry.service)? {
             ProfileHandleKind::Phone | ProfileHandleKind::Whatsapp => {
-                account_profile::unlink_account_handle(conn, account_id, raw, HandleType::Phone)?;
+                account_profile::unlink_account_handle(conn, account_id, raw, HandleType::Phone)
+                    .await?;
             }
             ProfileHandleKind::Email => {
-                account_profile::unlink_account_handle(conn, account_id, raw, HandleType::Email)?;
+                account_profile::unlink_account_handle(conn, account_id, raw, HandleType::Email)
+                    .await?;
             }
         }
     }
@@ -128,16 +155,19 @@ fn apply_profile_update(
         }
         match parse_profile_service(&entry.service)? {
             ProfileHandleKind::Phone => {
-                account_profile::link_account_handle(conn, account_id, raw, HandleType::Phone)?;
+                account_profile::link_account_handle(conn, account_id, raw, HandleType::Phone)
+                    .await?;
             }
             ProfileHandleKind::Email => {
-                account_profile::link_account_handle(conn, account_id, raw, HandleType::Email)?;
+                account_profile::link_account_handle(conn, account_id, raw, HandleType::Email)
+                    .await?;
                 account_profile::upsert_account_email(
                     conn,
                     account_id,
                     &raw.to_ascii_lowercase(),
                     false,
-                )?;
+                )
+                .await?;
             }
             ProfileHandleKind::Whatsapp => {
                 account_profile::link_account_handle_with_service(
@@ -146,7 +176,8 @@ fn apply_profile_update(
                     raw,
                     HandleType::Phone,
                     Some("whatsapp"),
-                )?;
+                )
+                .await?;
             }
         }
     }
@@ -155,21 +186,22 @@ fn apply_profile_update(
 }
 
 /// Apply a profile update in one transaction, then reload the response.
-fn update_profile_on_conn(
-    conn: &mut Connection,
+async fn update_profile_on_conn(
+    conn: &mut AnyConnection,
     account_id: &str,
     req: &AccountProfileUpdateRequest,
 ) -> Result<AccountProfileResponse> {
-    let tx = conn.transaction()?;
+    let mut tx = conn.begin().await?;
     apply_profile_update(
-        &tx,
+        &mut tx,
         account_id,
         req.preferred_name.as_deref(),
         &req.handles,
         &req.remove_handles,
-    )?;
-    tx.commit()?;
-    load_response(conn, account_id)
+    )
+    .await?;
+    tx.commit().await?;
+    load_response(conn, account_id).await
 }
 
 enum ProfileHandleKind {
@@ -188,12 +220,21 @@ fn parse_profile_service(service: &str) -> Result<ProfileHandleKind> {
     }
 }
 
-/// `POST /v1/account/profile`
-///
-/// # Errors
-///
-/// Returns an API error when the caller is not a signed-in session, a handle
-/// service is unsupported, or the update fails.
+/// Update the account's display name and linked handles, then return the
+/// reloaded profile.
+#[utoipa::path(
+    post,
+    path = "/v1/account/profile",
+    tag = "Account",
+    security(("bearer" = [])),
+    request_body = AccountProfileUpdateRequest,
+    responses(
+        (status = 200, body = AccountProfileResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
 pub async fn account_profile_update_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -203,33 +244,37 @@ pub async fn account_profile_update_handler(
     require_full_access(&auth)?;
     let account_id = auth.account_id;
 
-    let db = state.cfg.paths.db.clone();
-    let result = tokio::task::spawn_blocking(move || -> Result<AccountProfileResponse> {
-        let mut conn = schema::open_configured(&db)?;
-        update_profile_on_conn(&mut conn, &account_id, &req)
-    })
-    .await
-    .join_map("profile update task", |e| {
-        let msg = e.to_string();
-        if msg.starts_with("unsupported handle service:") {
-            ApiError::BadRequest(msg)
-        } else {
-            ApiError::Internal(msg)
-        }
-    })?;
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    let result = update_profile_on_conn(&mut conn, &account_id, &req)
+        .await
+        .map_err(|e| {
+            let msg = e.to_string();
+            if msg.starts_with("unsupported handle service:") {
+                ApiError::BadRequest(msg)
+            } else {
+                ApiError::Internal(msg)
+            }
+        })?;
 
     Ok(Json(result))
 }
 
-#[derive(Debug, Deserialize)]
+/// Confirmation flag for deleting all messages.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct DeleteMessagesRequest {
+    /// Must be `true`; anything else is rejected with a 400.
     pub confirm: bool,
 }
 
-#[derive(Debug, Serialize)]
+/// Counts of deleted conversations and attachment rows.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DeleteMessagesResponse {
+    /// Always true when a response is returned.
     pub ok: bool,
+    /// Conversations deleted.
     pub conversations: u64,
+    /// Attachment rows deleted (on-disk files are removed too).
     pub attachments: u64,
 }
 
@@ -263,13 +308,21 @@ fn remove_account_asset_trees(
     Ok(())
 }
 
-/// `POST /v1/account/delete-messages` — delete conversations, messages, and
-/// attachments; keep contacts and account login.
-///
-/// # Errors
-///
-/// Returns an API error when confirmation is missing, the caller is not a
-/// signed-in session, or the delete fails.
+/// Delete every conversation, message, and attachment for the account.
+/// Contacts and the account login survive.
+#[utoipa::path(
+    post,
+    path = "/v1/account/delete-messages",
+    tag = "Account",
+    security(("bearer" = [])),
+    request_body = DeleteMessagesRequest,
+    responses(
+        (status = 200, body = DeleteMessagesResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
 pub async fn delete_messages_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -283,20 +336,17 @@ pub async fn delete_messages_handler(
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let account_id = auth.account_id;
-    let db = state.cfg.paths.db.clone();
     let data_dir = state.cfg.paths.data_dir.clone();
     let assets_name = state.cfg.paths.assets_dir.clone();
     let converted_name = state.cfg.paths.assets_converted_dir.clone();
 
-    let stats =
-        tokio::task::spawn_blocking(move || -> Result<account_profile::DeletedMessagesStats> {
-            let conn = schema::open_configured(&db)?;
-            let stats = account_profile::delete_all_messages_for_account(&conn, &account_id)?;
-            remove_account_asset_trees(&data_dir, &account_id, &assets_name, &converted_name)?;
-            Ok(stats)
-        })
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    let stats = account_profile::delete_all_messages_for_account(&mut conn, &account_id)
         .await
-        .join_blocking("delete messages task")?;
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    remove_account_asset_trees(&data_dir, &account_id, &assets_name, &converted_name)
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     Ok(Json(DeleteMessagesResponse {
         ok: true,
@@ -305,29 +355,84 @@ pub async fn delete_messages_handler(
     }))
 }
 
+/// Attachment usage and the largest files.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct AccountStorageResponse {
+    pub total_bytes: i64,
+    pub attachment_count: i64,
+    pub top_attachments: Vec<crate::db::vault_imports::TopAttachment>,
+}
+
+/// Attachment storage usage for the account: total bytes, count, and the 100
+/// largest files.
+#[utoipa::path(
+    get,
+    path = "/v1/account/storage",
+    tag = "Account",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = AccountStorageResponse),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn account_storage_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<AccountStorageResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let account_id = auth.account_id;
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    let total_bytes = crate::db::vault_imports::account_attachment_bytes(&mut conn, &account_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let attachment_count =
+        crate::db::vault_imports::account_attachment_count(&mut conn, &account_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let top_attachments =
+        crate::db::vault_imports::top_attachments_by_size(&mut conn, &account_id, 100)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let result = AccountStorageResponse {
+        total_bytes,
+        attachment_count,
+        top_attachments,
+    };
+
+    Ok(Json(result))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::params;
 
-    fn setup() -> (Connection, String) {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        schema::ensure_vault_schema(&conn).unwrap();
+    use crate::db::{engine, schema};
+
+    async fn setup() -> (sqlx::AnyPool, tempfile::TempDir, String) {
+        let (pool, dir) = engine::test_pool().await;
+        schema::ensure_vault_schema(&mut pool.acquire().await.unwrap())
+            .await
+            .unwrap();
         let account_id = "00000000-0000-4000-8000-000000000001".to_string();
-        conn.execute(
-            "INSERT INTO accounts (id, username, read_only) VALUES (?1, ?2, 0)",
-            params![&account_id, "alice"],
-        )
-        .unwrap();
-        (conn, account_id)
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, username, read_only) VALUES ($1, $2, 0)")
+            .bind(&account_id)
+            .bind("alice")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        (pool, dir, account_id)
     }
 
-    #[test]
-    fn apply_profile_update_sets_name_and_handles() {
-        let (conn, account_id) = setup();
+    #[tokio::test]
+    async fn apply_profile_update_sets_name_and_handles() {
+        let (pool, _dir, account_id) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
         apply_profile_update(
-            &conn,
+            &mut conn,
             &account_id,
             Some("Alex"),
             &[
@@ -346,29 +451,32 @@ mod tests {
             ],
             &[],
         )
+        .await
         .unwrap();
 
-        let loaded = load_response(&conn, &account_id).unwrap();
+        let loaded = load_response(&mut conn, &account_id).await.unwrap();
         assert_eq!(loaded.preferred_name.as_deref(), Some("Alex"));
         assert!(loaded.phones.iter().any(|p| p == "+15555550100"));
         assert!(loaded.phones.iter().any(|p| p == "+15555550199"));
         assert!(loaded.emails.iter().any(|e| e == "alex@example.com"));
 
-        let wa_service: String = conn
-            .query_row(
-                "SELECT service FROM handles WHERE account_id = ?1 AND normalized = ?2",
-                params![&account_id, "+15555550199"],
-                |row| row.get(0),
-            )
-            .unwrap();
+        let wa_service: String = sqlx::query_scalar(
+            "SELECT service FROM handles WHERE account_id = $1 AND normalized = $2",
+        )
+        .bind(&account_id)
+        .bind("+15555550199")
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
         assert_eq!(wa_service, "whatsapp");
     }
 
-    #[test]
-    fn apply_profile_update_removes_handles() {
-        let (conn, account_id) = setup();
+    #[tokio::test]
+    async fn apply_profile_update_removes_handles() {
+        let (pool, _dir, account_id) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
         apply_profile_update(
-            &conn,
+            &mut conn,
             &account_id,
             None,
             &[
@@ -383,10 +491,11 @@ mod tests {
             ],
             &[],
         )
+        .await
         .unwrap();
 
         apply_profile_update(
-            &conn,
+            &mut conn,
             &account_id,
             None,
             &[],
@@ -401,30 +510,37 @@ mod tests {
                 },
             ],
         )
+        .await
         .unwrap();
 
-        let loaded = load_response(&conn, &account_id).unwrap();
+        let loaded = load_response(&mut conn, &account_id).await.unwrap();
         assert!(loaded.phones.is_empty());
         assert!(loaded.emails.is_empty());
     }
 
-    #[test]
-    fn load_response_sets_is_guest_true_when_guest_status_assigned() {
-        let (conn, account_id) = setup();
+    #[tokio::test]
+    async fn load_response_sets_is_guest_true_when_guest_status_assigned() {
+        let (pool, _dir, account_id) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
         let guest_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-        account_profile::insert_guest_account(&conn, guest_id, "guest-bbbb", None).unwrap();
-        account_profile::set_guest_status(&conn, guest_id, "assigned").unwrap();
+        account_profile::insert_guest_account(&mut conn, guest_id, "guest-bbbb", None)
+            .await
+            .unwrap();
+        account_profile::set_guest_status(&mut conn, guest_id, "assigned")
+            .await
+            .unwrap();
 
-        let guest = load_response(&conn, guest_id).unwrap();
+        let guest = load_response(&mut conn, guest_id).await.unwrap();
         assert!(guest.is_guest);
 
-        let regular = load_response(&conn, &account_id).unwrap();
+        let regular = load_response(&mut conn, &account_id).await.unwrap();
         assert!(!regular.is_guest);
     }
 
-    #[test]
-    fn profile_update_rolls_back_when_a_handle_service_is_unsupported() {
-        let (mut conn, account_id) = setup();
+    #[tokio::test]
+    async fn profile_update_rolls_back_when_a_handle_service_is_unsupported() {
+        let (pool, _dir, account_id) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
 
         let result = update_profile_on_conn(
             &mut conn,
@@ -437,11 +553,14 @@ mod tests {
                 }],
                 remove_handles: vec![],
             },
-        );
+        )
+        .await;
 
         assert!(result.is_err());
         assert_eq!(
-            account_profile::load_preferred_name(&conn, &account_id).unwrap(),
+            account_profile::load_preferred_name(&mut conn, &account_id)
+                .await
+                .unwrap(),
             None
         );
     }

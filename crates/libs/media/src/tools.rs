@@ -59,14 +59,20 @@ pub fn tools_dir() -> Option<PathBuf> {
         .clone()
 }
 
+/// Result of locating ffmpeg and ffprobe (the GUI's probe result type).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FfmpegToolsProbe {
+    /// Whether both tools were found and pass `-version`.
     pub ok: bool,
+    /// Resolved ffmpeg path, if found.
     pub ffmpeg_path: Option<PathBuf>,
+    /// Resolved ffprobe path, if found.
     pub ffprobe_path: Option<PathBuf>,
+    /// Human-readable list of missing tools when `ok` is false.
     pub error: Option<String>,
 }
 
+/// True when both ffmpeg and ffprobe resolve from the search path.
 pub fn ffmpeg_available() -> bool {
     resolve_tool("ffmpeg").is_some() && resolve_tool("ffprobe").is_some()
 }
@@ -138,6 +144,8 @@ fn find_tool_in_dir(dir: &Path, name: &str) -> Option<PathBuf> {
     }
 }
 
+/// Probe both tools in an explicit directory, or fall back to the default
+/// resolution path (tools-dir override, beside the executable, `MESSAGE_VAULT_IO_BIN`, PATH).
 pub fn probe_ffmpeg_tools(dir: Option<&Path>) -> FfmpegToolsProbe {
     let (ffmpeg, ffprobe) = match dir {
         Some(d) => (

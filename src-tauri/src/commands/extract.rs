@@ -2,8 +2,9 @@
 //!
 //! `extract` starts the selected exporter on a background thread and returns
 //! immediately. Progress is sent back as Tauri events:
-//! `extract:log` (one log line), `extract:finished` (a summary string or JSON
-//! object), and `extract:error` ([`ExtractErrorEvent`]).
+//! `extract:log` (one log line), `extract:progress` (bar position),
+//! `extract:finished` (a summary string or JSON object), and `extract:error`
+//! ([`ExtractErrorEvent`]).
 //!
 //! The shared cancel flag lives in [`AppState`]. `cancel` sets it to true.
 //! `extract` turns it off at the start of a job. The exporter checks it
@@ -14,14 +15,12 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
-use std::thread;
 
 use media::MaxResolution;
 use message_vault_io_core::{
-    ApplePlatform, AttachmentMedia, CancelFlag, Exporter, ExporterConfig, Form, GoSmsProConfig,
-    ImazingConfig, LogSink, MediaConfig, ObfuscateConfig, OpenExtractConfig, OutputFormat,
-    SmsBackupPlusConfig, SmsBackupRestoreConfig, SourceConfig, WhatsappConfig, WhatsappPlatform,
-    parse_date_range,
+    ApplePlatform, AttachmentMedia, Exporter, ExporterConfig, Form, GoSmsProConfig, ImazingConfig,
+    LogSink, MediaConfig, ObfuscateConfig, OpenExtractConfig, OutputFormat, SmsBackupPlusConfig,
+    SmsBackupRestoreConfig, SourceConfig, WhatsappConfig, WhatsappPlatform, parse_date_range,
 };
 use tauri::Emitter;
 
@@ -34,7 +33,9 @@ use sms_backup_plus_exporter::run as run_sms_plus;
 use sms_backup_restore_exporter::run as run_sms_restore;
 use whatsapp_exporter::run as run_whatsapp;
 
-use super::events::{ExtractErrorEvent, ExtractProgressEvent};
+use super::events::ExtractErrorEvent;
+use super::jobs::{reset_and_clone_cancel, spawn_job};
+use super::progress::{ExtractProgressStage, extract_progress_from_log};
 use super::{last_log_line_or, optional_trimmed};
 use crate::state::AppState;
 
@@ -125,6 +126,52 @@ fn count_jsonl_output(root: &Path) -> anyhow::Result<JsonlOutputCounts> {
     Ok(counts)
 }
 
+/// User-facing parameters for the `extract` command (before defaults/parsing).
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtractArgs {
+    /// Backup source key, for example `imessage-ios` or `whatsapp-android`.
+    pub source: String,
+    /// Path to the phone backup (a folder, database file, or XML file).
+    pub path: String,
+    /// Folder the exporter writes conversation files into.
+    pub output_dir: String,
+    /// Password for encrypted backups, when the source needs one.
+    pub backup_password: Option<String>,
+    /// Attachment handling choice: `copy`, `convert`, `compress`, or `skip`.
+    pub attachment_media: Option<String>,
+    /// Video/image size cap for convert and compress: `720p`, `1080p`, or `4k`.
+    pub media_max_resolution: Option<String>,
+    /// Frame-rate cap for compressed video, for example `30`.
+    pub media_max_fps: Option<String>,
+    /// Smallest media file size that still counts as an attachment, for example `20M`.
+    pub media_min_size: Option<String>,
+    /// Conversation filter string passed to the exporter.
+    pub conversation_filter: Option<String>,
+    /// Export start date, inclusive, in `YYYY-MM-DD` form.
+    pub start_date: Option<String>,
+    /// Export end date, inclusive, in `YYYY-MM-DD` form.
+    pub end_date: Option<String>,
+    /// When true, replace names and phone numbers with fake ones.
+    pub obfuscate: Option<bool>,
+    /// Owner phone numbers for Android SMS exporters (SMS Backup & Restore).
+    pub owner_phones: Option<Vec<String>>,
+    /// Alternate folder for Attachments and StickerCache (Mac and jailbreak).
+    pub attachment_root: Option<String>,
+    /// Path to an Apple AddressBook file (Mac and jailbreak).
+    pub apple_contacts: Option<String>,
+    /// WhatsApp decryption key or key-file path (Android crypt backups).
+    pub whatsapp_key: Option<String>,
+    /// Optional WhatsApp contacts database (`wa.db` / `ContactsV2.sqlite`).
+    pub whatsapp_wa: Option<String>,
+    /// Optional WhatsApp media folder.
+    pub whatsapp_media: Option<String>,
+    /// Optional explicit `msgstore.db` path.
+    pub whatsapp_db: Option<String>,
+    /// WhatsApp Business backup (iPhone only; Android stays false).
+    pub whatsapp_business: Option<bool>,
+}
+
 /// Ask this process to parse a phone backup and write conversation files.
 ///
 /// Returns as soon as the background thread starts. Log lines, progress, and
@@ -137,51 +184,54 @@ fn count_jsonl_output(root: &Path) -> anyhow::Result<JsonlOutputCounts> {
 /// Returns an error if a form field is invalid, the source is unknown, or
 /// another thread panicked while holding the shared state lock. Failures
 /// during the export itself are sent as `extract:error`, not returned here.
-#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn extract(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
     app: tauri::AppHandle,
-    source: String,
-    path: String,
-    output_dir: String,
-    backup_password: Option<String>,
-    attachment_media: Option<String>,
-    media_max_resolution: Option<String>,
-    media_max_fps: Option<String>,
-    media_min_size: Option<String>,
-    conversation_filter: Option<String>,
-    start_date: Option<String>,
-    end_date: Option<String>,
-    obfuscate: Option<bool>,
+    args: ExtractArgs,
 ) -> Result<(), String> {
     let options = ExtractOptions {
-        backup_password: backup_password.unwrap_or_default(),
-        attachment_media: parse_attachment_media(attachment_media.as_deref())?,
-        media_max_resolution: parse_max_resolution(media_max_resolution.as_deref())?,
-        media_max_fps: media_max_fps.unwrap_or_else(|| "30".into()),
-        media_min_size: media_min_size.unwrap_or_else(|| "20M".into()),
-        conversation_filter: conversation_filter.unwrap_or_default(),
-        start_date: start_date.unwrap_or_default(),
-        end_date: end_date.unwrap_or_default(),
-        obfuscate: obfuscate.unwrap_or(false),
+        backup_password: args.backup_password.unwrap_or_default(),
+        attachment_media: parse_attachment_media(args.attachment_media.as_deref())?,
+        media_max_resolution: parse_max_resolution(args.media_max_resolution.as_deref())?,
+        media_max_fps: args.media_max_fps.unwrap_or_else(|| "30".into()),
+        media_min_size: args.media_min_size.unwrap_or_else(|| "20M".into()),
+        conversation_filter: args.conversation_filter.unwrap_or_default(),
+        start_date: args.start_date.unwrap_or_default(),
+        end_date: args.end_date.unwrap_or_default(),
+        obfuscate: args.obfuscate.unwrap_or(false),
+        owner_phones: args
+            .owner_phones
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty())
+            .collect(),
+        attachment_root: optional_trimmed(args.attachment_root.as_deref())
+            .map(str::to_string)
+            .unwrap_or_default(),
+        apple_contacts: optional_trimmed(args.apple_contacts.as_deref())
+            .map(str::to_string)
+            .unwrap_or_default(),
+        whatsapp_key: optional_trimmed(args.whatsapp_key.as_deref())
+            .map(str::to_string)
+            .unwrap_or_default(),
+        whatsapp_wa: optional_trimmed(args.whatsapp_wa.as_deref())
+            .map(str::to_string)
+            .unwrap_or_default(),
+        whatsapp_media: optional_trimmed(args.whatsapp_media.as_deref())
+            .map(str::to_string)
+            .unwrap_or_default(),
+        whatsapp_db: optional_trimmed(args.whatsapp_db.as_deref())
+            .map(str::to_string)
+            .unwrap_or_default(),
+        whatsapp_business: args.whatsapp_business.unwrap_or(false),
     };
 
-    let mut config = build_exporter_config(&source, &path, &output_dir, &options)?;
+    let output_dir = args.output_dir;
+    let mut config = build_exporter_config(&args.source, &args.path, &output_dir, &options)?;
 
-    // Clear a leftover cancel from a previous job. Otherwise this new export
-    // would stop immediately.
-    {
-        let st = state.lock().map_err(|e| e.to_string())?;
-        st.cancel_flag.store(false, Ordering::SeqCst);
-    }
-
-    // Share the same cancel flag with the background thread. The cancel
-    // command sets it; the exporter reads it.
-    let cancel: CancelFlag = {
-        let st = state.lock().map_err(|e| e.to_string())?;
-        st.cancel_flag.clone()
-    };
+    let cancel = reset_and_clone_cancel(&state)?;
 
     let app_handle = app.clone();
     config.cancel = Some(cancel);
@@ -195,7 +245,7 @@ pub async fn extract(
         }
     }));
 
-    thread::spawn(move || {
+    spawn_job(app, move || {
         let result = run_exporter(&config);
 
         match result {
@@ -229,16 +279,9 @@ pub async fn extract(
                     }
                 }
             }
-            Err(err) => {
-                let _ = app_handle.emit(
-                    "extract:error",
-                    ExtractErrorEvent {
-                        detail: format!("{err:#}"),
-                        user_message: None,
-                    },
-                );
-            }
+            Err(err) => return Err(err),
         }
+        Ok(())
     });
 
     Ok(())
@@ -255,6 +298,14 @@ struct ExtractOptions {
     start_date: String,
     end_date: String,
     obfuscate: bool,
+    owner_phones: Vec<String>,
+    attachment_root: String,
+    apple_contacts: String,
+    whatsapp_key: String,
+    whatsapp_wa: String,
+    whatsapp_media: String,
+    whatsapp_db: String,
+    whatsapp_business: bool,
 }
 
 /// Parse the attachment handling choice from the Extract form.
@@ -310,40 +361,64 @@ fn build_exporter_config(
     options: &ExtractOptions,
 ) -> Result<ExporterConfig, String> {
     match source {
-        "imessage-ios" | "imessage-macos" => {
-            let mut form = Form::default();
-            form.db_path = path.to_string();
-            form.output = output_dir.to_string();
-            form.apple_platform = if source == "imessage-ios" {
-                ApplePlatform::Ios
-            } else {
-                ApplePlatform::MacOs
+        "imessage-ios" | "imessage-macos" | "imessage-jailbreak" => {
+            let form = Form {
+                db_path: path.to_string(),
+                output: output_dir.to_string(),
+                apple_platform: if source == "imessage-ios" {
+                    ApplePlatform::Ios
+                } else {
+                    ApplePlatform::MacOs
+                },
+                backup_password: if source == "imessage-ios" {
+                    options.backup_password.clone()
+                } else {
+                    String::new()
+                },
+                attachment_root: if source == "imessage-ios" {
+                    String::new()
+                } else {
+                    options.attachment_root.clone()
+                },
+                apple_contacts: if source == "imessage-ios" {
+                    String::new()
+                } else {
+                    options.apple_contacts.clone()
+                },
+                attachment_media: options.attachment_media,
+                media_max_resolution: options.media_max_resolution,
+                media_max_fps: options.media_max_fps.clone(),
+                media_min_size: options.media_min_size.clone(),
+                conversation_filter: options.conversation_filter.clone(),
+                start_date: options.start_date.clone(),
+                end_date: options.end_date.clone(),
+                obfuscate: source == "imessage-ios" && options.obfuscate,
+                // Import and Push read conversation files as JSON Lines (one JSON
+                // object per line).
+                output_format: OutputFormat::Jsonl,
+                ..Default::default()
             };
-            form.backup_password = options.backup_password.clone();
-            form.attachment_media = options.attachment_media;
-            form.media_max_resolution = options.media_max_resolution;
-            form.media_max_fps = options.media_max_fps.clone();
-            form.media_min_size = options.media_min_size.clone();
-            form.conversation_filter = options.conversation_filter.clone();
-            form.start_date = options.start_date.clone();
-            form.end_date = options.end_date.clone();
-            form.obfuscate = options.obfuscate;
-            // Import and Push read conversation files as JSON Lines (one JSON
-            // object per line).
-            form.output_format = OutputFormat::Jsonl;
             form.to_config(Exporter::Imessage)
                 .map_err(|errors| errors.join("; "))
         }
         other => {
             let source_config = match other {
-                "sms-backup-restore" => SourceConfig::SmsBackupRestore(SmsBackupRestoreConfig {
-                    owner_phones: Vec::new(),
-                }),
+                "sms-backup-restore" => {
+                    if options.owner_phones.is_empty() {
+                        return Err(
+                            "SMS Backup & Restore requires at least one backup device phone number"
+                                .into(),
+                        );
+                    }
+                    SourceConfig::SmsBackupRestore(SmsBackupRestoreConfig {
+                        owner_phones: options.owner_phones.clone(),
+                    })
+                }
                 "go-sms-pro" => SourceConfig::GoSmsPro(GoSmsProConfig {
-                    owner_phones: Vec::new(),
+                    owner_phones: options.owner_phones.clone(),
                 }),
                 "sms-backup-plus" => SourceConfig::SmsBackupPlus(SmsBackupPlusConfig {
-                    owner_phones: Vec::new(),
+                    owner_phones: options.owner_phones.clone(),
                     owner_emails: Vec::new(),
                     name_mapping: None,
                     verbose: false,
@@ -353,10 +428,21 @@ fn build_exporter_config(
                 "imazing" => SourceConfig::Imazing(ImazingConfig {}),
                 "whatsapp-android" => SourceConfig::Whatsapp(WhatsappConfig {
                     platform: Some(WhatsappPlatform::Android),
+                    key: nonempty(&options.whatsapp_key).map(str::to_string),
+                    backup: None,
+                    wa: nonempty(&options.whatsapp_wa).map(PathBuf::from),
+                    media: nonempty(&options.whatsapp_media).map(PathBuf::from),
+                    db: nonempty(&options.whatsapp_db).map(PathBuf::from),
+                    business: false,
                     ..Default::default()
                 }),
                 "whatsapp-ios" => SourceConfig::Whatsapp(WhatsappConfig {
                     platform: Some(WhatsappPlatform::Ios),
+                    backup: Some(PathBuf::from(path)),
+                    wa: nonempty(&options.whatsapp_wa).map(PathBuf::from),
+                    media: None,
+                    db: None,
+                    business: options.whatsapp_business,
                     ..Default::default()
                 }),
                 _ => return Err(format!("unsupported source '{source}'")),
@@ -429,135 +515,107 @@ fn run_exporter(config: &ExporterConfig) -> anyhow::Result<message_vault_io_core
     }
 }
 
-/// Whether log lines are still about reading the backup, or already about
-/// writing conversation files.
-#[derive(Copy, Clone, Eq, PartialEq)]
-enum ExtractProgressStage {
-    Parse,
-    Convert,
-}
-
-/// Turn an exporter log line into a progress event, if the line has counts.
-fn extract_progress_from_log(
-    line: &str,
-    stage: &Arc<Mutex<ExtractProgressStage>>,
-) -> Option<ExtractProgressEvent> {
-    if is_writing_conversation_files_banner(line) {
-        if let Ok(mut current_stage) = stage.lock() {
-            *current_stage = ExtractProgressStage::Convert;
-        }
-        return Some(ExtractProgressEvent {
-            step: "convert".into(),
-            done: 0,
-            total: 0,
-            status: Some("included_in_extract".into()),
-        });
-    }
-
-    let Some((done, total)) = extract_progress_ratio(line) else {
-        return None;
-    };
-
-    let current_stage = match stage.lock() {
-        Ok(guard) => *guard,
-        Err(_) => ExtractProgressStage::Parse,
-    };
-    let step = match current_stage {
-        ExtractProgressStage::Parse => "parse",
-        ExtractProgressStage::Convert => "convert",
-    };
-
-    Some(ExtractProgressEvent {
-        step: step.into(),
-        done,
-        total,
-        status: None,
-    })
-}
-
-/// True for the log line that means "finished reading, now writing files".
-fn is_writing_conversation_files_banner(line: &str) -> bool {
-    line.contains("Writing ") && line.contains("conversation file(s)")
-}
-
-/// True for backup-setup lines like `[1/5] Deriving backup keys...`.
-///
-/// Those counts are setup steps, not message progress, so they must not
-/// move the progress bar.
-fn has_bracketed_step_ratio(line: &str) -> bool {
-    let mut rest = line;
-    while let Some(open) = rest.find('[') {
-        rest = &rest[open + 1..];
-        let Some((left, after_left)) = rest.split_once('/') else {
-            continue;
-        };
-        if left.is_empty() || !left.chars().all(|c| c.is_ascii_digit()) {
-            continue;
-        }
-        let Some((right, after_right)) = after_left.split_once(']') else {
-            continue;
-        };
-        if !right.is_empty() && right.chars().all(|c| c.is_ascii_digit()) {
-            return true;
-        }
-        rest = after_right;
-    }
-    false
-}
-
-/// Read `done/total` from a message-progress log line.
-fn extract_progress_ratio(line: &str) -> Option<(usize, usize)> {
-    if has_bracketed_step_ratio(line) {
-        return None;
-    }
-
-    let looks_like_message_progress = line.contains('…') || line.contains("wrote");
-    if !looks_like_message_progress {
-        return None;
-    }
-
-    let (left, right) = line.split_once('/')?;
-    let done = trailing_usize(left)?;
-    let total = leading_usize(right)?;
-    Some((done, total))
-}
-
-/// Parse the integer at the end of `text`, if any.
-fn trailing_usize(text: &str) -> Option<usize> {
-    let mut reversed_digits = String::new();
-    for ch in text.chars().rev() {
-        if !ch.is_ascii_digit() {
-            break;
-        }
-        reversed_digits.push(ch);
-    }
-    if reversed_digits.is_empty() {
-        return None;
-    }
-    let digits: String = reversed_digits.chars().rev().collect();
-    digits.parse().ok()
-}
-
-/// Parse the integer at the start of `text`, if any.
-fn leading_usize(text: &str) -> Option<usize> {
-    let mut digits = String::new();
-    for ch in text.chars() {
-        if !ch.is_ascii_digit() {
-            break;
-        }
-        digits.push(ch);
-    }
-    if digits.is_empty() {
-        return None;
-    }
-    digits.parse().ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_options(owner_phones: Vec<String>) -> ExtractOptions {
+        ExtractOptions {
+            backup_password: String::new(),
+            attachment_media: AttachmentMedia::default(),
+            media_max_resolution: MaxResolution::default(),
+            media_max_fps: "30".into(),
+            media_min_size: "20M".into(),
+            conversation_filter: String::new(),
+            start_date: String::new(),
+            end_date: String::new(),
+            obfuscate: false,
+            owner_phones,
+            attachment_root: String::new(),
+            apple_contacts: String::new(),
+            whatsapp_key: String::new(),
+            whatsapp_wa: String::new(),
+            whatsapp_media: String::new(),
+            whatsapp_db: String::new(),
+            whatsapp_business: false,
+        }
+    }
+
+    #[test]
+    fn jailbreak_uses_macos_platform_and_attachment_root() {
+        let mut options = test_options(Vec::new());
+        options.attachment_root = "/mnt/iphone/Library/SMS".into();
+        options.apple_contacts = "/mnt/iphone/AddressBook.sqlitedb".into();
+        options.obfuscate = true;
+        let config = build_exporter_config(
+            "imessage-jailbreak",
+            "/mnt/iphone/sms.db",
+            "/tmp/out",
+            &options,
+        )
+        .unwrap();
+        match config.source {
+            SourceConfig::Apple(apple) => {
+                assert_eq!(apple.platform, Some(ApplePlatform::MacOs));
+                assert_eq!(
+                    apple.attachment_root.as_deref(),
+                    Some("/mnt/iphone/Library/SMS")
+                );
+                assert_eq!(
+                    apple.apple_contacts.as_deref(),
+                    Some(std::path::Path::new("/mnt/iphone/AddressBook.sqlitedb"))
+                );
+                assert!(apple.backup_password.is_none());
+            }
+            other => panic!("expected Apple, got {other:?}"),
+        }
+        assert!(!config.obfuscate.enabled);
+    }
+
+    #[test]
+    fn ios_backup_does_not_forward_attachment_root() {
+        let mut options = test_options(Vec::new());
+        options.attachment_root = "/ignored".into();
+        options.apple_contacts = "/ignored-contacts".into();
+        options.backup_password = "pw".into();
+        let config =
+            build_exporter_config("imessage-ios", "/backups/iphone", "/tmp/out", &options).unwrap();
+        match config.source {
+            SourceConfig::Apple(apple) => {
+                assert_eq!(apple.platform, Some(ApplePlatform::Ios));
+                assert_eq!(apple.backup_password.as_deref(), Some("pw"));
+                // extract.rs blanks both extras for imessage-ios.
+                assert!(apple.attachment_root.is_none());
+                assert!(apple.apple_contacts.is_none());
+            }
+            other => panic!("expected Apple, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn macos_forwards_optional_attachment_root() {
+        let mut options = test_options(Vec::new());
+        options.attachment_root = "/Users/sam/Library/Messages".into();
+        let config = build_exporter_config(
+            "imessage-macos",
+            "/Users/sam/Library/Messages/chat.db",
+            "/tmp/out",
+            &options,
+        )
+        .unwrap();
+        match config.source {
+            SourceConfig::Apple(apple) => {
+                assert_eq!(apple.platform, Some(ApplePlatform::MacOs));
+                assert_eq!(
+                    apple.attachment_root.as_deref(),
+                    Some("/Users/sam/Library/Messages")
+                );
+            }
+            other => panic!("expected Apple, got {other:?}"),
+        }
+    }
 
     #[test]
     fn counts_exact_messages_written_to_jsonl_output() {
@@ -587,32 +645,110 @@ mod tests {
     }
 
     #[test]
-    fn extract_progress_parser_tracks_parse_and_convert() {
-        let stage = Arc::new(Mutex::new(ExtractProgressStage::Parse));
+    fn sms_backup_restore_requires_owner_phones() {
+        let err = build_exporter_config(
+            "sms-backup-restore",
+            "/tmp/backup",
+            "/tmp/out",
+            &test_options(Vec::new()),
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("phone number"),
+            "expected phone requirement error, got {err}"
+        );
+    }
 
-        let parse = extract_progress_from_log("  …500/12345 messages", &stage).unwrap();
-        assert_eq!(parse.step, "parse");
-        assert_eq!(parse.done, 500);
-        assert_eq!(parse.total, 12345);
-        assert_eq!(parse.status, None);
+    #[test]
+    fn sms_backup_restore_passes_owner_phones() {
+        let config = build_exporter_config(
+            "sms-backup-restore",
+            "/tmp/backup",
+            "/tmp/out",
+            &test_options(vec!["+15551111".into(), "+15552222".into()]),
+        )
+        .unwrap();
+        match config.source {
+            SourceConfig::SmsBackupRestore(s) => {
+                assert_eq!(s.owner_phones, vec!["+15551111", "+15552222"]);
+            }
+            other => panic!("expected SmsBackupRestore, got {other:?}"),
+        }
+    }
 
-        let banner =
-            extract_progress_from_log("Writing 3 conversation file(s)...", &stage).unwrap();
-        assert_eq!(banner.step, "convert");
-        assert_eq!(banner.done, 0);
-        assert_eq!(banner.total, 0);
-        assert_eq!(banner.status.as_deref(), Some("included_in_extract"));
+    #[test]
+    fn whatsapp_android_forwards_key_and_optional_paths() {
+        let mut options = test_options(Vec::new());
+        options.whatsapp_key = "deadbeef".into();
+        options.whatsapp_wa = "/tmp/wa.db".into();
+        options.whatsapp_media = "/tmp/WhatsApp".into();
+        options.whatsapp_db = "/tmp/msgstore.db".into();
+        options.whatsapp_business = true;
+        let config = build_exporter_config(
+            "whatsapp-android",
+            "/tmp/android-dump",
+            "/tmp/out",
+            &options,
+        )
+        .unwrap();
+        match config.source {
+            SourceConfig::Whatsapp(wa) => {
+                assert_eq!(wa.platform, Some(WhatsappPlatform::Android));
+                assert_eq!(wa.key.as_deref(), Some("deadbeef"));
+                assert_eq!(wa.wa.as_deref(), Some(std::path::Path::new("/tmp/wa.db")));
+                assert_eq!(
+                    wa.media.as_deref(),
+                    Some(std::path::Path::new("/tmp/WhatsApp"))
+                );
+                assert_eq!(
+                    wa.db.as_deref(),
+                    Some(std::path::Path::new("/tmp/msgstore.db"))
+                );
+                assert!(wa.backup.is_none());
+                assert!(!wa.business);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
 
-        let ignored = extract_progress_from_log("[1/5] Deriving backup keys...", &stage);
-        assert!(ignored.is_none());
+    #[test]
+    fn whatsapp_ios_omits_leftover_android_media_and_db() {
+        let mut options = test_options(Vec::new());
+        options.whatsapp_media = "/tmp/WhatsApp".into();
+        options.whatsapp_db = "/tmp/msgstore.db".into();
+        options.whatsapp_wa = "/tmp/ContactsV2.sqlite".into();
+        let config =
+            build_exporter_config("whatsapp-ios", "/tmp/ios-backup", "/tmp/out", &options).unwrap();
+        match config.source {
+            SourceConfig::Whatsapp(wa) => {
+                assert!(wa.media.is_none());
+                assert!(wa.db.is_none());
+                assert_eq!(
+                    wa.wa.as_deref(),
+                    Some(std::path::Path::new("/tmp/ContactsV2.sqlite"))
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
 
-        let backup_step = extract_progress_from_log("[2/5] Resolving messages database...", &stage);
-        assert!(backup_step.is_none());
-
-        let convert = extract_progress_from_log("  wrote 2/3 messages", &stage).unwrap();
-        assert_eq!(convert.step, "convert");
-        assert_eq!(convert.done, 2);
-        assert_eq!(convert.total, 3);
-        assert_eq!(convert.status, None);
+    #[test]
+    fn whatsapp_ios_sets_backup_from_folder_and_business() {
+        let mut options = test_options(Vec::new());
+        options.whatsapp_business = true;
+        let config =
+            build_exporter_config("whatsapp-ios", "/tmp/ios-backup", "/tmp/out", &options).unwrap();
+        match config.source {
+            SourceConfig::Whatsapp(wa) => {
+                assert_eq!(wa.platform, Some(WhatsappPlatform::Ios));
+                assert_eq!(
+                    wa.backup.as_deref(),
+                    Some(std::path::Path::new("/tmp/ios-backup"))
+                );
+                assert!(wa.business);
+                assert!(wa.key.is_none());
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }

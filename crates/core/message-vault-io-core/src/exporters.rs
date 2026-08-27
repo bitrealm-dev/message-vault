@@ -27,16 +27,26 @@ pub const EXPORTERS: [Exporter; 7] = [
     Exporter::SmsBackupPlus,
 ];
 
+/// iMessage Import / CLI copy when Convert or Compress is selected and ffmpeg is missing.
+pub const CONVERT_COMPRESS_FFMPEG_REQUIRED: &str = "Convert and Compress need ffmpeg and ffprobe. Put them on PATH, or in the desktop app set the ffmpeg directory in Settings → System.";
+
 /// Which backup type the user selected (iMessage, WhatsApp, SMS Backup & Restore, …).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Exporter {
+    /// GO SMS Pro backup type.
     GoSmsPro,
+    /// iMazing backup type.
     Imazing,
     #[default]
+    /// iMessage / iPhone backup type.
     Imessage,
+    /// OpenExtract backup type.
     OpenExtract,
+    /// SMS Backup & Restore backup type.
     SmsBackupRestore,
+    /// SMS Backup+ backup type.
     SmsBackupPlus,
+    /// WhatsApp backup type.
     Whatsapp,
 }
 
@@ -101,7 +111,7 @@ impl Exporter {
             Self::OpenExtract => "https://www.openextract.app/",
             Self::Imazing => "https://imazing.com/",
             Self::Imessage => {
-                "https://github.com/bitrealm-dev/message-vault-io/tree/main/crates/exporters/imessage-ir-exporter"
+                "https://github.com/bitrealm-io/message-vault/tree/main/crates/exporters/imessage-ir-exporter"
             }
             Self::Whatsapp => "https://github.com/KnugiHK/WhatsApp-Chat-Exporter",
         }
@@ -144,7 +154,9 @@ impl Exporter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WhatsappPlatform {
     #[default]
+    /// Android WhatsApp backup layout.
     Android,
+    /// iOS WhatsApp backup layout.
     Ios,
 }
 
@@ -181,6 +193,7 @@ impl WhatsappPlatform {
     }
 }
 
+/// The WhatsApp platforms in GUI dropdown order.
 pub const WHATSAPP_PLATFORMS: [WhatsappPlatform; 2] =
     [WhatsappPlatform::Android, WhatsappPlatform::Ios];
 
@@ -208,8 +221,11 @@ impl fmt::Display for Exporter {
 /// How a contacts file is parsed: none, CSV, or vCard (VCF).
 pub enum ContactsKind {
     #[default]
+    /// No contacts file.
     None,
+    /// CSV contacts file.
     Csv,
+    /// vCard (VCF) contacts file.
     Vcf,
 }
 
@@ -241,9 +257,13 @@ impl fmt::Display for ContactsKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AttachmentMedia {
     #[default]
+    /// Copy attachments without re-encoding.
     Clone,
+    /// Re-encode attachments to a standard format.
     Convert,
+    /// Re-encode and compress videos (720p/1080p/4k).
     Compress,
+    /// Do not copy attachments.
     Disabled,
 }
 
@@ -259,7 +279,8 @@ impl fmt::Display for AttachmentMedia {
 }
 
 impl AttachmentMedia {
-    /// Matching `message-media` mode used by FormatSink.
+    /// The `media::MediaMode` this GUI choice maps to (the same mode the
+    /// `--media-mode` CLI flag selects).
     pub fn media_mode(self) -> MediaMode {
         match self {
             Self::Clone => MediaMode::Clone,
@@ -290,6 +311,7 @@ impl AttachmentMedia {
     }
 }
 
+/// The attachment-media choices in GUI dropdown order.
 pub const ATTACHMENT_MEDIA: [AttachmentMedia; 4] = [
     AttachmentMedia::Clone,
     AttachmentMedia::Convert,
@@ -297,6 +319,7 @@ pub const ATTACHMENT_MEDIA: [AttachmentMedia; 4] = [
     AttachmentMedia::Disabled,
 ];
 
+/// The video resolution choices for compress mode.
 pub const MAX_RESOLUTIONS: [MaxResolution; 3] = [
     MaxResolution::P720,
     MaxResolution::P1080,
@@ -307,8 +330,11 @@ pub const MAX_RESOLUTIONS: [MaxResolution; 3] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ApplePlatform {
     #[default]
+    /// Auto-detect the backup layout.
     Auto,
+    /// macOS backup layout.
     MacOs,
+    /// iOS backup layout.
     Ios,
 }
 
@@ -343,6 +369,7 @@ impl ApplePlatform {
     }
 }
 
+/// The Apple platform choices in GUI dropdown order.
 pub const APPLE_PLATFORMS: [ApplePlatform; 3] = [
     ApplePlatform::Auto,
     ApplePlatform::MacOs,
@@ -352,38 +379,69 @@ pub const APPLE_PLATFORMS: [ApplePlatform; 3] = [
 /// GUI field set for one backup type, plus shared output and media options.
 #[derive(Debug, Clone)]
 pub struct Form {
+    /// Primary input path (source backup file or directory).
     pub input: String,
+    /// Output directory for the export.
     pub output: String,
+    /// Contacts file path (CSV or VCF) for phone→name resolution.
     pub contacts: String,
+    /// How the contacts file is parsed.
     pub contacts_kind: ContactsKind,
+    /// Comma-separated owner phone numbers (marks outgoing messages).
     pub owner_phones: String,
+    /// Comma-separated owner email addresses (marks outgoing messages).
     pub owner_emails: String,
+    /// Optional incorrect-name mapping file path.
     pub name_mapping: String,
+    /// Optional fixed UTC offset (e.g. `UTC-05:00`) for naive timestamps.
     pub timezone: String,
+    /// Whether to rewrite output with stable fake identities.
     pub obfuscate: bool,
+    /// Optional hex seed for reproducible obfuscation.
     pub obfuscate_seed: String,
+    /// Whether the advanced section of the GUI form is shown.
     pub advanced: bool,
+    /// iMessage chat database path (Apple sources).
     pub db_path: String,
+    /// Apple backup attachment root directory.
     pub attachment_root: String,
+    /// Start-date filter (`YYYY-MM-DD`).
     pub start_date: String,
+    /// End-date filter (`YYYY-MM-DD`, exclusive).
     pub end_date: String,
+    /// iMessage conversation filter (chat id).
     pub conversation_filter: String,
+    /// macOS AddressBook path (Apple sources).
     pub apple_contacts: String,
+    /// Apple backup decryption password (never written to `export.ini`).
     pub backup_password: String,
     /// Packaging format projected from the common message (`json` default).
     pub output_format: OutputFormat,
+    /// Attachment handling choice for the export.
     pub attachment_media: AttachmentMedia,
+    /// Compress-only long-edge cap (720p/1080p/4k).
     pub media_max_resolution: MaxResolution,
+    /// Compress-only max frame rate.
     pub media_max_fps: String,
+    /// Compress-only minimum video size (e.g. `20M`).
     pub media_min_size: String,
+    /// Compress-only: skip already-efficient HEVC videos.
     pub media_skip_efficient: bool,
+    /// iPhone vs Mac backup layout.
     pub apple_platform: ApplePlatform,
+    /// Android vs iOS WhatsApp layout.
     pub whatsapp_platform: WhatsappPlatform,
+    /// WhatsApp backup encryption key (never written to `export.ini`).
     pub whatsapp_key: String,
+    /// WhatsApp backup file path.
     pub whatsapp_backup: String,
+    /// WhatsApp Web session/wa path.
     pub whatsapp_wa: String,
+    /// WhatsApp media folder path.
     pub whatsapp_media: String,
+    /// WhatsApp message database path.
     pub whatsapp_db: String,
+    /// Whether the backup is a WhatsApp Business backup.
     pub whatsapp_business: bool,
 }
 
@@ -499,9 +557,7 @@ impl Form {
         required_text(&self.output, "Output directory", errors);
         let obfuscate_active = self.obfuscate || !self.obfuscate_seed.trim().is_empty();
         if !obfuscate_active && self.attachment_media.needs_ffmpeg() && !media::ffmpeg_available() {
-            errors.push(
-                "Convert/Compress require ffmpeg and ffprobe in lib/ (or beside the program), in MESSAGE_VAULT_IO_BIN, or on PATH.".into(),
-            );
+            errors.push(CONVERT_COMPRESS_FFMPEG_REQUIRED.into());
         }
         let media = self.media_config_for(
             matches!(self.attachment_media, AttachmentMedia::Compress),
@@ -606,7 +662,7 @@ impl Form {
         ) {
             Ok(range) => range,
             Err(error) => {
-                errors.push(error);
+                errors.push(error.to_string());
                 DateRange::default()
             }
         };
@@ -937,7 +993,7 @@ fn parse_date_range_local(
     match DateRange::parse(start, end) {
         Ok(range) => range,
         Err(error) => {
-            errors.push(error);
+            errors.push(error.to_string());
             DateRange::default()
         }
     }
@@ -1062,7 +1118,7 @@ mod tests {
 
         let experimental: Vec<_> = EXPORTERS[3..].iter().map(|e| e.display_name()).collect();
         let mut sorted = experimental.clone();
-        sorted.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+        sorted.sort_by_key(|a| a.to_lowercase());
         assert_eq!(experimental, sorted);
 
         assert_eq!(Exporter::Imessage.dropdown_label(), "iPhone backup");
@@ -1296,5 +1352,30 @@ mod tests {
                 .any(|error| error.contains("Output directory"))
         );
         assert!(errors.iter().any(|error| error.contains("Obfuscate seed")));
+    }
+
+    struct RestoreToolsDir;
+
+    impl Drop for RestoreToolsDir {
+        fn drop(&mut self) {
+            media::set_tools_dir(None);
+        }
+    }
+
+    #[test]
+    fn imessage_convert_without_ffmpeg_uses_locked_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let _restore = RestoreToolsDir;
+        media::set_tools_dir(Some(dir.path().to_path_buf()));
+        let form = Form {
+            output: "out".into(),
+            attachment_media: AttachmentMedia::Convert,
+            ..Form::default()
+        };
+        let err = form.to_config(Exporter::Imessage).unwrap_err();
+        assert!(
+            err.iter().any(|e| e == CONVERT_COMPRESS_FFMPEG_REQUIRED),
+            "{err:?}"
+        );
     }
 }

@@ -6,12 +6,19 @@
 //! The `imazing-exporter` binary is a thin CLI over [`run`].
 
 mod attachments;
+mod attachments_emit;
 mod emit;
 mod parse;
+mod parse_emit;
 mod run;
 
 pub use message_vault_io_core::{RunResult, parse_date_range_tz as parse_date_range};
 pub use run::run;
+
+#[cfg(feature = "cli")]
+pub mod cli;
+#[cfg(feature = "cli")]
+pub use cli::clap_command;
 
 #[cfg(test)]
 #[path = "../tests/convert_smoke.rs"]

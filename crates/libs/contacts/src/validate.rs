@@ -9,6 +9,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+/// Check-only or write-updates mode for the contacts-validate tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ValidateMode {
     /// Analyze only; do not write corrected files or a log file.
@@ -18,10 +19,14 @@ pub enum ValidateMode {
     Update,
 }
 
+/// Full result of a validate run.
 #[derive(Debug, Default)]
 pub struct ValidateReport {
+    /// Count of phones rewritten to a certain E.164.
     pub rewritten: u64,
+    /// Count of phones left unchanged as uncertain.
     pub uncertain: u64,
+    /// Count of E.164 values shared by more than one contact.
     pub duplicate_groups: u64,
     /// Planned or written primary output path.
     pub output_path: PathBuf,
@@ -53,7 +58,9 @@ struct UnableEntry {
 /// Formats accepted by contacts-validate and by [`crate::ContactsBook::load_contacts_file`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContactsFormat {
+    /// vCard `.vcf`/`.vcard` input.
     Vcf,
+    /// First/Last Name plus phone-column CSV input.
     VcardCsv,
 }
 
@@ -63,7 +70,9 @@ const UNRECOGNIZED_CONTACTS_FORMAT: &str = "Unrecognized contacts format.";
 /// Probe failure for GUI preflight (short `message` + optional log `details`).
 #[derive(Debug, Clone)]
 pub struct ContactsInputError {
+    /// Short human-readable error (e.g. `"Unrecognized contacts format."`).
     pub message: String,
+    /// Optional verbose detail lines for logs.
     pub details: Vec<String>,
 }
 
@@ -149,31 +158,31 @@ pub fn validate_contacts_file(
 
     match format {
         ContactsFormat::Vcf => {
-            rewrite_vcf(
+            rewrite_vcf(RewriteVcfArgs {
                 input,
-                &output_path,
+                output: &output_path,
                 region,
                 write,
-                &mut rewritten,
-                &mut uncertain,
-                &mut log_lines,
-                &mut unable,
-                &mut by_e164,
-            )?;
+                rewritten: &mut rewritten,
+                uncertain: &mut uncertain,
+                log_lines: &mut log_lines,
+                unable: &mut unable,
+                by_e164: &mut by_e164,
+            })?;
         }
         ContactsFormat::VcardCsv => {
-            rewrite_vcard_csv(
+            rewrite_vcard_csv(RewriteVcardCsvArgs {
                 input,
-                &output_path,
+                output: &output_path,
                 region,
                 write,
-                &mut rewritten,
-                &mut uncertain,
-                &mut log_lines,
-                &mut unable,
-                &mut by_e164,
-                &mut cards,
-            )?;
+                rewritten: &mut rewritten,
+                uncertain: &mut uncertain,
+                log_lines: &mut log_lines,
+                unable: &mut unable,
+                by_e164: &mut by_e164,
+                cards: &mut cards,
+            })?;
         }
     }
 
@@ -285,6 +294,11 @@ fn is_phone_header(h: &str) -> bool {
 }
 
 /// Detect VCF or vCard CSV (First Name, Last Name, phone columns).
+///
+/// # Errors
+///
+/// Returns a `ContactsInputError` when the path is missing, the extension is
+/// unknown, or the content is not a recognized contacts format.
 pub fn detect_contacts_format(path: &Path) -> Result<ContactsFormat, ContactsInputError> {
     detect_format(path)
 }
@@ -431,20 +445,34 @@ fn emit_uncertain_sections(log_lines: &mut Vec<String>, unable: &[UnableEntry]) 
     }
 }
 
-fn rewrite_phone_token(
-    raw: &str,
-    // Label for duplicate tracking (includes row).
-    contact_dup: &str,
-    // Name shown under UNCERTAIN FORMAT (name or `row N`).
-    contact_uncertain: &str,
+struct RewritePhoneTokenArgs<'a> {
+    raw: &'a str,
+    /// Label for duplicate tracking (includes row).
+    contact_dup: &'a str,
+    /// Name shown under UNCERTAIN FORMAT (name or `row N`).
+    contact_uncertain: &'a str,
     region: PhoneRegion,
-    rewritten: &mut u64,
-    uncertain: &mut u64,
-    log_lines: &mut Vec<String>,
-    unable: &mut Vec<UnableEntry>,
-    by_e164: &mut HashMap<String, Vec<String>>,
+    rewritten: &'a mut u64,
+    uncertain: &'a mut u64,
+    log_lines: &'a mut Vec<String>,
+    unable: &'a mut Vec<UnableEntry>,
+    by_e164: &'a mut HashMap<String, Vec<String>>,
     log_success: bool,
-) -> String {
+}
+
+fn rewrite_phone_token(args: RewritePhoneTokenArgs<'_>) -> String {
+    let RewritePhoneTokenArgs {
+        raw,
+        contact_dup,
+        contact_uncertain,
+        region,
+        rewritten,
+        uncertain,
+        log_lines,
+        unable,
+        by_e164,
+        log_success,
+    } = args;
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return raw.to_string();
@@ -480,26 +508,40 @@ fn rewrite_phone_token(
     }
 }
 
-fn rewrite_phone_list(
-    raw: &str,
-    contact_dup: &str,
-    contact_uncertain: &str,
+struct RewritePhoneListArgs<'a> {
+    raw: &'a str,
+    contact_dup: &'a str,
+    contact_uncertain: &'a str,
     region: PhoneRegion,
     sep: char,
-    rewritten: &mut u64,
-    uncertain: &mut u64,
-    log_lines: &mut Vec<String>,
-    unable: &mut Vec<UnableEntry>,
-    by_e164: &mut HashMap<String, Vec<String>>,
-) -> String {
+    rewritten: &'a mut u64,
+    uncertain: &'a mut u64,
+    log_lines: &'a mut Vec<String>,
+    unable: &'a mut Vec<UnableEntry>,
+    by_e164: &'a mut HashMap<String, Vec<String>>,
+}
+
+fn rewrite_phone_list(args: RewritePhoneListArgs<'_>) -> String {
+    let RewritePhoneListArgs {
+        raw,
+        contact_dup,
+        contact_uncertain,
+        region,
+        sep,
+        rewritten,
+        uncertain,
+        log_lines,
+        unable,
+        by_e164,
+    } = args;
     if raw.trim().is_empty() {
         return raw.to_string();
     }
     let parts: Vec<String> = raw
         .split(sep)
         .map(|p| {
-            rewrite_phone_token(
-                p,
+            rewrite_phone_token(RewritePhoneTokenArgs {
+                raw: p,
                 contact_dup,
                 contact_uncertain,
                 region,
@@ -508,24 +550,37 @@ fn rewrite_phone_list(
                 log_lines,
                 unable,
                 by_e164,
-                false,
-            )
+                log_success: false,
+            })
         })
         .collect();
     parts.join(&sep.to_string())
 }
 
-fn rewrite_vcf(
-    input: &Path,
-    output: &Path,
+struct RewriteVcfArgs<'a> {
+    input: &'a Path,
+    output: &'a Path,
     region: PhoneRegion,
     write: bool,
-    rewritten: &mut u64,
-    uncertain: &mut u64,
-    log_lines: &mut Vec<String>,
-    unable: &mut Vec<UnableEntry>,
-    by_e164: &mut HashMap<String, Vec<String>>,
-) -> Result<()> {
+    rewritten: &'a mut u64,
+    uncertain: &'a mut u64,
+    log_lines: &'a mut Vec<String>,
+    unable: &'a mut Vec<UnableEntry>,
+    by_e164: &'a mut HashMap<String, Vec<String>>,
+}
+
+fn rewrite_vcf(args: RewriteVcfArgs<'_>) -> Result<()> {
+    let RewriteVcfArgs {
+        input,
+        output,
+        region,
+        write,
+        rewritten,
+        uncertain,
+        log_lines,
+        unable,
+        by_e164,
+    } = args;
     let text = fs::read_to_string(input).with_context(|| format!("read {}", input.display()))?;
     let mut out = String::new();
     let mut current_name = String::from("(unnamed)");
@@ -573,20 +628,28 @@ fn rewrite_vcf(
             continue;
         }
         // TEL;TYPE=CELL:+1-555… or TEL:+1…
-        if upper.starts_with("TEL") {
-            if let Some((prefix, value)) = trimmed.split_once(':') {
-                let label = contact_label(card_index, &current_name);
-                let display = contact_display_name(card_index, &current_name);
-                let new_val = rewrite_phone_token(
-                    value, &label, &display, region, rewritten, uncertain, log_lines, unable,
-                    by_e164, true,
-                );
-                out.push_str(prefix);
-                out.push(':');
-                out.push_str(&new_val);
-                out.push('\n');
-                continue;
-            }
+        if upper.starts_with("TEL")
+            && let Some((prefix, value)) = trimmed.split_once(':')
+        {
+            let label = contact_label(card_index, &current_name);
+            let display = contact_display_name(card_index, &current_name);
+            let new_val = rewrite_phone_token(RewritePhoneTokenArgs {
+                raw: value,
+                contact_dup: &label,
+                contact_uncertain: &display,
+                region,
+                rewritten,
+                uncertain,
+                log_lines,
+                unable,
+                by_e164,
+                log_success: true,
+            });
+            out.push_str(prefix);
+            out.push(':');
+            out.push_str(&new_val);
+            out.push('\n');
+            continue;
         }
         out.push_str(line);
         out.push('\n');
@@ -631,18 +694,32 @@ fn vcf_escape(s: &str) -> String {
         .replace('\n', "\\n")
 }
 
-fn rewrite_vcard_csv(
-    input: &Path,
-    output: &Path,
+struct RewriteVcardCsvArgs<'a> {
+    input: &'a Path,
+    output: &'a Path,
     region: PhoneRegion,
     write: bool,
-    rewritten: &mut u64,
-    uncertain: &mut u64,
-    log_lines: &mut Vec<String>,
-    unable: &mut Vec<UnableEntry>,
-    by_e164: &mut HashMap<String, Vec<String>>,
-    cards: &mut Vec<OutCard>,
-) -> Result<()> {
+    rewritten: &'a mut u64,
+    uncertain: &'a mut u64,
+    log_lines: &'a mut Vec<String>,
+    unable: &'a mut Vec<UnableEntry>,
+    by_e164: &'a mut HashMap<String, Vec<String>>,
+    cards: &'a mut Vec<OutCard>,
+}
+
+fn rewrite_vcard_csv(args: RewriteVcardCsvArgs<'_>) -> Result<()> {
+    let RewriteVcardCsvArgs {
+        input,
+        output,
+        region,
+        write,
+        rewritten,
+        uncertain,
+        log_lines,
+        unable,
+        by_e164,
+        cards,
+    } = args;
     let file = File::open(input).with_context(|| format!("open {}", input.display()))?;
     let mut rdr = csv::ReaderBuilder::new().flexible(true).from_reader(file);
     let headers = rdr.headers()?.clone();
@@ -689,18 +766,18 @@ fn rewrite_vcard_csv(
                     continue;
                 }
                 // Some exporters pack multiple phones with `;`
-                *cell = rewrite_phone_list(
-                    cell,
-                    &contact_dup,
-                    &contact_uncertain,
+                *cell = rewrite_phone_list(RewritePhoneListArgs {
+                    raw: cell,
+                    contact_dup: &contact_dup,
+                    contact_uncertain: &contact_uncertain,
                     region,
-                    ';',
+                    sep: ';',
                     rewritten,
                     uncertain,
                     log_lines,
                     unable,
                     by_e164,
-                );
+                });
                 for p in cell.split(';') {
                     let p = p.trim();
                     if !p.is_empty() && !phones.iter().any(|x| x == p) {

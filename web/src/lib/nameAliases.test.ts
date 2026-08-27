@@ -1,35 +1,29 @@
 /** @vitest-environment jsdom */
-import { describe, it, expect, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   personDisplayLabel,
   readUseNameAliases,
-  writeUseNameAliases,
   USE_NAME_ALIASES_KEY,
+  writeUseNameAliases,
 } from "./nameAliases";
 
 describe("personDisplayLabel", () => {
   it("prefers preferred name when aliases are off", () => {
     expect(
-      personDisplayLabel(
-        { preferredName: "Ada", nameAlias: "A.L.", handle: "+1" },
-        false,
-      ),
+      personDisplayLabel({ preferredName: "Ada", nameAlias: "A.L.", handle: "+1" }, false),
     ).toBe("Ada");
   });
 
   it("prefers alias when aliases are on", () => {
     expect(
-      personDisplayLabel(
-        { preferredName: "Ada", nameAlias: "A.L.", handle: "+1" },
-        true,
-      ),
+      personDisplayLabel({ preferredName: "Ada", nameAlias: "A.L.", handle: "+1" }, true),
     ).toBe("A.L.");
   });
 
   it("falls back to handle", () => {
-    expect(
-      personDisplayLabel({ preferredName: null, nameAlias: null, handle: "+1" }, true),
-    ).toBe("+1");
+    expect(personDisplayLabel({ preferredName: null, nameAlias: null, handle: "+1" }, true)).toBe(
+      "+1",
+    );
   });
 });
 

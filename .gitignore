@@ -26,7 +26,12 @@ src-tauri/gen/schemas
 # Local machine export paths / owner identity
 config/export-to-vault.sh
 config/config.toml
+config/contacts.csv
+config/contacts.vcf
 **/export.ini
+
+# Local machine config (copy .env.example to .env)
+.env
 
 # Converter output trees (directory kept via .gitkeep)
 /data/*
@@ -36,6 +41,7 @@ config/config.toml
 /docs/.astro/
 /docs/dist/
 /docs/node_modules/
+/docs/public/vault/developer/rustdoc/
 
 # PlantUML extension default dump (workspace export goes to docs/maintainers/architecture/puml/img)
 /out/

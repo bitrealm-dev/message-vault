@@ -59,17 +59,13 @@ describe("groupByLetter", () => {
 describe("compareContactsByName", () => {
   it("sorts by last name then first name", () => {
     const names = ["Zoe Adams", "Amy Adams", "Bob Lee"];
-    const sorted = [...names].sort((a, b) =>
-      compareContactsByName(a, b, "last", "asc"),
-    );
+    const sorted = [...names].sort((a, b) => compareContactsByName(a, b, "last", "asc"));
     expect(sorted).toEqual(["Amy Adams", "Zoe Adams", "Bob Lee"]);
   });
 
   it("sorts by first name then last name", () => {
     const names = ["Zoe Adams", "Amy Adams", "Bob Lee"];
-    const sorted = [...names].sort((a, b) =>
-      compareContactsByName(a, b, "first", "asc"),
-    );
+    const sorted = [...names].sort((a, b) => compareContactsByName(a, b, "first", "asc"));
     expect(sorted).toEqual(["Amy Adams", "Bob Lee", "Zoe Adams"]);
   });
 });

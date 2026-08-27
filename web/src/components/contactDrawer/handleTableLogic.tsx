@@ -1,9 +1,6 @@
 import type { ReactNode } from "react";
 import type { CachedContactHandle } from "../../lib/contactDetailCache";
-import {
-  formatHandleDate,
-  formatHandleServiceLabel,
-} from "./contactDrawerTypes";
+import { formatHandleDate, formatHandleServiceLabel } from "./contactDrawerTypes";
 
 export function handleDateCell(iso: string | null | undefined): string {
   return formatHandleDate(iso) ?? "—";
@@ -43,8 +40,8 @@ export function removeIdentityConfirmBody(target: RemoveIdentityTarget): ReactNo
   const threadWord = threadCount === 1 ? "thread" : "threads";
   return (
     <p className="mt-3 text-[0.875rem] leading-relaxed text-muted">
-      Removing {serviceId} will unlink {threadCount} {threadWord} from this
-      contact. Unlinked data will not be deleted.
+      Removing {serviceId} will unlink {threadCount} {threadWord} from this contact. Unlinked data
+      will not be deleted.
     </p>
   );
 }

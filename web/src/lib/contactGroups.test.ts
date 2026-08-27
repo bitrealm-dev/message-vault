@@ -18,9 +18,7 @@ describe("groupSlug", () => {
 
 describe("groupFromSlug", () => {
   it("prefers an exact slug match, then ignores case", () => {
-    expect(groupFromSlug("Work-Friends", ["Work Friends", "Family"])).toBe(
-      "Work Friends",
-    );
+    expect(groupFromSlug("Work-Friends", ["Work Friends", "Family"])).toBe("Work Friends");
     expect(groupFromSlug("family", ["Family"])).toBe("Family");
     expect(groupFromSlug("missing", ["Family"])).toBeNull();
   });

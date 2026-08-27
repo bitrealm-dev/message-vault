@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  type CachedContactDetail,
   clearContactDetailCache,
   fetchContactDetail,
   getCachedContactDetail,
   invalidateContactDetail,
   updateCachedContactGroups,
-  type CachedContactDetail,
 } from "./contactDetailCache";
 
 function detail(id: string): CachedContactDetail {
@@ -81,9 +81,7 @@ describe("contactDetailCache", () => {
   });
 
   it("clear wipes all entries", async () => {
-    const get = vi.fn(async (path: string) =>
-      detail(path.split("/").pop() ?? "x"),
-    );
+    const get = vi.fn(async (path: string) => detail(path.split("/").pop() ?? "x"));
     await fetchContactDetail("3", get);
     await fetchContactDetail("4", get);
     clearContactDetailCache();

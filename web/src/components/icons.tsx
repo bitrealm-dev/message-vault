@@ -72,6 +72,15 @@ export function ChevronRightIcon({ size, className, ...rest }: IconProps) {
   );
 }
 
+/** Chevron pointing down — a closed menu that opens below. */
+export function ChevronDownIcon({ size, className, ...rest }: IconProps) {
+  return (
+    <IconShell size={size} className={className} {...rest}>
+      <path d="m6 9 6 6 6-6" />
+    </IconShell>
+  );
+}
+
 /** Three dots for a row menu. */
 export function EllipsisIcon({ size, className, ...rest }: IconProps) {
   return (
@@ -126,12 +135,41 @@ export function SignOutIcon({ size, className, ...rest }: IconProps) {
   );
 }
 
+/** Magnifying glass — a saved search. */
+export function SearchIcon({ size, className, ...rest }: IconProps) {
+  return (
+    <IconShell size={size} className={className} {...rest}>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m21 21-4.3-4.3" />
+    </IconShell>
+  );
+}
+
 /** One person — contacts with no group. */
 export function PersonIcon({ size, className, ...rest }: IconProps) {
   return (
     <IconShell size={size} className={className} {...rest}>
       <circle cx="12" cy="8" r="3" />
       <path d="M5 20c0-3.3 3.1-6 7-6s7 2.7 7 6" />
+    </IconShell>
+  );
+}
+
+/** Check mark — a tool was found. */
+export function CheckIcon({ size, className, ...rest }: IconProps) {
+  return (
+    <IconShell size={size} className={className} {...rest}>
+      <path d="M20 6 9 17l-5-5" />
+    </IconShell>
+  );
+}
+
+/** X mark — a tool was not found. */
+export function XIcon({ size, className, ...rest }: IconProps) {
+  return (
+    <IconShell size={size} className={className} {...rest}>
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
     </IconShell>
   );
 }

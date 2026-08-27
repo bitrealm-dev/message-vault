@@ -2,9 +2,11 @@
 //!
 //! Layout and headers follow the [mail archive format](https://bitrealm.io/vault/developer/formats/mail-archive/).
 //! The usual layout is one folder of `.eml` files per conversation.
-//! [`append_message_mbox`] writes **mboxrd** mailboxes for clients that prefer
+//! [`write_mail_package`] writes **mboxrd** mailboxes for clients that prefer
 //! a single file. SMS/MMS fill the core fields. iMessage also sets reply,
 //! tapback, balloon, parts, and edits extension fields.
+
+#![warn(missing_docs)]
 
 mod parse;
 
@@ -32,7 +34,9 @@ const OWNER_DISPLAY_NAME: &str = "Me";
 /// Message direction for From/To mapping and `X-ME-Direction`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
+    /// Incoming message (sender is the peer).
     Incoming,
+    /// Outgoing message (sender is the owner).
     Outgoing,
 }
 
@@ -49,7 +53,9 @@ impl Direction {
 /// One participant in a conversation roster.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Participant {
+    /// Phone, email, or chat handle; also used for peer matching in From/To mapping.
     pub handle: String,
+    /// Optional display name, omitted from the JSON header when `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
 }
@@ -57,13 +63,34 @@ pub struct Participant {
 /// Attachment bytes plus metadata for MIME parts / `X-ME-Attachment-Meta`.
 #[derive(Debug, Clone)]
 pub struct MailAttachment {
+    /// Raw file bytes attached as a MIME part.
     pub bytes: Vec<u8>,
-    pub original_name: Option<String>,
-    pub mime_type: Option<String>,
-    pub digest_sha256: Option<String>,
+    /// Shared attachment metadata (`path` is never serialized to the EML; readers
+    /// restore the IR path separately).
+    pub meta: message_ir::AttachmentMeta,
+    /// Sticker flag serialized in the attachment meta JSON.
     pub is_sticker: bool,
+    /// OCR/transcription text serialized in the attachment meta JSON.
     pub transcription: Option<String>,
+    /// Sticker effect name serialized in the attachment meta JSON.
     pub sticker_effect: Option<String>,
+}
+
+impl From<&MailAttachment> for message_ir::IrAttachment {
+    fn from(a: &MailAttachment) -> Self {
+        Self {
+            path: None,
+            original_name: a.meta.original_name.clone(),
+            mime_type: a.meta.mime_type.clone(),
+            digest_sha256: a.meta.digest_sha256.clone(),
+            is_sticker: a.is_sticker,
+            transcription: a.transcription.clone(),
+            sticker_effect: a.sticker_effect.clone(),
+            size_bytes: None,
+            missing_reason: None,
+            bytes: None,
+        }
+    }
 }
 
 /// How to package a conversation for mail-archive export.
@@ -78,25 +105,45 @@ pub enum MailPackage {
 /// Core SMS/MMS fields for [`MailMessage::sms`] (iMessage extensions left unset).
 #[derive(Debug, Clone)]
 pub struct SmsMailFields {
+    /// Conversation id; drives the folder/mbox stem and `X-ME-Chat-Identifier`.
     pub chat_identifier: String,
+    /// `individual` or `group`.
     pub conversation_type: String,
+    /// Group chat title (folder name / subject label).
     pub group_title: Option<String>,
+    /// Roster for `X-ME-Participants`.
     pub participants: Vec<Participant>,
+    /// Message guid used in Message-ID and the `.eml` filename.
     pub guid: String,
+    /// Message time in ms; feeds the Date header, filenames, and sort order.
     pub timestamp_unix_ms: i64,
+    /// From/To mapping.
     pub direction: Direction,
+    /// SMS/iMessage/…; selects the Message-ID domain.
     pub service: String,
+    /// `sms` / `mms` / `imessage` / `tapback` / `balloon` / ….
     pub message_kind: String,
+    /// Sender's handle (From for incoming).
     pub sender_handle: Option<String>,
+    /// Sender display name for From/To.
     pub sender_display_name: Option<String>,
+    /// Owner E.164/handle for From/To mapping.
     pub owner_handle: String,
+    /// Goes to `X-ME-Subject`, not the mail Subject.
     pub subject: Option<String>,
+    /// Message body.
     pub text: String,
+    /// Android message type code → `X-ME-Android-Type`.
     pub android_type: Option<String>,
+    /// Opaque source fields → `X-ME-Source-Fields`.
     pub source_fields_json: Option<String>,
+    /// Provenance string → `X-ME-Export-Source`.
     pub export_source: String,
+    /// Tool name → `X-ME-Export-Tool`.
     pub export_tool: String,
+    /// Version → `X-ME-Export-Tool-Version`.
     pub export_tool_version: String,
+    /// MIME parts to attach.
     pub attachments: Vec<MailAttachment>,
     /// Optional stem suffix (e.g. `"__whatsapp"`) for conversation folder / mbox names.
     pub filename_suffix: Option<String>,
@@ -105,53 +152,90 @@ pub struct SmsMailFields {
 /// One message ready to serialize as a single `.eml`.
 #[derive(Debug, Clone)]
 pub struct MailMessage {
+    /// Conversation id → `X-ME-Chat-Identifier`, folder stem, group chat address local part.
     pub chat_identifier: String,
     /// `individual` or `group`
     pub conversation_type: String,
+    /// Group title → `X-ME-Group-Title`, To display name, subject label.
     pub group_title: Option<String>,
+    /// Roster → `X-ME-Participants` JSON.
     pub participants: Vec<Participant>,
+    /// Message id for Message-ID and the `.eml` filename.
     pub guid: String,
+    /// Unix ms timestamp → Date header, filenames, mbox asctime, sort order.
     pub timestamp_unix_ms: i64,
+    /// From/To mapping → `X-ME-Direction`.
     pub direction: Direction,
+    /// Selects the Message-ID domain (`imessage.local` vs default) → `X-ME-Service`.
     pub service: String,
     /// `sms` / `mms` / `imessage` / `tapback` / `balloon` / …
     pub message_kind: String,
+    /// → `X-ME-Sender-Handle`; From for incoming.
     pub sender_handle: Option<String>,
+    /// → `X-ME-Sender-Display-Name`.
     pub sender_display_name: Option<String>,
     /// Owner E.164 (or handle) used for From/To mapping.
     pub owner_handle: String,
     /// Outgoing From display name; defaults to `"Me"` when absent.
     pub owner_display_name: Option<String>,
+    /// → `X-ME-Subject` (the mail Subject is always `"Message with …"`).
     pub subject: Option<String>,
+    /// Text body.
     pub text: String,
+    /// → `X-ME-Android-Type`.
     pub android_type: Option<String>,
+    /// → `X-ME-Source-Fields`.
     pub source_fields_json: Option<String>,
+    /// → `X-ME-Export-Source`.
     pub export_source: String,
+    /// → `X-ME-Export-Tool`.
     pub export_tool: String,
+    /// → `X-ME-Export-Tool-Version`.
     pub export_tool_version: String,
+    /// MIME parts plus the `X-ME-Attachment-Meta` JSON.
     pub attachments: Vec<MailAttachment>,
     /// Optional stem suffix (e.g. `"__whatsapp"`) for conversation folder / mbox names.
     pub filename_suffix: Option<String>,
     // --- iMessage extensions (SMS leaves these unset) ---
+    /// iMessage; → `X-ME-Is-Reply`.
     pub is_reply: bool,
+    /// Sets In-Reply-To/References and `X-ME-Thread-Originator-Guid`.
     pub in_reply_to_guid: Option<String>,
+    /// → `X-ME-Thread-Originator-Part`.
     pub thread_originator_part: Option<u32>,
+    /// → `X-ME-Num-Replies`.
     pub num_replies: Option<u32>,
+    /// → `X-ME-Is-Deleted`.
     pub is_deleted: bool,
+    /// → `X-ME-Send-Effect`.
     pub send_effect: Option<String>,
+    /// → `X-ME-Shared-Location`.
     pub shared_location: Option<String>,
+    /// → `X-ME-Announcement`.
     pub announcement: Option<String>,
+    /// → `X-ME-Read-Receipt`.
     pub read_receipt_rfc3339: Option<String>,
+    /// → `X-ME-Parts`.
     pub parts_json: Option<String>,
+    /// → `X-ME-Edits`.
     pub edits_json: Option<String>,
+    /// → `X-ME-App`.
     pub app_json: Option<String>,
+    /// → `X-ME-Balloon-Bundle-Id`.
     pub balloon_bundle_id: Option<String>,
+    /// → `X-ME-Balloon-Kind`.
     pub balloon_kind: Option<String>,
+    /// → `X-ME-Tapbacks`.
     pub tapbacks_json: Option<String>,
+    /// Tapback target message → `X-ME-Associated-Guid`.
     pub associated_guid: Option<String>,
+    /// Tapback target part index → `X-ME-Associated-Part`.
     pub associated_part: Option<u32>,
+    /// → `X-ME-Tapback-Kind`.
     pub tapback_kind: Option<String>,
+    /// → `X-ME-Tapback-Emoji`.
     pub tapback_emoji: Option<String>,
+    /// → `X-ME-Tapback-Action`.
     pub tapback_action: Option<String>,
 }
 
@@ -782,12 +866,12 @@ fn build_eml(msg: &MailMessage) -> Result<Vec<u8>> {
             .iter()
             .map(|a| AttachmentMetaCell {
                 path: None,
-                original_name: a.original_name.as_deref(),
-                mime_type: a.mime_type.as_deref(),
+                original_name: a.meta.original_name.as_deref(),
+                mime_type: a.meta.mime_type.as_deref(),
                 is_sticker: a.is_sticker,
                 transcription: a.transcription.as_deref(),
                 sticker_effect: a.sticker_effect.as_deref(),
-                digest_sha256: a.digest_sha256.as_deref(),
+                digest_sha256: a.meta.digest_sha256.as_deref(),
             })
             .collect();
         let meta_json = serde_json::to_string(&meta).unwrap_or_else(|_| "[]".into());
@@ -798,11 +882,13 @@ fn build_eml(msg: &MailMessage) -> Result<Vec<u8>> {
 
     for (i, att) in msg.attachments.iter().enumerate() {
         let mime = att
+            .meta
             .mime_type
             .as_deref()
             .filter(|m| !m.is_empty())
             .unwrap_or("application/octet-stream");
         let filename = att
+            .meta
             .original_name
             .clone()
             .unwrap_or_else(|| format!("attachment-{i}"));
@@ -993,9 +1079,12 @@ mod tests {
         ];
         msg.attachments = vec![MailAttachment {
             bytes: b"\xff\xd8\xfffakejpeg".to_vec(),
-            original_name: Some("photo.jpg".into()),
-            mime_type: Some("image/jpeg".into()),
-            digest_sha256: Some("deadbeef".into()),
+            meta: message_ir::AttachmentMeta {
+                path: None,
+                original_name: Some("photo.jpg".into()),
+                mime_type: Some("image/jpeg".into()),
+                digest_sha256: Some("deadbeef".into()),
+            },
             is_sticker: false,
             transcription: None,
             sticker_effect: None,
@@ -1199,9 +1288,12 @@ mod tests {
         msg.text = "Loved a message".into();
         msg.attachments = vec![MailAttachment {
             bytes: b"<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>".to_vec(),
-            original_name: Some("handwriting.svg".into()),
-            mime_type: Some("image/svg+xml".into()),
-            digest_sha256: None,
+            meta: message_ir::AttachmentMeta {
+                path: None,
+                original_name: Some("handwriting.svg".into()),
+                mime_type: Some("image/svg+xml".into()),
+                digest_sha256: None,
+            },
             is_sticker: false,
             transcription: None,
             sticker_effect: None,

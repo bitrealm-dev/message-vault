@@ -1,6 +1,6 @@
-import type { MessageAttachment } from "../lib/types";
-import { missingAttachmentChipLabel } from "../lib/missingAttachmentLabel";
 import { useAssetObjectUrl } from "../hooks/useAssetObjectUrl";
+import { missingAttachmentChipLabel } from "../lib/missingAttachmentLabel";
+import type { MessageAttachment } from "../lib/types";
 
 export default function AttachmentThumbnail({
   attachment,
@@ -57,9 +57,10 @@ export default function AttachmentThumbnail({
   }
 
   return (
-    <div
+    <button
+      type="button"
       onClick={onClick}
-      className="mt-1.5 max-w-[300px] cursor-pointer overflow-hidden rounded-md border border-border"
+      className="mt-1.5 max-w-[300px] cursor-pointer overflow-hidden rounded-md border border-border bg-transparent p-0 text-left"
     >
       <img
         src={url}
@@ -67,6 +68,6 @@ export default function AttachmentThumbnail({
         loading="lazy"
         className="block h-auto w-full"
       />
-    </div>
+    </button>
   );
 }

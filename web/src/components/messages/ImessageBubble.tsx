@@ -4,8 +4,8 @@ import {
   ChatBubbleRow,
   formatMessageTime,
   isGroupConversation,
-  senderName,
   type MessageBubbleProps,
+  senderName,
 } from "./chatBubbleShared";
 
 export default function ImessageBubble({
@@ -26,14 +26,10 @@ export default function ImessageBubble({
       <>
         <MessageAttachments message={message} onAttachmentClick={onAttachmentClick} />
         {hasReactions ? (
-          <div
-            className={`flex flex-wrap gap-1 ${
-              hasAttachments ? "mt-1" : "mt-0"
-            }`}
-          >
-            {message.reactions!.map((r, i) => (
+          <div className={`flex flex-wrap gap-1 ${hasAttachments ? "mt-1" : "mt-0"}`}>
+            {message.reactions?.map((r) => (
               <span
-                key={i}
+                key={r.emoji}
                 className="rounded-full border border-border bg-elevated px-[0.35rem] py-[0.1rem] text-[0.75rem] text-text"
               >
                 {r.emoji} {r.count}
@@ -55,9 +51,7 @@ export default function ImessageBubble({
       timeLabel={time}
       meta={
         <>
-          {message.effect ? (
-            <span className="italic text-[#8b5cf6]">{message.effect}</span>
-          ) : null}
+          {message.effect ? <span className="italic text-[#8b5cf6]">{message.effect}</span> : null}
           {message.edit_history && message.edit_history.length > 0 ? (
             <span className="italic">Edited</span>
           ) : null}

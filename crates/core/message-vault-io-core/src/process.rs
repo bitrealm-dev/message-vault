@@ -65,7 +65,9 @@ pub fn check_cancel(cancel: Option<&CancelFlag>) -> Result<(), &'static str> {
 /// Failure returned by an in-process GUI job.
 #[derive(Debug, Clone)]
 pub struct JobError {
+    /// Technical failure detail.
     pub detail: String,
+    /// Optional short banner text for the GUI.
     pub user_message: Option<String>,
 }
 
@@ -113,11 +115,17 @@ impl fmt::Display for JobError {
 #[derive(Debug, Clone)]
 /// One event sent on the job channel: started, log line, finished, or error.
 pub enum ProcessEvent {
+    /// Job started; carries the job label.
     Started(String),
+    /// Mid-run progress or warning line.
     Log(String),
+    /// Job finished; carries the completion message.
     Finished(String),
+    /// Job failed; carries the error detail and optional banner text.
     Error {
+        /// Technical failure detail.
         detail: String,
+        /// Optional short banner text for the GUI.
         user_message: Option<String>,
     },
 }

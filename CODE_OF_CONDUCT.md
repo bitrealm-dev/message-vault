@@ -60,7 +60,7 @@ representative at an online or offline event.
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported by contacting the maintainers of the
-[bitrealm-dev/message-vault](https://github.com/bitrealm-dev/message-vault)
+[bitrealm-io/message-vault](https://github.com/bitrealm-io/message-vault)
 GitHub repository. All complaints will be reviewed and investigated promptly and
 fairly.
 

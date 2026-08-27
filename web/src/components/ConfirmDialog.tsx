@@ -1,5 +1,5 @@
-import ModalShell from "./ModalShell";
 import Button from "./Button";
+import ModalShell from "./ModalShell";
 
 export default function ConfirmDialog({
   open,
@@ -49,11 +49,7 @@ export default function ConfirmDialog({
         <Button onPress={onClose} isDisabled={busy}>
           Cancel
         </Button>
-        <Button
-          variant={danger ? "danger" : "primary"}
-          onPress={onConfirm}
-          isDisabled={busy}
-        >
+        <Button variant={danger ? "danger" : "primary"} onPress={onConfirm} isDisabled={busy}>
           {busy ? "Working…" : confirmLabel}
         </Button>
       </div>

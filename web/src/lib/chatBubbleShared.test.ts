@@ -1,13 +1,13 @@
 /** @vitest-environment jsdom */
-import { describe, it, expect, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
-  formatMessageTime,
   bubbleBody,
-  senderName,
+  formatMessageTime,
   isGroupConversation,
+  senderName,
 } from "../components/messages/chatBubbleShared";
-import type { Message } from "./types";
 import { USE_NAME_ALIASES_KEY } from "./nameAliases";
+import type { Message } from "./types";
 
 function message(partial: Partial<Message> & Pick<Message, "conversation">): Message {
   return {
@@ -47,7 +47,7 @@ describe("bubbleBody", () => {
   it("returns highlighted nodes when a term is set", () => {
     const nodes = bubbleBody("hello world", "hello");
     expect(Array.isArray(nodes)).toBe(true);
-    expect(nodes!.length).toBeGreaterThan(0);
+    expect(nodes?.length).toBeGreaterThan(0);
   });
 });
 
@@ -64,9 +64,7 @@ describe("senderName / isGroupConversation", () => {
         chat_identifier: "x",
         conversation_type: "individual",
         group_title: null,
-        participants: [
-          { handle: "+1", name_alias: null, preferred_name: "Ada", contact_id: null },
-        ],
+        participants: [{ handle: "+1", name_alias: null, preferred_name: "Ada", contact_id: null }],
       },
     });
     expect(senderName(m)).toBe("Me");
@@ -100,9 +98,7 @@ describe("senderName / isGroupConversation", () => {
         chat_identifier: "x",
         conversation_type: "individual",
         group_title: null,
-        participants: [
-          { handle: "a", name_alias: null, preferred_name: null, contact_id: null },
-        ],
+        participants: [{ handle: "a", name_alias: null, preferred_name: null, contact_id: null }],
       },
     });
     expect(isGroupConversation(one)).toBe(false);

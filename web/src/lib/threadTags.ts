@@ -35,10 +35,7 @@ export const tagSlug = groupSlug;
 export const tagFromSlug = groupFromSlug;
 
 /** Build the thread-list query for a tag page plus optional typed search. */
-export function tagListQuery(
-  tag: string | "none" | null,
-  search: string,
-): string {
+export function tagListQuery(tag: string | "none" | null, search: string): string {
   const parts: string[] = [];
   if (tag === "none") {
     parts.push("tag:none");

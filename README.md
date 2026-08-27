@@ -1,47 +1,26 @@
-{{< /*<!-- markdownlint-disable MD041 First line heading-->*/ >}}
-{{< /*<!-- markdownlint-disable MD033 No bare URLs-->*/ >}}
-
-<!-- Template inspired by the Best-README-Template
-     https://github.com/blackwell-systems/oss-kit/blob/main/templates/README.template.md
--->
-
-<a id="readme-top"></a>
-
-<!-- PROJECT SHIELDS -->
-<!--
-*** Reference links are enclosed in brackets [ ] instead of parentheses ( ).
-*** See the bottom of this document for the declaration of the reference variables
-*** for contributors-url, forks-url, etc. This is an optional, concise syntax you may use.
-*** https://www.markdownguide.org/basic-syntax/#reference-style-links
--->
-
-<!-- 
-[![Contributors][contributors-shield]][contributors-url]
-[![Forks][forks-shield]][forks-url]
-[![Stargazers][stars-shield]][stars-url]
--->
 [![Issues][issues-shield]][issues-url]
 [![project_license][license-shield]][license-url]
 
-<!-- PROJECT LOGO -->
+<a id="readme-top"></a>
+
 <br />
 <div align="center">
-  <a href="https://github.com/bitrealm-dev/message-vault">
-    <img src="img/vault_icon.png" alt="Icon" width="250" height="250">
+  <a href="https://github.com/bitrealm-io/message-vault">
+    <img src="docs/img/vault_icon.png" alt="Message Vault icon" width="250" height="250">
   </a>
 
 <h1 align="center">Message Vault</h1>
   <p align="center">
-    Pry digitial conversations out of apps and store them in your own self-hosted vault.
+    Your chat history, in a vault you run yourself.
     <br />
     <br />
     <a href="https://bitrealm.io/vault/user/"><strong>Explore the docs »</strong></a>
     <br />
-    <a href="https://github.com/bitrealm-dev/message-vault">View Demo</a>
+    <a href="https://bitrealm.io/vault/user/get-started/try-the-vault/">Try the vault</a>
     &middot;
-    <a href="https://github.com/bitrealm-dev/message-vault/issues/new?labels=bug&template=bug_report.md">Report Bug</a>
+    <a href="https://github.com/bitrealm-io/message-vault/issues/new?labels=bug&template=bug_report.md">Report Bug</a>
     &middot;
-    <a href="https://github.com/bitrealm-dev/message-vault/issues/new?labels=enhancement&template=feature_request.md">Request Feature</a>
+    <a href="https://github.com/bitrealm-io/message-vault/issues/new?labels=enhancement&template=feature_request.md">Request Feature</a>
   </p>
 </div>
 
@@ -63,17 +42,9 @@
 
 ## About The Project
 
-<!-- <p align="center">
-  <img src="docs/img/message-vault.jpg" width="50%" />
-</p> -->
-
 [![Docker][Docker]][Docker-url] [![React][React.js]][React-url] [![Rust][Rust-dev]][Rust-url] [![SQLite][SQLite]][SQLite-url] [![Tauri][Tauri]][Tauri-url] [![Vite][Vite]][Vite-url]
 
-You own your phone. You installed the apps. You wrote the messages. So why don't you own them?
-
-Digital messages are locked in proprietary formats, trapped inside closed platforms, inaccessible once you leave. Email solved this decades ago with open standards that let you download, search, and migrate freely. Messaging apps never did. Every platform is a silo, and your conversations are held hostage.
-
-This project changes that. It aggregates the messages you wrote, on a platform you control, by rules you set.
+Message Vault copies your conversations out of chat apps and phone backups — iMessage, WhatsApp, Android SMS — and stores them in a self-hosted, searchable archive that you control. Read old threads in a browser, search years of messages, and export them as ordinary files whenever you like.
 
 ### Project Details
 
@@ -81,15 +52,15 @@ The Message Vault software has three parts:
 
 - **Backend** - The core system that runs on your computer. It keeps you signed in, stores your messages, and powers the search feature.
 - **Desktop App** - A program that imports your messages into the vault from phone backups and app exports. You can also view, organize, and export your messages from here.
-- **Webpage** - A read only version of the desktop app running in a web browser.
+- **Website** - A read-only version of the desktop app running in a web browser.
 
 You can bring in:
 
 - Apple Messages from an iPhone backup, or from Messages on a Mac
 - Android texts and picture messages from an SMS Backup & Restore file
-- WhatsApp from an iPhone backup or from WhatsApp’s Android files
+- WhatsApp from an iPhone backup or from WhatsApp's Android files
 
-A few older export files can still be brought in if that is all you have left.
+A few older export formats still work if that is all you have left.
 
 Once messages are in the vault you can:
 
@@ -106,29 +77,18 @@ This project is for people who want a personal copy of their phone messages. Tha
 
 Follow the [User Guide](https://bitrealm.io/vault/user/get-started/what-is-message-vault/) to run the demo and import your own data.
 
-See the [Developer Guide](https://bitrealm.io/vault/developer/) to setup a local development environment and and compile and run from source.
+The [Developer Guide](https://bitrealm.io/vault/developer/) covers setting up a local development environment and compiling from source.
 
 ## Contributing
 
-Contributions are **greatly appreciated** and make the open source community the great place that it is.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) if you'd like to contribute.
+Contributions are welcome. The [Contributing guide](https://bitrealm.io/vault/developer/contributing/) covers the development environment, running the code, and how pull requests work.
 
 ## Additional documentation
 
-The overwhelming majority of documentation is generated by [astro starlight](https://starlight.astro.build) and published to [bitrealm.io](https://bitrealm.io).
+Most documentation lives in the guidebook at [bitrealm.io](https://bitrealm.io):
 
 - [User Guide](https://bitrealm.io/vault/user/)
-- [Developer Guide](https://bitrealm.io/vault/developer/)
-- [docs/maintainers](docs/maintainers) - Not yet ported documentation.
-
-<!-- ## How to get help
-
-{Include links and brief descriptions for support resources. Examples provided in README template guide.}
-
-- Reference link 1
-- Reference link 2
-- Reference link 3... -->
+- [Developer Guide](https://bitrealm.io/vault/developer/) — including [Architecture](https://bitrealm.io/vault/developer/vault-design/) (Vault Design, Message Transfer, Common message)
 
 ## License
 
@@ -140,7 +100,7 @@ This project is currently under heavy development and moving towards a v1.0.0 re
 
 ## Maintainers
 
-Matt Beisser - [message.vault@bitrealm.io](message.vault@bitrealm.io)
+Matt Beisser - [vault@bitrealm.io](vault@bitrealm.io)
 
 ## Related Projects
 
@@ -157,20 +117,10 @@ Matt Beisser - [message.vault@bitrealm.io](message.vault@bitrealm.io)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-<!-- MARKDOWN LINKS & IMAGES -->
-<!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
-<!-- [contributors-shield]: https://img.shields.io/github/contributors/bitrealm-dev/message-vault.svg?style=for-the-badge
-[contributors-url]: https://github.com/bitrealm-dev/message-vault/graphs/contributors -->
-<!-- [forks-shield]: https://img.shields.io/github/forks/bitrealm-dev/message-vault.svg?style=for-the-badge
-[forks-url]: https://github.com/bitrealm-dev/message-vault/network/members
-[stars-shield]: https://img.shields.io/github/stars/bitrealm-dev/message-vault.svg?style=for-the-badge
-[stars-url]: https://github.com/bitrealm-dev/message-vault/stargazers -->
-[issues-shield]: https://img.shields.io/github/issues/bitrealm-dev/message-vault.svg?style=for-the-badge
-[issues-url]: https://github.com/bitrealm-dev/message-vault/issues
+[issues-shield]: https://img.shields.io/github/issues/bitrealm-io/message-vault.svg
+[issues-url]: https://github.com/bitrealm-io/message-vault/issues
 [license-shield]: https://img.shields.io/badge/license-FCL_1.0-blue
-[license-url]: https://github.com/bitrealm-dev/message-vault/blob/main/LICENSE.md
-
-<!-- Shields.io badges. You can a comprehensive list with many more badges at: https://github.com/inttter/md-badges -->
+[license-url]: https://github.com/bitrealm-io/message-vault/blob/main/LICENSE.md
 
 [React.js]: https://img.shields.io/badge/React-%2320232a.svg?logo=react&logoColor=%2361DAFB
 [React-url]: https://reactjs.org/
@@ -189,5 +139,3 @@ Matt Beisser - [message.vault@bitrealm.io](message.vault@bitrealm.io)
 
 [Docker]: https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=fff
 [Docker-url]: https://www.docker.com/
-
-> Like this `README.md`? Explore other templates from [The Good Docs Project](https://thegooddocsproject.dev).

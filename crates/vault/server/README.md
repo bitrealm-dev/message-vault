@@ -22,4 +22,4 @@ Docker (release-shaped image from this checkout): `docker compose -f docker/comp
 
 ## License
 
-AGPL-3.0. See the repository root `LICENSE`.
+Fair Core License. See the repository root `LICENSE.md`.

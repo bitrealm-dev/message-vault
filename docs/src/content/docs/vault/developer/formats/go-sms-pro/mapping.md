@@ -5,7 +5,7 @@ description: "How GO SMS Pro XML and PDU fields become the shared conversation s
 
 How `gosms_sys*.xml` `<SMS>` elements and `I_*.pdu` MMS files become shared `ConversationDocument` values, including validation, skipped records, and retained source data.
 
-Shared model: [message-ir](https://github.com/bitrealm-dev/message-vault/blob/main/docs/maintainers/architecture/message-ir.md). CSV projection: [CSV columns](/vault/developer/reference/csv-columns/) and [`message_ir_format::CSV_HEADERS`](https://github.com/bitrealm-dev/message-vault/blob/main/crates/libs/ir-format/src/write.rs).
+Shared model: [message-ir](/vault/developer/architecture/common-message/). CSV projection: [CSV columns](/vault/developer/reference/csv-columns/) and [`message_ir_format::CSV_HEADERS`](https://github.com/bitrealm-io/message-vault/blob/main/crates/libs/ir-format/src/write.rs).
 
 ## Goal / non-goal
 
@@ -22,7 +22,7 @@ Diagnostic skip lists (`skipped_invalid_address.csv`, `skipped_empty_pdu.csv`, `
 
 ## XML structure
 
-```xml
+```xml title="gosms XML"
 <GoSms>
   <SMSCount>…</SMSCount>
   <SMS>

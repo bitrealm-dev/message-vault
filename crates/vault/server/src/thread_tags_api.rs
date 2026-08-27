@@ -3,435 +3,525 @@
 use std::collections::HashMap;
 
 use anyhow::Result as AnyResult;
-use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
+use axum::Json;
+use axum::extract::{Query, State};
+use axum::http::HeaderMap;
+use serde::{Deserialize, Serialize};
+use sqlx::AnyConnection;
 
+use crate::db::dialect::engine_of;
+use crate::db::engine::DbEngine;
 use crate::db::sql::{fold_in_id_chunks, in_placeholders};
-
-/// Longest allowed tag name (characters).
-pub const MAX_TAG_NAME_LEN: usize = 80;
-
-/// Names that must not be created as user tags.
-const RESERVED_TAG_NAMES: &[&str] = &[
-    "home",
-    "contacts",
-    "threads",
-    "thread",
-    "all",
-    "excluded",
-    "unassigned",
-    "trash",
-    "tags",
-    "tag",
-    "no-tag",
-    "no tag",
-    "groups",
-    "group",
-    "labels",
-    "label",
-];
+use crate::named_membership::{self, MembershipError, tag_spec};
+use crate::server::{
+    ApiError, AppState, MembershipChangedResponse, require_full_access, resolve_auth,
+};
 
 /// Create / rename / delete / membership failures.
-#[derive(Debug)]
-pub enum TagError {
-    BadRequest(String),
-    NotFound(String),
-    Conflict(String),
-    Internal(String),
-}
-
-impl From<rusqlite::Error> for TagError {
-    fn from(e: rusqlite::Error) -> Self {
-        Self::Internal(e.to_string())
-    }
-}
-
-/// True when `name` is reserved and must not be created.
-pub fn is_reserved_tag_name(name: &str) -> bool {
-    let key = name.trim().to_ascii_lowercase();
-    RESERVED_TAG_NAMES.contains(&key.as_str())
-}
-
-fn reserved_tag_error(name: &str) -> String {
-    format!("\"{}\" is a reserved tag", name.trim())
-}
-
-fn normalize_new_name(name: &str) -> Result<String, TagError> {
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
-        return Err(TagError::BadRequest("name required".into()));
-    }
-    if trimmed.chars().count() > MAX_TAG_NAME_LEN {
-        return Err(TagError::BadRequest(format!(
-            "name must be at most {MAX_TAG_NAME_LEN} characters"
-        )));
-    }
-    if is_reserved_tag_name(trimmed) {
-        return Err(TagError::BadRequest(reserved_tag_error(trimmed)));
-    }
-    Ok(trimmed.to_string())
-}
+pub type TagError = MembershipError;
 
 /// Tag names for this account, A–Z, excluding reserved leftovers.
-pub fn list_tags(conn: &Connection, account_id: &str) -> Result<Vec<String>, TagError> {
-    let mut stmt = conn.prepare(
-        "SELECT name FROM conversation_tags
-         WHERE account_id = ?1
-         ORDER BY name COLLATE NOCASE",
-    )?;
-    let rows = stmt.query_map(params![account_id], |row| row.get::<_, String>(0))?;
-    let mut out = Vec::new();
-    for row in rows {
-        let name = row?;
-        if !is_reserved_tag_name(&name) {
-            out.push(name);
-        }
-    }
-    Ok(out)
-}
-
-/// Tags on one conversation, A–Z.
-pub fn tags_for_conversation(
-    conn: &Connection,
+pub async fn list_tags(
+    conn: &mut AnyConnection,
     account_id: &str,
-    conversation_id: i64,
-) -> AnyResult<Vec<String>> {
-    let mut stmt = conn.prepare(
-        "SELECT ct.name
-         FROM conversation_tags ct
-         JOIN conversation_tag_members m ON m.tag_id = ct.id
-         WHERE ct.account_id = ?1 AND m.conversation_id = ?2
-         ORDER BY ct.name COLLATE NOCASE",
-    )?;
-    let rows = stmt.query_map(params![account_id, conversation_id], |row| {
-        row.get::<_, String>(0)
-    })?;
-    let mut out = Vec::new();
-    for row in rows {
-        out.push(row?);
-    }
-    Ok(out)
-}
-
-/// Tags on each conversation id, A–Z within each list.
-pub fn tags_for_conversations(
-    conn: &Connection,
-    account_id: &str,
-    conversation_ids: &[i64],
-) -> AnyResult<HashMap<i64, Vec<String>>> {
-    fold_in_id_chunks(conversation_ids, |chunk| {
-        let placeholders = in_placeholders(chunk.len());
-        let sql = format!(
-            "SELECT m.conversation_id, ct.name
-             FROM conversation_tag_members m
-             JOIN conversation_tags ct ON ct.id = m.tag_id
-             WHERE ct.account_id = ? AND m.conversation_id IN ({placeholders})
-             ORDER BY ct.name COLLATE NOCASE"
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let mut binds: Vec<rusqlite::types::Value> = Vec::with_capacity(chunk.len() + 1);
-        binds.push(account_id.to_string().into());
-        for id in chunk {
-            binds.push((*id).into());
-        }
-        let rows = stmt.query_map(params_from_iter(binds), |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-        })?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(Into::into)
-    })
-}
-
-fn find_tag_id(conn: &Connection, account_id: &str, name: &str) -> Result<Option<i64>, TagError> {
-    let id = conn
-        .query_row(
-            "SELECT id FROM conversation_tags
-             WHERE account_id = ?1 AND name = ?2 COLLATE NOCASE",
-            params![account_id, name],
-            |row| row.get(0),
-        )
-        .optional()?;
-    Ok(id)
-}
-
-fn ensure_tag_id(conn: &Connection, account_id: &str, name: &str) -> Result<i64, TagError> {
-    let name = normalize_new_name(name)?;
-    conn.execute(
-        "INSERT OR IGNORE INTO conversation_tags (account_id, name) VALUES (?1, ?2)",
-        params![account_id, name],
-    )?;
-    find_tag_id(conn, account_id, &name)?
-        .ok_or_else(|| TagError::Internal(format!("failed to ensure tag {name}")))
+) -> Result<Vec<String>, TagError> {
+    named_membership::list_names(tag_spec(), conn, account_id).await
 }
 
 /// Create a tag. Fails when the name is taken (ignoring case).
-pub fn create_tag(conn: &Connection, account_id: &str, name: &str) -> Result<String, TagError> {
-    let name = normalize_new_name(name)?;
-    if find_tag_id(conn, account_id, &name)?.is_some() {
-        return Err(TagError::Conflict("tag already exists".into()));
-    }
-    conn.execute(
-        "INSERT INTO conversation_tags (account_id, name) VALUES (?1, ?2)",
-        params![account_id, name],
-    )?;
-    Ok(name)
+pub async fn create_tag(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    name: &str,
+) -> Result<String, TagError> {
+    named_membership::create_name(tag_spec(), conn, account_id, name).await
 }
 
 /// Rename a tag. Allows a case-only change of the same name.
-pub fn rename_tag(
-    conn: &Connection,
+pub async fn rename_tag(
+    conn: &mut AnyConnection,
     account_id: &str,
     from: &str,
     to: &str,
 ) -> Result<String, TagError> {
-    let old_name = from.trim();
-    if old_name.is_empty() {
-        return Err(TagError::BadRequest("from and to required".into()));
-    }
-    let new_name = normalize_new_name(to)?;
-    let Some(id) = find_tag_id(conn, account_id, old_name)? else {
-        return Err(TagError::NotFound("tag not found".into()));
-    };
-    if old_name.eq_ignore_ascii_case(&new_name) {
-        if old_name == new_name {
-            return Ok(new_name);
-        }
-    } else if let Some(other) = find_tag_id(conn, account_id, &new_name)?
-        && other != id
-    {
-        return Err(TagError::Conflict("tag already exists".into()));
-    }
-    conn.execute(
-        "UPDATE conversation_tags SET name = ?1 WHERE id = ?2 AND account_id = ?3",
-        params![new_name, id, account_id],
-    )?;
-    Ok(new_name)
+    named_membership::rename_name(tag_spec(), conn, account_id, from, to).await
 }
 
 /// Delete a tag and its memberships.
-pub fn delete_tag(conn: &Connection, account_id: &str, name: &str) -> Result<(), TagError> {
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
-        return Err(TagError::BadRequest("name required".into()));
-    }
-    let Some(id) = find_tag_id(conn, account_id, trimmed)? else {
-        return Err(TagError::NotFound("tag not found".into()));
-    };
-    conn.execute(
-        "DELETE FROM conversation_tag_members WHERE tag_id = ?1",
-        params![id],
-    )?;
-    conn.execute(
-        "DELETE FROM conversation_tags WHERE id = ?1 AND account_id = ?2",
-        params![id, account_id],
-    )?;
-    Ok(())
+pub async fn delete_tag(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    name: &str,
+) -> Result<(), TagError> {
+    named_membership::delete_name(tag_spec(), conn, account_id, name).await
 }
 
 /// Conversation ids that currently have a named tag (case-insensitive).
-pub fn list_tag_member_ids(
-    conn: &Connection,
+pub async fn list_tag_member_ids(
+    conn: &mut AnyConnection,
     account_id: &str,
     name: &str,
 ) -> Result<Vec<i64>, TagError> {
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
-        return Err(TagError::BadRequest("name required".into()));
-    }
-    let mut stmt = conn.prepare(
-        "SELECT ctm.conversation_id
-         FROM conversation_tag_members ctm
-         JOIN conversation_tags ct ON ct.id = ctm.tag_id
-         WHERE ct.account_id = ?1 AND ct.name = ?2 COLLATE NOCASE
-         ORDER BY ctm.conversation_id",
-    )?;
-    let rows = stmt.query_map(params![account_id, trimmed], |row| row.get(0))?;
-    let mut out = Vec::new();
-    for row in rows {
-        out.push(row?);
-    }
-    Ok(out)
-}
-
-fn conversation_exists(
-    conn: &Connection,
-    account_id: &str,
-    conversation_id: i64,
-) -> Result<bool, TagError> {
-    let found: Option<i64> = conn
-        .query_row(
-            "SELECT id FROM conversations WHERE id = ?1 AND account_id = ?2",
-            params![conversation_id, account_id],
-            |row| row.get(0),
-        )
-        .optional()?;
-    Ok(found.is_some())
+    named_membership::list_member_ids(tag_spec(), conn, account_id, name).await
 }
 
 /// Add or remove one tag for many conversations. Creates the tag when enabling.
-pub fn set_conversations_tag_membership(
-    conn: &Connection,
+pub async fn set_conversations_tag_membership(
+    conn: &mut AnyConnection,
     account_id: &str,
     conversation_ids: &[i64],
     name: &str,
     enable: bool,
 ) -> Result<u64, TagError> {
-    let mut ids: Vec<i64> = conversation_ids
-        .iter()
-        .copied()
-        .filter(|id| *id > 0)
-        .collect();
-    ids.sort_unstable();
-    ids.dedup();
-    if ids.is_empty() {
-        return Err(TagError::BadRequest("conversation ids required".into()));
-    }
-    let tag_name = name.trim();
-    if tag_name.is_empty() {
-        return Err(TagError::BadRequest("tag name required".into()));
-    }
-    if is_reserved_tag_name(tag_name) {
-        return Err(TagError::BadRequest(reserved_tag_error(tag_name)));
-    }
+    named_membership::set_membership(tag_spec(), conn, account_id, conversation_ids, name, enable)
+        .await
+}
 
-    for id in &ids {
-        if !conversation_exists(conn, account_id, *id)? {
-            return Err(TagError::NotFound(format!("conversation {id} not found")));
-        }
-    }
-
-    let tag_row_id = if enable {
-        ensure_tag_id(conn, account_id, tag_name)?
-    } else {
-        match find_tag_id(conn, account_id, tag_name)? {
-            Some(id) => id,
-            None => return Ok(0),
-        }
+/// Tags on one conversation, A–Z.
+#[cfg(test)]
+pub(crate) async fn tags_for_conversation(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    conversation_id: i64,
+) -> AnyResult<Vec<String>> {
+    let order = match engine_of(conn) {
+        DbEngine::Sqlite => "ORDER BY ct.name COLLATE NOCASE",
+        DbEngine::Postgres => "ORDER BY lower(ct.name)",
     };
+    let sql = format!(
+        "SELECT ct.name
+         FROM conversation_tags ct
+         JOIN conversation_tag_members m ON m.tag_id = ct.id
+         WHERE ct.account_id = $1 AND m.conversation_id = $2
+         {order}"
+    );
+    let rows = sqlx::query_scalar::<_, String>(&sql)
+        .bind(account_id)
+        .bind(conversation_id)
+        .fetch_all(&mut *conn)
+        .await?;
+    Ok(rows)
+}
 
-    let mut changed = 0u64;
-    for id in ids {
-        let n = if enable {
-            conn.execute(
-                "INSERT OR IGNORE INTO conversation_tag_members (conversation_id, tag_id)
-                 SELECT id, ?1 FROM conversations WHERE id = ?2 AND account_id = ?3",
-                params![tag_row_id, id, account_id],
-            )?
-        } else {
-            conn.execute(
-                "DELETE FROM conversation_tag_members
-                 WHERE conversation_id = ?1 AND tag_id = ?2
-                   AND EXISTS (
-                     SELECT 1 FROM conversations
-                     WHERE conversations.id = conversation_tag_members.conversation_id
-                       AND conversations.account_id = ?3
-                   )",
-                params![id, tag_row_id, account_id],
-            )?
-        };
-        if n > 0 {
-            changed += 1;
-        }
+/// Tags on each conversation id, A–Z within each list.
+pub async fn tags_for_conversations(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    conversation_ids: &[i64],
+) -> AnyResult<HashMap<i64, Vec<String>>> {
+    let account_id = account_id.to_string();
+    fold_in_id_chunks(conn, conversation_ids, |conn, chunk| {
+        let account_id = account_id.clone();
+        Box::pin(async move {
+            let placeholders = in_placeholders(2, chunk.len());
+            let order = match engine_of(conn) {
+                DbEngine::Sqlite => "ORDER BY ct.name COLLATE NOCASE",
+                DbEngine::Postgres => "ORDER BY lower(ct.name)",
+            };
+            let sql = format!(
+                "SELECT m.conversation_id, ct.name
+                 FROM conversation_tag_members m
+                 JOIN conversation_tags ct ON ct.id = m.tag_id
+                 WHERE ct.account_id = $1 AND m.conversation_id IN ({placeholders})
+                 {order}"
+            );
+            let mut q = sqlx::query_as::<_, (i64, String)>(&sql).bind(&account_id);
+            for id in chunk {
+                q = q.bind(*id);
+            }
+            let rows = q.fetch_all(&mut *conn).await?;
+            Ok(rows)
+        })
+    })
+    .await
+}
+
+fn map_tag_error(err: TagError) -> ApiError {
+    match err {
+        TagError::BadRequest(m) => ApiError::BadRequest(m),
+        TagError::NotFound(m) => ApiError::NotFound(m),
+        TagError::Conflict(m) => ApiError::Conflict(m),
+        TagError::Internal(m) => ApiError::Internal(m),
     }
-    Ok(changed)
+}
+
+/// A tag name.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct ThreadTagNameBody {
+    name: String,
+}
+
+/// Old and new tag names.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct ThreadTagRenameBody {
+    from: String,
+    to: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ThreadTagMembersQuery {
+    name: String,
+}
+
+/// Conversation ids, tag name, and enable flag.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct ThreadTagMembershipBody {
+    ids: Vec<i64>,
+    name: String,
+    enable: bool,
+}
+
+/// The account's tag names.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ThreadTagsListResponse {
+    tags: Vec<String>,
+}
+
+/// The affected tag plus the updated list.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ThreadTagNamedListResponse {
+    name: String,
+    tags: Vec<String>,
+}
+
+/// The updated list after deletion.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ThreadTagDeleteResponse {
+    ok: bool,
+    tags: Vec<String>,
+}
+
+/// Conversation ids carrying the named tag.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ThreadTagMembersResponse {
+    name: String,
+    #[serde(rename = "memberConversationIds")]
+    member_conversation_ids: Vec<i64>,
+}
+
+/// List the account's thread tags (A–Z, reserved names hidden).
+#[utoipa::path(
+    get,
+    path = "/v1/thread-tags",
+    tag = "Thread tags",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = ThreadTagsListResponse),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn thread_tags_list_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ThreadTagsListResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    let tags = list_tags(&mut conn, &auth.account_id)
+        .await
+        .map_err(map_tag_error)?;
+    Ok(Json(ThreadTagsListResponse { tags }))
+}
+
+/// Create a thread tag and return the updated list.
+#[utoipa::path(
+    post,
+    path = "/v1/thread-tags",
+    tag = "Thread tags",
+    security(("bearer" = [])),
+    request_body = ThreadTagNameBody,
+    responses(
+        (status = 200, body = ThreadTagNamedListResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 409, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn thread_tags_create_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ThreadTagNameBody>,
+) -> Result<Json<ThreadTagNamedListResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    let name = body.name;
+    let created = create_tag(&mut conn, &auth.account_id, &name)
+        .await
+        .map_err(map_tag_error)?;
+    let tags = list_tags(&mut conn, &auth.account_id)
+        .await
+        .map_err(map_tag_error)?;
+    Ok(Json(ThreadTagNamedListResponse {
+        name: created,
+        tags,
+    }))
+}
+
+/// Rename a thread tag and return the updated list.
+#[utoipa::path(
+    patch,
+    path = "/v1/thread-tags",
+    tag = "Thread tags",
+    security(("bearer" = [])),
+    request_body = ThreadTagRenameBody,
+    responses(
+        (status = 200, body = ThreadTagNamedListResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody),
+        (status = 409, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn thread_tags_rename_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ThreadTagRenameBody>,
+) -> Result<Json<ThreadTagNamedListResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    let name = rename_tag(&mut conn, &auth.account_id, &body.from, &body.to)
+        .await
+        .map_err(map_tag_error)?;
+    let tags = list_tags(&mut conn, &auth.account_id)
+        .await
+        .map_err(map_tag_error)?;
+    Ok(Json(ThreadTagNamedListResponse { name, tags }))
+}
+
+/// Delete a thread tag and return the updated list.
+#[utoipa::path(
+    delete,
+    path = "/v1/thread-tags",
+    tag = "Thread tags",
+    security(("bearer" = [])),
+    request_body = ThreadTagNameBody,
+    responses(
+        (status = 200, body = ThreadTagDeleteResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn thread_tags_delete_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ThreadTagNameBody>,
+) -> Result<Json<ThreadTagDeleteResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    delete_tag(&mut conn, &auth.account_id, &body.name)
+        .await
+        .map_err(map_tag_error)?;
+    let tags = list_tags(&mut conn, &auth.account_id)
+        .await
+        .map_err(map_tag_error)?;
+    Ok(Json(ThreadTagDeleteResponse { ok: true, tags }))
+}
+
+/// Conversation ids that carry a named tag.
+#[utoipa::path(
+    get,
+    path = "/v1/thread-tags/members",
+    tag = "Thread tags",
+    security(("bearer" = [])),
+    params(("name" = String, Query, description = "Tag name")),
+    responses(
+        (status = 200, body = ThreadTagMembersResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn thread_tags_members_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ThreadTagMembersQuery>,
+) -> Result<Json<ThreadTagMembersResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    let member_conversation_ids = list_tag_member_ids(&mut conn, &auth.account_id, &query.name)
+        .await
+        .map_err(map_tag_error)?;
+    Ok(Json(ThreadTagMembersResponse {
+        name: query.name,
+        member_conversation_ids,
+    }))
+}
+
+/// Add or remove a tag on conversations.
+#[utoipa::path(
+    post,
+    path = "/v1/conversations/tags",
+    tag = "Thread tags",
+    security(("bearer" = [])),
+    request_body = ThreadTagMembershipBody,
+    responses(
+        (status = 200, body = MembershipChangedResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn thread_tags_membership_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ThreadTagMembershipBody>,
+) -> Result<Json<MembershipChangedResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    let changed = set_conversations_tag_membership(
+        &mut conn,
+        &auth.account_id,
+        &body.ids,
+        &body.name,
+        body.enable,
+    )
+    .await
+    .map_err(map_tag_error)?;
+    Ok(Json(MembershipChangedResponse { changed }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::params;
 
+    use crate::db::engine;
     use crate::db::schema;
 
-    fn setup() -> (Connection, String, i64, i64) {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        schema::ensure_vault_schema(&conn).unwrap();
+    async fn setup() -> (sqlx::AnyPool, tempfile::TempDir, String, i64, i64) {
+        let (pool, dir) = engine::test_pool().await;
+        schema::ensure_vault_schema(&mut pool.acquire().await.unwrap())
+            .await
+            .unwrap();
         let account = "00000000-0000-4000-8000-0000000000d1".to_string();
-        conn.execute(
-            "INSERT INTO accounts (id, username, read_only) VALUES (?1, 'alice', 0)",
-            params![&account],
-        )
-        .unwrap();
-        conn.execute(
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, username, read_only) VALUES ($1, 'alice', 0)")
+            .bind(&account)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let h1: i64 = sqlx::query_scalar(
             "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-             VALUES (?1, '+15555550100', '+15555550100', 'phone', 'phone')",
-            params![&account],
+             VALUES ($1, '+15555550100', '+15555550100', 'phone', 'phone') RETURNING id",
         )
+        .bind(&account)
+        .fetch_one(&mut *conn)
+        .await
         .unwrap();
-        let h1 = conn.last_insert_rowid();
-        conn.execute(
+        let h2: i64 = sqlx::query_scalar(
             "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-             VALUES (?1, '+15555550200', '+15555550200', 'phone', 'phone')",
-            params![&account],
+             VALUES ($1, '+15555550200', '+15555550200', 'phone', 'phone') RETURNING id",
         )
+        .bind(&account)
+        .fetch_one(&mut *conn)
+        .await
         .unwrap();
-        let h2 = conn.last_insert_rowid();
-        conn.execute(
+        let a: i64 = sqlx::query_scalar(
             r#"
             INSERT INTO conversations (
                 account_id, chat_handle_id, conversation_type, group_title, source_file
-            ) VALUES (?1, ?2, 'individual', NULL, 't.json')
+            ) VALUES ($1, $2, 'individual', NULL, 't.json') RETURNING id
             "#,
-            params![&account, h1],
         )
+        .bind(&account)
+        .bind(h1)
+        .fetch_one(&mut *conn)
+        .await
         .unwrap();
-        let a = conn.last_insert_rowid();
-        conn.execute(
+        let b: i64 = sqlx::query_scalar(
             r#"
             INSERT INTO conversations (
                 account_id, chat_handle_id, conversation_type, group_title, source_file
-            ) VALUES (?1, ?2, 'individual', NULL, 't.json')
+            ) VALUES ($1, $2, 'individual', NULL, 't.json') RETURNING id
             "#,
-            params![&account, h2],
         )
+        .bind(&account)
+        .bind(h2)
+        .fetch_one(&mut *conn)
+        .await
         .unwrap();
-        let b = conn.last_insert_rowid();
-        (conn, account, a, b)
+        (pool, dir, account, a, b)
     }
 
-    #[test]
-    fn create_list_rename_delete_tag() {
-        let (conn, account, _, _) = setup();
-        assert_eq!(create_tag(&conn, &account, " Holiday ").unwrap(), "Holiday");
-        assert_eq!(list_tags(&conn, &account).unwrap(), vec!["Holiday"]);
+    #[tokio::test]
+    async fn create_list_rename_delete_tag() {
+        let (pool, _dir, account, _, _) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        assert_eq!(
+            create_tag(&mut conn, &account, " Holiday ").await.unwrap(),
+            "Holiday"
+        );
+        assert_eq!(
+            list_tags(&mut conn, &account).await.unwrap(),
+            vec!["Holiday"]
+        );
 
-        let err = create_tag(&conn, &account, "holiday").unwrap_err();
+        let err = create_tag(&mut conn, &account, "holiday")
+            .await
+            .unwrap_err();
         assert!(matches!(err, TagError::Conflict(_)));
 
-        let err = create_tag(&conn, &account, "Trash").unwrap_err();
+        let err = create_tag(&mut conn, &account, "Trash").await.unwrap_err();
         assert!(matches!(err, TagError::BadRequest(_)));
 
         assert_eq!(
-            rename_tag(&conn, &account, "holiday", "Trip").unwrap(),
+            rename_tag(&mut conn, &account, "holiday", "Trip")
+                .await
+                .unwrap(),
             "Trip"
         );
-        assert_eq!(list_tags(&conn, &account).unwrap(), vec!["Trip"]);
+        assert_eq!(list_tags(&mut conn, &account).await.unwrap(), vec!["Trip"]);
 
-        delete_tag(&conn, &account, "trip").unwrap();
-        assert!(list_tags(&conn, &account).unwrap().is_empty());
+        delete_tag(&mut conn, &account, "trip").await.unwrap();
+        assert!(list_tags(&mut conn, &account).await.unwrap().is_empty());
     }
 
-    #[test]
-    fn membership_add_and_remove() {
-        let (conn, account, a, b) = setup();
+    #[tokio::test]
+    async fn membership_add_and_remove() {
+        let (pool, _dir, account, a, b) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
         assert_eq!(
-            set_conversations_tag_membership(&conn, &account, &[a, b], "Holiday", true).unwrap(),
+            set_conversations_tag_membership(&mut conn, &account, &[a, b], "Holiday", true)
+                .await
+                .unwrap(),
             2
         );
         assert_eq!(
-            list_tag_member_ids(&conn, &account, "holiday").unwrap(),
+            list_tag_member_ids(&mut conn, &account, "holiday")
+                .await
+                .unwrap(),
             vec![a, b]
         );
         assert_eq!(
-            tags_for_conversation(&conn, &account, a).unwrap(),
+            tags_for_conversation(&mut conn, &account, a).await.unwrap(),
             vec!["Holiday"]
         );
         assert_eq!(
-            set_conversations_tag_membership(&conn, &account, &[a], "Holiday", false).unwrap(),
+            set_conversations_tag_membership(&mut conn, &account, &[a], "Holiday", false)
+                .await
+                .unwrap(),
             1
         );
         assert_eq!(
-            list_tag_member_ids(&conn, &account, "Holiday").unwrap(),
+            list_tag_member_ids(&mut conn, &account, "Holiday")
+                .await
+                .unwrap(),
             vec![b]
         );
     }

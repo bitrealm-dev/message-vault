@@ -42,7 +42,7 @@ where
     Ok(s.map(|s| HandleType::parse(&s)))
 }
 
-/// Read a conversation CSV written by [`crate::write_conversation_csv`].
+/// Read a conversation CSV written by `write_conversation_csv`.
 ///
 /// Conversation and export header fields come from the first data row.
 ///
@@ -106,10 +106,11 @@ fn header_from_row(headers: &[String], row: &csv::StringRecord) -> Result<Conver
     // single-participant conversations, fall back to the per-row
     // `handle_type` column (the sender's inferred type) so the peer keeps
     // a type. Group chats have no single type, so they are left untouched.
-    if participants.len() == 1 && participants[0].handle_type.is_none() {
-        if let Some(t) = parse_handle_type_cell(get("handle_type")) {
-            participants[0].handle_type = Some(t);
-        }
+    if participants.len() == 1
+        && participants[0].handle_type.is_none()
+        && let Some(t) = parse_handle_type_cell(get("handle_type"))
+    {
+        participants[0].handle_type = Some(t);
     }
     let group_title = {
         let t = get("group_title");
@@ -281,19 +282,5 @@ fn parse_attachments(raw: &str) -> Result<Vec<IrAttachment>> {
     }
     let cells: Vec<AttachmentCell> =
         serde_json::from_str(raw).with_context(|| format!("parse attachments_json: {raw}"))?;
-    Ok(cells
-        .into_iter()
-        .map(|a| IrAttachment {
-            path: a.path,
-            original_name: a.original_name,
-            mime_type: a.mime_type,
-            digest_sha256: a.digest_sha256,
-            is_sticker: a.is_sticker,
-            transcription: a.transcription,
-            sticker_effect: a.sticker_effect,
-            size_bytes: None,
-            missing_reason: None,
-            bytes: None,
-        })
-        .collect())
+    Ok(cells.into_iter().map(Into::into).collect())
 }

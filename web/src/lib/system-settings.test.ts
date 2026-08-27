@@ -1,0 +1,282 @@
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+  defaultImportStagingDir,
+  getImporterExtraPaths,
+  getImporterPath,
+  isUsableImportStagingParent,
+  joinImportStagingPath,
+  loadRememberedImportPaths,
+  resolveImportStagingDir,
+  setImporterExtraPath,
+  setImporterPath,
+  setRememberImporterPaths,
+} from "./system-settings";
+
+const mem = new Map<string, string>();
+
+beforeEach(() => {
+  mem.clear();
+  (globalThis as { localStorage?: Storage }).localStorage = {
+    getItem: (k) => mem.get(k) ?? null,
+    setItem: (k, v) => {
+      mem.set(k, String(v));
+    },
+    removeItem: (k) => {
+      mem.delete(k);
+    },
+    clear: () => mem.clear(),
+    key: () => null,
+    length: 0,
+  };
+});
+
+describe("defaultImportStagingDir", () => {
+  it("joins message-vault under the home folder", () => {
+    expect(defaultImportStagingDir("/home/mbeisser")).toBe("/home/mbeisser/message-vault");
+  });
+
+  it("strips a trailing slash on the home folder", () => {
+    expect(defaultImportStagingDir("/home/mbeisser/")).toBe("/home/mbeisser/message-vault");
+  });
+
+  it("uses a relative message-vault path when home is empty", () => {
+    expect(defaultImportStagingDir("")).toBe("message-vault");
+  });
+
+  it("joins message-vault under a Unix root home", () => {
+    expect(defaultImportStagingDir("/")).toBe("/message-vault");
+  });
+});
+
+describe("isUsableImportStagingParent", () => {
+  it("accepts an absolute folder", () => {
+    expect(isUsableImportStagingParent("/data/imports")).toBe(true);
+  });
+
+  it("rejects the filesystem root", () => {
+    expect(isUsableImportStagingParent("/")).toBe(false);
+    expect(isUsableImportStagingParent("///")).toBe(false);
+  });
+
+  it("rejects a relative folder", () => {
+    expect(isUsableImportStagingParent("message-vault")).toBe(false);
+    expect(isUsableImportStagingParent("")).toBe(false);
+  });
+});
+
+describe("joinImportStagingPath", () => {
+  const now = new Date(2026, 7, 24, 18, 5, 9);
+
+  it("puts the staging folder name directly under the parent", () => {
+    expect(joinImportStagingPath("/home/mbeisser/message-vault", "imessage-ios", now)).toBe(
+      "/home/mbeisser/message-vault/staging-iphone-ios-260824-180509",
+    );
+  });
+
+  it("does not nest another message-vault under a custom parent", () => {
+    expect(joinImportStagingPath("/data/imports", "imessage-ios", now)).toBe(
+      "/data/imports/staging-iphone-ios-260824-180509",
+    );
+  });
+
+  it("keeps a Unix root when stripping trailing slashes", () => {
+    expect(joinImportStagingPath("/", "imessage-ios", now)).toBe(
+      "/staging-iphone-ios-260824-180509",
+    );
+  });
+
+  it("keeps SMS Backup & Restore source ids in the folder name", () => {
+    expect(joinImportStagingPath("/Users/sam/message-vault", "sms-backup-restore", now)).toBe(
+      "/Users/sam/message-vault/staging-sms-backup-restore-260824-180509",
+    );
+  });
+
+  it("strips a trailing slash on the parent folder", () => {
+    expect(joinImportStagingPath("/home/mbeisser/message-vault/", "imessage-macos", now)).toBe(
+      "/home/mbeisser/message-vault/staging-macos-260824-180509",
+    );
+  });
+
+  it("strips a trailing backslash on a Windows parent folder", () => {
+    expect(joinImportStagingPath("C:\\Users\\sam\\message-vault\\", "imessage-ios", now)).toBe(
+      "C:\\Users\\sam\\message-vault/staging-iphone-ios-260824-180509",
+    );
+  });
+
+  it("uses only the staging folder name when the parent is empty", () => {
+    expect(joinImportStagingPath("", "imessage-ios", now)).toBe("staging-iphone-ios-260824-180509");
+  });
+});
+
+describe("resolveImportStagingDir", () => {
+  it("fails when the user home directory cannot be determined and no parent is saved", async () => {
+    await expect(resolveImportStagingDir("/backup", "imessage-ios")).rejects.toThrow(
+      /home directory/i,
+    );
+  });
+
+  it("joins a saved custom parent without nesting message-vault", async () => {
+    localStorage.setItem("mv-vault-working-dir", "/data/imports");
+    await expect(resolveImportStagingDir("/backup", "imessage-ios")).resolves.toMatch(
+      /^\/data\/imports\/staging-iphone-ios-\d{6}-\d{6}$/,
+    );
+  });
+
+  it("ignores a saved filesystem root and fails without a home directory", async () => {
+    localStorage.setItem("mv-vault-working-dir", "/");
+    await expect(resolveImportStagingDir("/backup", "imessage-ios")).rejects.toThrow(
+      /home directory/i,
+    );
+  });
+
+  it("ignores a saved relative parent and fails without a home directory", async () => {
+    localStorage.setItem("mv-vault-working-dir", "message-vault");
+    await expect(resolveImportStagingDir("/backup", "imessage-ios")).rejects.toThrow(
+      /home directory/i,
+    );
+  });
+});
+
+describe("joinImportStagingPath jailbreak slug", () => {
+  const now = new Date(2026, 7, 24, 18, 5, 9);
+
+  it("uses iphone-jailbreak in the staging folder name", () => {
+    expect(joinImportStagingPath("/home/sam/message-vault", "imessage-jailbreak", now)).toBe(
+      "/home/sam/message-vault/staging-iphone-jailbreak-260824-180509",
+    );
+  });
+});
+
+describe("remembered importer extra paths", () => {
+  it("keeps a legacy backup path string for imessage-ios", () => {
+    setImporterPath("imessage-ios", "/backups/old-iphone");
+    expect(getImporterPath("imessage-ios")).toBe("/backups/old-iphone");
+    expect(getImporterExtraPaths("imessage-ios")).toEqual({
+      attachmentRoot: "",
+      appleContacts: "",
+      whatsappWa: "",
+      whatsappMedia: "",
+      whatsappDb: "",
+    });
+  });
+
+  it("stores attachment folder and Apple Contacts per method", () => {
+    setImporterPath("imessage-macos", "/Users/sam/Library/Messages/chat.db");
+    setImporterExtraPath("imessage-macos", "attachmentRoot", "/Users/sam/Library/Messages");
+    setImporterExtraPath(
+      "imessage-macos",
+      "appleContacts",
+      "/Users/sam/Library/Application Support/AddressBook/AddressBook-v22.abcddb",
+    );
+    setImporterPath("imessage-jailbreak", "/mnt/iphone/sms.db");
+    setImporterExtraPath("imessage-jailbreak", "attachmentRoot", "/mnt/iphone/Library/SMS");
+
+    expect(getImporterPath("imessage-macos")).toBe("/Users/sam/Library/Messages/chat.db");
+    expect(getImporterExtraPaths("imessage-macos")).toEqual({
+      attachmentRoot: "/Users/sam/Library/Messages",
+      appleContacts: "/Users/sam/Library/Application Support/AddressBook/AddressBook-v22.abcddb",
+      whatsappWa: "",
+      whatsappMedia: "",
+      whatsappDb: "",
+    });
+    expect(getImporterPath("imessage-jailbreak")).toBe("/mnt/iphone/sms.db");
+    expect(getImporterExtraPaths("imessage-jailbreak").attachmentRoot).toBe(
+      "/mnt/iphone/Library/SMS",
+    );
+    expect(getImporterExtraPaths("imessage-macos").attachmentRoot).not.toBe(
+      getImporterExtraPaths("imessage-jailbreak").attachmentRoot,
+    );
+  });
+
+  it("clears an extra path when set to blank", () => {
+    setImporterExtraPath("imessage-macos", "attachmentRoot", "/tmp/root");
+    setImporterExtraPath("imessage-macos", "attachmentRoot", "  ");
+    expect(getImporterExtraPaths("imessage-macos").attachmentRoot).toBe("");
+  });
+});
+
+describe("loadRememberedImportPaths", () => {
+  it("clears leftover storage when remembering is off", () => {
+    setImporterPath("imessage-macos", "/Users/sam/Library/Messages/chat.db");
+    setImporterPath("whatsapp-android", "/tmp/wa");
+    setImporterExtraPath("imessage-macos", "attachmentRoot", "/Users/sam/Library/Messages");
+    setRememberImporterPaths(false);
+
+    expect(loadRememberedImportPaths("imessage-macos")).toEqual({
+      backupPath: "",
+      attachmentRoot: "",
+      appleContacts: "",
+      whatsappWa: "",
+      whatsappMedia: "",
+      whatsappDb: "",
+    });
+    expect(loadRememberedImportPaths("whatsapp-android")).toEqual({
+      backupPath: "",
+      attachmentRoot: "",
+      appleContacts: "",
+      whatsappWa: "",
+      whatsappMedia: "",
+      whatsappDb: "",
+    });
+  });
+
+  it("loads per-method paths when remembering is on", () => {
+    setRememberImporterPaths(true);
+    setImporterPath("imessage-ios", "/backups/iphone");
+    setImporterPath("imessage-macos", "/Users/sam/Library/Messages/chat.db");
+    setImporterExtraPath("imessage-macos", "attachmentRoot", "/Users/sam/Library/Messages");
+
+    expect(loadRememberedImportPaths("imessage-ios")).toEqual({
+      backupPath: "/backups/iphone",
+      attachmentRoot: "",
+      appleContacts: "",
+      whatsappWa: "",
+      whatsappMedia: "",
+      whatsappDb: "",
+    });
+    expect(loadRememberedImportPaths("imessage-macos")).toEqual({
+      backupPath: "/Users/sam/Library/Messages/chat.db",
+      attachmentRoot: "/Users/sam/Library/Messages",
+      appleContacts: "",
+      whatsappWa: "",
+      whatsappMedia: "",
+      whatsappDb: "",
+    });
+  });
+
+  it("restores WhatsApp folders by method id and whatsappWa without mixing appleContacts", () => {
+    setRememberImporterPaths(true);
+    setImporterPath("whatsapp-ios", "/backups/iphone");
+    setImporterPath("whatsapp-android", "/backups/android");
+    setImporterExtraPath("whatsapp-android", "whatsappWa", "/backups/android/wa.db");
+    setImporterExtraPath("whatsapp-android", "whatsappMedia", "/backups/android/media");
+    setImporterExtraPath("whatsapp-android", "whatsappDb", "/backups/android/msgstore.db");
+    setImporterExtraPath(
+      "imessage-macos",
+      "appleContacts",
+      "/Users/sam/Library/Application Support/AddressBook/AddressBook-v22.abcddb",
+    );
+
+    expect(loadRememberedImportPaths("whatsapp-ios")).toEqual({
+      backupPath: "/backups/iphone",
+      attachmentRoot: "",
+      appleContacts: "",
+      whatsappWa: "",
+      whatsappMedia: "",
+      whatsappDb: "",
+    });
+    expect(loadRememberedImportPaths("whatsapp-android")).toEqual({
+      backupPath: "/backups/android",
+      attachmentRoot: "",
+      appleContacts: "",
+      whatsappWa: "/backups/android/wa.db",
+      whatsappMedia: "/backups/android/media",
+      whatsappDb: "/backups/android/msgstore.db",
+    });
+    expect(loadRememberedImportPaths("imessage-macos").appleContacts).toBe(
+      "/Users/sam/Library/Application Support/AddressBook/AddressBook-v22.abcddb",
+    );
+    expect(loadRememberedImportPaths("whatsapp-android").appleContacts).toBe("");
+    expect(loadRememberedImportPaths("imessage-macos").whatsappWa).toBe("");
+  });
+});

@@ -3,7 +3,7 @@ name = "message-reexport"
 version = "0.1.0"
 edition = "2024"
 description = "Convert a Message Vault output directory to another format"
-license = "AGPL-3.0-only"
+license = "LicenseRef-FCL-1.0-ALv2"
 
 [[bin]]
 name = "message-reexporter"
@@ -20,4 +20,5 @@ media = { path = "../media" }
 serde_json = "1.0.150"
 
 [dev-dependencies]
+message-ir = { path = "../ir", features = ["testutil"] }
 tempfile = "3.27.0"

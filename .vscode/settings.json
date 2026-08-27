@@ -4,8 +4,8 @@
     "src-tauri/Cargo.toml"
   ],
   "rust-analyzer.check.command": "clippy",
-  "plantuml.diagramsRoot": "docs/maintainers/architecture/puml",
-  "plantuml.exportOutDir": "docs/maintainers/architecture/puml/img",
+  "plantuml.diagramsRoot": "docs/src/assets/architecture",
+  "plantuml.exportOutDir": "docs/src/assets/architecture",
   "plantuml.exportFormat": "svg",
   "plantuml.exportSubFolder": false,
   "plantuml.exportIncludeFolderHeirarchy": false

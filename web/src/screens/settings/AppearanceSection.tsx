@@ -43,8 +43,8 @@ export function AppearanceSection() {
             <span>
               <span className="font-medium">Use name aliases</span>
               <span className="mt-0.5 block text-[0.813rem] text-muted">
-                When enabled, threads and messages show each service identity’s
-                imported name when one is set.
+                When enabled, threads and messages show each service identity’s imported name when
+                one is set.
               </span>
             </span>
           </>

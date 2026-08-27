@@ -1,32 +1,33 @@
 import { useRef, useState } from "react";
-import { useAuth } from "../../lib/auth";
-import { apiClient, getBaseUrl } from "../../lib/api";
 import {
-  invokeExtract,
-  invokePush,
-  type TauriJobResult,
-} from "../../lib/tauri";
+  completionTextFor,
+  type ImportIssue,
+  type ImportSummaryView,
+} from "../../components/import/ImportSummaryPanel";
 import { useTauriJob } from "../../hooks/useTauriJob";
-import { isTauri } from "../../lib/tauri-check";
-import { resolveImportStagingDir } from "../../lib/system-settings";
+import { apiClient, getBaseUrl } from "../../lib/api";
+import { attachmentStepCopy } from "../../lib/attachmentStepCopy";
+import { useAuth } from "../../lib/auth";
+import { imessageExtractFields } from "../../lib/imessageExtractFields";
+import { isImessageMethod } from "../../lib/imessageImport";
 import { saveImportSavedGroup } from "../../lib/savedGroups";
+import { sbrExtractFields } from "../../lib/sbrExtractFields";
+import { resolveImportStagingDir } from "../../lib/system-settings";
+import { invokeExtract, invokePush, type TauriJobResult } from "../../lib/tauri";
+import { isTauri } from "../../lib/tauri-check";
 import type {
   AttachmentMediaMode,
   ContactNameMode,
   ImportIssueEvent,
   ImportProgressEvent,
 } from "../../lib/types";
-import {
-  completionTextFor,
-  type ImportIssue,
-  type ImportSummaryView,
-} from "../../components/import/ImportSummaryPanel";
+import { whatsappExtractFields } from "../../lib/whatsappExtractFields";
+import { isWhatsappMethod } from "../../lib/whatsappImport";
 
 export type ImportStep = {
   label: string;
   status: "pending" | "active" | "done" | "error";
   detail?: string;
-  pathLink?: string;
   durationMs?: number | null;
 };
 
@@ -51,10 +52,14 @@ const EMPTY_TIMING: StageTiming = {
 };
 
 /** Three import steps shown in the progress view. */
-function initialSteps(status: ImportStep["status"] = "pending"): ImportStep[] {
+function initialSteps(
+  status: ImportStep["status"] = "pending",
+  attachmentMedia: AttachmentMediaMode = "copy",
+): ImportStep[] {
+  const attachments = attachmentStepCopy(attachmentMedia);
   return [
     { label: "Parse backup", status, detail: status === "active" ? "Parsing backup…" : undefined },
-    { label: "Convert attachments", status: "pending" },
+    { label: attachments.label, status: "pending" },
     { label: "Upload to vault", status: "pending" },
   ];
 }
@@ -66,10 +71,13 @@ function stepIndexFor(step: ImportProgressEvent["step"]): number {
   return 2;
 }
 
-/** Present-tense verb shown while a step is running. */
+/**
+ * Present-tense verb shown while a step is running.
+ * Convert-stage ratios are conversation writes (`wrote N/M`), not attachment ops.
+ */
 function progressVerb(step: ImportProgressEvent["step"]): string {
   if (step === "upload") return "Uploading";
-  if (step === "convert") return "Converting";
+  if (step === "convert") return "Writing";
   return "Parsing";
 }
 
@@ -78,8 +86,7 @@ function stageDurations(
   timing: StageTiming,
   extractFinishedAt: number,
 ): { parseMs: number; convertMs: number } {
-  const parseStart =
-    timing.parseStartedAt ?? timing.extractStartedAt ?? extractFinishedAt;
+  const parseStart = timing.parseStartedAt ?? timing.extractStartedAt ?? extractFinishedAt;
   if (timing.convertStartedAt != null) {
     return {
       parseMs: Math.max(0, (timing.parseEndedAt ?? timing.convertStartedAt) - parseStart),
@@ -101,12 +108,17 @@ export type ImportJobFormValues = {
   maxFps: string;
   minSizeMb: string;
   contactNameMode: ContactNameMode;
-  conversationFilter: string;
-  startDate: string;
-  endDate: string;
+  ownerPhones: string[];
   force: boolean;
   obfuscate: boolean;
-  isIos: boolean;
+  isSbr: boolean;
+  attachmentRoot: string;
+  appleContacts: string;
+  whatsappKey: string;
+  whatsappWa: string;
+  whatsappMedia: string;
+  whatsappDb: string;
+  whatsappBusiness: boolean;
 };
 
 /** Run extract then upload for one import, and keep step progress for the UI. */
@@ -125,6 +137,7 @@ export function useImportJob() {
     messagesParsed?: number;
   }>({});
   const timingRef = useRef({ ...EMPTY_TIMING });
+  const attachmentModeRef = useRef<AttachmentMediaMode>("copy");
 
   function returnToForm(): void {
     setPhase("form");
@@ -153,11 +166,13 @@ export function useImportJob() {
       rawDetail = `${event.done}/${event.total} (${event.status})`;
     }
 
+    const attachments = attachmentStepCopy(attachmentModeRef.current);
     const detail =
       event.status === "included_in_extract" && event.step === "convert"
         ? rawDetail
         : `${progressVerb(event.step)} ${rawDetail}`;
     const done = event.total > 0 && event.done >= event.total;
+    const attachmentLabel = event.step === "convert" ? attachments.label : undefined;
 
     setSteps((current) =>
       current.map((step, index) => {
@@ -167,6 +182,7 @@ export function useImportJob() {
         if (index > stepIndex) return step;
         return {
           ...step,
+          ...(attachmentLabel ? { label: attachmentLabel } : {}),
           status: done ? "done" : "active",
           detail,
         };
@@ -185,11 +201,12 @@ export function useImportJob() {
     issuesRef.current = [];
     countsRef.current = {};
     timingRef.current = { ...EMPTY_TIMING };
+    attachmentModeRef.current = form.attachmentMedia;
     setRunning(true);
     setPhase("progress");
     setSummaryView(null);
     setStagingDir(null);
-    setSteps(initialSteps("active"));
+    setSteps(initialSteps("active", form.attachmentMedia));
 
     let importSessionId: number | null = null;
     let importCompleted = false;
@@ -212,9 +229,7 @@ export function useImportJob() {
       outputDir = await resolveImportStagingDir(form.backupPath, form.source);
       setStagingDir(outputDir);
       setSteps((current) =>
-        current.map((step, i) =>
-          i === 0 ? { ...step, pathLink: outputDir, detail: "Extracting…" } : step,
-        ),
+        current.map((step, i) => (i === 0 ? { ...step, detail: "Extracting…" } : step)),
       );
 
       timingRef.current.extractStartedAt = performance.now();
@@ -224,18 +239,42 @@ export function useImportJob() {
             source: form.source,
             path: form.backupPath,
             output_dir: outputDir,
-            ...(form.isIos
-              ? {
-                  backup_password: form.backupPassword || undefined,
-                  attachment_media: form.attachmentMedia,
-                  media_max_resolution: form.maxResolution,
-                  media_max_fps: form.maxFps,
-                  media_min_size: `${form.minSizeMb.trim() || "20"}M`,
-                  conversation_filter: form.conversationFilter || undefined,
-                  start_date: form.startDate || undefined,
-                  end_date: form.endDate || undefined,
+            ...(isImessageMethod(form.source)
+              ? imessageExtractFields({
+                  source: form.source,
+                  backupPassword: form.backupPassword,
+                  attachmentMedia: form.attachmentMedia,
+                  maxResolution: form.maxResolution,
+                  maxFps: form.maxFps,
+                  minSizeMb: form.minSizeMb,
                   obfuscate: form.obfuscate,
-                }
+                  attachmentRoot: form.attachmentRoot,
+                  appleContacts: form.appleContacts,
+                })
+              : {}),
+            ...(isWhatsappMethod(form.source)
+              ? whatsappExtractFields({
+                  source: form.source,
+                  attachmentMedia: form.attachmentMedia,
+                  maxResolution: form.maxResolution,
+                  maxFps: form.maxFps,
+                  minSizeMb: form.minSizeMb,
+                  key: form.whatsappKey,
+                  wa: form.whatsappWa,
+                  media: form.whatsappMedia,
+                  db: form.whatsappDb,
+                  business: form.whatsappBusiness,
+                })
+              : {}),
+            ...(form.isSbr
+              ? sbrExtractFields({
+                  attachmentMedia: form.attachmentMedia,
+                  maxResolution: form.maxResolution,
+                  maxFps: form.maxFps,
+                  minSizeMb: form.minSizeMb,
+                  ownerPhones: form.ownerPhones,
+                  obfuscate: form.obfuscate,
+                })
               : {}),
           }),
         { onProgress: applyProgress, onIssue: recordIssue },
@@ -248,19 +287,19 @@ export function useImportJob() {
       const extractFinishedAt = performance.now();
       timingRef.current.convertEndedAt = extractFinishedAt;
       ({ parseMs, convertMs } = stageDurations(timingRef.current, extractFinishedAt));
+      const attachments = attachmentStepCopy(form.attachmentMedia);
 
       setSteps([
         {
           label: "Parse backup",
           status: "done",
-          pathLink: outputDir,
           detail: "Extraction complete",
           durationMs: parseMs,
         },
         {
-          label: "Convert attachments",
+          label: attachments.label,
           status: "done",
-          detail: "Attachments processed",
+          detail: attachments.doneDetail,
           durationMs: convertMs,
         },
         {
@@ -283,7 +322,12 @@ export function useImportJob() {
             force: form.force,
             continue_on_error: true,
             skip_attachments: false,
-            trust_export: false,
+            // Extract just wrote these files. Matching size_bytes lets
+            // vault-push skip a second full-file hash. Media remaps clear
+            // digest and size, so a transcoded file is hashed during extract
+            // and then trusted here. Applies to every desktop source, not
+            // only SMS Backup & Restore.
+            trust_export: true,
             contact_name_mode: form.contactNameMode,
             import_id: importSession.id,
           }),
@@ -306,9 +350,7 @@ export function useImportJob() {
         { kind: "error", step: activeStepRef.current, item: "Import", reason: msg },
       ];
       setSteps((current) =>
-        current.map((step) =>
-          step.status === "active" ? { ...step, status: "error" } : step,
-        ),
+        current.map((step) => (step.status === "active" ? { ...step, status: "error" } : step)),
       );
     } finally {
       const durationMs = performance.now() - importStartedAt;

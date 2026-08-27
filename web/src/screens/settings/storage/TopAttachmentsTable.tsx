@@ -30,10 +30,7 @@ export default function TopAttachmentsTable({
       <h3 className={sectionTitle}>Largest attachments</h3>
       <p className={sectionHint}>
         Top {topAttachments.length || 100} attachments by file size
-        {topAttachments.length > ATTACHMENT_PAGE_SIZE
-          ? ` · ${ATTACHMENT_PAGE_SIZE} per page`
-          : ""}
-        .
+        {topAttachments.length > ATTACHMENT_PAGE_SIZE ? ` · ${ATTACHMENT_PAGE_SIZE} per page` : ""}.
       </p>
       {topAttachments.length === 0 ? (
         <p className={`${sectionHint} mt-3`}>No attachments with sizes yet.</p>
@@ -54,9 +51,7 @@ export default function TopAttachmentsTable({
                     <td className={`${tdStyle} max-w-[14rem] truncate`}>
                       {row.original_name || row.mime_type || `Attachment ${row.id}`}
                     </td>
-                    <td className={tdStyle}>
-                      {row.conversation_title || row.chat_identifier}
-                    </td>
+                    <td className={tdStyle}>{row.conversation_title || row.chat_identifier}</td>
                     <td className={`${tdStyle} text-right tabular-nums`}>
                       {formatBytes(row.size_bytes)}
                     </td>

@@ -21,7 +21,7 @@ use crate::{
     FormatAdapter, HomeAdapter, ImportAdapter, LogAdapter, VaultAdapter, VaultExportAdapter,
 };
 
-const DOCS_URL: &str = "https://bitrealm-dev.github.io/message-vault-io/";
+const DOCS_URL: &str = "https://bitrealm.io/vault/user/";
 
 /// Parse `YYYY-MM-DD`. Invalid or empty input becomes today's local date.
 fn date_from_iso_or_today(value: &str) -> Date {

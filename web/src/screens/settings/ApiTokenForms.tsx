@@ -1,6 +1,6 @@
 import Button from "../../components/Button";
-import TextField from "../../components/TextField";
 import ModalShell from "../../components/ModalShell";
+import TextField from "../../components/TextField";
 
 export function ApiTokenCreateForm({
   label,
@@ -111,11 +111,7 @@ export function ApiTokenRenameDialog({
         <Button onPress={onClose} isDisabled={busy}>
           Cancel
         </Button>
-        <Button
-          variant="primary"
-          onPress={onSave}
-          isDisabled={busy || !renameLabel.trim()}
-        >
+        <Button variant="primary" onPress={onSave} isDisabled={busy || !renameLabel.trim()}>
           {busy ? "Saving…" : "Save"}
         </Button>
       </div>

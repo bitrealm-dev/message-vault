@@ -48,10 +48,14 @@ const ATTACHMENT_MAGICS: &[(&[u8], &str)] = &[
     (b"RIFF", ".wav"),
 ];
 
+/// One attachment decoded from a PDU.
 #[derive(Debug, Clone)]
 pub struct ParsedAttachment {
+    /// File extension including the leading dot (e.g. `.jpg`).
     pub ext: String,
+    /// Decoded attachment bytes.
     pub data: Vec<u8>,
+    /// SMIL `src` reference the part binds to, when matched.
     pub smil_name: Option<String>,
 }
 
@@ -61,15 +65,24 @@ enum FieldSource {
     Heuristic,
 }
 
+/// One decoded PDU message.
 #[derive(Debug, Clone)]
 pub struct ParsedPdu {
+    /// Source `.pdu` file path.
     pub path: std::path::PathBuf,
+    /// Message time in Unix seconds (structured Date header, else filename).
     pub timestamp: i64,
+    /// Deduplicated, sanitized participant numbers.
     pub participants: Vec<String>,
+    /// Decoded message text (possibly emoji-decoded).
     pub body: String,
+    /// Decoded attachment list.
     pub attachments: Vec<ParsedAttachment>,
+    /// Whether the direction is outgoing (owner was From).
     pub is_sent: bool,
+    /// Whether there are at least 3 unique participants.
     pub is_group: bool,
+    /// Inferred sender digits (owner when outgoing).
     pub sender_number: String,
     /// Structured MMS From header was present (before digit sanitize).
     pub has_from: bool,

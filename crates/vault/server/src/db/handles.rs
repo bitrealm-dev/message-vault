@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use message_ir::{HandleService, HandleType};
-use rusqlite::{Connection, params};
+use sqlx::AnyConnection;
 
 /// One standard form of a handle for identity matching, per type, plus a
 /// human-readable note when that form is ambiguous (guarded policy).
@@ -49,8 +49,8 @@ pub fn infer_handle_type_from_shape(handle: &str) -> HandleType {
 
 /// Insert or reuse a `handles` row. Returns the id and whether this call newly
 /// inserted a flagged (review-note) row.
-pub fn upsert_handle_row(
-    conn: &Connection,
+pub async fn upsert_handle_row(
+    conn: &mut AnyConnection,
     account_id: &str,
     raw: &str,
     handle_type: HandleType,
@@ -59,23 +59,29 @@ pub fn upsert_handle_row(
     let (normalized, note) = normalize_handle(raw, handle_type);
     let platform = HandleService::parse(service.unwrap_or(HandleService::Phone.as_str()));
     let service_str = platform.as_str();
-    let inserted = conn.execute(
-        "INSERT OR IGNORE INTO handles (account_id, raw, normalized, normalized_note, handle_type, service)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![
-            account_id,
-            raw,
-            normalized,
-            note,
-            handle_type.as_str(),
-            service_str
-        ],
-    )?;
-    let id: i64 = conn.query_row(
+    let inserted = sqlx::query(
+        "INSERT INTO handles (account_id, raw, normalized, normalized_note, handle_type, service)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(account_id)
+    .bind(raw)
+    .bind(normalized.as_str())
+    .bind(note.as_deref())
+    .bind(handle_type.as_str())
+    .bind(service_str)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    let id: i64 = sqlx::query_scalar(
         "SELECT id FROM handles
-         WHERE account_id = ?1 AND normalized = ?2 AND handle_type = ?3 AND service = ?4",
-        params![account_id, normalized, handle_type.as_str(), service_str],
-        |row| row.get(0),
-    )?;
+         WHERE account_id = $1 AND normalized = $2 AND handle_type = $3 AND service = $4",
+    )
+    .bind(account_id)
+    .bind(normalized.as_str())
+    .bind(handle_type.as_str())
+    .bind(service_str)
+    .fetch_one(&mut *conn)
+    .await?;
     Ok((id, inserted > 0 && note.is_some()))
 }

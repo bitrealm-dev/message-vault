@@ -1,8 +1,8 @@
 //! GUI session Bearer tokens (`mv-user-…`); one per account, rotates on login.
 
 use anyhow::{Context, Result, bail};
-use rand::RngCore;
-use rusqlite::{Connection, OptionalExtension, params};
+use rand::TryRng;
+use sqlx::AnyConnection;
 
 const TOKEN_ALPHANUM: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
@@ -35,7 +35,7 @@ pub fn hash_api_token(token: &str) -> String {
 }
 
 fn fill_random(buf: &mut [u8]) -> Result<()> {
-    rand::rngs::OsRng
+    rand::rngs::SysRng
         .try_fill_bytes(buf)
         .map_err(|e| anyhow::anyhow!("secure random unavailable: {e}"))?;
     if buf.iter().all(|&b| b == 0) {
@@ -60,15 +60,17 @@ fn now_unix_secs() -> u64 {
 /// # Errors
 ///
 /// Returns an error when the lookup or delete fails.
-pub fn lookup_account_for_token(conn: &Connection, token: &str) -> Result<Option<String>> {
+pub async fn lookup_account_for_token(
+    conn: &mut AnyConnection,
+    token: &str,
+) -> Result<Option<String>> {
     let token_hash = hash_api_token(token);
-    let found: Option<(String, String)> = conn
-        .query_row(
-            "SELECT account_id, expires_at FROM account_session_tokens WHERE token_hash = ?1",
-            params![token_hash],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()?;
+    let found: Option<(String, String)> = sqlx::query_as(
+        "SELECT account_id, expires_at FROM account_session_tokens WHERE token_hash = $1",
+    )
+    .bind(token_hash.as_str())
+    .fetch_optional(&mut *conn)
+    .await?;
     let Some((account_id, expires_at)) = found else {
         return Ok(None);
     };
@@ -76,10 +78,10 @@ pub fn lookup_account_for_token(conn: &Connection, token: &str) -> Result<Option
     let now = now_unix_secs();
     // Legacy rows migrated with expires_at='0' are treated as expired; rotate via login.
     if expires == 0 || expires <= now {
-        let _ = conn.execute(
-            "DELETE FROM account_session_tokens WHERE token_hash = ?1",
-            params![token_hash],
-        );
+        let _ = sqlx::query("DELETE FROM account_session_tokens WHERE token_hash = $1")
+            .bind(token_hash.as_str())
+            .execute(&mut *conn)
+            .await;
         return Ok(None);
     }
     Ok(Some(account_id))
@@ -91,12 +93,12 @@ pub fn lookup_account_for_token(conn: &Connection, token: &str) -> Result<Option
 ///
 /// Returns an error when the count query fails.
 #[allow(dead_code)]
-pub fn account_has_session_token(conn: &Connection, account_id: &str) -> Result<bool> {
-    let n: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM account_session_tokens WHERE account_id = ?1",
-        params![account_id],
-        |row| row.get(0),
-    )?;
+pub async fn account_has_session_token(conn: &mut AnyConnection, account_id: &str) -> Result<bool> {
+    let n: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM account_session_tokens WHERE account_id = $1")
+            .bind(account_id)
+            .fetch_one(&mut *conn)
+            .await?;
     Ok(n > 0)
 }
 
@@ -106,22 +108,30 @@ pub fn account_has_session_token(conn: &Connection, account_id: &str) -> Result<
 ///
 /// Returns an error when a token cannot be generated or the write fails.
 #[allow(dead_code)]
-pub fn rotate_account_session_token(conn: &Connection, account_id: &str) -> Result<String> {
+pub async fn rotate_account_session_token(
+    conn: &mut AnyConnection,
+    account_id: &str,
+) -> Result<String> {
     let token = generate_session_token()?;
     let token_hash = hash_api_token(&token);
     let created_at = unix_secs_string();
     let expires_at = session_expiry_unix(now_unix_secs());
-    conn.execute(
+    sqlx::query(
         r#"
         INSERT INTO account_session_tokens (account_id, token_hash, created_at, expires_at)
-        VALUES (?1, ?2, ?3, ?4)
+        VALUES ($1, $2, $3, $4)
         ON CONFLICT(account_id) DO UPDATE SET
             token_hash = excluded.token_hash,
             created_at = excluded.created_at,
             expires_at = excluded.expires_at
         "#,
-        params![account_id, token_hash, created_at, expires_at],
     )
+    .bind(account_id)
+    .bind(token_hash)
+    .bind(created_at)
+    .bind(expires_at)
+    .execute(&mut *conn)
+    .await
     .with_context(|| format!("rotate session token for {account_id}"))?;
     Ok(token)
 }
@@ -131,8 +141,11 @@ pub fn rotate_account_session_token(conn: &Connection, account_id: &str) -> Resu
 /// # Errors
 ///
 /// Returns an error when a token cannot be generated or the insert fails.
-pub fn insert_account_session_token(conn: &Connection, account_id: &str) -> Result<String> {
-    insert_account_session_token_with_ttl(conn, account_id, SESSION_TTL_SECS)
+pub async fn insert_account_session_token(
+    conn: &mut AnyConnection,
+    account_id: &str,
+) -> Result<String> {
+    insert_account_session_token_with_ttl(conn, account_id, SESSION_TTL_SECS).await
 }
 
 /// Create a fresh session token with a custom lifetime and return the plaintext.
@@ -140,8 +153,8 @@ pub fn insert_account_session_token(conn: &Connection, account_id: &str) -> Resu
 /// # Errors
 ///
 /// Returns an error when a token cannot be generated or the insert fails.
-pub fn insert_account_session_token_with_ttl(
-    conn: &Connection,
+pub async fn insert_account_session_token_with_ttl(
+    conn: &mut AnyConnection,
     account_id: &str,
     ttl_secs: u64,
 ) -> Result<String> {
@@ -149,11 +162,16 @@ pub fn insert_account_session_token_with_ttl(
     let token_hash = hash_api_token(&token);
     let created_at = unix_secs_string();
     let expires_at = format!("{}", now_unix_secs().saturating_add(ttl_secs));
-    conn.execute(
+    sqlx::query(
         "INSERT INTO account_session_tokens (account_id, token_hash, created_at, expires_at)
-         VALUES (?1, ?2, ?3, ?4)",
-        params![account_id, token_hash, created_at, expires_at],
+         VALUES ($1, $2, $3, $4)",
     )
+    .bind(account_id)
+    .bind(token_hash)
+    .bind(created_at)
+    .bind(expires_at)
+    .execute(&mut *conn)
+    .await
     .with_context(|| format!("insert session token for {account_id}"))?;
     Ok(token)
 }
@@ -163,17 +181,18 @@ pub fn insert_account_session_token_with_ttl(
 /// # Errors
 ///
 /// Returns an error when the lookup or token write fails.
-pub fn get_or_create_session_token(conn: &Connection, account_id: &str) -> Result<String> {
-    let existing: Option<String> = conn
-        .query_row(
-            "SELECT token_hash FROM account_session_tokens WHERE account_id = ?1",
-            params![account_id],
-            |row| row.get(0),
-        )
-        .optional()?;
+pub async fn get_or_create_session_token(
+    conn: &mut AnyConnection,
+    account_id: &str,
+) -> Result<String> {
+    let existing: Option<String> =
+        sqlx::query_scalar("SELECT token_hash FROM account_session_tokens WHERE account_id = $1")
+            .bind(account_id)
+            .fetch_optional(&mut *conn)
+            .await?;
     match existing {
-        Some(_) => rotate_account_session_token(conn, account_id),
-        None => insert_account_session_token(conn, account_id),
+        Some(_) => rotate_account_session_token(conn, account_id).await,
+        None => insert_account_session_token(conn, account_id).await,
     }
 }
 
@@ -182,28 +201,14 @@ pub fn get_or_create_session_token(conn: &Connection, account_id: &str) -> Resul
 /// # Errors
 ///
 /// Returns an error when the delete fails.
-pub fn revoke_session_token(conn: &Connection, token: &str) -> Result<bool> {
+pub async fn revoke_session_token(conn: &mut AnyConnection, token: &str) -> Result<bool> {
     let token_hash = hash_api_token(token);
-    let n = conn.execute(
-        "DELETE FROM account_session_tokens WHERE token_hash = ?1",
-        params![token_hash],
-    )?;
+    let n = sqlx::query("DELETE FROM account_session_tokens WHERE token_hash = $1")
+        .bind(token_hash)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
     Ok(n > 0)
-}
-
-/// Revoke every session for an account (e.g. after password change).
-/// Delete the account's session token row.
-///
-/// # Errors
-///
-/// Returns an error when the delete fails.
-pub fn delete_account_session_token(conn: &Connection, account_id: &str) -> Result<()> {
-    conn.execute(
-        "DELETE FROM account_session_tokens WHERE account_id = ?1",
-        params![account_id],
-    )
-    .with_context(|| format!("delete session token for {account_id}"))?;
-    Ok(())
 }
 
 pub(crate) fn unix_secs_string() -> String {
@@ -232,58 +237,79 @@ mod tests {
         assert_ne!(a, b);
     }
 
-    #[test]
-    fn lookup_rejects_expired_session() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        schema::ensure_accounts_schema(&conn).unwrap();
-        conn.execute(
-            "INSERT INTO accounts (id, username) VALUES ('a1', 'alice')",
-            [],
-        )
-        .unwrap();
-        let token = insert_account_session_token(&conn, "a1").unwrap();
-        // Force expiry into the past.
-        conn.execute("UPDATE account_session_tokens SET expires_at = '1'", [])
+    #[tokio::test]
+    async fn lookup_rejects_expired_session() {
+        let (pool, _dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        schema::ensure_accounts_schema(&mut conn).await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'alice')")
+            .bind("a1")
+            .execute(&mut *conn)
+            .await
             .unwrap();
-        assert!(lookup_account_for_token(&conn, &token).unwrap().is_none());
+        let token = insert_account_session_token(&mut conn, "a1").await.unwrap();
+        // Force expiry into the past.
+        sqlx::query("UPDATE account_session_tokens SET expires_at = '1'")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        assert!(
+            lookup_account_for_token(&mut conn, &token)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
-    #[test]
-    fn insert_session_with_ttl_sets_expires_at() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        schema::ensure_accounts_schema(&conn).unwrap();
-        conn.execute(
-            "INSERT INTO accounts (id, username) VALUES ('a1', 'alice')",
-            [],
-        )
-        .unwrap();
-        let before = now_unix_secs();
-        let token = insert_account_session_token_with_ttl(&conn, "a1", 120).unwrap();
-        assert!(token.starts_with("mv-user-"));
-        let expires: String = conn
-            .query_row(
-                "SELECT expires_at FROM account_session_tokens WHERE account_id = 'a1'",
-                [],
-                |r| r.get(0),
-            )
+    #[tokio::test]
+    async fn insert_session_with_ttl_sets_expires_at() {
+        let (pool, _dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        schema::ensure_accounts_schema(&mut conn).await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'alice')")
+            .bind("a1")
+            .execute(&mut *conn)
+            .await
             .unwrap();
+        let before = now_unix_secs();
+        let token = insert_account_session_token_with_ttl(&mut conn, "a1", 120)
+            .await
+            .unwrap();
+        assert!(token.starts_with("mv-user-"));
+        let expires: String = sqlx::query_scalar(
+            "SELECT expires_at FROM account_session_tokens WHERE account_id = 'a1'",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
         let exp: u64 = expires.parse().unwrap();
         assert!(exp >= before + 120);
         assert!(exp <= before + 130);
     }
 
-    #[test]
-    fn revoke_session_token_removes_row() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        schema::ensure_accounts_schema(&conn).unwrap();
-        conn.execute(
-            "INSERT INTO accounts (id, username) VALUES ('a1', 'alice')",
-            [],
-        )
-        .unwrap();
-        let token = insert_account_session_token(&conn, "a1").unwrap();
-        assert!(lookup_account_for_token(&conn, &token).unwrap().is_some());
-        assert!(revoke_session_token(&conn, &token).unwrap());
-        assert!(lookup_account_for_token(&conn, &token).unwrap().is_none());
+    #[tokio::test]
+    async fn revoke_session_token_removes_row() {
+        let (pool, _dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        schema::ensure_accounts_schema(&mut conn).await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'alice')")
+            .bind("a1")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let token = insert_account_session_token(&mut conn, "a1").await.unwrap();
+        assert!(
+            lookup_account_for_token(&mut conn, &token)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(revoke_session_token(&mut conn, &token).await.unwrap());
+        assert!(
+            lookup_account_for_token(&mut conn, &token)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 }

@@ -1,5 +1,5 @@
-import { type ReactNode } from "react";
 import { parseDate } from "@internationalized/date";
+import type { ReactNode } from "react";
 import {
   Button,
   Calendar,
@@ -67,8 +67,7 @@ export default function DateField({
   // parseDate throws on malformed input; parent state is only ever "" or a
   // valid ISO date written by this component, so guard anyway.
   const calendarValue = value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? parseDate(value) : null;
-  const pickLabel =
-    pickAriaLabel ?? (typeof label === "string" ? label : "date");
+  const pickLabel = pickAriaLabel ?? (typeof label === "string" ? label : "date");
 
   return (
     <div className={className ?? "min-w-[10rem] flex-[1_1_12rem]"}>
@@ -96,7 +95,10 @@ export default function DateField({
             <CalendarIcon />
           </Button>
         </Group>
-        <Popover data-mv-overlay="" className={`z-[100] rounded-md border border-border bg-popover p-2 outline-none ${popupShadow}`}>
+        <Popover
+          data-mv-overlay=""
+          className={`z-[100] rounded-md border border-border bg-popover p-2 outline-none ${popupShadow}`}
+        >
           <Dialog className="outline-none">
             <Calendar className="outline-none">
               <div className="flex items-center justify-between pb-2">
@@ -126,7 +128,14 @@ export default function DateField({
                   {(date) => (
                     <CalendarCell
                       date={date}
-                      className={({ isHovered, isPressed, isSelected, isFocused, isDisabled, isOutsideMonth }) =>
+                      className={({
+                        isHovered,
+                        isPressed,
+                        isSelected,
+                        isFocused,
+                        isDisabled,
+                        isOutsideMonth,
+                      }) =>
                         "flex h-8 w-8 items-center justify-center rounded text-[0.875rem] outline-none " +
                         (isOutsideMonth || isDisabled ? "text-muted opacity-50" : "text-text") +
                         (isHovered || isPressed ? " bg-hover" : "") +

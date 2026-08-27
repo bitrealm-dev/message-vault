@@ -12,6 +12,8 @@ members = [
     "crates/libs/obfuscate",
     "crates/libs/media",
     "crates/libs/go-sms-mms",
+    "crates/libs/journal",
+    "crates/libs/vault-http",
     "crates/exporters/go-sms-pro-exporter",
     "crates/exporters/sms-backup-restore-exporter",
     "crates/exporters/sms-backup-plus-exporter",
@@ -22,6 +24,7 @@ members = [
     "crates/core/message-vault-io-core",
     "crates/cli/vault-push",
     "crates/cli/vault-pull",
+    "crates/cli/dump-cli-docs",
     "crates/vault/demo-seed",
     "crates/vault/server",
     "crates/message-vault-io-gui",
@@ -32,3 +35,6 @@ exclude = ["src-tauri"]
 message-ir = { path = "crates/libs/ir" }
 contacts = { path = "crates/libs/contacts" }
 phone = { path = "crates/libs/phone" }
+
+[patch.crates-io]
+sqlx-sqlite = { path = "vendor/sqlx-sqlite" }

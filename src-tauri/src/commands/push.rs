@@ -2,12 +2,12 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::thread;
 
 use tauri::Emitter;
 use vault_push::{ProgressEvent, VaultPushConfig, run as run_push};
 
-use super::events::{ExtractErrorEvent, ExtractProgressEvent};
+use super::events::ExtractProgressEvent;
+use super::jobs::{reset_and_clone_cancel, spawn_job};
 use crate::state::AppState;
 
 /// Convert a report count to the `usize` the progress event uses.
@@ -53,6 +53,39 @@ fn finished_push_events(
     (progress, summary)
 }
 
+/// User-facing parameters for the `push` command.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushArgs {
+    /// Base URL of the vault server, for example `http://127.0.0.1:8080`.
+    pub base_url: String,
+    /// Vault account name.
+    pub username: String,
+    /// API token or account password for the vault.
+    pub key: String,
+    /// Folder of conversation files to upload.
+    pub input_dir: String,
+    /// Import mode. `append` adds to existing data (safe to re-run);
+    /// `replace` deletes existing messages for this source, then imports.
+    pub mode: String,
+    /// When true, ignore the journal and re-upload assets and re-import
+    /// messages.
+    pub force: bool,
+    /// When true, continue after a failed conversation.
+    pub continue_on_error: bool,
+    /// When true, import messages without uploading attachments.
+    pub skip_attachments: bool,
+    /// When true, trust export metadata: skip re-hashing attachments when
+    /// size_bytes matches the file size on disk. Without this flag every
+    /// attachment is re-hashed.
+    pub trust_export: bool,
+    /// Server-side import option that controls how missing contact names
+    /// are filled in, for example `fill_missing`.
+    pub contact_name_mode: Option<String>,
+    /// Import id of an earlier import to resume, when set.
+    pub import_id: Option<i64>,
+}
+
 /// Ask this process to upload extracted conversations to a vault server.
 ///
 /// Returns as soon as the background thread starts. Upload progress uses the
@@ -60,50 +93,52 @@ fn finished_push_events(
 ///
 /// # Errors
 ///
-/// This command always returns `Ok` after the thread starts. Failures during
-/// the upload are sent as `extract:error`.
+/// Returns an error if another thread panicked while holding the shared
+/// state lock. Failures during the upload are sent as `extract:error`.
 #[tauri::command]
 pub async fn push(
-    _state: tauri::State<'_, Arc<Mutex<AppState>>>,
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
     app: tauri::AppHandle,
-    base_url: String,
-    username: String,
-    key: String,
-    input_dir: String,
-    mode: String,
-    force: bool,
-    continue_on_error: bool,
-    skip_attachments: bool,
-    trust_export: bool,
-    contact_name_mode: Option<String>,
-    import_id: Option<i64>,
+    args: PushArgs,
 ) -> Result<(), String> {
-    let app_handle = app.clone();
-    let contact_name_mode = contact_name_mode.unwrap_or_else(|| "fill_missing".into());
+    let cancel = reset_and_clone_cancel(&state)?;
 
-    thread::spawn(move || {
+    let app_handle = app.clone();
+    let contact_name_mode = args
+        .contact_name_mode
+        .unwrap_or_else(|| "fill_missing".into());
+
+    spawn_job(app, move || {
         let cfg = VaultPushConfig {
-            input: PathBuf::from(&input_dir),
-            base_url,
-            username,
-            key,
-            mode,
-            continue_on_error,
-            force,
-            skip_attachments,
-            trust_export,
+            input: PathBuf::from(&args.input_dir),
+            base_url: args.base_url,
+            username: args.username,
+            key: args.key,
+            mode: args.mode,
+            continue_on_error: args.continue_on_error,
+            force: args.force,
+            skip_attachments: args.skip_attachments,
+            trust_export: args.trust_export,
             verify_digests: false,
             max_retries: 3,
-            batch_size: 100,
-            asset_upload_workers: 8,
+            // Pack until vault_push::MAX_IMPORT_BODY_BYTES (64 MiB); do not stop at a message count.
+            batch_size: vault_push::NO_MESSAGE_COUNT_LIMIT,
+            // Above the CLI default (8): desktop imports are often many small files.
+            asset_upload_workers: 16,
+            // Above the CLI default (3): hide more hashing behind in-flight imports.
+            prepare_ahead: 8,
+            // Above the CLI default (2): more of the prepare-ahead queue runs at once.
+            prepare_workers: 4,
             asset_multipart_threshold: 5 * 1024 * 1024,
+            // Per-file attachment cap. JSONL import batches use MAX_IMPORT_BODY_BYTES.
             asset_max_bytes: 50 * 1024 * 1024,
             report_path: None,
             log_path: None,
+            // Relies on one preflight HEAD per run instead of a persisted journal.
             journal_path: None,
-            cancel: None,
+            cancel: Some(cancel),
             contact_name_mode,
-            import_id,
+            import_id: args.import_id,
         };
 
         let mut progress = |event: ProgressEvent| match event {
@@ -145,10 +180,7 @@ pub async fn push(
             ProgressEvent::Finished(report) => {
                 for result in &report.results {
                     if result.status == "failed" {
-                        let reason = match result.error.as_deref() {
-                            Some(error) => error,
-                            None => "upload failed",
-                        };
+                        let reason = result.error.as_deref().unwrap_or("upload failed");
                         let _ = app_handle.emit(
                             "extract:issue",
                             serde_json::json!({
@@ -159,10 +191,10 @@ pub async fn push(
                             }),
                         );
                     } else if result.status == "skipped" {
-                        let reason = match result.error.as_deref() {
-                            Some(error) => error,
-                            None => "already imported or skipped",
-                        };
+                        let reason = result
+                            .error
+                            .as_deref()
+                            .unwrap_or("already imported or skipped");
                         let _ = app_handle.emit(
                             "extract:issue",
                             serde_json::json!({
@@ -182,16 +214,9 @@ pub async fn push(
 
         match run_push(&cfg, Some(&mut progress)) {
             Ok(_) => {}
-            Err(err) => {
-                let _ = app_handle.emit(
-                    "extract:error",
-                    ExtractErrorEvent {
-                        detail: format!("{err:#}"),
-                        user_message: None,
-                    },
-                );
-            }
+            Err(err) => return Err(err),
         }
+        Ok(())
     });
 
     Ok(())

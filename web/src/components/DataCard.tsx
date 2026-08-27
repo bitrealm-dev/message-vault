@@ -41,9 +41,7 @@ export default function DataCard({
       {hasHeader ? (
         <div className="mb-3 flex items-start justify-between gap-3">
           {title != null ? (
-            <div className="min-w-0 flex-1 text-[0.938rem] font-semibold text-text">
-              {title}
-            </div>
+            <div className="min-w-0 flex-1 text-[0.938rem] font-semibold text-text">{title}</div>
           ) : (
             <span />
           )}

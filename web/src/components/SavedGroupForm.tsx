@@ -1,6 +1,6 @@
 import { useState } from "react";
-import ModalShell from "./ModalShell";
 import Button from "./Button";
+import ModalShell from "./ModalShell";
 
 interface SavedGroupFormProps {
   onSave: (name: string, query: string) => void;
@@ -30,30 +30,29 @@ export default function SavedGroupForm({ onSave, onCancel, initial }: SavedGroup
         {initial ? "Edit saved search" : "New saved search"}
       </h3>
 
-      <label className="mb-1 block text-[0.813rem] font-medium text-text">
-        Name
+      <label className="mb-3 block">
+        <span className="mb-1 block text-[0.813rem] font-medium text-text">Name</span>
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleSave()}
+          placeholder="e.g. Work team"
+          className="box-border w-full rounded border border-border bg-elevated px-2 py-1.5 text-[0.875rem] text-text"
+        />
       </label>
-      <input
-        type="text"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && handleSave()}
-        placeholder="e.g. Work team"
-        className="mb-3 box-border w-full rounded border border-border bg-elevated px-2 py-1.5 text-[0.875rem] text-text"
-        autoFocus
-      />
 
-      <label className="mb-1 block text-[0.813rem] font-medium text-text">
-        Query
+      <label className="mb-4 block">
+        <span className="mb-1 block text-[0.813rem] font-medium text-text">Query</span>
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleSave()}
+          placeholder="e.g. from:bob service:discord"
+          className="box-border w-full rounded border border-border bg-elevated px-2 py-1.5 text-[0.875rem] text-text"
+        />
       </label>
-      <input
-        type="text"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && handleSave()}
-        placeholder="e.g. from:bob service:discord"
-        className="mb-4 box-border w-full rounded border border-border bg-elevated px-2 py-1.5 text-[0.875rem] text-text"
-      />
 
       <div className="flex justify-end gap-2">
         <Button onClick={onCancel} className="!px-3 !py-1.5">

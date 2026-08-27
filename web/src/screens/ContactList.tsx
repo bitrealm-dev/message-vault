@@ -1,44 +1,34 @@
-import {
-  useState,
-  useEffect,
-  useCallback,
-  useMemo,
-  useRef,
-  startTransition,
-} from "react";
-import { apiClient } from "../lib/api";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ContactInitialCircle from "../components/ContactInitialCircle";
 import ContactSortMenu from "../components/ContactSortMenu";
 import GroupsMenu from "../components/GroupsMenu";
-import { useSetRightToolbar } from "../components/RightToolbarContext";
-import { checksFromMembers } from "../lib/membershipChecks";
 import InfiniteOffsetList from "../components/InfiniteOffsetList";
-import { highlightText } from "../lib/highlightText";
+import { useSetRightToolbar } from "../components/useRightToolbar";
+import { apiClient } from "../lib/api";
+import { getCachedContactDetail, updateCachedContactGroups } from "../lib/contactDetailCache";
 import {
-  compareContactsByName,
-  contactSortLetter,
-  loadContactNameSort,
-  saveContactNameSort,
-  type ContactNameSortState,
-} from "../lib/contactSort";
-import {
-  GROUP_FILTER_TOKEN_RE,
   contactBelongsToGroup,
   createContactGroup,
+  GROUP_FILTER_TOKEN_RE,
   groupListQuery,
   hasGroupFilterToken,
   setContactGroupMembership,
 } from "../lib/contactGroups";
-import { useContactGroups } from "../lib/useContactGroups";
 import {
-  getCachedContactDetail,
-  updateCachedContactGroups,
-} from "../lib/contactDetailCache";
+  type ContactNameSortState,
+  compareContactsByName,
+  contactSortLetter,
+  loadContactNameSort,
+  saveContactNameSort,
+} from "../lib/contactSort";
+import { highlightText } from "../lib/highlightText";
+import { checksFromMembers } from "../lib/membershipChecks";
+import { useContactGroups } from "../lib/useContactGroups";
 import {
   PAGE_SIZE_CONTACTS_FIRST,
   PAGE_SIZE_FIRST,
-  usePagedList,
   type PagedFetchPage,
+  usePagedList,
 } from "../lib/usePagedList";
 
 const FILTER_DEBOUNCE_MS = 300;
@@ -130,9 +120,7 @@ function contactMatchesFilter(c: Contact, filter: string): boolean {
 }
 
 /** Make every contact id a string so list keys stay stable. */
-function normalizeContacts(
-  rows: ContactsPage["contacts"] | undefined,
-): Contact[] {
+function normalizeContacts(rows: ContactsPage["contacts"] | undefined): Contact[] {
   return (rows || []).map((c) => ({
     ...c,
     id: String(c.id),
@@ -142,28 +130,14 @@ function normalizeContacts(
 }
 
 /** Prefer a local override, then the open-drawer cache, then the list row. */
-function groupsForContact(
-  c: Contact,
-  overrides: Record<string, string[]>,
-): string[] {
-  return (
-    overrides[c.id] ??
-    getCachedContactDetail(c.id)?.groups ??
-    c.groups ??
-    []
-  );
+function groupsForContact(c: Contact, overrides: Record<string, string[]>): string[] {
+  return overrides[c.id] ?? getCachedContactDetail(c.id)?.groups ?? c.groups ?? [];
 }
 
 /** Add or remove one group name, matching letter case the same way the list does. */
-function withGroupMembership(
-  groups: string[],
-  name: string,
-  enable: boolean,
-): string[] {
+function withGroupMembership(groups: string[], name: string, enable: boolean): string[] {
   if (enable) {
-    return groups.some((g) => g.toLowerCase() === name.toLowerCase())
-      ? groups
-      : [...groups, name];
+    return groups.some((g) => g.toLowerCase() === name.toLowerCase()) ? groups : [...groups, name];
   }
   return groups.filter((g) => g.toLowerCase() !== name.toLowerCase());
 }
@@ -187,12 +161,8 @@ export default function ContactList({
   clearCheckedRev?: number;
 }) {
   const [serverQ, setServerQ] = useState("");
-  const [groupOverrides, setGroupOverrides] = useState<Record<string, string[]>>(
-    {},
-  );
-  const [nameSort, setNameSort] = useState<ContactNameSortState>(() =>
-    loadContactNameSort(),
-  );
+  const [groupOverrides, setGroupOverrides] = useState<Record<string, string[]>>({});
+  const [nameSort, setNameSort] = useState<ContactNameSortState>(() => loadContactNameSort());
   const [checkedIds, setCheckedIds] = useState<Set<string>>(() => new Set());
   const [groupsMenuOpen, setGroupsMenuOpen] = useState(false);
   /** Last contacts the Groups menu assigned to, so a list filter change does not disable an open menu. */
@@ -219,10 +189,7 @@ export default function ContactList({
         limit: String(limit),
         offset: String(offset),
       });
-      const res = await apiClient.get<ContactsPage>(
-        `/v1/export/contacts?${params}`,
-        { signal },
-      );
+      const res = await apiClient.get<ContactsPage>(`/v1/export/contacts?${params}`, { signal });
       return {
         items: normalizeContacts(res.contacts),
         total: res.total ?? 0,
@@ -252,10 +219,11 @@ export default function ContactList({
   }
 
   const groupActive = Boolean(groupFilter);
-  const advancedActive =
-    hasAdvancedContactTokens(filter) || hasGroupFilterToken(filter);
+  const advancedActive = hasAdvancedContactTokens(filter) || hasGroupFilterToken(filter);
 
   useEffect(() => {
+    void filter;
+    void groupFilter;
     setCheckedIds(new Set());
   }, [filter, groupFilter]);
 
@@ -265,6 +233,7 @@ export default function ContactList({
   }, [clearCheckedRev]);
 
   useEffect(() => {
+    void catalogComplete;
     setGroupOverrides({});
     const combined = groupListQuery(groupFilter, filter);
     // Empty filter: load the full catalog.
@@ -304,25 +273,19 @@ export default function ContactList({
   const displayContacts = useMemo(
     () =>
       [...filteredContacts]
-        .map((c) =>
-          groupOverrides[c.id] ? { ...c, groups: groupOverrides[c.id] } : c,
-        )
+        .map((c) => (groupOverrides[c.id] ? { ...c, groups: groupOverrides[c.id] } : c))
         .filter((c) => contactBelongsToGroup(c.groups, groupFilter))
-        .sort((a, b) =>
-          compareContactsByName(a.name, b.name, nameSort.sort, nameSort.order),
-        ),
+        .sort((a, b) => compareContactsByName(a.name, b.name, nameSort.sort, nameSort.order)),
     [filteredContacts, nameSort, groupOverrides, groupFilter],
   );
 
-  const selectedContact =
-    displayContacts.find((c) => c.id === selectedId) ?? null;
+  const selectedContact = displayContacts.find((c) => c.id === selectedId) ?? null;
   const checkedContacts = useMemo(
     () => displayContacts.filter((c) => checkedIds.has(c.id)),
     [checkedIds, displayContacts],
   );
   const selectAllChecked =
-    displayContacts.length > 0 &&
-    displayContacts.every((c) => checkedIds.has(c.id));
+    displayContacts.length > 0 && displayContacts.every((c) => checkedIds.has(c.id));
   const selectAllIndeterminate =
     !selectAllChecked && displayContacts.some((c) => checkedIds.has(c.id));
   const targetContacts = useMemo(() => {
@@ -332,8 +295,7 @@ export default function ContactList({
   if (targetContacts.length > 0) {
     assignTargetsRef.current = targetContacts;
   }
-  const assignTargets =
-    targetContacts.length > 0 ? targetContacts : assignTargetsRef.current;
+  const assignTargets = targetContacts.length > 0 ? targetContacts : assignTargetsRef.current;
 
   useEffect(() => {
     onCheckedChange?.(checkedContacts);
@@ -362,17 +324,11 @@ export default function ContactList({
 
   const applyMembership = useCallback(async (name: string, enable: boolean) => {
     const targets = assignTargetsRef.current;
-    const ids = targets
-      .map((c) => Number(c.id))
-      .filter((id) => Number.isFinite(id) && id > 0);
+    const ids = targets.map((c) => Number(c.id)).filter((id) => Number.isFinite(id) && id > 0);
     if (ids.length === 0) return;
     const nextOverrides = { ...groupOverridesRef.current };
     for (const c of targets) {
-      const groups = withGroupMembership(
-        groupsForContact(c, nextOverrides),
-        name,
-        enable,
-      );
+      const groups = withGroupMembership(groupsForContact(c, nextOverrides), name, enable);
       nextOverrides[c.id] = groups;
       updateCachedContactGroups(c.id, groups);
     }
@@ -383,11 +339,7 @@ export default function ContactList({
     } catch {
       const reverted = { ...groupOverridesRef.current };
       for (const c of targets) {
-        const groups = withGroupMembership(
-          groupsForContact(c, reverted),
-          name,
-          !enable,
-        );
+        const groups = withGroupMembership(groupsForContact(c, reverted), name, !enable);
         reverted[c.id] = groups;
         updateCachedContactGroups(c.id, groups);
       }
@@ -399,9 +351,7 @@ export default function ContactList({
   /** Drop every group on the selected contacts in one paint, then tell the server in parallel. */
   const clearAllMembership = useCallback(async () => {
     const targets = assignTargetsRef.current;
-    const ids = targets
-      .map((c) => Number(c.id))
-      .filter((id) => Number.isFinite(id) && id > 0);
+    const ids = targets.map((c) => Number(c.id)).filter((id) => Number.isFinite(id) && id > 0);
     if (ids.length === 0) return;
     const priorById: Record<string, string[]> = {};
     const names = new Set<string>();
@@ -450,9 +400,7 @@ export default function ContactList({
         }}
         onCreate={(name) => {
           void (async () => {
-            const existing = allGroups.find(
-              (g) => g.toLowerCase() === name.toLowerCase(),
-            );
+            const existing = allGroups.find((g) => g.toLowerCase() === name.toLowerCase());
             if (!existing) {
               await createContactGroup(name);
             }
@@ -467,7 +415,6 @@ export default function ContactList({
   }, [
     allGroups,
     applyMembership,
-    assignTargets,
     clearAllMembership,
     groupChecks,
     groupsMenuOpen,
@@ -508,16 +455,12 @@ export default function ContactList({
         }
         onSelect(c);
       }}
-      isRowHighlighted={(c) =>
-        checkedIds.size > 0 ? checkedIds.has(c.id) : c.id === selectedId
-      }
+      isRowHighlighted={(c) => (checkedIds.size > 0 ? checkedIds.has(c.id) : c.id === selectedId)}
       selectAllChecked={selectAllChecked}
       selectAllIndeterminate={selectAllIndeterminate}
       onSelectAllChange={(on) => {
         startTransition(() => {
-          setCheckedIds(
-            on ? new Set(displayContacts.map((c) => c.id)) : new Set(),
-          );
+          setCheckedIds(on ? new Set(displayContacts.map((c) => c.id)) : new Set());
         });
       }}
       selectAllLabel="Select all contacts"
@@ -526,17 +469,9 @@ export default function ContactList({
       ariaLabel="Contacts"
       errorPrefix="Could not load contacts"
       headerActions={
-        <ContactSortMenu
-          sort={nameSort.sort}
-          order={nameSort.order}
-          onChange={onNameSortChange}
-        />
+        <ContactSortMenu sort={nameSort.sort} order={nameSort.order} onChange={onNameSortChange} />
       }
-      getSectionLetter={
-        filterActive
-          ? undefined
-          : (c) => contactSortLetter(c.name, nameSort.sort)
-      }
+      getSectionLetter={filterActive ? undefined : (c) => contactSortLetter(c.name, nameSort.sort)}
       empty={
         !loading ? (
           <div className="p-4 text-[0.813rem] text-muted">
@@ -553,32 +488,25 @@ export default function ContactList({
       renderRow={(c) => {
         const nameKey = c.name.trim().toLowerCase();
         const shownHandles = filterActive
-          ? matchingHandles(c.handles, filter).filter(
-              (h) => h.trim().toLowerCase() !== nameKey,
-            )
+          ? matchingHandles(c.handles, filter).filter((h) => h.trim().toLowerCase() !== nameKey)
           : [];
         const checked = checkedIds.has(c.id);
         return (
           <>
-            <span
+            <label
               className="group/avatar relative flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center self-center"
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 skipRowSelectRef.current = true;
                 toggleChecked(c.id);
-                // The row click is suppressed only for this press. A later
-                // click on the name must still toggle the row.
                 queueMicrotask(() => {
                   skipRowSelectRef.current = false;
                 });
               }}
+              onKeyDown={(e) => e.stopPropagation()}
             >
-              <span
-                className={
-                  checked ? "invisible" : "group-hover/avatar:invisible"
-                }
-              >
+              <span className={checked ? "invisible" : "group-hover/avatar:invisible"}>
                 <ContactInitialCircle
                   displayName={c.name}
                   preferredHandle={c.handles?.[0] ?? null}
@@ -593,20 +521,15 @@ export default function ContactList({
                   checked ? "" : "invisible group-hover/avatar:visible"
                 }`}
               />
-            </span>
+            </label>
             <div className="min-w-0 flex-1">
               <div className="truncate text-[0.875rem] font-medium">
-                {filterActive && nameMarkTerm
-                  ? highlightText(c.name, nameMarkTerm)
-                  : c.name}
+                {filterActive && nameMarkTerm ? highlightText(c.name, nameMarkTerm) : c.name}
               </div>
               {shownHandles.length > 0 && (
                 <div className="mt-0.5">
                   {shownHandles.map((h) => (
-                    <div
-                      key={h}
-                      className="truncate text-[0.75rem] text-muted"
-                    >
+                    <div key={h} className="truncate text-[0.75rem] text-muted">
                       {highlightText(h, handleMarkTerm)}
                     </div>
                   ))}

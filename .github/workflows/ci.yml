@@ -4,9 +4,33 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+    # Tag pushes still run (path filters do not apply to tags). Skip the
+    # full Rust workspace on docs-only / markdown-only commits to main.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/pull_request_template.md"
+      - ".cursor/**"
+      - "LICENSE*"
+      - ".gitignore"
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/pull_request_template.md"
+      - ".cursor/**"
+      - "LICENSE*"
+      - ".gitignore"
   workflow_dispatch:
+
+# A new push to the same branch cancels the previous run. That stops
+# queued Rust jobs from sitting until the 6-hour default timeout.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
 
 permissions:
   contents: write
@@ -17,6 +41,7 @@ jobs:
   fmt:
     name: rustfmt
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -34,6 +59,7 @@ jobs:
   test:
     name: Build & Test (Rust)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
 
@@ -46,7 +72,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev
 
-      - uses: actions/cache@v5
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -62,35 +88,144 @@ jobs:
       - name: Test workspace
         run: cargo test --workspace
 
-  # ── Always: web ESLint ────────────────────────────────────────────────
+  # ── Always: Postgres-gated server tests ───────────────────────────────
+  # Runs the search-parity and FTS suites against a real Postgres 16 service
+  # (the gated tests skip themselves unless MV_TEST_POSTGRES_URL is set).
+  test-postgres:
+    name: Build & Test (Rust, Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: vault
+          POSTGRES_PASSWORD: vault
+          POSTGRES_DB: vault
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vault"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # Job runs on the Ubuntu VM, not in a job container. GitHub publishes
+      # service ports on localhost. The hostname `postgres` only resolves when
+      # the job itself is a container on the same Docker network.
+      - name: Test message-vault-server against Postgres
+        env:
+          MV_TEST_POSTGRES_URL: postgres://vault:vault@127.0.0.1:5432/vault
+        run: cargo test -p message-vault-server
+
+  # ── Always: cargo-deny advisories ─────────────────────────────────────
+  deny:
+    name: cargo-deny (advisories)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories
+
+  # ── Always: check, lint, and test src-tauri ───────────────────────────
+  # src-tauri is not a workspace member, so the workspace build above skips
+  # it; this is its compile, lint, and test gate. Same system packages as
+  # the release job's Linux installer build.
+  check-tauri:
+    name: Check, lint, and test (src-tauri)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Install Tauri build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libgtk-3-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libsoup-3.0-dev
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-src-tauri-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-src-tauri-
+
+      - name: Check src-tauri
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Clippy src-tauri
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Test src-tauri
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  # ── Always: web Biome (lint + format) + TypeScript ────────────────────
   web-lint:
     name: Lint (web)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - name: Lint web frontend
+      - name: Lint, format-check, and type-check web frontend
         run: |
           cd web
           npm ci
-          npm run lint
+          npx biome ci .
+          npx tsc --noEmit
 
   # ── Always: web Vitest ────────────────────────────────────────────────
   web-test:
     name: Test (web)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -102,27 +237,79 @@ jobs:
           npm ci
           npm test
 
+  # ── Always: npm audit (web + docs) ────────────────────────────────────
+  npm-audit:
+    name: Audit npm deps
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            docs/package-lock.json
+
+      - name: Audit web frontend
+        run: |
+          cd web
+          npm ci
+          npm audit --audit-level=high
+
+      - name: Audit docs site
+        run: |
+          cd docs
+          npm ci
+          npm audit --audit-level=high
+
+  # ── Always: license consistency ───────────────────────────────────────
+  license:
+    name: License consistency
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check license metadata agrees on the Fair Core License
+        run: ./scripts/check-license.sh
+
+  # ── Always: release Dockerfile copies [patch.crates-io] path crates ──
+  docker-context:
+    name: Docker rust-builder context
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check Docker rust-builder copies patched crates
+        run: ./scripts/check-docker-context.sh
+
   # ── Tag only: Docker image → DockerHub ────────────────────────────────
   docker:
     name: Docker image
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [fmt, test]
+    needs: [fmt, test, test-postgres, check-tauri]
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: bitrealm/message-vault
           tags: |
@@ -138,7 +325,7 @@ jobs:
           echo "build_date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./docker/Dockerfile
@@ -155,7 +342,8 @@ jobs:
   release:
     name: Desktop App (${{ matrix.label }})
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [fmt, test]
+    needs: [fmt, test, test-postgres, check-tauri]
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -167,20 +355,13 @@ jobs:
           - os: macos-latest
             label: macos
     runs-on: ${{ matrix.os }}
-    env:
-      WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
-      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-      MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
-      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
-      NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
-      NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
-      NOTARY_APP_SPECIFIC_PASSWORD: ${{ secrets.NOTARY_APP_SPECIFIC_PASSWORD }}
+    # Installers ship unsigned for now: no signing or notarization step
+    # exists in this job. Tracked in issue #144.
     steps:
       - uses: actions/checkout@v7
 
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -259,6 +440,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: release
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 

@@ -1,10 +1,10 @@
 import type { ReactNode } from "react";
-import type { Conversation } from "../lib/types";
 import { formatDateSpan } from "../lib/formatDate";
 import { personDisplayLabel } from "../lib/nameAliases";
-import { useNameAliases } from "../lib/useNameAliases";
 import { listRowDividers } from "../lib/tw";
-import { useListColumnResizing } from "./ListColumnResizeContext";
+import type { Conversation } from "../lib/types";
+import { useNameAliases } from "../lib/useNameAliases";
+import { useColumnResizing } from "./columnResizeState";
 
 /** Short service label (imessage / sms/mms). */
 function formatServiceLabel(service: string): string | null {
@@ -62,7 +62,7 @@ function GroupNames({ conv }: { conv: Conversation }) {
       {conv.participants.map((p, i) => {
         const label = participantLabel(p, useAliases);
         return (
-          <span key={`${p.handle}-${i}`}>
+          <span key={p.handle}>
             {i > 0 ? ", " : null}
             <span className="whitespace-nowrap">{label}</span>
           </span>
@@ -119,7 +119,7 @@ export default function ConversationRow({
   checked?: boolean;
   onCheckChange?: (id: string) => void;
 }) {
-  const columnResizing = useListColumnResizing();
+  const columnResizing = useColumnResizing();
   const useAliases = useNameAliases();
   const isGroup = conversation.is_group;
   const wraps = isGroup && !conversation.label && !columnResizing;
@@ -127,14 +127,11 @@ export default function ConversationRow({
     conversation.date_range_start,
     conversation.last_message_at || conversation.date_range_end,
   );
-  const bottomLeft = isGroup ? (
-    <GroupService conv={conversation} />
-  ) : (
-    directService(conversation)
-  );
+  const bottomLeft = isGroup ? <GroupService conv={conversation} /> : directService(conversation);
 
   return (
     <button
+      type="button"
       onClick={onClick}
       className={`box-border flex w-full cursor-pointer items-start gap-2 border-none px-[0.85rem] py-[0.7rem] text-left ${listRowDividers} ${
         isSelected ? "bg-hover" : "bg-transparent"
@@ -161,18 +158,12 @@ export default function ConversationRow({
           >
             {titleContent(conversation, useAliases)}
           </span>
-          {isGroup ? (
-            <GroupParticipantCount count={conversation.participants.length} />
-          ) : null}
+          {isGroup ? <GroupParticipantCount count={conversation.participants.length} /> : null}
         </div>
 
         <div className="flex items-baseline justify-between gap-2 text-[0.75rem] text-muted">
-          <span className="min-w-0 truncate">
-            {bottomLeft}
-          </span>
-          {dateSpan ? (
-            <span className="shrink-0 text-right">{dateSpan}</span>
-          ) : null}
+          <span className="min-w-0 truncate">{bottomLeft}</span>
+          {dateSpan ? <span className="shrink-0 text-right">{dateSpan}</span> : null}
         </div>
       </div>
     </button>

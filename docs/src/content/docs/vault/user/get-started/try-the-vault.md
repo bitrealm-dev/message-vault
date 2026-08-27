@@ -25,7 +25,9 @@ Already sure you want your own data? Skip to [Use your own messages](/vault/user
 
 ## Start the vault
 
-```bash
+To start, pull the latest published image `bitrealm/message-vault:latest` from Docker Hub.
+
+```bash title="Start with docker run"
 docker run -d --name message-vault \
   -p 8080:8080 \
   -e DEMO_DATA=true \
@@ -33,18 +35,18 @@ docker run -d --name message-vault \
   bitrealm/message-vault:latest
 ```
 
-Or with Compose — save [docker/compose.yml](https://github.com/bitrealm-dev/message-vault/blob/main/docker/compose.yml) and start it:
+Or with Compose — save [docker/compose.yml](https://github.com/bitrealm-io/message-vault/blob/main/docker/compose.yml) and start it:
 
-```bash
+```bash title="Start with Compose"
 mkdir message-vault && cd message-vault
 curl -fsSL -o compose.yml \
-  https://raw.githubusercontent.com/bitrealm-dev/message-vault/main/docker/compose.yml
+  https://raw.githubusercontent.com/bitrealm-io/message-vault/main/docker/compose.yml
 docker compose up -d
 ```
 
-Both commands start the vault and, on an **empty** volume, seed sample conversations. The website and the import API share **port 8080**. The `message-vault-data` volume keeps the database between restarts. Compose and `docker run` use that same volume name, so you can switch methods without copying the database.
+Both commands start the vault and, on first start, generate sample conversations for the `demo` user. The website and the import API share **port 8080**. The `message-vault-data` Docker volume keeps the database between restarts. Compose and `docker run` use that same volume name, so you can switch methods without copying the database.
 
-Edit the Compose file to change the published port, set `DEMO_DATA=false` for an empty vault, or pin `bitrealm/message-vault:0.7.3` instead of `latest`.
+Edit the Compose file to change the published port, set `DEMO_DATA=false` to skip generating sample conversations, or pin `bitrealm/message-vault:0.8.3` instead of `latest`.
 
 `DEMO_DATA=true` only seeds when the volume is new. Changing the variable later does not add or remove accounts.
 
@@ -56,8 +58,9 @@ Open **http://localhost:8080**. Sign in with username `demo` and an empty passwo
 
 ## After you have looked around
 
-Sign out. Create your own account on **this same vault** — not a second container. Continue at [Use your own messages](/vault/user/get-started/your-own-messages/).
+Sign out. Create your own account on **this same vault**, and continue at [Use your own messages](/vault/user/get-started/your-own-messages/).
 
 ## Build from source instead
 
-Compiling the vault and the desktop app: [Run from source](/vault/developer/run-from-source/). A release-shaped image from a git checkout: [Operator Docker](/vault/developer/docker-compose/).
+- Compiling the vault and the desktop app: [Contributing](/vault/developer/contributing/#build-and-run).
+- Building a Docker image from a git checkout: [Docker](/vault/developer/docker/).

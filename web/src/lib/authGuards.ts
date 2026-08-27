@@ -7,10 +7,7 @@ export const DEFAULT_TAURI_VAULT_URL = "http://127.0.0.1:8080";
  * First value for the login server URL field.
  * Replaces the old `http://localhost:8080` default so a saved session still reaches a local Docker vault.
  */
-export function initialLoginServerUrl(
-  savedUrl: string | undefined,
-  inTauri: boolean,
-): string {
+export function initialLoginServerUrl(savedUrl: string | undefined, inTauri: boolean): string {
   if (typeof savedUrl === "string" && savedUrl.length > 0) {
     const normalized = savedUrl.trim().replace(/\/+$/, "");
     if (normalized === "http://localhost:8080") {

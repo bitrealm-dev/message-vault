@@ -23,10 +23,9 @@ export async function fetchConversationById(
       limit: String(PAGE_SIZE),
       offset: String(offset),
     });
-    const page = await apiClient.get<ConversationsPage>(
-      `/v1/export/conversations?${params}`,
-      { signal },
-    );
+    const page = await apiClient.get<ConversationsPage>(`/v1/export/conversations?${params}`, {
+      signal,
+    });
 
     const match = (page.conversations || []).find((c) => c.id === conversationId);
     if (match) return match;

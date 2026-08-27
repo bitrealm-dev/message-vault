@@ -16,21 +16,14 @@ use message_ir::{
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
 use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
 use serde_json::Map;
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 const EXPORT_SOURCE: &str = "whatsapp";
 const EXPORT_TOOL: &str = "WhatsApp Chat Exporter";
 /// Pinned documented upstream version (JSON convert path; shell-out may differ).
 pub(crate) const EXPORT_TOOL_VERSION: &str = "0.13.0";
-
-/// Bump a per-exporter counter in the report's `extra` map.
-fn bump(report: &mut ExportReport, key: &str, by: u64) {
-    *report.extra.entry(key.to_string()).or_insert(0) += by;
-}
 
 /// File extension without the leading dot, e.g. `"jpg"` for `"photo.jpg"`.
 fn ext_of(name: &str) -> String {
@@ -133,10 +126,8 @@ fn ingest_chat(
     };
 
     let mut peer_phones: BTreeSet<String> = BTreeSet::new();
-    if !group {
-        if let Some(e164) = jid_to_e164(jid) {
-            peer_phones.insert(e164);
-        }
+    if !group && let Some(e164) = jid_to_e164(jid) {
+        peer_phones.insert(e164);
     }
 
     let mut pending = PendingConversation {
@@ -155,7 +146,7 @@ fn ingest_chat(
 
     let display_fallback = chat.name.clone().unwrap_or_default();
 
-    for (_id, msg) in &chat.messages {
+    for msg in chat.messages.values() {
         let Some(ts_raw) = msg.timestamp else {
             report.skipped_invalid_date += 1;
             continue;
@@ -173,12 +164,11 @@ fn ingest_chat(
         let is_from_me = msg.from_me;
         let (sender_handle, sender_display_name) =
             resolve_sender(msg, is_from_me, &chat_id, &display_fallback, group);
-        if group {
-            if let Some(e164) = jid_to_e164(sender_handle.as_str())
+        if group
+            && let Some(e164) = jid_to_e164(sender_handle.as_str())
                 .or_else(|| msg.sender.as_deref().and_then(jid_to_e164))
-            {
-                peer_phones.insert(e164);
-            }
+        {
+            peer_phones.insert(e164);
         }
 
         let text = message_text(msg);
@@ -197,7 +187,7 @@ fn ingest_chat(
                         vec![att]
                     }
                     Ok(None) => {
-                        bump(&mut *report, "attachments_missing", 1);
+                        report.bump("attachments_missing", 1);
                         Vec::new()
                     }
                     Err(e) => {
@@ -328,6 +318,11 @@ fn copy_media(
     }))
 }
 
+/// Shared hasher with the historical bare-io-error text this exporter emitted.
+fn file_sha256(path: &std::path::Path) -> anyhow::Result<String> {
+    media::file_sha256(path).map_err(|e| anyhow::anyhow!("{}", e.root_cause()))
+}
+
 /// Resolve a wtsexporter media path against `media_base` and search roots.
 ///
 /// Only paths that resolve inside an allowed root (search roots, or an
@@ -435,27 +430,6 @@ fn sanitize_att_stem(chat_id: &str) -> String {
     if s.is_empty() { "chat".into() } else { s }
 }
 
-/// SHA-256 fingerprint of the file bytes (streamed, not loaded whole).
-///
-/// # Errors
-///
-/// Returns an error when the file cannot be read.
-fn file_sha256(path: &Path) -> Result<String> {
-    // Stream in 64KB chunks so large media never loads fully into RAM.
-    let file = fs::File::open(path)?;
-    let mut reader = std::io::BufReader::with_capacity(64 * 1024, file);
-    let mut hasher = Sha256::new();
-    let mut buf = [0u8; 64 * 1024];
-    loop {
-        let n = reader.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Ok(hex::encode(hasher.finalize()))
-}
-
 /// WhatsApp `key_id` as a string (empty when missing).
 fn key_id_string(msg: &MessageJson) -> String {
     match &msg.key_id {
@@ -489,16 +463,7 @@ fn prepare_conversation(convo: &mut PendingConversation, report: &mut ExportRepo
             .cmp(&b.sort_key)
             .then_with(|| a.extra_str("key_id").cmp(b.extra_str("key_id")))
     });
-    convo.messages.retain(|m| {
-        if format_local_ts(m.sort_key / 1000).is_some() {
-            true
-        } else {
-            report.skipped_invalid_date += 1;
-            false
-        }
-    });
-    convo.has_attachments = convo.messages.iter().any(|m| !m.attachments.is_empty());
-    !convo.messages.is_empty()
+    message_vault_io_core::prune_and_finish_conversation(convo, report, |k| k / 1000)
 }
 
 /// Map a staged attachment onto the shared [`IrAttachment`] shape.
@@ -536,13 +501,19 @@ fn pending_to_document(
         })
         .collect();
 
-    let export = ExportMeta {
-        source: EXPORT_SOURCE.into(),
-        tool: EXPORT_TOOL.into(),
-        tool_version: EXPORT_TOOL_VERSION.into(),
+    let owner_meta = ExportMeta {
+        source: String::new(),
+        tool: String::new(),
+        tool_version: String::new(),
         owner_handle: None,
         owner_display_name: None,
     };
+    let export = message_vault_io_core::export_meta(
+        EXPORT_SOURCE,
+        EXPORT_TOOL,
+        EXPORT_TOOL_VERSION,
+        &owner_meta,
+    );
     let (owner_handle, owner_display) = owner_sender(&export);
 
     let mut messages = Vec::with_capacity(convo.messages.len());

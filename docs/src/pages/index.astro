@@ -1,49 +1,131 @@
 ---
-import "../styles/custom.css";
+import LandingLayout from "../layouts/LandingLayout.astro";
+import { landingLinks } from "../lib/landing-links";
 
-const userGuide = "https://bitrealm.io/vault/user/";
-const developer = "https://bitrealm.io/vault/developer/";
-const github = "https://github.com/bitrealm-dev/message-vault";
+const features = [
+  {
+    title: "Multiple import sources",
+    body: "Bring in SMS, iMessage, WhatsApp, and other supported phone backups from one desktop workflow.",
+  },
+  {
+    title: "Advanced search",
+    body: "Find a conversation, keyword, date range, or attachment without scrolling forever.",
+  },
+  {
+    title: "Native-style viewing",
+    body: "Read threads in a familiar chat layout so old messages still feel like messages.",
+  },
+  {
+    title: "Local and private",
+    body: "Your archive lives in a vault you run—on your machine or a server you control. Not a stranger’s cloud account.",
+  },
+  {
+    title: "Export anytime",
+    body: "Take clean copies in open formats whenever you want. Nothing is locked in.",
+  },
+  {
+    title: "Self-hosted control",
+    body: "Run from source, with Docker, or via the desktop app. You choose uptime, storage, and access.",
+  },
+] as const;
+
+const steps = [
+  {
+    num: "01",
+    title: "Run your vault",
+    body: "Install the desktop app, run from source, or start the published Docker image—no cloud signup required.",
+  },
+  {
+    num: "02",
+    title: "Import your history",
+    body: "Point Message Vault at phone backups you already have and bring conversations into one local library.",
+  },
+  {
+    num: "03",
+    title: "Search and export",
+    body: "Find any message quickly, browse threads, and export when you need a portable copy.",
+  },
+] as const;
 ---
 
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Bitrealm</title>
-    <meta
-      name="description"
-      content="Local software you run. Not a cloud account."
-    />
-    <link rel="canonical" href="https://bitrealm.io/" />
-  </head>
-  <body class="bitrealm-home">
-    <header class="bitrealm-header">
-      <a class="bitrealm-mark" href="/">Bitrealm</a>
-      <nav>
-        <a href={userGuide}>User Guide</a>
-        <a href={developer}>Developer</a>
-        <a href={github}>GitHub</a>
-      </nav>
-    </header>
-    <main class="bitrealm-main">
-      <h1>Bitrealm</h1>
-      <p class="bitrealm-lede">
-        Local software you run on a machine you control. Not a cloud account.
-      </p>
-      <article class="bitrealm-card">
-        <h2>Message Vault</h2>
-        <p>
-          Extract messages from Apple and Android phone backups. Import them
-          into a local SQLite vault. Browse, search, and export in formats you
-          can keep.
-        </p>
-        <p class="bitrealm-card-links">
-          <a href={userGuide}>User Guide</a>
-          <a href={developer}>Developer</a>
-          <a href={github}>GitHub</a>
-        </p>
-      </article>
-    </main>
-  </body>
-</html>
+<LandingLayout
+  title="Message Vault"
+  description="Extract messages from phone backups into a local vault you control. Browse, search, and export on your terms."
+  canonicalPath="/"
+>
+  <main>
+    <section class="mv-hero">
+      <div class="mv-hero-inner">
+        <div>
+          <span class="mv-eyebrow">Self-hosted and private</span>
+          <h1>Every message you’ve ever sent, preserved forever.</h1>
+          <p class="mv-lede">
+            Message Vault turns phone-backup chat history into one searchable
+            library you run yourself—SMS, iMessage, WhatsApp, and more.
+          </p>
+          <div class="mv-hero-actions">
+            <a
+              class="mv-btn mv-btn-primary mv-btn-lg"
+              href={landingLinks.download}>Download</a
+            >
+            <a class="mv-btn mv-btn-ghost mv-btn-lg" href={landingLinks.features}
+              >See features</a
+            >
+          </div>
+        </div>
+        <figure class="mv-hero-visual">
+          <img
+            src="/landing/hero-messages.avif"
+            alt="Message conversation preview"
+            width="960"
+            height="720"
+            loading="eager"
+          />
+        </figure>
+      </div>
+    </section>
+
+    <section class="mv-section mv-section-alt" id="features">
+      <div class="mv-section-inner">
+        <div class="mv-section-head">
+          <span class="mv-kicker">Why Message Vault</span>
+          <h2>The archive you’ll actually want to keep</h2>
+          <p>
+            Stop losing years of conversations. Turn scattered chat history into
+            one searchable, private library.
+          </p>
+        </div>
+        <div class="mv-feature-grid">
+          {
+            features.map((feature) => (
+              <article class="mv-feature">
+                <h3>{feature.title}</h3>
+                <p>{feature.body}</p>
+              </article>
+            ))
+          }
+        </div>
+      </div>
+    </section>
+
+    <section class="mv-section">
+      <div class="mv-section-inner">
+        <div class="mv-section-head">
+          <span class="mv-kicker">How it works</span>
+          <h2>Up and running in three steps</h2>
+        </div>
+        <div class="mv-steps">
+          {
+            steps.map((step) => (
+              <article class="mv-step">
+                <span class="mv-step-num">{step.num}</span>
+                <h3>{step.title}</h3>
+                <p>{step.body}</p>
+              </article>
+            ))
+          }
+        </div>
+      </div>
+    </section>
+  </main>
+</LandingLayout>

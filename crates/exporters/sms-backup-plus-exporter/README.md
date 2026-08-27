@@ -2,7 +2,7 @@
 
 Rescue messages from an SMS Backup+ `.eml` mail archive into JSON Lines, JSON, CSV, EML, MBOX, or XML. This is a limited rescue import.
 
-The desktop app Extract Messages screen uses this crate as a library. The `sms-backup-plus-exporter` command is the same converter from a terminal.
+The desktop app Import screen uses this crate as a library. The `sms-backup-plus-exporter` command is the same converter from a terminal.
 
 ## Build and test
 
@@ -23,4 +23,4 @@ Import mapping: https://bitrealm.io/vault/developer/formats/sms-backup-plus/mapp
 
 ## License
 
-AGPL-3.0. See the repository root `LICENSE`.
+Fair Core License. See the repository root `LICENSE.md`.

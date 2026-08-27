@@ -16,7 +16,7 @@ One of these:
 
 Use files from the same backup. A mismatched key will not decrypt.
 
-The desktop app ships with `wtsexporter` — no separate install.
+Install `wtsexporter` before Import. Commands are on [Install the desktop app](/vault/user/get-started/install-the-desktop-app/).
 
 ## How to get the data
 
@@ -32,8 +32,6 @@ See WhatsApp's official [backup documentation](https://faq.whatsapp.com/) for th
 
 The desktop app runs `wtsexporter` to read the database or encrypted backup, then imports the result. Conversation names use a `__whatsapp` suffix.
 
-The app can also read WhatsApp Business databases — enable that in advanced options.
-
 ## Known limitations
 
 - Getting the files from the phone varies by device and Android version. On modern phones without root access, the direct database path may be restricted
@@ -42,4 +40,4 @@ The app can also read WhatsApp Business databases — enable that in advanced op
 
 ## Next step
 
-Open **Import**, set the source to **WhatsApp - Android**, and fill in the backup path and key. See [Import from a backup](/vault/user/import-from-a-backup/).
+Open **Import**, set the source to **WhatsApp**, set **Platform** to **Android**, and fill in the backup folder and key. See [Import from a backup](/vault/user/import-from-a-backup/).

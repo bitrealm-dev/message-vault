@@ -9,22 +9,28 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use rusqlite::{Connection, params};
+use sqlx::AnyConnection;
 use tempfile::TempDir;
 
 use crate::config::Config;
-use crate::db::schema;
+use crate::db::{engine, schema};
 use crate::media_tools::{
     self, JPEG_MIN_BYTES, MP3_MIN_BYTES, MP4_MIN_BYTES, MediaKind, ext_of, path_str,
     probe_video_efficient,
 };
 
+/// Options for one derived-media processing pass.
 #[derive(Debug, Clone, Default)]
 pub struct ProcessAssetsOptions {
+    /// Re-convert even when a browser preview already exists.
     pub force: bool,
+    /// Convert and log without writing files or updating the database.
     pub dry_run: bool,
+    /// Skip image conversion.
     pub skip_image: bool,
+    /// Skip video conversion.
     pub skip_video: bool,
+    /// Skip audio conversion.
     pub skip_audio: bool,
     /// Override DB path from config.
     pub db: Option<PathBuf>,
@@ -32,11 +38,16 @@ pub struct ProcessAssetsOptions {
     pub source: Option<String>,
 }
 
+/// Counts reported by one derived-media processing pass.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ProcessAssetsStats {
+    /// Attachments examined.
     pub scanned: u64,
+    /// Browser previews written (JPEG/MP4/MP3).
     pub derived: u64,
+    /// Attachments left as-is (already converted, non-media, or small JPEG).
     pub skipped: u64,
+    /// Conversions that failed.
     pub errors: u64,
 }
 
@@ -72,17 +83,19 @@ impl AssetRow {
 ///
 /// Returns an error when the database is missing, a conversion tool fails, or
 /// a derived file cannot be written.
-pub fn run(cfg: &Config, opts: &ProcessAssetsOptions) -> Result<ProcessAssetsStats> {
+pub async fn run(cfg: &Config, opts: &ProcessAssetsOptions) -> Result<ProcessAssetsStats> {
     let db_path = opts.db.as_ref().unwrap_or(&cfg.paths.db);
     if !db_path.is_file() {
         bail!("database not found: {}", db_path.display());
     }
 
-    let mut conn = schema::open_configured(db_path)
+    let pool = engine::open_pool_for_path(db_path)
+        .await
         .with_context(|| format!("open database {}", db_path.display()))?;
-    schema::ensure_vault_schema(&conn)?;
+    let mut conn = pool.acquire().await?;
+    schema::ensure_vault_schema(&mut conn).await?;
 
-    let account_ids = list_account_ids(&conn, &cfg.paths.data_dir)?;
+    let account_ids = list_account_ids(&mut conn, &cfg.paths.data_dir).await?;
     if account_ids.is_empty() {
         bail!("no accounts found — create an account or run reset-demo first");
     }
@@ -92,11 +105,12 @@ pub fn run(cfg: &Config, opts: &ProcessAssetsOptions) -> Result<ProcessAssetsSta
 
     for account_id in &account_ids {
         let mut source_ids = discover_source_ids(
-            &conn,
+            &mut conn,
             account_id,
             &cfg.paths.data_dir,
             &cfg.paths.assets_dir,
-        )?;
+        )
+        .await?;
         if let Some(filter) = opts.source.as_deref() {
             let filter = filter.trim();
             source_ids.retain(|id| id == filter);
@@ -129,19 +143,21 @@ pub fn run(cfg: &Config, opts: &ProcessAssetsOptions) -> Result<ProcessAssetsSta
             fs::create_dir_all(&converted_dir)
                 .with_context(|| format!("create converted dir {}", converted_dir.display()))?;
 
-            let rows = list_attachments(&conn, account_id, &source_id)?;
+            let rows = list_attachments(&mut conn, account_id, &source_id).await?;
             for row in rows {
                 stats.scanned += 1;
-                match process_one(
-                    &mut conn,
+                match process_one(ProcessOneArgs {
+                    conn: &mut conn,
                     opts,
-                    work.path(),
+                    work_dir: work.path(),
                     account_id,
-                    &source_id,
-                    &assets_dir,
-                    &converted_dir,
-                    &row,
-                ) {
+                    source_id: &source_id,
+                    assets_dir: &assets_dir,
+                    converted_dir: &converted_dir,
+                    row: &row,
+                })
+                .await
+                {
                     Ok(Outcome::Derived) => stats.derived += 1,
                     Ok(Outcome::Skipped) => stats.skipped += 1,
                     Err(err) => {
@@ -172,17 +188,28 @@ enum Outcome {
     Skipped,
 }
 
-#[allow(clippy::too_many_arguments)]
-fn process_one(
-    conn: &mut Connection,
-    opts: &ProcessAssetsOptions,
-    work_dir: &Path,
-    account_id: &str,
-    source_id: &str,
-    assets_dir: &Path,
-    converted_dir: &Path,
-    row: &AssetRow,
-) -> Result<Outcome> {
+struct ProcessOneArgs<'a> {
+    conn: &'a mut AnyConnection,
+    opts: &'a ProcessAssetsOptions,
+    work_dir: &'a Path,
+    account_id: &'a str,
+    source_id: &'a str,
+    assets_dir: &'a Path,
+    converted_dir: &'a Path,
+    row: &'a AssetRow,
+}
+
+async fn process_one(args: ProcessOneArgs<'_>) -> Result<Outcome> {
+    let ProcessOneArgs {
+        conn,
+        opts,
+        work_dir,
+        account_id,
+        source_id,
+        assets_dir,
+        converted_dir,
+        row,
+    } = args;
     // Incomplete transfers / aborted uploads — never hand these to ffmpeg.
     if is_part_path(&row.assets_path) {
         let source_path = assets_dir.join(&row.assets_path);
@@ -283,7 +310,7 @@ fn process_one(
         MediaKind::Other => return Ok(Outcome::Skipped),
     };
 
-    update_derived(conn, account_id, source_id, &row.sha256, &blob)?;
+    update_derived(conn, account_id, source_id, &row.sha256, &blob).await?;
     println!(
         "{account_id}/{source_id}/{} -> {}",
         row.assets_path, blob.assets_path
@@ -291,19 +318,14 @@ fn process_one(
     Ok(Outcome::Derived)
 }
 
-fn list_account_ids(conn: &Connection, data_dir: &Path) -> Result<Vec<String>> {
-    let has_accounts: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'accounts'",
-        [],
-        |r| r.get(0),
-    )?;
+async fn list_account_ids(conn: &mut AnyConnection, data_dir: &Path) -> Result<Vec<String>> {
+    // Engine-branched: sqlite_master does not exist on Postgres.
     let mut ids = Vec::new();
-    if has_accounts > 0 {
-        let mut stmt = conn.prepare("SELECT id FROM accounts ORDER BY id")?;
-        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-        for row in rows {
-            ids.push(row?);
-        }
+    if schema::table_exists(conn, "accounts").await? {
+        let rows = sqlx::query_scalar::<_, String>("SELECT id FROM accounts ORDER BY id")
+            .fetch_all(&mut *conn)
+            .await?;
+        ids = rows;
     }
     if ids.is_empty() && data_dir.is_dir() {
         for entry in fs::read_dir(data_dir)? {
@@ -317,27 +339,28 @@ fn list_account_ids(conn: &Connection, data_dir: &Path) -> Result<Vec<String>> {
     Ok(ids)
 }
 
-fn discover_source_ids(
-    conn: &Connection,
+async fn discover_source_ids(
+    conn: &mut AnyConnection,
     account_id: &str,
     data_dir: &Path,
     assets_name: &str,
 ) -> Result<Vec<String>> {
     let mut ids = std::collections::BTreeSet::new();
-    let mut stmt = conn.prepare(
+    let rows = sqlx::query_scalar::<_, String>(
         r#"
         SELECT DISTINCT m.source
         FROM messages m
         JOIN conversations c ON c.id = m.conversation_id
-        WHERE c.account_id = ?1
+        WHERE c.account_id = $1
           AND m.source IS NOT NULL
           AND TRIM(m.source) != ''
         ORDER BY m.source
         "#,
-    )?;
-    let rows = stmt.query_map(params![account_id], |r| r.get::<_, String>(0))?;
-    for row in rows {
-        let s = row?;
+    )
+    .bind(account_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    for s in rows {
         let t = s.trim();
         if !t.is_empty() {
             ids.insert(t.to_string());
@@ -360,11 +383,25 @@ fn discover_source_ids(
     Ok(ids.into_iter().collect())
 }
 
-fn list_attachments(conn: &Connection, account_id: &str, source_id: &str) -> Result<Vec<AssetRow>> {
+async fn list_attachments(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    source_id: &str,
+) -> Result<Vec<AssetRow>> {
     // One row per stored blob. Several messages can share a blob under different
     // names, and only one derived file per blob is ever produced, so collapse
     // those rows and keep any name that could identify the media type.
-    let mut stmt = conn.prepare(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ),
+    >(
         r#"
         SELECT
             a.sha256,
@@ -376,58 +413,63 @@ fn list_attachments(conn: &Connection, account_id: &str, source_id: &str) -> Res
         FROM attachments a
         JOIN messages m ON m.id = a.message_id
         JOIN conversations c ON c.id = m.conversation_id
-        WHERE m.source = ?1
-          AND c.account_id = ?2
+        WHERE m.source = $1
+          AND c.account_id = $2
           AND a.sha256 IS NOT NULL AND a.sha256 != ''
           AND a.assets_path IS NOT NULL AND a.assets_path != ''
         GROUP BY a.sha256, a.assets_path
         ORDER BY a.sha256
         "#,
-    )?;
-    let rows = stmt.query_map(params![source_id, account_id], |r| {
-        Ok(AssetRow {
-            sha256: r.get(0)?,
-            assets_path: r.get(1)?,
-            mime_type: r.get(2)?,
-            derived_assets_path: r.get(3)?,
-            original_name: r.get(4)?,
-            source_path: r.get(5)?,
-        })
-    })?;
-    let mut out = Vec::new();
-    for row in rows {
-        out.push(row?);
-    }
+    )
+    .bind(source_id)
+    .bind(account_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    let out = rows
+        .into_iter()
+        .map(
+            |(sha256, assets_path, mime_type, derived_assets_path, original_name, source_path)| {
+                AssetRow {
+                    sha256,
+                    assets_path,
+                    mime_type,
+                    derived_assets_path,
+                    original_name,
+                    source_path,
+                }
+            },
+        )
+        .collect();
     Ok(out)
 }
 
-fn update_derived(
-    conn: &Connection,
+async fn update_derived(
+    conn: &mut AnyConnection,
     account_id: &str,
     source_id: &str,
     original_sha: &str,
     blob: &DerivedBlob,
 ) -> Result<()> {
-    conn.execute(
+    sqlx::query(
         r#"
         UPDATE attachments
-        SET derived_sha256 = ?1, derived_assets_path = ?2, derived_mime_type = ?3
-        WHERE sha256 = ?4
+        SET derived_sha256 = $1, derived_assets_path = $2, derived_mime_type = $3
+        WHERE sha256 = $4
           AND message_id IN (
             SELECT m.id FROM messages m
             JOIN conversations c ON c.id = m.conversation_id
-            WHERE m.source = ?5 AND c.account_id = ?6
+            WHERE m.source = $5 AND c.account_id = $6
           )
         "#,
-        params![
-            blob.sha256,
-            blob.assets_path,
-            blob.mime_type,
-            original_sha,
-            source_id,
-            account_id
-        ],
-    )?;
+    )
+    .bind(&blob.sha256)
+    .bind(&blob.assets_path)
+    .bind(&blob.mime_type)
+    .bind(original_sha)
+    .bind(source_id)
+    .bind(account_id)
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 
@@ -550,9 +592,7 @@ fn kind_of(assets_path: &str, mime: Option<&str>, name_hints: &[Option<&str>]) -
 }
 
 fn nonempty_mime(mime: Option<&str>) -> Option<&str> {
-    let Some(raw) = mime else {
-        return None;
-    };
+    let raw = mime?;
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         None
@@ -734,7 +774,7 @@ fn should_skip_existing(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::schema;
+    use crate::db::engine;
 
     #[test]
     fn derived_rel_path_layout() {
@@ -825,40 +865,44 @@ mod tests {
         assert!(!should_skip_existing(false, None, dir.path()));
     }
 
-    #[test]
-    fn store_and_update_derived_db() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("vault.db");
-        let conn = Connection::open(&db_path).unwrap();
-        schema::ensure_vault_schema(&conn).unwrap();
-        conn.execute(
-            "INSERT INTO accounts (id, username, read_only) VALUES ('acc', 'demo', 0)",
-            [],
-        )
-        .unwrap();
-        conn.execute(
+    #[tokio::test]
+    async fn store_and_update_derived_db() {
+        let (pool, dir) = engine::test_pool().await;
+        schema::ensure_vault_schema(&mut pool.acquire().await.unwrap())
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, username, read_only) VALUES ('acc', 'demo', 0)")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query(
             "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
              VALUES ('acc', '+1', '+1', 'phone', 'phone')",
-            [],
         )
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO conversations (id, account_id, chat_handle_id, conversation_type, source_file)
              VALUES (1, 'acc', 1, 'individual', 't')",
-            [],
         )
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO messages (id, conversation_id, account_id, source, timestamp, is_from_me, sort_order)
              VALUES (1, 1, 'acc', 'imessage', '2020-01-01T00:00:00Z', 0, 0)",
-            [],
         )
+        .execute(&mut *conn)
+        .await
         .unwrap();
-        conn.execute(
+        sqlx::query(
             "INSERT INTO attachments (id, message_id, sha256, assets_path, mime_type)
              VALUES (1, 1, 'aa11', 'aa/aa11.jpg', 'image/jpeg')",
-            [],
         )
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
         let converted = dir.path().join("converted");
@@ -866,15 +910,16 @@ mod tests {
         let blob = store_derived_bytes(&converted, b"jpeg-bytes", ".jpg").unwrap();
         assert!(converted.join(&blob.assets_path).is_file());
 
-        update_derived(&conn, "acc", "imessage", "aa11", &blob).unwrap();
-
-        let (d_sha, d_path, d_mime): (String, String, String) = conn
-            .query_row(
-                "SELECT derived_sha256, derived_assets_path, derived_mime_type FROM attachments WHERE id = 1",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
+        update_derived(&mut conn, "acc", "imessage", "aa11", &blob)
+            .await
             .unwrap();
+
+        let (d_sha, d_path, d_mime): (String, String, String) = sqlx::query_as(
+            "SELECT derived_sha256, derived_assets_path, derived_mime_type FROM attachments WHERE id = 1",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
         assert_eq!(d_sha, blob.sha256);
         assert_eq!(d_path, blob.assets_path);
         assert_eq!(d_mime, "image/jpeg");
@@ -891,13 +936,15 @@ mod tests {
         );
     }
 
-    #[test]
-    fn listed_attachments_carry_name_hints_for_extensionless_blobs() {
-        let dir = tempfile::tempdir().unwrap();
-        let conn = Connection::open(dir.path().join("vault.db")).unwrap();
-        schema::ensure_vault_schema(&conn).unwrap();
-        conn.execute_batch(
-            &format!(r#"
+    #[tokio::test]
+    async fn listed_attachments_carry_name_hints_for_extensionless_blobs() {
+        let (pool, _dir) = engine::test_pool().await;
+        schema::ensure_vault_schema(&mut pool.acquire().await.unwrap())
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(&format!(
+            r#"
             INSERT INTO accounts (id, username, read_only) VALUES ('acc', 'demo', 0);
             INSERT INTO handles (account_id, raw, normalized, handle_type, service)
                 VALUES ('acc', '+1', '+1', 'phone', 'phone');
@@ -907,11 +954,15 @@ mod tests {
                 VALUES (1, 1, 'acc', 'imessage', '2020-01-01T00:00:00Z', 0, 0);
             INSERT INTO attachments (id, message_id, sha256, assets_path, mime_type, original_name, path)
                 VALUES (1, 1, '{SHA}', 'ab/{SHA}', NULL, 'voice-note.amr', 'attachments/voice-note.amr');
-            "#),
-        )
+            "#
+        ))
+        .execute(&mut *conn)
+        .await
         .unwrap();
 
-        let rows = list_attachments(&conn, "acc", "imessage").unwrap();
+        let rows = list_attachments(&mut conn, "acc", "imessage")
+            .await
+            .unwrap();
         assert_eq!(rows.len(), 1);
         let row = &rows[0];
         assert_eq!(

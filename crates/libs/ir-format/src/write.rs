@@ -178,10 +178,10 @@ pub(crate) fn parts_are_trivial_text_duplicate(message_text: &str, parts: Option
     if part_text != message_text {
         return false;
     }
-    match obj.get("kind").and_then(|v| v.as_str()) {
-        None | Some("run") | Some("text") => true,
-        _ => false,
-    }
+    matches!(
+        obj.get("kind").and_then(|v| v.as_str()),
+        None | Some("run") | Some("text")
+    )
 }
 
 fn value_as_string(v: Option<&Value>) -> Option<String> {
@@ -259,10 +259,7 @@ pub(crate) fn write_conversation_csv(
             .attachments
             .iter()
             .map(|a| AttachmentCell {
-                path: a.path.clone(),
-                original_name: a.original_name.clone(),
-                mime_type: a.mime_type.clone(),
-                digest_sha256: a.digest_sha256.clone(),
+                meta: a.into(),
                 is_sticker: a.is_sticker,
                 transcription: a.transcription.clone(),
                 sticker_effect: a.sticker_effect.clone(),
@@ -391,6 +388,10 @@ fn write_conversation_mail(
 }
 
 /// Build [`MailMessage`] list from IR (reads attachment bytes from disk when missing).
+///
+/// # Errors
+///
+/// Returns an error when an attachment file cannot be read from disk.
 pub fn document_to_mail_messages(
     doc: &ConversationDocument,
     output_dir: &Path,
@@ -413,9 +414,7 @@ pub fn document_to_mail_messages(
             let bytes = util::load_attachment_bytes_strict(a, output_dir)?;
             attachments.push(MailAttachment {
                 bytes,
-                original_name: a.original_name.clone(),
-                mime_type: a.mime_type.clone(),
-                digest_sha256: a.digest_sha256.clone(),
+                meta: a.into(),
                 is_sticker: a.is_sticker,
                 transcription: a.transcription.clone(),
                 sticker_effect: a.sticker_effect.clone(),

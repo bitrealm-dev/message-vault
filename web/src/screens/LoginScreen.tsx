@@ -1,24 +1,18 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "../lib/auth";
-import { apiClient, setBaseUrl } from "../lib/api";
-import { isTauri } from "../lib/tauri-check";
-import { useAsyncAction } from "../lib/useAsyncAction";
-import TextField from "../components/TextField";
-import PasswordField from "../components/PasswordField";
 import AuthBackButton from "../components/AuthBackButton";
 import AuthErrorFooter from "../components/AuthErrorFooter";
 import Button from "../components/Button";
-import {
-  authCard,
-  authLabel,
-  authTitle,
-  mutedText,
-  pageCenter,
-} from "../lib/uiStyles";
-import ExtractScreen from "./Extract";
-import FormatScreen from "./Format";
-import { initialLoginServerUrl, isAuthMode, type AuthMode } from "../lib/authGuards";
+import HealthDot from "../components/HealthDot";
+import PasswordField from "../components/PasswordField";
+import TextField from "../components/TextField";
+import { apiClient, setBaseUrl } from "../lib/api";
+import { useAuth } from "../lib/auth";
+import { type AuthMode, initialLoginServerUrl, isAuthMode } from "../lib/authGuards";
+import { isTauri } from "../lib/tauri-check";
+import { authCard, authTitle, mutedText, pageCenter } from "../lib/uiStyles";
+import { useAsyncAction } from "../lib/useAsyncAction";
+import { useVaultHealth } from "../lib/useVaultHealth";
 
 interface AuthModeResponse {
   mode: string;
@@ -26,12 +20,13 @@ interface AuthModeResponse {
   try_demo?: boolean;
 }
 
+/** Flip to true to allow demo sign-in from the login cards. */
+const TRY_IT_ENABLED = false;
+
 export default function LoginScreen() {
   const navigate = useNavigate();
   const { login, setServer: setAuthServer, serverUrl: savedUrl } = useAuth();
-  const [serverUrl, setServerUrl] = useState(() =>
-    initialLoginServerUrl(savedUrl, isTauri()),
-  );
+  const [serverUrl, setServerUrl] = useState(() => initialLoginServerUrl(savedUrl, isTauri()));
   const [authMode, setAuthMode] = useState<AuthMode | null>(null);
   const [hankoApiUrl, setHankoApiUrl] = useState<string | null>(null);
   const { busy, error, run, clearError } = useAsyncAction();
@@ -42,7 +37,8 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
 
   const hankoRef = useRef<HTMLDivElement>(null);
-  const [offlineScreen, setOfflineScreen] = useState<"none" | "extract" | "format">("none");
+  // Only probe while choosing a vault; stop after Connect advances the card.
+  const healthStatus = useVaultHealth(authMode === null ? serverUrl : null);
 
   const displayError = error || hankoError;
 
@@ -149,43 +145,22 @@ export default function LoginScreen() {
     };
   }, [authMode, hankoApiUrl, serverUrl, login, run]);
 
-  if (offlineScreen === "extract") {
-    return <ExtractScreen onBack={() => setOfflineScreen("none")} />;
-  }
-  if (offlineScreen === "format") {
-    return <FormatScreen onBack={() => setOfflineScreen("none")} />;
-  }
-
   return (
     <div className={pageCenter}>
       <div className={authCard}>
-        <h1 className={authTitle}>
+        <h1 className={authMode === null ? `${authTitle} !text-center` : authTitle}>
           {authMode === null ? "Message Vault" : "Sign In"}
         </h1>
 
         {authMode === null && (
           <>
-            <div className="mb-4">
-              <TryItButton busy={busy} onClick={handleTryDemo} />
-              <p className={`${mutedText} mt-2`}>
-                Open a sample account.
-              </p>
-            </div>
-            <div className={`${orRowClass} mb-4`}>
-              <span className={orLineClass} />
-              <span className={orTextClass}>OR</span>
-              <span className={orLineClass} />
-            </div>
-            <label className={authLabel}>Server URL</label>
             <TextField
+              label="Server URL"
+              labelEnd={<HealthDot status={healthStatus} />}
               value={serverUrl}
               onChange={setServerUrl}
               onKeyDown={(e) => e.key === "Enter" && detectMode()}
-              placeholder={
-                isTauri()
-                  ? "https://vault.example.com"
-                  : "Leave blank for this origin"
-              }
+              placeholder={isTauri() ? "https://vault.example.com" : "Leave blank for this origin"}
             />
             <div className="mt-3 mb-[0.35rem] flex justify-end">
               <Button
@@ -202,59 +177,25 @@ export default function LoginScreen() {
                 Leave blank to use this origin (Vite `/v1` proxy or vault-hosted UI).
               </p>
             )}
-            {isTauri() && <div className="mb-4" />}
-
-            {isTauri() && (
-              <>
-                <div className={`${orRowClass} mb-2 mt-3`}>
-                  <span className={orLineClass} />
-                  <span className={orTextClass}>OR</span>
-                  <span className={orLineClass} />
-                </div>
-                <p
-                  className={`${mutedText} text-center mb-2`}
-                >
-                  Use offline message tools.
-                </p>
-                <div className="flex gap-3">
-                  <Button
-                    onClick={() => setOfflineScreen("extract")}
-                    className="flex-1 !p-2"
-                  >
-                    Extract messages
-                  </Button>
-                  <Button
-                    onClick={() => setOfflineScreen("format")}
-                    className="flex-1 !p-2"
-                  >
-                    Format conversion
-                  </Button>
-                </div>
-              </>
-            )}
 
             <AuthErrorFooter error={displayError} />
+            <TryItFooter busy={busy} onClick={handleTryDemo} />
           </>
         )}
 
         {authMode === "local" && (
           <>
-            <div className="mb-4">
-              <TryItButton busy={busy} onClick={handleTryDemo} />
-              <p className={`${mutedText} mt-2`}>
-                Open a sample account.
-              </p>
-            </div>
-            <label className={authLabel}>Username</label>
             <TextField
+              label="Username"
               value={username}
               onChange={setUsername}
               onKeyDown={(e) => e.key === "Enter" && handleLocalLogin()}
               autoComplete="username"
             />
 
-            <label className={`${authLabel} mt-3`}>Password</label>
             <PasswordField
+              label="Password"
+              className="mt-3"
               value={password}
               onChange={setPassword}
               onKeyDown={(e) => e.key === "Enter" && handleLocalLogin()}
@@ -264,30 +205,19 @@ export default function LoginScreen() {
             />
 
             <div className="mt-6 flex justify-end gap-3">
-              <Button onClick={() => navigate("/register")}>
-                Create an account
-              </Button>
-              <Button
-                variant="primary"
-                onClick={handleLocalLogin}
-                disabled={busy}
-              >
+              <Button onClick={() => navigate("/register")}>Create an account</Button>
+              <Button variant="primary" onClick={handleLocalLogin} disabled={busy}>
                 {busy ? "Signing in…" : "Sign in"}
               </Button>
             </div>
 
             <AuthErrorFooter error={displayError} />
+            <TryItFooter busy={busy} onClick={handleTryDemo} />
           </>
         )}
 
         {authMode === "hanko" && (
           <>
-            <div className="mb-4">
-              <TryItButton busy={busy} onClick={handleTryDemo} />
-              <p className={`${mutedText} mt-2`}>
-                Open a sample account.
-              </p>
-            </div>
             <div ref={hankoRef}>
               {hankoApiUrl ? (
                 <hanko-auth />
@@ -299,6 +229,7 @@ export default function LoginScreen() {
             </div>
 
             <AuthErrorFooter error={displayError} />
+            <TryItFooter busy={busy} onClick={handleTryDemo} />
           </>
         )}
 
@@ -310,15 +241,31 @@ export default function LoginScreen() {
   );
 }
 
-function TryItButton({
-  busy,
-  onClick,
-}: {
-  busy: boolean;
-  onClick: () => void;
-}) {
+function TryItFooter({ busy, onClick }: { busy: boolean; onClick: () => void }) {
+  const caption = TRY_IT_ENABLED
+    ? "Open a sample account."
+    : "Sample sign-in is temporarily unavailable.";
   return (
-    <Button variant="primary" onClick={onClick} disabled={busy}>
+    <>
+      <div className={`${orRowClass} mb-2 mt-3`}>
+        <span className={orLineClass} />
+        <span className={orTextClass}>OR</span>
+        <span className={orLineClass} />
+      </div>
+      <TryItButton busy={busy} onClick={onClick} />
+      <p className={`${mutedText} mt-2`}>{caption}</p>
+    </>
+  );
+}
+
+function TryItButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
+  return (
+    <Button
+      variant="primary"
+      onClick={onClick}
+      disabled={!TRY_IT_ENABLED || busy}
+      title={TRY_IT_ENABLED ? undefined : "Sample sign-in is temporarily unavailable."}
+    >
       {busy ? "Opening sample…" : "Try it"}
     </Button>
   );

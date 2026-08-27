@@ -166,9 +166,7 @@ function isThemeMode(value: string | null | undefined): value is ThemeMode {
 }
 
 /** True when the value is only light or dark (older storage without "system"). */
-function isResolvedTheme(
-  value: string | null | undefined,
-): value is ResolvedTheme {
+function isResolvedTheme(value: string | null | undefined): value is ResolvedTheme {
   return value === "light" || value === "dark";
 }
 
@@ -185,12 +183,7 @@ export function normalizeHex(raw: string): string | null {
 
 /** Join the four theme colors into a shareable comma-separated string. */
 export function formatThemeShare(seeds: ThemeSeeds): string {
-  return [
-    seeds.lightHeader,
-    seeds.lightAccent,
-    seeds.darkHeader,
-    seeds.darkAccent,
-  ]
+  return [seeds.lightHeader, seeds.lightAccent, seeds.darkHeader, seeds.darkAccent]
     .map((h) => normalizeHex(h) ?? h)
     .join(",");
 }
@@ -235,10 +228,7 @@ function prefersDarkScheme(): boolean {
 }
 
 /** Pick light or dark from the saved mode and the system color-scheme setting. */
-export function resolveMode(
-  mode: ThemeMode,
-  prefersDark = prefersDarkScheme(),
-): ResolvedTheme {
+export function resolveMode(mode: ThemeMode, prefersDark = prefersDarkScheme()): ResolvedTheme {
   if (mode === "system") return prefersDark ? "dark" : "light";
   return mode;
 }
