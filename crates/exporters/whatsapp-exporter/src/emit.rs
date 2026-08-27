@@ -6,6 +6,7 @@ use crate::parse::{
     ChatJson, MessageJson, load_chat_store, media_path, message_text, timestamp_ms, timestamp_secs,
 };
 use anyhow::{Context, Result};
+use media::{CompressOptions, MediaMode};
 use message_csv::{DateRange, format_local_ts, json_cell, stable_guid};
 use message_ir::{
     ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, HandleType,
@@ -14,7 +15,9 @@ use message_ir::{
     owner_sender,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
-use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
+use message_vault_io_core::{
+    AttachmentJob, CancelFlag, ExportReport, LogSink, OutputFormat, emit_log, run_attachment_jobs,
+};
 use serde_json::Map;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -61,8 +64,14 @@ pub(crate) fn convert_json(
     // deletes all *.json files.
     let store = load_chat_store(json_path)?;
     let copy_attachments = transforms.copies_attachments();
-    let (mut sink, _attachments_dir) =
-        FormatSink::open_prepared(output, output_format, transforms)?;
+    let media_mode = if copy_attachments {
+        transforms.media
+    } else {
+        MediaMode::Disabled
+    };
+    let compress = transforms.compress.clone();
+    let log = transforms.log.clone();
+    let (mut sink, attachments_dir) = FormatSink::open_prepared(output, output_format, transforms)?;
     let mut report = ExportReport::default();
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
 
@@ -75,7 +84,6 @@ pub(crate) fn convert_json(
         match ingest_chat(
             &jid,
             &chat,
-            output,
             date_range,
             copy_attachments,
             media_search_roots,
@@ -89,14 +97,48 @@ pub(crate) fn convert_json(
         }
     }
 
+    let mut documents = Vec::new();
+    let mut media_sources = Vec::new();
     for (chat_id, mut convo) in conversations {
         message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
         if !prepare_conversation(&mut convo, &mut report) {
             continue;
         }
-        let doc = pending_to_document(&chat_id, &convo, &mut report)?;
+        collect_media_sources(&convo, &mut media_sources);
+        documents.push(pending_to_document(&chat_id, &convo, &mut report)?);
+    }
+
+    stage_conversation_attachments(
+        &mut documents,
+        &attachments_dir,
+        media_mode,
+        &compress,
+        &media_sources,
+        log.as_ref(),
+        cancel,
+        &mut report,
+    )?;
+
+    let total_conversations = documents.len() as u64;
+    emit_log(log.as_ref(), "");
+    emit_log(
+        log.as_ref(),
+        format!("Preparing {total_conversations} conversation file(s)..."),
+    );
+    let mut written = 0u64;
+    for doc in documents {
+        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        written += 1;
         sink.write_document(doc)?;
         report.conversations += 1;
+        // `%` instead of `u64::is_multiple_of`: that method needs Rust 1.87.
+        #[allow(clippy::manual_is_multiple_of)]
+        if written % 100 == 0 || written == total_conversations {
+            emit_log(
+                log.as_ref(),
+                format!("  preparing {written}/{total_conversations}"),
+            );
+        }
     }
     let sink_result = sink.finish()?;
 
@@ -107,7 +149,6 @@ pub(crate) fn convert_json(
 fn ingest_chat(
     jid: &str,
     chat: &ChatJson,
-    output: &Path,
     date_range: &DateRange,
     copy_attachments: bool,
     media_search_roots: &[PathBuf],
@@ -172,45 +213,16 @@ fn ingest_chat(
         }
 
         let text = message_text(msg);
-        let attachments = match media_path(msg) {
-            Some(src) if copy_attachments => {
-                match copy_media(
-                    src,
-                    chat.media_base.as_deref(),
-                    media_search_roots,
-                    output,
-                    &chat_id,
-                    msg,
-                ) {
-                    Ok(Some(att)) => {
-                        report.attachments_saved += 1;
-                        vec![att]
-                    }
-                    Ok(None) => {
-                        report.bump("attachments_missing", 1);
-                        Vec::new()
-                    }
-                    Err(e) => {
-                        report.errors.push(format!("{jid} media: {e:#}"));
-                        Vec::new()
-                    }
-                }
-            }
-            Some(src) => {
-                // Media is not copied: keep basename metadata only. Do not store
-                // host paths as IR `path` or hash path strings as content digests.
-                let name = Path::new(src)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned());
-                vec![PendingAttachment {
-                    rel_path: String::new(),
-                    content_type: msg.mime.clone().unwrap_or_default(),
-                    extension: name.as_deref().map(ext_of).unwrap_or_default(),
-                    digest_sha256: None,
-                    name_hint: name,
-                }]
-            }
-            None => Vec::new(),
+        let (attachments, media_source) = match media_path(msg) {
+            Some(src) => queue_media(
+                src,
+                chat.media_base.as_deref(),
+                media_search_roots,
+                copy_attachments,
+                msg,
+                report,
+            ),
+            None => (Vec::new(), None),
         };
 
         pending.messages.push(PendingMessage {
@@ -233,6 +245,9 @@ fn ingest_chat(
                     "is_sticker".into(),
                     if msg.sticker { "true" } else { "false" }.into(),
                 );
+                if let Some(path) = media_source {
+                    e.insert("media_source".into(), path.to_string_lossy().into_owned());
+                }
                 e
             },
         });
@@ -278,49 +293,105 @@ fn resolve_sender(
     }
 }
 
-/// Copy one media file into `output/attachments/` and return a staged attachment.
-///
-/// # Errors
-///
-/// Returns an error when the destination cannot be created or the file cannot
-/// be copied or hashed.
-fn copy_media(
+/// Resolve a media path during parse. Do not copy; the runner writes later.
+fn queue_media(
     src: &str,
     media_base: Option<&str>,
     media_search_roots: &[PathBuf],
-    output: &Path,
-    chat_id: &str,
+    copy_attachments: bool,
     msg: &MessageJson,
-) -> Result<Option<PendingAttachment>> {
-    let Some(src_path) = resolve_media_file(src, media_base, media_search_roots) else {
-        return Ok(None);
-    };
-    let original = src_path
+    report: &mut ExportReport,
+) -> (Vec<PendingAttachment>, Option<PathBuf>) {
+    let name = Path::new(src)
         .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "attachment.bin".into());
-    let stem = sanitize_att_stem(chat_id);
-    let dest_name = unique_name(output, &stem, &original, msg);
-    let rel = format!("attachments/{dest_name}");
-    let dest = output.join(&rel);
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::copy(&src_path, &dest)
-        .with_context(|| format!("copy {} → {}", src_path.display(), dest.display()))?;
-    let digest = file_sha256(&dest)?;
-    Ok(Some(PendingAttachment {
-        rel_path: rel,
+        .map(|n| n.to_string_lossy().into_owned());
+    let pending = PendingAttachment {
+        rel_path: String::new(),
         content_type: msg.mime.clone().unwrap_or_default(),
-        extension: ext_of(&original),
-        digest_sha256: Some(digest),
-        name_hint: Some(original),
-    }))
+        extension: name.as_deref().map(ext_of).unwrap_or_default(),
+        digest_sha256: None,
+        name_hint: name,
+    };
+    if !copy_attachments {
+        return (vec![pending], None);
+    }
+    match resolve_media_file(src, media_base, media_search_roots) {
+        Some(src_path) => (vec![pending], Some(src_path)),
+        None => {
+            report.bump("attachments_missing", 1);
+            (Vec::new(), None)
+        }
+    }
 }
 
-/// Shared hasher with the historical bare-io-error text this exporter emitted.
-fn file_sha256(path: &std::path::Path) -> anyhow::Result<String> {
-    media::file_sha256(path).map_err(|e| anyhow::anyhow!("{}", e.root_cause()))
+/// Collect source paths in the same order attachments will appear on documents.
+fn collect_media_sources(convo: &PendingConversation, out: &mut Vec<Option<PathBuf>>) {
+    for msg in &convo.messages {
+        if msg.attachments.is_empty() {
+            continue;
+        }
+        let source = msg.extra_str("media_source").to_string();
+        for _ in &msg.attachments {
+            out.push((!source.is_empty()).then(|| PathBuf::from(&source)));
+        }
+    }
+}
+
+/// Write staged attachment bytes after parse and before conversation files.
+fn stage_conversation_attachments(
+    documents: &mut [ConversationDocument],
+    attachments_dir: &Path,
+    mode: MediaMode,
+    compress: &CompressOptions,
+    media_sources: &[Option<PathBuf>],
+    log: Option<&LogSink>,
+    cancel: Option<&CancelFlag>,
+    report: &mut ExportReport,
+) -> Result<()> {
+    let mut jobs = Vec::new();
+    for doc in documents.iter_mut() {
+        for msg in &mut doc.messages {
+            let ts = msg.timestamp_unix_ms;
+            for att in &mut msg.attachments {
+                let hint = att.size_bytes;
+                jobs.push(AttachmentJob {
+                    attachment: att,
+                    timestamp_unix_ms: ts,
+                    size_hint: hint,
+                });
+            }
+        }
+    }
+    let cancel_flag = cancel.map(|flag| flag.as_ref());
+    run_attachment_jobs(
+        &mut jobs,
+        attachments_dir,
+        mode,
+        compress,
+        |i| {
+            let Some(path) = media_sources.get(i).and_then(|p| p.as_ref()) else {
+                return Ok(None);
+            };
+            std::fs::read(path).map(Some).or(Ok(None))
+        },
+        |progress| {
+            emit_log(
+                log,
+                format!(
+                    "  attachments {}/{} {}/{}",
+                    progress.done, progress.total, progress.bytes_done, progress.bytes_total
+                ),
+            );
+        },
+        cancel_flag,
+    )
+    .map_err(anyhow::Error::msg)?;
+    for job in &jobs {
+        if job.attachment.path.is_some() && job.attachment.digest_sha256.is_some() {
+            report.attachments_saved += 1;
+        }
+    }
+    Ok(())
 }
 
 /// Resolve a wtsexporter media path against `media_base` and search roots.
@@ -389,6 +460,7 @@ fn path_within_any(path: &Path, roots: &[PathBuf]) -> bool {
 }
 
 /// Pick a unique attachment file name under `output/attachments/`.
+#[cfg(test)]
 fn unique_name(output: &Path, chat_stem: &str, original: &str, msg: &MessageJson) -> String {
     let dir = output.join("attachments");
     let short: String = key_id_string(msg).chars().take(12).collect();
@@ -413,21 +485,6 @@ fn unique_name(output: &Path, chat_stem: &str, original: &str, msg: &MessageJson
         }
     }
     unreachable!("u32 counter exhausted for attachment names");
-}
-
-/// Filesystem-safe stem from a chat id (non-alphanumeric → `_`).
-fn sanitize_att_stem(chat_id: &str) -> String {
-    let s: String = chat_id
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if s.is_empty() { "chat".into() } else { s }
 }
 
 /// WhatsApp `key_id` as a string (empty when missing).

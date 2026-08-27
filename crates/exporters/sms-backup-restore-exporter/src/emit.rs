@@ -3,13 +3,14 @@
 
 use anyhow::Result;
 use contacts::ContactsBook;
+use media::MediaMode;
 use message_csv::DateRange;
 use message_ir::{ConversationDocument, HandleType};
 use message_ir_format::{
     ExportTransforms, FormatSink, FormatSinkResult, SbrReadOptions, SbrReadReport,
     read_sbr_documents,
 };
-use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat, emit_log};
 use std::path::Path;
 
 /// Map the ir-format read report onto the shared [`ExportReport`] shape,
@@ -94,6 +95,13 @@ pub(crate) fn convert_export(
     args: ConvertExportArgs<'_>,
 ) -> Result<(ExportReport, FormatSinkResult)> {
     let copy_attachments = args.transforms.copies_attachments();
+    let media = if copy_attachments {
+        args.transforms.media
+    } else {
+        MediaMode::Disabled
+    };
+    let compress = args.transforms.compress.clone();
+    let log = args.transforms.log.clone();
     let (mut sink, attachments_dir) =
         FormatSink::open_prepared(args.output_dir, args.output_format, args.transforms)?;
     let (mut documents, report) = read_sbr_documents(
@@ -105,13 +113,31 @@ pub(crate) fn convert_export(
             copy_attachments,
             // FormatSink reloads staged bytes after media transforms.
             keep_attachment_bytes: false,
+            media,
+            compress,
+            log: log.as_ref(),
             cancel: args.cancel,
         },
     )?;
     enrich_contacts(args.contacts, &mut documents);
 
+    let total_conversations = documents.len() as u64;
+    emit_log(log.as_ref(), "");
+    emit_log(
+        log.as_ref(),
+        format!("Preparing {total_conversations} conversation file(s)..."),
+    );
+    let mut written = 0u64;
     for document in documents {
+        written += 1;
         sink.write_document(document)?;
+        #[allow(clippy::manual_is_multiple_of)]
+        if written % 100 == 0 || written == total_conversations {
+            emit_log(
+                log.as_ref(),
+                format!("  preparing {written}/{total_conversations}"),
+            );
+        }
     }
     Ok((to_core_report(report), sink.finish()?))
 }

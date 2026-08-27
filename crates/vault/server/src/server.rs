@@ -1136,7 +1136,8 @@ mod tests {
                 bytes_uploaded: None,
                 duration_ms: None,
                 parse_ms: None,
-                convert_ms: None,
+                attachments_ms: None,
+                prepare_ms: None,
                 upload_ms: None,
                 summary: None,
                 issues: vec![],
@@ -1167,7 +1168,8 @@ mod tests {
             bytes_uploaded: Some(100),
             duration_ms: Some(48_000),
             parse_ms: Some(18_000),
-            convert_ms: Some(22_000),
+            attachments_ms: Some(22_000),
+            prepare_ms: Some(4_000),
             upload_ms: Some(8_000),
             summary: Some(serde_json::json!({
                 "parse": { "messages": 10 },
@@ -1209,7 +1211,8 @@ mod tests {
         assert_eq!(value.id, import_id);
         assert_eq!(value.duration_ms, Some(48_000));
         assert_eq!(value.parse_ms, Some(18_000));
-        assert_eq!(value.convert_ms, Some(22_000));
+        assert_eq!(value.attachments_ms, Some(22_000));
+        assert_eq!(value.prepare_ms, Some(4_000));
         assert_eq!(value.upload_ms, Some(8_000));
         assert_eq!(value.summary["parse"]["messages"], 10);
         assert_eq!(value.issues.len(), 2);
@@ -1229,7 +1232,8 @@ mod tests {
             bytes_uploaded: Some(100),
             duration_ms: Some(48_000),
             parse_ms: Some(18_000),
-            convert_ms: Some(22_000),
+            attachments_ms: Some(22_000),
+            prepare_ms: Some(4_000),
             upload_ms: Some(8_000),
             summary: None,
             issues: vec![CompleteImportIssueBody {

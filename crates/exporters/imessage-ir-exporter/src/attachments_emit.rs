@@ -1,7 +1,7 @@
 //! Attachment persistence and part-index helpers for the emitter.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use imessage_database::{
     message_types::handwriting::HandwrittenMessage,
@@ -103,7 +103,25 @@ fn remap_part_attachment_indices(
     }
 }
 
-/// Load body parts and attachment bytes for one Apple message.
+/// How the shared runner should load one iMessage attachment after parse.
+pub(super) enum AttachmentLoad {
+    /// Decrypt or read this backup path during the attachment pass.
+    Path {
+        path: PathBuf,
+        size_hint: Option<u64>,
+    },
+    /// Already-resident bytes (handwriting SVG).
+    Bytes(Vec<u8>),
+    /// No source file.
+    Missing,
+}
+
+/// Load body parts and attachment metadata for one Apple message.
+///
+/// When `defer_file_bytes` is true, file attachments are not decrypted or
+/// read. The runner loads them later from [`AttachmentLoad`] keys. Handwriting
+/// SVG stays in memory. When `defer_file_bytes` is false (EML / MBOX embed),
+/// bytes are loaded here as before.
 ///
 /// # Errors
 ///
@@ -112,7 +130,8 @@ fn remap_part_attachment_indices(
 pub(super) fn collect_mail_parts_and_attachments(
     session: &MailSession,
     message: &Message,
-) -> Result<(Vec<PartRecord>, Vec<MailAttachment>), RuntimeError> {
+    defer_file_bytes: bool,
+) -> Result<(Vec<PartRecord>, Vec<MailAttachment>, Vec<AttachmentLoad>), RuntimeError> {
     let mut attachments = Attachment::from_message(session.data_source.db(), message)?;
     let referenced = referenced_attachment_indices(message, &attachments);
     let index_by_full: std::collections::HashMap<usize, usize> = referenced
@@ -125,9 +144,9 @@ pub(super) fn collect_mail_parts_and_attachments(
     remap_part_attachment_indices(&mut parts, &index_by_full);
 
     let mut mail_attachments = Vec::new();
+    let mut loads = Vec::new();
     for &idx in &referenced {
         let attachment = &mut attachments[idx];
-        let bytes = load_attachment_bytes(session, attachment)?;
         let transcription = transcription_for_attachment(message, attachment);
         let (_prompt, sticker_effect) = sticker_extras(
             attachment,
@@ -135,6 +154,26 @@ pub(super) fn collect_mail_parts_and_attachments(
             session.options.db_path.as_path(),
             session.options.attachment_root.as_deref(),
         );
+        let (bytes, load) = if defer_file_bytes {
+            let size_hint = (attachment.total_bytes > 0).then_some(attachment.total_bytes as u64);
+            let load = attachment
+                .resolved_attachment_path(
+                    &session.options.platform,
+                    &session.options.db_path,
+                    session.options.attachment_root.as_deref(),
+                )
+                .map(|path| AttachmentLoad::Path {
+                    path: PathBuf::from(path),
+                    size_hint,
+                })
+                .unwrap_or(AttachmentLoad::Missing);
+            (Vec::new(), load)
+        } else {
+            (
+                load_attachment_bytes(session, attachment)?,
+                AttachmentLoad::Missing,
+            )
+        };
         mail_attachments.push(MailAttachment {
             bytes,
             meta: message_ir::AttachmentMeta {
@@ -147,11 +186,13 @@ pub(super) fn collect_mail_parts_and_attachments(
             transcription,
             sticker_effect,
         });
+        loads.push(load);
     }
 
     if let Some(svg) = try_handwriting_svg(session, message) {
+        loads.push(AttachmentLoad::Bytes(svg.bytes.clone()));
         mail_attachments.push(svg);
     }
 
-    Ok((parts, mail_attachments))
+    Ok((parts, mail_attachments, loads))
 }

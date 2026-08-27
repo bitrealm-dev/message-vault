@@ -2,12 +2,15 @@
 //! ([`ConversationDocument`]) every exporter writes, then write the chosen
 //! output format via [`FormatSink`].
 
-use crate::attachments_emit::{pending_attachment_to_ir, save_pdu_attachments};
+use crate::attachments_emit::{
+    pending_attachment_to_ir, queue_pdu_attachments, stage_conversation_attachments,
+};
 use crate::chat_id::{chat_id_group, chat_id_individual, guarded_phone};
 use crate::xml::{SkippedBadAddrDetail, XmlMessage, parse_xml_file};
 use anyhow::{Context, Result, bail};
 use contacts::ContactsBook;
 use go_sms_mms::{ParsedPdu, parse_pdu_file};
+use media::MediaMode;
 use message_csv::{DateRange, format_local_ts, stable_guid};
 use message_ir::{
     ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, HandleType,
@@ -16,7 +19,7 @@ use message_ir::{
     owner_sender, parse_android_type,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
-use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat, prepare_outputs};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat, emit_log, prepare_outputs};
 use phone::OwnerHandleSet;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -203,7 +206,10 @@ fn add_pdu_message(
         report.bump("pdu_group_messages", 1);
     }
 
-    let att_names: Vec<String> = attachments.iter().map(|a| a.rel_path.clone()).collect();
+    let att_names: Vec<String> = attachments
+        .iter()
+        .map(|a| a.digest_sha256.clone().unwrap_or_default())
+        .collect();
     let dedupe_key = format!(
         "{}|{}|{}|{}",
         parsed.timestamp,
@@ -371,6 +377,7 @@ fn pending_to_document(
     convo: &PendingConversation,
     owner_handle: &str,
     report: &mut ExportReport,
+    blob_bytes: &std::collections::HashMap<String, Vec<u8>>,
 ) -> Result<ConversationDocument> {
     let name_by_handle = display_names_for_handles(convo);
     let mut participants: Vec<IrParticipant> = convo
@@ -443,7 +450,7 @@ fn pending_to_document(
         let attachments: Vec<IrAttachment> = msg
             .attachments
             .iter()
-            .map(pending_attachment_to_ir)
+            .map(|a| pending_attachment_to_ir(a, blob_bytes))
             .collect();
         let message_kind = if msg.attachments.is_empty() {
             IrMessageKind::Sms
@@ -610,8 +617,17 @@ pub(crate) fn convert_export(
 
     // Clean previous CSV / mail artifacts (keep attachments if re-run; rewrite as needed).
     let copy_attachments = transforms.copies_attachments();
+    let media_mode = if copy_attachments {
+        transforms.media
+    } else {
+        MediaMode::Disabled
+    };
+    let compress = transforms.compress.clone();
+    let log = transforms.log.clone();
     let (mut sink, attachments_dir) =
         FormatSink::open_prepared(&output_dir, output_format, transforms)?;
+    let mut blob_bytes: std::collections::HashMap<String, Vec<u8>> =
+        std::collections::HashMap::new();
 
     let mut xml_paths = message_vault_io_core::discover_files(input_dir, &is_xml_file)?;
     xml_paths.sort();
@@ -675,8 +691,7 @@ pub(crate) fn convert_export(
                     report.skipped_out_of_range += 1;
                     continue;
                 }
-                match save_pdu_attachments(&parsed, &attachments_dir, &mut report, copy_attachments)
-                {
+                match queue_pdu_attachments(&parsed, copy_attachments, &mut blob_bytes) {
                     Ok(atts) => add_pdu_message(
                         &mut conversations,
                         parsed,
@@ -698,6 +713,7 @@ pub(crate) fn convert_export(
 
     message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
 
+    let mut documents = Vec::new();
     for (chat_id, mut convo) in conversations {
         for msg in &mut convo.messages {
             enrich_pending_names(contacts, &chat_id, msg);
@@ -705,9 +721,45 @@ pub(crate) fn convert_export(
         if !prepare_conversation(&mut convo, &mut report) {
             continue;
         }
-        let doc = pending_to_document(&chat_id, &convo, &owner_handle, &mut report)?;
+        documents.push(pending_to_document(
+            &chat_id,
+            &convo,
+            &owner_handle,
+            &mut report,
+            &blob_bytes,
+        )?);
+    }
+
+    stage_conversation_attachments(
+        &mut documents,
+        &attachments_dir,
+        media_mode,
+        &compress,
+        log.as_ref(),
+        cancel,
+        &mut report,
+    )
+    .map_err(anyhow::Error::msg)?;
+
+    let total_conversations = documents.len() as u64;
+    emit_log(log.as_ref(), "");
+    emit_log(
+        log.as_ref(),
+        format!("Preparing {total_conversations} conversation file(s)..."),
+    );
+    let mut written = 0u64;
+    for doc in documents {
+        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        written += 1;
         sink.write_document(doc)?;
         report.conversations += 1;
+        #[allow(clippy::manual_is_multiple_of)]
+        if written % 100 == 0 || written == total_conversations {
+            emit_log(
+                log.as_ref(),
+                format!("  preparing {written}/{total_conversations}"),
+            );
+        }
     }
 
     let sink_result = sink.finish()?;

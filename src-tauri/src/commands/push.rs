@@ -23,6 +23,8 @@ fn finished_push_events(
         step: "upload".into(),
         done: as_usize(report.conversations_total),
         total: as_usize(report.conversations_total),
+        bytes_done: None,
+        bytes_total: None,
         status: None,
     };
     let summary = serde_json::json!({
@@ -154,6 +156,8 @@ pub async fn push(
                         step: "upload".into(),
                         done: index.saturating_sub(1),
                         total,
+                        bytes_done: None,
+                        bytes_total: None,
                         status: None,
                     },
                 );

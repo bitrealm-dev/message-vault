@@ -6,6 +6,7 @@ import {
 } from "../../components/import/ImportSummaryPanel";
 import { useTauriJob } from "../../hooks/useTauriJob";
 import { apiClient, getBaseUrl } from "../../lib/api";
+import { formatAttachmentProgress } from "../../lib/attachmentProgressCopy";
 import { attachmentStepCopy } from "../../lib/attachmentStepCopy";
 import { useAuth } from "../../lib/auth";
 import { imessageExtractFields } from "../../lib/imessageExtractFields";
@@ -23,6 +24,11 @@ import type {
 } from "../../lib/types";
 import { whatsappExtractFields } from "../../lib/whatsappExtractFields";
 import { isWhatsappMethod } from "../../lib/whatsappImport";
+import {
+  type AttachmentProgressCounts,
+  attachmentDoneDetail,
+  isProgressStepComplete,
+} from "./importProgressState";
 
 export type ImportStep = {
   label: string;
@@ -39,19 +45,23 @@ type StageTiming = {
   extractStartedAt: number | null;
   parseStartedAt: number | null;
   parseEndedAt: number | null;
-  convertStartedAt: number | null;
-  convertEndedAt: number | null;
+  attachmentsStartedAt: number | null;
+  attachmentsEndedAt: number | null;
+  prepareStartedAt: number | null;
+  prepareEndedAt: number | null;
 };
 
 const EMPTY_TIMING: StageTiming = {
   extractStartedAt: null,
   parseStartedAt: null,
   parseEndedAt: null,
-  convertStartedAt: null,
-  convertEndedAt: null,
+  attachmentsStartedAt: null,
+  attachmentsEndedAt: null,
+  prepareStartedAt: null,
+  prepareEndedAt: null,
 };
 
-/** Three import steps shown in the progress view. */
+/** Four import steps shown in the progress view. */
 function initialSteps(
   status: ImportStep["status"] = "pending",
   attachmentMedia: AttachmentMediaMode = "copy",
@@ -60,6 +70,7 @@ function initialSteps(
   return [
     { label: "Parse backup", status, detail: status === "active" ? "Parsing backup…" : undefined },
     { label: attachments.label, status: "pending" },
+    { label: "Preparing messages", status: "pending" },
     { label: "Upload to vault", status: "pending" },
   ];
 }
@@ -67,35 +78,38 @@ function initialSteps(
 /** Index of the progress step that matches this server event. */
 function stepIndexFor(step: ImportProgressEvent["step"]): number {
   if (step === "parse") return 0;
-  if (step === "convert") return 1;
-  return 2;
+  if (step === "attachments") return 1;
+  if (step === "prepare") return 2;
+  return 3;
 }
 
-/**
- * Present-tense verb shown while a step is running.
- * Convert-stage ratios are conversation writes (`wrote N/M`), not attachment ops.
- */
+/** Present-tense verb shown while a step is running. */
 function progressVerb(step: ImportProgressEvent["step"]): string {
   if (step === "upload") return "Uploading";
-  if (step === "convert") return "Writing";
+  if (step === "prepare") return "Preparing";
+  if (step === "attachments") return "Copied";
   return "Parsing";
 }
 
-/** Parse and convert durations from timestamps recorded during extract. */
+/** Parse, attachment, and prepare durations from timestamps recorded during extract. */
 function stageDurations(
   timing: StageTiming,
   extractFinishedAt: number,
-): { parseMs: number; convertMs: number } {
+): { parseMs: number; attachmentsMs: number; prepareMs: number } {
   const parseStart = timing.parseStartedAt ?? timing.extractStartedAt ?? extractFinishedAt;
-  if (timing.convertStartedAt != null) {
-    return {
-      parseMs: Math.max(0, (timing.parseEndedAt ?? timing.convertStartedAt) - parseStart),
-      convertMs: Math.max(0, extractFinishedAt - timing.convertStartedAt),
-    };
-  }
+  const attachmentsEnd = timing.attachmentsEndedAt ?? timing.prepareStartedAt ?? extractFinishedAt;
+  const prepareEnd = timing.prepareEndedAt ?? extractFinishedAt;
   return {
-    parseMs: Math.max(0, extractFinishedAt - (timing.extractStartedAt ?? parseStart)),
-    convertMs: 0,
+    parseMs: Math.max(
+      0,
+      (timing.parseEndedAt ?? timing.attachmentsStartedAt ?? extractFinishedAt) - parseStart,
+    ),
+    attachmentsMs:
+      timing.attachmentsStartedAt != null
+        ? Math.max(0, attachmentsEnd - timing.attachmentsStartedAt)
+        : 0,
+    prepareMs:
+      timing.prepareStartedAt != null ? Math.max(0, prepareEnd - timing.prepareStartedAt) : 0,
   };
 }
 
@@ -138,6 +152,7 @@ export function useImportJob() {
   }>({});
   const timingRef = useRef({ ...EMPTY_TIMING });
   const attachmentModeRef = useRef<AttachmentMediaMode>("copy");
+  const lastAttachmentProgressRef = useRef<AttachmentProgressCounts | null>(null);
 
   function returnToForm(): void {
     setPhase("form");
@@ -153,26 +168,40 @@ export function useImportJob() {
       timingRef.current.parseStartedAt ??= now;
       countsRef.current.messagesParsed =
         event.total > 0 && event.done >= event.total ? event.total : event.done;
-    } else if (event.step === "convert" && timingRef.current.convertStartedAt == null) {
+    } else if (event.step === "attachments") {
       timingRef.current.parseEndedAt ??= now;
-      timingRef.current.convertStartedAt = now;
+      timingRef.current.attachmentsStartedAt ??= now;
+      lastAttachmentProgressRef.current = {
+        done: event.done,
+        total: event.total,
+        bytesDone: event.bytes_done ?? 0,
+        bytesTotal: event.bytes_total ?? 0,
+      };
+    } else if (event.step === "prepare") {
+      timingRef.current.attachmentsEndedAt ??= now;
+      timingRef.current.prepareStartedAt ??= now;
     }
 
     const stepIndex = stepIndexFor(event.step);
     let rawDetail = `${event.done}/${event.total}`;
-    if (event.status === "included_in_extract") {
-      rawDetail = "Included in extract";
-    } else if (event.status) {
+    if (event.status) {
       rawDetail = `${event.done}/${event.total} (${event.status})`;
     }
 
     const attachments = attachmentStepCopy(attachmentModeRef.current);
+    const lastAttachment = lastAttachmentProgressRef.current;
     const detail =
-      event.status === "included_in_extract" && event.step === "convert"
-        ? rawDetail
+      event.step === "attachments"
+        ? formatAttachmentProgress({
+            mode: attachmentModeRef.current,
+            done: event.done,
+            total: event.total,
+            bytesDone: event.bytes_done ?? lastAttachment?.bytesDone ?? 0,
+            bytesTotal: event.bytes_total ?? lastAttachment?.bytesTotal ?? 0,
+          })
         : `${progressVerb(event.step)} ${rawDetail}`;
-    const done = event.total > 0 && event.done >= event.total;
-    const attachmentLabel = event.step === "convert" ? attachments.label : undefined;
+    const done = isProgressStepComplete(event.step, event.done, event.total);
+    const attachmentLabel = event.step === "attachments" ? attachments.label : undefined;
 
     setSteps((current) =>
       current.map((step, index) => {
@@ -201,6 +230,7 @@ export function useImportJob() {
     issuesRef.current = [];
     countsRef.current = {};
     timingRef.current = { ...EMPTY_TIMING };
+    lastAttachmentProgressRef.current = null;
     attachmentModeRef.current = form.attachmentMedia;
     setRunning(true);
     setPhase("progress");
@@ -211,7 +241,8 @@ export function useImportJob() {
     let importSessionId: number | null = null;
     let importCompleted = false;
     let parseMs: number | null = null;
-    let convertMs: number | null = null;
+    let attachmentsMs: number | null = null;
+    let prepareMs: number | null = null;
     let uploadMs: number | null = null;
     let pushResult: TauriJobResult | null = null;
     let outputDir = "";
@@ -285,9 +316,19 @@ export function useImportJob() {
       }
 
       const extractFinishedAt = performance.now();
-      timingRef.current.convertEndedAt = extractFinishedAt;
-      ({ parseMs, convertMs } = stageDurations(timingRef.current, extractFinishedAt));
+      timingRef.current.prepareEndedAt = extractFinishedAt;
+      timingRef.current.attachmentsEndedAt ??=
+        timingRef.current.prepareStartedAt ?? extractFinishedAt;
+      ({ parseMs, attachmentsMs, prepareMs } = stageDurations(
+        timingRef.current,
+        extractFinishedAt,
+      ));
       const attachments = attachmentStepCopy(form.attachmentMedia);
+      const attachmentDoneLine = attachmentDoneDetail(
+        form.attachmentMedia,
+        lastAttachmentProgressRef.current,
+        attachments.doneDetail,
+      );
 
       setSteps([
         {
@@ -299,8 +340,14 @@ export function useImportJob() {
         {
           label: attachments.label,
           status: "done",
-          detail: attachments.doneDetail,
-          durationMs: convertMs,
+          detail: attachmentDoneLine,
+          durationMs: attachmentsMs,
+        },
+        {
+          label: "Preparing messages",
+          status: "done",
+          detail: "Preparation complete",
+          durationMs: prepareMs,
         },
         {
           label: "Upload to vault",
@@ -338,7 +385,7 @@ export function useImportJob() {
 
       setSteps((current) =>
         current.map((step, i) =>
-          i === 2
+          i === 3
             ? { ...step, status: "done", detail: "Upload complete", durationMs: uploadMs }
             : step,
         ),
@@ -367,12 +414,13 @@ export function useImportJob() {
         messagesDeduped: pushReport?.messages_deduped,
         messagesFailed: pushReport?.messages_failed,
         parseMs,
-        convertMs,
+        attachmentsMs,
+        prepareMs,
         uploadMs,
         durationMs,
         issues: issuesRef.current,
       };
-      const durations = [parseMs, convertMs, uploadMs];
+      const durations = [parseMs, attachmentsMs, prepareMs, uploadMs];
       setSteps((current) =>
         current.map((step, index) => {
           const duration = durations[index];
@@ -388,7 +436,8 @@ export function useImportJob() {
             attachment_count: pushReport?.assets_uploaded,
             bytes_uploaded: pushReport?.assets_bytes,
             parse_ms: parseMs,
-            convert_ms: convertMs,
+            attachments_ms: attachmentsMs,
+            prepare_ms: prepareMs,
             upload_ms: uploadMs,
             duration_ms: durationMs,
             summary: {

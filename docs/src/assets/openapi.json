@@ -3935,14 +3935,14 @@
             ],
             "format": "int64"
           },
-          "bytes_uploaded": {
+          "attachments_ms": {
             "type": [
               "integer",
               "null"
             ],
             "format": "int64"
           },
-          "convert_ms": {
+          "bytes_uploaded": {
             "type": [
               "integer",
               "null"
@@ -3973,6 +3973,13 @@
             "type": "boolean"
           },
           "parse_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "prepare_ms": {
             "type": [
               "integer",
               "null"
@@ -5474,15 +5481,15 @@
             "type": "integer",
             "format": "int64"
           },
-          "bytes_uploaded": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "convert_ms": {
+          "attachments_ms": {
             "type": [
               "integer",
               "null"
             ],
+            "format": "int64"
+          },
+          "bytes_uploaded": {
+            "type": "integer",
             "format": "int64"
           },
           "duration_ms": {
@@ -5516,6 +5523,13 @@
             "type": "string"
           },
           "parse_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "prepare_ms": {
             "type": [
               "integer",
               "null"
