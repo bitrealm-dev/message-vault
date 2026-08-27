@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { IMESSAGE_METHODS, IMESSAGE_SOURCE_ID } from "./imessageImport";
-import { vaultSourceForMethod } from "./vaultSource";
+import { importSessionCreateBody, vaultSourceForMethod } from "./vaultSource";
 import { WHATSAPP_METHODS, WHATSAPP_SOURCE_ID } from "./whatsappImport";
 
 describe("vaultSourceForMethod", () => {
@@ -31,5 +31,29 @@ describe("vaultSourceForMethod", () => {
 
   it("returns an unknown string unchanged", () => {
     expect(vaultSourceForMethod("not-a-real-source")).toBe("not-a-real-source");
+  });
+});
+
+describe("importSessionCreateBody", () => {
+  it("sends imessage when the form method is imessage-ios", () => {
+    expect(importSessionCreateBody("imessage-ios")).toEqual({
+      source: "imessage",
+      tool: "message-vault-io",
+      mode: "append",
+    });
+  });
+
+  it("sends whatsapp when the form method is whatsapp-android", () => {
+    expect(importSessionCreateBody("whatsapp-android")).toEqual({
+      source: "whatsapp",
+      tool: "message-vault-io",
+      mode: "append",
+    });
+  });
+
+  it("sends sms-backup-restore unchanged", () => {
+    expect(importSessionCreateBody("sms-backup-restore").source).toBe(
+      "sms-backup-restore",
+    );
   });
 });

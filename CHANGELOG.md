@@ -13,6 +13,7 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ### Fixed
 
+- 2026-08-27: Desktop Import opens the vault session as `imessage` or `whatsapp` instead of the Platform method id (`imessage-ios`, `whatsapp-android`, …), so conversation uploads no longer fail with a source mismatch.
 - 2026-08-27: Import Errors groups identical `step` + `reason` + `kind` into one row with an `N files` count. Expanding the row lists the filenames. Stored per-file issues are unchanged.
 
 ### Changed

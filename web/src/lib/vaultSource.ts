@@ -11,3 +11,16 @@ export function vaultSourceForMethod(source: string): string {
   }
   return source;
 }
+
+/** Body for POST /v1/imports. Maps method ids; leaves other sources as-is. */
+export function importSessionCreateBody(formSource: string): {
+  source: string;
+  tool: "message-vault-io";
+  mode: "append";
+} {
+  return {
+    source: vaultSourceForMethod(formSource),
+    tool: "message-vault-io",
+    mode: "append",
+  };
+}
