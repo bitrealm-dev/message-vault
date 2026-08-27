@@ -29,6 +29,7 @@ describe("ImportProgressView", () => {
         steps={[
           { label: "Parse backup", status: "active", detail: "Extracting…" },
           { label: "Copy attachments", status: "pending" },
+          { label: "Preparing messages", status: "pending" },
           { label: "Upload to vault", status: "pending" },
         ]}
         running
@@ -81,6 +82,7 @@ describe("ImportProgressView", () => {
         steps={[
           { label: "Parse backup", status: "done", durationMs: 1000 },
           { label: "Copy attachments", status: "done", durationMs: 500 },
+          { label: "Preparing messages", status: "done", durationMs: 50 },
           { label: "Upload to vault", status: "done", durationMs: 2000 },
         ]}
         running={false}
