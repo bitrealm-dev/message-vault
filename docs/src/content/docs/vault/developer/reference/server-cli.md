@@ -119,9 +119,10 @@ Regenerate demo bundle, clear demo account data, import, and process assets
 * `--bundle <BUNDLE>` — Demo bundle directory (rewritten by demo-seed, then imported)
 
   Default value: `crates/vault/demo-seed`
-* `--config <CONFIG>` — Active config path to overwrite (default config/config.toml)
+* `--config <CONFIG>` — Active config path. Overwritten on the SQLite path; only read for attachment paths when `--db-url` is set (default config/config.toml)
 
   Default value: `config/config.toml`
+* `--db-url <DB_URL>` — Connection URL (postgres://… or sqlite://…); seeds that database instead of replacing paths.db
 
 
 
