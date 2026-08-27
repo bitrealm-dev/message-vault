@@ -361,7 +361,7 @@ pub(super) async fn promote_append(
 
 /// Staging rows per set-based insert window (progress plus smaller write-ahead
 /// log spikes).
-const PROMOTE_MESSAGE_BATCH: i64 = 10_000;
+const PROMOTE_MESSAGE_BATCH: i64 = 50_000;
 /// Pairs per multi-row INSERT into `_promote_msg_map` (SQLite default max variables is 999).
 /// Drop secondary indexes only for large promotes relative to the existing table.
 const PROMOTE_INDEX_DROP_MIN_STAGING: i64 = 5_000;
