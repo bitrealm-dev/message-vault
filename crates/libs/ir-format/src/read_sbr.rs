@@ -1,19 +1,22 @@
 //! Read SMS Backup & Restore XML into [`ConversationDocument`] values.
 
 use anyhow::{Context, Result, bail};
+use media::{CompressOptions, MediaMode};
 use message_csv::{DateRange, format_local_ts, stable_guid};
 use message_ir::{
     ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, HandleType,
     IrAttachment, IrConversationType, IrDirection, IrMessage, IrMessageKind, IrParticipant,
     IrService, IrSource, SCHEMA_VERSION, owner_sender,
 };
-use message_vault_io_core::{CancelFlag, check_cancel, discover_files, is_cancelled};
+use message_vault_io_core::{
+    AttachmentJob, CancelFlag, LogSink, check_cancel, discover_files, emit_log, is_cancelled,
+    run_attachment_jobs,
+};
 use phone::OwnerHandleSet;
 use sbr::{
     AttachmentBlob, ConversationKind, ParseStats, Record, infer_owner_phones, parse_file_with,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -66,13 +69,18 @@ pub struct SbrReadOptions<'a> {
     pub copy_attachments: bool,
     /// Whether to retain decoded bytes in memory on the records.
     pub keep_attachment_bytes: bool,
+    /// How to write attachment files after parse.
+    pub media: MediaMode,
+    /// Image/video compress settings used when `media` converts or compresses.
+    pub compress: CompressOptions,
+    /// Optional progress log (attachment lines for the desktop app).
+    pub log: Option<&'a LogSink>,
     /// Cancellation flag checked between files.
     pub cancel: Option<&'a CancelFlag>,
 }
 
 #[derive(Debug, Clone)]
 struct PendingAttachment {
-    rel_path: String,
     original_name: Option<String>,
     mime_type: Option<String>,
     digest: String,
@@ -135,44 +143,100 @@ fn merge_stats(report: &mut SbrReadReport, stats: ParseStats) {
     report.skipped_bad_attachment += stats.skipped_bad_attachment;
 }
 
-fn stage_attachments(
-    blobs: &[AttachmentBlob],
-    options: &SbrReadOptions<'_>,
-    report: &mut SbrReadReport,
-) -> Result<Vec<PendingAttachment>> {
-    if !options.copy_attachments && !options.keep_attachment_bytes {
-        return Ok(Vec::new());
-    }
-    let mut out = Vec::with_capacity(blobs.len());
-    for blob in blobs {
-        if options.copy_attachments
-            && let Some(dir) = options.attachments_dir
-        {
-            let path = dir.join(&blob.filename);
-            if !path.exists() {
-                // Stage atomically: a crash mid-write would otherwise leave
-                // a truncated file under the content-addressed name, which
-                // every later run would see as already staged and reuse
-                // forever. Media transforms skip *.tmp names, and the next
-                // run's cleanup drops the whole attachments/ directory.
-                let tmp = path.with_extension("tmp");
-                fs::write(&tmp, blob.data.as_ref())?;
-                fs::rename(&tmp, &path)?;
-                report.attachments_saved += 1;
-            }
-        }
-        out.push(PendingAttachment {
-            rel_path: format!("attachments/{}", blob.filename),
+fn queue_attachments(blobs: &[AttachmentBlob], keep_bytes: bool) -> Vec<PendingAttachment> {
+    blobs
+        .iter()
+        .map(|blob| PendingAttachment {
             original_name: blob.original_name.clone(),
             mime_type: blob.mime_type.clone(),
             digest: blob.digest_hex.clone(),
             size_bytes: blob.data.len() as u64,
-            bytes: options
-                .keep_attachment_bytes
-                .then(|| Arc::clone(&blob.data)),
-        });
+            bytes: keep_bytes.then(|| Arc::clone(&blob.data)),
+        })
+        .collect()
+}
+
+/// Write queued attachment bytes after every conversation is built.
+fn stage_read_attachments(
+    documents: &mut [ConversationDocument],
+    options: &SbrReadOptions<'_>,
+    report: &mut SbrReadReport,
+) -> Result<()> {
+    let payloads: Vec<Option<Vec<u8>>> = documents
+        .iter()
+        .flat_map(|doc| {
+            doc.messages
+                .iter()
+                .flat_map(|msg| msg.attachments.iter().map(|att| att.bytes.clone()))
+        })
+        .collect();
+    if payloads.is_empty() {
+        return Ok(());
     }
-    Ok(out)
+
+    let mut jobs = Vec::new();
+    for doc in documents.iter_mut() {
+        for msg in &mut doc.messages {
+            let ts = msg.timestamp_unix_ms;
+            for att in &mut msg.attachments {
+                let hint = att
+                    .size_bytes
+                    .or_else(|| att.bytes.as_ref().map(|b| b.len() as u64));
+                jobs.push(AttachmentJob {
+                    attachment: att,
+                    timestamp_unix_ms: ts,
+                    size_hint: hint,
+                });
+            }
+        }
+    }
+    if jobs.is_empty() {
+        return Ok(());
+    }
+
+    let mode = if options.copy_attachments {
+        options.media
+    } else {
+        MediaMode::Disabled
+    };
+    let attachments_dir = options.attachments_dir.unwrap_or_else(|| Path::new(""));
+    run_attachment_jobs(
+        &mut jobs,
+        attachments_dir,
+        mode,
+        &options.compress,
+        |i| Ok(payloads.get(i).cloned().flatten()),
+        |progress| {
+            emit_log(
+                options.log,
+                format!(
+                    "  attachments {}/{} {}/{}",
+                    progress.done, progress.total, progress.bytes_done, progress.bytes_total
+                ),
+            );
+        },
+        options.cancel.map(|flag| flag.as_ref()),
+    )
+    .map_err(anyhow::Error::msg)?;
+
+    let mut seen = HashSet::new();
+    for job in &jobs {
+        if let (Some(path), Some(_)) = (&job.attachment.path, &job.attachment.digest_sha256)
+            && seen.insert(path.clone())
+        {
+            report.attachments_saved += 1;
+        }
+    }
+    if !options.keep_attachment_bytes {
+        for doc in documents.iter_mut() {
+            for msg in &mut doc.messages {
+                for att in &mut msg.attachments {
+                    att.bytes = None;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn chat_id(record: &Record) -> String {
@@ -214,7 +278,7 @@ fn add_record(
             participant_e164s: peers,
             messages: Vec::new(),
         });
-    let names: Vec<_> = attachments.iter().map(|a| a.rel_path.as_str()).collect();
+    let names: Vec<_> = attachments.iter().map(|a| a.digest.as_str()).collect();
     // Include the full fractional timestamp and sender to avoid false deduplication
     // of distinct messages within the same second.
     let dedupe_key = format!(
@@ -351,10 +415,10 @@ fn to_document(
                 .attachments
                 .iter()
                 .map(|a| IrAttachment {
-                    path: Some(a.rel_path.clone()),
+                    path: None,
                     original_name: a.original_name.clone(),
                     mime_type: a.mime_type.clone(),
-                    digest_sha256: Some(a.digest.clone()),
+                    digest_sha256: (!a.digest.is_empty()).then(|| a.digest.clone()),
                     is_sticker: false,
                     transcription: None,
                     sticker_effect: None,
@@ -448,20 +512,14 @@ pub fn read_sbr_documents(
         let guarded = phone::normalize_guarded(primary, phone::PhoneRegion::Usa);
         (owners.all_phone_digits(), Some(guarded.normalized))
     };
-    if options.copy_attachments
-        && let Some(dir) = options.attachments_dir
-    {
-        fs::create_dir_all(dir)?;
-    }
-
     let mut report = SbrReadReport::default();
     let mut conversations = BTreeMap::new();
+    let keep_bytes = options.copy_attachments || options.keep_attachment_bytes;
     for path in paths {
         check_cancel(options.cancel).map_err(anyhow::Error::msg)?;
-        // Stage each message as it is parsed so decoded attachment bytes can
-        // be dropped before the next MMS is read. Peak RAM is one message's
-        // payloads, not the whole backup. Messages that parse before an XML
-        // error are kept; stats are merged even when the file is truncated.
+        // Decode attachment bytes during parse; file writes wait until every
+        // conversation is built. Messages that parse before an XML error are
+        // kept; stats are merged even when the file is truncated.
         let mut stats = ParseStats::default();
         let parse_result = parse_file_with(&path, &owners, &mut stats, |record| {
             check_cancel(options.cancel).map_err(anyhow::Error::msg)?;
@@ -469,12 +527,11 @@ pub fn read_sbr_documents(
                 report.skipped_out_of_range += 1;
                 return Ok(());
             }
-            match stage_attachments(&record.attachments, &options, &mut report)
-                .and_then(|attachments| add_record(&mut conversations, record, attachments))
-            {
+            let attachments = queue_attachments(&record.attachments, keep_bytes);
+            match add_record(&mut conversations, record, attachments) {
                 Ok(()) => Ok(()),
                 Err(error) => {
-                    // Keep parsing the rest of the file; one bad attachment
+                    // Keep parsing the rest of the file; one bad record
                     // must not abort the whole backup.
                     report.errors.push(format!("{}: {error:#}", path.display()));
                     Ok(())
@@ -511,6 +568,7 @@ pub fn read_sbr_documents(
         ));
         report.conversations += 1;
     }
+    stage_read_attachments(&mut documents, &options, &mut report)?;
     Ok((documents, report))
 }
 
@@ -518,6 +576,31 @@ pub fn read_sbr_documents(
 mod tests {
     use super::*;
     use crate::SbrBackupSession;
+    use std::fs;
+
+    fn opts<'a>(
+        owner_phones: &'a [String],
+        date_range: &'a DateRange,
+        attachments_dir: Option<&'a Path>,
+        copy_attachments: bool,
+        keep_attachment_bytes: bool,
+    ) -> SbrReadOptions<'a> {
+        SbrReadOptions {
+            owner_phones,
+            date_range,
+            attachments_dir,
+            copy_attachments,
+            keep_attachment_bytes,
+            media: if copy_attachments {
+                MediaMode::Clone
+            } else {
+                MediaMode::Disabled
+            },
+            compress: CompressOptions::default(),
+            log: None,
+            cancel: None,
+        }
+    }
 
     #[test]
     fn reads_then_writes_source_fields_and_attachment() {
@@ -528,14 +611,7 @@ mod tests {
         let stage = output.join("attachments");
         let (docs, report) = read_sbr_documents(
             &input,
-            SbrReadOptions {
-                owner_phones: &[],
-                date_range: &DateRange::default(),
-                attachments_dir: Some(&stage),
-                copy_attachments: true,
-                keep_attachment_bytes: false,
-                cancel: None,
-            },
+            opts(&[], &DateRange::default(), Some(&stage), true, false),
         )
         .unwrap();
         assert_eq!(report.attachments_saved, 1);
@@ -578,14 +654,7 @@ mod tests {
         let stage = output.join("attachments");
         let (docs, report) = read_sbr_documents(
             &input,
-            SbrReadOptions {
-                owner_phones: &[],
-                date_range: &DateRange::default(),
-                attachments_dir: Some(&stage),
-                copy_attachments: true,
-                keep_attachment_bytes: false,
-                cancel: None,
-            },
+            opts(&[], &DateRange::default(), Some(&stage), true, false),
         )
         .unwrap();
         assert_eq!(report.attachments_saved, 1);
@@ -607,18 +676,9 @@ mod tests {
         )
         .unwrap();
         fs::write(input.join("broken.xml"), "<smses><mms date=").unwrap();
-        let (docs, report) = read_sbr_documents(
-            &input,
-            SbrReadOptions {
-                owner_phones: &[],
-                date_range: &DateRange::default(),
-                attachments_dir: None,
-                copy_attachments: false,
-                keep_attachment_bytes: false,
-                cancel: None,
-            },
-        )
-        .unwrap();
+        let (docs, report) =
+            read_sbr_documents(&input, opts(&[], &DateRange::default(), None, false, false))
+                .unwrap();
         assert_eq!(docs[0].export.owner_handle.as_deref(), Some("+15555550100"));
         assert_eq!(report.errors.len(), 1);
     }
@@ -632,16 +692,10 @@ mod tests {
             r#"<smses><sms protocol="0" address="+15555550101" date="1400773261000" type="1" body="kept"/><sms date=""#,
         )
         .unwrap();
+        let owner = vec!["+15555550100".to_string()];
         let (docs, report) = read_sbr_documents(
             &input,
-            SbrReadOptions {
-                owner_phones: &["+15555550100".into()],
-                date_range: &DateRange::default(),
-                attachments_dir: None,
-                copy_attachments: false,
-                keep_attachment_bytes: false,
-                cancel: None,
-            },
+            opts(&owner, &DateRange::default(), None, false, false),
         )
         .unwrap();
         assert_eq!(docs.len(), 1);

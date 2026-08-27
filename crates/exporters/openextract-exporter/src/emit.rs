@@ -12,7 +12,7 @@ use message_ir::{
     PendingConversation, PendingMessage, SCHEMA_VERSION, owner_sender,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
-use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat, prepare_outputs};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat, emit_log, prepare_outputs};
 use phone::sanitize_number;
 use serde_json::{Map, json};
 use std::collections::{BTreeMap, HashSet};
@@ -63,6 +63,7 @@ pub(crate) fn convert_export(
     let (inputs, output) = prepare_outputs(&[input.to_path_buf()], output)?;
     let input = &inputs[0];
 
+    let log = transforms.log.clone();
     let (mut sink, _attachments_dir) =
         FormatSink::open_prepared(&output, output_format, transforms)?;
 
@@ -177,13 +178,33 @@ pub(crate) fn convert_export(
 
     message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
 
+    let mut documents = Vec::new();
     for (chat_id, mut convo) in conversations {
         if !prepare_conversation(&mut convo, &mut report) {
             continue;
         }
-        let doc = pending_to_document(&chat_id, &convo, &mut report)?;
+        documents.push(pending_to_document(&chat_id, &convo, &mut report)?);
+    }
+
+    let total_conversations = documents.len() as u64;
+    emit_log(log.as_ref(), "");
+    emit_log(
+        log.as_ref(),
+        format!("Preparing {total_conversations} conversation file(s)..."),
+    );
+    let mut written = 0u64;
+    for doc in documents {
+        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        written += 1;
         sink.write_document(doc)?;
         report.conversations += 1;
+        #[allow(clippy::manual_is_multiple_of)]
+        if written % 100 == 0 || written == total_conversations {
+            emit_log(
+                log.as_ref(),
+                format!("  preparing {written}/{total_conversations}"),
+            );
+        }
     }
     let sink_result = sink.finish()?;
 

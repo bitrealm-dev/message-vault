@@ -5,6 +5,7 @@
 pub mod cli;
 
 use anyhow::{Context, Result, bail};
+use media::{CompressOptions, MediaMode};
 use message_ir::ConversationDocument;
 use message_ir_format::{
     CSV_HEADERS, ExportTransforms, FormatSink, FormatSinkResult, SbrReadOptions,
@@ -122,6 +123,13 @@ fn load_documents(
                 attachments_dir: Some(&attachments_dir),
                 copy_attachments,
                 keep_attachment_bytes: false,
+                media: if copy_attachments {
+                    MediaMode::Clone
+                } else {
+                    MediaMode::Disabled
+                },
+                compress: CompressOptions::default(),
+                log: None,
                 cancel: config.cancel.as_ref(),
             },
         )?;

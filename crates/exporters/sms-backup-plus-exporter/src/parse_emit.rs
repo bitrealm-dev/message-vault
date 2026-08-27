@@ -79,11 +79,11 @@ pub(super) enum ParsedEmlKind {
     Archive {
         msgs: Vec<ParsedMessage>,
         skipped_dates: u64,
-        path_display: String,
+        _path_display: String,
     },
     Flat {
         msg: Box<ParsedMessage>,
-        path_display: String,
+        _path_display: String,
     },
     FlatNone,
     NotSms,
@@ -128,7 +128,7 @@ pub(super) fn parse_one_eml(
                 ParsedEmlKind::Archive {
                     msgs,
                     skipped_dates,
-                    path_display,
+                    _path_display: path_display,
                 }
             }
             Err(err) => ParsedEmlKind::ParseError(format!("{path_display}: {err:#}")),
@@ -142,7 +142,7 @@ pub(super) fn parse_one_eml(
                 enrich_display_names(&mut msg, contacts);
                 ParsedEmlKind::Flat {
                     msg: Box::new(msg),
-                    path_display,
+                    _path_display: path_display,
                 }
             }
             Ok(None) => ParsedEmlKind::FlatNone,

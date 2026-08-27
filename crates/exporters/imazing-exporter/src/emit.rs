@@ -9,6 +9,7 @@ use crate::parse_emit::{
 };
 use anyhow::Result;
 use contacts::ContactsBook;
+use media::{CompressOptions, MediaMode};
 use message_csv::{DateRange, format_local_ts, stable_guid};
 use message_ir::{
     ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, HandleType,
@@ -17,7 +18,9 @@ use message_ir::{
     owner_sender,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
-use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat, prepare_outputs};
+use message_vault_io_core::{
+    CancelFlag, ExportReport, LogSink, OutputFormat, emit_log, prepare_outputs,
+};
 use serde_json::Map;
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
@@ -86,6 +89,13 @@ pub(crate) fn convert_export(
     let (inputs, output) = prepare_outputs(&[input.to_path_buf()], output)?;
     let input = &inputs[0];
     let copy_attachments = transforms.copies_attachments();
+    let media_mode = if copy_attachments {
+        transforms.media
+    } else {
+        MediaMode::Disabled
+    };
+    let compress = transforms.compress.clone();
+    let log = transforms.log.clone();
     let (mut sink, attachments_dir) =
         FormatSink::open_prepared(&output, output_format, transforms)?;
     // Walk the input tree once; per-attachment lookups hit this index.
@@ -182,31 +192,22 @@ pub(crate) fn convert_export(
                 let mut attachment_extra: BTreeMap<String, String> = BTreeMap::new();
                 if !row.attachment.is_empty() {
                     let csv_parent = discovered.path.parent().unwrap_or_else(|| Path::new("."));
-                    let mut copy_failures = 0u64;
-                    let cell = resolve_attachment_cell(ResolveAttachmentArgs {
+                    let (cell, source) = resolve_attachment_cell(ResolveAttachmentArgs {
                         csv_name: &row.attachment,
                         attachment_type: &row.attachment_type,
                         csv_parent,
                         index: attachment_index.as_ref(),
-                        attachments_dir: &attachments_dir,
                         copy_attachments,
-                        message_secs: secs,
-                        attachments_saved: &mut report.attachments_saved,
-                        copy_failures: &mut copy_failures,
                     });
-                    if copy_failures > 0 {
-                        report.bump("attachment-copy-failures", copy_failures);
-                    }
-                    let rel_path = cell.meta.path.clone().unwrap_or_default();
                     attachments.push(PendingAttachment {
-                        rel_path: rel_path.clone(),
+                        rel_path: row.attachment.clone(),
                         content_type: cell.meta.mime_type.clone().unwrap_or_default(),
-                        extension: Path::new(&rel_path)
+                        extension: Path::new(&row.attachment)
                             .extension()
                             .and_then(|e| e.to_str())
                             .unwrap_or("")
                             .to_string(),
-                        digest_sha256: cell.meta.digest_sha256.clone(),
+                        digest_sha256: None,
                         name_hint: cell.meta.original_name.clone(),
                     });
                     // iMazing rows carry at most one attachment, so sticker
@@ -223,6 +224,12 @@ pub(crate) fn convert_export(
                         "sticker_effect".into(),
                         cell.sticker_effect.unwrap_or_default(),
                     );
+                    if let Some(src) = source {
+                        attachment_extra.insert(
+                            "attachment_source".into(),
+                            src.to_string_lossy().into_owned(),
+                        );
+                    }
                 }
 
                 // sender_id distinguishes same-second same-text rows from
@@ -294,6 +301,8 @@ pub(crate) fn convert_export(
         }
     }
 
+    let mut documents = Vec::new();
+    let mut sources = Vec::new();
     for (key, mut convo) in conversations {
         let chat_id = key
             .split_once('|')
@@ -302,13 +311,116 @@ pub(crate) fn convert_export(
         if !prepare_conversation(&mut convo, &mut report) {
             continue;
         }
-        let doc = pending_to_document(&chat_id, &convo, &mut report)?;
+        collect_attachment_sources(&convo, &mut sources);
+        documents.push(pending_to_document(&chat_id, &convo, &mut report)?);
+    }
+
+    stage_conversation_attachments(
+        &mut documents,
+        &sources,
+        &attachments_dir,
+        media_mode,
+        &compress,
+        log.as_ref(),
+        cancel,
+        &mut report,
+    )?;
+
+    let total_conversations = documents.len() as u64;
+    emit_log(log.as_ref(), "");
+    emit_log(
+        log.as_ref(),
+        format!("Preparing {total_conversations} conversation file(s)..."),
+    );
+    let mut written = 0u64;
+    for doc in documents {
+        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        written += 1;
         sink.write_document(doc)?;
         report.conversations += 1;
+        #[allow(clippy::manual_is_multiple_of)]
+        if written % 100 == 0 || written == total_conversations {
+            emit_log(
+                log.as_ref(),
+                format!("  preparing {written}/{total_conversations}"),
+            );
+        }
     }
     let sink_result = sink.finish()?;
 
     Ok((report, sink_result))
+}
+
+fn collect_attachment_sources(
+    convo: &PendingConversation,
+    out: &mut Vec<Option<std::path::PathBuf>>,
+) {
+    for msg in &convo.messages {
+        if msg.attachments.is_empty() {
+            continue;
+        }
+        let source = msg.extra_str("attachment_source").to_string();
+        for _ in &msg.attachments {
+            out.push((!source.is_empty()).then(|| std::path::PathBuf::from(&source)));
+        }
+    }
+}
+
+fn stage_conversation_attachments(
+    documents: &mut [ConversationDocument],
+    sources: &[Option<std::path::PathBuf>],
+    attachments_dir: &Path,
+    mode: MediaMode,
+    compress: &CompressOptions,
+    log: Option<&LogSink>,
+    cancel: Option<&CancelFlag>,
+    report: &mut ExportReport,
+) -> Result<()> {
+    let mut jobs = Vec::new();
+    for doc in documents.iter_mut() {
+        for msg in &mut doc.messages {
+            let ts = msg.timestamp_unix_ms;
+            for att in &mut msg.attachments {
+                jobs.push(message_vault_io_core::AttachmentJob {
+                    attachment: att,
+                    timestamp_unix_ms: ts,
+                    size_hint: None,
+                });
+            }
+        }
+    }
+    if jobs.is_empty() {
+        return Ok(());
+    }
+    message_vault_io_core::run_attachment_jobs(
+        &mut jobs,
+        attachments_dir,
+        mode,
+        compress,
+        |i| {
+            let Some(path) = sources.get(i).and_then(|p| p.as_ref()) else {
+                return Ok(None);
+            };
+            std::fs::read(path).map(Some).or(Ok(None))
+        },
+        |progress| {
+            emit_log(
+                log,
+                format!(
+                    "  attachments {}/{} {}/{}",
+                    progress.done, progress.total, progress.bytes_done, progress.bytes_total
+                ),
+            );
+        },
+        cancel.map(|flag| flag.as_ref()),
+    )
+    .map_err(anyhow::Error::msg)?;
+    for job in &jobs {
+        if job.attachment.path.is_some() && job.attachment.digest_sha256.is_some() {
+            report.attachments_saved += 1;
+        }
+    }
+    Ok(())
 }
 
 fn prepare_conversation(convo: &mut PendingConversation, report: &mut ExportReport) -> bool {

@@ -23,7 +23,10 @@ pub(super) fn pending_attachment_to_ir(
     msg: &PendingMessage,
 ) -> IrAttachment {
     IrAttachment {
-        path: Some(a.rel_path.clone()),
+        path: a
+            .rel_path
+            .starts_with("attachments/")
+            .then(|| a.rel_path.clone()),
         original_name: a.name_hint.clone(),
         mime_type: a.mime_type(),
         digest_sha256: a.digest_sha256.clone(),
