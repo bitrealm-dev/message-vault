@@ -362,9 +362,6 @@ fn stage_conversation_attachments(
             }
         }
     }
-    if jobs.is_empty() {
-        return Ok(());
-    }
     let cancel_flag = cancel.map(|flag| flag.as_ref());
     run_attachment_jobs(
         &mut jobs,

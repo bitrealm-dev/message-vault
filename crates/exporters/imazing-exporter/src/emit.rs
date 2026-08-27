@@ -389,9 +389,6 @@ fn stage_conversation_attachments(
             }
         }
     }
-    if jobs.is_empty() {
-        return Ok(());
-    }
     message_vault_io_core::run_attachment_jobs(
         &mut jobs,
         attachments_dir,

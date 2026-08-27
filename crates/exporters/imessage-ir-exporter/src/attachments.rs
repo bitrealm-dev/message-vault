@@ -1,6 +1,9 @@
 //! Load attachment bytes (macOS path or encrypted iOS decrypt-to-temp).
 
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use crabapple::error::BackupError;
 use imessage_database::tables::attachment::Attachment;
@@ -25,8 +28,18 @@ pub(crate) fn load_attachment_bytes(
     ) else {
         return Ok(Vec::new());
     };
-    let source = PathBuf::from(source);
+    read_resolved_attachment(session, &PathBuf::from(source))
+}
 
+/// Read a previously resolved attachment path (plain file or encrypted backup).
+///
+/// # Errors
+///
+/// Returns a fatal decrypt or temp-file error. Missing files return empty bytes.
+pub(crate) fn read_resolved_attachment(
+    session: &MailSession,
+    source: &Path,
+) -> Result<Vec<u8>, RuntimeError> {
     if let Some(backup) = &session.data_source.backup
         && backup.is_encrypted()
     {

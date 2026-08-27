@@ -24,6 +24,11 @@ import type {
 } from "../../lib/types";
 import { whatsappExtractFields } from "../../lib/whatsappExtractFields";
 import { isWhatsappMethod } from "../../lib/whatsappImport";
+import {
+  type AttachmentProgressCounts,
+  attachmentDoneDetail,
+  isProgressStepComplete,
+} from "./importProgressState";
 
 export type ImportStep = {
   label: string;
@@ -44,13 +49,6 @@ type StageTiming = {
   attachmentsEndedAt: number | null;
   prepareStartedAt: number | null;
   prepareEndedAt: number | null;
-};
-
-type AttachmentProgressCounts = {
-  done: number;
-  total: number;
-  bytesDone: number;
-  bytesTotal: number;
 };
 
 const EMPTY_TIMING: StageTiming = {
@@ -91,22 +89,6 @@ function progressVerb(step: ImportProgressEvent["step"]): string {
   if (step === "prepare") return "Preparing";
   if (step === "attachments") return "Copied";
   return "Parsing";
-}
-
-/** Done-line for the attachment step, using the last live counts when present. */
-function attachmentDoneDetail(
-  mode: AttachmentMediaMode,
-  counts: AttachmentProgressCounts | null,
-  fallback: string,
-): string {
-  if (counts == null) return fallback;
-  return formatAttachmentProgress({
-    mode,
-    done: counts.done,
-    total: counts.total,
-    bytesDone: counts.bytesDone,
-    bytesTotal: counts.bytesTotal,
-  });
 }
 
 /** Parse, attachment, and prepare durations from timestamps recorded during extract. */
@@ -218,7 +200,7 @@ export function useImportJob() {
             bytesTotal: event.bytes_total ?? lastAttachment?.bytesTotal ?? 0,
           })
         : `${progressVerb(event.step)} ${rawDetail}`;
-    const done = event.total > 0 && event.done >= event.total;
+    const done = isProgressStepComplete(event.step, event.done, event.total);
     const attachmentLabel = event.step === "attachments" ? attachments.label : undefined;
 
     setSteps((current) =>

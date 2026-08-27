@@ -90,9 +90,6 @@ pub(super) fn stage_conversation_attachments(
                 .flat_map(|msg| msg.attachments.iter().map(|att| att.bytes.clone()))
         })
         .collect();
-    if payloads.is_empty() {
-        return Ok(());
-    }
 
     let mut jobs = Vec::new();
     for doc in documents.iter_mut() {
@@ -110,10 +107,6 @@ pub(super) fn stage_conversation_attachments(
             }
         }
     }
-    if jobs.is_empty() {
-        return Ok(());
-    }
-
     run_attachment_jobs(
         &mut jobs,
         attachments_dir,

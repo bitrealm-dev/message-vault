@@ -50,6 +50,15 @@ pub fn run_attachment_jobs(
     cancel: Option<&AtomicBool>,
 ) -> Result<(), String> {
     let total = jobs.len();
+    if total == 0 {
+        on_progress(AttachmentProgress {
+            done: 0,
+            total: 0,
+            bytes_done: 0,
+            bytes_total: 0,
+        });
+        return Ok(());
+    }
     if matches!(mode, MediaMode::Disabled) {
         for job in jobs.iter_mut() {
             job.attachment.missing_reason = Some("skipped".into());
@@ -108,6 +117,12 @@ pub fn run_attachment_jobs(
             return Err("canceled".into());
         }
         apply_convert_or_compress(jobs, attachments_dir, mode, compress)?;
+        on_progress(AttachmentProgress {
+            done: total,
+            total,
+            bytes_done,
+            bytes_total,
+        });
     }
 
     Ok(())
@@ -144,21 +159,69 @@ fn apply_convert_or_compress(
     };
     let (report, remap) =
         media::process_attachments_dir(output_dir, mode, compress).map_err(|e| e.to_string())?;
+    apply_remap_to_jobs(jobs, &remap, output_dir);
     for err in &report.errors {
-        // Per-file ffmpeg failures stay on the report; jobs without a remap keep
-        // the clone path and hash.
-        let _ = err;
+        mark_convert_error(jobs, err);
     }
+    Ok(())
+}
+
+fn apply_remap_to_jobs(
+    jobs: &mut [AttachmentJob<'_>],
+    remap: &std::collections::HashMap<String, String>,
+    output_dir: &Path,
+) {
     for job in jobs.iter_mut() {
         let Some(path) = job.attachment.path.as_mut() else {
             continue;
         };
         if let Some(new_rel) = remap.get(path.as_str()) {
             *path = new_rel.clone();
-            refresh_digest_and_size(job.attachment, output_dir)?;
+            if let Some(mime) = mime_for_rel(new_rel) {
+                job.attachment.mime_type = Some(mime);
+            }
+            if refresh_digest_and_size(job.attachment, output_dir).is_err() {
+                job.attachment.missing_reason = Some("file_missing".into());
+            }
         }
     }
-    Ok(())
+}
+
+fn mark_convert_error(jobs: &mut [AttachmentJob<'_>], err: &str) {
+    let Some((path, reason)) = err.split_once(": ") else {
+        return;
+    };
+    for job in jobs.iter_mut() {
+        let Some(rel) = job.attachment.path.as_deref() else {
+            continue;
+        };
+        let native = rel.replace('/', std::path::MAIN_SEPARATOR_STR);
+        if path.ends_with(rel) || path.ends_with(native.as_str()) {
+            job.attachment.missing_reason = Some(format!("convert_failed: {reason}"));
+        }
+    }
+}
+
+fn mime_for_rel(rel: &str) -> Option<String> {
+    let ext = Path::new(rel)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    Some(
+        match ext.as_str() {
+            "jpg" | "jpeg" => "image/jpeg",
+            "png" => "image/png",
+            "gif" => "image/gif",
+            "webp" => "image/webp",
+            "mp4" | "m4v" => "video/mp4",
+            "mov" => "video/quicktime",
+            "mp3" => "audio/mpeg",
+            "m4a" => "audio/mp4",
+            _ => return None,
+        }
+        .into(),
+    )
 }
 
 fn refresh_digest_and_size(attachment: &mut IrAttachment, output_dir: &Path) -> Result<(), String> {
@@ -360,5 +423,67 @@ mod tests {
         assert_eq!(err, "canceled");
         assert!(a.path.is_some());
         assert!(b.path.is_none());
+    }
+
+    #[test]
+    fn empty_jobs_emits_zero_of_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        let att_dir = dir.path().join("attachments");
+        let progress = Mutex::new(Vec::new());
+        run_attachment_jobs(
+            &mut [],
+            &att_dir,
+            MediaMode::Clone,
+            &CompressOptions::default(),
+            |_| Ok(None),
+            |p| progress.lock().unwrap().push(p),
+            None,
+        )
+        .unwrap();
+        let last = progress.lock().unwrap().last().cloned().unwrap();
+        assert_eq!(last.done, 0);
+        assert_eq!(last.total, 0);
+        assert_eq!(last.bytes_done, 0);
+        assert_eq!(last.bytes_total, 0);
+    }
+
+    #[test]
+    fn remap_updates_mime_and_continues_when_one_file_is_unreadable() {
+        let dir = tempfile::tempdir().unwrap();
+        let att_dir = dir.path().join("attachments");
+        std::fs::create_dir_all(&att_dir).unwrap();
+        std::fs::write(att_dir.join("ok.jpg"), b"jpeg-bytes").unwrap();
+        let mut ok = empty_att("ok.heic");
+        ok.path = Some("attachments/ok.heic".into());
+        ok.mime_type = Some("image/heic".into());
+        let mut missing = empty_att("gone.heic");
+        missing.path = Some("attachments/gone.heic".into());
+        missing.mime_type = Some("image/heic".into());
+        {
+            let mut jobs = [
+                AttachmentJob {
+                    attachment: &mut ok,
+                    timestamp_unix_ms: 0,
+                    size_hint: None,
+                },
+                AttachmentJob {
+                    attachment: &mut missing,
+                    timestamp_unix_ms: 0,
+                    size_hint: None,
+                },
+            ];
+            let mut remap = std::collections::HashMap::new();
+            remap.insert("attachments/ok.heic".into(), "attachments/ok.jpg".into());
+            remap.insert(
+                "attachments/gone.heic".into(),
+                "attachments/gone.jpg".into(),
+            );
+            apply_remap_to_jobs(&mut jobs, &remap, dir.path());
+        }
+        assert_eq!(ok.path.as_deref(), Some("attachments/ok.jpg"));
+        assert_eq!(ok.mime_type.as_deref(), Some("image/jpeg"));
+        assert_eq!(ok.digest_sha256.as_ref().unwrap().len(), 64);
+        assert_eq!(missing.missing_reason.as_deref(), Some("file_missing"));
+        assert!(ok.missing_reason.is_none());
     }
 }

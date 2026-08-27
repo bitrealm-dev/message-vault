@@ -30,7 +30,8 @@ use message_ir_format::{FormatSink, FormatSinkResult};
 use message_vault_io_core::{AttachmentJob, OutputFormat, run_attachment_jobs};
 
 use crate::{
-    attachments_emit::{collect_mail_parts_and_attachments, persist_attachment},
+    attachments::read_resolved_attachment,
+    attachments_emit::{AttachmentLoad, collect_mail_parts_and_attachments, persist_attachment},
     body::apply_body,
     error::RuntimeError,
     fields::{
@@ -66,6 +67,8 @@ struct PendingConversation {
     /// First non-empty owner display name (caller-id / Me).
     owner_display_name: Option<String>,
     messages: Vec<IrMessage>,
+    /// Load keys in the same order as flattened `messages[].attachments`.
+    attachment_loads: Vec<AttachmentLoad>,
 }
 
 /// Stream `chat.db` into the shared conversation structure, then write the
@@ -84,9 +87,10 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
         session.options.export_path.display(),
     ));
 
-    // Prepare the sink before the message stream: attachments are written during
-    // collect, so prior IR artifacts (including stale attachments/) must be
-    // cleaned first — same pattern as WhatsApp / SMS Backup & Restore.
+    // Prepare the sink before the message stream. Attachment files are written
+    // after parse by the shared runner, so prior IR artifacts (including stale
+    // attachments/) must be cleaned first — same pattern as WhatsApp / SMS
+    // Backup & Restore.
     let (mut sink, attachments_dir) = FormatSink::open_prepared(
         &session.options.export_path,
         format,
@@ -262,23 +266,18 @@ fn stage_conversation_attachments(
     let compress = session.options.transforms.compress.clone();
     let cancel = session.options.cancel.as_ref().map(|flag| flag.as_ref());
 
+    let mut loads = Vec::new();
+    let mut jobs = Vec::new();
     for convo in conversations.values_mut() {
-        let payloads: Vec<Option<Vec<u8>>> = convo
-            .messages
-            .iter()
-            .flat_map(|msg| msg.attachments.iter().map(|att| att.bytes.clone()))
-            .collect();
-        if payloads.is_empty() {
-            continue;
-        }
-
-        let mut jobs = Vec::new();
+        loads.append(&mut convo.attachment_loads);
         for msg in &mut convo.messages {
             let ts = msg.timestamp_unix_ms;
             for att in &mut msg.attachments {
-                let hint = att
-                    .size_bytes
-                    .or_else(|| att.bytes.as_ref().map(|b| b.len() as u64));
+                let hint = match loads.get(jobs.len()) {
+                    Some(AttachmentLoad::Path { size_hint, .. }) => *size_hint,
+                    Some(AttachmentLoad::Bytes(bytes)) => Some(bytes.len() as u64),
+                    _ => att.size_bytes,
+                };
                 jobs.push(AttachmentJob {
                     attachment: att,
                     timestamp_unix_ms: ts,
@@ -286,26 +285,32 @@ fn stage_conversation_attachments(
                 });
             }
         }
-        if jobs.is_empty() {
-            continue;
-        }
+    }
 
-        run_attachment_jobs(
-            &mut jobs,
-            attachments_dir,
-            mode,
-            &compress,
-            |i| Ok(payloads.get(i).cloned().flatten()),
-            |progress| {
-                session.options.emit_log(format!(
-                    "  attachments {}/{} {}/{}",
-                    progress.done, progress.total, progress.bytes_done, progress.bytes_total
-                ));
-            },
-            cancel,
-        )
-        .map_err(|e| RuntimeError::InvalidOptions(e))?;
+    run_attachment_jobs(
+        &mut jobs,
+        attachments_dir,
+        mode,
+        &compress,
+        |i| match loads.get(i) {
+            Some(AttachmentLoad::Path { path, .. }) => {
+                let bytes = read_resolved_attachment(session, path).map_err(|e| e.to_string())?;
+                Ok((!bytes.is_empty()).then_some(bytes))
+            }
+            Some(AttachmentLoad::Bytes(bytes)) => Ok(Some(bytes.clone())),
+            _ => Ok(None),
+        },
+        |progress| {
+            session.options.emit_log(format!(
+                "  attachments {}/{} {}/{}",
+                progress.done, progress.total, progress.bytes_done, progress.bytes_total
+            ));
+        },
+        cancel,
+    )
+    .map_err(RuntimeError::InvalidOptions)?;
 
+    for convo in conversations.values_mut() {
         for msg in &mut convo.messages {
             for att in &mut msg.attachments {
                 att.bytes = None;
@@ -321,7 +326,7 @@ fn collect_one(
     attachments_dir: &Path,
     message: &Message,
 ) -> Result<(), RuntimeError> {
-    let mail = build_mail_message(session, message)?;
+    let (mail, loads) = build_mail_message(session, message)?;
     let chat_identifier = if mail.chat_identifier.is_empty() {
         ORPHANED.to_string()
     } else {
@@ -345,6 +350,7 @@ fn collect_one(
             owner_handle: String::new(),
             owner_display_name: None,
             messages: Vec::new(),
+            attachment_loads: Vec::new(),
         });
     if convo.owner_handle.is_empty() && !mail.owner_handle.is_empty() {
         convo.owner_handle = mail.owner_handle.clone();
@@ -352,6 +358,7 @@ fn collect_one(
     if convo.owner_display_name.is_none() {
         convo.owner_display_name = mail.owner_display_name.clone();
     }
+    convo.attachment_loads.extend(loads);
     convo.messages.push(ir_message);
     Ok(())
 }
@@ -381,7 +388,8 @@ fn mail_message_to_ir(
     let mut attachments = Vec::with_capacity(mail.attachments.len());
     for attachment in &mail.attachments {
         let has_bytes = embed == AttachmentEmbed::Embed && !attachment.bytes.is_empty();
-        let missing_reason = if has_bytes {
+        let deferred = persist_to_disk && embed == AttachmentEmbed::Embed;
+        let missing_reason = if has_bytes || deferred {
             None
         } else if embed == AttachmentEmbed::Disabled {
             Some("embed_disabled".to_string())
@@ -390,8 +398,8 @@ fn mail_message_to_ir(
         };
         let (path, digest_sha256, file_size, bytes) = if persist_to_disk {
             if has_bytes {
-                // Stage after parse via `run_attachment_jobs`. Keep bytes in
-                // memory so the runner can write the hashed file.
+                // Handwriting SVG stays in memory. File attachments are loaded
+                // later by `run_attachment_jobs`.
                 (
                     None,
                     None,
@@ -399,7 +407,7 @@ fn mail_message_to_ir(
                     Some(attachment.bytes.clone()),
                 )
             } else {
-                (None, attachment.meta.digest_sha256.clone(), None, None)
+                (None, None, None, None)
             }
         } else {
             let bytes = has_bytes.then(|| attachment.bytes.clone());
@@ -797,7 +805,7 @@ fn resolve_mail_conversation_context(
 fn build_mail_message(
     session: &MailSession,
     message: &Message,
-) -> Result<MailMessage, RuntimeError> {
+) -> Result<(MailMessage, Vec<AttachmentLoad>), RuntimeError> {
     let MailConversationContext {
         chat_identifier,
         conversation_type,
@@ -809,7 +817,13 @@ fn build_mail_message(
         service,
     } = resolve_mail_conversation_context(session, message);
 
-    let (parts, mail_attachments) = collect_mail_parts_and_attachments(session, message)?;
+    let defer_file_bytes = session.options.transforms.copies_attachments()
+        && matches!(
+            session.options.output_format,
+            OutputFormat::Csv | OutputFormat::Json | OutputFormat::Jsonl | OutputFormat::Xml
+        );
+    let (parts, mail_attachments, loads) =
+        collect_mail_parts_and_attachments(session, message, defer_file_bytes)?;
 
     let send_effect = expressive_label(message.get_expressive());
     let shared_location = message
@@ -952,7 +966,7 @@ fn build_mail_message(
 
     let owner_handle = message.destination_caller_id.clone().unwrap_or_default();
 
-    Ok(MailMessage {
+    let mail = MailMessage {
         chat_identifier,
         conversation_type,
         group_title,
@@ -999,7 +1013,8 @@ fn build_mail_message(
         tapback_kind,
         tapback_emoji,
         tapback_action,
-    })
+    };
+    Ok((mail, loads))
 }
 
 #[cfg(test)]
@@ -1101,7 +1116,7 @@ mod tests {
         assert!(fs::read_dir(dir.path()).unwrap().next().is_none());
 
         let empty = sample_mail_with_attachment(Vec::new());
-        let ir_missing = mail_message_to_ir(
+        let ir_deferred = mail_message_to_ir(
             &empty,
             dir.path(),
             OutputFormat::Jsonl,
@@ -1109,10 +1124,10 @@ mod tests {
             true,
         )
         .unwrap();
-        assert_eq!(
-            ir_missing.attachments[0].missing_reason.as_deref(),
-            Some("file_missing")
-        );
+        assert_eq!(ir_deferred.attachments[0].missing_reason, None);
+        assert!(ir_deferred.attachments[0].bytes.is_none());
+        assert!(ir_deferred.attachments[0].path.is_none());
+        assert!(fs::read_dir(dir.path()).unwrap().next().is_none());
 
         let ir_disabled = mail_message_to_ir(
             &with_bytes,

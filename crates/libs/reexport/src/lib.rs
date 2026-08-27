@@ -13,7 +13,7 @@ use message_ir_format::{
     read_conversation_json, read_conversation_jsonl, read_conversation_mbox, read_sbr_documents,
 };
 pub use message_vault_io_core::RunResult;
-use message_vault_io_core::{ExporterConfig, OutputFormat};
+use message_vault_io_core::{AttachmentJob, ExporterConfig, OutputFormat, run_attachment_jobs};
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
@@ -87,9 +87,12 @@ fn convert_export(input_dir: &Path, config: &ExporterConfig) -> Result<ReexportR
         copy_attachments_dir(input_dir, &config.output)?;
     }
 
-    let documents = load_documents(input_dir, detected, config, copy_attachments)?;
+    let mut documents = load_documents(input_dir, detected, config, copy_attachments)?;
     if documents.is_empty() {
         bail!("no conversations loaded from {}", input_dir.display());
+    }
+    if matches!(transforms.media, MediaMode::Convert | MediaMode::Compress) {
+        apply_reexport_convert(&mut documents, &config.output, &transforms)?;
     }
 
     let conversations = documents.len();
@@ -104,6 +107,54 @@ fn convert_export(input_dir: &Path, config: &ExporterConfig) -> Result<ReexportR
         conversations,
         sink,
     })
+}
+
+/// Transcode copied attachments and update document paths, hashes, and MIME.
+fn apply_reexport_convert(
+    documents: &mut [ConversationDocument],
+    output_dir: &Path,
+    transforms: &ExportTransforms,
+) -> Result<()> {
+    let attachments_dir = output_dir.join("attachments");
+    let mut jobs = Vec::new();
+    for doc in documents.iter_mut() {
+        for msg in &mut doc.messages {
+            let ts = msg.timestamp_unix_ms;
+            for att in &mut msg.attachments {
+                let size_hint = att.size_bytes;
+                jobs.push(AttachmentJob {
+                    attachment: att,
+                    timestamp_unix_ms: ts,
+                    size_hint,
+                });
+            }
+        }
+    }
+    let sources: Vec<Option<PathBuf>> = jobs
+        .iter()
+        .map(|job| {
+            job.attachment
+                .path
+                .as_ref()
+                .map(|rel| output_dir.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR)))
+        })
+        .collect();
+    run_attachment_jobs(
+        &mut jobs,
+        &attachments_dir,
+        transforms.media,
+        &transforms.compress,
+        |i| {
+            let Some(path) = sources.get(i).and_then(|p| p.as_ref()) else {
+                return Ok(None);
+            };
+            fs::read(path).map(Some).or(Ok(None))
+        },
+        |_| {},
+        None,
+    )
+    .map_err(anyhow::Error::msg)?;
+    Ok(())
 }
 
 /// Load every conversation document from a detected export directory.

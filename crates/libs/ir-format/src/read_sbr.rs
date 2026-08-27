@@ -170,9 +170,6 @@ fn stage_read_attachments(
                 .flat_map(|msg| msg.attachments.iter().map(|att| att.bytes.clone()))
         })
         .collect();
-    if payloads.is_empty() {
-        return Ok(());
-    }
 
     let mut jobs = Vec::new();
     for doc in documents.iter_mut() {
@@ -190,10 +187,6 @@ fn stage_read_attachments(
             }
         }
     }
-    if jobs.is_empty() {
-        return Ok(());
-    }
-
     let mode = if options.copy_attachments {
         options.media
     } else {
