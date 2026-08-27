@@ -16,6 +16,12 @@ use crate::db::sql::SQLITE_IN_CHUNK;
 const CONTENT_KEY_WRITE_LOG_EVERY: usize = 50_000;
 
 /// One production message that still needs a content fingerprint.
+///
+/// Column order matches the SELECT in [`recompute_content_keys`]:
+/// `id`, `conversation_id`, `chat_id` (chat handle `normalized`),
+/// `conversation_type`, `is_from_me`, `timestamp_utc`, `timestamp`,
+/// `body`, `sender_normalized`. Two SQL columns are both named
+/// `normalized`, so this stays a positional tuple rather than `FromRow`.
 type ContentKeyRow = (
     i64,
     i64,
@@ -320,8 +326,11 @@ async fn insert_content_key_rows(conn: &mut AnyConnection, keys: &[(i64, String)
             q = q.bind(*id).bind(key);
         }
         q.execute(&mut *conn).await?;
+        let previous = written;
         written += chunk.len();
-        if written == total || (written > 0 && written % CONTENT_KEY_WRITE_LOG_EVERY == 0) {
+        let crossed_log_mark =
+            written / CONTENT_KEY_WRITE_LOG_EVERY != previous / CONTENT_KEY_WRITE_LOG_EVERY;
+        if written == total || crossed_log_mark {
             println!("  sql:      writing content keys … running={written}/{total}");
             let _ = io::stdout().flush();
         }
@@ -851,7 +860,7 @@ pub async fn run_dedupe(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     use super::*;
     use crate::db::engine;
@@ -1087,6 +1096,88 @@ mod tests {
         assert_eq!(second, 0);
         let key: Option<String> =
             sqlx::query_scalar("SELECT content_key FROM messages WHERE guid = 'g-fill'")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert!(key.as_deref().is_some_and(|k| !k.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn fill_missing_content_keys_writes_multiple_rows_in_one_batch() {
+        let (pool, _dir) = engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        setup_db(&mut conn).await;
+        for (guid, body, sort_order) in [
+            ("g-multi-a", "First", 0),
+            ("g-multi-b", "Second", 1),
+            ("g-multi-c", "Third", 2),
+        ] {
+            insert_msg(
+                &mut conn,
+                InsertMsgArgs {
+                    source: "go-sms-pro",
+                    guid,
+                    utc: "2015-03-12T18:04:22Z",
+                    local: "2015-03-12T14:04:22-04:00",
+                    from_me: 1,
+                    body,
+                    sort_order,
+                },
+            )
+            .await;
+        }
+        let filled = fill_missing_content_keys(&mut conn, TEST_ACCOUNT_ID)
+            .await
+            .unwrap();
+        assert_eq!(filled, 3);
+        let keys: Vec<(String, Option<String>)> = sqlx::query_as(
+            r#"
+            SELECT guid, content_key
+            FROM messages
+            WHERE guid IN ('g-multi-a', 'g-multi-b', 'g-multi-c')
+            ORDER BY guid
+            "#,
+        )
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(keys.len(), 3);
+        let values: Vec<&str> = keys
+            .iter()
+            .map(|(_, key)| key.as_deref().expect("content_key"))
+            .collect();
+        assert!(values.iter().all(|key| !key.is_empty()));
+        assert_eq!(values.iter().copied().collect::<HashSet<_>>().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn recompute_all_content_keys_rewrites_existing_keys() {
+        let (pool, _dir) = engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        setup_db(&mut conn).await;
+        insert_msg(
+            &mut conn,
+            InsertMsgArgs {
+                source: "go-sms-pro",
+                guid: "g-rebuild",
+                utc: "2015-03-12T18:04:22Z",
+                local: "2015-03-12T14:04:22-04:00",
+                from_me: 1,
+                body: "Rebuild me",
+                sort_order: 0,
+            },
+        )
+        .await;
+        let first = fill_missing_content_keys(&mut conn, TEST_ACCOUNT_ID)
+            .await
+            .unwrap();
+        assert_eq!(first, 1);
+        let rebuilt = recompute_all_content_keys(&mut conn, TEST_ACCOUNT_ID)
+            .await
+            .unwrap();
+        assert_eq!(rebuilt, 1);
+        let key: Option<String> =
+            sqlx::query_scalar("SELECT content_key FROM messages WHERE guid = 'g-rebuild'")
                 .fetch_one(&mut *conn)
                 .await
                 .unwrap();
