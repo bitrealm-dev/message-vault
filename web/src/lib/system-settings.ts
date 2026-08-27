@@ -170,6 +170,9 @@ export function setImporterPath(sourceId: string, path: string): void {
 type ImporterExtraRow = {
   attachmentRoot?: string;
   appleContacts?: string;
+  whatsappWa?: string;
+  whatsappMedia?: string;
+  whatsappDb?: string;
 };
 
 function readImporterExtraPaths(): Record<string, ImporterExtraRow> {
@@ -189,6 +192,15 @@ function readImporterExtraPaths(): Record<string, ImporterExtraRow> {
       if (typeof record.appleContacts === "string" && record.appleContacts.trim()) {
         entry.appleContacts = record.appleContacts.trim();
       }
+      if (typeof record.whatsappWa === "string" && record.whatsappWa.trim()) {
+        entry.whatsappWa = record.whatsappWa.trim();
+      }
+      if (typeof record.whatsappMedia === "string" && record.whatsappMedia.trim()) {
+        entry.whatsappMedia = record.whatsappMedia.trim();
+      }
+      if (typeof record.whatsappDb === "string" && record.whatsappDb.trim()) {
+        entry.whatsappDb = record.whatsappDb.trim();
+      }
       if (Object.keys(entry).length > 0) out[sourceId] = entry;
     }
     return out;
@@ -206,33 +218,67 @@ function writeImporterExtraPaths(map: Record<string, ImporterExtraRow>): void {
   }
 }
 
-export type ImporterExtraField = "attachmentRoot" | "appleContacts";
+export type ImporterExtraField =
+  | "attachmentRoot"
+  | "appleContacts"
+  | "whatsappWa"
+  | "whatsappMedia"
+  | "whatsappDb";
+
+const IMPORTER_EXTRA_FIELDS: ImporterExtraField[] = [
+  "attachmentRoot",
+  "appleContacts",
+  "whatsappWa",
+  "whatsappMedia",
+  "whatsappDb",
+];
 
 export function getImporterExtraPaths(sourceId: string): {
   attachmentRoot: string;
   appleContacts: string;
+  whatsappWa: string;
+  whatsappMedia: string;
+  whatsappDb: string;
 } {
   const row = readImporterExtraPaths()[sourceId];
   return {
     attachmentRoot: row?.attachmentRoot ?? "",
     appleContacts: row?.appleContacts ?? "",
+    whatsappWa: row?.whatsappWa ?? "",
+    whatsappMedia: row?.whatsappMedia ?? "",
+    whatsappDb: row?.whatsappDb ?? "",
   };
 }
+
+const EMPTY_REMEMBERED_PATHS = {
+  backupPath: "",
+  attachmentRoot: "",
+  appleContacts: "",
+  whatsappWa: "",
+  whatsappMedia: "",
+  whatsappDb: "",
+};
 
 /** Last paths to show after a source change. Empty when remembering is off. */
 export function loadRememberedImportPaths(sourceId: string): {
   backupPath: string;
   attachmentRoot: string;
   appleContacts: string;
+  whatsappWa: string;
+  whatsappMedia: string;
+  whatsappDb: string;
 } {
   if (!getRememberImporterPaths()) {
-    return { backupPath: "", attachmentRoot: "", appleContacts: "" };
+    return { ...EMPTY_REMEMBERED_PATHS };
   }
   const extras = getImporterExtraPaths(sourceId);
   return {
     backupPath: getImporterPath(sourceId),
     attachmentRoot: extras.attachmentRoot,
     appleContacts: extras.appleContacts,
+    whatsappWa: extras.whatsappWa,
+    whatsappMedia: extras.whatsappMedia,
+    whatsappDb: extras.whatsappDb,
   };
 }
 
@@ -251,8 +297,7 @@ export function setImporterExtraPath(
   const row = map[sourceId];
   if (!row) return;
   const nextRow: ImporterExtraRow = {};
-  const extraFields: ImporterExtraField[] = ["attachmentRoot", "appleContacts"];
-  for (const extraField of extraFields) {
+  for (const extraField of IMPORTER_EXTRA_FIELDS) {
     if (extraField === field) continue;
     const value = row[extraField];
     if (value) nextRow[extraField] = value;

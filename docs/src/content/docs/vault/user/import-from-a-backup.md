@@ -23,8 +23,8 @@ JSONL (JSON Lines) folders on disk are a command-line task: [Extract to files](/
    |---|---|
    | **iMessage** → **Platform:** **iPhone backup** | Finder/iTunes backup folder (device UUID directory), not a `.db` file inside it |
    | **iMessage** → **Platform:** **Mac Messages** | `chat.db` |
-   | **WhatsApp - iOS** | iPhone backup that includes WhatsApp |
-   | **WhatsApp - Android** | `msgstore.db` or `msgstore.db.crypt*` plus key |
+   | **WhatsApp** → **Platform:** **Android** | Folder with `msgstore.db` or `msgstore.db.crypt*` plus key |
+   | **WhatsApp** → **Platform:** **iPhone** | iPhone backup that includes WhatsApp |
    | **SMS Backup & Restore** | SyncTech XML |
 
    Rescue sources (GO SMS Pro, iMazing, OpenExtract, SMS Backup+) are documented under [rescue imports](/vault/user/how-to/rescue-imports/).
@@ -49,6 +49,26 @@ After you pick **iMessage**, **Platform** chooses Mac Messages or iPhone backup.
 - **Apple Contacts file (Optional)** — leave empty to use the local AddressBook on a live Mac. Point at `AddressBook-v22.abcddb` or `AddressBook.sqlitedb` only if that file is not in the usual Contacts location. People do not normally move that file.
 
 **Attachments** and **Contacts** apply to both platforms. Attachments is Copy / Convert / Compress / Skip. Contacts fills names from vault contacts after import; that is separate from the Apple Contacts file above.
+
+### WhatsApp fields
+
+After you pick **WhatsApp**, **Platform** chooses Android or iPhone. Default Platform is **Android**.
+
+**Android**
+
+- **Backup folder** (required) — a folder that contains `msgstore.db` and/or `msgstore.db.crypt12` / `.crypt14` / `.crypt15`. See [WhatsApp on Android](/vault/user/prepare-a-backup/android-whatsapp/).
+- **Decryption key** — required (red asterisk) when the folder has a crypt file and no decrypted `msgstore.db`. **(Optional)** when `msgstore.db` is already in the folder. Enter a key file path or a crypt15 hex string. This is the WhatsApp Android decryption key, not the Apple backup password. The app does not save it.
+- **Contacts database (Optional)** — `wa.db`. Leave empty if that file is in the backup folder.
+- **Media folder (Optional)** — leave empty if a `WhatsApp` media folder is in the backup folder.
+- **Message database (Optional)** — leave empty if `msgstore.db` is in the backup folder.
+
+**iPhone**
+
+- **Backup folder** (required) — the device UUID folder from Finder or iTunes. See [WhatsApp on iPhone](/vault/user/prepare-a-backup/iphone-whatsapp/).
+- **Contacts database (Optional)** — `ContactsV2.sqlite`. Leave empty if that file is in the backup.
+- **WhatsApp Business** — optional checkbox, unmarked by default. Turn it on only for a WhatsApp Business backup. The app does not remember this choice.
+
+**Attachments** and **Contacts** apply to both platforms. Attachments is Copy / Convert / Compress / Skip. Contacts fills names from vault contacts after import; that is separate from the WhatsApp contacts database above.
 
 ## Resume and force reprocessing
 

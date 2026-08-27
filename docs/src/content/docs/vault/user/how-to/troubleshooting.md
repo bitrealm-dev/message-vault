@@ -13,7 +13,7 @@ description: Fix common problems with the desktop app and reaching the vault in 
 
 ### Import or Extract fails
 
-**Wrong source or method.** Choose **iMessage**, then **Platform** **iPhone backup** or **Mac Messages**. A `.db` file is not an iPhone backup folder. For WhatsApp, choose **WhatsApp - iOS** or **WhatsApp - Android**.
+**Wrong source or method.** Choose **iMessage**, then **Platform** **iPhone backup** or **Mac Messages**. A `.db` file is not an iPhone backup folder. For WhatsApp, choose **WhatsApp**, then **Platform** **Android** or **iPhone**.
 
 **Encrypted backup password is wrong.** The app cannot read an encrypted iPhone backup without the correct password. If Import says the backup is encrypted, fill **Encryption password**. If Import says the backup is not encrypted, clear **Encryption password**.
 

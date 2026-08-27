@@ -21,6 +21,8 @@ import type {
   ImportIssueEvent,
   ImportProgressEvent,
 } from "../../lib/types";
+import { whatsappExtractFields } from "../../lib/whatsappExtractFields";
+import { isWhatsappMethod } from "../../lib/whatsappImport";
 
 export type ImportStep = {
   label: string;
@@ -112,6 +114,11 @@ export type ImportJobFormValues = {
   isSbr: boolean;
   attachmentRoot: string;
   appleContacts: string;
+  whatsappKey: string;
+  whatsappWa: string;
+  whatsappMedia: string;
+  whatsappDb: string;
+  whatsappBusiness: boolean;
 };
 
 /** Run extract then upload for one import, and keep step progress for the UI. */
@@ -243,6 +250,20 @@ export function useImportJob() {
                   obfuscate: form.obfuscate,
                   attachmentRoot: form.attachmentRoot,
                   appleContacts: form.appleContacts,
+                })
+              : {}),
+            ...(isWhatsappMethod(form.source)
+              ? whatsappExtractFields({
+                  source: form.source,
+                  attachmentMedia: form.attachmentMedia,
+                  maxResolution: form.maxResolution,
+                  maxFps: form.maxFps,
+                  minSizeMb: form.minSizeMb,
+                  key: form.whatsappKey,
+                  wa: form.whatsappWa,
+                  media: form.whatsappMedia,
+                  db: form.whatsappDb,
+                  business: form.whatsappBusiness,
                 })
               : {}),
             ...(form.isSbr

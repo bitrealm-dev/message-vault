@@ -26,6 +26,11 @@ export async function invokeExtract(config: ExtractConfig): Promise<void> {
       ownerPhones: config.owner_phones ?? null,
       attachmentRoot: config.attachment_root ?? null,
       appleContacts: config.apple_contacts ?? null,
+      whatsappKey: config.whatsapp_key ?? null,
+      whatsappWa: config.whatsapp_wa ?? null,
+      whatsappMedia: config.whatsapp_media ?? null,
+      whatsappDb: config.whatsapp_db ?? null,
+      whatsappBusiness: config.whatsapp_business ?? null,
     },
   });
 }

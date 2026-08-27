@@ -4,6 +4,12 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { IMESSAGE_SOURCE_ID } from "../../lib/imessageImport";
+import {
+  emptyWhatsappPathStats,
+  WHATSAPP_ERR_CRYPT_KEY,
+  WHATSAPP_ERR_FOLDER_IS_FILE,
+  WHATSAPP_SOURCE_ID,
+} from "../../lib/whatsappImport";
 import ImportFormFields, { type ImportFormFieldsProps } from "./ImportFormFields";
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -37,6 +43,19 @@ function renderForm(override: Partial<ImportFormFieldsProps> = {}) {
       appleContacts: null,
       backupEncrypted: false,
     },
+    whatsappKey: "",
+    onWhatsappKeyChange: vi.fn(),
+    showWhatsappKey: false,
+    onToggleWhatsappKey: vi.fn(),
+    whatsappWa: "",
+    onWhatsappWaChange: vi.fn(),
+    whatsappMedia: "",
+    onWhatsappMediaChange: vi.fn(),
+    whatsappDb: "",
+    onWhatsappDbChange: vi.fn(),
+    whatsappBusiness: false,
+    onWhatsappBusinessChange: vi.fn(),
+    whatsappStats: emptyWhatsappPathStats(),
     attachmentMedia: "copy",
     onAttachmentMediaChange: vi.fn(),
     maxResolution: "720p",
@@ -210,8 +229,19 @@ describe("ImportFormFields iMessage methods", () => {
     const user = userEvent.setup();
     renderForm({ source: "whatsapp-android", onSourceChange });
     await user.click(screen.getByLabelText("Import source"));
-    await user.click(await screen.findByRole("option", { name: "iMessage" }));
+    expect(await screen.findByRole("option", { name: "WhatsApp" })).toBeTruthy();
+    await user.click(screen.getByRole("option", { name: "iMessage" }));
     expect(onSourceChange).toHaveBeenCalledWith(IMESSAGE_SOURCE_ID);
+  });
+
+  it("passes the WhatsApp source key through when WhatsApp is chosen", async () => {
+    const onSourceChange = vi.fn();
+    const user = userEvent.setup();
+    renderForm({ source: "imessage-ios", onSourceChange });
+    await user.click(screen.getByLabelText("Import source"));
+    expect(await screen.findByRole("option", { name: "iMessage" })).toBeTruthy();
+    await user.click(screen.getByRole("option", { name: "WhatsApp" }));
+    expect(onSourceChange).toHaveBeenCalledWith(WHATSAPP_SOURCE_ID);
   });
 
   it("shows an Apple Contacts kind error when the path is a directory", () => {
@@ -227,6 +257,64 @@ describe("ImportFormFields iMessage methods", () => {
       },
     });
     expect(screen.getByText("Pick AddressBook-v22.abcddb or AddressBook.sqlitedb.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+  });
+});
+
+describe("ImportFormFields WhatsApp methods", () => {
+  it("shows WhatsApp Platform Android and iPhone with key and attachments", async () => {
+    const user = userEvent.setup();
+    renderForm({ source: "whatsapp-android" });
+    expect(screen.getByLabelText("Platform")).toBeTruthy();
+    await user.click(screen.getByLabelText("Platform"));
+    expect(await screen.findByRole("option", { name: "Android" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "iPhone" })).toBeTruthy();
+    expect(screen.getByLabelText("Decryption key (Optional)")).toBeTruthy();
+    expect(screen.queryByRole("checkbox", { name: "WhatsApp Business" })).toBeNull();
+    expect(screen.getByLabelText("Attachments")).toBeTruthy();
+  });
+
+  it("hides key, media, and db on iPhone and shows Business", () => {
+    renderForm({ source: "whatsapp-ios" });
+    expect(screen.queryByLabelText("Decryption key (Optional)")).toBeNull();
+    expect(screen.queryByLabelText("Decryption key")).toBeNull();
+    expect(screen.getByRole("checkbox", { name: "WhatsApp Business" })).toBeTruthy();
+    expect(screen.queryByLabelText("Media folder (Optional)")).toBeNull();
+    expect(screen.queryByLabelText("Message database (Optional)")).toBeNull();
+  });
+
+  it("requires the decryption key for an encrypted backup", () => {
+    renderForm({
+      source: "whatsapp-android",
+      backupPath: "/tmp/wa",
+      whatsappKey: "",
+      whatsappStats: {
+        backup: presentDir,
+        contactsDb: null,
+        media: null,
+        db: null,
+        hasMsgstoreDb: false,
+        cryptName: "msgstore.db.crypt15",
+      },
+    });
+    expect(screen.getByText(WHATSAPP_ERR_CRYPT_KEY)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+  });
+
+  it("shows a folder-kind error when the backup path is a file", () => {
+    renderForm({
+      source: "whatsapp-android",
+      backupPath: "/tmp/msgstore.db",
+      whatsappStats: {
+        backup: presentFile,
+        contactsDb: null,
+        media: null,
+        db: null,
+        hasMsgstoreDb: true,
+        cryptName: null,
+      },
+    });
+    expect(screen.getByText(WHATSAPP_ERR_FOLDER_IS_FILE)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
   });
 });

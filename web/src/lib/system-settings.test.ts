@@ -154,6 +154,9 @@ describe("remembered importer extra paths", () => {
     expect(getImporterExtraPaths("imessage-ios")).toEqual({
       attachmentRoot: "",
       appleContacts: "",
+      whatsappWa: "",
+      whatsappMedia: "",
+      whatsappDb: "",
     });
   });
 
@@ -172,6 +175,9 @@ describe("remembered importer extra paths", () => {
     expect(getImporterExtraPaths("imessage-macos")).toEqual({
       attachmentRoot: "/Users/sam/Library/Messages",
       appleContacts: "/Users/sam/Library/Application Support/AddressBook/AddressBook-v22.abcddb",
+      whatsappWa: "",
+      whatsappMedia: "",
+      whatsappDb: "",
     });
     expect(getImporterPath("imessage-jailbreak")).toBe("/mnt/iphone/sms.db");
     expect(getImporterExtraPaths("imessage-jailbreak").attachmentRoot).toBe(
@@ -200,11 +206,17 @@ describe("loadRememberedImportPaths", () => {
       backupPath: "",
       attachmentRoot: "",
       appleContacts: "",
+      whatsappWa: "",
+      whatsappMedia: "",
+      whatsappDb: "",
     });
     expect(loadRememberedImportPaths("whatsapp-android")).toEqual({
       backupPath: "",
       attachmentRoot: "",
       appleContacts: "",
+      whatsappWa: "",
+      whatsappMedia: "",
+      whatsappDb: "",
     });
   });
 
@@ -218,11 +230,53 @@ describe("loadRememberedImportPaths", () => {
       backupPath: "/backups/iphone",
       attachmentRoot: "",
       appleContacts: "",
+      whatsappWa: "",
+      whatsappMedia: "",
+      whatsappDb: "",
     });
     expect(loadRememberedImportPaths("imessage-macos")).toEqual({
       backupPath: "/Users/sam/Library/Messages/chat.db",
       attachmentRoot: "/Users/sam/Library/Messages",
       appleContacts: "",
+      whatsappWa: "",
+      whatsappMedia: "",
+      whatsappDb: "",
     });
+  });
+
+  it("restores WhatsApp folders by method id and whatsappWa without mixing appleContacts", () => {
+    setRememberImporterPaths(true);
+    setImporterPath("whatsapp-ios", "/backups/iphone");
+    setImporterPath("whatsapp-android", "/backups/android");
+    setImporterExtraPath("whatsapp-android", "whatsappWa", "/backups/android/wa.db");
+    setImporterExtraPath("whatsapp-android", "whatsappMedia", "/backups/android/media");
+    setImporterExtraPath("whatsapp-android", "whatsappDb", "/backups/android/msgstore.db");
+    setImporterExtraPath(
+      "imessage-macos",
+      "appleContacts",
+      "/Users/sam/Library/Application Support/AddressBook/AddressBook-v22.abcddb",
+    );
+
+    expect(loadRememberedImportPaths("whatsapp-ios")).toEqual({
+      backupPath: "/backups/iphone",
+      attachmentRoot: "",
+      appleContacts: "",
+      whatsappWa: "",
+      whatsappMedia: "",
+      whatsappDb: "",
+    });
+    expect(loadRememberedImportPaths("whatsapp-android")).toEqual({
+      backupPath: "/backups/android",
+      attachmentRoot: "",
+      appleContacts: "",
+      whatsappWa: "/backups/android/wa.db",
+      whatsappMedia: "/backups/android/media",
+      whatsappDb: "/backups/android/msgstore.db",
+    });
+    expect(loadRememberedImportPaths("imessage-macos").appleContacts).toBe(
+      "/Users/sam/Library/Application Support/AddressBook/AddressBook-v22.abcddb",
+    );
+    expect(loadRememberedImportPaths("whatsapp-android").appleContacts).toBe("");
+    expect(loadRememberedImportPaths("imessage-macos").whatsappWa).toBe("");
   });
 });
