@@ -210,7 +210,7 @@ pub async fn source_priority_from_db(
     Ok(rows.into_iter().map(|(source,)| source).collect())
 }
 
-/// Recompute every content key, clear prior flags, then soft-hide cross-source duplicates.
+/// Fill any missing content keys, clear prior flags, then soft-hide cross-source duplicates.
 ///
 /// Survivor preference: source imported first (min message id), then source name.
 /// Optional `source_priority` overrides (tests); `None` loads order from the DB.
