@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { EXPORT_SOURCES } from "./exportSources";
 import { IMESSAGE_METHODS, IMESSAGE_SOURCE_ID } from "./imessageImport";
 import { importSessionCreateBody, vaultSourceForMethod } from "./vaultSource";
 import { WHATSAPP_METHODS, WHATSAPP_SOURCE_ID } from "./whatsappImport";
@@ -16,12 +17,15 @@ describe("vaultSourceForMethod", () => {
   });
 
   it("maps each WhatsApp method id to whatsapp", () => {
-    expect(WHATSAPP_METHODS.map((m) => m.id)).toEqual([
-      "whatsapp-android",
-      "whatsapp-ios",
-    ]);
+    expect(WHATSAPP_METHODS.map((m) => m.id)).toEqual(["whatsapp-android", "whatsapp-ios"]);
     for (const method of WHATSAPP_METHODS) {
       expect(vaultSourceForMethod(method.id)).toBe(WHATSAPP_SOURCE_ID);
+    }
+  });
+
+  it("leaves each picker source id unchanged", () => {
+    for (const source of EXPORT_SOURCES) {
+      expect(vaultSourceForMethod(source.id)).toBe(source.id);
     }
   });
 
@@ -52,8 +56,6 @@ describe("importSessionCreateBody", () => {
   });
 
   it("sends sms-backup-restore unchanged", () => {
-    expect(importSessionCreateBody("sms-backup-restore").source).toBe(
-      "sms-backup-restore",
-    );
+    expect(importSessionCreateBody("sms-backup-restore").source).toBe("sms-backup-restore");
   });
 });

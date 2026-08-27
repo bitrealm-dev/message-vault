@@ -1,5 +1,5 @@
 import { IMESSAGE_SOURCE_ID, isImessageMethod } from "./imessageImport";
-import { WHATSAPP_SOURCE_ID, isWhatsappMethod } from "./whatsappImport";
+import { isWhatsappMethod, WHATSAPP_SOURCE_ID } from "./whatsappImport";
 
 /** Vault session / messages.source slug for a desktop Import method id. */
 export function vaultSourceForMethod(source: string): string {
