@@ -1,5 +1,10 @@
 //! SQL dialect helpers for queries that cannot be written portably.
 
+use std::io::{self, Write};
+use std::time::Instant;
+
+use sqlx::AnyConnection;
+
 use crate::db::engine::DbEngine;
 
 /// Case-insensitive substring match fragment (`%term%` patterns).
@@ -43,6 +48,62 @@ pub fn begin_immediate_sql(engine: DbEngine) -> &'static str {
         DbEngine::Sqlite => "BEGIN IMMEDIATE TRANSACTION",
         DbEngine::Postgres => "BEGIN",
     }
+}
+
+/// Planner refresh for the tables promote writes. Same statements on both
+/// engines (`ANALYZE <table>` is valid on SQLite and Postgres).
+pub fn analyze_import_tables_sql() -> &'static [&'static str] {
+    &[
+        "ANALYZE messages",
+        "ANALYZE attachments",
+        "ANALYZE tapbacks",
+    ]
+}
+
+/// Compact after `--reset-demo` finishes. Postgres vacuums the three written
+/// tables. SQLite `VACUUM` rewrites the whole file.
+pub fn vacuum_after_demo_sql(engine: DbEngine) -> &'static [&'static str] {
+    match engine {
+        DbEngine::Postgres => &["VACUUM messages", "VACUUM attachments", "VACUUM tapbacks"],
+        DbEngine::Sqlite => &["VACUUM"],
+    }
+}
+
+async fn run_sql_warn(conn: &mut AnyConnection, statements: &[&str]) {
+    for sql in statements {
+        if let Err(err) = sqlx::query(sql).execute(&mut *conn).await {
+            eprintln!("  sql:      warning: {sql} failed: {err}");
+        }
+    }
+}
+
+/// Refresh planner stats on committed import tables. Errors are warnings;
+/// the caller still opens the promote transaction.
+pub async fn analyze_import_tables(conn: &mut AnyConnection) {
+    let started = Instant::now();
+    run_sql_warn(conn, analyze_import_tables_sql()).await;
+    println!(
+        "  sql:      analyze messages, attachments, tapbacks ({:.1}s)",
+        started.elapsed().as_secs_f64()
+    );
+    let _ = io::stdout().flush();
+}
+
+/// Reclaim dead row versions after the demo inbox is fully imported.
+/// Errors are warnings; `reset-demo` still succeeds.
+pub async fn vacuum_import_tables(conn: &mut AnyConnection) {
+    let started = Instant::now();
+    let engine = engine_of(conn);
+    run_sql_warn(conn, vacuum_after_demo_sql(engine)).await;
+    let what = match engine {
+        DbEngine::Postgres => "messages, attachments, tapbacks",
+        DbEngine::Sqlite => "database",
+    };
+    println!(
+        "  sql:      vacuum {what} ({:.1}s)",
+        started.elapsed().as_secs_f64()
+    );
+    let _ = io::stdout().flush();
 }
 
 /// Aggregate many values into one column with U+001F separators (the format
@@ -105,5 +166,26 @@ mod tests {
             group_concat_unit_separator(DbEngine::Postgres, "cl.name"),
             "string_agg(cl.name, chr(31))"
         );
+    }
+
+    #[test]
+    fn analyze_import_tables_sql_is_three_named_tables() {
+        assert_eq!(
+            analyze_import_tables_sql(),
+            &[
+                "ANALYZE messages",
+                "ANALYZE attachments",
+                "ANALYZE tapbacks"
+            ]
+        );
+    }
+
+    #[test]
+    fn vacuum_after_demo_sql_is_tables_on_postgres_and_whole_file_on_sqlite() {
+        assert_eq!(
+            vacuum_after_demo_sql(DbEngine::Postgres),
+            &["VACUUM messages", "VACUUM attachments", "VACUUM tapbacks"]
+        );
+        assert_eq!(vacuum_after_demo_sql(DbEngine::Sqlite), &["VACUUM"]);
     }
 }

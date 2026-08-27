@@ -36,6 +36,10 @@ pub(super) async fn promote_append(
     let mut stats = PromoteStats::default();
     let started = Instant::now();
 
+    // Stats on already-committed rows so this promote's guid join can use
+    // the indexes. Failure is a warning; the import still runs.
+    dialect::analyze_import_tables(conn).await;
+
     // Promote writes need the write lock up front on SQLite (IMMEDIATE) so
     // two imports for different accounts cannot race into SQLITE_BUSY at the
     // first write; Postgres has no statement-level equivalent.
@@ -972,6 +976,16 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(stats.messages, 1, "one staged message must promote");
+        let last_analyze: Option<String> = sqlx::query_scalar(
+            "SELECT last_analyze::text FROM pg_stat_user_tables WHERE relname = 'messages'",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert!(
+            last_analyze.is_some(),
+            "ANALYZE before BEGIN must set last_analyze on messages"
+        );
         assert_eq!(
             pg_fts_hits(&mut conn, "stagedbody").await,
             1,
@@ -997,6 +1011,85 @@ mod tests {
             1,
             "triggers must fire again after the promote cycle"
         );
+    }
+
+    #[tokio::test]
+    async fn promote_analyzes_import_tables_before_begin() {
+        let (pool, _dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        schema::ensure_vault_schema(&mut conn).await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'promote-analyze')")
+            .bind(TEST_ACCOUNT)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let handle_id: i64 = sqlx::query_scalar(
+            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+             VALUES ($1, '+15555550300', '+15555550300', 'phone', 'phone')
+             RETURNING id",
+        )
+        .bind(TEST_ACCOUNT)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let staging_conv_id: i64 = sqlx::query_scalar(
+            r#"
+            INSERT INTO staging_conversations (
+                account_id, chat_handle_id, conversation_type, source_file
+            ) VALUES ($1, $2, 'individual', 'analyze.json')
+            RETURNING id
+            "#,
+        )
+        .bind(TEST_ACCOUNT)
+        .bind(handle_id)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            r#"
+            INSERT INTO staging_messages (
+                conversation_id, account_id, source, guid, timestamp,
+                is_from_me, sort_order, body
+            ) VALUES ($1, $2, 'sms', 'analyze-guid-1', '2020-01-01T00:00:00Z', 0, 0, 'analyzebody')
+            "#,
+        )
+        .bind(staging_conv_id)
+        .bind(TEST_ACCOUNT)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let first = promote_append(&mut conn, ImportMode::Append, TEST_ACCOUNT, false, &[])
+            .await
+            .unwrap();
+        assert_eq!(first.messages, 1);
+        let stat_rows: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl IN ('messages', 'attachments', 'tapbacks')",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert!(
+            stat_rows >= 1,
+            "ANALYZE before BEGIN must write sqlite_stat1 for import tables"
+        );
+
+        sqlx::query(
+            r#"
+            INSERT INTO staging_messages (
+                conversation_id, account_id, source, guid, timestamp,
+                is_from_me, sort_order, body
+            ) VALUES ($1, $2, 'sms', 'analyze-guid-2', '2020-01-01T00:00:01Z', 0, 1, 'second')
+            "#,
+        )
+        .bind(staging_conv_id)
+        .bind(TEST_ACCOUNT)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let second = promote_append(&mut conn, ImportMode::Append, TEST_ACCOUNT, false, &[])
+            .await
+            .unwrap();
+        assert_eq!(second.messages, 1, "second promote must still insert");
     }
 
     #[tokio::test]
