@@ -1291,10 +1291,20 @@ read_only = true
         conn.close().await.expect("close wipe conn");
         pool.close().await;
 
+        let host_config_before = fs::read(&config_dest).expect("read host config");
         let cfg = Config::load(&config_dest).expect("load host config");
         reset_prepared_bundle_at_url(&cfg, &bundle, DEMO_ACCOUNT_ID, &url)
             .await
             .expect("reset at url");
+        assert!(
+            !unused_db.exists(),
+            "reset-demo --db-url must not create or replace paths.db"
+        );
+        assert_eq!(
+            fs::read(&config_dest).expect("reread host config"),
+            host_config_before,
+            "reset-demo --db-url must leave the host config file unchanged"
+        );
 
         let pool = engine::open_pool_from_url(&url)
             .await

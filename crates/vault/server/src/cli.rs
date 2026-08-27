@@ -123,7 +123,8 @@ pub enum Commands {
         #[arg(long, default_value = "crates/vault/demo-seed")]
         bundle: PathBuf,
 
-        /// Active config path to overwrite (default config/config.toml)
+        /// Active config path. Overwritten on the SQLite path; only read for
+        /// attachment paths when `--db-url` is set (default config/config.toml)
         #[arg(long, default_value = "config/config.toml")]
         config: PathBuf,
 

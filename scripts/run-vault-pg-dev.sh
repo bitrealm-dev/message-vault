@@ -134,7 +134,7 @@ else
 fi
 
 echo
-echo "Vault API:  http://127.0.0.1:8080  (Postgres ${DB_URL})"
+echo "Vault API:  http://127.0.0.1:8080  (Postgres postgres://127.0.0.1:5432/vault)"
 echo "Website:    cd web && npm run dev     → http://localhost:5173"
 echo "Desktop:    cargo tauri dev"
 echo "Stop:       Ctrl+C also stops the Postgres container (volume kept)."
