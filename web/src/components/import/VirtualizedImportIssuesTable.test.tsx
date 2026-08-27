@@ -4,6 +4,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ImportIssue } from "./ImportSummaryPanel";
+import { estimateExpandedHeight, tableViewportHeight } from "./importIssuesTableLayout";
 import VirtualizedImportIssuesTable from "./VirtualizedImportIssuesTable";
 
 vi.mock("@tanstack/react-virtual", () => ({
@@ -89,5 +90,36 @@ describe("VirtualizedImportIssuesTable", () => {
     expect(screen.getByText("HTTP 500 from vault")).toBeInTheDocument();
     expect(screen.getAllByText("chat.jsonl")).toHaveLength(1);
     expect(screen.queryByRole("list")).not.toBeInTheDocument();
+  });
+
+  it("keeps the filename list open when a name is clicked", async () => {
+    const user = userEvent.setup();
+    render(
+      <VirtualizedImportIssuesTable
+        issues={[
+          issue({ item: "a.jsonl", reason: "source mismatch" }),
+          issue({ item: "b.jsonl", reason: "source mismatch" }),
+        ]}
+      />,
+    );
+
+    await user.click(screen.getByRole("row", { name: /Expand error for 2 files/ }));
+    await user.click(screen.getByText("a.jsonl"));
+
+    expect(screen.getByRole("row", { name: /Collapse error for 2 files/ })).toBeInTheDocument();
+    expect(screen.getByText("b.jsonl")).toBeInTheDocument();
+  });
+});
+
+describe("tableViewportHeight", () => {
+  it("grows a one-group viewport to fit the expanded reason and file list", () => {
+    const reason = "source mismatch";
+    const fileCount = 681;
+    const expanded = estimateExpandedHeight(reason, fileCount);
+    const viewport = tableViewportHeight(1, { reason, fileCount });
+
+    expect(tableViewportHeight(1, null)).toBe(56);
+    expect(viewport).toBeGreaterThanOrEqual(expanded);
+    expect(viewport).toBe(expanded);
   });
 });

@@ -2,26 +2,15 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { groupImportIssues, type ImportIssueGroup } from "./groupImportIssues";
 import type { ImportIssue } from "./ImportSummaryPanel";
+import {
+  COLLAPSED_ROW_HEIGHT,
+  estimateExpandedHeight,
+  FILENAME_ROW_PX,
+  MAX_VISIBLE_FILENAMES,
+  tableViewportHeight,
+} from "./importIssuesTableLayout";
 
-/** Collapsed row: file + step + two lines of error text. */
-const COLLAPSED_ROW_HEIGHT = 56;
-const MAX_VISIBLE_ROWS = 14;
 const ISSUE_COLUMNS = "grid-cols-[minmax(0,1fr)_4.5rem_minmax(0,1.4fr)]";
-const MAX_VISIBLE_FILENAMES = 6;
-const FILENAME_ROW_PX = 20;
-
-function estimateReasonHeight(reason: string): number {
-  // Rough wrap estimate for the error column (~42 chars/line at this font size).
-  const lines = Math.max(2, Math.ceil(reason.length / 42));
-  return Math.min(220, 20 + lines * 18);
-}
-
-function estimateExpandedHeight(reason: string, fileCount: number): number {
-  const reasonHeight = estimateReasonHeight(reason);
-  if (fileCount <= 1) return reasonHeight;
-  const visibleFiles = Math.min(fileCount, MAX_VISIBLE_FILENAMES);
-  return reasonHeight + 8 + visibleFiles * FILENAME_ROW_PX;
-}
 
 function parseFileLabel(group: ImportIssueGroup): string {
   if (group.items.length === 1) {
@@ -49,7 +38,13 @@ export default function VirtualizedImportIssuesTable({ issues }: { issues: Impor
     overscan: 6,
   });
   const virtualRows = virtualizer.getVirtualItems();
-  const viewportHeight = Math.min(groups.length, MAX_VISIBLE_ROWS) * COLLAPSED_ROW_HEIGHT;
+  const expandedGroup = expandedIndex == null ? null : groups[expandedIndex];
+  const viewportHeight = tableViewportHeight(
+    groups.length,
+    expandedGroup == null
+      ? null
+      : { reason: expandedGroup.reason, fileCount: expandedGroup.items.length },
+  );
 
   useEffect(() => {
     void expandedIndex;
@@ -122,7 +117,13 @@ export default function VirtualizedImportIssuesTable({ issues }: { issues: Impor
                 aria-rowindex={virtualRow.index + 2}
                 aria-expanded={expanded}
                 aria-label={rowAriaLabel(group, expanded)}
-                onClick={() => toggleRow(virtualRow.index)}
+                onClick={(event) => {
+                  const target = event.target;
+                  if (target instanceof Element && target.closest("[data-issue-filenames]")) {
+                    return;
+                  }
+                  toggleRow(virtualRow.index);
+                }}
                 onKeyDown={(event) => onRowKeyDown(event, virtualRow.index)}
                 className={`absolute left-0 top-0 grid w-full min-w-0 cursor-pointer ${ISSUE_COLUMNS} items-start border-b border-border outline-none last:border-b-0 hover:bg-hover focus-visible:bg-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent ${
                   expanded ? "bg-hover" : ""
@@ -158,6 +159,7 @@ export default function VirtualizedImportIssuesTable({ issues }: { issues: Impor
                   </span>
                   {expanded && group.items.length > 1 ? (
                     <ul
+                      data-issue-filenames=""
                       className="mt-2 overflow-y-auto text-muted"
                       style={{ maxHeight: MAX_VISIBLE_FILENAMES * FILENAME_ROW_PX }}
                     >
