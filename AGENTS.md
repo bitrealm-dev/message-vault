@@ -196,14 +196,13 @@ API: **http://127.0.0.1:8080**. After `--reset-demo`, sign in as username `demo`
 
 Restart terminal 1 after edits under `crates/vault/server/` (debug `cargo run`; no hot reload).
 
-**Run on Postgres (optional)** — the server defaults to SQLite at `data/vault.db`; a `postgres://…` (or `sqlite://…`) URL selects the engine instead, passed with `serve --db-url` or set as `[database] url` in `config/config.toml`.
-
-```bash
-docker compose -f docker-compose.pg.yml up -d   # dev-only Postgres on 127.0.0.1:5432 (vault/vault/vault)
-cargo run -p message-vault-server -- serve --config config/config.toml --db-url postgres://vault:vault@127.0.0.1:5432/vault
-```
-
-`docker compose -f docker-compose.pg.yml down` stops the database. Do not run this and `./scripts/run-vault-dev.sh` at once unless one uses a different `[server] bind` — both serve on 127.0.0.1:8080.
+**Run on Postgres (optional)** — `./scripts/run-vault-pg-dev.sh` starts
+compose Postgres, runs this checkout's vault with `--db-url
+postgres://vault:vault@127.0.0.1:5432/vault`, and stops the container
+on exit. `--reset` / `--reset-demo` wipe the `vault_pg_data` volume and
+host `data/`. After `--reset-demo`, sign in as `demo` with an empty
+password. Do not run this and `./scripts/run-vault-dev.sh` at once
+(both serve on 127.0.0.1:8080).
 
 **Terminal 2 — UI** (pick one)
 

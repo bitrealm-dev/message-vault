@@ -109,6 +109,21 @@ The first run uses `--reset-demo`. Later sessions, start with no flags so `data/
 
 `--reset` wipes `data/` and starts empty (no sample inbox). Don't combine `--reset` and `--reset-demo`. `--sqlweb` works with any of these.
 
+### Start the vault on Postgres (optional)
+
+Same flags as the SQLite script, against the compose Postgres on
+`127.0.0.1:5432`. Needs Docker. There is no `--sqlweb`.
+
+```bash title="Start the vault on Postgres"
+./scripts/run-vault-pg-dev.sh --reset-demo
+```
+
+Sign in as username `demo` with an empty password. `--reset` wipes the
+Postgres volume and `data/` and starts empty. A run with no flags keeps
+the volume. Stopping the script (Ctrl+C) stops the Postgres container
+and keeps the volume. Do not run this at the same time as
+`./scripts/run-vault-dev.sh` — both use port 8080.
+
 ### Open the website (terminal 2)
 
 Install the frontend packages once, then start the Vite UI. Vite is the local web server for `web/`.

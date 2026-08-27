@@ -159,14 +159,19 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
 ///
 /// Returns an error when the bundle is incomplete, the database cannot be
 /// replaced, or import / media processing fails.
-pub async fn run_reset_demo(bundle: &Path, config_dest: &Path) -> Result<ResetDemoStats> {
-    run_reset_demo_for_account(bundle, config_dest, DEMO_ACCOUNT_ID).await
+pub async fn run_reset_demo(
+    bundle: &Path,
+    config_dest: &Path,
+    db_url: Option<&str>,
+) -> Result<ResetDemoStats> {
+    run_reset_demo_for_account(bundle, config_dest, DEMO_ACCOUNT_ID, db_url).await
 }
 
 async fn run_reset_demo_for_account(
     bundle: &Path,
     config_dest: &Path,
     account_id: &str,
+    db_url: Option<&str>,
 ) -> Result<ResetDemoStats> {
     let bundle = if bundle.is_absolute() {
         bundle.to_path_buf()
@@ -176,7 +181,7 @@ async fn run_reset_demo_for_account(
 
     println!("  bundle:       {}", bundle.display());
     let seed_stats = maybe_regenerate_bundle(&bundle)?;
-    let reset_stats = prepare_config_and_reset(&bundle, config_dest, account_id).await?;
+    let reset_stats = prepare_config_and_reset(&bundle, config_dest, account_id, db_url).await?;
 
     Ok(ResetDemoStats {
         seed: seed_stats,
@@ -186,10 +191,25 @@ async fn run_reset_demo_for_account(
     })
 }
 
+/// Refuse a config that serves the database from a URL unless `--db-url` was passed.
+fn refuse_url_config_without_flag(cfg: &Config, db_url: Option<&str>) -> Result<()> {
+    if db_url.is_some() {
+        return Ok(());
+    }
+    if let Some(url) = cfg.database.url.as_deref() {
+        bail!(
+            "reset-demo replaces the on-disk vault at paths.db, but this config serves the database from {}; URL-served databases cannot be reset this way — run reset-demo on the host that owns the database file",
+            crate::import_cli::redact_db_url(url)
+        );
+    }
+    Ok(())
+}
+
 async fn prepare_config_and_reset(
     bundle: &Path,
     config_dest: &Path,
     account_id: &str,
+    db_url: Option<&str>,
 ) -> Result<ResetPreparedStats> {
     validate_prepared_bundle(bundle)?;
     let demo_config = bundle.join("config/config.toml");
@@ -198,6 +218,14 @@ async fn prepare_config_and_reset(
             "incomplete demo bundle under {} (need config/config.toml)",
             bundle.display()
         );
+    }
+    if let Some(url) = db_url {
+        let cfg = if config_dest.is_file() {
+            Config::load(config_dest)?
+        } else {
+            Config::load(&demo_config)?
+        };
+        return reset_prepared_bundle_at_url(&cfg, bundle, account_id, url).await;
     }
     let config_parent = parent_dir_or_cwd(config_dest);
     fs::create_dir_all(config_parent)
@@ -214,16 +242,7 @@ async fn prepare_config_and_reset(
         )
     })?;
     let cfg = Config::load(temporary_config.path())?;
-    // reset-demo replaces the on-disk vault file and account tree, so a
-    // URL-served database (Postgres, or SQLite via `[database] url`) would
-    // be silently left untouched by the reset below. Refuse instead of
-    // reporting a reset that never touched the real database.
-    if let Some(url) = cfg.database.url.as_deref() {
-        bail!(
-            "reset-demo replaces the on-disk vault at paths.db, but this config serves the database from {}; URL-served databases cannot be reset this way — run reset-demo on the host that owns the database file",
-            crate::import_cli::redact_db_url(url)
-        );
-    }
+    refuse_url_config_without_flag(&cfg, None)?;
     let temporary_config = temporary_config.into_temp_path();
     reset_prepared_bundle(
         &cfg,
@@ -233,6 +252,117 @@ async fn prepare_config_and_reset(
         temporary_config.as_ref(),
     )
     .await
+}
+
+async fn reset_prepared_bundle_at_url(
+    cfg: &Config,
+    bundle: &Path,
+    account_id: &str,
+    db_url: &str,
+) -> Result<ResetPreparedStats> {
+    let prepared = validate_prepared_bundle(bundle)?;
+    wipe_demo_account_at_url(cfg, account_id, db_url).await?;
+
+    println!("Reset demo — preparing replacement");
+    println!("  account:      {account_id}");
+    println!("  imessage:     {}", prepared.imessage_dir.display());
+    println!("  android:      {}", prepared.sbr_dir.display());
+    println!("  whatsapp:     {}", prepared.whatsapp_dir.display());
+    println!(
+        "  db:           {}",
+        crate::import_cli::redact_db_url(db_url)
+    );
+
+    seed_demo_account_at_url(db_url, account_id, &prepared.seed).await?;
+    let mut import_stats = crate::import_cli::run(
+        cfg,
+        &crate::import_cli::CliImportOptions {
+            account_id: account_id.to_string(),
+            input_dir: prepared.imessage_dir.clone(),
+            db_path: None,
+            db_url: Some(db_url.to_string()),
+            assets_dir: None,
+            source_override: Some(IMESSAGE_SOURCE.to_string()),
+            mode: ImportMode::Replace,
+            media: crate::import_media::MediaMode::Copy,
+            contacts: Some(prepared.contacts_vcf.clone()),
+            overwrite_contacts: true,
+            skip_dedupe: true,
+            window_secs: 2,
+        },
+    )
+    .await?
+    .import;
+    let sbr_stats = crate::import_cli::run(
+        cfg,
+        &crate::import_cli::CliImportOptions {
+            account_id: account_id.to_string(),
+            input_dir: prepared.sbr_dir.clone(),
+            db_path: None,
+            db_url: Some(db_url.to_string()),
+            assets_dir: None,
+            source_override: Some(SBR_SOURCE.to_string()),
+            mode: ImportMode::Append,
+            media: crate::import_media::MediaMode::Copy,
+            contacts: None,
+            overwrite_contacts: false,
+            skip_dedupe: true,
+            window_secs: 2,
+        },
+    )
+    .await?
+    .import;
+    merge_import_stats(&mut import_stats, &sbr_stats);
+    let whatsapp_stats = crate::import_cli::run(
+        cfg,
+        &crate::import_cli::CliImportOptions {
+            account_id: account_id.to_string(),
+            input_dir: prepared.whatsapp_dir.clone(),
+            db_path: None,
+            db_url: Some(db_url.to_string()),
+            assets_dir: None,
+            source_override: Some(WHATSAPP_SOURCE.to_string()),
+            mode: ImportMode::Append,
+            media: crate::import_media::MediaMode::Copy,
+            contacts: None,
+            overwrite_contacts: false,
+            skip_dedupe: true,
+            window_secs: 2,
+        },
+    )
+    .await?
+    .import;
+    merge_import_stats(&mut import_stats, &whatsapp_stats);
+
+    let dedupe_stats = dedupe::run_dedupe(&cfg.paths.db, account_id, 2, Some(db_url)).await?;
+    println!("Reset demo — processing prepared assets");
+    let process_stats = process_assets::run(
+        cfg,
+        &ProcessAssetsOptions {
+            force: false,
+            dry_run: false,
+            skip_image: false,
+            skip_video: false,
+            skip_audio: false,
+            db: None,
+            source: None,
+            db_url: Some(db_url.to_string()),
+        },
+    )
+    .await
+    .context("process-assets after prepared demo import")?;
+    if process_stats.errors > 0 {
+        eprintln!(
+            "warning: {} demo attachment(s) failed conversion; originals stay in place and reset-demo continues",
+            process_stats.errors
+        );
+    }
+
+    Ok(ResetPreparedStats {
+        import: import_stats,
+        dedupe_keys_filled: dedupe_stats.keys_filled,
+        process_assets: process_stats,
+    })
 }
 
 async fn reset_prepared_bundle(
@@ -330,6 +460,7 @@ async fn reset_prepared_bundle(
             skip_audio: false,
             db: None,
             source: None,
+            db_url: None,
         },
     )
     .await
@@ -876,7 +1007,28 @@ async fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) ->
     let pool = engine::open_pool_for_path(db_path).await?;
     let mut conn = pool.acquire().await?;
     schema::ensure_vault_schema(&mut conn).await?;
-    account_profile::ensure_account_row(&mut conn, account_id).await?;
+    seed_demo_account_on_conn(&mut conn, account_id, seed).await?;
+    conn.close().await?;
+    pool.close().await;
+    Ok(())
+}
+
+async fn seed_demo_account_at_url(db_url: &str, account_id: &str, seed: &DemoSeed) -> Result<()> {
+    let pool = engine::open_pool_from_url(db_url).await?;
+    let mut conn = pool.acquire().await?;
+    schema::ensure_vault_schema(&mut conn).await?;
+    seed_demo_account_on_conn(&mut conn, account_id, seed).await?;
+    conn.close().await?;
+    pool.close().await;
+    Ok(())
+}
+
+async fn seed_demo_account_on_conn(
+    conn: &mut sqlx::AnyConnection,
+    account_id: &str,
+    seed: &DemoSeed,
+) -> Result<()> {
+    account_profile::ensure_account_row(conn, account_id).await?;
 
     sqlx::query(
         r#"
@@ -924,10 +1076,8 @@ async fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) ->
         .execute(&mut *conn)
         .await?;
     for (raw, handle_type) in &seed.owner.handle_specs {
-        account_profile::link_account_handle(&mut conn, account_id, raw, *handle_type).await?;
+        account_profile::link_account_handle(conn, account_id, raw, *handle_type).await?;
     }
-    conn.close().await?;
-    pool.close().await;
     Ok(())
 }
 
@@ -966,6 +1116,39 @@ async fn wipe_demo_account(cfg: &Config, account_id: &str) -> Result<()> {
     Ok(())
 }
 
+async fn wipe_demo_account_at_url(cfg: &Config, account_id: &str, db_url: &str) -> Result<()> {
+    println!(
+        "Reset demo — clearing account data in {}",
+        crate::import_cli::redact_db_url(db_url)
+    );
+    let pool = engine::open_pool_from_url(db_url).await.with_context(|| {
+        format!(
+            "open {} for demo account wipe",
+            crate::import_cli::redact_db_url(db_url)
+        )
+    })?;
+    let mut conn = pool.acquire().await.with_context(|| {
+        format!(
+            "open {} for demo account wipe",
+            crate::import_cli::redact_db_url(db_url)
+        )
+    })?;
+    schema::ensure_vault_schema(&mut conn).await?;
+    let deleted = sqlx::query("DELETE FROM accounts WHERE id = $1")
+        .bind(account_id)
+        .execute(&mut *conn)
+        .await
+        .with_context(|| format!("delete account {account_id}"))?
+        .rows_affected();
+    println!("  sql:      demo account rows removed (accounts matched={deleted})");
+    conn.close().await?;
+    pool.close().await;
+
+    let account_root = cfg.paths.data_dir.join(account_id);
+    remove_tree_if_exists(&account_root)?;
+    Ok(())
+}
+
 fn remove_tree_if_exists(path: &Path) -> Result<()> {
     if path.exists() {
         fs::remove_dir_all(path).with_context(|| format!("remove {}", path.display()))?;
@@ -980,6 +1163,173 @@ mod tests {
     use crate::guest_pool;
     use sqlx::AnyConnection;
 
+    fn url_config_for_refuse_tests() -> Config {
+        Config {
+            paths: PathsConfig {
+                db: PathBuf::from("data/vault.db"),
+                data_dir: PathBuf::from("data"),
+                assets_dir: "assets".into(),
+                assets_converted_dir: "assets_converted".into(),
+            },
+            server: None,
+            database: crate::config::DatabaseConfig {
+                url: Some("postgres://vault:vault@127.0.0.1:5432/vault".into()),
+            },
+        }
+    }
+
+    #[test]
+    fn refuse_url_config_without_flag_errors_when_config_has_url() {
+        let err = refuse_url_config_without_flag(&url_config_for_refuse_tests(), None)
+            .expect_err("config URL without --db-url must fail");
+        assert!(
+            err.to_string()
+                .contains("URL-served databases cannot be reset"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn refuse_url_config_without_flag_ok_when_db_url_flag_set() {
+        refuse_url_config_without_flag(
+            &url_config_for_refuse_tests(),
+            Some("postgres://vault:vault@127.0.0.1:5432/vault"),
+        )
+        .expect("flag allows a URL-served config");
+    }
+
+    fn write_tiny_reset_bundle(root: &Path) {
+        fs::create_dir_all(root.join("config")).expect("create bundle config");
+        fs::create_dir_all(root.join("staging").join(IMESSAGE_SOURCE)).expect("imessage dir");
+        fs::create_dir_all(root.join("staging").join(SBR_SOURCE)).expect("sbr dir");
+        fs::create_dir_all(root.join("staging").join(WHATSAPP_SOURCE)).expect("whatsapp dir");
+        fs::write(
+            root.join("config/config.toml"),
+            "[paths]\ndb = \"data/vault.db\"\ndata_dir = \"data\"\n",
+        )
+        .expect("write bundle config");
+        fs::write(
+            root.join("config/seed.toml"),
+            r#"
+[owner]
+display_name = "Demo User"
+handle_specs = [["+14155559000", "phone"]]
+emails = ["demo.ingest@example.com"]
+
+[account]
+username = "demo"
+read_only = true
+"#,
+        )
+        .expect("write seed.toml");
+        fs::write(
+            root.join("config/contacts.vcf"),
+            "BEGIN:VCARD\nVERSION:3.0\nFN:Test\nTEL:+15555550100\nEND:VCARD\n",
+        )
+        .expect("write contacts");
+        let conversation = |source: &str, chat: &str, guid: &str| {
+            format!(
+                r#"{{"schema_version":3,"export":{{"source":"{source}","tool":"t","tool_version":"0","owner_handle":null,"owner_display_name":null}},"conversation":{{"chat_identifier":"{chat}","conversation_type":"individual","group_title":null,"participants":[{{"handle":"{chat}","display_name":null}}],"stats":{{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}}}}
+{{"guid":"{guid}","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"{chat}","sender_display_name":null,"subject":null,"text":"hello","attachments":[],"imessage":null,"source":null}}
+"#
+            )
+        };
+        fs::write(
+            root.join("staging").join(IMESSAGE_SOURCE).join("a.jsonl"),
+            conversation(IMESSAGE_SOURCE, "+15555550101", "pg-demo-imessage"),
+        )
+        .expect("write imessage jsonl");
+        fs::write(
+            root.join("staging").join(SBR_SOURCE).join("a.jsonl"),
+            conversation(SBR_SOURCE, "+15555550102", "pg-demo-sbr"),
+        )
+        .expect("write sbr jsonl");
+        fs::write(
+            root.join("staging").join(WHATSAPP_SOURCE).join("a.jsonl"),
+            conversation(WHATSAPP_SOURCE, "+15555550103", "pg-demo-wa"),
+        )
+        .expect("write whatsapp jsonl");
+    }
+
+    #[tokio::test]
+    async fn reset_demo_db_url_creates_demo_account_on_postgres() {
+        let Some(url) = crate::pg_test_url() else {
+            return;
+        };
+        let _pg_guard = crate::acquire_pg_test_lock().await;
+        sqlx::any::install_default_drivers();
+
+        let temp = tempfile::tempdir().expect("temp dir");
+        let bundle = temp.path().join("bundle");
+        write_tiny_reset_bundle(&bundle);
+        let data_dir = temp.path().join("data");
+        fs::create_dir_all(&data_dir).expect("data dir");
+        let unused_db = temp.path().join("unused.db");
+        let config_dest = temp.path().join("config.toml");
+        fs::write(
+            &config_dest,
+            format!(
+                "[paths]\ndb = \"{}\"\ndata_dir = \"{}\"\n",
+                unused_db.display(),
+                data_dir.display()
+            ),
+        )
+        .expect("write host config");
+
+        let pool = engine::open_pool_from_url(&url)
+            .await
+            .expect("open postgres");
+        let mut conn = pool.acquire().await.expect("acquire");
+        schema::ensure_vault_schema(&mut conn)
+            .await
+            .expect("schema");
+        sqlx::query("DELETE FROM accounts WHERE id = $1")
+            .bind(DEMO_ACCOUNT_ID)
+            .execute(&mut *conn)
+            .await
+            .expect("wipe leftover demo");
+        conn.close().await.expect("close wipe conn");
+        pool.close().await;
+
+        let cfg = Config::load(&config_dest).expect("load host config");
+        reset_prepared_bundle_at_url(&cfg, &bundle, DEMO_ACCOUNT_ID, &url)
+            .await
+            .expect("reset at url");
+
+        let pool = engine::open_pool_from_url(&url)
+            .await
+            .expect("reopen postgres");
+        let mut conn = pool.acquire().await.expect("acquire");
+        let username: Option<String> =
+            sqlx::query_scalar("SELECT username FROM accounts WHERE id = $1")
+                .bind(DEMO_ACCOUNT_ID)
+                .fetch_optional(&mut *conn)
+                .await
+                .expect("username");
+        assert_eq!(username.as_deref(), Some("demo"));
+        let hash: Option<String> =
+            sqlx::query_scalar("SELECT password_hash FROM accounts WHERE id = $1")
+                .bind(DEMO_ACCOUNT_ID)
+                .fetch_one(&mut *conn)
+                .await
+                .expect("password hash");
+        assert!(hash.is_none(), "demo account must have no password hash");
+        let conversations: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM conversations WHERE account_id = $1")
+                .bind(DEMO_ACCOUNT_ID)
+                .fetch_one(&mut *conn)
+                .await
+                .expect("conversations");
+        assert!(conversations >= 1, "expected imported conversations");
+        sqlx::query("DELETE FROM accounts WHERE id = $1")
+            .bind(DEMO_ACCOUNT_ID)
+            .execute(&mut *conn)
+            .await
+            .expect("cleanup demo");
+        conn.close().await.expect("close");
+        pool.close().await;
+    }
+
     /// Open `db` with the vault schema applied and one connection checked out.
     async fn test_db_conn(db: &Path) -> sqlx::pool::PoolConnection<sqlx::Any> {
         let (_pool, conn) = test_db(db).await;
@@ -990,6 +1340,7 @@ mod tests {
     /// connection so the caller can close the pool deterministically before
     /// copying or replacing the database file.
     async fn test_db(db: &Path) -> (sqlx::AnyPool, sqlx::pool::PoolConnection<sqlx::Any>) {
+        sqlx::any::install_default_drivers();
         let pool = engine::open_pool_for_path(db)
             .await
             .expect("open test database");
@@ -1286,7 +1637,8 @@ mod tests {
         let invalid_bundle = temp.path().join("invalid-bundle");
         fs::create_dir_all(&invalid_bundle).expect("create invalid bundle");
 
-        let result = prepare_config_and_reset(&invalid_bundle, &config_dest, DEMO_ACCOUNT_ID).await;
+        let result =
+            prepare_config_and_reset(&invalid_bundle, &config_dest, DEMO_ACCOUNT_ID, None).await;
 
         assert!(result.is_err());
         assert_eq!(

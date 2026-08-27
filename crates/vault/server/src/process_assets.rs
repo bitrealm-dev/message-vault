@@ -36,6 +36,8 @@ pub struct ProcessAssetsOptions {
     pub db: Option<PathBuf>,
     /// Only process this source id.
     pub source: Option<String>,
+    /// Connection URL (`postgres://…` or `sqlite://…`); wins over `db` / `paths.db`.
+    pub db_url: Option<String>,
 }
 
 /// Counts reported by one derived-media processing pass.
@@ -84,14 +86,20 @@ impl AssetRow {
 /// Returns an error when the database is missing, a conversion tool fails, or
 /// a derived file cannot be written.
 pub async fn run(cfg: &Config, opts: &ProcessAssetsOptions) -> Result<ProcessAssetsStats> {
-    let db_path = opts.db.as_ref().unwrap_or(&cfg.paths.db);
-    if !db_path.is_file() {
-        bail!("database not found: {}", db_path.display());
-    }
-
-    let pool = engine::open_pool_for_path(db_path)
-        .await
-        .with_context(|| format!("open database {}", db_path.display()))?;
+    let pool = match opts.db_url.as_deref() {
+        Some(url) => engine::open_pool_from_url(url)
+            .await
+            .with_context(|| format!("open database {}", crate::import_cli::redact_db_url(url)))?,
+        None => {
+            let db_path = opts.db.as_ref().unwrap_or(&cfg.paths.db);
+            if !db_path.is_file() {
+                bail!("database not found: {}", db_path.display());
+            }
+            engine::open_pool_for_path(db_path)
+                .await
+                .with_context(|| format!("open database {}", db_path.display()))?
+        }
+    };
     let mut conn = pool.acquire().await?;
     schema::ensure_vault_schema(&mut conn).await?;
 
