@@ -160,7 +160,7 @@ export default function ImportSummaryPanel({
           <section className="min-w-0 overflow-hidden">
             <h2 className="m-0 text-base font-semibold">Import Errors</h2>
             <p className="mb-0 mt-1 text-[0.75rem] text-muted">
-              Error messages show two lines. Click a row to expand or collapse the full message.
+              Identical errors are grouped. Error messages show two lines. Click a row to expand the full message and the file list.
             </p>
             <VirtualizedImportIssuesTable issues={summary.issues} />
           </section>
