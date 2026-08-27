@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { ImportIssue } from "./ImportSummaryPanel";
 import { groupImportIssues } from "./groupImportIssues";
+import type { ImportIssue } from "./ImportSummaryPanel";
 
-function issue(
-  partial: Partial<ImportIssue> & Pick<ImportIssue, "item" | "reason">,
-): ImportIssue {
+function issue(partial: Partial<ImportIssue> & Pick<ImportIssue, "item" | "reason">): ImportIssue {
   return {
     kind: "error",
     step: "upload",
