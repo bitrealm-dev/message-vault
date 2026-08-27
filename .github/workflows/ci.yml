@@ -290,7 +290,7 @@ jobs:
           - Tauri v2 desktop app with all exporters included
           - Vault push/pull, format conversion, contacts preview
           - Vault server Docker image: \`bitrealm/message-vault:${TAG}\`
-          - User Guide and developer docs: https://bitrealm.dev/vault/user/ and https://bitrealm.dev/vault/developer/
+          - User Guide and developer docs: https://bitrealm.io/vault/user/ and https://bitrealm.io/vault/developer/
 
           ## Installers
 

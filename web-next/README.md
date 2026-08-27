@@ -9,7 +9,7 @@ static). This package is the restored historical Next.js browse app.
 
 Product documentation:
 
-**https://bitrealm.dev/vault/user/browse-your-messages/**
+**https://bitrealm.io/vault/user/browse-your-messages/**
 
 ## Local development
 

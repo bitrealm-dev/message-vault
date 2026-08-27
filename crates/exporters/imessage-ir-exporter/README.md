@@ -15,7 +15,7 @@ Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
 
 ## Docs
 
-Command-line options: https://bitrealm.dev/vault/developer/reference/cli/imessage-ir-exporter/
+Command-line options: https://bitrealm.io/vault/developer/reference/cli/imessage-ir-exporter/
 
 ## License
 

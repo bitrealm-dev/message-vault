@@ -69,10 +69,10 @@ Discord, Signal, Telegram, and Slack are recognized services in the shared model
 | GO SMS Pro | [Import mapping](/vault/developer/formats/go-sms-pro/mapping/) |
 | SMS Backup & Restore | [Input format](/vault/developer/formats/sms-backup-restore/input/) · [Import mapping](/vault/developer/formats/sms-backup-restore/mapping/) |
 | SMS Backup+ | [Format](/vault/developer/formats/sms-backup-plus/format/) · [Import mapping](/vault/developer/formats/sms-backup-plus/mapping/) |
-| OpenExtract | [CLI](https://bitrealm.dev/vault/developer/reference/cli/openextract-exporter/) |
+| OpenExtract | [CLI](https://bitrealm.io/vault/developer/reference/cli/openextract-exporter/) |
 | iMazing | [Input format](/vault/developer/formats/imazing/input/) · [Design](/vault/developer/formats/imazing/design/) |
-| WhatsApp | [CLI](https://bitrealm.dev/vault/developer/reference/cli/whatsapp-exporter/) |
-| iMessage | [CLI](https://bitrealm.dev/vault/developer/reference/cli/imessage-ir-exporter/) |
+| WhatsApp | [CLI](https://bitrealm.io/vault/developer/reference/cli/whatsapp-exporter/) |
+| iMessage | [CLI](https://bitrealm.io/vault/developer/reference/cli/imessage-ir-exporter/) |
 
 **Common message:** end-user [export structure](/vault/developer/reference/export-structure/); schema [message-ir architecture](https://github.com/bitrealm-dev/message-vault/blob/main/docs/maintainers/architecture/message-ir.md). All exporters parse to `ConversationDocument` then project via `message_ir_format::FormatSink` (per-chat JSON/JSONL/CSV/EML/MBOX, or one SyncTech `smses.xml` with `--format xml`). Output formats: [mail archives](/vault/developer/formats/mail-archive/) and [SMS Backup & Restore XML](/vault/developer/formats/sms-backup-restore-xml/). Attachment modes (none / copy / convert / compress) and obfuscate apply through `FormatSink` for every format.
 

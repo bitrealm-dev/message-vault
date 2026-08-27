@@ -184,7 +184,7 @@ export function SettingsAccessForm({
           Create an API token to import messages. It is shown only once. In Message
           Exporters → Vault, paste the token and set Vault URL to your vault origin
           (for example <span className="font-mono text-text">http://127.0.0.1:8080</span>{" "}
-          or <span className="font-mono text-text">https://app.bitrealm.dev</span>
+          or <span className="font-mono text-text">https://app.bitrealm.io</span>
           ).
           {username ? (
             <>

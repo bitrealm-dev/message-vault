@@ -16,7 +16,7 @@ Contributions to the Message Vault are welcome.
 How to set up, build, run, and contribute to Message Vault.
 
 
-End-user guides (install, first export, formats) live on the [docs site](https://bitrealm.dev/). Architecture, releases, signing, and GUI design notes live under [`docs/maintainers/`](docs/maintainers/README.md).
+End-user guides (install, first export, formats) live on the [docs site](https://bitrealm.io/). Architecture, releases, signing, and GUI design notes live under [`docs/maintainers/`](docs/maintainers/README.md).
 
 ## Prerequisites
 
@@ -121,7 +121,7 @@ cd web && npm run dev                   # website at http://localhost:5173 (prox
 # cargo tauri dev                       # desktop window instead of a browser
 ```
 
-Create an account in the website when the vault is empty. For CLI import and export, create an API token under **Settings → Account**. To run the published image without compiling: [Try the vault](https://bitrealm.dev/vault/user/get-started/try-the-vault/). To build a release-shaped image from this checkout: [Operator Docker](https://bitrealm.dev/vault/developer/docker-compose/).
+Create an account in the website when the vault is empty. For CLI import and export, create an API token under **Settings → Account**. To run the published image without compiling: [Try the vault](https://bitrealm.io/vault/user/get-started/try-the-vault/). To build a release-shaped image from this checkout: [Operator Docker](https://bitrealm.io/vault/developer/docker-compose/).
 
 Settings persist in `export.ini` (working directory or next to the binary). Template: [`crates/core/message-vault-io-core/export.example.ini`](crates/core/message-vault-io-core/export.example.ini). Backup passwords are never written.
 
@@ -181,7 +181,7 @@ cd web && npm ci && npm run lint && npm test
 
 ## Docs site (optional)
 
-User-facing docs are Astro Starlight under `docs/`, published to **https://bitrealm.dev/** by `.github/workflows/docs.yml` (manual dispatch or push to `main` that touches `docs/**`).
+User-facing docs are Astro Starlight under `docs/`, published to **https://bitrealm.io/** by `.github/workflows/docs.yml` (manual dispatch or push to `main` that touches `docs/**`).
 
 ```bash
 cd docs
@@ -201,14 +201,14 @@ npm run build
 
 ### Publishing / custom domain
 
-GitHub Pages on this repo serves the built site. The custom domain is `bitrealm.dev` (`docs/public/CNAME`). After enabling Pages (source: GitHub Actions) and setting the domain, remove the same custom domain from `bitrealm-dev/bitrealm-dev.github.io` so only one Pages site claims it. The `bitrealm.dev` A records should keep pointing at GitHub Pages. Add a verification TXT record only if GitHub’s Pages settings request one.
+GitHub Pages on this repo serves the built site. The custom domain is `bitrealm.io` (`docs/public/CNAME`). After enabling Pages (source: GitHub Actions) and setting the domain, remove the same custom domain from `bitrealm-dev/bitrealm-dev.github.io` so only one Pages site claims it. The `bitrealm.io` A records should keep pointing at GitHub Pages. Add a verification TXT record only if GitHub’s Pages settings request one.
 
 Guides live at:
 
-- User Guide: `https://bitrealm.dev/vault/user/`
-- Developer docs: `https://bitrealm.dev/vault/developer/`
+- User Guide: `https://bitrealm.io/vault/user/`
+- Developer docs: `https://bitrealm.io/vault/developer/`
 
-Do not add a DNS name `vault`. GitHub Pages uses one custom domain: `bitrealm.dev`. After GitHub shows a valid certificate, turn on **Enforce HTTPS** in the repository Pages settings. Leave the DNS records named `api`, `app`, and `cdn` alone.
+Do not add a DNS name `vault`. GitHub Pages uses one custom domain: `bitrealm.io`. Do not put `bitrealm.dev` in `docs/public/CNAME` or in the Pages custom-domain field — that hostname was retired, and a mismatch keeps the Pages certificate from issuing. After GitHub shows a valid certificate, turn on **Enforce HTTPS** in the repository Pages settings. Leave the DNS records named `api`, `app`, and `cdn` alone.
 
 ## Workspace map
 
@@ -244,6 +244,6 @@ This project is **AGPL-3.0**. `imessage-ir-exporter` still depends on `imessage-
 
 - [Maintainer documentation index](docs/maintainers/README.md)
 - [Development and releases](docs/maintainers/developing.md)
-- [Converter capabilities](https://bitrealm.dev/vault/developer/formats/)
+- [Converter capabilities](https://bitrealm.io/vault/developer/formats/)
 - [Code signing](docs/maintainers/signing.md)
-- End-user docs: <https://bitrealm.dev/>
+- End-user docs: <https://bitrealm.io/>
