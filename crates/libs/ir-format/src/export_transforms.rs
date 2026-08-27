@@ -1,7 +1,7 @@
 //! Media convert/compress and obfuscation applied before writing files.
 
 use crate::util::read_attachment_file;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use media::{CompressOptions, MediaMode, MediaReport};
 use message_ir::{ConversationDocument, IrAttachment, IrDirection, IrParticipant};
 use message_vault_io_core::{LogSink, MediaConfig, ObfuscateConfig, emit_log};
@@ -9,9 +9,14 @@ use obfuscate::{
     Obfuscator, classify_attachment, materialize_placeholders, placeholder_rel_path,
     resolve_obfuscator_with_log,
 };
-use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
+
+#[cfg(test)]
+use anyhow::Context;
+#[cfg(test)]
+use std::collections::HashMap;
+#[cfg(test)]
+use std::fs;
 
 /// Options passed into [`crate::FormatSink`] for media and obfuscation.
 #[derive(Debug, Clone)]

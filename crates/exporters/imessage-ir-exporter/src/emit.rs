@@ -27,7 +27,7 @@ use message_ir::{
     IrService, SCHEMA_VERSION, owner_sender, parse_json_value,
 };
 use message_ir_format::{FormatSink, FormatSinkResult};
-use message_vault_io_core::OutputFormat;
+use message_vault_io_core::{AttachmentJob, OutputFormat, run_attachment_jobs};
 
 use crate::{
     attachments_emit::{collect_mail_parts_and_attachments, persist_attachment},
@@ -156,10 +156,17 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
         ));
     }
 
+    if matches!(
+        format,
+        OutputFormat::Csv | OutputFormat::Json | OutputFormat::Jsonl | OutputFormat::Xml
+    ) {
+        stage_conversation_attachments(session, &mut conversations, &attachments_dir)?;
+    }
+
     let total_conversations = conversations.len() as u64;
     session.options.emit_log("");
     session.options.emit_log(format!(
-        "Writing {total_conversations} conversation file(s)..."
+        "Preparing {total_conversations} conversation file(s)..."
     ));
     let mut written = 0u64;
     for (chat_identifier, convo) in conversations {
@@ -212,9 +219,9 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
         // but this crate's MSRV is 1.85.
         #[allow(clippy::manual_is_multiple_of)]
         if written % CONVERSATION_PROGRESS_EVERY == 0 || written == total_conversations {
-            session.options.emit_log(format!(
-                "  wrote {written}/{total_conversations} conversations"
-            ));
+            session
+                .options
+                .emit_log(format!("  preparing {written}/{total_conversations}"));
         }
     }
     let sink_result = sink
@@ -245,6 +252,69 @@ fn mail_participants_to_ir(participants: Vec<Participant>) -> Vec<IrParticipant>
 ///
 /// Returns an error when the message cannot be converted or an attachment
 /// cannot be written.
+/// Write staged attachment bytes after parse and before conversation files.
+fn stage_conversation_attachments(
+    session: &MailSession,
+    conversations: &mut BTreeMap<String, PendingConversation>,
+    attachments_dir: &Path,
+) -> Result<(), RuntimeError> {
+    let mode = session.options.transforms.media;
+    let compress = session.options.transforms.compress.clone();
+    let cancel = session.options.cancel.as_ref().map(|flag| flag.as_ref());
+
+    for convo in conversations.values_mut() {
+        let payloads: Vec<Option<Vec<u8>>> = convo
+            .messages
+            .iter()
+            .flat_map(|msg| msg.attachments.iter().map(|att| att.bytes.clone()))
+            .collect();
+        if payloads.is_empty() {
+            continue;
+        }
+
+        let mut jobs = Vec::new();
+        for msg in &mut convo.messages {
+            let ts = msg.timestamp_unix_ms;
+            for att in &mut msg.attachments {
+                let hint = att
+                    .size_bytes
+                    .or_else(|| att.bytes.as_ref().map(|b| b.len() as u64));
+                jobs.push(AttachmentJob {
+                    attachment: att,
+                    timestamp_unix_ms: ts,
+                    size_hint: hint,
+                });
+            }
+        }
+        if jobs.is_empty() {
+            continue;
+        }
+
+        run_attachment_jobs(
+            &mut jobs,
+            attachments_dir,
+            mode,
+            &compress,
+            |i| Ok(payloads.get(i).cloned().flatten()),
+            |progress| {
+                session.options.emit_log(format!(
+                    "  attachments {}/{} {}/{}",
+                    progress.done, progress.total, progress.bytes_done, progress.bytes_total
+                ));
+            },
+            cancel,
+        )
+        .map_err(|e| RuntimeError::InvalidOptions(e))?;
+
+        for msg in &mut convo.messages {
+            for att in &mut msg.attachments {
+                att.bytes = None;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn collect_one(
     session: &MailSession,
     conversations: &mut BTreeMap<String, PendingConversation>,
@@ -297,7 +367,7 @@ fn collect_one(
 /// Returns an error when attachment bytes cannot be written to disk.
 fn mail_message_to_ir(
     mail: &MailMessage,
-    attachments_dir: &Path,
+    _attachments_dir: &Path,
     format: OutputFormat,
     embed: AttachmentEmbed,
     copy_attachments: bool,
@@ -320,13 +390,14 @@ fn mail_message_to_ir(
         };
         let (path, digest_sha256, file_size, bytes) = if persist_to_disk {
             if has_bytes {
-                let (rel_path, digest, size) = persist_attachment(
-                    attachments_dir,
-                    mail.timestamp_unix_ms,
-                    &attachment.bytes,
-                    attachment.meta.original_name.as_deref(),
-                )?;
-                (Some(rel_path), Some(digest), Some(size), None)
+                // Stage after parse via `run_attachment_jobs`. Keep bytes in
+                // memory so the runner can write the hashed file.
+                (
+                    None,
+                    None,
+                    Some(attachment.bytes.len() as u64),
+                    Some(attachment.bytes.clone()),
+                )
             } else {
                 (None, attachment.meta.digest_sha256.clone(), None, None)
             }
@@ -1025,7 +1096,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(ir.attachments[0].missing_reason, None);
-        assert!(ir.attachments[0].path.is_some());
+        assert!(ir.attachments[0].path.is_none());
+        assert_eq!(ir.attachments[0].bytes.as_deref(), Some(b"abc".as_slice()));
+        assert!(fs::read_dir(dir.path()).unwrap().next().is_none());
 
         let empty = sample_mail_with_attachment(Vec::new());
         let ir_missing = mail_message_to_ir(
