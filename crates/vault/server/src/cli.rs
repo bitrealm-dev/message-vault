@@ -123,9 +123,15 @@ pub enum Commands {
         #[arg(long, default_value = "crates/vault/demo-seed")]
         bundle: PathBuf,
 
-        /// Active config path to overwrite (default config/config.toml)
+        /// Active config path. Overwritten on the SQLite path; only read for
+        /// attachment paths when `--db-url` is set (default config/config.toml)
         #[arg(long, default_value = "config/config.toml")]
         config: PathBuf,
+
+        /// Connection URL (postgres://… or sqlite://…); seeds that database
+        /// instead of replacing paths.db
+        #[arg(long)]
+        db_url: Option<String>,
     },
 
     /// Run HTTP ingest API (`POST /v1/import` with message-ir JSONL)
@@ -389,8 +395,13 @@ pub async fn run(cli: Cli) -> Result<()> {
             println!("  group links:  {}", stats.groups);
         }
 
-        Commands::ResetDemo { bundle, config } => {
-            let stats = crate::reset_demo::run_reset_demo(&bundle, &config).await?;
+        Commands::ResetDemo {
+            bundle,
+            config,
+            db_url,
+        } => {
+            let stats =
+                crate::reset_demo::run_reset_demo(&bundle, &config, db_url.as_deref()).await?;
             println!();
             println!("Demo reset complete");
             if stats.seed.messages > 0 {
@@ -472,6 +483,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                     skip_audio,
                     db,
                     source,
+                    db_url: None,
                 },
             )
             .await?;
