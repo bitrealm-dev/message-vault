@@ -237,10 +237,10 @@ pub async fn dedupe_cross_source(
     let started = Instant::now();
 
     {
-        println!("  dedupe:   recomputing content keys…");
+        println!("  dedupe:   filling missing content keys…");
         let _ = io::stdout().flush();
         let mut tx = conn.begin().await?;
-        stats.keys_filled = recompute_all_content_keys(&mut tx, account_id).await?;
+        stats.keys_filled = fill_missing_content_keys(&mut tx, account_id).await?;
         sqlx::query(
             r#"
             UPDATE messages
@@ -1091,6 +1091,34 @@ mod tests {
                 .await
                 .unwrap();
         assert!(key.as_deref().is_some_and(|k| !k.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn dedupe_cross_source_does_not_rehash_existing_keys() {
+        let (pool, _dir) = engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        setup_db(&mut conn).await;
+        insert_msg(
+            &mut conn,
+            InsertMsgArgs {
+                source: "go-sms-pro",
+                guid: "g-once",
+                utc: "2015-03-12T18:04:22Z",
+                local: "2015-03-12T14:04:22-04:00",
+                from_me: 1,
+                body: "Once",
+                sort_order: 0,
+            },
+        )
+        .await;
+        let first = dedupe_cross_source(&mut conn, TEST_ACCOUNT_ID, None, 2)
+            .await
+            .unwrap();
+        assert_eq!(first.keys_filled, 1);
+        let second = dedupe_cross_source(&mut conn, TEST_ACCOUNT_ID, None, 2)
+            .await
+            .unwrap();
+        assert_eq!(second.keys_filled, 0);
     }
 
     #[tokio::test]
