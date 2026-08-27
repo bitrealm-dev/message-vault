@@ -310,15 +310,18 @@ fn first_existing(candidates: &[PathBuf]) -> Option<PathBuf> {
 ///
 /// Prefers a decrypted `msgstore.db` file over any crypt name. Crypt names are
 /// checked at the folder root only, in order: crypt12, crypt14, crypt15.
+/// Directories with those names are ignored (`is_file`), matching the form probe.
 pub(crate) fn android_crypt_backup(search: &Path) -> Option<PathBuf> {
     if search.join("msgstore.db").is_file() {
         return None;
     }
-    first_existing(&[
+    [
         search.join("msgstore.db.crypt12"),
         search.join("msgstore.db.crypt14"),
         search.join("msgstore.db.crypt15"),
-    ])
+    ]
+    .into_iter()
+    .find(|p| p.is_file())
 }
 
 /// True when `s` looks like a filesystem path rather than a hex key string.
@@ -379,9 +382,24 @@ fn write_key_file(work_dir: &Path, hex_key: &str) -> Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::android_crypt_backup;
+    use super::{Platform, WtsexporterArgs, android_crypt_backup, resolve_forwarded_paths};
     use std::fs;
+    use std::path::Path;
     use tempfile::tempdir;
+
+    fn android_args(input: &Path, key: Option<&str>) -> WtsexporterArgs {
+        WtsexporterArgs {
+            platform: Platform::Android,
+            input: input.to_path_buf(),
+            work_dir: input.to_path_buf(),
+            key: key.map(str::to_string),
+            backup: None,
+            wa: None,
+            media: None,
+            db: None,
+            business: false,
+        }
+    }
 
     #[test]
     fn prefers_msgstore_db_over_crypt() {
@@ -400,5 +418,77 @@ mod tests {
             android_crypt_backup(dir.path()).as_deref(),
             Some(crypt.as_path())
         );
+    }
+
+    #[test]
+    fn prefers_crypt12_over_crypt15() {
+        let dir = tempdir().unwrap();
+        let crypt12 = dir.path().join("msgstore.db.crypt12");
+        fs::write(&crypt12, b"c12").unwrap();
+        fs::write(dir.path().join("msgstore.db.crypt15"), b"c15").unwrap();
+        assert_eq!(
+            android_crypt_backup(dir.path()).as_deref(),
+            Some(crypt12.as_path())
+        );
+    }
+
+    #[test]
+    fn ignores_crypt15_directory() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join("msgstore.db.crypt15")).unwrap();
+        assert_eq!(android_crypt_backup(dir.path()), None);
+    }
+
+    #[test]
+    fn drops_key_when_msgstore_db_is_present() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("msgstore.db"), b"db").unwrap();
+        fs::write(dir.path().join("msgstore.db.crypt15"), b"crypt").unwrap();
+        let paths = resolve_forwarded_paths(&android_args(dir.path(), Some("deadbeef"))).unwrap();
+        assert!(paths.backup.is_none());
+        assert!(paths.key.is_none());
+    }
+
+    #[test]
+    fn forwards_crypt15_and_key_when_msgstore_missing() {
+        let dir = tempdir().unwrap();
+        let crypt = dir.path().join("msgstore.db.crypt15");
+        fs::write(&crypt, b"crypt").unwrap();
+        let paths = resolve_forwarded_paths(&android_args(dir.path(), Some("deadbeef"))).unwrap();
+        assert_eq!(paths.backup.as_deref(), Some(crypt.as_path()));
+        assert_eq!(paths.key.as_deref(), Some("deadbeef"));
+    }
+
+    #[test]
+    fn forwards_crypt15_without_key_when_key_omitted() {
+        let dir = tempdir().unwrap();
+        let crypt = dir.path().join("msgstore.db.crypt15");
+        fs::write(&crypt, b"crypt").unwrap();
+        let paths = resolve_forwarded_paths(&android_args(dir.path(), None)).unwrap();
+        assert_eq!(paths.backup.as_deref(), Some(crypt.as_path()));
+        assert!(paths.key.is_none());
+    }
+
+    #[test]
+    fn skipped_wtsexporter_flags_are_never_passed() {
+        let src = include_str!("wtsexporter.rs");
+        let production = src
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source before tests");
+        for flag in [
+            "--wab",
+            "--call-db",
+            "--exported",
+            "-e",
+            "-c",
+            "--move-media",
+        ] {
+            let needle = format!("arg(\"{flag}\")");
+            assert!(
+                !production.contains(&needle),
+                "wtsexporter command must not pass {needle}"
+            );
+        }
     }
 }

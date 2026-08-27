@@ -696,6 +696,14 @@ mod tests {
                 assert_eq!(wa.platform, Some(WhatsappPlatform::Android));
                 assert_eq!(wa.key.as_deref(), Some("deadbeef"));
                 assert_eq!(wa.wa.as_deref(), Some(std::path::Path::new("/tmp/wa.db")));
+                assert_eq!(
+                    wa.media.as_deref(),
+                    Some(std::path::Path::new("/tmp/WhatsApp"))
+                );
+                assert_eq!(
+                    wa.db.as_deref(),
+                    Some(std::path::Path::new("/tmp/msgstore.db"))
+                );
                 assert!(wa.backup.is_none());
                 assert!(!wa.business);
             }

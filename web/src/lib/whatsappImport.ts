@@ -41,10 +41,7 @@ export const WHATSAPP_CRYPT_NAMES = [
   "msgstore.db.crypt15",
 ] as const;
 
-export function whatsappCryptRequired(
-  hasMsgstoreDb: boolean,
-  cryptName: string | null,
-): boolean {
+export function whatsappCryptRequired(hasMsgstoreDb: boolean, cryptName: string | null): boolean {
   return !hasMsgstoreDb && cryptName !== null;
 }
 
@@ -173,14 +170,7 @@ export function whatsappCanImport(args: WhatsappCanImportArgs): {
   }
 
   if (whatsappShowsDb(args.method)) {
-    checkOptionalPath(
-      args.db,
-      args.stats.db,
-      errors,
-      "db",
-      WHATSAPP_ERR_MUST_BE_FILE,
-      false,
-    );
+    checkOptionalPath(args.db, args.stats.db, errors, "db", WHATSAPP_ERR_MUST_BE_FILE, false);
   }
 
   const contactsCheckPending =

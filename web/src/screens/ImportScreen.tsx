@@ -183,6 +183,7 @@ export default function ImportScreen() {
 
   useEffect(() => {
     if (!isTauri() || !isWhatsappMethod(source)) return;
+    setWhatsappStats(emptyWhatsappPathStats());
     let cancelled = false;
     const timer = window.setTimeout(() => {
       void (async () => {

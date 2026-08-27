@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isWhatsappMethod,
   WHATSAPP_DEFAULT_METHOD,
   WHATSAPP_ERR_CRYPT_KEY,
   WHATSAPP_ERR_FOLDER_IS_FILE,
@@ -7,7 +8,6 @@ import {
   WHATSAPP_ERR_MUST_BE_FOLDER,
   WHATSAPP_ERR_PATH_MISSING,
   WHATSAPP_SOURCE_ID,
-  isWhatsappMethod,
   whatsappCanImport,
   whatsappCryptRequired,
   whatsappShowsBusiness,
@@ -32,6 +32,50 @@ describe("whatsappImport", () => {
 
   it("uses the spec error catalog", () => {
     expect(WHATSAPP_ERR_PATH_MISSING).toBe("This path does not exist.");
+  });
+
+  it("disables Import when the backup folder does not exist", () => {
+    const missing = { exists: false, isFile: false, isDirectory: false };
+    const result = whatsappCanImport({
+      method: "whatsapp-android",
+      backupPath: "/tmp/missing-wa",
+      key: "",
+      contactsDb: "",
+      media: "",
+      db: "",
+      stats: {
+        backup: missing,
+        contactsDb: null,
+        media: null,
+        db: null,
+        hasMsgstoreDb: false,
+        cryptName: null,
+      },
+    });
+    expect(result.enabled).toBe(false);
+    expect(result.errors.backupPath).toBe(WHATSAPP_ERR_PATH_MISSING);
+  });
+
+  it("rejects an optional contacts path that does not exist", () => {
+    const missing = { exists: false, isFile: false, isDirectory: false };
+    const result = whatsappCanImport({
+      method: "whatsapp-android",
+      backupPath: "/tmp/wa",
+      key: "",
+      contactsDb: "/tmp/missing-wa.db",
+      media: "",
+      db: "",
+      stats: {
+        backup: dir,
+        contactsDb: missing,
+        media: null,
+        db: null,
+        hasMsgstoreDb: true,
+        cryptName: null,
+      },
+    });
+    expect(result.enabled).toBe(false);
+    expect(result.errors.contactsDb).toBe(WHATSAPP_ERR_PATH_MISSING);
   });
 
   it("requires a key only when a crypt file is used", () => {
