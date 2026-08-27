@@ -11,6 +11,9 @@ use sqlx::AnyConnection;
 use sqlx::Connection;
 
 use crate::db::schema;
+use crate::db::sql::SQLITE_IN_CHUNK;
+
+const CONTENT_KEY_WRITE_LOG_EVERY: usize = 50_000;
 
 /// One production message that still needs a content fingerprint.
 type ContentKeyRow = (
@@ -301,6 +304,31 @@ pub async fn recompute_all_content_keys(conn: &mut AnyConnection, account_id: &s
     recompute_content_keys(conn, false, account_id).await
 }
 
+async fn insert_content_key_rows(conn: &mut AnyConnection, keys: &[(i64, String)]) -> Result<()> {
+    let total = keys.len();
+    let mut written = 0usize;
+    for chunk in keys.chunks(SQLITE_IN_CHUNK) {
+        let mut sql = String::from("INSERT INTO _content_keys (id, content_key) VALUES ");
+        for (i, _) in chunk.iter().enumerate() {
+            if i > 0 {
+                sql.push(',');
+            }
+            sql.push_str(&format!("(${}, ${})", i * 2 + 1, i * 2 + 2));
+        }
+        let mut q = sqlx::query(&sql);
+        for (id, key) in chunk {
+            q = q.bind(*id).bind(key);
+        }
+        q.execute(&mut *conn).await?;
+        written += chunk.len();
+        if written == total || (written > 0 && written % CONTENT_KEY_WRITE_LOG_EVERY == 0) {
+            println!("  sql:      writing content keys … running={written}/{total}");
+            let _ = io::stdout().flush();
+        }
+    }
+    Ok(())
+}
+
 async fn recompute_content_keys(
     conn: &mut AnyConnection,
     missing_only: bool,
@@ -324,18 +352,7 @@ async fn recompute_content_keys(
         ORDER BY m.id
         "#
     );
-    type ExactDedupeRow = (
-        i64,
-        i64,
-        String,
-        String,
-        i64,
-        Option<String>,
-        String,
-        Option<String>,
-        Option<String>,
-    );
-    let rows: Vec<ExactDedupeRow> = sqlx::query_as(&sql)
+    let rows: Vec<ContentKeyRow> = sqlx::query_as(&sql)
         .bind(account_id)
         .fetch_all(&mut *conn)
         .await?;
@@ -397,40 +414,16 @@ async fn recompute_content_keys(
         }
     }
 
-    let empty: Vec<String> = Vec::new();
-    let mut keys: Vec<(i64, String)> = Vec::with_capacity(rows.len());
-    for (
-        id,
-        conversation_id,
-        chat_id,
-        conversation_type,
-        is_from_me,
-        ts_utc,
-        ts,
-        body,
-        sender_norm,
-    ) in rows
-    {
-        let shas = shas_by_msg.get(&id).unwrap_or(&empty);
-        let identity = if conversation_type == "group" {
-            chat_identity_for_content_key(
-                &chat_id,
-                group_handles.get(&conversation_id).map(|h| h.as_slice()),
-            )
-        } else {
-            chat_id
-        };
-        let key = compute_content_key(
-            &identity,
-            is_from_me != 0,
-            sender_norm.as_deref(),
-            ts_utc.as_deref(),
-            &ts,
-            body.as_deref(),
-            shas,
-        );
-        keys.push((id, key));
-    }
+    println!(
+        "  sql:      hashing content keys ({} messages)…",
+        rows.len()
+    );
+    let _ = io::stdout().flush();
+
+    let keys =
+        tokio::task::spawn_blocking(move || hash_content_keys(&rows, &group_handles, &shas_by_msg))
+            .await
+            .context("content-key hash task panicked")?;
 
     let filled = keys.len() as u64;
     for stmt in schema::split_ddl(
@@ -444,15 +437,7 @@ async fn recompute_content_keys(
     ) {
         sqlx::query(&stmt).execute(&mut *conn).await?;
     }
-    {
-        for (id, key) in &keys {
-            sqlx::query("INSERT INTO _content_keys (id, content_key) VALUES ($1, $2)")
-                .bind(id)
-                .bind(key)
-                .execute(&mut *conn)
-                .await?;
-        }
-    }
+    insert_content_key_rows(conn, &keys).await?;
     sqlx::query(
         r#"
         UPDATE messages AS m
@@ -1072,6 +1057,40 @@ mod tests {
         .fetch_one(&mut *conn)
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn fill_missing_content_keys_skips_rows_that_already_have_keys() {
+        let (pool, _dir) = engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        setup_db(&mut conn).await;
+        insert_msg(
+            &mut conn,
+            InsertMsgArgs {
+                source: "go-sms-pro",
+                guid: "g-fill",
+                utc: "2015-03-12T18:04:22Z",
+                local: "2015-03-12T14:04:22-04:00",
+                from_me: 1,
+                body: "Need a key",
+                sort_order: 0,
+            },
+        )
+        .await;
+        let first = fill_missing_content_keys(&mut conn, TEST_ACCOUNT_ID)
+            .await
+            .unwrap();
+        assert_eq!(first, 1);
+        let second = fill_missing_content_keys(&mut conn, TEST_ACCOUNT_ID)
+            .await
+            .unwrap();
+        assert_eq!(second, 0);
+        let key: Option<String> =
+            sqlx::query_scalar("SELECT content_key FROM messages WHERE guid = 'g-fill'")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert!(key.as_deref().is_some_and(|k| !k.is_empty()));
     }
 
     #[tokio::test]
