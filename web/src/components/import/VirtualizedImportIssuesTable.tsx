@@ -1,38 +1,61 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { groupImportIssues, type ImportIssueGroup } from "./groupImportIssues";
 import type { ImportIssue } from "./ImportSummaryPanel";
 
 /** Collapsed row: file + step + two lines of error text. */
 const COLLAPSED_ROW_HEIGHT = 56;
 const MAX_VISIBLE_ROWS = 14;
 const ISSUE_COLUMNS = "grid-cols-[minmax(0,1fr)_4.5rem_minmax(0,1.4fr)]";
+const MAX_VISIBLE_FILENAMES = 6;
+const FILENAME_ROW_PX = 20;
 
-function estimateExpandedHeight(reason: string): number {
+function estimateReasonHeight(reason: string): number {
   // Rough wrap estimate for the error column (~42 chars/line at this font size).
   const lines = Math.max(2, Math.ceil(reason.length / 42));
   return Math.min(220, 20 + lines * 18);
 }
 
+function estimateExpandedHeight(reason: string, fileCount: number): number {
+  const reasonHeight = estimateReasonHeight(reason);
+  if (fileCount <= 1) return reasonHeight;
+  const visibleFiles = Math.min(fileCount, MAX_VISIBLE_FILENAMES);
+  return reasonHeight + 8 + visibleFiles * FILENAME_ROW_PX;
+}
+
+function parseFileLabel(group: ImportIssueGroup): string {
+  if (group.items.length === 1) {
+    return group.items[0] ?? "";
+  }
+  return `${group.items.length} files`;
+}
+
+function rowAriaLabel(group: ImportIssueGroup, expanded: boolean): string {
+  const verb = expanded ? "Collapse" : "Expand";
+  return `${verb} error for ${parseFileLabel(group)}`;
+}
+
 export default function VirtualizedImportIssuesTable({ issues }: { issues: ImportIssue[] }) {
+  const groups = useMemo(() => groupImportIssues(issues), [issues]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const virtualizer = useVirtualizer({
-    count: issues.length,
+    count: groups.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: (index) =>
       expandedIndex === index
-        ? estimateExpandedHeight(issues[index]?.reason ?? "")
+        ? estimateExpandedHeight(groups[index]?.reason ?? "", groups[index]?.items.length ?? 0)
         : COLLAPSED_ROW_HEIGHT,
     overscan: 6,
   });
   const virtualRows = virtualizer.getVirtualItems();
-  const viewportHeight = Math.min(issues.length, MAX_VISIBLE_ROWS) * COLLAPSED_ROW_HEIGHT;
+  const viewportHeight = Math.min(groups.length, MAX_VISIBLE_ROWS) * COLLAPSED_ROW_HEIGHT;
 
   useEffect(() => {
     void expandedIndex;
-    void issues;
+    void groups;
     virtualizer.measure();
-  }, [expandedIndex, issues, virtualizer]);
+  }, [expandedIndex, groups, virtualizer]);
 
   const toggleRow = (index: number) => {
     setExpandedIndex((current) => (current === index ? null : index));
@@ -50,7 +73,7 @@ export default function VirtualizedImportIssuesTable({ issues }: { issues: Impor
     <div
       role="table"
       aria-label="Import errors"
-      aria-rowcount={issues.length + 1}
+      aria-rowcount={groups.length + 1}
       className="mt-2 w-full min-w-0 max-w-full overflow-hidden rounded-lg border border-border text-left text-[0.813rem]"
     >
       {/* biome-ignore lint/a11y/useSemanticElements: virtualized grid cannot use native table elements */}
@@ -84,19 +107,21 @@ export default function VirtualizedImportIssuesTable({ issues }: { issues: Impor
       >
         <div className="relative w-full min-w-0" style={{ height: virtualizer.getTotalSize() }}>
           {virtualRows.map((virtualRow) => {
-            const issue = issues[virtualRow.index];
+            const group = groups[virtualRow.index];
+            if (!group) return null;
             const expanded = expandedIndex === virtualRow.index;
+            const fileLabel = parseFileLabel(group);
             return (
               // biome-ignore lint/a11y/useSemanticElements: virtualized grid cannot use native table elements
               <div
-                key={`${issue.kind}-${issue.step}-${issue.item}-${virtualRow.index}`}
+                key={`${group.kind}-${group.step}-${group.reason}-${virtualRow.index}`}
                 data-index={virtualRow.index}
                 ref={virtualizer.measureElement}
                 role="row"
                 tabIndex={0}
                 aria-rowindex={virtualRow.index + 2}
                 aria-expanded={expanded}
-                aria-label={`${expanded ? "Collapse" : "Expand"} error for ${issue.item}`}
+                aria-label={rowAriaLabel(group, expanded)}
                 onClick={() => toggleRow(virtualRow.index)}
                 onKeyDown={(event) => onRowKeyDown(event, virtualRow.index)}
                 className={`absolute left-0 top-0 grid w-full min-w-0 cursor-pointer ${ISSUE_COLUMNS} items-start border-b border-border outline-none last:border-b-0 hover:bg-hover focus-visible:bg-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent ${
@@ -107,19 +132,19 @@ export default function VirtualizedImportIssuesTable({ issues }: { issues: Impor
                 {/* biome-ignore lint/a11y/useSemanticElements: virtualized grid cannot use native table elements */}
                 <div
                   role="cell"
-                  title={issue.item}
+                  title={fileLabel}
                   className="min-w-0 overflow-hidden px-3 py-2 text-text"
                 >
-                  <span className="block truncate">{issue.item}</span>
+                  <span className="block truncate">{fileLabel}</span>
                 </div>
                 {/* biome-ignore lint/a11y/useSemanticElements: virtualized grid cannot use native table elements */}
                 <div role="cell" className="overflow-hidden px-3 py-2 capitalize text-text">
-                  <span className="block truncate">{issue.step}</span>
+                  <span className="block truncate">{group.step}</span>
                 </div>
                 {/* biome-ignore lint/a11y/useSemanticElements: virtualized grid cannot use native table elements */}
                 <div
                   role="cell"
-                  title={expanded ? undefined : issue.reason}
+                  title={expanded ? undefined : group.reason}
                   className="min-w-0 overflow-hidden px-3 py-2 text-text"
                 >
                   <span
@@ -129,8 +154,25 @@ export default function VirtualizedImportIssuesTable({ issues }: { issues: Impor
                         : "line-clamp-2 break-words"
                     }
                   >
-                    {issue.reason}
+                    {group.reason}
                   </span>
+                  {expanded && group.items.length > 1 ? (
+                    <ul
+                      className="mt-2 overflow-y-auto text-muted"
+                      style={{ maxHeight: MAX_VISIBLE_FILENAMES * FILENAME_ROW_PX }}
+                    >
+                      {group.items.map((name, fileIndex) => (
+                        <li
+                          key={`${name}-${String(fileIndex)}`}
+                          title={name}
+                          className="truncate"
+                          style={{ height: FILENAME_ROW_PX }}
+                        >
+                          {name}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
                 </div>
               </div>
             );
