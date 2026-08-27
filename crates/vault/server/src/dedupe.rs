@@ -5,11 +5,34 @@ use std::io::{self, Write};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
+use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 use sqlx::AnyConnection;
 use sqlx::Connection;
 
 use crate::db::schema;
+use crate::db::sql::SQLITE_IN_CHUNK;
+
+const CONTENT_KEY_WRITE_LOG_EVERY: usize = 50_000;
+
+/// One production message that still needs a content fingerprint.
+///
+/// Column order matches the SELECT in [`recompute_content_keys`]:
+/// `id`, `conversation_id`, `chat_id` (chat handle `normalized`),
+/// `conversation_type`, `is_from_me`, `timestamp_utc`, `timestamp`,
+/// `body`, `sender_normalized`. Two SQL columns are both named
+/// `normalized`, so this stays a positional tuple rather than `FromRow`.
+type ContentKeyRow = (
+    i64,
+    i64,
+    String,
+    String,
+    i64,
+    Option<String>,
+    String,
+    Option<String>,
+    Option<String>,
+);
 
 /// Collapse whitespace so minor text differences do not split the same SMS.
 pub fn normalize_body(body: Option<&str>) -> String {
@@ -100,6 +123,55 @@ pub fn compute_content_key(
     crate::assets::hex_encode(&hasher.finalize())
 }
 
+fn content_key_for_row(
+    row: &ContentKeyRow,
+    group_handles: &HashMap<i64, Vec<String>>,
+    shas_by_msg: &HashMap<i64, Vec<String>>,
+) -> (i64, String) {
+    let (
+        id,
+        conversation_id,
+        chat_id,
+        conversation_type,
+        is_from_me,
+        ts_utc,
+        ts,
+        body,
+        sender_norm,
+    ) = row;
+    let empty: &[String] = &[];
+    let shas = shas_by_msg.get(id).map(Vec::as_slice).unwrap_or(empty);
+    let group_identity = if conversation_type == "group" {
+        Some(chat_identity_for_content_key(
+            chat_id,
+            group_handles.get(conversation_id).map(Vec::as_slice),
+        ))
+    } else {
+        None
+    };
+    let identity = group_identity.as_deref().unwrap_or(chat_id);
+    let key = compute_content_key(
+        identity,
+        *is_from_me != 0,
+        sender_norm.as_deref(),
+        ts_utc.as_deref(),
+        ts,
+        body.as_deref(),
+        shas,
+    );
+    (*id, key)
+}
+
+fn hash_content_keys(
+    rows: &[ContentKeyRow],
+    group_handles: &HashMap<i64, Vec<String>>,
+    shas_by_msg: &HashMap<i64, Vec<String>>,
+) -> Vec<(i64, String)> {
+    rows.par_iter()
+        .map(|row| content_key_for_row(row, group_handles, shas_by_msg))
+        .collect()
+}
+
 fn resolve_utc_secs(timestamp_utc: Option<&str>, timestamp: &str) -> Option<i64> {
     timestamp_utc
         .map(str::trim)
@@ -144,7 +216,7 @@ pub async fn source_priority_from_db(
     Ok(rows.into_iter().map(|(source,)| source).collect())
 }
 
-/// Recompute every content key, clear prior flags, then soft-hide cross-source duplicates.
+/// Fill any missing content keys, clear prior flags, then soft-hide cross-source duplicates.
 ///
 /// Survivor preference: source imported first (min message id), then source name.
 /// Optional `source_priority` overrides (tests); `None` loads order from the DB.
@@ -171,10 +243,10 @@ pub async fn dedupe_cross_source(
     let started = Instant::now();
 
     {
-        println!("  dedupe:   recomputing content keys…");
+        println!("  dedupe:   filling missing content keys…");
         let _ = io::stdout().flush();
         let mut tx = conn.begin().await?;
-        stats.keys_filled = recompute_all_content_keys(&mut tx, account_id).await?;
+        stats.keys_filled = fill_missing_content_keys(&mut tx, account_id).await?;
         sqlx::query(
             r#"
             UPDATE messages
@@ -238,6 +310,34 @@ pub async fn recompute_all_content_keys(conn: &mut AnyConnection, account_id: &s
     recompute_content_keys(conn, false, account_id).await
 }
 
+async fn insert_content_key_rows(conn: &mut AnyConnection, keys: &[(i64, String)]) -> Result<()> {
+    let total = keys.len();
+    let mut written = 0usize;
+    for chunk in keys.chunks(SQLITE_IN_CHUNK) {
+        let mut sql = String::from("INSERT INTO _content_keys (id, content_key) VALUES ");
+        for (i, _) in chunk.iter().enumerate() {
+            if i > 0 {
+                sql.push(',');
+            }
+            sql.push_str(&format!("(${}, ${})", i * 2 + 1, i * 2 + 2));
+        }
+        let mut q = sqlx::query(&sql);
+        for (id, key) in chunk {
+            q = q.bind(*id).bind(key);
+        }
+        q.execute(&mut *conn).await?;
+        let previous = written;
+        written += chunk.len();
+        let crossed_log_mark =
+            written / CONTENT_KEY_WRITE_LOG_EVERY != previous / CONTENT_KEY_WRITE_LOG_EVERY;
+        if written == total || crossed_log_mark {
+            println!("  sql:      writing content keys … running={written}/{total}");
+            let _ = io::stdout().flush();
+        }
+    }
+    Ok(())
+}
+
 async fn recompute_content_keys(
     conn: &mut AnyConnection,
     missing_only: bool,
@@ -261,18 +361,7 @@ async fn recompute_content_keys(
         ORDER BY m.id
         "#
     );
-    type ExactDedupeRow = (
-        i64,
-        i64,
-        String,
-        String,
-        i64,
-        Option<String>,
-        String,
-        Option<String>,
-        Option<String>,
-    );
-    let rows: Vec<ExactDedupeRow> = sqlx::query_as(&sql)
+    let rows: Vec<ContentKeyRow> = sqlx::query_as(&sql)
         .bind(account_id)
         .fetch_all(&mut *conn)
         .await?;
@@ -334,40 +423,16 @@ async fn recompute_content_keys(
         }
     }
 
-    let empty: Vec<String> = Vec::new();
-    let mut keys: Vec<(i64, String)> = Vec::with_capacity(rows.len());
-    for (
-        id,
-        conversation_id,
-        chat_id,
-        conversation_type,
-        is_from_me,
-        ts_utc,
-        ts,
-        body,
-        sender_norm,
-    ) in rows
-    {
-        let shas = shas_by_msg.get(&id).unwrap_or(&empty);
-        let identity = if conversation_type == "group" {
-            chat_identity_for_content_key(
-                &chat_id,
-                group_handles.get(&conversation_id).map(|h| h.as_slice()),
-            )
-        } else {
-            chat_id
-        };
-        let key = compute_content_key(
-            &identity,
-            is_from_me != 0,
-            sender_norm.as_deref(),
-            ts_utc.as_deref(),
-            &ts,
-            body.as_deref(),
-            shas,
-        );
-        keys.push((id, key));
-    }
+    println!(
+        "  sql:      hashing content keys ({} messages)…",
+        rows.len()
+    );
+    let _ = io::stdout().flush();
+
+    let keys =
+        tokio::task::spawn_blocking(move || hash_content_keys(&rows, &group_handles, &shas_by_msg))
+            .await
+            .context("content-key hash task panicked")?;
 
     let filled = keys.len() as u64;
     for stmt in schema::split_ddl(
@@ -381,15 +446,7 @@ async fn recompute_content_keys(
     ) {
         sqlx::query(&stmt).execute(&mut *conn).await?;
     }
-    {
-        for (id, key) in &keys {
-            sqlx::query("INSERT INTO _content_keys (id, content_key) VALUES ($1, $2)")
-                .bind(id)
-                .bind(key)
-                .execute(&mut *conn)
-                .await?;
-        }
-    }
+    insert_content_key_rows(conn, &keys).await?;
     sqlx::query(
         r#"
         UPDATE messages AS m
@@ -803,6 +860,8 @@ pub async fn run_dedupe(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{HashMap, HashSet};
+
     use super::*;
     use crate::db::engine;
 
@@ -856,6 +915,44 @@ mod tests {
         );
         assert_eq!(a, b);
         assert_eq!(a, c);
+    }
+
+    #[test]
+    fn parallel_content_keys_match_serial() {
+        let rows = vec![
+            (
+                1,
+                10,
+                "+14075551212".into(),
+                "individual".into(),
+                1,
+                Some("2015-03-12T18:04:22Z".into()),
+                "x".into(),
+                Some("hi".into()),
+                None,
+            ),
+            (
+                2,
+                11,
+                "chat-group".into(),
+                "group".into(),
+                0,
+                Some("2015-03-12T18:04:23Z".into()),
+                "x".into(),
+                Some("yo".into()),
+                Some("+15555550001".into()),
+            ),
+        ];
+        let mut groups = HashMap::new();
+        groups.insert(11, vec!["+15555550001".into(), "+15555550002".into()]);
+        let mut shas = HashMap::new();
+        shas.insert(2, vec!["abc".into()]);
+        let parallel = hash_content_keys(&rows, &groups, &shas);
+        let serial: Vec<_> = rows
+            .iter()
+            .map(|row| content_key_for_row(row, &groups, &shas))
+            .collect();
+        assert_eq!(parallel, serial);
     }
 
     #[test]
@@ -969,6 +1066,150 @@ mod tests {
         .fetch_one(&mut *conn)
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn fill_missing_content_keys_skips_rows_that_already_have_keys() {
+        let (pool, _dir) = engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        setup_db(&mut conn).await;
+        insert_msg(
+            &mut conn,
+            InsertMsgArgs {
+                source: "go-sms-pro",
+                guid: "g-fill",
+                utc: "2015-03-12T18:04:22Z",
+                local: "2015-03-12T14:04:22-04:00",
+                from_me: 1,
+                body: "Need a key",
+                sort_order: 0,
+            },
+        )
+        .await;
+        let first = fill_missing_content_keys(&mut conn, TEST_ACCOUNT_ID)
+            .await
+            .unwrap();
+        assert_eq!(first, 1);
+        let second = fill_missing_content_keys(&mut conn, TEST_ACCOUNT_ID)
+            .await
+            .unwrap();
+        assert_eq!(second, 0);
+        let key: Option<String> =
+            sqlx::query_scalar("SELECT content_key FROM messages WHERE guid = 'g-fill'")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert!(key.as_deref().is_some_and(|k| !k.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn fill_missing_content_keys_writes_multiple_rows_in_one_batch() {
+        let (pool, _dir) = engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        setup_db(&mut conn).await;
+        for (guid, body, sort_order) in [
+            ("g-multi-a", "First", 0),
+            ("g-multi-b", "Second", 1),
+            ("g-multi-c", "Third", 2),
+        ] {
+            insert_msg(
+                &mut conn,
+                InsertMsgArgs {
+                    source: "go-sms-pro",
+                    guid,
+                    utc: "2015-03-12T18:04:22Z",
+                    local: "2015-03-12T14:04:22-04:00",
+                    from_me: 1,
+                    body,
+                    sort_order,
+                },
+            )
+            .await;
+        }
+        let filled = fill_missing_content_keys(&mut conn, TEST_ACCOUNT_ID)
+            .await
+            .unwrap();
+        assert_eq!(filled, 3);
+        let keys: Vec<(String, Option<String>)> = sqlx::query_as(
+            r#"
+            SELECT guid, content_key
+            FROM messages
+            WHERE guid IN ('g-multi-a', 'g-multi-b', 'g-multi-c')
+            ORDER BY guid
+            "#,
+        )
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(keys.len(), 3);
+        let values: Vec<&str> = keys
+            .iter()
+            .map(|(_, key)| key.as_deref().expect("content_key"))
+            .collect();
+        assert!(values.iter().all(|key| !key.is_empty()));
+        assert_eq!(values.iter().copied().collect::<HashSet<_>>().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn recompute_all_content_keys_rewrites_existing_keys() {
+        let (pool, _dir) = engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        setup_db(&mut conn).await;
+        insert_msg(
+            &mut conn,
+            InsertMsgArgs {
+                source: "go-sms-pro",
+                guid: "g-rebuild",
+                utc: "2015-03-12T18:04:22Z",
+                local: "2015-03-12T14:04:22-04:00",
+                from_me: 1,
+                body: "Rebuild me",
+                sort_order: 0,
+            },
+        )
+        .await;
+        let first = fill_missing_content_keys(&mut conn, TEST_ACCOUNT_ID)
+            .await
+            .unwrap();
+        assert_eq!(first, 1);
+        let rebuilt = recompute_all_content_keys(&mut conn, TEST_ACCOUNT_ID)
+            .await
+            .unwrap();
+        assert_eq!(rebuilt, 1);
+        let key: Option<String> =
+            sqlx::query_scalar("SELECT content_key FROM messages WHERE guid = 'g-rebuild'")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert!(key.as_deref().is_some_and(|k| !k.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn dedupe_cross_source_does_not_rehash_existing_keys() {
+        let (pool, _dir) = engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        setup_db(&mut conn).await;
+        insert_msg(
+            &mut conn,
+            InsertMsgArgs {
+                source: "go-sms-pro",
+                guid: "g-once",
+                utc: "2015-03-12T18:04:22Z",
+                local: "2015-03-12T14:04:22-04:00",
+                from_me: 1,
+                body: "Once",
+                sort_order: 0,
+            },
+        )
+        .await;
+        let first = dedupe_cross_source(&mut conn, TEST_ACCOUNT_ID, None, 2)
+            .await
+            .unwrap();
+        assert_eq!(first.keys_filled, 1);
+        let second = dedupe_cross_source(&mut conn, TEST_ACCOUNT_ID, None, 2)
+            .await
+            .unwrap();
+        assert_eq!(second.keys_filled, 0);
     }
 
     #[tokio::test]
