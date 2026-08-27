@@ -42,7 +42,8 @@ export interface ImportDetailResponse {
   bytes_uploaded: number;
   duration_ms: number | null;
   parse_ms: number | null;
-  convert_ms: number | null;
+  attachments_ms: number | null;
+  prepare_ms: number | null;
   upload_ms: number | null;
   summary: unknown;
   issues: ImportIssue[];
@@ -96,11 +97,17 @@ export function toImportSummaryView(detail: ImportDetailResponse): ImportSummary
       ? (detail.summary as Record<string, unknown>)
       : {};
   const hasAnyStageTiming =
-    detail.parse_ms != null || detail.convert_ms != null || detail.upload_ms != null;
+    detail.parse_ms != null ||
+    detail.attachments_ms != null ||
+    detail.prepare_ms != null ||
+    detail.upload_ms != null;
   const durationMs =
     detail.duration_ms ??
     (hasAnyStageTiming
-      ? (detail.parse_ms ?? 0) + (detail.convert_ms ?? 0) + (detail.upload_ms ?? 0)
+      ? (detail.parse_ms ?? 0) +
+        (detail.attachments_ms ?? 0) +
+        (detail.prepare_ms ?? 0) +
+        (detail.upload_ms ?? 0)
       : null);
 
   return {
@@ -121,7 +128,8 @@ export function toImportSummaryView(detail: ImportDetailResponse): ImportSummary
     messagesDeduped: toNumber(summary.messages_deduped ?? summary.messagesDeduped),
     messagesFailed: toNumber(summary.messages_failed ?? summary.messagesFailed),
     parseMs: detail.parse_ms,
-    convertMs: detail.convert_ms,
+    attachmentsMs: detail.attachments_ms,
+    prepareMs: detail.prepare_ms,
     uploadMs: detail.upload_ms,
     durationMs,
     issues: detail.issues,

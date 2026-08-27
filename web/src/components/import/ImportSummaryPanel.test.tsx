@@ -20,6 +20,25 @@ describe("ImportSummaryPanel", () => {
     cleanup();
   });
 
+  it("shows four history steps including Attachments and Preparing messages", () => {
+    render(
+      <ImportSummaryPanel
+        summary={{
+          ...baseSummary,
+          parseMs: 10,
+          attachmentsMs: 20,
+          prepareMs: 5,
+          uploadMs: 30,
+        }}
+      />,
+    );
+    expect(screen.getByText("Parse backup")).toBeInTheDocument();
+    expect(screen.getByText("Attachments")).toBeInTheDocument();
+    expect(screen.getByText("Preparing messages")).toBeInTheDocument();
+    expect(screen.getByText("Upload to vault")).toBeInTheDocument();
+    expect(screen.queryByText("Convert attachments")).not.toBeInTheDocument();
+  });
+
   it("hides Import Errors when there are no issues", () => {
     render(<ImportSummaryPanel summary={baseSummary} embedStepTimings={false} />);
     expect(screen.queryByRole("heading", { name: "Import Errors" })).not.toBeInTheDocument();

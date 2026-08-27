@@ -20,7 +20,8 @@ function detail(partial: Partial<ImportDetailResponse> = {}): ImportDetailRespon
     bytes_uploaded: 0,
     duration_ms: 1000,
     parse_ms: null,
-    convert_ms: null,
+    attachments_ms: null,
+    prepare_ms: null,
     upload_ms: null,
     summary: {},
     issues: [],
@@ -83,10 +84,13 @@ describe("toImportSummaryView", () => {
       detail({
         duration_ms: null,
         parse_ms: 10,
-        convert_ms: 20,
+        attachments_ms: 20,
+        prepare_ms: 5,
         upload_ms: 30,
       }),
     );
-    expect(view.durationMs).toBe(60);
+    expect(view.durationMs).toBe(65);
+    expect(view.attachmentsMs).toBe(20);
+    expect(view.prepareMs).toBe(5);
   });
 });
