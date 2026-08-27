@@ -22,6 +22,7 @@ import type {
   ImportIssueEvent,
   ImportProgressEvent,
 } from "../../lib/types";
+import { importSessionCreateBody } from "../../lib/vaultSource";
 import { whatsappExtractFields } from "../../lib/whatsappExtractFields";
 import { isWhatsappMethod } from "../../lib/whatsappImport";
 import {
@@ -250,11 +251,10 @@ export function useImportJob() {
       const baseUrl = getBaseUrl();
       if (!token) throw new Error("Not authenticated");
 
-      const importSession = await apiClient.post<{ id: number }>("/v1/imports", {
-        source: form.source,
-        tool: "message-vault-io",
-        mode: "append",
-      });
+      const importSession = await apiClient.post<{ id: number }>(
+        "/v1/imports",
+        importSessionCreateBody(form.source),
+      );
       importSessionId = importSession.id;
 
       outputDir = await resolveImportStagingDir(form.backupPath, form.source);
