@@ -1,8 +1,8 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isReservedGroupName, reservedGroupError } from "../lib/contactGroups";
 import type { MembershipCheckState } from "../lib/membershipChecks";
-import { useDismissable } from "../lib/useDismissable";
 import { popupShadow } from "../lib/uiStyles";
+import { useDismissable } from "../lib/useDismissable";
 import { Z_POPOVER } from "../lib/zLayers";
 import Checkbox from "./Checkbox";
 import { ChevronDownIcon, PeopleGroupIcon } from "./icons";

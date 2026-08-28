@@ -1,8 +1,8 @@
 import { useCallback, useRef, useState } from "react";
 import type { ContactNameSort, ContactNameSortState, ContactSortOrder } from "../lib/contactSort";
 import { popupShadow } from "../lib/uiStyles";
-import { Z_POPOVER } from "../lib/zLayers";
 import { useMenuKeyboard } from "../lib/useMenuKeyboard";
+import { Z_POPOVER } from "../lib/zLayers";
 
 const FIELDS = [
   { id: "first", label: "First Name" },

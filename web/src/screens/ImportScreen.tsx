@@ -19,8 +19,8 @@ import {
 } from "../lib/system-settings";
 import { invokeHomeDir, invokeIosBackupEncrypted, invokePathStat } from "../lib/tauri";
 import { isTauri } from "../lib/tauri-check";
-import { loadAccountProfile } from "../lib/useAccountProfile";
 import type { AttachmentMediaMode, ContactNameMode } from "../lib/types";
+import { loadAccountProfile } from "../lib/useAccountProfile";
 import {
   emptyWhatsappPathStats,
   isWhatsappMethod,
