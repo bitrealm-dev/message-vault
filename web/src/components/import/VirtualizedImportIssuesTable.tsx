@@ -111,7 +111,11 @@ export default function VirtualizedImportIssuesTable({ issues }: { issues: Impor
               <div
                 key={`${group.kind}-${group.step}-${group.reason}-${virtualRow.index}`}
                 data-index={virtualRow.index}
-                ref={virtualizer.measureElement}
+                // Collapsed rows are exactly COLLAPSED_ROW_HEIGHT, so only the
+                // expanded row — whose height is a guess — needs measuring.
+                // Measuring all of them forced a layout read per visible row on
+                // every pass for no gain.
+                ref={expanded ? virtualizer.measureElement : undefined}
                 role="row"
                 tabIndex={0}
                 aria-rowindex={virtualRow.index + 2}
