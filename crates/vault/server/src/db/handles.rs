@@ -1,8 +1,13 @@
 //! Shared handle identity helpers (same format for matching + infer type from shape).
 
+use std::collections::HashMap;
+
 use anyhow::Result;
 use message_ir::{HandleService, HandleType};
 use sqlx::AnyConnection;
+
+/// `(account_id, normalized, handle_type, service)` → handle id for one import.
+pub type HandleIdCache = HashMap<(String, String, String, String), i64>;
 
 /// One standard form of a handle for identity matching, per type, plus a
 /// human-readable note when that form is ambiguous (guarded policy).
@@ -84,4 +89,79 @@ pub async fn upsert_handle_row(
     .fetch_one(&mut *conn)
     .await?;
     Ok((id, inserted > 0 && note.is_some()))
+}
+
+/// Same as [`upsert_handle_row`], but skip the two SQL statements when this
+/// import already resolved the same identity.
+pub async fn upsert_handle_row_cached(
+    conn: &mut AnyConnection,
+    cache: &mut HandleIdCache,
+    account_id: &str,
+    raw: &str,
+    handle_type: HandleType,
+    service: Option<&str>,
+) -> Result<(i64, bool)> {
+    let (normalized, _) = normalize_handle(raw, handle_type);
+    let platform = HandleService::parse(service.unwrap_or(HandleService::Phone.as_str()));
+    let key = (
+        account_id.to_string(),
+        normalized,
+        handle_type.as_str().to_string(),
+        platform.as_str().to_string(),
+    );
+    if let Some(&id) = cache.get(&key) {
+        return Ok((id, false));
+    }
+    let (id, flagged) = upsert_handle_row(conn, account_id, raw, handle_type, service).await?;
+    cache.insert(key, id);
+    Ok((id, flagged))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::schema;
+
+    const TEST_ACCOUNT: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+
+    #[tokio::test]
+    async fn upsert_handle_row_cached_reuses_id_without_second_row() {
+        let (pool, _dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        schema::ensure_vault_schema(&mut conn).await.unwrap();
+        crate::db::account_profile::ensure_account_row(&mut conn, TEST_ACCOUNT)
+            .await
+            .unwrap();
+        let mut cache = HandleIdCache::new();
+        let (first, _) = upsert_handle_row_cached(
+            &mut conn,
+            &mut cache,
+            TEST_ACCOUNT,
+            "+15555550100",
+            HandleType::Phone,
+            Some("phone"),
+        )
+        .await
+        .unwrap();
+        let (second, flagged) = upsert_handle_row_cached(
+            &mut conn,
+            &mut cache,
+            TEST_ACCOUNT,
+            "+15555550100",
+            HandleType::Phone,
+            Some("phone"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(first, second);
+        assert!(!flagged);
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM handles WHERE account_id = $1 AND normalized = '+15555550100'",
+        )
+        .bind(TEST_ACCOUNT)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(n, 1);
+    }
 }

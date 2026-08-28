@@ -475,12 +475,13 @@ pub async fn import_jsonl_files_on_conn(
         }
 
         if n % STAGING_COMMIT_EVERY == 0 && n < total_files {
+            let handles = stmts.take_handles();
             drop(stmts);
             tx.commit().await?;
             tx = conn
                 .begin_with(dialect::begin_immediate_sql(engine))
                 .await?;
-            stmts = StagingInserts::new(opts.account_id, opts.import_id);
+            stmts = StagingInserts::with_handles(opts.account_id, opts.import_id, handles);
         }
     }
     drop(stmts);
@@ -1363,6 +1364,147 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(triggers, 6);
+    }
+
+    fn replace_opts<'a>(assets: &'a Path, root: &'a Path, source: &'a str) -> ImportOptions<'a> {
+        ImportOptions::fixed(FixedImportArgs {
+            assets_dir: assets,
+            asset_root: root,
+            contacts: None,
+            overwrite_contacts: false,
+            mode: ImportMode::Replace,
+            source,
+            account_id: TEST_ACCOUNT,
+            fill_content_keys: false,
+            import_id: None,
+        })
+    }
+
+    fn missing_attachment_json(name: &str) -> String {
+        format!(
+            r#"[{{"path":"attachments/{name}","original_name":"{name}","mime_type":"application/octet-stream","digest_sha256":null,"is_sticker":false,"transcription":null,"sticker_effect":null,"size_bytes":12,"missing_reason":"not_found"}}]"#
+        )
+    }
+
+    const TAPBACK_IMESSAGE: &str = r#"{"is_reply":false,"in_reply_to_guid":null,"thread_originator_part":null,"num_replies":null,"is_deleted":false,"send_effect":null,"shared_location":null,"announcement":null,"read_receipt_rfc3339":null,"parts":null,"edits":null,"tapbacks":[{"emoji":null,"is_from_me":false,"kind":"liked","part_index":0,"sender":"+15555550999"}],"app":null,"balloon_bundle_id":null,"balloon_kind":null,"associated_guid":null,"associated_part":null,"tapback_kind":null,"tapback_emoji":null,"tapback_action":null}"#;
+
+    fn chunk_boundary_jsonl() -> String {
+        let header = r#"{"schema_version":3,"export":{"source":"imessage","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550123","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550123","display_name":null},{"handle":"+15555550999","display_name":null}],"stats":{"message_count":56,"attachment_count":2,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183517000}}}"#;
+        let mut lines = vec![header.to_string()];
+        for i in 0..56 {
+            let guid = format!("g-{i:02}");
+            let ts = 1_426_183_462_000i64 + i64::from(i) * 1000;
+            let attachments = if i == 0 {
+                missing_attachment_json("first.bin")
+            } else if i == 55 {
+                missing_attachment_json("last.bin")
+            } else {
+                "[]".to_string()
+            };
+            let imessage = if i == 1 { TAPBACK_IMESSAGE } else { "null" };
+            lines.push(format!(
+                r#"{{"guid":"{guid}","timestamp_unix_ms":{ts},"direction":"incoming","service":"imessage","message_kind":"imessage","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"msg {i}","attachments":{attachments},"imessage":{imessage},"source":null}}"#
+            ));
+        }
+        lines.join("\n")
+    }
+
+    #[tokio::test]
+    async fn staging_chunks_56_messages_and_keeps_children_on_right_rows() {
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("vault.db");
+        let assets = tmp.path().join("assets");
+        let path = write_jsonl(tmp.path(), "chunk-boundary.jsonl", &chunk_boundary_jsonl());
+        let stats =
+            import_jsonl_files(&db, &[path], &replace_opts(&assets, tmp.path(), "imessage"))
+                .await
+                .unwrap();
+        assert_eq!(stats.messages, 56);
+        assert_eq!(stats.attachments, 2);
+        assert_eq!(stats.tapbacks, 1);
+        assert_eq!(stats.messages_deduped, 0);
+
+        let (_pool, mut conn) = open_verify(&db).await;
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(n, 56);
+        let first_atts: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM attachments WHERE message_id = (SELECT id FROM messages WHERE guid = 'g-00')",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let last_atts: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM attachments WHERE message_id = (SELECT id FROM messages WHERE guid = 'g-55')",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let second_taps: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM tapbacks WHERE message_id = (SELECT id FROM messages WHERE guid = 'g-01')",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(first_atts, 1);
+        assert_eq!(last_atts, 1);
+        assert_eq!(second_taps, 1);
+    }
+
+    #[tokio::test]
+    async fn staging_skips_duplicate_guid_in_same_file_and_keeps_first_attachment() {
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("vault.db");
+        let assets = tmp.path().join("assets");
+        let header = r#"{"schema_version":3,"export":{"source":"imessage","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550123","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550123","display_name":null},{"handle":"+15555550999","display_name":null}],"stats":{"message_count":2,"attachment_count":2,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183463000}}}"#;
+        let first = format!(
+            r#"{{"guid":"g-once","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"imessage","message_kind":"imessage","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"first","attachments":{},"imessage":null,"source":null}}"#,
+            missing_attachment_json("first.bin")
+        );
+        let second = format!(
+            r#"{{"guid":"g-once","timestamp_unix_ms":1426183463000,"direction":"incoming","service":"imessage","message_kind":"imessage","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"second","attachments":{},"imessage":{TAPBACK_IMESSAGE},"source":null}}"#,
+            missing_attachment_json("second.bin")
+        );
+        let path = write_jsonl(
+            tmp.path(),
+            "dup-guid.jsonl",
+            &format!("{header}\n{first}\n{second}\n"),
+        );
+        let stats =
+            import_jsonl_files(&db, &[path], &replace_opts(&assets, tmp.path(), "imessage"))
+                .await
+                .unwrap();
+        assert_eq!(stats.messages, 1);
+        assert_eq!(stats.messages_deduped, 1);
+        assert_eq!(stats.attachments, 1);
+        assert_eq!(stats.tapbacks, 0);
+
+        let (_pool, mut conn) = open_verify(&db).await;
+        let (body, attachments, tapbacks): (String, i64, i64) = sqlx::query_as(
+            r#"
+            SELECT m.body, COUNT(DISTINCT a.id), COUNT(DISTINCT t.id)
+            FROM messages m
+            LEFT JOIN attachments a ON a.message_id = m.id
+            LEFT JOIN tapbacks t ON t.message_id = m.id
+            WHERE m.guid = 'g-once'
+            GROUP BY m.id
+            "#,
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(body, "first");
+        assert_eq!(attachments, 1);
+        assert_eq!(tapbacks, 0);
+        let name: String = sqlx::query_scalar(
+            "SELECT original_name FROM attachments WHERE message_id = (SELECT id FROM messages WHERE guid = 'g-once')",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(name, "first.bin");
     }
 
     #[tokio::test]
