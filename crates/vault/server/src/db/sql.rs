@@ -7,6 +7,8 @@ use std::pin::Pin;
 use sqlx::AnyConnection;
 use sqlx::any::AnyRow;
 
+use super::engine::DbEngine;
+
 /// Max ids per `IN (...)` bind list (SQLite's default variable limit is 999).
 pub const SQLITE_IN_CHUNK: usize = 400;
 
@@ -14,12 +16,30 @@ pub const SQLITE_IN_CHUNK: usize = 400;
 /// must keep `columns × rows` at or below this.
 pub const SQLITE_MAX_VARIABLES: usize = 999;
 
-/// Largest row count whose binds fit in one statement (`columns × rows ≤ 999`).
-pub fn max_rows_for_bind_limit(columns: usize) -> usize {
+/// Postgres protocol bind-parameter cap. Multi-row `INSERT` chunks must
+/// keep `columns × rows` at or below this.
+pub const POSTGRES_MAX_VARIABLES: usize = 65_535;
+
+/// Practical Postgres `INSERT … VALUES` row cap. The protocol allows
+/// thousands of rows; 1000 is where Docker round-trips flatten out
+/// without building a half-megabyte statement.
+pub const POSTGRES_INSERT_MAX_ROWS: usize = 1000;
+
+/// Largest row count whose binds fit in one statement for `engine`.
+/// SQLite: `columns × rows ≤ 999`. Postgres: `columns × rows ≤ 65_535`
+/// and at most [`POSTGRES_INSERT_MAX_ROWS`] rows.
+pub fn max_rows_for_bind_limit(engine: DbEngine, columns: usize) -> usize {
     if columns == 0 {
-        0
-    } else {
-        SQLITE_MAX_VARIABLES / columns
+        return 0;
+    }
+    let bind_cap = match engine {
+        DbEngine::Sqlite => SQLITE_MAX_VARIABLES,
+        DbEngine::Postgres => POSTGRES_MAX_VARIABLES,
+    };
+    let by_binds = bind_cap / columns;
+    match engine {
+        DbEngine::Sqlite => by_binds,
+        DbEngine::Postgres => by_binds.min(POSTGRES_INSERT_MAX_ROWS),
     }
 }
 
@@ -115,13 +135,25 @@ pub async fn fold_in_id_chunks<T, E>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::engine::DbEngine;
 
     #[test]
     fn max_rows_for_bind_limit_respects_sqlite_999() {
-        assert_eq!(max_rows_for_bind_limit(18), 55);
-        assert_eq!(max_rows_for_bind_limit(10), 99);
-        assert_eq!(max_rows_for_bind_limit(6), 166);
-        assert_eq!(max_rows_for_bind_limit(0), 0);
+        assert_eq!(max_rows_for_bind_limit(DbEngine::Sqlite, 18), 55);
+        assert_eq!(max_rows_for_bind_limit(DbEngine::Sqlite, 10), 99);
+        assert_eq!(max_rows_for_bind_limit(DbEngine::Sqlite, 6), 166);
+        assert_eq!(max_rows_for_bind_limit(DbEngine::Sqlite, 0), 0);
+    }
+
+    #[test]
+    fn max_rows_for_bind_limit_caps_postgres_at_1000() {
+        assert_eq!(max_rows_for_bind_limit(DbEngine::Postgres, 18), 1000);
+        assert_eq!(max_rows_for_bind_limit(DbEngine::Postgres, 10), 1000);
+        assert_eq!(max_rows_for_bind_limit(DbEngine::Postgres, 6), 1000);
+        assert_eq!(max_rows_for_bind_limit(DbEngine::Postgres, 0), 0);
+        // 70 columns: 65_535 / 70 = 936, so the bind cap wins over 1000.
+        assert_eq!(max_rows_for_bind_limit(DbEngine::Postgres, 70), 936);
+        assert!(1000 * 18 < POSTGRES_MAX_VARIABLES);
     }
 
     #[test]
