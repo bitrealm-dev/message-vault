@@ -28,7 +28,8 @@ export default function CreateAccountForm({ serverUrl }: { serverUrl: string }) 
       if (!username.trim()) {
         throw new Error("Username is required.");
       }
-      // Empty passwords are allowed. Only reject when the two fields disagree.
+      // Only the mismatch is checked here. Length is the server's rule, so it
+      // stays there rather than being restated and left to drift.
       if (password !== confirmPassword) {
         throw new Error("Passwords do not match.");
       }
@@ -67,6 +68,7 @@ export default function CreateAccountForm({ serverUrl }: { serverUrl: string }) 
         showPassword={showPassword}
         onToggle={() => setShowPassword((v) => !v)}
       />
+      <p className="mt-1 text-[0.75rem] text-muted">At least 8 characters.</p>
 
       <PasswordField
         label="Confirm Password"
