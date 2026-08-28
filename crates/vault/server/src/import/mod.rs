@@ -475,13 +475,10 @@ pub async fn import_jsonl_files_on_conn(
         }
 
         if n % STAGING_COMMIT_EVERY == 0 && n < total_files {
-            let handles = stmts.take_handles();
-            drop(stmts);
             tx.commit().await?;
             tx = conn
                 .begin_with(dialect::begin_immediate_sql(engine))
                 .await?;
-            stmts = StagingInserts::with_handles(opts.account_id, opts.import_id, handles);
         }
     }
     drop(stmts);
@@ -1505,6 +1502,42 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(name, "first.bin");
+    }
+
+    #[tokio::test]
+    async fn staging_keeps_both_rows_when_guids_differ_only_by_whitespace() {
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("vault.db");
+        let assets = tmp.path().join("assets");
+        let header = r#"{"schema_version":3,"export":{"source":"imessage","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550123","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550123","display_name":null}],"stats":{"message_count":2,"attachment_count":2,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183463000}}}"#;
+        let first = format!(
+            r#"{{"guid":"g-space","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"imessage","message_kind":"imessage","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"trimmed","attachments":{},"imessage":null,"source":null}}"#,
+            missing_attachment_json("trim.bin")
+        );
+        let second = format!(
+            r#"{{"guid":" g-space","timestamp_unix_ms":1426183463000,"direction":"incoming","service":"imessage","message_kind":"imessage","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"padded","attachments":{},"imessage":null,"source":null}}"#,
+            missing_attachment_json("pad.bin")
+        );
+        let path = write_jsonl(
+            tmp.path(),
+            "guid-whitespace.jsonl",
+            &format!("{header}\n{first}\n{second}\n"),
+        );
+        let stats =
+            import_jsonl_files(&db, &[path], &replace_opts(&assets, tmp.path(), "imessage"))
+                .await
+                .unwrap();
+        assert_eq!(stats.messages, 2);
+        assert_eq!(stats.messages_deduped, 0);
+        assert_eq!(stats.attachments, 2);
+
+        let (_pool, mut conn) = open_verify(&db).await;
+        let names: Vec<String> =
+            sqlx::query_scalar("SELECT original_name FROM attachments ORDER BY original_name")
+                .fetch_all(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!(names, vec!["pad.bin".to_string(), "trim.bin".to_string()]);
     }
 
     #[tokio::test]

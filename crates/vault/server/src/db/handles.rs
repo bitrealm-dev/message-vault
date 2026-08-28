@@ -92,7 +92,8 @@ pub async fn upsert_handle_row(
 }
 
 /// Same as [`upsert_handle_row`], but skip the two SQL statements when this
-/// import already resolved the same identity.
+/// import already resolved the same identity. Third value is `true` on a
+/// cache hit so callers can skip leftover per-row work (sibling contact link).
 pub async fn upsert_handle_row_cached(
     conn: &mut AnyConnection,
     cache: &mut HandleIdCache,
@@ -100,7 +101,7 @@ pub async fn upsert_handle_row_cached(
     raw: &str,
     handle_type: HandleType,
     service: Option<&str>,
-) -> Result<(i64, bool)> {
+) -> Result<(i64, bool, bool)> {
     let (normalized, _) = normalize_handle(raw, handle_type);
     let platform = HandleService::parse(service.unwrap_or(HandleService::Phone.as_str()));
     let key = (
@@ -110,11 +111,11 @@ pub async fn upsert_handle_row_cached(
         platform.as_str().to_string(),
     );
     if let Some(&id) = cache.get(&key) {
-        return Ok((id, false));
+        return Ok((id, false, true));
     }
     let (id, flagged) = upsert_handle_row(conn, account_id, raw, handle_type, service).await?;
     cache.insert(key, id);
-    Ok((id, flagged))
+    Ok((id, flagged, false))
 }
 
 #[cfg(test)]
@@ -133,7 +134,7 @@ mod tests {
             .await
             .unwrap();
         let mut cache = HandleIdCache::new();
-        let (first, _) = upsert_handle_row_cached(
+        let (first, _, first_cached) = upsert_handle_row_cached(
             &mut conn,
             &mut cache,
             TEST_ACCOUNT,
@@ -143,7 +144,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let (second, flagged) = upsert_handle_row_cached(
+        let (second, flagged, second_cached) = upsert_handle_row_cached(
             &mut conn,
             &mut cache,
             TEST_ACCOUNT,
@@ -154,7 +155,9 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(first, second);
+        assert!(!first_cached);
         assert!(!flagged);
+        assert!(second_cached);
         let n: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM handles WHERE account_id = $1 AND normalized = '+15555550100'",
         )

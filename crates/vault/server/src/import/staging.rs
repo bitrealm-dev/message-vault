@@ -204,9 +204,14 @@ INSERT INTO staging_messages (
 ) VALUES
 "#;
 
+/// Bind counts must stay in lockstep with the `INSERT` column lists above.
+const MESSAGE_BIND_COLUMNS: usize = 18;
+const ATTACHMENT_BIND_COLUMNS: usize = 10;
+const TAPBACK_BIND_COLUMNS: usize = 6;
+
 const INSERT_MESSAGE_SUFFIX: &str = r#"
 ON CONFLICT DO NOTHING
-RETURNING id, guid, sort_order
+RETURNING id, sort_order
 "#;
 
 const INSERT_ATTACHMENT_PREFIX: &str = r#"
@@ -228,22 +233,6 @@ impl StagingInserts {
             account_id: account_id.to_string(),
             import_id,
             handles: HandleIdCache::new(),
-        }
-    }
-
-    pub(super) fn take_handles(&mut self) -> HandleIdCache {
-        std::mem::take(&mut self.handles)
-    }
-
-    pub(super) fn with_handles(
-        account_id: &str,
-        import_id: Option<i64>,
-        handles: HandleIdCache,
-    ) -> Self {
-        Self {
-            account_id: account_id.to_string(),
-            import_id,
-            handles,
         }
     }
 }
@@ -494,7 +483,7 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
 
     // Conversation identity: the chat handle, typed from its shape (Phone for
     // SMS/iMessage/WhatsApp numbers, Email for `@`, Other for group ids).
-    let (chat_handle_id, flagged) = upsert_handle_row_cached(
+    let (chat_handle_id, flagged, cached) = upsert_handle_row_cached(
         tx,
         &mut stmts.handles,
         &stmts.account_id,
@@ -506,7 +495,9 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
     if flagged {
         stats.phones_needing_review += 1;
     }
-    let _ = ensure_sibling_contact_link(tx, &stmts.account_id, chat_handle_id).await?;
+    if !cached {
+        let _ = ensure_sibling_contact_link(tx, &stmts.account_id, chat_handle_id).await?;
+    }
 
     let conversation_id: i64 = sqlx::query_scalar(INSERT_CONVERSATION)
         .bind(&stmts.account_id)
@@ -522,7 +513,7 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
     for (handle, name_alias, handle_type) in kept_participants {
         // Prefer the source-provided type; fall back to shape inference.
         let handle_type = handle_type.unwrap_or_else(|| infer_handle_type(&handle));
-        let (handle_id, flagged) = upsert_handle_row_cached(
+        let (handle_id, flagged, _cached) = upsert_handle_row_cached(
             tx,
             &mut stmts.handles,
             &stmts.account_id,
@@ -586,7 +577,7 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
         });
     }
 
-    let msg_chunk = max_rows_for_bind_limit(18).max(1);
+    let msg_chunk = max_rows_for_bind_limit(MESSAGE_BIND_COLUMNS).max(1);
     for chunk in pending_rows.chunks(msg_chunk) {
         flush_staging_message_chunk(
             tx,
@@ -634,10 +625,6 @@ struct PendingTapbackRow {
     sender_handle_id: Option<i64>,
 }
 
-fn guid_key(guid: Option<&str>) -> Option<String> {
-    nonempty_str(guid).map(str::to_string)
-}
-
 async fn flush_staging_message_chunk(
     tx: &mut AnyConnection,
     stmts: &mut StagingInserts,
@@ -652,7 +639,7 @@ async fn flush_staging_message_chunk(
     }
     let sql = format!(
         "{INSERT_MESSAGE_PREFIX} {} {INSERT_MESSAGE_SUFFIX}",
-        values_tuples(chunk.len(), 18)
+        values_tuples(chunk.len(), MESSAGE_BIND_COLUMNS)
     );
     let mut q = sqlx::query(&sql);
     for row in chunk {
@@ -677,30 +664,19 @@ async fn flush_staging_message_chunk(
             .bind(stmts.import_id);
     }
     let returned = q.fetch_all(&mut *tx).await?;
-    let mut by_guid = HashMap::<String, i64>::new();
     let mut by_sort = HashMap::<i64, i64>::new();
     for row in &returned {
         let id: i64 = row.try_get(0)?;
-        let guid: Option<String> = row.try_get(1)?;
-        let sort_order: i64 = row.try_get(2)?;
-        if let Some(key) = guid_key(guid.as_deref()) {
-            by_guid.insert(key, id);
-        } else {
-            by_sort.insert(sort_order, id);
-        }
+        let sort_order: i64 = row.try_get(1)?;
+        by_sort.insert(sort_order, id);
     }
 
     let mut att_rows = Vec::new();
     let mut tap_rows = Vec::new();
     for row in chunk {
-        // Consume the RETURNING id so a second incoming row with the same
-        // guid in this chunk is skipped instead of attaching children to
-        // the first row.
-        let message_id = if let Some(key) = guid_key(row.msg.guid.as_deref()) {
-            by_guid.remove(&key)
-        } else {
-            by_sort.remove(&row.sort_order)
-        };
+        // Consume the RETURNING id so a conflicted row (duplicate guid) is
+        // skipped instead of attaching children to another message.
+        let message_id = by_sort.remove(&row.sort_order);
         let Some(message_id) = message_id else {
             stats.messages_deduped += 1;
             continue;
@@ -771,14 +747,14 @@ async fn flush_attachment_chunks(
     rows: &[PendingAttachmentRow],
     stats: &mut ImportStats,
 ) -> Result<()> {
-    let size = max_rows_for_bind_limit(10).max(1);
+    let size = max_rows_for_bind_limit(ATTACHMENT_BIND_COLUMNS).max(1);
     for chunk in rows.chunks(size) {
         if chunk.is_empty() {
             continue;
         }
         let sql = format!(
             "{INSERT_ATTACHMENT_PREFIX} {}",
-            values_tuples(chunk.len(), 10)
+            values_tuples(chunk.len(), ATTACHMENT_BIND_COLUMNS)
         );
         let mut q = sqlx::query(&sql);
         for row in chunk {
@@ -805,12 +781,15 @@ async fn flush_tapback_chunks(
     rows: &[PendingTapbackRow],
     stats: &mut ImportStats,
 ) -> Result<()> {
-    let size = max_rows_for_bind_limit(6).max(1);
+    let size = max_rows_for_bind_limit(TAPBACK_BIND_COLUMNS).max(1);
     for chunk in rows.chunks(size) {
         if chunk.is_empty() {
             continue;
         }
-        let sql = format!("{INSERT_TAPBACK_PREFIX} {}", values_tuples(chunk.len(), 6));
+        let sql = format!(
+            "{INSERT_TAPBACK_PREFIX} {}",
+            values_tuples(chunk.len(), TAPBACK_BIND_COLUMNS)
+        );
         let mut q = sqlx::query(&sql);
         for row in chunk {
             q = q

@@ -58,13 +58,15 @@ pub(super) async fn resolve_incoming_sender_handle(
         return Ok(None);
     };
     let handle_type = handle_type.unwrap_or_else(|| infer_handle_type(sender));
-    let (handle_id, flagged) =
+    let (handle_id, flagged, cached) =
         upsert_handle_row_cached(tx, cache, account_id, sender, handle_type, Some(platform))
             .await?;
     if flagged {
         stats.phones_needing_review += 1;
     }
-    let _ = ensure_sibling_contact_link(tx, account_id, handle_id).await?;
+    if !cached {
+        let _ = ensure_sibling_contact_link(tx, account_id, handle_id).await?;
+    }
     Ok(Some(handle_id))
 }
 
