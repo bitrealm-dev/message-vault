@@ -8,6 +8,7 @@ import {
   healthBackoffMs,
   healthProbeUrl,
   healthStatusLabel,
+  probeTimeoutSignal,
 } from "./vaultHealth";
 
 describe("healthBackoffMs", () => {
@@ -49,11 +50,12 @@ describe("healthProbeUrl", () => {
 });
 
 describe("healthStatusLabel", () => {
-  it("names each status", () => {
-    expect(healthStatusLabel("unknown")).toBe("Server status unknown");
-    expect(healthStatusLabel("checking")).toBe("Checking server");
-    expect(healthStatusLabel("ok")).toBe("Server reachable");
-    expect(healthStatusLabel("fail")).toBe("Server unreachable");
+  it("uses one vocabulary: connecting, connected, disconnected", () => {
+    expect(healthStatusLabel("ok")).toBe("Connected");
+    expect(healthStatusLabel("fail")).toBe("Disconnected");
+    // Not yet answered and still trying read the same from the user's side.
+    expect(healthStatusLabel("checking")).toBe("Connecting…");
+    expect(healthStatusLabel("unknown")).toBe("Connecting…");
   });
 });
 
@@ -127,5 +129,27 @@ describe("checkVaultHealth", () => {
     const pending = checkVaultHealth("http://127.0.0.1:8080");
     await vi.advanceTimersByTimeAsync(HEALTH_PROBE_TIMEOUT_MS);
     await expect(pending).resolves.toBe(false);
+  });
+});
+
+describe("probeTimeoutSignal", () => {
+  const originalTimeout = AbortSignal.timeout;
+
+  afterEach(() => {
+    vi.useRealTimers();
+    AbortSignal.timeout = originalTimeout;
+  });
+
+  it("returns a signal that aborts once the probe budget elapses", () => {
+    // `AbortSignal.timeout` runs on the platform's own clock, not the fake
+    // one, so force the manual-controller fallback to exercise the budget
+    // under fake timers.
+    (AbortSignal as unknown as { timeout?: unknown }).timeout = undefined;
+    vi.useFakeTimers();
+    const signal = probeTimeoutSignal();
+
+    expect(signal.aborted).toBe(false);
+    vi.advanceTimersByTime(HEALTH_PROBE_TIMEOUT_MS);
+    expect(signal.aborted).toBe(true);
   });
 });

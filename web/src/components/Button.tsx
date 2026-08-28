@@ -47,6 +47,7 @@ export default function Button({
   size = "md",
   children,
   disabled,
+  isDisabled,
   title,
   style,
   className,
@@ -66,7 +67,7 @@ export default function Button({
         // The menu library strips `title`. Set it on the element so hover text still works.
         if (el && el.title !== title) el.title = title ?? "";
       }}
-      isDisabled={disabled}
+      isDisabled={disabled ?? isDisabled}
       style={style}
       className={`
         box-border inline-flex cursor-pointer select-none items-center justify-center
