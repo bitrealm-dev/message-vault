@@ -49,13 +49,21 @@ use this vault, and what may they do with it.
 
 ## Relationship to existing work
 
-The branch `auth-entry-flow` carries seven commits, including five implemented tasks from
-`docs/superpowers/plans/2026-08-28-auth-entry-flow.md` (error-envelope parsing, per-service field
-examples, connection vocabulary, the fixed 448 × 560 card frame, the vault line). Tasks 6–8 of that
-plan — the two screen rewrites and the browser pass — are unimplemented.
+`docs/superpowers/plans/2026-08-28-auth-entry-flow.md` is **complete and merged** — PR #219, on
+`main` as `c42e3c6c`. Sign-in is now the entry screen, the vault is named in place, profile setup is
+rebuilt around "Your Accounts", and the card holds a fixed 448 × 560 frame.
 
-This spec does not depend on that work and does not supersede the five landed tasks. The login screen
-design that follows this one will decide the fate of tasks 6–8.
+That merge did part of this spec's work and complicated another part.
+
+**Already done:** `LoginScreen.tsx` no longer renders a Hanko branch. Only a comment remains, noting
+that Hanko is gone from the product and that local is the only mode the card can render. The removal
+table below is written against this state.
+
+**Newly complicated:** the merged card calls `GET /v1/auth/mode` as its **reachability probe**. It
+discards the response body entirely — a successful answer means the vault is up, a failure or an
+8-second timeout moves the card to `disconnected`. So the endpoint is no longer a mode oracle that
+can simply be deleted; it is load-bearing for the connect/disconnect behavior that just shipped. See
+"The mode endpoint" below.
 
 ## What is removed
 
@@ -72,13 +80,29 @@ Every trace, including the schema column.
 | `crates/vault/server/src/db/account_profile.rs` | `hanko_user_id` parameters and reads |
 | `schema/sql/accounts.sql`, `pg_accounts.sql` | the `hanko_user_id` column and `ix_accounts_hanko_user_id` |
 | `web/package.json` | `@teamhanko/hanko-elements` |
-| `web/src/screens/LoginScreen.tsx` | the `<hanko-auth>` branch |
-| `web/src/lib/authGuards.ts` | the `AuthMode` union |
+| `web/src/screens/LoginScreen.tsx` | already done in PR #219; only the explanatory comment remains |
+| `web/src/lib/authGuards.ts` | the `AuthMode` union, `isAuthMode`, and `isTryDemoEnabled` |
+| `web/src/lib/authGuards.test.ts` | the cases covering those |
 | `.env.example` | the Hanko block |
 
-With `AuthMode` gone there is one sign-in mechanism, so `GET /v1/auth/mode` has nothing left to
-report. The endpoint is removed. The client's mode detection goes with it; what replaces it as the
-reachability probe is a question for the login screen design, not this one.
+#### The mode endpoint
+
+With `AuthMode` gone there is one sign-in mechanism, and with try-demo gone the response's `try_demo`
+field goes too, so `GET /v1/auth/mode` has nothing left to report. It cannot simply be deleted,
+though: PR #219 made it the sign-in card's reachability probe, and the card's entire
+connecting → connected → disconnected behavior hangs off whether it answers.
+
+**The probe moves to `GET /health`**, which already exists (`server.rs:535`), is a truer statement of
+the question being asked, and does not require a body. `LoginScreen.tsx` swaps the URL inside
+`connect()`, keeps `probeTimeoutSignal()` and the eight-second timeout exactly as they are, and drops
+the now-pointless `AuthModeResponse` type and `authMode` state. `LoginScreen.test.tsx` mocks
+`/health` in place of `/v1/auth/mode` — it already mocks both, so the change is small.
+
+Only then is `GET /v1/auth/mode` removed.
+
+This is the one place where this spec edits code that has just shipped rather than code that has sat
+unchanged for a while. Whoever implements it should read `connect()` first rather than working from
+this description.
 
 `web-next/` is legacy and out of scope. Its Hanko files stay as they are.
 
@@ -447,7 +471,9 @@ Both were raised and not ruled on; either can be reversed on review.
 
 ## Deferred
 
-- The login screen redesign — the original request, still unspecified.
+- The login screen redesign — the original request, still unspecified. The auth entry flow that
+  merged as PR #219 rebuilt how the vault is chosen and how sign-in is entered; it did not answer
+  the wider redesign question, and nothing in it anticipates an administrator.
 - Per-import and per-conversation admin deletion.
 - Folding `web-next/` into any of this. It stays legacy.
 - Any audit log of administrative actions. Nothing records who disabled or deleted whom.
