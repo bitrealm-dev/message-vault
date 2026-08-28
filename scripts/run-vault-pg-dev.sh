@@ -4,6 +4,7 @@
 #   ./scripts/run-vault-pg-dev.sh                 # start Postgres if needed; keep data
 #   ./scripts/run-vault-pg-dev.sh --reset         # wipe volume + data/, empty vault
 #   ./scripts/run-vault-pg-dev.sh --reset-demo    # wipe, seed sample inbox (demo / empty password)
+#   ./scripts/run-vault-pg-dev.sh --release       # optimized binary (also with --reset / --reset-demo)
 #
 # Website (separate terminal):
 #   cd web && npm run dev
@@ -23,13 +24,15 @@ COMPOSE=(docker compose -f docker-compose.pg.yml)
 DB_URL="postgres://vault:vault@127.0.0.1:5432/vault"
 DEMO=0
 RESET=0
+RELEASE=0
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [--reset | --reset-demo]
+Usage: $(basename "$0") [--reset | --reset-demo] [--release]
 
   --reset       Wipe the Postgres volume and data/, start empty
   --reset-demo  Wipe the Postgres volume and data/, seed the sample inbox
+  --release     Build and run the optimized binary (seed and serve)
   -h, --help
 EOF
 }
@@ -38,6 +41,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --reset) RESET=1 ;;
     --reset-demo) DEMO=1 ;;
+    --release) RELEASE=1 ;;
     --demo)
       echo "error: --demo was renamed to --reset-demo (always wipes data/ and reseeds)" >&2
       exit 1
@@ -101,6 +105,11 @@ wait_postgres() {
 require_cmd cargo
 require_cmd docker
 
+CARGO_RUN=(cargo run -p message-vault-server)
+if [[ "${RELEASE}" -eq 1 ]]; then
+  CARGO_RUN=(cargo run --release -p message-vault-server)
+fi
+
 mkdir -p data
 
 if [[ ! -f "${CONFIG}" ]]; then
@@ -125,7 +134,7 @@ if [[ "${DEMO}" -eq 1 ]]; then
   require_cmd ffmpeg
   require_cmd ffprobe
   echo "Seeding demo data into Postgres…"
-  cargo run -p message-vault-server -- reset-demo --config "${CONFIG}" --db-url "${DB_URL}"
+  "${CARGO_RUN[@]}" -- reset-demo --config "${CONFIG}" --db-url "${DB_URL}"
   write_host_dev_config
 elif [[ "${RESET}" -eq 1 ]]; then
   echo "Empty Postgres (create an account in the web UI)."
@@ -140,5 +149,9 @@ echo "Desktop:    cargo tauri dev"
 echo "Stop:       Ctrl+C also stops the Postgres container (volume kept)."
 echo
 
-echo "Starting message-vault-server (debug). Restart after server-crate edits."
-cargo run -p message-vault-server -- serve --config "${CONFIG}" --db-url "${DB_URL}"
+if [[ "${RELEASE}" -eq 1 ]]; then
+  echo "Starting message-vault-server (release). First compile can take several minutes."
+else
+  echo "Starting message-vault-server (debug). Restart after server-crate edits."
+fi
+"${CARGO_RUN[@]}" -- serve --config "${CONFIG}" --db-url "${DB_URL}"
