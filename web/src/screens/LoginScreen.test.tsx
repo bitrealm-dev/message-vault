@@ -6,13 +6,10 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const login = vi.fn();
+const setServer = vi.fn();
 
 vi.mock("../lib/auth", () => ({
-  useAuth: () => ({
-    login,
-    setServer: vi.fn(),
-    serverUrl: "",
-  }),
+  useAuth: () => ({ login, setServer, serverUrl: "" }),
 }));
 
 vi.mock("../lib/tauri-check", () => ({
@@ -21,181 +18,158 @@ vi.mock("../lib/tauri-check", () => ({
 
 import LoginScreen from "./LoginScreen";
 
-/** Answer `/health` and `/v1/auth/mode` so Connect reaches the local auth card. */
-function stubLocalModeServer() {
+/** Answer `/v1/auth/mode` and `/health` as a healthy local-auth vault. */
+function stubVault() {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
       if (String(url).endsWith("/v1/auth/mode")) {
-        return { ok: true, json: async () => ({ mode: "local" }) };
+        return {
+          ok: true,
+          json: async () => ({ mode: "local" }),
+        };
       }
-      return { ok: true };
+      return { ok: true, text: async () => "" };
     }),
   );
 }
 
-async function connect(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("button", { name: "Connect" }));
-  await screen.findByRole("tab", { name: "Login" });
+function renderScreen() {
+  render(
+    <MemoryRouter>
+      <LoginScreen />
+    </MemoryRouter>,
+  );
 }
 
 describe("LoginScreen", () => {
   beforeEach(() => {
     login.mockReset();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+    setServer.mockReset();
   });
 
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
-    vi.useRealTimers();
   });
 
-  it("puts Connect first and offers no demo sign-in", () => {
-    render(
-      <MemoryRouter>
-        <LoginScreen />
-      </MemoryRouter>,
-    );
+  it("signs in without a vault-selection step", async () => {
+    stubVault();
+    renderScreen();
 
-    expect(screen.getByRole("heading", { name: "Message Vault" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Connect" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Try it" })).not.toBeInTheDocument();
-    expect(screen.queryByText("OR")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Extract messages" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Format conversion" })).not.toBeInTheDocument();
-    expect(screen.getByRole("status", { name: "Connecting…" })).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: "Login" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Username" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+
+    expect(screen.queryByRole("button", { name: "Connect" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Server URL" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Back to Vault Selection" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("shows Login and Create Account tabs after connecting, with Login first", async () => {
-    stubLocalModeServer();
-    const user = userEvent.setup();
+  it("names the vault it connected to", async () => {
+    stubVault();
+    renderScreen();
 
-    render(
-      <MemoryRouter>
-        <LoginScreen />
-      </MemoryRouter>,
-    );
+    expect(await screen.findByText("connected")).toBeInTheDocument();
+    expect(setServer).toHaveBeenCalledWith("");
+  });
 
-    await connect(user);
+  it("keeps both tabs, Login first", async () => {
+    stubVault();
+    renderScreen();
 
+    await screen.findByRole("tab", { name: "Login" });
     const tabs = screen.getAllByRole("tab");
     expect(tabs.map((t) => t.textContent)).toEqual(["Login", "Create Account"]);
     expect(tabs[0]).toHaveAttribute("aria-selected", "true");
-
-    expect(screen.getByRole("textbox", { name: "Username" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Password")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
-    expect(screen.queryByLabelText("Confirm Password")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Try it" })).not.toBeInTheDocument();
   });
 
-  it("asks for the password twice on the Create Account tab", async () => {
-    stubLocalModeServer();
+  it("still asks for the password twice on Create Account", async () => {
+    stubVault();
     const user = userEvent.setup();
+    renderScreen();
 
-    render(
-      <MemoryRouter>
-        <LoginScreen />
-      </MemoryRouter>,
-    );
-
-    await connect(user);
+    await screen.findByRole("tab", { name: "Create Account" });
     await user.click(screen.getByRole("tab", { name: "Create Account" }));
 
-    expect(screen.getByRole("textbox", { name: "Username" })).toBeInTheDocument();
     expect(screen.getByLabelText("Password")).toBeInTheDocument();
     expect(screen.getByLabelText("Confirm Password")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create account" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Sign in" })).not.toBeInTheDocument();
   });
 
   it("rejects a new account when the two passwords disagree", async () => {
-    stubLocalModeServer();
+    stubVault();
     const user = userEvent.setup();
+    renderScreen();
 
-    render(
-      <MemoryRouter>
-        <LoginScreen />
-      </MemoryRouter>,
-    );
-
-    await connect(user);
+    await screen.findByRole("tab", { name: "Create Account" });
     await user.click(screen.getByRole("tab", { name: "Create Account" }));
-
     await user.type(screen.getByRole("textbox", { name: "Username" }), "ada");
-    await user.type(screen.getByLabelText("Password"), "hunter2");
-    await user.type(screen.getByLabelText("Confirm Password"), "hunter3");
+    await user.type(screen.getByLabelText("Password"), "hunter22");
+    await user.type(screen.getByLabelText("Confirm Password"), "hunter23");
     await user.click(screen.getByRole("button", { name: "Create account" }));
 
     expect(await screen.findByText("Passwords do not match.")).toBeInTheDocument();
     expect(login).not.toHaveBeenCalled();
   });
 
-  it("turns the Server URL light green for a blank URL when this origin is up", async () => {
-    render(
-      <MemoryRouter>
-        <LoginScreen />
-      </MemoryRouter>,
-    );
+  it("offers the address field when nothing answers", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    renderScreen();
 
-    await waitFor(
-      () => {
-        expect(screen.getByRole("status", { name: "Connected" })).toBeInTheDocument();
-      },
-      { timeout: 2000 },
-    );
-
-    expect(fetch).toHaveBeenCalledWith(
-      "/health",
-      expect.objectContaining({ method: "GET", cache: "no-store" }),
-    );
+    expect(await screen.findByText("disconnected")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Vault address" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sign in" })).not.toBeInTheDocument();
   });
 
-  it("turns the Server URL light green when /health succeeds", async () => {
+  it("retries against a typed address", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
     const user = userEvent.setup();
+    renderScreen();
 
-    render(
-      <MemoryRouter>
-        <LoginScreen />
-      </MemoryRouter>,
-    );
+    await screen.findByText("disconnected");
 
-    const input = screen.getByRole("textbox", { name: "Server URL" });
-    await user.clear(input);
-    await user.type(input, "http://127.0.0.1:8080");
+    stubVault();
+    const field = screen.getByRole("textbox", { name: "Vault address" });
+    await user.clear(field);
+    await user.type(field, "http://127.0.0.1:8080");
+    await user.click(screen.getByRole("button", { name: "Retry" }));
 
-    await waitFor(
-      () => {
-        expect(screen.getByRole("status", { name: "Connected" })).toBeInTheDocument();
-      },
-      { timeout: 2000 },
-    );
-
-    expect(fetch).toHaveBeenCalledWith(
-      "http://127.0.0.1:8080/health",
-      expect.objectContaining({ method: "GET", cache: "no-store" }),
-    );
+    expect(await screen.findByRole("tab", { name: "Login" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(setServer).toHaveBeenCalledWith("http://127.0.0.1:8080");
+    });
   });
 
-  it("turns the Server URL light red when /health fails", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 503 }));
+  it("opens the address field from Change without losing the form", async () => {
+    stubVault();
     const user = userEvent.setup();
+    renderScreen();
 
-    render(
-      <MemoryRouter>
-        <LoginScreen />
-      </MemoryRouter>,
+    await screen.findByRole("tab", { name: "Login" });
+    await user.click(screen.getByRole("button", { name: "Change" }));
+
+    expect(screen.getByRole("textbox", { name: "Vault address" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Use" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Login" })).toBeInTheDocument();
+  });
+
+  it("falls back to local tabs when the vault reports an unrecognized mode", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).endsWith("/v1/auth/mode")) {
+          return { ok: true, json: async () => ({ mode: "sso" }) };
+        }
+        return { ok: true, text: async () => "" };
+      }),
     );
+    renderScreen();
 
-    const input = screen.getByRole("textbox", { name: "Server URL" });
-    await user.type(input, "http://127.0.0.1:9999");
-
-    await waitFor(
-      () => {
-        expect(screen.getByRole("status", { name: "Disconnected" })).toBeInTheDocument();
-      },
-      { timeout: 2000 },
-    );
+    expect(await screen.findByRole("tab", { name: "Login" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Create Account" })).toBeInTheDocument();
   });
 });

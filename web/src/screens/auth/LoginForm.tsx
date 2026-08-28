@@ -6,10 +6,17 @@ import TextField from "../../components/TextField";
 import { apiClient } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import type { SessionResponse } from "../../lib/authGuards";
+import { authCardFooter } from "../../lib/uiStyles";
 import { useAsyncAction } from "../../lib/useAsyncAction";
 
 /** Username and password sign-in for a vault running in local auth mode. */
-export default function LoginForm({ serverUrl }: { serverUrl: string }) {
+export default function LoginForm({
+  serverUrl,
+  disabled = false,
+}: {
+  serverUrl: string;
+  disabled?: boolean;
+}) {
   const { login } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -29,13 +36,14 @@ export default function LoginForm({ serverUrl }: { serverUrl: string }) {
   };
 
   return (
-    <>
+    <div className="flex min-h-0 flex-1 flex-col">
       <TextField
         label="Username"
         value={username}
         onChange={setUsername}
         onKeyDown={(e) => e.key === "Enter" && submit()}
         autoComplete="username"
+        isDisabled={disabled}
       />
 
       <PasswordField
@@ -47,13 +55,15 @@ export default function LoginForm({ serverUrl }: { serverUrl: string }) {
         autoComplete="current-password"
         showPassword={showPassword}
         onToggle={() => setShowPassword((v) => !v)}
+        isDisabled={disabled}
       />
 
-      <AuthSubmitButton onClick={submit} disabled={busy}>
-        {busy ? "Signing in…" : "Sign in"}
-      </AuthSubmitButton>
-
-      <AuthErrorFooter error={error} />
-    </>
+      <div className={authCardFooter}>
+        <AuthErrorFooter error={error} />
+        <AuthSubmitButton onClick={submit} disabled={busy || disabled}>
+          {busy ? "Signing in…" : "Sign in"}
+        </AuthSubmitButton>
+      </div>
+    </div>
   );
 }

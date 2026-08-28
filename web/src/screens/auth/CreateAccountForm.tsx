@@ -6,6 +6,7 @@ import TextField from "../../components/TextField";
 import { apiClient, setBaseUrl } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import type { SessionResponse } from "../../lib/authGuards";
+import { authCardFooter } from "../../lib/uiStyles";
 import { useAsyncAction } from "../../lib/useAsyncAction";
 
 /**
@@ -14,7 +15,13 @@ import { useAsyncAction } from "../../lib/useAsyncAction";
  * The name and phone numbers are not asked for here — the account is created
  * with an empty profile, which sends the user straight to profile setup.
  */
-export default function CreateAccountForm({ serverUrl }: { serverUrl: string }) {
+export default function CreateAccountForm({
+  serverUrl,
+  disabled = false,
+}: {
+  serverUrl: string;
+  disabled?: boolean;
+}) {
   const { login } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -49,13 +56,14 @@ export default function CreateAccountForm({ serverUrl }: { serverUrl: string }) 
   };
 
   return (
-    <>
+    <div className="flex min-h-0 flex-1 flex-col">
       <TextField
         label="Username"
         value={username}
         onChange={setUsername}
         onKeyDown={(e) => e.key === "Enter" && submit()}
         autoComplete="username"
+        isDisabled={disabled}
       />
 
       <PasswordField
@@ -67,6 +75,7 @@ export default function CreateAccountForm({ serverUrl }: { serverUrl: string }) 
         autoComplete="new-password"
         showPassword={showPassword}
         onToggle={() => setShowPassword((v) => !v)}
+        isDisabled={disabled}
       />
       <p className="mt-1 text-[0.75rem] text-muted">At least 8 characters.</p>
 
@@ -79,13 +88,15 @@ export default function CreateAccountForm({ serverUrl }: { serverUrl: string }) 
         autoComplete="new-password"
         showPassword={showConfirm}
         onToggle={() => setShowConfirm((v) => !v)}
+        isDisabled={disabled}
       />
 
-      <AuthSubmitButton onClick={submit} disabled={busy}>
-        {busy ? "Creating account…" : "Create account"}
-      </AuthSubmitButton>
-
-      <AuthErrorFooter error={error} />
-    </>
+      <div className={authCardFooter}>
+        <AuthErrorFooter error={error} />
+        <AuthSubmitButton onClick={submit} disabled={busy || disabled}>
+          {busy ? "Creating account…" : "Create account"}
+        </AuthSubmitButton>
+      </div>
+    </div>
   );
 }

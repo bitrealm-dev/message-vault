@@ -1,183 +1,111 @@
-import { useEffect, useRef, useState } from "react";
-import AuthBackButton from "../components/AuthBackButton";
-import AuthErrorFooter from "../components/AuthErrorFooter";
-import Button from "../components/Button";
-import HealthDot from "../components/HealthDot";
-import TextField from "../components/TextField";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient, setBaseUrl } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import {
-  type AuthMode,
-  initialLoginServerUrl,
-  isAuthMode,
-  type SessionResponse,
-} from "../lib/authGuards";
+import { initialLoginServerUrl, vaultDisplayHost } from "../lib/authGuards";
 import { isTauri } from "../lib/tauri-check";
-import { authCard, authTitle, pageCenter } from "../lib/uiStyles";
-import { useAsyncAction } from "../lib/useAsyncAction";
+import { authCard, authCardBody, pageCenter } from "../lib/uiStyles";
 import { useVaultHealth } from "../lib/useVaultHealth";
+import { probeTimeoutSignal } from "../lib/vaultHealth";
 import LocalAuthTabs from "./auth/LocalAuthTabs";
+import VaultLine, { type VaultConnection } from "./auth/VaultLine";
 
 interface AuthModeResponse {
   mode: string;
-  hanko_api_url?: string | null;
   try_demo?: boolean;
 }
 
+/** Placeholder shaped like the form, so the card does not flicker into shape. */
+function FormSkeleton({ dimmed }: { dimmed: boolean }) {
+  return (
+    <div className={dimmed ? "opacity-40" : ""} aria-hidden="true">
+      <div className="mb-6 h-9 rounded bg-elevated" />
+      <div className="h-3.5 w-1/3 rounded bg-elevated" />
+      <div className="mt-2 h-10 rounded bg-elevated" />
+      <div className="mt-5 h-3.5 w-1/4 rounded bg-elevated" />
+      <div className="mt-2 h-10 rounded bg-elevated" />
+    </div>
+  );
+}
+
+/**
+ * The way into a vault. The card resolves an address on mount and detects the
+ * auth mode itself, so the only question the old first screen asked — which
+ * vault — is answered by default and changed in place when the default is
+ * wrong.
+ */
 export default function LoginScreen() {
-  const { login, setServer: setAuthServer, serverUrl: savedUrl } = useAuth();
-  const [serverUrl, setServerUrl] = useState(() => initialLoginServerUrl(savedUrl, isTauri()));
-  const [authMode, setAuthMode] = useState<AuthMode | null>(null);
-  const [hankoApiUrl, setHankoApiUrl] = useState<string | null>(null);
-  const { busy, error, run, clearError } = useAsyncAction();
-  const [hankoError, setHankoError] = useState("");
+  const { setServer: setAuthServer, serverUrl: savedUrl } = useAuth();
+  const [address, setAddress] = useState(() => initialLoginServerUrl(savedUrl, isTauri()));
+  const [draft, setDraft] = useState(address);
+  const [state, setState] = useState<VaultConnection>("connecting");
+  const [authMode, setAuthMode] = useState<"local" | null>(null);
 
-  const hankoRef = useRef<HTMLDivElement>(null);
-  // Only probe while choosing a vault; stop after Connect advances the card.
-  const healthStatus = useVaultHealth(authMode === null ? serverUrl : null);
+  const editorOpen = state === "editing" || state === "disconnected";
+  // Only probe while the address is being chosen. Once connected, the mode
+  // request has already proved the vault is there.
+  const health = useVaultHealth(editorOpen ? draft : null);
 
-  const displayError = error || hankoError;
-
-  const detectMode = () => {
-    setAuthMode(null);
-    void run(async () => {
+  const connect = useCallback(
+    async (url: string) => {
+      const trimmed = url.trim();
+      setState("connecting");
+      setBaseUrl(trimmed);
       try {
-        const url = serverUrl.trim();
-        setBaseUrl(url);
-        const res = await apiClient.get<AuthModeResponse>("/v1/auth/mode");
-        setAuthMode(isAuthMode(res.mode) ? res.mode : null);
-        setHankoApiUrl(res.hanko_api_url || null);
-        setAuthServer(url);
+        // Hanko has been removed from this product; whatever the vault
+        // reports, the only mode this card knows how to render is local.
+        await apiClient.get<AuthModeResponse>("/v1/auth/mode", {
+          signal: probeTimeoutSignal(),
+        });
+        setAddress(trimmed);
+        setDraft(trimmed);
+        setAuthMode("local");
+        setAuthServer(trimmed);
+        setState("connected");
       } catch {
-        throw new Error(
-          isTauri()
-            ? "Could not reach server. Check the URL and try again."
-            : "Could not reach server. Leave the URL blank for this origin (Vite proxy / vault UI), or enter an absolute vault URL.",
-        );
+        // Nothing answered. That is the vault line's problem, not the form's.
+        setState("disconnected");
       }
-    });
-  };
+    },
+    [setAuthServer],
+  );
 
-  const changeServer = () => {
-    setAuthMode(null);
-    setHankoApiUrl(null);
-    clearError();
-    setHankoError("");
-  };
-
-  // Load Hanko sign-in when that login mode is selected.
+  // Resolve the vault once on mount; Use and Retry call `connect` again.
+  const started = useRef(false);
   useEffect(() => {
-    if (authMode !== "hanko" || !hankoApiUrl || !hankoRef.current) return;
+    if (started.current) return;
+    started.current = true;
+    void connect(address);
+  }, [connect, address]);
 
-    let cancelled = false;
-    // `loadHanko` is async, so anything it returns is a promise the effect
-    // cannot use as a cleanup — the unsubscribe has to be handed back this way
-    // or every run leaks a Hanko instance and its session listener.
-    let unsubscribe: (() => void) | null = null;
-
-    const loadHanko = async () => {
-      try {
-        const mod = await import("@teamhanko/hanko-elements");
-        if (cancelled) return;
-
-        // Register the Hanko sign-in web component.
-        mod.register(hankoApiUrl).catch(() => {
-          if (!cancelled) {
-            setHankoError("Failed to load Hanko sign-in.");
-          }
-        });
-
-        // Listen for a successful Hanko session so the app can log in.
-        const hanko = new mod.Hanko(hankoApiUrl);
-
-        const remove = hanko.onSessionCreated(() => {
-          if (cancelled) return;
-          void run(async () => {
-            const jwt = hanko.getSessionToken();
-            setBaseUrl(serverUrl.trim());
-            const res = await apiClient.post<SessionResponse>("/v1/auth/hanko/session", {
-              hanko_jwt: jwt,
-            });
-            await login(serverUrl.trim(), res.token, res.account_id);
-          });
-        });
-
-        if (cancelled) {
-          remove();
-          return;
-        }
-        unsubscribe = remove;
-      } catch {
-        if (!cancelled) {
-          setHankoError("Failed to load Hanko. Is @teamhanko/hanko-elements installed?");
-        }
-      }
-    };
-
-    void loadHanko();
-
-    return () => {
-      cancelled = true;
-      unsubscribe?.();
-    };
-  }, [authMode, hankoApiUrl, serverUrl, login, run]);
+  const host = vaultDisplayHost(
+    state === "connected" ? address : draft,
+    typeof window === "undefined" ? "" : window.location.host,
+  );
 
   return (
     <div className={pageCenter}>
       <div className={authCard}>
-        {/* In local mode the tab strip is the card's heading. */}
-        {authMode !== "local" && (
-          <h1 className={authMode === null ? `${authTitle} !text-center` : authTitle}>
-            {authMode === null ? "Message Vault" : "Sign In"}
-          </h1>
-        )}
+        <div className={authCardBody}>
+          <VaultLine
+            state={state}
+            host={host}
+            draft={draft}
+            health={health}
+            onDraftChange={setDraft}
+            onEdit={() => setState("editing")}
+            onCancel={() => {
+              setDraft(address);
+              setState("connected");
+            }}
+            onSubmit={() => void connect(draft)}
+          />
 
-        {authMode === null && (
-          <>
-            <TextField
-              label="Server URL"
-              labelEnd={<HealthDot status={healthStatus} />}
-              value={serverUrl}
-              onChange={setServerUrl}
-              onKeyDown={(e) => e.key === "Enter" && detectMode()}
-              placeholder={isTauri() ? "https://vault.example.com" : "Leave blank for this origin"}
-            />
-            <div className="mt-3 mb-[0.35rem] flex justify-end">
-              <Button variant="primary" onClick={detectMode} disabled={busy}>
-                {busy ? "Connecting…" : "Connect"}
-              </Button>
-            </div>
-            {!isTauri() && (
-              <p className="text-[0.75rem] text-muted mb-4">
-                Leave blank to use this origin (Vite `/v1` proxy or vault-hosted UI).
-              </p>
-            )}
-
-            <AuthErrorFooter error={displayError} />
-          </>
-        )}
-
-        {authMode === "local" && <LocalAuthTabs serverUrl={serverUrl} />}
-
-        {authMode === "hanko" && (
-          <>
-            <div ref={hankoRef}>
-              {hankoApiUrl ? (
-                <hanko-auth />
-              ) : (
-                <div className="text-[0.875rem] text-muted text-center p-4">
-                  Hanko API URL not configured on server.
-                </div>
-              )}
-            </div>
-
-            <AuthErrorFooter error={displayError} />
-          </>
-        )}
-
-        {authMode !== null && (
-          <AuthBackButton label="Back to Vault Selection" onClick={changeServer} />
-        )}
+          {authMode === null ? (
+            <FormSkeleton dimmed={state === "disconnected"} />
+          ) : (
+            <LocalAuthTabs serverUrl={address} disabled={state !== "connected"} />
+          )}
+        </div>
       </div>
     </div>
   );
