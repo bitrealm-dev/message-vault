@@ -1,3 +1,4 @@
+import { useNameAliases } from "../../lib/useNameAliases";
 import MessageAttachments from "../MessageAttachments";
 import {
   bubbleBody,
@@ -15,6 +16,7 @@ export default function ImessageBubble({
   onAttachmentClick,
 }: MessageBubbleProps) {
   const time = formatMessageTime(message.timestamp);
+  const useAliases = useNameAliases();
   const mine = message.is_from_me;
   const group = isGroupConversation(message);
   const body = (message.text || "").trim();
@@ -47,7 +49,7 @@ export default function ImessageBubble({
       isActive={isActive}
       palette="imessage"
       showSender={!mine && group}
-      senderLabel={senderName(message)}
+      senderLabel={senderName(message, useAliases)}
       timeLabel={time}
       meta={
         <>

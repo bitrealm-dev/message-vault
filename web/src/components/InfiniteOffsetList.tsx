@@ -3,6 +3,7 @@ import {
   type ReactNode,
   type UIEvent,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -349,16 +350,35 @@ function SectionedLetterList<T>({
   const hasMoreRef = useRef(hasMore);
   hasMoreRef.current = hasMore;
 
+  const itemCount = items.length;
   const publishVisibleRange = useCallback(
     (root: HTMLElement) => {
       const rootRect = root.getBoundingClientRect();
+      const viewTop = rootRect.top;
       const viewBottom = rootRect.bottom - RANGE_PILL_OVERLAY_INSET;
-      const rows = root.querySelectorAll("[data-contact-index]");
+      const rows = root.querySelectorAll<HTMLElement>("[data-contact-index]");
+
+      // Rows run top to bottom, so the first one reaching the viewport can be
+      // bisected for. Measuring all of them here cost one layout read per
+      // contact on every scroll event — 20k of them on a large catalog.
+      let lo = 0;
+      let hi = rows.length - 1;
+      let first = rows.length;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (rows[mid].getBoundingClientRect().bottom > viewTop) {
+          first = mid;
+          hi = mid - 1;
+        } else {
+          lo = mid + 1;
+        }
+      }
+
       let start = 0;
       let end = 0;
-      for (const row of rows) {
-        const rect = row.getBoundingClientRect();
-        if (rect.bottom <= rootRect.top || rect.top >= viewBottom) continue;
+      for (let i = first; i < rows.length; i++) {
+        const row = rows[i];
+        if (row.getBoundingClientRect().top >= viewBottom) break;
         const raw = row.getAttribute("data-contact-index");
         const idx = raw == null ? Number.NaN : Number(raw);
         if (!Number.isFinite(idx)) continue;
@@ -367,11 +387,11 @@ function SectionedLetterList<T>({
         end = oneBased;
       }
       onRangeRef.current({ start, end });
-      if (hasMoreRef.current && items.length > 0 && end >= items.length - NEAR_END_THRESHOLD) {
+      if (hasMoreRef.current && itemCount > 0 && end >= itemCount - NEAR_END_THRESHOLD) {
         requestMoreRef.current();
       }
     },
-    [items],
+    [itemCount],
   );
 
   useLayoutEffect(() => {
@@ -379,8 +399,22 @@ function SectionedLetterList<T>({
     if (root) publishVisibleRange(root);
   }, [publishVisibleRange]);
 
+  // Scroll events outpace frames; one measurement per frame is all that can show.
+  const rangeFrameRef = useRef(0);
+  useEffect(
+    () => () => {
+      if (rangeFrameRef.current) cancelAnimationFrame(rangeFrameRef.current);
+    },
+    [],
+  );
+
   const onScroll = (e: UIEvent<HTMLDivElement>) => {
-    publishVisibleRange(e.currentTarget);
+    if (rangeFrameRef.current) return;
+    const root = e.currentTarget;
+    rangeFrameRef.current = requestAnimationFrame(() => {
+      rangeFrameRef.current = 0;
+      publishVisibleRange(root);
+    });
   };
 
   if (items.length === 0 && empty) {
