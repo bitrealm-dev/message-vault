@@ -29,6 +29,7 @@ export default function CountField({
         <Select
           selectedKey={value.comparator}
           aria-label={`${label} comparison`}
+          size="sm"
           triggerClassName={selectTriggerClass}
           onSelectionChange={(k) => {
             const comparator = parseSelectKey(k, ["any", "=", ">", "<"] as const);

@@ -1,8 +1,10 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isReservedGroupName, reservedGroupError } from "../lib/contactGroups";
 import type { MembershipCheckState } from "../lib/membershipChecks";
-import { shouldIgnoreOutsideDismiss } from "../lib/portaledOverlay";
 import { popupShadow } from "../lib/uiStyles";
+import { useDismissable } from "../lib/useDismissable";
+import { Z_POPOVER } from "../lib/zLayers";
+import Checkbox from "./Checkbox";
 import { ChevronDownIcon, PeopleGroupIcon } from "./icons";
 
 export type GroupCheckState = MembershipCheckState;
@@ -76,25 +78,11 @@ export default function GroupsMenu({
   const searchRef = useRef<HTMLInputElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (e: MouseEvent) => {
-      if (shouldIgnoreOutsideDismiss(e, rootRef.current)) return;
-      setOpen(false);
-      setMode("list");
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      setOpen(false);
-      setMode("list");
-    };
-    document.addEventListener("mousedown", onPointerDown, true);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown, true);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open, setOpen]);
+  const dismiss = useCallback(() => {
+    setOpen(false);
+    setMode("list");
+  }, [setOpen]);
+  useDismissable(open, rootRef, dismiss);
 
   useEffect(() => {
     if (!open) return;
@@ -119,7 +107,7 @@ export default function GroupsMenu({
   );
   const listEmptyText = query.trim() ? noMatchText : emptyText;
   const toneClass = open ? "text-accent" : "text-muted";
-  const popoverClass = `absolute top-full left-0 z-[100] mt-1 w-64 rounded-xl border border-border bg-popover ${popupShadow}`;
+  const popoverClass = `absolute top-full left-0 mt-1 w-64 rounded-xl border border-border bg-popover ${Z_POPOVER} ${popupShadow}`;
 
   const saveNew = () => {
     if (disabled || !onCreate) return;
@@ -185,22 +173,16 @@ export default function GroupsMenu({
               visibleGroups.map((name) => {
                 const state = checks[name] ?? "off";
                 return (
-                  <label
+                  <Checkbox
                     key={name}
-                    className={`${MENU_ROW_CLASS} cursor-pointer text-text hover:bg-hover`}
+                    labelClassName={`${MENU_ROW_CLASS} w-full text-text hover:bg-hover`}
+                    checked={state === "on"}
+                    indeterminate={state === "mixed"}
+                    disabled={boxesDisabled}
+                    onChange={() => onToggle?.(name)}
                   >
-                    <input
-                      type="checkbox"
-                      checked={state === "on"}
-                      ref={(el) => {
-                        if (el) el.indeterminate = state === "mixed";
-                      }}
-                      disabled={boxesDisabled}
-                      onChange={() => onToggle?.(name)}
-                      className="size-3.5 accent-accent"
-                    />
                     <span className="truncate">{name}</span>
-                  </label>
+                  </Checkbox>
                 );
               })
             )}
@@ -252,7 +234,7 @@ export default function GroupsMenu({
               type="button"
               disabled={disabled || !newName.trim()}
               onClick={saveNew}
-              className="cursor-pointer rounded-md bg-accent px-3 py-1 text-[0.813rem] font-medium text-[#1c1c1e] disabled:opacity-40"
+              className="cursor-pointer rounded-md bg-accent px-3 py-1 text-[0.813rem] font-medium text-sent-text disabled:opacity-40"
             >
               Create
             </button>

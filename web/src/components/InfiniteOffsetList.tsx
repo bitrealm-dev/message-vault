@@ -1,8 +1,11 @@
 import {
+  type CSSProperties,
   type ReactNode,
   type UIEvent,
   useCallback,
+  useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -42,6 +45,12 @@ type InfiniteOffsetListProps<T> = {
   /** Accessible name for ListBoxItem (Tauri path). */
   getTextValue?: (item: T) => string;
   renderRow: (item: T) => ReactNode;
+  /**
+   * Leading cell rendered as a sibling of the row control, not inside it.
+   * Row selection is a button, and interactive content (a per-row checkbox)
+   * may not nest inside a button — keeping it out is what makes it reachable.
+   */
+  renderRowLead?: (item: T) => ReactNode;
   empty?: ReactNode;
   ariaLabel: string;
   /** Override the “N of total” denominator (e.g. filtered client count). */
@@ -64,6 +73,46 @@ function rowClass(selected: boolean, hovered = false): string {
       ? "bg-hover"
       : "bg-transparent hover:bg-hover";
   return `box-border flex w-full cursor-pointer items-center gap-2.5 border-none p-2 px-3 text-left text-text outline-none ${listRowDividersThin} ${fill}`;
+}
+
+/**
+ * The select-row button when a lead cell sits beside it. The row container owns
+ * the fill, dividers and padding, so the button carries no chrome of its own.
+ */
+const ROW_BODY =
+  "flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 border-none bg-transparent p-0 text-left text-text outline-none";
+
+/** A row is either one button, or a container holding the lead cell plus that button. */
+function Row({
+  lead,
+  className,
+  style,
+  onSelect,
+  children,
+  ...rest
+}: {
+  lead: ReactNode;
+  className: string;
+  style?: CSSProperties;
+  onSelect: () => void;
+  children: ReactNode;
+  "data-contact-index"?: number;
+}) {
+  if (!lead) {
+    return (
+      <button type="button" onClick={onSelect} className={className} style={style} {...rest}>
+        {children}
+      </button>
+    );
+  }
+  return (
+    <div className={className} style={style} {...rest}>
+      {lead}
+      <button type="button" onClick={onSelect} className={ROW_BODY}>
+        {children}
+      </button>
+    </div>
+  );
 }
 
 function rangeFromScroll(
@@ -92,6 +141,7 @@ function RacVirtualList<T extends object>({
   getId,
   getTextValue,
   renderRow,
+  renderRowLead,
   requestMore,
   hasMore,
   onVisibleRangeChange,
@@ -107,6 +157,7 @@ function RacVirtualList<T extends object>({
   getId: (item: T) => string;
   getTextValue?: (item: T) => string;
   renderRow: (item: T) => ReactNode;
+  renderRowLead?: (item: T) => ReactNode;
   requestMore: () => void;
   hasMore: boolean;
   onVisibleRangeChange: (range: VisibleRange) => void;
@@ -174,6 +225,8 @@ function RacVirtualList<T extends object>({
               }
               style={dynamicSize ? { minHeight: estimateSize } : { height: "100%", minHeight: 0 }}
             >
+              {/* A row checkbox inside a listbox option is RAC's own selection pattern. */}
+              {renderRowLead?.(item)}
               {renderRow(item)}
             </ListBoxItem>
           );
@@ -192,6 +245,7 @@ function TanStackVirtualList<T>({
   isRowHighlighted,
   getId,
   renderRow,
+  renderRowLead,
   requestMore,
   hasMore,
   onVisibleRangeChange,
@@ -206,6 +260,7 @@ function TanStackVirtualList<T>({
   getId: (item: T) => string;
   getTextValue?: (item: T) => string;
   renderRow: (item: T) => ReactNode;
+  renderRowLead?: (item: T) => ReactNode;
   requestMore: () => void;
   hasMore: boolean;
   onVisibleRangeChange: (range: VisibleRange) => void;
@@ -230,9 +285,9 @@ function TanStackVirtualList<T>({
         const id = getId(item);
         const selected = isRowHighlighted?.(item) ?? id === selectedId;
         return (
-          <button
-            type="button"
-            onClick={() => onSelect(item)}
+          <Row
+            lead={renderRowLead?.(item)}
+            onSelect={() => onSelect(item)}
             style={{
               height: dynamicSize ? "auto" : "100%",
               minHeight: dynamicSize ? estimateSize : undefined,
@@ -240,7 +295,7 @@ function TanStackVirtualList<T>({
             className={rowClass(selected)}
           >
             {renderRow(item)}
-          </button>
+          </Row>
         );
       }}
     />
@@ -257,6 +312,7 @@ function SectionedLetterList<T>({
   sectionLead,
   getId,
   renderRow,
+  renderRowLead,
   requestMore,
   hasMore,
   getSectionLetter,
@@ -271,6 +327,7 @@ function SectionedLetterList<T>({
   sectionLead?: ReactNode;
   getId: (item: T) => string;
   renderRow: (item: T) => ReactNode;
+  renderRowLead?: (item: T) => ReactNode;
   requestMore: () => void;
   hasMore: boolean;
   getSectionLetter: (item: T) => string;
@@ -278,8 +335,13 @@ function SectionedLetterList<T>({
   onVisibleRangeChange: (range: VisibleRange) => void;
   empty?: ReactNode;
 }) {
-  const groups = groupByLetter(items, getSectionLetter);
-  const indexById = new Map(items.map((item, i) => [getId(item), i]));
+  // This list is not virtualized, so both of these walk every contact. Rebuilding
+  // them on each render is what made scrolling a large catalog expensive.
+  const groups = useMemo(() => groupByLetter(items, getSectionLetter), [items, getSectionLetter]);
+  const indexById = useMemo(
+    () => new Map(items.map((item, i) => [getId(item), i])),
+    [items, getId],
+  );
   const scrollerRef = useRef<HTMLDivElement>(null);
   const onRangeRef = useRef(onVisibleRangeChange);
   onRangeRef.current = onVisibleRangeChange;
@@ -288,16 +350,35 @@ function SectionedLetterList<T>({
   const hasMoreRef = useRef(hasMore);
   hasMoreRef.current = hasMore;
 
+  const itemCount = items.length;
   const publishVisibleRange = useCallback(
     (root: HTMLElement) => {
       const rootRect = root.getBoundingClientRect();
+      const viewTop = rootRect.top;
       const viewBottom = rootRect.bottom - RANGE_PILL_OVERLAY_INSET;
-      const rows = root.querySelectorAll("[data-contact-index]");
+      const rows = root.querySelectorAll<HTMLElement>("[data-contact-index]");
+
+      // Rows run top to bottom, so the first one reaching the viewport can be
+      // bisected for. Measuring all of them here cost one layout read per
+      // contact on every scroll event — 20k of them on a large catalog.
+      let lo = 0;
+      let hi = rows.length - 1;
+      let first = rows.length;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (rows[mid].getBoundingClientRect().bottom > viewTop) {
+          first = mid;
+          hi = mid - 1;
+        } else {
+          lo = mid + 1;
+        }
+      }
+
       let start = 0;
       let end = 0;
-      for (const row of rows) {
-        const rect = row.getBoundingClientRect();
-        if (rect.bottom <= rootRect.top || rect.top >= viewBottom) continue;
+      for (let i = first; i < rows.length; i++) {
+        const row = rows[i];
+        if (row.getBoundingClientRect().top >= viewBottom) break;
         const raw = row.getAttribute("data-contact-index");
         const idx = raw == null ? Number.NaN : Number(raw);
         if (!Number.isFinite(idx)) continue;
@@ -306,11 +387,11 @@ function SectionedLetterList<T>({
         end = oneBased;
       }
       onRangeRef.current({ start, end });
-      if (hasMoreRef.current && items.length > 0 && end >= items.length - NEAR_END_THRESHOLD) {
+      if (hasMoreRef.current && itemCount > 0 && end >= itemCount - NEAR_END_THRESHOLD) {
         requestMoreRef.current();
       }
     },
-    [items],
+    [itemCount],
   );
 
   useLayoutEffect(() => {
@@ -318,8 +399,22 @@ function SectionedLetterList<T>({
     if (root) publishVisibleRange(root);
   }, [publishVisibleRange]);
 
+  // Scroll events outpace frames; one measurement per frame is all that can show.
+  const rangeFrameRef = useRef(0);
+  useEffect(
+    () => () => {
+      if (rangeFrameRef.current) cancelAnimationFrame(rangeFrameRef.current);
+    },
+    [],
+  );
+
   const onScroll = (e: UIEvent<HTMLDivElement>) => {
-    publishVisibleRange(e.currentTarget);
+    if (rangeFrameRef.current) return;
+    const root = e.currentTarget;
+    rangeFrameRef.current = requestAnimationFrame(() => {
+      rangeFrameRef.current = 0;
+      publishVisibleRange(root);
+    });
   };
 
   if (items.length === 0 && empty) {
@@ -343,15 +438,15 @@ function SectionedLetterList<T>({
             const selected = isRowHighlighted?.(item) ?? id === selectedId;
             const index = indexById.get(id) ?? 0;
             return (
-              <button
+              <Row
                 key={id}
-                type="button"
+                lead={renderRowLead?.(item)}
                 data-contact-index={index}
-                onClick={() => onSelect(item)}
+                onSelect={() => onSelect(item)}
                 className={rowClass(selected)}
               >
                 {renderRow(item)}
-              </button>
+              </Row>
             );
           })}
         </section>
@@ -379,6 +474,7 @@ export default function InfiniteOffsetList<T extends object>({
   getId,
   getTextValue,
   renderRow,
+  renderRowLead,
   empty,
   ariaLabel,
   rangeTotal,
@@ -426,6 +522,7 @@ export default function InfiniteOffsetList<T extends object>({
     getId,
     getTextValue,
     renderRow,
+    renderRowLead,
     requestMore,
     hasMore,
     onVisibleRangeChange: setVisibleRange,
@@ -463,6 +560,7 @@ export default function InfiniteOffsetList<T extends object>({
           sectionLead={sectionLead}
           getId={getId}
           renderRow={renderRow}
+          renderRowLead={renderRowLead}
           requestMore={requestMore}
           hasMore={hasMore}
           getSectionLetter={getSectionLetter}

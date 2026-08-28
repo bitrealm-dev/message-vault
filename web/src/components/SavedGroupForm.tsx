@@ -55,14 +55,15 @@ export default function SavedGroupForm({ onSave, onCancel, initial }: SavedGroup
       </label>
 
       <div className="flex justify-end gap-2">
-        <Button onClick={onCancel} className="!px-3 !py-1.5">
+        <Button onClick={onCancel} size="sm">
           Cancel
         </Button>
         <Button
           variant="primary"
           onClick={handleSave}
           disabled={!name.trim() || !query.trim()}
-          className="!px-4 !py-1.5"
+          size="sm"
+          className="!px-4"
         >
           Save
         </Button>

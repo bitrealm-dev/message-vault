@@ -9,13 +9,7 @@ import {
 } from "./contactDrawerTypes";
 import { CountCell } from "./handleTableHelpers";
 import { conversationCount, handleDateCell } from "./handleTableLogic";
-import {
-  iconBtnDangerClass,
-  rowActionsRevealClass,
-  tdClass,
-  tdLeftClass,
-  tdRightClass,
-} from "./handleTableStyles";
+import { rowActionsRevealClass, tdClass, tdLeftClass, tdRightClass } from "./handleTableStyles";
 
 type BrowseFn = (args: { kind: ContactBrowseKind; handle?: string; service?: string }) => void;
 
@@ -79,12 +73,12 @@ export function renderHandleTableRow(
         <CountCell value={h.group_message_count} loading={loading} />
         <div className={`absolute top-1/2 right-0 -translate-y-1/2 ${rowActionsRevealClass}`}>
           <Button
-            variant="ghost"
+            variant="ghostDanger"
+            size="icon"
             disabled={opts.busy || opts.loading}
             title="Remove identity"
             aria-label="Remove identity"
             onClick={() => opts.onRequestRemove(h)}
-            className={iconBtnDangerClass}
           >
             <TrashIcon />
           </Button>

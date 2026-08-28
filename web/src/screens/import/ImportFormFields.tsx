@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import Button from "../../components/Button";
+import Checkbox from "../../components/Checkbox";
 import PasswordField from "../../components/PasswordField";
 import PathPicker from "../../components/PathPicker";
 import PhoneTokenField, { type PhoneTokenFieldHandle } from "../../components/PhoneTokenField";
@@ -574,14 +575,13 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
             ) : null}
 
             {whatsappShowsBusiness(whatsappMethod) ? (
-              <label className="mb-[1.1rem] flex cursor-pointer items-center gap-2 text-[0.875rem]">
-                <input
-                  type="checkbox"
-                  checked={props.whatsappBusiness}
-                  onChange={(e) => props.onWhatsappBusinessChange(e.target.checked)}
-                />
+              <Checkbox
+                labelClassName="mb-[1.1rem] flex text-[0.875rem]"
+                checked={props.whatsappBusiness}
+                onChange={props.onWhatsappBusinessChange}
+              >
                 WhatsApp Business
-              </label>
+              </Checkbox>
             ) : null}
 
             <AttachmentFields
@@ -665,15 +665,14 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
                   messages will not be linked to my account.
                 </div>
               ) : null}
-              <label className="mt-2 flex cursor-pointer items-start gap-2 text-[0.8125rem] text-text">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 shrink-0"
-                  checked={mismatchAck}
-                  onChange={(e) => setMismatchAck(e.target.checked)}
-                />
+              <Checkbox
+                labelClassName="mt-2 flex items-start text-[0.8125rem]"
+                className="mt-0.5 shrink-0"
+                checked={mismatchAck}
+                onChange={setMismatchAck}
+              >
                 <span>Allow import from phone numbers not on my profile.</span>
-              </label>
+              </Checkbox>
             </StackedField>
           </>
         ) : (
@@ -688,23 +687,21 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
         open={props.processingOpen}
         onToggle={props.onToggleProcessing}
       >
-        <label className="mb-3 flex items-center gap-2 text-[0.875rem]">
-          <input
-            type="checkbox"
-            checked={props.force}
-            onChange={(e) => props.onForceChange(e.target.checked)}
-          />
+        <Checkbox
+          labelClassName="mb-3 flex text-[0.875rem]"
+          checked={props.force}
+          onChange={props.onForceChange}
+        >
           Force reprocessing
-        </label>
+        </Checkbox>
         {isIos || isSbr ? (
-          <label className="mb-2 flex items-center gap-2 text-[0.875rem]">
-            <input
-              type="checkbox"
-              checked={props.obfuscate}
-              onChange={(e) => props.onObfuscateChange(e.target.checked)}
-            />
+          <Checkbox
+            labelClassName="mb-2 flex text-[0.875rem]"
+            checked={props.obfuscate}
+            onChange={props.onObfuscateChange}
+          >
             Obfuscate - All message data is anonymized.
-          </label>
+          </Checkbox>
         ) : null}
       </CollapsibleSection>
 

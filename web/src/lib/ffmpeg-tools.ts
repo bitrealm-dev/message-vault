@@ -1,4 +1,3 @@
-import { setFfmpegToolsDir } from "./tauri";
 import { isTauri } from "./tauri-check";
 
 export const FFMPEG_TOOLS_STORAGE_KEY = "mv-ffmpeg-path";
@@ -13,7 +12,11 @@ export function initFfmpegToolsFromStorage(): void {
   const stored = localStorage.getItem(FFMPEG_TOOLS_STORAGE_KEY)?.trim();
   if (!stored) return;
 
-  void setFfmpegToolsDir(stored).catch(() => {
-    // Startup is best-effort. Settings shows a detailed status when the user opens it.
-  });
+  // Loaded on demand: a static import here would put the whole Tauri bridge on
+  // the entry chunk, which every browser visitor downloads and never calls.
+  void import("./tauri")
+    .then(({ setFfmpegToolsDir }) => setFfmpegToolsDir(stored))
+    .catch(() => {
+      // Startup is best-effort. Settings shows a detailed status when the user opens it.
+    });
 }

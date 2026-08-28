@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
-import { shouldIgnoreOutsideDismiss } from "../lib/portaledOverlay";
+import { useCallback, useRef, useState } from "react";
+import { useDismissable } from "../lib/useDismissable";
+import { Z_INLINE_PANEL } from "../lib/zLayers";
 import AdvancedSearchForm, { type AdvancedSearchMode } from "./AdvancedSearchForm";
 import AppAccountMenu from "./AppAccountMenu";
 import ContactSearch from "./ContactSearch";
@@ -38,15 +39,8 @@ export default function AppHeader({
     ),
   );
 
-  useEffect(() => {
-    if (!showAdvancedSearch || isContacts) return;
-    const onPointerDown = (e: MouseEvent) => {
-      if (shouldIgnoreOutsideDismiss(e, conversationsAdvancedRef.current)) return;
-      setShowAdvancedSearch(false);
-    };
-    document.addEventListener("mousedown", onPointerDown, true);
-    return () => document.removeEventListener("mousedown", onPointerDown, true);
-  }, [showAdvancedSearch, isContacts]);
+  const closeAdvancedSearch = useCallback(() => setShowAdvancedSearch(false), []);
+  useDismissable(showAdvancedSearch && !isContacts, conversationsAdvancedRef, closeAdvancedSearch);
 
   return (
     <header className="relative z-20 flex shrink-0 items-center border-b border-border bg-panel">
@@ -78,7 +72,9 @@ export default function AppHeader({
                 {showAdvancedSearch ? "Hide" : "Advanced"}
               </button>
               {showAdvancedSearch ? (
-                <div className="absolute left-0 top-full z-[70] mt-1 w-full min-w-[300px]">
+                <div
+                  className={`absolute top-full left-0 mt-1 w-full min-w-[300px] ${Z_INLINE_PANEL}`}
+                >
                   <AdvancedSearchForm
                     mode={searchMode}
                     onApply={(q) => {

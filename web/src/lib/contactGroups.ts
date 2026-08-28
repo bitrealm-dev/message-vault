@@ -1,4 +1,4 @@
-import { apiClient } from "./api";
+import { createNameCollection } from "./nameCollection";
 
 /** Names that must not be created as user groups. */
 export const RESERVED_GROUP_NAMES = new Set(
@@ -30,10 +30,6 @@ export const RESERVED_GROUP_NAMES = new Set(
   ].map((s) => s.toLowerCase()),
 );
 
-export function isReservedGroupName(name: string): boolean {
-  return RESERVED_GROUP_NAMES.has(name.trim().toLowerCase());
-}
-
 export function reservedGroupError(name: string): string {
   const key = name.trim().toLowerCase();
   if (key === "contacts") return "Contacts is a reserved group";
@@ -59,6 +55,22 @@ export function reservedGroupError(name: string): string {
     return "Group Messages is a reserved name";
   }
   return `"${name.trim()}" is a reserved group`;
+}
+
+export const CONTACT_GROUPS_CHANGED_EVENT = "mv-contact-groups-changed";
+
+export const contactGroups = createNameCollection({
+  endpoint: "/v1/contact-groups",
+  membershipEndpoint: "/v1/contacts/groups",
+  responseKey: "groups",
+  queryToken: "group",
+  changedEvent: CONTACT_GROUPS_CHANGED_EVENT,
+  reservedNames: RESERVED_GROUP_NAMES,
+  reservedError: reservedGroupError,
+});
+
+export function isReservedGroupName(name: string): boolean {
+  return contactGroups.isReserved(name);
 }
 
 /** URL slug for a contact group. Keeps letter case so Regroup and regroup stay distinct. */
@@ -104,95 +116,12 @@ export function contactBelongsToGroup(
 }
 
 /** Build the contact-list query for a group page plus optional typed search. */
-export function groupListQuery(group: string | "none" | null, search: string): string {
-  const parts: string[] = [];
-  if (group === "none") {
-    parts.push("group:none");
-  } else if (group) {
-    parts.push(/\s/.test(group) ? `group:"${group}"` : `group:${group}`);
-  }
-  const extra = search.trim();
-  if (extra) parts.push(extra);
-  return parts.join(" ");
-}
-
-export const CONTACT_GROUPS_CHANGED_EVENT = "mv-contact-groups-changed";
-
-function notifyContactGroupsChanged(): void {
-  cachedGroups = null;
-  try {
-    globalThis.dispatchEvent?.(new Event(CONTACT_GROUPS_CHANGED_EVENT));
-  } catch {
-    // Some browsers block custom events. The next fetch still works.
-  }
-}
-
-type GroupsResponse = { groups: string[] };
-type NameGroupsResponse = { name: string; groups: string[] };
-
-let cachedGroups: string[] | null = null;
-let inflight: Promise<string[]> | null = null;
+export const groupListQuery = contactGroups.listQuery;
 
 /** Load group names for the signed-in account. Reuses an in-flight request. */
-export async function fetchContactGroups(signal?: AbortSignal): Promise<string[]> {
-  if (cachedGroups !== null && !signal) return cachedGroups;
-  if (inflight && !signal) return inflight;
-  const req = apiClient
-    .get<GroupsResponse>("/v1/contact-groups", { signal })
-    .then((res) => {
-      const groups = Array.isArray(res.groups) ? res.groups : [];
-      cachedGroups = groups;
-      return groups;
-    })
-    .finally(() => {
-      inflight = null;
-    });
-  if (!signal) inflight = req;
-  return req;
-}
-
-export function invalidateContactGroups(): void {
-  notifyContactGroupsChanged();
-}
-
-export async function createContactGroup(name: string): Promise<string> {
-  const trimmed = name.trim();
-  if (!trimmed) throw new Error("name required");
-  if (isReservedGroupName(trimmed)) throw new Error(reservedGroupError(trimmed));
-  const res = await apiClient.post<NameGroupsResponse>("/v1/contact-groups", {
-    name: trimmed,
-  });
-  cachedGroups = res.groups;
-  notifyContactGroupsChanged();
-  return res.name;
-}
-
-export async function renameContactGroup(from: string, to: string): Promise<string> {
-  const res = await apiClient.patch<NameGroupsResponse>("/v1/contact-groups", {
-    from,
-    to,
-  });
-  cachedGroups = res.groups;
-  notifyContactGroupsChanged();
-  return res.name;
-}
-
-export async function deleteContactGroup(name: string): Promise<void> {
-  const res = await apiClient.delete<GroupsResponse>("/v1/contact-groups", { name });
-  cachedGroups = res.groups;
-  notifyContactGroupsChanged();
-}
-
-export async function setContactGroupMembership(
-  ids: number[],
-  name: string,
-  enable: boolean,
-): Promise<number> {
-  const res = await apiClient.post<{ changed: number }>("/v1/contacts/groups", {
-    ids,
-    name,
-    enable,
-  });
-  notifyContactGroupsChanged();
-  return res.changed;
-}
+export const fetchContactGroups = contactGroups.fetchAll;
+export const invalidateContactGroups = contactGroups.invalidate;
+export const createContactGroup = contactGroups.create;
+export const renameContactGroup = contactGroups.rename;
+export const deleteContactGroup = contactGroups.remove;
+export const setContactGroupMembership = contactGroups.setMembership;

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { lazy, type ReactNode, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import AppLayout from "./components/AppLayout";
 import { AuthGuard } from "./components/AuthGuard";
@@ -8,13 +8,21 @@ import { canUseImportExportWithProfile } from "./lib/desktopFeatures";
 import { ThemeProvider } from "./lib/ThemeProvider";
 import { isTauri } from "./lib/tauri-check";
 import { useAccountProfile } from "./lib/useAccountProfile";
-import ExportScreen from "./screens/ExportScreen";
-import ImportScreen from "./screens/ImportScreen";
 import LoginScreen from "./screens/LoginScreen";
 import OnboardingScreen from "./screens/OnboardingScreen";
 import RegisterScreen from "./screens/RegisterScreen";
-import SettingsScreen from "./screens/SettingsScreen";
-import TrashScreen from "./screens/TrashScreen";
+
+/**
+ * Import and export only ever run in the desktop app, so their code — the
+ * importer forms, the job runner and the Tauri bridge behind them — is split out
+ * and never downloaded by a browser visiting the website build.
+ */
+const ImportScreen = lazy(() => import("./screens/ImportScreen"));
+const ExportScreen = lazy(() => import("./screens/ExportScreen"));
+
+/** Settings and trash are their own routes and are not on the first paint path. */
+const SettingsScreen = lazy(() => import("./screens/SettingsScreen"));
+const TrashScreen = lazy(() => import("./screens/TrashScreen"));
 
 /** Import and export stay on the desktop app and are closed to guest sessions. */
 function ImportExportRoute({ children }: { children: ReactNode }) {
@@ -28,7 +36,9 @@ function ImportExportRoute({ children }: { children: ReactNode }) {
   if (profile == null || !canUseImportExportWithProfile(true, profile)) {
     return <Navigate to="/" replace />;
   }
-  return children;
+  // The chunk only starts loading once the route is allowed, so the redirect
+  // paths above never pay for it.
+  return <Suspense fallback={null}>{children}</Suspense>;
 }
 
 function AppRoutes() {
@@ -61,7 +71,14 @@ function AppRoutes() {
           <Route path="no-group" element={null} />
           <Route path="tag/:slug" element={null} />
           <Route path="no-tag" element={null} />
-          <Route path="trash" element={<TrashScreen />} />
+          <Route
+            path="trash"
+            element={
+              <Suspense fallback={null}>
+                <TrashScreen />
+              </Suspense>
+            }
+          />
           <Route
             path="import"
             element={
@@ -78,7 +95,14 @@ function AppRoutes() {
               </ImportExportRoute>
             }
           />
-          <Route path="settings" element={<SettingsScreen />} />
+          <Route
+            path="settings"
+            element={
+              <Suspense fallback={null}>
+                <SettingsScreen />
+              </Suspense>
+            }
+          />
           <Route path="messages/:conversationId" element={<MessageRoute />} />
         </Route>
       </Route>

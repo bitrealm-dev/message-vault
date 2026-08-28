@@ -1,96 +1,73 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiClient } from "../../../lib/api";
+import { useResource } from "../../../lib/useResource";
 import type { ImportDetailResponse, ImportRow, TopAttachment } from "./storageUtils";
 
-export function useStorageData() {
-  const [imports, setImports] = useState<ImportRow[]>([]);
-  const [totalBytes, setTotalBytes] = useState(0);
-  const [attachmentCount, setAttachmentCount] = useState(0);
-  const [topAttachments, setTopAttachments] = useState<TopAttachment[]>([]);
-  const [page, setPage] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [selectedImportId, setSelectedImportId] = useState<number | null>(null);
-  const [selectedImport, setSelectedImport] = useState<ImportDetailResponse | null>(null);
-  const [selectedImportLoading, setSelectedImportLoading] = useState(false);
-  const [selectedImportError, setSelectedImportError] = useState("");
+type StorageOverview = {
+  imports: ImportRow[];
+  totalBytes: number;
+  attachmentCount: number;
+  topAttachments: TopAttachment[];
+};
 
+async function fetchOverview(signal: AbortSignal): Promise<StorageOverview> {
+  const [importsRes, usageRes] = await Promise.all([
+    apiClient.get<{ imports: ImportRow[] }>("/v1/imports", { signal }),
+    apiClient.get<{
+      total_bytes: number;
+      attachment_count: number;
+      top_attachments: TopAttachment[];
+    }>("/v1/account/storage", { signal }),
+  ]);
+  return {
+    imports: importsRes.imports ?? [],
+    totalBytes: usageRes.total_bytes ?? 0,
+    attachmentCount: usageRes.attachment_count ?? 0,
+    topAttachments: usageRes.top_attachments ?? [],
+  };
+}
+
+/**
+ * Both requests run through `useResource`, which already owns the
+ * abort-on-unmount and aborted-guard handling these effects were repeating —
+ * and the overview request, written by hand, had no AbortController at all.
+ */
+export function useStorageData() {
+  const [page, setPage] = useState(0);
+  const [selectedImportId, setSelectedImportId] = useState<number | null>(null);
+
+  const { data: overview, loading, error } = useResource("storage/overview", fetchOverview);
+
+  // A fresh overview invalidates whatever page the user was on.
   useEffect(() => {
-    setLoading(true);
-    setError("");
-    Promise.all([
-      apiClient.get<{ imports: ImportRow[] }>("/v1/imports"),
-      apiClient.get<{
-        total_bytes: number;
-        attachment_count: number;
-        top_attachments: TopAttachment[];
-      }>("/v1/account/storage"),
-    ])
-      .then(([importsRes, usageRes]) => {
-        setImports(importsRes.imports ?? []);
-        setTotalBytes(usageRes.total_bytes ?? 0);
-        setAttachmentCount(usageRes.attachment_count ?? 0);
-        setTopAttachments(usageRes.top_attachments ?? []);
-        setPage(0);
-      })
-      .catch((e) => {
-        setError(e instanceof Error ? e.message : String(e));
-      })
-      .finally(() => setLoading(false));
+    if (overview) setPage(0);
+  }, [overview]);
+
+  const fetchDetail = useCallback(
+    (signal: AbortSignal) =>
+      apiClient.get<ImportDetailResponse>(`/v1/imports/${selectedImportId}`, { signal }),
+    [selectedImportId],
+  );
+
+  const {
+    data: selectedImport,
+    loading: selectedImportLoading,
+    error: selectedImportError,
+  } = useResource(selectedImportId == null ? null : `imports/${selectedImportId}`, fetchDetail);
+
+  const closeImportDetail = useCallback(() => {
+    setSelectedImportId(null);
   }, []);
 
-  useEffect(() => {
-    if (selectedImportId == null) return;
-
-    const controller = new AbortController();
-    setSelectedImportLoading(true);
-    setSelectedImportError("");
-
-    apiClient
-      .get<ImportDetailResponse>(`/v1/imports/${selectedImportId}`, {
-        signal: controller.signal,
-      })
-      .then((detail) => {
-        setSelectedImport(detail);
-      })
-      .catch((err) => {
-        if (controller.signal.aborted) return;
-        setSelectedImport(null);
-        setSelectedImportError(
-          err instanceof Error ? err.message : "Couldn’t load import details.",
-        );
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) {
-          setSelectedImportLoading(false);
-        }
-      });
-
-    return () => controller.abort();
-  }, [selectedImportId]);
-
-  const closeImportDetail = () => {
-    setSelectedImportId(null);
-    setSelectedImport(null);
-    setSelectedImportLoading(false);
-    setSelectedImportError("");
-  };
-
-  const toggleImportDetail = (importId: number) => {
-    if (selectedImportId === importId) {
-      closeImportDetail();
-      return;
-    }
-    setSelectedImportId(importId);
-    setSelectedImport(null);
-    setSelectedImportError("");
-  };
+  const toggleImportDetail = useCallback((importId: number) => {
+    setSelectedImportId((current) => (current === importId ? null : importId));
+  }, []);
 
   return {
-    imports,
-    totalBytes,
-    attachmentCount,
-    topAttachments,
+    imports: overview?.imports ?? [],
+    totalBytes: overview?.totalBytes ?? 0,
+    attachmentCount: overview?.attachmentCount ?? 0,
+    topAttachments: overview?.topAttachments ?? [],
     page,
     setPage,
     loading,

@@ -47,10 +47,10 @@ export default function TauriJobFormShell({
       {children}
 
       <div className="mt-6 flex gap-3">
-        <Button variant="primary" onClick={onStart} disabled={disabled} className="!px-6 !py-2">
+        <Button variant="primary" onClick={onStart} disabled={disabled} size="wide">
           {running ? (runningLabel ?? `${startLabel}…`) : startLabel}
         </Button>
-        <Button onClick={onCancel} disabled={!running} className="!px-6 !py-2">
+        <Button onClick={onCancel} disabled={!running} size="wide">
           Cancel
         </Button>
       </div>

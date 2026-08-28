@@ -17,7 +17,7 @@ export default function DiscordBubble({
     <ServiceBubbleShell
       message={message}
       isActive={isActive}
-      senderStyle={{ color: message.role_color || "#5865f2" }}
+      senderStyle={{ color: message.role_color || "var(--discord-brand)" }}
       timeClassName="text-[0.688rem] text-muted"
       headerAlignClassName="items-center"
     >

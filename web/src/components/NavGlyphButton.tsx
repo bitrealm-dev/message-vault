@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { ButtonHTMLAttributes, ReactNode, Ref } from "react";
 
 /**
  * 24px (`size-6`) round hit target for left-nav plus, ellipsis, and delete.
@@ -9,6 +9,7 @@ export default function NavGlyphButton({
   active = false,
   danger = false,
   className = "",
+  ref,
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   children: ReactNode;
@@ -16,6 +17,8 @@ export default function NavGlyphButton({
   active?: boolean;
   /** Trash control: keep the circle, use the danger color on the glyph. */
   danger?: boolean;
+  /** Menus that open from this button return focus here when they close. */
+  ref?: Ref<HTMLButtonElement>;
 }) {
   const hoverText = danger
     ? "hover:text-danger focus-visible:text-danger"
@@ -23,6 +26,7 @@ export default function NavGlyphButton({
   return (
     <button
       type="button"
+      ref={ref}
       className={`box-border flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full border-none bg-transparent p-0 text-muted hover:bg-hover focus-visible:bg-hover disabled:cursor-default disabled:opacity-40 ${hoverText} ${
         active ? "bg-hover text-text" : ""
       } ${className}`.trim()}

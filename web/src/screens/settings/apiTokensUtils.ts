@@ -43,5 +43,3 @@ export type ApiTokenItem = {
 export const thClass = "px-3 py-2 text-left text-[0.75rem] font-bold text-muted";
 export const tdClass = "px-3 py-2 text-[0.75rem] text-text align-middle";
 export const tdMuted = "px-3 py-2 text-[0.75rem] text-muted align-middle";
-export const iconBtnClass =
-  "!inline-flex !aspect-square !h-7 !w-7 !min-h-7 !min-w-7 !shrink-0 !items-center !justify-center !rounded-sm !p-0 !leading-none !text-muted";

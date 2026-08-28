@@ -186,7 +186,6 @@ export default function VirtualList({
   }, []);
 
   useEffect(() => {
-    void count;
     const el = parentRef.current;
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
@@ -209,7 +208,11 @@ export default function VirtualList({
     lastScrollHeightRef.current = el.clientHeight;
     setLayoutTick((n) => n + 1);
     return () => ro.disconnect();
-  }, [virtualizer, count, columnResizing]);
+    // `count` is deliberately not a dependency: the observed element does not
+    // change when rows are appended, and re-running this called
+    // `virtualizer.measure()`, throwing away every cached row measurement on a
+    // dynamicSize list each time a page loaded.
+  }, [virtualizer, columnResizing]);
 
   if (count === 0 && empty) {
     return (

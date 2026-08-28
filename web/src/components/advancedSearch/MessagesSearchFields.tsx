@@ -67,6 +67,7 @@ export default function MessagesSearchFields({
             if (next) onMsgTypeChange(next);
           }}
           aria-label="Conversation type"
+          size="sm"
           triggerClassName={selectTriggerClass}
         >
           <SelectListBoxItem id="all" className={compactSelectItemClassName}>

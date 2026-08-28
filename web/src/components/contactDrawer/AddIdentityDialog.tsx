@@ -6,8 +6,9 @@ import {
   handleServiceSelectValue,
 } from "../../lib/handleService";
 import { parseSelectKey } from "../../lib/selectKey";
+import { Z_POPOVER_IN_MODAL } from "../../lib/zLayers";
 import Button from "../Button";
-import ModalShell from "../ModalShell";
+import ModalShell, { DialogError, DialogFooter } from "../ModalShell";
 import Select, { ListBoxItem, selectItemClassName } from "../Select";
 
 const fieldLabelClass = "mb-1 block text-[0.813rem] font-medium text-text";
@@ -35,12 +36,15 @@ function identityAlreadyExists(
 export default function AddIdentityDialog({
   open,
   busy = false,
+  error = "",
   existingHandles = [],
   onClose,
   onConfirm,
 }: {
   open: boolean;
   busy?: boolean;
+  /** Why the last submit failed. The dialog stays open so it can be retried. */
+  error?: string;
   existingHandles?: { handle: string; service: string | null }[];
   onClose: () => void;
   onConfirm: (args: { handle: string; service: string }) => void;
@@ -73,20 +77,12 @@ export default function AddIdentityDialog({
       }}
       dismissable={!busy}
       label="Add identity"
+      title="Add identity"
+      onClose={onClose}
+      closeDisabled={busy}
       maxWidth="24rem"
     >
-      <button
-        type="button"
-        aria-label="Close"
-        disabled={busy}
-        onClick={onClose}
-        className="absolute top-3 right-3 cursor-pointer border-none bg-transparent text-[1.25rem] leading-none text-muted disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        ×
-      </button>
-      <h2 className="mb-4 pr-6 text-[1.125rem] font-semibold text-text">Add identity</h2>
-
-      <div className="mb-4">
+      <div className="mt-4 mb-4">
         <label htmlFor={serviceId} className={fieldLabelClass}>
           Service
         </label>
@@ -101,7 +97,7 @@ export default function AddIdentityDialog({
           isDisabled={busy}
           triggerClassName={selectTriggerClass}
           valueClassName={selectValueClass}
-          popoverClassName="!z-[250]"
+          popoverClassName={Z_POPOVER_IN_MODAL}
           className="block w-full min-w-0"
         >
           {CONTACT_IDENTITY_SERVICE_OPTIONS.map((s) => (
@@ -139,14 +135,16 @@ export default function AddIdentityDialog({
         </p>
       ) : null}
 
-      <div className="mt-5 flex justify-end gap-2">
+      <DialogError message={error} />
+
+      <DialogFooter>
         <Button onPress={onClose} isDisabled={busy}>
           Cancel
         </Button>
         <Button variant="primary" onPress={submit} isDisabled={!canSubmit}>
           {busy ? "Working…" : "OK"}
         </Button>
-      </div>
+      </DialogFooter>
     </ModalShell>
   );
 }

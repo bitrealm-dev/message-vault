@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { ContactNameSort, ContactNameSortState, ContactSortOrder } from "../lib/contactSort";
-import { shouldIgnoreOutsideDismiss } from "../lib/portaledOverlay";
 import { popupShadow } from "../lib/uiStyles";
+import { useMenuKeyboard } from "../lib/useMenuKeyboard";
+import { Z_POPOVER } from "../lib/zLayers";
 
 const FIELDS = [
   { id: "first", label: "First Name" },
@@ -18,25 +19,19 @@ export default function ContactSortMenu({
   onChange: (next: ContactNameSortState) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (e: MouseEvent) => {
-      if (shouldIgnoreOutsideDismiss(e, rootRef.current)) return;
-      setOpen(false);
-    };
-    document.addEventListener("mousedown", onPointerDown, true);
-    return () => document.removeEventListener("mousedown", onPointerDown, true);
-  }, [open]);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  const { onKeyDown } = useMenuKeyboard(open, menuRef, close, triggerRef);
 
   const sortLabel = FIELDS.find((f) => f.id === sort)?.label ?? "Last Name";
   const orderLabel = order === "asc" ? "Ascending" : "Descending";
 
   return (
-    <div ref={rootRef} className="relative">
+    <div className="relative">
       <button
         type="button"
+        ref={triggerRef}
         aria-label={`Sort contacts by ${sortLabel}, ${orderLabel}`}
         aria-expanded={open}
         aria-haspopup="menu"
@@ -48,9 +43,12 @@ export default function ContactSortMenu({
       </button>
       {open ? (
         <div
+          ref={menuRef}
           role="menu"
+          aria-label="Sort contacts"
           data-mv-overlay=""
-          className={`absolute top-full right-0 z-[100] mt-1 min-w-[10.5rem] rounded-xl border border-border bg-popover py-2 ${popupShadow}`}
+          onKeyDown={onKeyDown}
+          className={`absolute top-full right-0 mt-1 min-w-[10.5rem] rounded-xl border border-border bg-popover py-2 ${Z_POPOVER} ${popupShadow}`}
         >
           <div className="px-3 pb-1.5 text-[0.75rem] font-semibold text-text">Sort By</div>
           {FIELDS.map((field) => (
@@ -103,7 +101,7 @@ function SortOption({
       role="menuitemradio"
       aria-checked={selected}
       onClick={onSelect}
-      className="flex w-full cursor-pointer items-center gap-2 border-none bg-transparent px-3 py-1.5 text-left text-[0.813rem] text-text hover:bg-hover-strong"
+      className="flex w-full cursor-pointer items-center gap-2 border-none bg-transparent px-3 py-1.5 text-left text-[0.813rem] text-text outline-none hover:bg-hover-strong focus-visible:bg-hover-strong"
     >
       <span className="flex w-4 justify-center text-accent">{selected ? <CheckIcon /> : null}</span>
       {label}

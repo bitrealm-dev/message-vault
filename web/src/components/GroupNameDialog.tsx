@@ -60,14 +60,15 @@ export default function GroupNameDialog({
         <div className="mb-3" />
       )}
       <div className="flex justify-end gap-2">
-        <Button onClick={onCancel} disabled={busy} className="!px-3 !py-1.5">
+        <Button onClick={onCancel} disabled={busy} size="sm">
           Cancel
         </Button>
         <Button
           variant="primary"
           onClick={submit}
           disabled={busy || !name.trim()}
-          className="!px-4 !py-1.5"
+          size="sm"
+          className="!px-4"
         >
           {confirmLabel}
         </Button>

@@ -19,6 +19,7 @@ import {
 } from "react-aria-components";
 
 import { popupShadow } from "../lib/uiStyles";
+import { Z_POPOVER } from "../lib/zLayers";
 
 function CalendarIcon() {
   return (
@@ -97,7 +98,7 @@ export default function DateField({
         </Group>
         <Popover
           data-mv-overlay=""
-          className={`z-[100] rounded-md border border-border bg-popover p-2 outline-none ${popupShadow}`}
+          className={`rounded-md border border-border bg-popover p-2 outline-none ${Z_POPOVER} ${popupShadow}`}
         >
           <Dialog className="outline-none">
             <Calendar className="outline-none">

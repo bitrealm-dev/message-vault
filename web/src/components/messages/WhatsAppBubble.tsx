@@ -14,7 +14,11 @@ export default function WhatsAppBubble({
   const mine = message.is_from_me;
 
   return (
-    <ServiceBubbleShell message={message} isActive={isActive} senderClassName="text-[#075e54]">
+    <ServiceBubbleShell
+      message={message}
+      isActive={isActive}
+      senderClassName="text-[var(--whatsapp-brand)]"
+    >
       {message.reply_to_message && (
         <div
           className={`mb-1 rounded border-l-[3px] border-l-[#25d366] bg-hover px-2 py-1 text-[0.75rem] text-muted ${

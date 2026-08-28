@@ -50,21 +50,13 @@ export default function MessageThread({
 
       <div className="flex items-center justify-center gap-4 border-t border-border p-2 text-[0.813rem] text-muted">
         {!yearMode && (
-          <Button
-            onClick={onPrevPage}
-            disabled={offset === 0 || loading}
-            className="!px-3 !py-1 !text-[0.813rem]"
-          >
+          <Button onClick={onPrevPage} disabled={offset === 0 || loading} size="xs">
             Previous
           </Button>
         )}
         <span>{footerLabel}</span>
         {!yearMode && (
-          <Button
-            onClick={onNextPage}
-            disabled={offset + PAGE_SIZE >= total || loading}
-            className="!px-3 !py-1 !text-[0.813rem]"
-          >
+          <Button onClick={onNextPage} disabled={offset + PAGE_SIZE >= total || loading} size="xs">
             Next
           </Button>
         )}

@@ -9,6 +9,7 @@ import {
   Select as RACSelect,
 } from "react-aria-components";
 import { popupShadow } from "../../lib/uiStyles";
+import { Z_POPOVER } from "../../lib/zLayers";
 import { compactSelectItemClassName, labelClass } from "./advancedSearchStyles";
 
 const SERVICE_ITEMS = [
@@ -104,7 +105,7 @@ export default function ServiceMultiSelect({
         ref={popoverRef}
         data-mv-overlay=""
         isNonModal
-        className={`z-[100] box-border w-[var(--trigger-width)] max-w-[var(--trigger-width)] rounded-md border border-border bg-popover p-1 outline-none ${popupShadow}`}
+        className={`box-border w-[var(--trigger-width)] max-w-[var(--trigger-width)] rounded-md border border-border bg-popover p-1 outline-none ${Z_POPOVER} ${popupShadow}`}
       >
         <ListBox className="outline-none">
           {SERVICE_ITEMS.map((item) => (

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import AttachmentLightbox, { type LightboxItem } from "../components/AttachmentLightbox";
 import {
   type ContactPreview,
@@ -105,12 +105,16 @@ export default function MessageView({
     }));
   }, [conversation.participants, messages, useAliases]);
 
+  // Re-highlighting a whole thread is far more work than echoing a keystroke, so
+  // the find bar stays on `findTerm` while the thread trails on the deferred one.
+  const deferredFindTerm = useDeferredValue(findTerm);
+
   // Message ids on this page whose text contains the find-bar search.
   const matchIds = useMemo(() => {
-    const t = findTerm.trim().toLowerCase();
+    const t = deferredFindTerm.trim().toLowerCase();
     if (!t) return [];
     return messages.filter((m) => (m.text || "").toLowerCase().includes(t)).map((m) => m.id);
-  }, [messages, findTerm]);
+  }, [messages, deferredFindTerm]);
 
   // Scroll the current find match into view.
   useEffect(() => {
@@ -160,7 +164,7 @@ export default function MessageView({
       <MessageThread
         messages={messages}
         loading={loading}
-        findTerm={findTerm}
+        findTerm={deferredFindTerm}
         matchIds={matchIds}
         activeMatch={activeMatch}
         yearMode={yearMode}

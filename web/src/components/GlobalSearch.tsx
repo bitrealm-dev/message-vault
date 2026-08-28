@@ -2,6 +2,7 @@ import { type Key, useEffect, useRef, useState } from "react";
 import { ComboBox, Input, ListBox, ListBoxItem, Popover } from "react-aria-components";
 import { apiClient } from "../lib/api";
 import { popupShadow } from "../lib/uiStyles";
+import { Z_POPOVER } from "../lib/zLayers";
 
 /** Operators the conversation list API actually understands. */
 const OPERATORS = ["handle:", "contact:", "is:", "participants:"];
@@ -163,7 +164,7 @@ export default function GlobalSearch({
         />
       </div>
       <Popover
-        className={`z-[100] box-border w-[var(--trigger-width)] max-w-[var(--trigger-width)] rounded-md border border-border bg-popover p-1 outline-none ${popupShadow}`}
+        className={`box-border w-[var(--trigger-width)] max-w-[var(--trigger-width)] rounded-md border border-border bg-popover p-1 outline-none ${Z_POPOVER} ${popupShadow}`}
       >
         <ListBox className="max-h-72 overflow-auto outline-none">
           {suggestions.map((s) => (

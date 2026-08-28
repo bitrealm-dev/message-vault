@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient } from "../../lib/api";
 import type { Message } from "../../lib/types";
 
@@ -52,9 +52,11 @@ export function buildFooterLabel(activeYear: number | null, total: number, offse
 /** Load every message matching this search, paging until the server has no more. */
 async function fetchAllMessagesForQuery(
   q: string,
+  signal: AbortSignal,
 ): Promise<{ messages: Message[]; total: number }> {
   const countRes = await apiClient.get<{ messages: number }>(
     `/v1/export/messages/count?q=${encodeURIComponent(q)}`,
+    { signal },
   );
   const total = countRes.messages ?? 0;
   if (total === 0) return { messages: [], total: 0 };
@@ -64,6 +66,7 @@ async function fetchAllMessagesForQuery(
   while (offset < total) {
     const msgRes = await apiClient.get<{ messages: Message[] }>(
       `/v1/export/messages?q=${encodeURIComponent(q)}&offset=${offset}&limit=${YEAR_FETCH_LIMIT}`,
+      { signal },
     );
     const batch = msgRes.messages ?? [];
     collected.push(...batch);
@@ -72,6 +75,11 @@ async function fetchAllMessagesForQuery(
     if (batch.length < YEAR_FETCH_LIMIT) break;
   }
   return { messages: collected, total };
+}
+
+/** True for the rejection `fetch` raises when its signal is aborted. */
+function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
 }
 
 /** Load messages for one conversation, either a page at a time or a whole year. */
@@ -85,50 +93,75 @@ export function useConversationMessages(conversationId: string) {
   const [activeMatch, setActiveMatch] = useState(0);
   const [loading, setLoading] = useState(false);
 
+  /**
+   * The one request whose result may reach state. Switching conversations, or
+   * paging again before the previous page lands, aborts the old one — otherwise
+   * a slow response can overwrite a newer conversation's messages.
+   */
+  const inFlightRef = useRef<AbortController | null>(null);
+  const startRequest = useCallback(() => {
+    inFlightRef.current?.abort();
+    const controller = new AbortController();
+    inFlightRef.current = controller;
+    return controller.signal;
+  }, []);
+
+  useEffect(() => () => inFlightRef.current?.abort(), []);
+
   const fetchConversationPage = useCallback(
     async (newOffset: number) => {
+      const signal = startRequest();
       setLoading(true);
       try {
         const q = `in:${conversationId}`;
         const [msgRes, countRes] = await Promise.all([
           apiClient.get<{ messages: Message[] }>(
             `/v1/export/messages?q=${encodeURIComponent(q)}&offset=${newOffset}&limit=${PAGE_SIZE}`,
+            { signal },
           ),
           apiClient.get<{ messages: number }>(
             `/v1/export/messages/count?q=${encodeURIComponent(q)}`,
+            { signal },
           ),
         ]);
+        if (signal.aborted) return;
         setMessages(msgRes.messages);
         setTotal(countRes.messages);
         setOffset(newOffset);
-      } catch {
+      } catch (err) {
+        if (signal.aborted || isAbortError(err)) return;
         setMessages([]);
         setTotal(0);
       } finally {
-        setLoading(false);
+        // A newer request owns `loading` once this one is superseded.
+        if (!signal.aborted) setLoading(false);
       }
     },
-    [conversationId],
+    [conversationId, startRequest],
   );
 
   const fetchYear = useCallback(
     async (year: number) => {
+      const signal = startRequest();
       setLoading(true);
       try {
         const { messages: all, total: yearTotal } = await fetchAllMessagesForQuery(
           yearQuery(conversationId, year),
+          signal,
         );
+        if (signal.aborted) return;
         setMessages(all);
         setTotal(yearTotal);
         setOffset(0);
-      } catch {
+      } catch (err) {
+        if (signal.aborted || isAbortError(err)) return;
         setMessages([]);
         setTotal(0);
       } finally {
-        setLoading(false);
+        if (!signal.aborted) setLoading(false);
       }
     },
-    [conversationId],
+    [conversationId, startRequest],
   );
 
   useEffect(() => {

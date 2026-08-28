@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import Checkbox from "../../components/Checkbox";
 import { CheckIcon, XIcon } from "../../components/icons";
 import PathPicker from "../../components/PathPicker";
 import { FFMPEG_TOOLS_STORAGE_KEY } from "../../lib/ffmpeg-tools";
@@ -189,24 +190,22 @@ export function SystemSection() {
         </p>
       </div>
 
-      <label className="mt-5 flex cursor-pointer items-start gap-2 text-[0.875rem]">
-        <input
-          type="checkbox"
-          checked={rememberPaths}
-          onChange={(e) => {
-            const on = e.target.checked;
-            setRememberPaths(on);
-            setRememberImporterPaths(on);
-          }}
-          className="mt-[0.15rem]"
-        />
+      <Checkbox
+        labelClassName="mt-5 flex items-start text-[0.875rem]"
+        className="mt-[0.15rem]"
+        checked={rememberPaths}
+        onChange={(on) => {
+          setRememberPaths(on);
+          setRememberImporterPaths(on);
+        }}
+      >
         <span>
           Remember importer paths
           <span className="mt-1 block text-[0.75rem] text-muted">
             When enabled, Import restores the last backup path for each import source.
           </span>
         </span>
-      </label>
+      </Checkbox>
 
       <div className="mt-8">
         <h3 className={sectionHeading}>Media</h3>

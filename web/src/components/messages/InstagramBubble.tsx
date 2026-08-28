@@ -17,11 +17,11 @@ export default function InstagramBubble({
     <ServiceBubbleShell
       message={message}
       isActive={isActive}
-      senderClassName="text-[#e4405f]"
+      senderClassName="text-[var(--instagram-brand)]"
       headerExtra={
         <>
           {message.is_story_reply && (
-            <span className="text-[0.688rem] text-[#e4405f]">Story reply</span>
+            <span className="text-[0.688rem] text-[var(--instagram-brand)]">Story reply</span>
           )}
           {message.forwarded && <span className="text-[0.688rem] text-muted">Forwarded</span>}
         </>

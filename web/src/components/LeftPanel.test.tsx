@@ -81,9 +81,9 @@ describe("LeftPanel", () => {
     const user = userEvent.setup();
     renderPanel();
     await user.click(screen.getByRole("button", { name: "Saved search options for From Alice" }));
-    expect(screen.getByRole("button", { name: "Rename…" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Rename…" })).toBeTruthy();
     await user.keyboard("{Escape}");
-    expect(screen.queryByRole("button", { name: "Rename…" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Rename…" })).toBeNull();
   });
 
   describe("desktop Import/Export Messages section", () => {

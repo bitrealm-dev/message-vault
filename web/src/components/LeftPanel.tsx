@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { canUseImportExportWithProfile } from "../lib/desktopFeatures";
 import {
@@ -13,6 +13,7 @@ import { isTauri } from "../lib/tauri-check";
 import { useAccountProfile } from "../lib/useAccountProfile";
 import { useContactGroups } from "../lib/useContactGroups";
 import { useThreadTags } from "../lib/useThreadTags";
+import { Z_ROW_MENU } from "../lib/zLayers";
 import ColumnResizeHandle from "./ColumnResizeHandle";
 import { useReportColumnResizing } from "./columnResizeState";
 import GroupsNav from "./GroupsNav";
@@ -33,6 +34,7 @@ import {
   NAV_NESTED_ROW_CLASS,
   navGlyphRowClass,
 } from "./navSectionLayout";
+import PopupMenu from "./PopupMenu";
 import SavedGroupForm from "./SavedGroupForm";
 import ThreadTagsNav from "./ThreadTagsNav";
 import { useColumnResize } from "./useColumnResize";
@@ -152,6 +154,7 @@ export default function LeftPanel({
   const [showGroupForm, setShowGroupForm] = useState(false);
   const [editFor, setEditFor] = useState<SavedGroup | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  const savedSearchMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const { groups: contactGroups } = useContactGroups();
   const { tags: threadTags } = useThreadTags();
 
@@ -160,24 +163,6 @@ export default function LeftPanel({
     globalThis.addEventListener(SAVED_GROUPS_CHANGED_EVENT, refresh);
     return () => globalThis.removeEventListener(SAVED_GROUPS_CHANGED_EVENT, refresh);
   }, []);
-
-  useEffect(() => {
-    if (!menuFor) return;
-    const onPointerDown = (e: MouseEvent) => {
-      const t = e.target;
-      if (t instanceof Element && t.closest("[data-saved-search-row-menu]")) return;
-      setMenuFor(null);
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMenuFor(null);
-    };
-    document.addEventListener("mousedown", onPointerDown, true);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown, true);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [menuFor]);
 
   return (
     <div
@@ -296,7 +281,6 @@ export default function LeftPanel({
                       <span className="min-w-0 truncate">{g.name}</span>
                     </button>
                     <NavGlyphButton
-                      data-saved-search-row-menu=""
                       aria-label={`Saved search options for ${g.name}`}
                       aria-haspopup="menu"
                       aria-expanded={menuOpen}
@@ -304,6 +288,7 @@ export default function LeftPanel({
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
+                        savedSearchMenuTriggerRef.current = e.currentTarget;
                         setMenuFor(menuOpen ? null : g.id);
                       }}
                       className={
@@ -315,36 +300,29 @@ export default function LeftPanel({
                       <EllipsisIcon size={15} />
                     </NavGlyphButton>
                   </div>
-                  {menuOpen ? (
-                    <div
-                      data-saved-search-row-menu=""
-                      data-mv-overlay=""
-                      className="absolute top-full right-0 z-[80] mt-0.5 min-w-[7.5rem] rounded-lg border border-border bg-popover py-1 shadow-xl"
-                    >
-                      <button
-                        type="button"
-                        className="block w-full cursor-pointer border-none bg-transparent px-3 py-1.5 text-left text-[0.813rem] text-text hover:bg-hover"
-                        onClick={() => {
-                          setMenuFor(null);
+                  <PopupMenu
+                    open={menuOpen}
+                    onClose={() => setMenuFor(null)}
+                    triggerRef={savedSearchMenuTriggerRef}
+                    label={`Saved search options for ${g.name}`}
+                    className={`absolute top-full right-0 mt-0.5 ${Z_ROW_MENU}`}
+                    items={[
+                      {
+                        label: "Rename…",
+                        onSelect: () => {
                           setShowGroupForm(false);
                           setEditFor(g);
-                        }}
-                      >
-                        Rename…
-                      </button>
-                      <button
-                        type="button"
-                        className="block w-full cursor-pointer border-none bg-transparent px-3 py-1.5 text-left text-[0.813rem] text-text hover:bg-hover"
-                        onClick={() => {
-                          setMenuFor(null);
+                        },
+                      },
+                      {
+                        label: "Delete",
+                        onSelect: () => {
                           removeGroup(g.id);
                           setGroups(listGroups());
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  ) : null}
+                        },
+                      },
+                    ]}
+                  />
                 </div>
               );
             })

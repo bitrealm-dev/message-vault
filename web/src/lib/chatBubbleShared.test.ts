@@ -6,7 +6,6 @@ import {
   isGroupConversation,
   senderName,
 } from "../components/messages/chatBubbleShared";
-import { USE_NAME_ALIASES_KEY } from "./nameAliases";
 import type { Message } from "./types";
 
 function message(partial: Partial<Message> & Pick<Message, "conversation">): Message {
@@ -67,7 +66,7 @@ describe("senderName / isGroupConversation", () => {
         participants: [{ handle: "+1", name_alias: null, preferred_name: "Ada", contact_id: null }],
       },
     });
-    expect(senderName(m)).toBe("Me");
+    expect(senderName(m, false)).toBe("Me");
   });
 
   it("uses preferred name, then alias when aliases enabled", () => {
@@ -86,9 +85,8 @@ describe("senderName / isGroupConversation", () => {
       ],
     };
     const m = message({ sender: "+1555", conversation });
-    expect(senderName(m)).toBe("Ada");
-    window.localStorage.setItem(USE_NAME_ALIASES_KEY, "1");
-    expect(senderName(m)).toBe("A.L.");
+    expect(senderName(m, false)).toBe("Ada");
+    expect(senderName(m, true)).toBe("A.L.");
   });
 
   it("detects groups from type or participant count", () => {

@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { Message, MessageAttachment } from "../lib/types";
 import DiscordBubble from "./messages/DiscordBubble";
 import ImessageBubble from "./messages/ImessageBubble";
@@ -35,7 +36,7 @@ function resolveBubbleKind(
   return "sms";
 }
 
-export default function MessageBubble({
+function MessageBubble({
   message,
   highlight,
   isActive,
@@ -61,3 +62,10 @@ export default function MessageBubble({
       return <SmsBubble {...props} />;
   }
 }
+
+/**
+ * A thread renders every message it has loaded, so stepping through find matches
+ * would otherwise re-render the whole list to move one highlight. `onAttachmentClick`
+ * is a stable callback in the one screen that passes it, so this holds.
+ */
+export default memo(MessageBubble);

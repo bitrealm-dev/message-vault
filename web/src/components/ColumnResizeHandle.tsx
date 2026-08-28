@@ -1,3 +1,4 @@
+import { Z_RESIZE_HANDLE } from "../lib/zLayers";
 import type { ColumnResizeHandleProps } from "./useColumnResize";
 
 /** Vertical grip on the right edge of a resizable column. */
@@ -29,7 +30,7 @@ export default function ColumnResizeHandle({
       aria-valuemax={maxWidth}
       tabIndex={0}
       {...handleProps}
-      className="absolute top-0 right-0 z-[60] h-full w-3 touch-none cursor-col-resize bg-transparent"
+      className={`absolute top-0 right-0 h-full w-3 touch-none cursor-col-resize bg-transparent ${Z_RESIZE_HANDLE}`}
     >
       <div
         aria-hidden

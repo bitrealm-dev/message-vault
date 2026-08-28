@@ -5,7 +5,6 @@ import type { ApiTokenItem } from "./apiTokensUtils";
 import {
   displayKeyHint,
   formatTokenDate,
-  iconBtnClass,
   scopesLabel,
   tdClass,
   tdMuted,
@@ -70,22 +69,22 @@ export default function ApiTokensTable({
               <Cell className={`${tdClass}`}>
                 <div className="flex items-center justify-end gap-1">
                   <Button
-                    variant="secondary"
+                    variant="ghostNeutral"
+                    size="icon"
                     disabled={busy}
                     title="Edit API Key"
                     aria-label="Edit API Key"
                     onClick={() => onRename(item)}
-                    className={`${iconBtnClass} hover:!text-text`}
                   >
                     <PencilIcon />
                   </Button>
                   <Button
-                    variant="secondary"
+                    variant="ghostDanger"
+                    size="icon"
                     disabled={busy}
                     title="Revoke API Key"
                     aria-label="Revoke API Key"
                     onClick={() => onRevoke(item)}
-                    className={`${iconBtnClass} hover:!text-danger`}
                   >
                     <TrashIcon />
                   </Button>

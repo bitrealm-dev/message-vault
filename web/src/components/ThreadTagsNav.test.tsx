@@ -63,8 +63,8 @@ describe("ThreadTagsNav", () => {
     const user = userEvent.setup();
     renderNav("/");
     await user.click(screen.getByRole("button", { name: "Tag options for Work" }));
-    expect(screen.getByRole("button", { name: "Rename…" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Rename…" })).toBeTruthy();
     await user.keyboard("{Escape}");
-    expect(screen.queryByRole("button", { name: "Rename…" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Rename…" })).toBeNull();
   });
 });

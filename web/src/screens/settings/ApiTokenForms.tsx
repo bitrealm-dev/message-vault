@@ -1,5 +1,5 @@
 import Button from "../../components/Button";
-import ModalShell from "../../components/ModalShell";
+import ModalShell, { DialogFooter } from "../../components/ModalShell";
 import TextField from "../../components/TextField";
 
 export function ApiTokenCreateForm({
@@ -79,18 +79,11 @@ export function ApiTokenRenameDialog({
       }}
       dismissable={!busy}
       label="Rename API key"
+      title="Rename API key"
+      onClose={onClose}
+      closeDisabled={busy}
       maxWidth="24rem"
     >
-      <button
-        type="button"
-        aria-label="Close"
-        disabled={busy}
-        onClick={onClose}
-        className="absolute top-3 right-3 cursor-pointer border-none bg-transparent text-[1.25rem] leading-none text-muted disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        ×
-      </button>
-      <h2 className="mb-2 pr-6 text-[1.125rem] font-semibold text-text">Rename API key</h2>
       <p className="mb-3 text-[0.813rem] text-muted">
         Choose a name you will recognize later. The secret value does not change.
       </p>
@@ -107,14 +100,14 @@ export function ApiTokenRenameDialog({
           }
         }}
       />
-      <div className="mt-5 flex justify-end gap-2">
+      <DialogFooter>
         <Button onPress={onClose} isDisabled={busy}>
           Cancel
         </Button>
         <Button variant="primary" onPress={onSave} isDisabled={busy || !renameLabel.trim()}>
           {busy ? "Saving…" : "Save"}
         </Button>
-      </div>
+      </DialogFooter>
     </ModalShell>
   );
 }
