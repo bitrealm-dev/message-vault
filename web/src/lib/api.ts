@@ -34,12 +34,21 @@ export class VaultApiError extends Error {
 }
 
 /**
+ * A raw-text fallback longer than this is someone else's page, not a message
+ * — clamped so it cannot overrun the fixed-height auth card, which never
+ * scrolls.
+ */
+const RAW_BODY_FALLBACK_LIMIT = 200;
+
+/**
  * Human-readable message for a failed response.
  *
  * The vault answers `{"ok":false,"error":"..."}`, and that sentence is what a
  * user should read — not the status code and not the envelope around it.
  * Anything else (a proxy's HTML error page, an empty body) falls back to the
- * raw text, then to a generic sentence.
+ * raw text — clamped to `RAW_BODY_FALLBACK_LIMIT` characters, since a
+ * reverse proxy or non-vault host can answer with a whole HTML page — then to
+ * a generic sentence.
  */
 export function errorMessageFromBody(status: number, text: string): string {
   const trimmed = text.trim();
@@ -53,6 +62,9 @@ export function errorMessageFromBody(status: number, text: string): string {
     }
   } catch {
     // Not JSON — the raw text is the best available message.
+  }
+  if (trimmed.length > RAW_BODY_FALLBACK_LIMIT) {
+    return `${trimmed.slice(0, RAW_BODY_FALLBACK_LIMIT)}…`;
   }
   return trimmed;
 }

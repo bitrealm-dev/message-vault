@@ -41,6 +41,16 @@ describe("OnboardingScreen", () => {
     expect(rowValue(1)).toHaveAttribute("placeholder", "+1 555-123-4567");
   });
 
+  it("changes the placeholder when the service picker changes", async () => {
+    const user = userEvent.setup();
+    render(<OnboardingScreen />);
+
+    await user.click(screen.getByRole("button", { name: "Text message Account 1 type" }));
+    await user.click(screen.getByRole("option", { name: "Email" }));
+
+    expect(rowValue(1)).toHaveAttribute("placeholder", "you@example.com");
+  });
+
   it("hides the remove control until there is more than one row", async () => {
     const user = userEvent.setup();
     render(<OnboardingScreen />);

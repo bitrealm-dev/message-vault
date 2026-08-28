@@ -12,7 +12,7 @@ function sentenceCase(text: string): string {
 export default function AuthErrorFooter({ error }: { error: string }) {
   return (
     <div
-      className="mb-2 min-h-10 text-[0.813rem] leading-[1.35]"
+      className="mb-2 min-h-8 text-[0.813rem] leading-[1.35]"
       style={{ color: error ? "var(--danger)" : "transparent" }}
       aria-live="polite"
     >

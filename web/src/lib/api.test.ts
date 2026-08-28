@@ -26,6 +26,19 @@ describe("errorMessageFromBody", () => {
       '{"ok":false,"error":"  "}',
     );
   });
+
+  it("clamps an oversized raw-text fallback so it cannot overrun the fixed card", () => {
+    const html = `<html><body>${"x".repeat(500)}</body></html>`;
+    const message = errorMessageFromBody(502, html);
+    expect(message.length).toBe(201);
+    expect(message.endsWith("…")).toBe(true);
+    expect(message.startsWith(html.slice(0, 200))).toBe(true);
+  });
+
+  it("leaves a raw-text fallback at or under the limit untouched", () => {
+    const short = "<html>Bad Gateway</html>";
+    expect(errorMessageFromBody(502, short)).toBe(short);
+  });
 });
 
 describe("apiClient errors", () => {

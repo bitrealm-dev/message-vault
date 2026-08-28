@@ -20,7 +20,7 @@ describe("AuthErrorFooter", () => {
   it("reserves its space when there is no message", () => {
     const { container } = render(<AuthErrorFooter error="" />);
     const line = container.firstElementChild;
-    expect(line).toHaveClass("min-h-10");
+    expect(line).toHaveClass("min-h-8");
     expect(line).toHaveAttribute("aria-live", "polite");
   });
 });
