@@ -59,6 +59,9 @@ Rows are scoped by `account_id` in a shared `vault.db`.
 - Web login uses username + password (Argon2id hash in `accounts.password_hash`).
   Accounts may opt into no password (`password_hash` NULL); empty password is
   accepted only for those accounts.
+- Login and registration are each rate-limited to 20 attempts per username per
+  60 seconds, tracked separately (a username's login attempts do not count
+  against its registration attempts, or the reverse).
 - Each account can create named **API tokens** for `vault-push` / `vault-pull`
   (stored hashed; shown once when created). GUI sessions use a separate rotating
   token.
