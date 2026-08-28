@@ -90,6 +90,18 @@ stop_postgres() {
   "${COMPOSE[@]}" down
 }
 
+# This file used to inherit the directory project name `message-vault`,
+# the same project as leftover `sqlite-web` from the deleted
+# compose-dev.yml. Stop that old Postgres so the new `message-vault-pg`
+# project can bind 5432. Does not remove sqlite-web.
+stop_legacy_postgres() {
+  if docker ps -aq --filter name=message-vault-postgres-1 \
+    --filter label=com.docker.compose.project=message-vault | grep -q .; then
+    echo "Stopping leftover Postgres from the old message-vault compose project…"
+    docker compose -p message-vault -f docker-compose.pg.yml down
+  fi
+}
+
 wait_postgres() {
   local i
   for i in $(seq 1 30); do
@@ -116,6 +128,8 @@ if [[ ! -f "${CONFIG}" ]]; then
   echo "Writing ${CONFIG} from ${CONFIG_EXAMPLE} (CORS for :5173 enabled)."
   write_host_dev_config
 fi
+
+stop_legacy_postgres
 
 if [[ "${RESET}" -eq 1 || "${DEMO}" -eq 1 ]]; then
   echo "Removing Postgres volume vault_pg_data and ${REPO_ROOT}/data/…"

@@ -6,6 +6,12 @@
 #     cargo test -p message-vault-server
 #
 # Data lives in the named volume vault_pg_data. `down -v` deletes it.
+#
+# Own project name so this file does not share containers or the
+# message-vault_default network with docker/compose.yml (also named
+# message-vault) or leftover services from deleted compose files.
+name: message-vault-pg
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -24,3 +30,4 @@ services:
 
 volumes:
   vault_pg_data:
+    name: vault_pg_data
