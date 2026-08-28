@@ -1,12 +1,19 @@
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   clearContactRecentSearches,
   loadContactRecentSearches,
   pushContactRecentSearch,
 } from "../lib/contactRecentSearches";
-import { shouldIgnoreOutsideDismiss } from "../lib/portaledOverlay";
 import { popupShadow } from "../lib/uiStyles";
+import { useDismissable } from "../lib/useDismissable";
 import AdvancedSearchForm from "./AdvancedSearchForm";
+
+/** Element id for one recent-search row, referenced by `aria-activedescendant`. */
+function optionId(query: string): string {
+  return `contact-search-recent-${encodeURIComponent(query)}`;
+}
+
+const ADVANCED_OPTION_ID = "contact-search-advanced";
 
 function MagnifyingGlassIcon() {
   return (
@@ -77,6 +84,8 @@ export default function ContactSearch({
   const [popdownOpen, setPopdownOpen] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [recents, setRecents] = useState(() => loadContactRecentSearches());
+  /** Row the arrow keys are on; -1 means the typed text itself. */
+  const [activeIndex, setActiveIndex] = useState(-1);
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -88,17 +97,11 @@ export default function ContactSearch({
     notifyOpen(popdownOpen || showAdvanced);
   }, [popdownOpen, showAdvanced]);
 
-  useEffect(() => {
-    if (!popdownOpen && !showAdvanced) return;
-    const onPointerDown = (e: MouseEvent) => {
-      // Capture phase: see open Select/Date menus before RAC removes them.
-      if (shouldIgnoreOutsideDismiss(e, rootRef.current)) return;
-      setPopdownOpen(false);
-      setShowAdvanced(false);
-    };
-    document.addEventListener("mousedown", onPointerDown, true);
-    return () => document.removeEventListener("mousedown", onPointerDown, true);
-  }, [popdownOpen, showAdvanced]);
+  const dismissAll = useCallback(() => {
+    setPopdownOpen(false);
+    setShowAdvanced(false);
+  }, []);
+  useDismissable(popdownOpen || showAdvanced, rootRef, dismissAll);
 
   const refreshRecents = () => {
     setRecents(loadContactRecentSearches());
@@ -121,6 +124,34 @@ export default function ContactSearch({
     setPopdownOpen(true);
   };
 
+  const openAdvanced = () => {
+    setPopdownOpen(false);
+    setShowAdvanced(true);
+  };
+
+  /**
+   * Rows the arrow keys walk: every recent search, then the Advanced search row.
+   * The input keeps DOM focus throughout and points at the current row with
+   * `aria-activedescendant`, which is what `role="combobox"` promises — before
+   * this the list was reachable only with a pointer.
+   */
+  const options = [
+    ...recents.map((q) => ({ id: optionId(q), run: () => applyQuery(q, { save: true }) })),
+    { id: ADVANCED_OPTION_ID, run: openAdvanced },
+  ];
+  const active = activeIndex >= 0 && activeIndex < options.length ? options[activeIndex] : null;
+
+  const moveActive = (delta: number) => {
+    if (!popdownOpen) {
+      openPopdown();
+      setActiveIndex(0);
+      return;
+    }
+    const count = options.length;
+    if (count === 0) return;
+    setActiveIndex((at) => (at < 0 ? (delta > 0 ? 0 : count - 1) : (at + delta + count) % count));
+  };
+
   return (
     <div ref={rootRef} className="relative">
       <div className="flex items-center rounded-xl border border-border bg-bg focus-within:border-accent">
@@ -135,7 +166,11 @@ export default function ContactSearch({
           aria-expanded={popdownOpen}
           aria-controls="contact-search-popdown"
           aria-autocomplete="list"
-          onChange={(e) => onChange(e.target.value)}
+          aria-activedescendant={popdownOpen && active ? active.id : undefined}
+          onChange={(e) => {
+            onChange(e.target.value);
+            setActiveIndex(-1);
+          }}
           onFocus={openPopdown}
           onClick={openPopdown}
           onKeyDown={(e) => {
@@ -148,12 +183,25 @@ export default function ContactSearch({
               if (popdownOpen) {
                 e.preventDefault();
                 setPopdownOpen(false);
+                setActiveIndex(-1);
               }
+              return;
+            }
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              moveActive(1);
+              return;
+            }
+            if (e.key === "ArrowUp") {
+              e.preventDefault();
+              moveActive(-1);
               return;
             }
             if (e.key === "Enter") {
               e.preventDefault();
-              applyQuery(value, { save: true });
+              // A highlighted row wins; otherwise submit what was typed.
+              if (active) active.run();
+              else applyQuery(value, { save: true });
             }
           }}
           className="min-w-0 flex-1 border-none bg-transparent px-2 py-2.5 text-[0.875rem] text-text outline-none"
@@ -198,13 +246,18 @@ export default function ContactSearch({
                 </button>
               </div>
               <ul className="m-0 list-none p-0">
-                {recents.map((q) => (
+                {recents.map((q, i) => (
                   <li key={q}>
                     <button
                       type="button"
                       role="option"
+                      id={optionId(q)}
+                      aria-selected={activeIndex === i}
+                      onMouseEnter={() => setActiveIndex(i)}
                       onClick={() => applyQuery(q, { save: true })}
-                      className="flex w-full cursor-pointer items-center gap-2 border-none bg-transparent px-3 py-2 text-left text-[0.875rem] text-text hover:bg-hover"
+                      className={`flex w-full cursor-pointer items-center gap-2 border-none px-3 py-2 text-left text-[0.875rem] text-text hover:bg-hover ${
+                        activeIndex === i ? "bg-hover" : "bg-transparent"
+                      }`}
                     >
                       <ClockIcon />
                       <span className="min-w-0 truncate">{q}</span>
@@ -217,11 +270,14 @@ export default function ContactSearch({
           ) : null}
           <button
             type="button"
-            onClick={() => {
-              setPopdownOpen(false);
-              setShowAdvanced(true);
-            }}
-            className="flex w-full cursor-pointer items-center gap-2 border-none bg-transparent px-3 py-2.5 text-left text-[0.875rem] text-text hover:bg-hover"
+            role="option"
+            id={ADVANCED_OPTION_ID}
+            aria-selected={activeIndex === recents.length}
+            onMouseEnter={() => setActiveIndex(recents.length)}
+            onClick={openAdvanced}
+            className={`flex w-full cursor-pointer items-center gap-2 border-none px-3 py-2.5 text-left text-[0.875rem] text-text hover:bg-hover ${
+              activeIndex === recents.length ? "bg-hover" : "bg-transparent"
+            }`}
           >
             <SlidersIcon />
             Advanced search

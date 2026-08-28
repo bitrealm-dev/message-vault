@@ -1,7 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isReservedGroupName, reservedGroupError } from "../lib/contactGroups";
 import type { MembershipCheckState } from "../lib/membershipChecks";
-import { shouldIgnoreOutsideDismiss } from "../lib/portaledOverlay";
+import { useDismissable } from "../lib/useDismissable";
 import { popupShadow } from "../lib/uiStyles";
 import Checkbox from "./Checkbox";
 import { ChevronDownIcon, PeopleGroupIcon } from "./icons";
@@ -77,25 +77,11 @@ export default function GroupsMenu({
   const searchRef = useRef<HTMLInputElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (e: MouseEvent) => {
-      if (shouldIgnoreOutsideDismiss(e, rootRef.current)) return;
-      setOpen(false);
-      setMode("list");
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      setOpen(false);
-      setMode("list");
-    };
-    document.addEventListener("mousedown", onPointerDown, true);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown, true);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open, setOpen]);
+  const dismiss = useCallback(() => {
+    setOpen(false);
+    setMode("list");
+  }, [setOpen]);
+  useDismissable(open, rootRef, dismiss);
 
   useEffect(() => {
     if (!open) return;

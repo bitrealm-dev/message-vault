@@ -57,8 +57,43 @@ describe("GroupsNav", () => {
     const user = userEvent.setup();
     renderNav("/contacts");
     await user.click(screen.getByRole("button", { name: "Group options for College" }));
-    expect(screen.getByRole("button", { name: "Rename…" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Rename…" })).toBeTruthy();
     await user.keyboard("{Escape}");
-    expect(screen.queryByRole("button", { name: "Rename…" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Rename…" })).toBeNull();
+  });
+
+  it("exposes the options popup as a menu, not a bare div of buttons", async () => {
+    const user = userEvent.setup();
+    renderNav("/contacts");
+    await user.click(screen.getByRole("button", { name: "Group options for College" }));
+    expect(screen.getByRole("menu", { name: "Group options for College" })).toBeTruthy();
+    expect(screen.getAllByRole("menuitem")).toHaveLength(2);
+  });
+
+  it("moves focus into the menu and walks it with arrow keys", async () => {
+    const user = userEvent.setup();
+    renderNav("/contacts");
+    await user.click(screen.getByRole("button", { name: "Group options for College" }));
+
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Rename…" }));
+
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Delete" }));
+
+    // Wraps around to the first item.
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Rename…" }));
+
+    await user.keyboard("{ArrowUp}");
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Delete" }));
+  });
+
+  it("returns focus to the trigger when the menu closes", async () => {
+    const user = userEvent.setup();
+    renderNav("/contacts");
+    const trigger = screen.getByRole("button", { name: "Group options for College" });
+    await user.click(trigger);
+    await user.keyboard("{Escape}");
+    expect(document.activeElement).toBe(trigger);
   });
 });

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { shouldIgnoreOutsideDismiss } from "../lib/portaledOverlay";
+import { useCallback, useRef, useState } from "react";
+import { useDismissable } from "../lib/useDismissable";
 import AdvancedSearchForm, { type AdvancedSearchMode } from "./AdvancedSearchForm";
 import AppAccountMenu from "./AppAccountMenu";
 import ContactSearch from "./ContactSearch";
@@ -38,15 +38,8 @@ export default function AppHeader({
     ),
   );
 
-  useEffect(() => {
-    if (!showAdvancedSearch || isContacts) return;
-    const onPointerDown = (e: MouseEvent) => {
-      if (shouldIgnoreOutsideDismiss(e, conversationsAdvancedRef.current)) return;
-      setShowAdvancedSearch(false);
-    };
-    document.addEventListener("mousedown", onPointerDown, true);
-    return () => document.removeEventListener("mousedown", onPointerDown, true);
-  }, [showAdvancedSearch, isContacts]);
+  const closeAdvancedSearch = useCallback(() => setShowAdvancedSearch(false), []);
+  useDismissable(showAdvancedSearch && !isContacts, conversationsAdvancedRef, closeAdvancedSearch);
 
   return (
     <header className="relative z-20 flex shrink-0 items-center border-b border-border bg-panel">
