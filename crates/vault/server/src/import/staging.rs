@@ -11,6 +11,7 @@ use sqlx::Row;
 
 use crate::assets::{self, AssetStats, StoredAsset};
 use crate::config::validate_source_id;
+use crate::db::dialect;
 use crate::db::handles::{
     HandleIdCache, infer_handle_type_from_shape as infer_handle_type, upsert_handle_row_cached,
 };
@@ -577,7 +578,8 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
         });
     }
 
-    let msg_chunk = max_rows_for_bind_limit(MESSAGE_BIND_COLUMNS).max(1);
+    let engine = dialect::engine_of(tx);
+    let msg_chunk = max_rows_for_bind_limit(engine, MESSAGE_BIND_COLUMNS).max(1);
     for chunk in pending_rows.chunks(msg_chunk) {
         flush_staging_message_chunk(
             tx,
@@ -747,7 +749,7 @@ async fn flush_attachment_chunks(
     rows: &[PendingAttachmentRow],
     stats: &mut ImportStats,
 ) -> Result<()> {
-    let size = max_rows_for_bind_limit(ATTACHMENT_BIND_COLUMNS).max(1);
+    let size = max_rows_for_bind_limit(dialect::engine_of(tx), ATTACHMENT_BIND_COLUMNS).max(1);
     for chunk in rows.chunks(size) {
         if chunk.is_empty() {
             continue;
@@ -781,7 +783,7 @@ async fn flush_tapback_chunks(
     rows: &[PendingTapbackRow],
     stats: &mut ImportStats,
 ) -> Result<()> {
-    let size = max_rows_for_bind_limit(TAPBACK_BIND_COLUMNS).max(1);
+    let size = max_rows_for_bind_limit(dialect::engine_of(tx), TAPBACK_BIND_COLUMNS).max(1);
     for chunk in rows.chunks(size) {
         if chunk.is_empty() {
             continue;
