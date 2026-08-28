@@ -13,12 +13,14 @@ export function useHandleMutations({
 }) {
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const [removeTarget, setRemoveTarget] = useState<RemoveIdentityTarget | null>(null);
 
   useEffect(() => {
     void contactId;
     setAdding(false);
     setBusy(false);
+    setError("");
     setRemoveTarget(null);
   }, [contactId]);
 
@@ -37,14 +39,16 @@ export function useHandleMutations({
     const handle = removeTarget.handle;
     const service = handleServiceSelectValue(handle, removeTarget.service);
     setBusy(true);
+    setError("");
     try {
       await apiClient.post(`/v1/export/contacts/${contactId}`, {
         remove_handle: { handle, service },
       });
       setRemoveTarget(null);
       onHandlesChanged();
-    } catch {
-      /* keep dialog open for retry */
+    } catch (e: unknown) {
+      // Keep the dialog open for retry, but say why it did not go through.
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -53,14 +57,16 @@ export function useHandleMutations({
   const confirmAdd = async (args: { handle: string; service: string }) => {
     if (busy) return;
     setBusy(true);
+    setError("");
     try {
       await apiClient.post(`/v1/export/contacts/${contactId}`, {
         add_handle: { handle: args.handle, service: args.service },
       });
       setAdding(false);
       onHandlesChanged();
-    } catch {
-      /* keep dialog open for retry */
+    } catch (e: unknown) {
+      // Keep the dialog open for retry, but say why it did not go through.
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -70,6 +76,7 @@ export function useHandleMutations({
     adding,
     setAdding,
     busy,
+    error,
     removeTarget,
     setRemoveTarget,
     requestRemoveHandle,

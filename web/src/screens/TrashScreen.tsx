@@ -3,6 +3,7 @@ import Button from "../components/Button";
 import ConfirmDialog from "../components/ConfirmDialog";
 import { apiClient } from "../lib/api";
 import { formatLocaleDate } from "../lib/formatDate";
+import { useAsyncAction } from "../lib/useAsyncAction";
 import { useResource } from "../lib/useResource";
 
 interface TrashEntry {
@@ -18,7 +19,10 @@ const TRASH_RESOURCE_KEY = "trash";
 export default function TrashScreen() {
   const [message, setMessage] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  // Restore and empty are fire-and-forget from a click handler, so their
+  // failures need somewhere to land — otherwise a failed restore is
+  // indistinguishable from a click that never registered.
+  const { busy: deleting, error: actionError, run } = useAsyncAction();
 
   const fetchTrash = useCallback(async (signal: AbortSignal) => {
     const res = await apiClient.get<{ trash: TrashEntry[] }>("/v1/export/trash", {
@@ -31,23 +35,25 @@ export default function TrashScreen() {
 
   const entries = data ?? [];
 
-  const restore = async (id: string) => {
-    await apiClient.post(`/v1/trash/${id}/restore`);
-    setMessage("Conversation restored.");
-    reload();
-  };
-
-  const emptyTrash = async () => {
-    setDeleting(true);
-    try {
-      await apiClient.post("/v1/trash/empty");
-      setMessage("Trash emptied.");
+  const restore = (id: string) =>
+    run(async () => {
+      setMessage("");
+      await apiClient.post(`/v1/trash/${id}/restore`);
+      setMessage("Conversation restored.");
       reload();
-    } finally {
-      setDeleting(false);
-      setConfirmOpen(false);
-    }
-  };
+    });
+
+  const emptyTrash = () =>
+    run(async () => {
+      setMessage("");
+      try {
+        await apiClient.post("/v1/trash/empty");
+        setMessage("Trash emptied.");
+        reload();
+      } finally {
+        setConfirmOpen(false);
+      }
+    });
 
   if (loading) return <div className="p-6 text-[0.875rem] text-muted">Loading…</div>;
 
@@ -66,9 +72,9 @@ export default function TrashScreen() {
           </Button>
         )}
       </div>
-      {error && (
+      {(error || actionError) && (
         <div className="mb-4 rounded border border-danger-soft-border bg-danger-soft-bg px-3 py-2 text-[0.813rem] text-danger">
-          {error}
+          {error || actionError}
         </div>
       )}
       {message && (
@@ -91,7 +97,7 @@ export default function TrashScreen() {
                 {formatLocaleDate(entry.deleted_at)}
               </div>
             </div>
-            <Button onClick={() => restore(entry.id)} className="!px-3 !py-1 !text-[0.813rem]">
+            <Button onClick={() => void restore(entry.id)} className="!px-3 !py-1 !text-[0.813rem]">
               Restore
             </Button>
           </div>

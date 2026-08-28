@@ -99,6 +99,10 @@ export default function LoginScreen() {
     if (authMode !== "hanko" || !hankoApiUrl || !hankoRef.current) return;
 
     let cancelled = false;
+    // `loadHanko` is async, so anything it returns is a promise the effect
+    // cannot use as a cleanup — the unsubscribe has to be handed back this way
+    // or every run leaks a Hanko instance and its session listener.
+    let unsubscribe: (() => void) | null = null;
 
     const loadHanko = async () => {
       try {
@@ -128,9 +132,11 @@ export default function LoginScreen() {
           });
         });
 
-        return () => {
+        if (cancelled) {
           remove();
-        };
+          return;
+        }
+        unsubscribe = remove;
       } catch {
         if (!cancelled) {
           setHankoError("Failed to load Hanko. Is @teamhanko/hanko-elements installed?");
@@ -138,10 +144,11 @@ export default function LoginScreen() {
       }
     };
 
-    loadHanko();
+    void loadHanko();
 
     return () => {
       cancelled = true;
+      unsubscribe?.();
     };
   }, [authMode, hankoApiUrl, serverUrl, login, run]);
 

@@ -43,19 +43,10 @@ export default function SourcesPanel({
         onClose();
       }}
       label="Sources"
+      title="Sources"
+      onClose={onClose}
       variant="drawer"
     >
-      <div className="mb-4 flex justify-between">
-        <h2 className="m-0 text-[1.125rem]">Sources</h2>
-        <button
-          type="button"
-          onClick={onClose}
-          className="cursor-pointer border-none bg-none text-[1.25rem] text-muted"
-        >
-          ×
-        </button>
-      </div>
-
       {loading ? (
         <div className="text-[0.875rem] text-muted">Loading…</div>
       ) : error ? (

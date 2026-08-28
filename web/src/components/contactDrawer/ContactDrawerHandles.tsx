@@ -143,6 +143,7 @@ export function ContactDrawerHandles({
     adding,
     setAdding,
     busy,
+    error: mutationError,
     removeTarget,
     setRemoveTarget,
     requestRemoveHandle,
@@ -317,6 +318,7 @@ export function ContactDrawerHandles({
       <AddIdentityDialog
         open={adding}
         busy={busy}
+        error={mutationError}
         existingHandles={handleRows}
         onClose={() => {
           if (!busy) setAdding(false);
@@ -330,6 +332,7 @@ export function ContactDrawerHandles({
         confirmLabel="Remove identity"
         danger
         busy={busy}
+        error={mutationError}
         onClose={() => {
           if (!busy) setRemoveTarget(null);
         }}
