@@ -1,6 +1,7 @@
 import { useId } from "react";
 import type { Key } from "react-aria-components";
 import { parseSelectKey } from "../../lib/selectKey";
+import Checkbox from "../Checkbox";
 import Select, { ListBoxItem as SelectListBoxItem } from "../Select";
 import {
   compactFieldTriggerClass,
@@ -88,26 +89,23 @@ export default function ContactsSearchFields({
             placeholder={noPreferredName ? undefined : "Pat Lee"}
           />
         </label>
-        <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-[0.813rem] text-text">
-          <input
-            type="checkbox"
-            checked={noPreferredName}
-            onChange={(e) => {
-              const checked = e.target.checked;
-              if (checked) {
-                onContactNameSavedChange(contactName);
-                onContactNameChange("");
-                onNoPreferredNameChange(true);
-              } else {
-                onContactNameChange(contactNameSaved);
-                onContactNameSavedChange("");
-                onNoPreferredNameChange(false);
-              }
-            }}
-            className="checkbox-list"
-          />
+        <Checkbox
+          labelClassName="mt-2"
+          checked={noPreferredName}
+          onChange={(checked) => {
+            if (checked) {
+              onContactNameSavedChange(contactName);
+              onContactNameChange("");
+              onNoPreferredNameChange(true);
+            } else {
+              onContactNameChange(contactNameSaved);
+              onContactNameSavedChange("");
+              onNoPreferredNameChange(false);
+            }
+          }}
+        >
           No name
-        </label>
+        </Checkbox>
       </div>
       <div className="min-w-0">
         <label className="block">
@@ -120,43 +118,40 @@ export default function ContactsSearchFields({
             placeholder={noHandle ? undefined : "+15555550100"}
           />
         </label>
-        <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-[0.813rem] text-text">
-          <input
-            type="checkbox"
-            checked={noHandle}
-            onChange={(e) => {
-              const checked = e.target.checked;
-              if (checked) {
-                onHandleSavedChange(handle);
-                onHandleChange("");
-                onLockedByNoHandleChange({
-                  services,
-                  firstMsgBound,
-                  lastMsgBound,
-                  activity,
-                });
-                onServicesChange([]);
-                onFirstMsgBoundChange(EMPTY_DATE_BOUND);
-                onLastMsgBoundChange(EMPTY_DATE_BOUND);
-                onActivityChange("any");
-                onNoHandleChange(true);
-              } else {
-                onHandleChange(handleSaved);
-                onHandleSavedChange("");
-                if (lockedByNoHandle) {
-                  onServicesChange(lockedByNoHandle.services);
-                  onFirstMsgBoundChange(lockedByNoHandle.firstMsgBound);
-                  onLastMsgBoundChange(lockedByNoHandle.lastMsgBound);
-                  onActivityChange(lockedByNoHandle.activity);
-                  onLockedByNoHandleChange(null);
-                }
-                onNoHandleChange(false);
+        <Checkbox
+          labelClassName="mt-2"
+          checked={noHandle}
+          onChange={(checked) => {
+            if (checked) {
+              onHandleSavedChange(handle);
+              onHandleChange("");
+              onLockedByNoHandleChange({
+                services,
+                firstMsgBound,
+                lastMsgBound,
+                activity,
+              });
+              onServicesChange([]);
+              onFirstMsgBoundChange(EMPTY_DATE_BOUND);
+              onLastMsgBoundChange(EMPTY_DATE_BOUND);
+              onActivityChange("any");
+              onNoHandleChange(true);
+            } else {
+              onHandleChange(handleSaved);
+              onHandleSavedChange("");
+              if (lockedByNoHandle) {
+                onServicesChange(lockedByNoHandle.services);
+                onFirstMsgBoundChange(lockedByNoHandle.firstMsgBound);
+                onLastMsgBoundChange(lockedByNoHandle.lastMsgBound);
+                onActivityChange(lockedByNoHandle.activity);
+                onLockedByNoHandleChange(null);
               }
-            }}
-            className="checkbox-list"
-          />
+              onNoHandleChange(false);
+            }
+          }}
+        >
           No identity
-        </label>
+        </Checkbox>
       </div>
       <ServiceMultiSelect value={services} onChange={onServicesChange} isDisabled={noHandle} />
       <DateBoundField

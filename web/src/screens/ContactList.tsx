@@ -1,4 +1,5 @@
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Checkbox from "../components/Checkbox";
 import ContactInitialCircle from "../components/ContactInitialCircle";
 import ContactSortMenu from "../components/ContactSortMenu";
 import GroupsMenu from "../components/GroupsMenu";
@@ -265,10 +266,16 @@ export default function ContactList({
 
   // Filter by name and handle in the browser. Server results are used when the
   // filter has search words the client cannot apply.
-  const filteredContacts =
-    filterActive && !advancedActive
-      ? contacts.filter((c) => contactMatchesFilter(c, filter))
-      : contacts;
+  // Memoized: a fresh array here would invalidate `displayContacts` and
+  // `checkedContacts` on every render, and the `onCheckedChange` effect below
+  // would then re-render the parent in a loop.
+  const filteredContacts = useMemo(
+    () =>
+      filterActive && !advancedActive
+        ? contacts.filter((c) => contactMatchesFilter(c, filter))
+        : contacts,
+    [contacts, filter, filterActive, advancedActive],
+  );
 
   const displayContacts = useMemo(
     () =>
@@ -485,58 +492,70 @@ export default function ContactList({
           </div>
         ) : null
       }
+      renderRowLead={(c) => {
+        const checked = checkedIds.has(c.id);
+        // The whole avatar square toggles the box, so the label points at it by id.
+        const checkId = `contact-check-${c.id}`;
+        return (
+          <label
+            htmlFor={checkId}
+            className="group/avatar relative flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center self-center"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              skipRowSelectRef.current = true;
+              queueMicrotask(() => {
+                skipRowSelectRef.current = false;
+              });
+            }}
+            onKeyDown={(e) => e.stopPropagation()}
+          >
+            {/*
+             * The initials hide behind the checkbox on hover, on keyboard focus,
+             * and once checked. `opacity-0` rather than `invisible` so the input
+             * stays in the tab order when it is not yet visible.
+             */}
+            <span
+              className={
+                checked
+                  ? "invisible"
+                  : "group-hover/avatar:invisible group-focus-within/avatar:invisible"
+              }
+            >
+              <ContactInitialCircle displayName={c.name} preferredHandle={c.handles?.[0] ?? null} />
+            </span>
+            <Checkbox
+              id={checkId}
+              checked={checked}
+              aria-label={`Select ${c.name}`}
+              onChange={() => toggleChecked(c.id)}
+              className={`absolute ${
+                checked ? "" : "opacity-0 group-hover/avatar:opacity-100 focus-visible:opacity-100"
+              }`}
+            />
+          </label>
+        );
+      }}
       renderRow={(c) => {
         const nameKey = c.name.trim().toLowerCase();
         const shownHandles = filterActive
           ? matchingHandles(c.handles, filter).filter((h) => h.trim().toLowerCase() !== nameKey)
           : [];
-        const checked = checkedIds.has(c.id);
         return (
-          <>
-            <label
-              className="group/avatar relative flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center self-center"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                skipRowSelectRef.current = true;
-                toggleChecked(c.id);
-                queueMicrotask(() => {
-                  skipRowSelectRef.current = false;
-                });
-              }}
-              onKeyDown={(e) => e.stopPropagation()}
-            >
-              <span className={checked ? "invisible" : "group-hover/avatar:invisible"}>
-                <ContactInitialCircle
-                  displayName={c.name}
-                  preferredHandle={c.handles?.[0] ?? null}
-                />
-              </span>
-              <input
-                type="checkbox"
-                checked={checked}
-                aria-label={`Select ${c.name}`}
-                onChange={() => toggleChecked(c.id)}
-                className={`mv-list-check pointer-events-none absolute ${
-                  checked ? "" : "invisible group-hover/avatar:visible"
-                }`}
-              />
-            </label>
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-[0.875rem] font-medium">
-                {filterActive && nameMarkTerm ? highlightText(c.name, nameMarkTerm) : c.name}
-              </div>
-              {shownHandles.length > 0 && (
-                <div className="mt-0.5">
-                  {shownHandles.map((h) => (
-                    <div key={h} className="truncate text-[0.75rem] text-muted">
-                      {highlightText(h, handleMarkTerm)}
-                    </div>
-                  ))}
-                </div>
-              )}
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[0.875rem] font-medium">
+              {filterActive && nameMarkTerm ? highlightText(c.name, nameMarkTerm) : c.name}
             </div>
-          </>
+            {shownHandles.length > 0 && (
+              <div className="mt-0.5">
+                {shownHandles.map((h) => (
+                  <div key={h} className="truncate text-[0.75rem] text-muted">
+                    {highlightText(h, handleMarkTerm)}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         );
       }}
     />

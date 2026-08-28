@@ -4,6 +4,7 @@ import { personDisplayLabel } from "../lib/nameAliases";
 import { listRowDividers } from "../lib/tw";
 import type { Conversation } from "../lib/types";
 import { useNameAliases } from "../lib/useNameAliases";
+import Checkbox from "./Checkbox";
 import { useColumnResizing } from "./columnResizeState";
 
 /** Short service label (imessage / sms/mms). */
@@ -82,6 +83,16 @@ function titleContent(conv: Conversation, useAliases: boolean): ReactNode {
   return <GroupNames conv={conv} />;
 }
 
+/** Plain-text form of the row title, for the checkbox's accessible name. */
+function conversationTitleText(conv: Conversation, useAliases: boolean): string {
+  if (conv.label) return conv.label;
+  if (!conv.is_group) {
+    const p = conv.participants[0];
+    return p ? participantLabel(p, useAliases) : "(unknown)";
+  }
+  return conv.participants.map((p) => participantLabel(p, useAliases)).join(", ");
+}
+
 /** Bottom-left for groups: service only (count sits upper-right). */
 function GroupService({ conv }: { conv: Conversation }) {
   return formatServiceLabel(conv.service);
@@ -129,43 +140,56 @@ export default function ConversationRow({
   );
   const bottomLeft = isGroup ? <GroupService conv={conversation} /> : directService(conversation);
 
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`box-border flex w-full cursor-pointer items-start gap-2 border-none px-[0.85rem] py-[0.7rem] text-left ${listRowDividers} ${
-        isSelected ? "bg-hover" : "bg-transparent"
-      }`}
-    >
-      {onCheckChange && (
-        <input
-          type="checkbox"
-          checked={checked || false}
-          onChange={(e) => {
-            e.stopPropagation();
-            onCheckChange(conversation.id);
-          }}
-          onClick={(e) => e.stopPropagation()}
-          className="mt-0.5 shrink-0"
-        />
-      )}
-      <div className="flex min-w-0 flex-1 flex-col gap-[0.3rem]">
-        <div className="flex min-w-0 items-start justify-between gap-2">
-          <span
-            className={`min-w-0 flex-1 text-[0.875rem] font-medium leading-[1.35] text-text ${
-              wraps ? "overflow-hidden" : "truncate"
-            }`}
-          >
-            {titleContent(conversation, useAliases)}
-          </span>
-          {isGroup ? <GroupParticipantCount count={conversation.participants.length} /> : null}
-        </div>
-
-        <div className="flex items-baseline justify-between gap-2 text-[0.75rem] text-muted">
-          <span className="min-w-0 truncate">{bottomLeft}</span>
-          {dateSpan ? <span className="shrink-0 text-right">{dateSpan}</span> : null}
-        </div>
+  const body = (
+    <div className="flex min-w-0 flex-1 flex-col gap-[0.3rem]">
+      <div className="flex min-w-0 items-start justify-between gap-2">
+        <span
+          className={`min-w-0 flex-1 text-[0.875rem] font-medium leading-[1.35] text-text ${
+            wraps ? "overflow-hidden" : "truncate"
+          }`}
+        >
+          {titleContent(conversation, useAliases)}
+        </span>
+        {isGroup ? <GroupParticipantCount count={conversation.participants.length} /> : null}
       </div>
-    </button>
+
+      <div className="flex items-baseline justify-between gap-2 text-[0.75rem] text-muted">
+        <span className="min-w-0 truncate">{bottomLeft}</span>
+        {dateSpan ? <span className="shrink-0 text-right">{dateSpan}</span> : null}
+      </div>
+    </div>
+  );
+
+  const rowClass = `box-border flex w-full items-start gap-2 border-none px-[0.85rem] py-[0.7rem] text-left ${listRowDividers} ${
+    isSelected ? "bg-hover" : "bg-transparent"
+  }`;
+
+  if (!onCheckChange) {
+    return (
+      <button type="button" onClick={onClick} className={`cursor-pointer ${rowClass}`}>
+        {body}
+      </button>
+    );
+  }
+
+  // The checkbox is a sibling of the select-row button, never a child: a button
+  // may not contain interactive content, and nesting it there left no way to
+  // reach the checkbox by keyboard.
+  return (
+    <div className={rowClass}>
+      <Checkbox
+        checked={checked || false}
+        aria-label={`Select ${conversationTitleText(conversation, useAliases)}`}
+        onChange={() => onCheckChange(conversation.id)}
+        className="mt-0.5 shrink-0"
+      />
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex min-w-0 flex-1 cursor-pointer items-start border-none bg-transparent p-0 text-left"
+      >
+        {body}
+      </button>
+    </div>
   );
 }

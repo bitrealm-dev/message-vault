@@ -48,6 +48,35 @@ export function contactPreviewFromListRow(c: ContactListPreviewSource): ContactP
   };
 }
 
+function sameStrings(a: string[] | undefined, b: string[] | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  return a.every((value, i) => value === b[i]);
+}
+
+/**
+ * Value equality for two preview lists. Callers hold these in state and re-map
+ * them from list rows on every render, so comparing before storing keeps a
+ * fresh-but-identical array from triggering another render pass.
+ */
+export function sameContactPreviews(
+  a: readonly ContactPreview[],
+  b: readonly ContactPreview[],
+): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  return a.every((left, i) => {
+    const right = b[i];
+    return (
+      left.id === right.id &&
+      left.name === right.name &&
+      left.handleCount === right.handleCount &&
+      sameStrings(left.handles, right.handles) &&
+      sameStrings(left.groups, right.groups)
+    );
+  });
+}
+
 export type ThreadParticipantPreviewSource = {
   contact_id: string | null;
   handle: string;

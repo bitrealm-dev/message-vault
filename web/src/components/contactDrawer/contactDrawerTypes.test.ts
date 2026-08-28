@@ -4,6 +4,7 @@ import {
   contactPreviewFromThreadParticipants,
   HANDLE_STUB_PLACEHOLDER,
   previewHandleStubRows,
+  sameContactPreviews,
 } from "./contactDrawerTypes";
 
 describe("contactPreviewFromListRow", () => {
@@ -145,5 +146,38 @@ describe("contactPreviewFromThreadParticipants", () => {
         { contact_id: "c1", handle: "+15550001", name: "Ada" },
       ]),
     ).toBeNull();
+  });
+});
+
+describe("sameContactPreviews", () => {
+  const ada = { id: "1", name: "Ada", handles: ["+15550001"], handleCount: 1, groups: ["Family"] };
+
+  it("treats a re-mapped but equal list as unchanged", () => {
+    expect(
+      sameContactPreviews([ada], [{ ...ada, handles: ["+15550001"], groups: ["Family"] }]),
+    ).toBe(true);
+  });
+
+  it("reports a changed name", () => {
+    expect(sameContactPreviews([ada], [{ ...ada, name: "Grace" }])).toBe(false);
+  });
+
+  it("reports changed group membership", () => {
+    expect(sameContactPreviews([ada], [{ ...ada, groups: ["Work"] }])).toBe(false);
+  });
+
+  it("reports a changed length", () => {
+    expect(sameContactPreviews([ada], [])).toBe(false);
+    expect(sameContactPreviews([], [ada])).toBe(false);
+  });
+
+  it("treats two empty lists as unchanged", () => {
+    expect(sameContactPreviews([], [])).toBe(true);
+  });
+
+  it("distinguishes a missing handles list from an empty one", () => {
+    expect(
+      sameContactPreviews([{ id: "1", name: "Ada" }], [{ id: "1", name: "Ada", handles: [] }]),
+    ).toBe(false);
   });
 });

@@ -3,6 +3,7 @@ import { isReservedGroupName, reservedGroupError } from "../lib/contactGroups";
 import type { MembershipCheckState } from "../lib/membershipChecks";
 import { shouldIgnoreOutsideDismiss } from "../lib/portaledOverlay";
 import { popupShadow } from "../lib/uiStyles";
+import Checkbox from "./Checkbox";
 import { ChevronDownIcon, PeopleGroupIcon } from "./icons";
 
 export type GroupCheckState = MembershipCheckState;
@@ -185,22 +186,16 @@ export default function GroupsMenu({
               visibleGroups.map((name) => {
                 const state = checks[name] ?? "off";
                 return (
-                  <label
+                  <Checkbox
                     key={name}
-                    className={`${MENU_ROW_CLASS} cursor-pointer text-text hover:bg-hover`}
+                    labelClassName={`${MENU_ROW_CLASS} w-full text-text hover:bg-hover`}
+                    checked={state === "on"}
+                    indeterminate={state === "mixed"}
+                    disabled={boxesDisabled}
+                    onChange={() => onToggle?.(name)}
                   >
-                    <input
-                      type="checkbox"
-                      checked={state === "on"}
-                      ref={(el) => {
-                        if (el) el.indeterminate = state === "mixed";
-                      }}
-                      disabled={boxesDisabled}
-                      onChange={() => onToggle?.(name)}
-                      className="size-3.5 accent-accent"
-                    />
                     <span className="truncate">{name}</span>
-                  </label>
+                  </Checkbox>
                 );
               })
             )}

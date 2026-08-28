@@ -17,6 +17,7 @@ import {
   type ContactListPreviewSource,
   type ContactPreview,
   contactPreviewFromListRow,
+  sameContactPreviews,
 } from "./contactDrawer/contactDrawerTypes";
 import LeftPanel from "./LeftPanel";
 import ListColumn from "./ListColumn";
@@ -78,7 +79,12 @@ export default function AppLayout() {
   const [checkedContacts, setCheckedContacts] = useState<ContactPreview[]>([]);
   const [clearCheckedRev, setClearCheckedRev] = useState(0);
   const handleCheckedContacts = useCallback((contacts: ContactListPreviewSource[]) => {
-    setCheckedContacts(contacts.map(contactPreviewFromListRow));
+    // The child re-maps its checked rows on every render, so store only when the
+    // value actually changed — otherwise each store schedules the next render.
+    setCheckedContacts((prev) => {
+      const next = contacts.map(contactPreviewFromListRow);
+      return sameContactPreviews(prev, next) ? prev : next;
+    });
   }, []);
   const clearCheckedContacts = useCallback(() => {
     setClearCheckedRev((n) => n + 1);

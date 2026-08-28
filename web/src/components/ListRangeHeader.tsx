@@ -1,5 +1,6 @@
-import { type ReactNode, useEffect, useRef } from "react";
+import type { ReactNode } from "react";
 import { listActivitySuffix } from "../lib/usePagedList";
+import Checkbox from "./Checkbox";
 
 /** Same height on the sidebar spacer, list toolbar, and right-pane toolbar. */
 export const LIST_TOOLBAR_CLASS =
@@ -29,27 +30,18 @@ export default function ListRangeHeader({
   selectAllLabel?: string;
   selectAllDisabled?: boolean;
 }) {
-  const selectAllRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (selectAllRef.current) {
-      selectAllRef.current.indeterminate = selectAllIndeterminate;
-    }
-  }, [selectAllIndeterminate]);
-
   const activitySuffix = listActivitySuffix(refreshing, filling);
 
   return (
     <div className={LIST_TOOLBAR_CLASS}>
       {onSelectAllChange ? (
         <span className="flex h-7 w-7 shrink-0 items-center justify-center">
-          <input
-            ref={selectAllRef}
-            type="checkbox"
+          <Checkbox
             checked={selectAllChecked}
+            indeterminate={selectAllIndeterminate}
             disabled={selectAllDisabled}
             aria-label={selectAllLabel}
-            onChange={(e) => onSelectAllChange(e.target.checked)}
-            className="mv-list-check disabled:opacity-40"
+            onChange={onSelectAllChange}
           />
         </span>
       ) : null}
