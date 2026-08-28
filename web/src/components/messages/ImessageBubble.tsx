@@ -53,7 +53,9 @@ export default function ImessageBubble({
       timeLabel={time}
       meta={
         <>
-          {message.effect ? <span className="italic text-[#8b5cf6]">{message.effect}</span> : null}
+          {message.effect ? (
+            <span className="italic text-[var(--imessage-effect)]">{message.effect}</span>
+          ) : null}
           {message.edit_history && message.edit_history.length > 0 ? (
             <span className="italic">Edited</span>
           ) : null}

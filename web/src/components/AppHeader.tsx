@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { useDismissable } from "../lib/useDismissable";
+import { Z_INLINE_PANEL } from "../lib/zLayers";
 import AdvancedSearchForm, { type AdvancedSearchMode } from "./AdvancedSearchForm";
 import AppAccountMenu from "./AppAccountMenu";
 import ContactSearch from "./ContactSearch";
@@ -71,7 +72,9 @@ export default function AppHeader({
                 {showAdvancedSearch ? "Hide" : "Advanced"}
               </button>
               {showAdvancedSearch ? (
-                <div className="absolute left-0 top-full z-[70] mt-1 w-full min-w-[300px]">
+                <div
+                  className={`absolute top-full left-0 mt-1 w-full min-w-[300px] ${Z_INLINE_PANEL}`}
+                >
                   <AdvancedSearchForm
                     mode={searchMode}
                     onApply={(q) => {

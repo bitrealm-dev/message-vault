@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Key } from "react-aria-components";
 import { popupShadow } from "../lib/uiStyles";
+import { Z_INLINE_PANEL, Z_INLINE_PANEL_TAIL } from "../lib/zLayers";
 import {
   type ActivityFilter,
   type AdvancedSearchMode,
@@ -99,11 +100,13 @@ export default function AdvancedSearchForm({
   };
 
   return (
-    <div className={`relative z-[70] rounded-md border border-border bg-panel p-3 ${popupShadow}`}>
+    <div
+      className={`relative rounded-md border border-border bg-panel p-3 ${Z_INLINE_PANEL} ${popupShadow}`}
+    >
       {withTail ? (
         <span
           aria-hidden
-          className="pointer-events-none absolute -top-[6px] left-[1.15rem] z-[71] box-border h-3 w-3 rotate-45 border-l border-t border-border bg-panel"
+          className={`pointer-events-none absolute -top-[6px] left-[1.15rem] box-border h-3 w-3 rotate-45 border-l border-t border-border bg-panel ${Z_INLINE_PANEL_TAIL}`}
         />
       ) : null}
 

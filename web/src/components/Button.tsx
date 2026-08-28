@@ -1,6 +1,12 @@
 import { Button as RACButton } from "react-aria-components";
 
-export type ButtonVariant = "primary" | "secondary" | "danger" | "ghost" | "ghostDanger";
+export type ButtonVariant =
+  | "primary"
+  | "secondary"
+  | "danger"
+  | "ghost"
+  | "ghostNeutral"
+  | "ghostDanger";
 
 /**
  * Sizes exist so call sites stop restating padding and type size as `!`-prefixed
@@ -16,6 +22,9 @@ const VARIANT: Record<ButtonVariant, string> = {
   danger:
     "bg-danger-soft-bg text-danger border-danger-soft-border font-semibold hover:brightness-95",
   ghost: "bg-transparent text-accent border-transparent font-medium hover:bg-hover",
+  /** Quiet until hovered, then picks up a chip — row edit actions. */
+  ghostNeutral:
+    "bg-transparent text-muted border-transparent font-normal hover:border-border hover:bg-elevated hover:text-text data-hovered:border-border data-hovered:bg-elevated data-hovered:text-text data-pressed:border-border data-pressed:bg-hover disabled:pointer-events-none",
   /** Quiet until hovered, then reads as destructive — row delete actions. */
   ghostDanger:
     "bg-transparent text-muted border-transparent font-normal hover:border-danger-soft-border hover:bg-danger-soft-bg hover:text-danger data-hovered:border-danger-soft-border data-hovered:bg-danger-soft-bg data-hovered:text-danger data-pressed:border-danger-soft-border data-pressed:bg-danger-soft-bg data-pressed:text-danger",

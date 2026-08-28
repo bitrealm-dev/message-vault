@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Dialog, type DialogProps, Modal, ModalOverlay } from "react-aria-components";
+import { Z_DRAWER, Z_DRAWER_SCRIM, Z_MODAL } from "../lib/zLayers";
 
 /**
  * Button row along the bottom of a dialog. Its own component so the spacing is
@@ -74,9 +75,11 @@ export default function ModalShell({
         isOpen={open}
         isDismissable={dismissable}
         onOpenChange={onOpenChange}
-        className="fixed inset-0 z-40 bg-[rgba(0,0,0,0.2)]"
+        className={`fixed inset-0 bg-[rgba(0,0,0,0.2)] ${Z_DRAWER_SCRIM}`}
       >
-        <Modal className="fixed top-0 right-0 bottom-0 z-50 w-[320px] overflow-auto bg-panel p-6 shadow-[-2px_0_8px_rgba(0,0,0,0.1)] outline-none">
+        <Modal
+          className={`fixed top-0 right-0 bottom-0 w-[320px] overflow-auto bg-panel p-6 shadow-[-2px_0_8px_rgba(0,0,0,0.1)] outline-none ${Z_DRAWER}`}
+        >
           <Dialog aria-label={label} className="relative outline-none" {...dialogProps}>
             {title != null ? (
               <div className="mb-4 flex justify-between">
@@ -96,7 +99,7 @@ export default function ModalShell({
       isOpen={open}
       isDismissable={dismissable}
       onOpenChange={onOpenChange}
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-scrim p-4"
+      className={`fixed inset-0 flex items-center justify-center bg-scrim p-4 ${Z_MODAL}`}
     >
       <Modal
         className="relative w-full rounded-lg border border-border bg-panel p-5 shadow-[0_16px_48px_rgba(0,0,0,0.25)] outline-none"

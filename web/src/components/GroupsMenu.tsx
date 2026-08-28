@@ -3,6 +3,7 @@ import { isReservedGroupName, reservedGroupError } from "../lib/contactGroups";
 import type { MembershipCheckState } from "../lib/membershipChecks";
 import { useDismissable } from "../lib/useDismissable";
 import { popupShadow } from "../lib/uiStyles";
+import { Z_POPOVER } from "../lib/zLayers";
 import Checkbox from "./Checkbox";
 import { ChevronDownIcon, PeopleGroupIcon } from "./icons";
 
@@ -106,7 +107,7 @@ export default function GroupsMenu({
   );
   const listEmptyText = query.trim() ? noMatchText : emptyText;
   const toneClass = open ? "text-accent" : "text-muted";
-  const popoverClass = `absolute top-full left-0 z-[100] mt-1 w-64 rounded-xl border border-border bg-popover ${popupShadow}`;
+  const popoverClass = `absolute top-full left-0 mt-1 w-64 rounded-xl border border-border bg-popover ${Z_POPOVER} ${popupShadow}`;
 
   const saveNew = () => {
     if (disabled || !onCreate) return;
@@ -233,7 +234,7 @@ export default function GroupsMenu({
               type="button"
               disabled={disabled || !newName.trim()}
               onClick={saveNew}
-              className="cursor-pointer rounded-md bg-accent px-3 py-1 text-[0.813rem] font-medium text-[#1c1c1e] disabled:opacity-40"
+              className="cursor-pointer rounded-md bg-accent px-3 py-1 text-[0.813rem] font-medium text-sent-text disabled:opacity-40"
             >
               Create
             </button>

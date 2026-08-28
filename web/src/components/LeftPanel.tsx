@@ -13,6 +13,7 @@ import { isTauri } from "../lib/tauri-check";
 import { useAccountProfile } from "../lib/useAccountProfile";
 import { useContactGroups } from "../lib/useContactGroups";
 import { useThreadTags } from "../lib/useThreadTags";
+import { Z_ROW_MENU } from "../lib/zLayers";
 import ColumnResizeHandle from "./ColumnResizeHandle";
 import { useReportColumnResizing } from "./columnResizeState";
 import GroupsNav from "./GroupsNav";
@@ -304,7 +305,7 @@ export default function LeftPanel({
                     onClose={() => setMenuFor(null)}
                     triggerRef={savedSearchMenuTriggerRef}
                     label={`Saved search options for ${g.name}`}
-                    className="absolute top-full right-0 z-[80] mt-0.5"
+                    className={`absolute top-full right-0 mt-0.5 ${Z_ROW_MENU}`}
                     items={[
                       {
                         label: "Rename…",

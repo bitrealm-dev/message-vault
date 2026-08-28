@@ -6,6 +6,7 @@ import {
   handleServiceSelectValue,
 } from "../../lib/handleService";
 import { parseSelectKey } from "../../lib/selectKey";
+import { Z_POPOVER_IN_MODAL } from "../../lib/zLayers";
 import Button from "../Button";
 import ModalShell, { DialogError, DialogFooter } from "../ModalShell";
 import Select, { ListBoxItem, selectItemClassName } from "../Select";
@@ -96,7 +97,7 @@ export default function AddIdentityDialog({
           isDisabled={busy}
           triggerClassName={selectTriggerClass}
           valueClassName={selectValueClass}
-          popoverClassName="!z-[250]"
+          popoverClassName={Z_POPOVER_IN_MODAL}
           className="block w-full min-w-0"
         >
           {CONTACT_IDENTITY_SERVICE_OPTIONS.map((s) => (

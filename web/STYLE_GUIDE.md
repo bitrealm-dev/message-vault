@@ -62,13 +62,20 @@ These drive a `color-mix` derivation tree in `theme.css`. Three `data-theme` mod
 
 ## Overlay Z-Index Ladder
 
-| z-index | Usage |
-|---|---|
-| 40 | Drawer scrim |
-| 50 | Drawer panel |
-| 60 | Inline overlays (search filter panel, column resize handle) |
-| 100 | Select/ComboBox popovers |
-| 200 | Modal dialogs, lightbox |
+Defined as named constants in `src/lib/zLayers.ts`. Use those rather than a bare
+`z-[…]`, and add a rung there if none of these fit.
+
+| z-index | Constant | Usage |
+|---|---|---|
+| 40 | `Z_DRAWER_SCRIM` | Drawer scrim |
+| 50 | `Z_DRAWER` | Drawer panel |
+| 60 | `Z_RESIZE_HANDLE` | Column resize handles |
+| 70 | `Z_INLINE_PANEL` | Inline overlays (advanced search panel) — clears the resize handle |
+| 71 | `Z_INLINE_PANEL_TAIL` | The pointer tail on an inline panel |
+| 80 | `Z_ROW_MENU` | Sidebar row action menus |
+| 100 | `Z_POPOVER` | Select/ComboBox popovers, menus, the contact-search popdown |
+| 200 | `Z_MODAL` | Modal dialogs, lightbox |
+| 250 | `Z_POPOVER_IN_MODAL` | A select popover opened inside a modal |
 
 ## Rules
 

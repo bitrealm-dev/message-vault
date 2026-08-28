@@ -6,6 +6,7 @@ import {
 } from "../lib/contactRecentSearches";
 import { popupShadow } from "../lib/uiStyles";
 import { useDismissable } from "../lib/useDismissable";
+import { Z_INLINE_PANEL, Z_POPOVER } from "../lib/zLayers";
 import AdvancedSearchForm from "./AdvancedSearchForm";
 
 /** Element id for one recent-search row, referenced by `aria-activedescendant`. */
@@ -226,7 +227,7 @@ export default function ContactSearch({
         <div
           id="contact-search-popdown"
           role="listbox"
-          className={`absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-md border border-border bg-popover ${popupShadow}`}
+          className={`absolute top-full right-0 left-0 mt-1 overflow-hidden rounded-md border border-border bg-popover ${Z_POPOVER} ${popupShadow}`}
         >
           {recents.length > 0 ? (
             <>
@@ -286,7 +287,7 @@ export default function ContactSearch({
       ) : null}
 
       {showAdvanced ? (
-        <div className="absolute left-0 top-full z-[70] mt-2 w-full min-w-[300px]">
+        <div className={`absolute top-full left-0 mt-2 w-full min-w-[300px] ${Z_INLINE_PANEL}`}>
           <AdvancedSearchForm
             mode="contacts"
             withTail

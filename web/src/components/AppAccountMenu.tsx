@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
+import { Z_POPOVER } from "../lib/zLayers";
 import { ChevronRightIcon, GearIcon, SignOutIcon } from "./icons";
 import PopupMenu from "./PopupMenu";
 
@@ -41,7 +42,7 @@ export default function AppAccountMenu() {
         onClose={close}
         triggerRef={triggerRef}
         label="Account menu"
-        className="absolute top-full left-0 z-[100] mt-1 min-w-[11rem] rounded-xl"
+        className={`absolute top-full left-0 mt-1 min-w-[11rem] rounded-xl ${Z_POPOVER}`}
         items={[
           {
             label: "Settings",

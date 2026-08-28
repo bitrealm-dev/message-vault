@@ -2,6 +2,7 @@ import { type ReactNode, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiErrorMessage } from "../lib/apiErrorMessage";
 import type { NameCollection } from "../lib/nameCollection";
+import { Z_ROW_MENU } from "../lib/zLayers";
 import GroupNameDialog from "./GroupNameDialog";
 import { EllipsisIcon } from "./icons";
 import NavCollapsibleSection from "./NavCollapsibleSection";
@@ -177,7 +178,7 @@ export default function NavEntityList({
                 onClose={() => setMenuFor(null)}
                 triggerRef={menuTriggerRef}
                 label={copy.optionsLabel(name)}
-                className="absolute top-full right-0 z-[80] mt-0.5"
+                className={`absolute top-full right-0 mt-0.5 ${Z_ROW_MENU}`}
                 items={[
                   {
                     label: "Rename…",

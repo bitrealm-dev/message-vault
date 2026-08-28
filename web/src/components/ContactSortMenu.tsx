@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import type { ContactNameSort, ContactNameSortState, ContactSortOrder } from "../lib/contactSort";
 import { popupShadow } from "../lib/uiStyles";
+import { Z_POPOVER } from "../lib/zLayers";
 import { useMenuKeyboard } from "../lib/useMenuKeyboard";
 
 const FIELDS = [
@@ -47,7 +48,7 @@ export default function ContactSortMenu({
           aria-label="Sort contacts"
           data-mv-overlay=""
           onKeyDown={onKeyDown}
-          className={`absolute top-full right-0 z-[100] mt-1 min-w-[10.5rem] rounded-xl border border-border bg-popover py-2 ${popupShadow}`}
+          className={`absolute top-full right-0 mt-1 min-w-[10.5rem] rounded-xl border border-border bg-popover py-2 ${Z_POPOVER} ${popupShadow}`}
         >
           <div className="px-3 pb-1.5 text-[0.75rem] font-semibold text-text">Sort By</div>
           {FIELDS.map((field) => (

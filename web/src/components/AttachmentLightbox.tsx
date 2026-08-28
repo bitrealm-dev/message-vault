@@ -2,6 +2,7 @@ import { type ReactNode, useEffect } from "react";
 import { Dialog, Modal, ModalOverlay } from "react-aria-components";
 import { useAssetObjectUrl } from "../hooks/useAssetObjectUrl";
 import type { MessageAttachment } from "../lib/types";
+import { Z_MODAL } from "../lib/zLayers";
 
 export type LightboxItem = {
   attachment: MessageAttachment;
@@ -59,7 +60,7 @@ export default function AttachmentLightbox({
       isOpen
       onOpenChange={() => onClose()}
       isDismissable
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-[rgba(0,0,0,0.9)]"
+      className={`fixed inset-0 flex items-center justify-center bg-[rgba(0,0,0,0.9)] ${Z_MODAL}`}
     >
       <Modal className="flex min-h-0 w-full items-center justify-center outline-none">
         <Dialog

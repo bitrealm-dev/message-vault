@@ -27,6 +27,18 @@
   --sms-sent-text: #ffffff;
   --bubble-received: #e9e9eb;
   --bubble-received-text: #000000;
+
+  /*
+    Vendor brand colors used on the sender line of each service's bubble.
+    These identify the service rather than following the theme, so unlike the
+    surface colors above they are the same in light and dark. They live here so
+    the bubble components stop hardcoding the same hex values inline.
+  */
+  --whatsapp-brand: #075e54;
+  --instagram-brand: #e4405f;
+  --discord-brand: #5865f2;
+  /* iMessage screen effects ("sent with Confetti"). */
+  --imessage-effect: #8b5cf6;
 }
 
 /* Dark: header is chrome; deepen for canvas, lift for elevated */
