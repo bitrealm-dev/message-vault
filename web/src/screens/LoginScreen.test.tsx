@@ -5,9 +5,11 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const login = vi.fn();
+
 vi.mock("../lib/auth", () => ({
   useAuth: () => ({
-    login: vi.fn(),
+    login,
     setServer: vi.fn(),
     serverUrl: "",
   }),
@@ -19,8 +21,27 @@ vi.mock("../lib/tauri-check", () => ({
 
 import LoginScreen from "./LoginScreen";
 
+/** Answer `/health` and `/v1/auth/mode` so Connect reaches the local auth card. */
+function stubLocalModeServer() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (String(url).endsWith("/v1/auth/mode")) {
+        return { ok: true, json: async () => ({ mode: "local" }) };
+      }
+      return { ok: true };
+    }),
+  );
+}
+
+async function connect(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: "Connect" }));
+  await screen.findByRole("tab", { name: "Login" });
+}
+
 describe("LoginScreen", () => {
   beforeEach(() => {
+    login.mockReset();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
   });
 
@@ -30,7 +51,7 @@ describe("LoginScreen", () => {
     vi.useRealTimers();
   });
 
-  it("puts Connect first, keeps Try it disabled, and hides extract/format tools", () => {
+  it("puts Connect first and offers no demo sign-in", () => {
     render(
       <MemoryRouter>
         <LoginScreen />
@@ -39,11 +60,76 @@ describe("LoginScreen", () => {
 
     expect(screen.getByRole("heading", { name: "Message Vault" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Try it" })).toBeDisabled();
-    expect(screen.getByText("Sample sign-in is temporarily unavailable.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try it" })).not.toBeInTheDocument();
+    expect(screen.queryByText("OR")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Extract messages" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Format conversion" })).not.toBeInTheDocument();
     expect(screen.getByRole("status", { name: "Server status unknown" })).toBeInTheDocument();
+  });
+
+  it("shows Login and Create Account tabs after connecting, with Login first", async () => {
+    stubLocalModeServer();
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter>
+        <LoginScreen />
+      </MemoryRouter>,
+    );
+
+    await connect(user);
+
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.map((t) => t.textContent)).toEqual(["Login", "Create Account"]);
+    expect(tabs[0]).toHaveAttribute("aria-selected", "true");
+
+    expect(screen.getByRole("textbox", { name: "Username" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Password")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Confirm Password")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try it" })).not.toBeInTheDocument();
+  });
+
+  it("asks for the password twice on the Create Account tab", async () => {
+    stubLocalModeServer();
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter>
+        <LoginScreen />
+      </MemoryRouter>,
+    );
+
+    await connect(user);
+    await user.click(screen.getByRole("tab", { name: "Create Account" }));
+
+    expect(screen.getByRole("textbox", { name: "Username" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Password")).toBeInTheDocument();
+    expect(screen.getByLabelText("Confirm Password")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create account" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sign in" })).not.toBeInTheDocument();
+  });
+
+  it("rejects a new account when the two passwords disagree", async () => {
+    stubLocalModeServer();
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter>
+        <LoginScreen />
+      </MemoryRouter>,
+    );
+
+    await connect(user);
+    await user.click(screen.getByRole("tab", { name: "Create Account" }));
+
+    await user.type(screen.getByRole("textbox", { name: "Username" }), "ada");
+    await user.type(screen.getByLabelText("Password"), "hunter2");
+    await user.type(screen.getByLabelText("Confirm Password"), "hunter3");
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+
+    expect(await screen.findByText("Passwords do not match.")).toBeInTheDocument();
+    expect(login).not.toHaveBeenCalled();
   });
 
   it("turns the Server URL light green for a blank URL when this origin is up", async () => {
