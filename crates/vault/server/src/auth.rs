@@ -1,10 +1,4 @@
-//! Authentication handlers: register, login, and Hanko session exchange.
-//!
-//! All three return a Bearer API token the rest of the API already accepts.
-//! There is no separate session layer — these are additional ways to get a
-//! token. Hanko is an external sign-in service. A Hanko session is a signed
-//! JSON Web Token (a signed claim of who the user is) that this server checks
-//! and then exchanges for a vault token.
+//! Authentication handlers: register, login, session check, and logout.
 
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
@@ -38,8 +32,6 @@ pub(crate) fn reject_demo_password_login(enabled: bool, username: &str) -> bool 
 /// Max password bytes accepted before hashing (registration / login / change).
 const MAX_PASSWORD_BYTES: usize = 1024;
 const MIN_PASSWORD_CHARS: usize = 8;
-/// Max Hanko JSON Web Token string length accepted for exchange.
-const MAX_HANKO_JWT_BYTES: usize = 16 * 1024;
 /// Sliding window for unauthenticated auth endpoints.
 const AUTH_RATE_WINDOW: Duration = Duration::from_secs(60);
 const AUTH_RATE_MAX: usize = 20;
@@ -48,11 +40,8 @@ const TRY_DEMO_PER_IP_RATE_MAX: usize = 60;
 /// Whole-process Try it cap. Login stays at 20.
 const TRY_DEMO_RATE_MAX: usize = 2000;
 const _: () = assert!(TRY_DEMO_RATE_MAX > AUTH_RATE_MAX);
-const JWKS_CACHE_TTL: Duration = Duration::from_secs(300);
-const JWKS_HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 
 static AUTH_RATE_LIMITS: Mutex<Option<HashMap<String, VecDeque<Instant>>>> = Mutex::new(None);
-static JWKS_CACHE: Mutex<Option<(String, Instant, serde_json::Value)>> = Mutex::new(None);
 static DUMMY_PASSWORD_HASH: OnceLock<String> = OnceLock::new();
 
 /// Reject when `bucket` has seen more than [`AUTH_RATE_MAX`] hits in [`AUTH_RATE_WINDOW`].
@@ -142,14 +131,6 @@ pub struct LoginRequest {
     /// Login password.
     #[serde(default)]
     pub password: String,
-}
-
-/// A raw Hanko session JWT from the client's onSessionCreated callback.
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct HankoSessionRequest {
-    /// The raw Hanko session JSON Web Token from the client-side
-    /// `onSessionCreated` callback.
-    pub hanko_jwt: String,
 }
 
 /// Session token plus the account id and username it belongs to.
@@ -257,41 +238,6 @@ fn validate_password_policy(password: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// Fetch Hanko's public signing keys, reusing a cached copy for a few minutes.
-///
-/// # Errors
-///
-/// Returns an error when the HTTP client cannot be built, the keys cannot be
-/// fetched, or the response is not JSON.
-fn fetch_jwks_cached(jwk_url: &str) -> Result<serde_json::Value> {
-    let now = Instant::now();
-    if let Ok(guard) = JWKS_CACHE.lock()
-        && let Some((url, fetched_at, json)) = guard.as_ref()
-        && url == jwk_url
-        && now.duration_since(*fetched_at) < JWKS_CACHE_TTL
-    {
-        return Ok(json.clone());
-    }
-
-    let client = reqwest::blocking::Client::builder()
-        .timeout(JWKS_HTTP_TIMEOUT)
-        .build()
-        .context("build JWKS HTTP client")?;
-    let jwks_json: serde_json::Value = client
-        .get(jwk_url)
-        .send()
-        .with_context(|| format!("failed to fetch JWKS from {jwk_url}"))?
-        .error_for_status()
-        .with_context(|| format!("JWKS HTTP error from {jwk_url}"))?
-        .json()
-        .with_context(|| "failed to parse JWKS")?;
-
-    if let Ok(mut guard) = JWKS_CACHE.lock() {
-        *guard = Some((jwk_url.to_string(), now, jwks_json.clone()));
-    }
-    Ok(jwks_json)
-}
-
 // ---------------------------------------------------------------------------
 // Username validation
 // ---------------------------------------------------------------------------
@@ -319,74 +265,23 @@ fn nonempty_trimmed(value: Option<&str>) -> Option<String> {
     }
 }
 
-fn nonempty_trimmed_lower(value: Option<&str>) -> Option<String> {
-    nonempty_trimmed(value).map(|s| s.to_ascii_lowercase())
-}
-
-fn jwk_matching_kid<'a>(keys: &'a [serde_json::Value], kid: &str) -> Result<&'a serde_json::Value> {
-    for key in keys {
-        let key_id = key.get("kid").and_then(|v| v.as_str());
-        if key_id == Some(kid) {
-            return Ok(key);
-        }
-    }
-    Err(anyhow::anyhow!("no JWK matching kid: {kid}"))
-}
-
-fn username_from_hanko_email_or_id(email: Option<&str>, hanko_user_id: &str) -> String {
-    if let Some(email) = email
-        && let Some(local_part) = email.split('@').next()
-    {
-        return local_part.to_string();
-    }
-    let short_id: String = hanko_user_id.chars().take(8).collect();
-    format!("user_{short_id}")
-}
-
-async fn unique_hanko_username(
-    conn: &mut AnyConnection,
-    username: String,
-    account_id: &str,
-) -> Result<String> {
-    if account_profile::lookup_account_ref(conn, &username)
-        .await?
-        .is_some()
-    {
-        Ok(format!("{}_{}", username, &account_id[..8]))
-    } else {
-        Ok(username)
-    }
-}
-
-/// Sign-in mode and Hanko URL so clients can render the right login form.
+/// Sign-in mode for clients. Retained only as the sign-in card's reachability
+/// probe until it moves to GET /health; see Task 7.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct AuthModeResponse {
+    /// Always "local". The vault has one sign-in mechanism.
     pub mode: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hanko_api_url: Option<String>,
-    pub try_demo: bool,
 }
 
-/// Returns the server's configured authentication mode so clients
-/// can render the correct login form before authenticating.
 #[utoipa::path(
     get,
     path = "/v1/auth/mode",
     tag = "Auth",
     responses((status = 200, description = "Sign-in mode", body = AuthModeResponse))
 )]
-pub(crate) async fn auth_mode_handler(State(state): State<AppState>) -> Json<AuthModeResponse> {
-    let mode = crate::config::AuthMode::from_env();
-    let hanko_api_url = std::env::var("HANKO_API_URL")
-        .ok()
-        .or_else(|| std::env::var("NEXT_PUBLIC_HANKO_API_URL").ok());
+pub(crate) async fn auth_mode_handler() -> Json<AuthModeResponse> {
     Json(AuthModeResponse {
-        mode: match mode {
-            crate::config::AuthMode::Hanko => "hanko".into(),
-            crate::config::AuthMode::Local => "local".into(),
-        },
-        hanko_api_url,
-        try_demo: state.guest.enabled,
+        mode: "local".into(),
     })
 }
 
@@ -564,7 +459,6 @@ pub async fn register_handler(
         &username,
         password_hash.as_deref(),
         preferred_name.as_deref(),
-        None,  // hanko_user_id
         false, // read_only
     )
     .await
@@ -645,140 +539,6 @@ pub async fn login_handler(
             "invalid username or password".into(),
         ));
     }
-
-    let response = AuthTokenResponse::for_existing_account(&mut conn, account_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-    Ok(Json(response))
-}
-
-/// Verify a Hanko session JSON Web Token and exchange it for a vault session
-/// token.
-#[utoipa::path(
-    post,
-    path = "/v1/auth/hanko/session",
-    tag = "Auth",
-    request_body = HankoSessionRequest,
-    responses(
-        (status = 200, description = "Session issued", body = AuthTokenResponse),
-        (status = 400, description = "Invalid input", body = crate::server::ErrorBody),
-        (status = 429, description = "Rate limited", body = crate::server::ErrorBody)
-    )
-)]
-pub async fn hanko_session_handler(
-    State(state): State<AppState>,
-    Json(req): Json<HankoSessionRequest>,
-) -> Result<Json<AuthTokenResponse>, ApiError> {
-    check_auth_rate_limit("hanko:session")?;
-    if req.hanko_jwt.len() > MAX_HANKO_JWT_BYTES {
-        return Err(ApiError::BadRequest("hanko_jwt is too long".into()));
-    }
-
-    let hanko_api_url = match std::env::var("HANKO_API_URL") {
-        Ok(url) => url,
-        Err(_) => std::env::var("NEXT_PUBLIC_HANKO_API_URL").unwrap_or_default(),
-    };
-
-    if hanko_api_url.is_empty() {
-        return Err(ApiError::Internal("HANKO_API_URL is not configured".into()));
-    }
-
-    let jwk_url = format!(
-        "{}/.well-known/jwks.json",
-        hanko_api_url.trim_end_matches('/')
-    );
-    let jtw = req.hanko_jwt.clone();
-    let hanko_issuer = hanko_api_url.trim_end_matches('/').to_string();
-
-    // JWKS fetch and JWT verification are blocking (HTTP + crypto); keep them
-    // off the async runtime. DB work below runs on the sqlx pool.
-    let (hanko_user_id, email) =
-        tokio::task::spawn_blocking(move || -> Result<(String, Option<String>)> {
-            let jwks_json = fetch_jwks_cached(&jwk_url)?;
-
-            let header = jsonwebtoken::decode_header(&jtw)
-                .map_err(|e| anyhow::anyhow!("JWT header decode: {e}"))?;
-            let kid = header.kid.as_deref().unwrap_or("");
-
-            let keys = jwks_json["keys"]
-                .as_array()
-                .ok_or_else(|| anyhow::anyhow!("JWKS has no keys array"))?;
-            let key = jwk_matching_kid(keys, kid)?;
-
-            let n_b64 = key["n"]
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("JWK missing n"))?;
-            let e_b64 = key["e"]
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("JWK missing e"))?;
-            let decoding_key = jsonwebtoken::DecodingKey::from_rsa_components(n_b64, e_b64)
-                .map_err(|e| anyhow::anyhow!("decoding key: {e}"))?;
-
-            let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
-            validation.set_required_spec_claims(&["exp", "sub"]);
-            validation.set_issuer(&[hanko_issuer.as_str()]);
-
-            #[derive(Debug, Deserialize)]
-            struct HankoClaims {
-                sub: String,
-                #[serde(default)]
-                email: Option<String>,
-            }
-
-            let token_data = jsonwebtoken::decode::<HankoClaims>(&jtw, &decoding_key, &validation)
-                .map_err(|e| anyhow::anyhow!("JWT verification: {e}"))?;
-
-            let hanko_user_id = token_data.claims.sub.trim().to_string();
-            if hanko_user_id.is_empty() {
-                bail!("invalid Hanko session: missing sub");
-            }
-
-            let email = nonempty_trimmed_lower(token_data.claims.email.as_deref());
-            Ok((hanko_user_id, email))
-        })
-        .await
-        .map_err(|e| ApiError::Internal(format!("hanko session task: {e}")))?
-        .map_err(|_| ApiError::Unauthorized("invalid or expired session".into()))?;
-
-    let mut conn = state
-        .db
-        .acquire()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-    let account_id = match account_profile::lookup_account_by_hanko(&mut conn, &hanko_user_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-    {
-        Some(id) => id,
-        None => {
-            let account_id = uuid::Uuid::new_v4().to_string();
-            let username = username_from_hanko_email_or_id(email.as_deref(), &hanko_user_id);
-            let username = unique_hanko_username(&mut conn, username, &account_id)
-                .await
-                .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-            account_profile::insert_account(
-                &mut conn,
-                &account_id,
-                &username,
-                None, // Hanko accounts have no local password
-                None, // Display name is set later in onboarding
-                Some(&hanko_user_id),
-                false,
-            )
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-            if let Some(email) = &email {
-                let _ = account_profile::upsert_account_email(&mut conn, &account_id, email, true)
-                    .await;
-            }
-
-            account_id
-        }
-    };
 
     let response = AuthTokenResponse::for_existing_account(&mut conn, account_id)
         .await
@@ -1213,7 +973,6 @@ mod tests {
             "alice",
             Some(&old_hash),
             None,
-            None,
             false,
         )
         .await
@@ -1223,7 +982,6 @@ mod tests {
             OTHER_ACCOUNT,
             "bob",
             Some(&old_hash),
-            None,
             None,
             false,
         )
@@ -1461,7 +1219,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let data_dir = tmp.path().to_path_buf();
         let (_dir, mut conn) = test_conn().await;
-        account_profile::insert_account(&mut conn, TEST_ACCOUNT, "alice", None, None, None, false)
+        account_profile::insert_account(&mut conn, TEST_ACCOUNT, "alice", None, None, false)
             .await
             .unwrap();
         let token = session_tokens::insert_account_session_token(&mut conn, TEST_ACCOUNT)
@@ -1495,7 +1253,6 @@ mod tests {
             &mut conn,
             account_profile::DEMO_ACCOUNT_ID,
             "demo",
-            None,
             None,
             None,
             true,
@@ -1567,6 +1324,21 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn insert_account_takes_no_hanko_id() {
+        let (_dir, mut conn) = test_conn().await;
+        account_profile::insert_account(&mut conn, TEST_ACCOUNT, "alice", None, None, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            account_profile::username_for_account(&mut conn, TEST_ACCOUNT)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("alice")
+        );
+    }
+
     #[test]
     fn hosted_demo_login_rejected_is_unauthorized() {
         match hosted_demo_login_rejected() {
@@ -1591,7 +1363,6 @@ mod tests {
                 &mut conn,
                 account_profile::DEMO_ACCOUNT_ID,
                 "demo",
-                None,
                 None,
                 None,
                 true,

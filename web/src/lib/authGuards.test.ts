@@ -2,24 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_TAURI_VAULT_URL,
   initialLoginServerUrl,
-  isAuthMode,
   isTryDemoEnabled,
   parsePersistedAuth,
   vaultDisplayHost,
 } from "./authGuards.ts";
-
-describe("isAuthMode", () => {
-  it("accepts hanko and local", () => {
-    expect(isAuthMode("hanko")).toBe(true);
-    expect(isAuthMode("local")).toBe(true);
-  });
-
-  it("rejects other values", () => {
-    expect(isAuthMode(null)).toBe(false);
-    expect(isAuthMode("oauth")).toBe(false);
-    expect(isAuthMode(1)).toBe(false);
-  });
-});
 
 describe("initialLoginServerUrl", () => {
   it("defaults the desktop app to IPv4 loopback", () => {

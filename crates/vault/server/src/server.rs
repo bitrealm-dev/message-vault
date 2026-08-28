@@ -25,7 +25,7 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::services::ServeDir;
 
 use crate::asset_uploads;
-use crate::config::{AuthMode, Config, GuestDemoSettings};
+use crate::config::{Config, GuestDemoSettings};
 use crate::db::account_profile;
 use crate::db::api_tokens;
 use crate::db::engine::{self, DbEngine};
@@ -302,13 +302,11 @@ fn build_cors_layer(origins: &[String]) -> CorsLayer {
         .allow_headers(AllowHeaders::mirror_request())
 }
 
-fn limited_auth_router(mode: AuthMode) -> (Router<AppState>, utoipa::openapi::OpenApi) {
-    let (router, spec) =
-        crate::openapi::auth_public_openapi(crate::openapi::SpecAuth::Live(mode)).split_for_parts();
+fn limited_auth_router() -> (Router<AppState>, utoipa::openapi::OpenApi) {
+    let (router, spec) = crate::openapi::auth_public_openapi().split_for_parts();
     (
-        router
-            // Auth JSON is tiny; keep a tight limit so Argon2/JWKS abuse cannot ship 512 MiB bodies.
-            .layer(RequestBodyLimitLayer::new(32 * 1024)),
+        // Auth JSON is tiny; keep a tight limit so Argon2 abuse cannot ship 512 MiB bodies.
+        router.layer(RequestBodyLimitLayer::new(32 * 1024)),
         spec,
     )
 }
@@ -326,8 +324,7 @@ pub(crate) fn http_app(state: AppState) -> Router {
         .as_ref()
         .map(|s| s.cors_origins.clone())
         .unwrap_or_default();
-    let mode = AuthMode::from_env();
-    let (auth_small, mut spec) = limited_auth_router(mode);
+    let (auth_small, mut spec) = limited_auth_router();
     let (doc_router, rest) = crate::openapi::api_openapi().split_for_parts();
     spec.merge(rest);
 
@@ -420,7 +417,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     eprintln!("message-vault-server serve listening on http://{bind}");
     eprintln!("  GET  /health");
-    eprintln!("  GET  /v1/auth/mode     (unauthenticated — returns hanko or local)");
+    eprintln!("  GET  /v1/auth/mode     (unauthenticated — always local)");
     eprintln!("  GET  /v1/auth/check   (Bearer session token or API token)");
     eprintln!("  GET  /v1/export/messages?q=&limit=&cursor=&account=  (read-only export)");
     eprintln!("  GET  /v1/export/messages/count?q=&account=&source=  (export match counts)");
@@ -795,8 +792,8 @@ mod tests {
     use std::sync::{Arc, Mutex as StdMutex};
     use tempfile::TempDir;
 
-    fn auth_public_router(mode: AuthMode) -> Router<AppState> {
-        limited_auth_router(mode).0
+    fn auth_public_router() -> Router<AppState> {
+        limited_auth_router().0
     }
 
     #[test]
@@ -999,9 +996,9 @@ mod tests {
         assert!(v["openapi"].as_str().unwrap().starts_with("3."));
     }
 
-    async fn auth_route_status(mode: AuthMode, path: &str) -> StatusCode {
+    async fn auth_route_status(path: &str) -> StatusCode {
         let (_tmp, state, _token, _import_id) = test_state().await;
-        let app = auth_public_router(mode).with_state(state);
+        let app = auth_public_router().with_state(state);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
@@ -1018,41 +1015,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auth_mode_includes_try_demo_flag() {
-        let (_tmp, state, _token, _import_id) = test_state().await;
-        let Json(value) = crate::auth::auth_mode_handler(State(state)).await;
-        assert!(!value.try_demo);
-        assert!(!value.mode.is_empty());
+    async fn auth_mode_reports_local() {
+        let Json(value) = crate::auth::auth_mode_handler().await;
+        assert_eq!(value.mode, "local");
     }
 
     #[tokio::test]
     async fn try_demo_route_exists() {
         assert_ne!(
-            auth_route_status(AuthMode::Local, "/v1/auth/try-demo").await,
-            StatusCode::NOT_FOUND
-        );
-        assert_ne!(
-            auth_route_status(AuthMode::Hanko, "/v1/auth/try-demo").await,
+            auth_route_status("/v1/auth/try-demo").await,
             StatusCode::NOT_FOUND
         );
     }
 
     #[tokio::test]
-    async fn hanko_router_excludes_local_auth_routes() {
+    async fn local_auth_routes_exist() {
         for path in ["/v1/auth/register", "/v1/auth/login"] {
-            assert_ne!(
-                auth_route_status(AuthMode::Local, path).await,
-                StatusCode::NOT_FOUND
-            );
-            assert_eq!(
-                auth_route_status(AuthMode::Hanko, path).await,
-                StatusCode::NOT_FOUND
-            );
+            assert_ne!(auth_route_status(path).await, StatusCode::NOT_FOUND);
         }
-        assert_ne!(
-            auth_route_status(AuthMode::Hanko, "/v1/auth/hanko/session").await,
-            StatusCode::NOT_FOUND
-        );
     }
 
     async fn guest_test_state() -> (TempDir, AppState, String) {

@@ -8,14 +8,13 @@ use utoipa::{Modify, OpenApi};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
-use crate::config::AuthMode;
 use crate::server::AppState;
 
 #[derive(OpenApi)]
 #[openapi(
     info(
         title = "Message Vault HTTP API",
-        description = "HTTP API for a local Message Vault. Bearer session tokens come from login. API tokens come from Settings → Account and can import and export only. Register and login exist when VAULT_AUTH is local (the default). POST /v1/auth/hanko/session exists for Hanko sign-in.",
+        description = "HTTP API for a local Message Vault. Bearer session tokens come from login. API tokens come from Settings → Account.",
         license(
             name = "Fair Core License 1.0 (ALv2 future)",
             url = "https://github.com/bitrealm-io/message-vault/blob/main/LICENSE.md"
@@ -50,32 +49,12 @@ impl Modify for BearerAddon {
     }
 }
 
-/// Which auth endpoints the OpenAPI document includes.
-pub enum SpecAuth {
-    /// Auth endpoints enabled by the running auth mode; local register/login
-    /// only when [`AuthMode::Local`].
-    Live(AuthMode),
-    /// Every auth endpoint, including local register/login regardless of mode.
-    Full,
-}
-
-/// Unauthenticated auth JSON (Hanko, Try it, and Local register/login).
-pub fn auth_public_openapi(auth: SpecAuth) -> OpenApiRouter<AppState> {
-    let mut router = OpenApiRouter::with_openapi(ApiDoc::openapi())
-        .routes(routes!(crate::auth::hanko_session_handler))
-        .routes(routes!(crate::auth::try_demo_handler));
-
-    let include_local = match auth {
-        SpecAuth::Full => true,
-        SpecAuth::Live(AuthMode::Local) => true,
-        SpecAuth::Live(AuthMode::Hanko) => false,
-    };
-    if include_local {
-        router = router
-            .routes(routes!(crate::auth::register_handler))
-            .routes(routes!(crate::auth::login_handler));
-    }
-    router
+/// Unauthenticated auth JSON (Try it, and register and login).
+pub fn auth_public_openapi() -> OpenApiRouter<AppState> {
+    OpenApiRouter::with_openapi(ApiDoc::openapi())
+        .routes(routes!(crate::auth::try_demo_handler))
+        .routes(routes!(crate::auth::register_handler))
+        .routes(routes!(crate::auth::login_handler))
 }
 
 /// Health, session-backed auth, account settings, and browse routes.
@@ -150,13 +129,13 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
 #[cfg(test)]
 /// The full OpenAPI router: public auth endpoints for `auth` plus the
 /// session-backed API routes.
-pub fn openapi_router(auth: SpecAuth) -> OpenApiRouter<AppState> {
-    auth_public_openapi(auth).merge(api_openapi())
+pub fn openapi_router() -> OpenApiRouter<AppState> {
+    auth_public_openapi().merge(api_openapi())
 }
 
 /// Pretty OpenAPI JSON. Same string the CLI writes and the stale-spec test compares.
 pub fn dump_openapi_json() -> String {
-    let (_a, mut spec) = auth_public_openapi(SpecAuth::Full).split_for_parts();
+    let (_a, mut spec) = auth_public_openapi().split_for_parts();
     let (_b, rest) = api_openapi().split_for_parts();
     spec.merge(rest);
     serde_json::to_string_pretty(&spec).expect("OpenAPI document serializes to JSON")
@@ -181,8 +160,7 @@ pub fn write_openapi(path: Option<&Path>) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SpecAuth, dump_openapi_json, openapi_router};
-    use crate::config::AuthMode;
+    use super::dump_openapi_json;
 
     #[test]
     fn dump_is_openapi_3_with_crate_version() {
@@ -220,7 +198,6 @@ mod tests {
         for p in [
             "/v1/auth/register",
             "/v1/auth/login",
-            "/v1/auth/hanko/session",
             "/v1/auth/try-demo",
             "/v1/auth/mode",
             "/v1/auth/check",
@@ -307,16 +284,6 @@ mod tests {
             put.get("application/octet-stream").is_some(),
             "PUT asset must be raw bytes"
         );
-    }
-
-    #[test]
-    fn live_hanko_spec_omits_register_login() {
-        let (_router, api) = openapi_router(SpecAuth::Live(AuthMode::Hanko)).split_for_parts();
-        let v = serde_json::to_value(&api).unwrap();
-        let paths = v["paths"].as_object().unwrap();
-        assert!(!paths.contains_key("/v1/auth/register"));
-        assert!(!paths.contains_key("/v1/auth/login"));
-        assert!(paths.contains_key("/v1/auth/hanko/session"));
     }
 
     #[test]

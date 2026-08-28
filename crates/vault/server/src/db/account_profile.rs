@@ -296,19 +296,6 @@ pub async fn delete_all_messages_for_account(
     })
 }
 
-/// Look up account id by Hanko user id. Returns None if no account is linked.
-pub async fn lookup_account_by_hanko(
-    conn: &mut AnyConnection,
-    hanko_user_id: &str,
-) -> Result<Option<String>> {
-    schema::ensure_accounts_schema(conn).await?;
-    let id: Option<String> = sqlx::query_scalar("SELECT id FROM accounts WHERE hanko_user_id = $1")
-        .bind(hanko_user_id)
-        .fetch_optional(&mut *conn)
-        .await?;
-    Ok(id)
-}
-
 /// Load the preferred_name for an account, if set.
 pub async fn load_preferred_name(
     conn: &mut AnyConnection,
@@ -332,19 +319,17 @@ pub async fn insert_account(
     username: &str,
     password_hash: Option<&str>,
     preferred_name: Option<&str>,
-    hanko_user_id: Option<&str>,
     read_only: bool,
 ) -> Result<()> {
     schema::ensure_accounts_schema(conn).await?;
     sqlx::query(
-        "INSERT INTO accounts (id, username, read_only, password_hash, preferred_name, hanko_user_id) VALUES ($1, $2, $3, $4, $5, $6)",
+        "INSERT INTO accounts (id, username, read_only, password_hash, preferred_name) VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(id)
     .bind(username)
     .bind(read_only as i32)
     .bind(password_hash)
     .bind(preferred_name)
-    .bind(hanko_user_id)
     .execute(&mut *conn)
     .await
     .with_context(|| format!("insert account {username}"))?;

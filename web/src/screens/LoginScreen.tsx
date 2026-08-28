@@ -9,11 +9,6 @@ import { probeTimeoutSignal, type VaultHealthStatus } from "../lib/vaultHealth";
 import LocalAuthTabs from "./auth/LocalAuthTabs";
 import VaultLine, { type VaultConnection } from "./auth/VaultLine";
 
-interface AuthModeResponse {
-  mode: string;
-  try_demo?: boolean;
-}
-
 /** Placeholder shaped like the form, so the card does not flicker into shape. */
 function FormSkeleton({ dimmed }: { dimmed: boolean }) {
   return (
@@ -51,9 +46,7 @@ export default function LoginScreen() {
       setState("connecting");
       setBaseUrl(trimmed);
       try {
-        // Hanko has been removed from this product; whatever the vault
-        // reports, the only mode this card knows how to render is local.
-        await apiClient.get<AuthModeResponse>("/v1/auth/mode", {
+        await apiClient.get("/v1/auth/mode", {
           signal: probeTimeoutSignal(),
         });
         setAddress(trimmed);

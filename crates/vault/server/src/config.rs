@@ -1,12 +1,12 @@
 //! Config file model ([`Config`]) plus path/source validation and the
-//! environment-driven settings ([`AuthMode`], [`GuestDemoSettings`]).
+//! environment-driven settings ([`GuestDemoSettings`]).
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use message_ir_format::UNSAFE_ATTACHMENT_PATH_PREFIX;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 /// Complete server configuration, loaded from a TOML file.
 #[derive(Debug, Clone, Deserialize)]
@@ -249,31 +249,6 @@ impl Config {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-/// Sign-in mechanism: local account passwords or Hanko passkeys.
-pub enum AuthMode {
-    /// Hanko passkey sign-in via `POST /v1/auth/hanko/session`.
-    Hanko,
-    /// Local vault account login (username and password).
-    Local,
-}
-
-impl AuthMode {
-    /// Auth mode from the `VAULT_AUTH` environment variable: `hanko` when set,
-    /// otherwise `local`.
-    pub fn from_env() -> Self {
-        Self::parse(&std::env::var("VAULT_AUTH").unwrap_or_default())
-    }
-
-    fn parse(raw: &str) -> Self {
-        match raw.to_lowercase().as_str() {
-            "hanko" => AuthMode::Hanko,
-            _ => AuthMode::Local,
-        }
-    }
-}
-
 /// Hosted Try it demo settings, read from `GUEST_DEMO_POOL`,
 /// `GUEST_POOL_MIN`, `GUEST_POOL_MAX`, and `GUEST_SESSION_SECS`.
 #[derive(Debug, Clone, Copy)]
@@ -379,20 +354,6 @@ mod tests {
         let joined = resolve_under_root(&root, "attachments/a.jpg").unwrap();
         assert_eq!(joined, root.join("attachments/a.jpg"));
         assert!(resolve_under_root(&root, "../outside").is_err());
-    }
-
-    #[test]
-    fn auth_mode_parse_hanko_case_insensitive() {
-        assert_eq!(AuthMode::parse("hanko"), AuthMode::Hanko);
-        assert_eq!(AuthMode::parse("Hanko"), AuthMode::Hanko);
-        assert_eq!(AuthMode::parse("HANKO"), AuthMode::Hanko);
-    }
-
-    #[test]
-    fn auth_mode_parse_defaults_to_local() {
-        assert_eq!(AuthMode::parse(""), AuthMode::Local);
-        assert_eq!(AuthMode::parse("local"), AuthMode::Local);
-        assert_eq!(AuthMode::parse("anything-else"), AuthMode::Local);
     }
 
     #[test]

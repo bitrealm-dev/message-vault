@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Message Vault HTTP API",
-    "description": "HTTP API for a local Message Vault. Bearer session tokens come from login. API tokens come from Settings → Account and can import and export only. Register and login exist when VAULT_AUTH is local (the default). POST /v1/auth/hanko/session exists for Hanko sign-in.",
+    "description": "HTTP API for a local Message Vault. Bearer session tokens come from login. API tokens come from Settings → Account.",
     "license": {
       "name": "Fair Core License 1.0 (ALv2 future)",
       "url": "https://github.com/bitrealm-io/message-vault/blob/main/LICENSE.md"
@@ -1355,57 +1355,6 @@
         ]
       }
     },
-    "/v1/auth/hanko/session": {
-      "post": {
-        "tags": [
-          "Auth"
-        ],
-        "summary": "Verify a Hanko session JSON Web Token and exchange it for a vault session\ntoken.",
-        "operationId": "hanko_session_handler",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/HankoSessionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Session issued",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AuthTokenResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid input",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/auth/login": {
       "post": {
         "tags": [
@@ -1508,7 +1457,6 @@
         "tags": [
           "Auth"
         ],
-        "summary": "Returns the server's configured authentication mode so clients\ncan render the correct login form before authenticating.",
         "operationId": "auth_mode_handler",
         "responses": {
           "200": {
@@ -3845,23 +3793,14 @@
       },
       "AuthModeResponse": {
         "type": "object",
-        "description": "Sign-in mode and Hanko URL so clients can render the right login form.",
+        "description": "Sign-in mode for clients. Retained only as the sign-in card's reachability\nprobe until it moves to GET /health; see Task 7.",
         "required": [
-          "mode",
-          "try_demo"
+          "mode"
         ],
         "properties": {
-          "hanko_api_url": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "mode": {
-            "type": "string"
-          },
-          "try_demo": {
-            "type": "boolean"
+            "type": "string",
+            "description": "Always \"local\". The vault has one sign-in mechanism."
           }
         }
       },
@@ -5421,19 +5360,6 @@
               "null"
             ],
             "description": "Reactor handle for incoming reactions."
-          }
-        }
-      },
-      "HankoSessionRequest": {
-        "type": "object",
-        "description": "A raw Hanko session JWT from the client's onSessionCreated callback.",
-        "required": [
-          "hanko_jwt"
-        ],
-        "properties": {
-          "hanko_jwt": {
-            "type": "string",
-            "description": "The raw Hanko session JSON Web Token from the client-side\n`onSessionCreated` callback."
           }
         }
       },
