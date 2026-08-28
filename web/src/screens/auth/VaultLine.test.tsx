@@ -38,6 +38,11 @@ describe("VaultLine", () => {
     expect(screen.queryByRole("button", { name: "Change" })).not.toBeInTheDocument();
   });
 
+  it("announces the connection status word politely", () => {
+    renderLine();
+    expect(screen.getByText("connected")).toHaveAttribute("aria-live", "polite");
+  });
+
   it("opens the address field when Change is pressed", async () => {
     const user = userEvent.setup();
     const props = renderLine();

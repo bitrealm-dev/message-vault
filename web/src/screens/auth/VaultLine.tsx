@@ -55,7 +55,9 @@ export default function VaultLine({
       <div className="flex items-center gap-1.5 text-[0.75rem] text-muted">
         <span className="min-w-0 truncate font-medium text-text">{host}</span>
         <span aria-hidden="true">·</span>
-        <span className={STATUS_COLOR[state]}>{STATUS_WORD[state]}</span>
+        <span className={STATUS_COLOR[state]} aria-live="polite">
+          {STATUS_WORD[state]}
+        </span>
         <span className="ml-auto flex items-center gap-2">
           {open ? <HealthDot status={health} /> : null}
           {state === "connected" ? (
