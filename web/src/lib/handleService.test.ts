@@ -4,6 +4,7 @@ import {
   formatHandleServiceLabel,
   HANDLE_SERVICE_OPTIONS,
   HANDLE_SERVICES,
+  handlePlaceholder,
   handleServiceSelectValue,
   inferService,
 } from "./handleService";
@@ -38,5 +39,23 @@ describe("handleService", () => {
   it("maps inferred services onto contact-identity select values", () => {
     expect(handleServiceSelectValue("x", "whatsapp")).toBe("whatsapp");
     expect(handleServiceSelectValue("a@b.com", null)).toBe("phone");
+  });
+});
+
+describe("handlePlaceholder", () => {
+  it("gives each service its own example", () => {
+    expect(handlePlaceholder("phone")).toBe("+1 555-123-4567");
+    expect(handlePlaceholder("email")).toBe("you@example.com");
+    expect(handlePlaceholder("whatsapp")).toBe("+1 555-123-4567");
+  });
+
+  it("gives every option in the picker an example", () => {
+    for (const option of HANDLE_SERVICE_OPTIONS) {
+      expect(option.placeholder.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("calls a phone number what the contact drawer calls it", () => {
+    expect(HANDLE_SERVICE_OPTIONS.find((o) => o.value === "phone")?.label).toBe("Text message");
   });
 });

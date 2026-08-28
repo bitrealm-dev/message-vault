@@ -15,12 +15,25 @@ export const CONTACT_IDENTITY_SERVICES = [
   "whatsapp",
 ] as const satisfies readonly ContactIdentityService[];
 
-/** Full service list for setup and account profile handles. */
+/**
+ * Services offered on setup and account profile, each with the example shown
+ * in an empty field. The example lives next to the service so adding one means
+ * adding its example on the same line — there is no second place to forget.
+ */
 export const HANDLE_SERVICE_OPTIONS = [
-  { value: "phone", label: "Phone" },
-  { value: "email", label: "Email" },
-  { value: "whatsapp", label: "WhatsApp" },
-] as const satisfies ReadonlyArray<{ value: HandleService; label: string }>;
+  { value: "phone", label: "Text message", placeholder: "+1 555-123-4567" },
+  { value: "email", label: "Email", placeholder: "you@example.com" },
+  { value: "whatsapp", label: "WhatsApp", placeholder: "+1 555-123-4567" },
+] as const satisfies ReadonlyArray<{
+  value: HandleService;
+  label: string;
+  placeholder: string;
+}>;
+
+/** Example shown in an empty value field for `service`. */
+export function handlePlaceholder(service: HandleService): string {
+  return HANDLE_SERVICE_OPTIONS.find((option) => option.value === service)?.placeholder ?? "";
+}
 
 /** Contact drawer "Add identity" picker (labels match the handles table). */
 export const CONTACT_IDENTITY_SERVICE_OPTIONS = [
