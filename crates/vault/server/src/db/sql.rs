@@ -10,6 +10,35 @@ use sqlx::any::AnyRow;
 /// Max ids per `IN (...)` bind list (SQLite's default variable limit is 999).
 pub const SQLITE_IN_CHUNK: usize = 400;
 
+/// SQLite default `SQLITE_MAX_VARIABLE_NUMBER`. Multi-row `INSERT` chunks
+/// must keep `columns × rows` at or below this.
+pub const SQLITE_MAX_VARIABLES: usize = 999;
+
+/// Largest row count whose binds fit in one statement (`columns × rows ≤ 999`).
+pub fn max_rows_for_bind_limit(columns: usize) -> usize {
+    if columns == 0 {
+        0
+    } else {
+        SQLITE_MAX_VARIABLES / columns
+    }
+}
+
+/// Hand-numbered `VALUES` tuples: `($1,$2,$3),($4,$5,$6)` for `row_count` rows
+/// of `col_count` columns. sqlx Any does no placeholder rewriting.
+pub fn values_tuples(row_count: usize, col_count: usize) -> String {
+    (0..row_count)
+        .map(|row| {
+            let start = row * col_count + 1;
+            let inner = (start..start + col_count)
+                .map(|i| format!("${i}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("({inner})")
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 /// Comma-separated hand-numbered `$N` placeholders for an `IN (...)` list of
 /// length `n`, starting at 1-based index `start` (the index of the first
 /// placeholder in the full statement). sqlx Any does no placeholder rewriting,
@@ -81,4 +110,24 @@ pub async fn fold_in_id_chunks<T, E>(
         }
     }
     Ok(map)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn max_rows_for_bind_limit_respects_sqlite_999() {
+        assert_eq!(max_rows_for_bind_limit(18), 55);
+        assert_eq!(max_rows_for_bind_limit(10), 99);
+        assert_eq!(max_rows_for_bind_limit(6), 166);
+        assert_eq!(max_rows_for_bind_limit(0), 0);
+    }
+
+    #[test]
+    fn values_tuples_numbers_placeholders_across_rows() {
+        assert_eq!(values_tuples(2, 3), "($1,$2,$3),($4,$5,$6)");
+        assert_eq!(values_tuples(1, 2), "($1,$2)");
+        assert_eq!(values_tuples(0, 3), "");
+    }
 }

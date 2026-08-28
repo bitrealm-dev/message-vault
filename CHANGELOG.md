@@ -18,6 +18,7 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ### Changed
 
+- 2026-08-27: Import writes staging messages, attachments, and tapbacks in multi-row chunks and reuses sender handle ids for the rest of the import, so JSONL staging is no longer one database call per row.
 - 2026-08-27: Import promote runs `ANALYZE` on `messages`, `attachments`, and `tapbacks` before it opens the write transaction, so a later source can use the guid index. `--reset-demo` runs `VACUUM` once after all three sources, dedupe, and media. Analyze or vacuum failure is a warning; the import still succeeds.
 - 2026-08-27: Import promote hashes content keys on a thread pool and writes them in multi-row batches. The later dedupe pass only fills missing keys instead of hashing every message again. Server logs print hash and write progress during a long fill.
 - 2026-08-27: Desktop Import shows four steps: parse the backup, copy or convert attachments (file count and size), prepare conversation files, then upload. Attachment work no longer appears as an instant second step. Import history stores `attachments_ms` and `prepare_ms` instead of `convert_ms` (vault schema 2; existing databases are rebuilt empty).

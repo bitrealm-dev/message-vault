@@ -7,7 +7,9 @@ use sqlx::AnyConnection;
 use super::ImportStats;
 use super::staging::nonempty_str;
 use crate::db::contacts;
-use crate::db::handles::{infer_handle_type_from_shape as infer_handle_type, upsert_handle_row};
+use crate::db::handles::{
+    HandleIdCache, infer_handle_type_from_shape as infer_handle_type, upsert_handle_row_cached,
+};
 
 /// How account contacts supply participant display names during import.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -41,6 +43,7 @@ impl ContactNameMode {
 
 pub(super) async fn resolve_incoming_sender_handle(
     tx: &mut AnyConnection,
+    cache: &mut HandleIdCache,
     account_id: &str,
     is_from_me: bool,
     sender: Option<&str>,
@@ -55,12 +58,15 @@ pub(super) async fn resolve_incoming_sender_handle(
         return Ok(None);
     };
     let handle_type = handle_type.unwrap_or_else(|| infer_handle_type(sender));
-    let (handle_id, flagged) =
-        upsert_handle_row(tx, account_id, sender, handle_type, Some(platform)).await?;
+    let (handle_id, flagged, cached) =
+        upsert_handle_row_cached(tx, cache, account_id, sender, handle_type, Some(platform))
+            .await?;
     if flagged {
         stats.phones_needing_review += 1;
     }
-    let _ = ensure_sibling_contact_link(tx, account_id, handle_id).await?;
+    if !cached {
+        let _ = ensure_sibling_contact_link(tx, account_id, handle_id).await?;
+    }
     Ok(Some(handle_id))
 }
 

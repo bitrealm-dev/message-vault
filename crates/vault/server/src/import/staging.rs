@@ -1,15 +1,20 @@
 //! Stage message-ir JSONL rows into the temporary import tables.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use message_ir::{HandleService, HandleType};
 use sqlx::AnyConnection;
+use sqlx::Row;
 
 use crate::assets::{self, AssetStats, StoredAsset};
 use crate::config::validate_source_id;
-use crate::db::handles::{infer_handle_type_from_shape as infer_handle_type, upsert_handle_row};
+use crate::db::handles::{
+    HandleIdCache, infer_handle_type_from_shape as infer_handle_type, upsert_handle_row_cached,
+};
+use crate::db::sql::{max_rows_for_bind_limit, values_tuples};
 use crate::import_media::{self, MediaMode};
 use crate::jsonl;
 use crate::models::{AttachmentRecord, ExportRecord, MessageRecord, clean_body};
@@ -170,12 +175,13 @@ fn prepare_attachments(
     Ok(prepared)
 }
 
-/// Per-row insert statements for one import run. sqlx Any cannot prepare ahead
-/// of time (no `Statement` handle), so the SQL lives as module constants and
-/// every row runs its own `sqlx::query` against the caller's connection.
+/// Per-import insert state. Message / attachment / tapback rows flush in
+/// multi-row chunks. Handle ids are remembered so the same sender is not
+/// looked up on every message.
 pub(super) struct StagingInserts {
     account_id: String,
     import_id: Option<i64>,
+    handles: HandleIdCache,
 }
 
 const INSERT_CONVERSATION: &str = r#"
@@ -190,29 +196,35 @@ INSERT INTO staging_participants (conversation_id, handle_id, contact_id, name_a
 VALUES ($1, $2, $3, $4)
 "#;
 
-const INSERT_MESSAGE: &str = r#"
+const INSERT_MESSAGE_PREFIX: &str = r#"
 INSERT INTO staging_messages (
     conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
     sender_handle_id, service, subject, body, is_announcement, is_reply,
     thread_originator_guid, thread_originator_part, num_replies, sort_order, import_id
-) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
-)
-ON CONFLICT DO NOTHING
-RETURNING id
+) VALUES
 "#;
 
-const INSERT_ATTACHMENT: &str = r#"
+/// Bind counts must stay in lockstep with the `INSERT` column lists above.
+const MESSAGE_BIND_COLUMNS: usize = 18;
+const ATTACHMENT_BIND_COLUMNS: usize = 10;
+const TAPBACK_BIND_COLUMNS: usize = 6;
+
+const INSERT_MESSAGE_SUFFIX: &str = r#"
+ON CONFLICT DO NOTHING
+RETURNING id, sort_order
+"#;
+
+const INSERT_ATTACHMENT_PREFIX: &str = r#"
 INSERT INTO staging_attachments (
     message_id, path, original_name, mime_type, is_sticker, transcription,
     sha256, assets_path, size_bytes, missing_reason
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+) VALUES
 "#;
 
-const INSERT_TAPBACK: &str = r#"
+const INSERT_TAPBACK_PREFIX: &str = r#"
 INSERT INTO staging_tapbacks (
     message_id, part_index, kind, emoji, is_from_me, sender_handle_id
-) VALUES ($1, $2, $3, $4, $5, $6)
+) VALUES
 "#;
 
 impl StagingInserts {
@@ -220,6 +232,7 @@ impl StagingInserts {
         Self {
             account_id: account_id.to_string(),
             import_id,
+            handles: HandleIdCache::new(),
         }
     }
 }
@@ -470,8 +483,9 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
 
     // Conversation identity: the chat handle, typed from its shape (Phone for
     // SMS/iMessage/WhatsApp numbers, Email for `@`, Other for group ids).
-    let (chat_handle_id, flagged) = upsert_handle_row(
+    let (chat_handle_id, flagged, cached) = upsert_handle_row_cached(
         tx,
+        &mut stmts.handles,
         &stmts.account_id,
         &chat_identifier,
         infer_handle_type(&chat_identifier),
@@ -481,7 +495,9 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
     if flagged {
         stats.phones_needing_review += 1;
     }
-    let _ = ensure_sibling_contact_link(tx, &stmts.account_id, chat_handle_id).await?;
+    if !cached {
+        let _ = ensure_sibling_contact_link(tx, &stmts.account_id, chat_handle_id).await?;
+    }
 
     let conversation_id: i64 = sqlx::query_scalar(INSERT_CONVERSATION)
         .bind(&stmts.account_id)
@@ -497,8 +513,9 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
     for (handle, name_alias, handle_type) in kept_participants {
         // Prefer the source-provided type; fall back to shape inference.
         let handle_type = handle_type.unwrap_or_else(|| infer_handle_type(&handle));
-        let (handle_id, flagged) = upsert_handle_row(
+        let (handle_id, flagged, _cached) = upsert_handle_row_cached(
             tx,
+            &mut stmts.handles,
             &stmts.account_id,
             &handle,
             handle_type,
@@ -526,6 +543,7 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
         stats.participants += 1;
     }
 
+    let mut pending_rows = Vec::with_capacity(prepared_messages.len());
     for (sort_order, (msg, attachments)) in prepared_messages.into_iter().enumerate() {
         let body = if msg.is_announcement {
             clean_body(msg.announcement.as_deref()).or_else(|| clean_body(msg.text.as_deref()))
@@ -533,7 +551,6 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
             clean_body(msg.text.as_deref())
         };
 
-        // Sender identity: platform from message transport (whatsapp vs phone).
         let sender_platform = msg
             .service
             .as_deref()
@@ -541,6 +558,7 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
             .unwrap_or(platform);
         let sender_handle_id = resolve_incoming_sender_handle(
             tx,
+            &mut stmts.handles,
             &stmts.account_id,
             msg.is_from_me,
             msg.sender.as_deref(),
@@ -549,98 +567,241 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
             &mut stats,
         )
         .await?;
+        pending_rows.push(PendingStagingMessage {
+            msg,
+            attachments,
+            sender_handle_id,
+            sender_platform: sender_platform.as_str().to_string(),
+            body,
+            sort_order: sort_order as i64,
+        });
+    }
 
-        let inserted_id: Option<i64> = sqlx::query_scalar(INSERT_MESSAGE)
+    let msg_chunk = max_rows_for_bind_limit(MESSAGE_BIND_COLUMNS).max(1);
+    for chunk in pending_rows.chunks(msg_chunk) {
+        flush_staging_message_chunk(
+            tx,
+            stmts,
+            &mut stats,
+            conversation_id,
+            &source,
+            &assets_dir,
+            chunk,
+        )
+        .await?;
+    }
+
+    Ok(stats)
+}
+
+struct PendingStagingMessage {
+    msg: MessageRecord,
+    attachments: Vec<PreparedAttachment>,
+    sender_handle_id: Option<i64>,
+    sender_platform: String,
+    body: Option<String>,
+    sort_order: i64,
+}
+
+struct PendingAttachmentRow {
+    message_id: i64,
+    path: Option<String>,
+    original_name: Option<String>,
+    mime_type: Option<String>,
+    is_sticker: i64,
+    transcription: Option<String>,
+    sha256: Option<String>,
+    assets_path: Option<String>,
+    size_bytes: Option<i64>,
+    missing_reason: Option<String>,
+}
+
+struct PendingTapbackRow {
+    message_id: i64,
+    part_index: i64,
+    kind: String,
+    emoji: Option<String>,
+    is_from_me: i64,
+    sender_handle_id: Option<i64>,
+}
+
+async fn flush_staging_message_chunk(
+    tx: &mut AnyConnection,
+    stmts: &mut StagingInserts,
+    stats: &mut ImportStats,
+    conversation_id: i64,
+    source: &str,
+    assets_dir: &Path,
+    chunk: &[PendingStagingMessage],
+) -> Result<()> {
+    if chunk.is_empty() {
+        return Ok(());
+    }
+    let sql = format!(
+        "{INSERT_MESSAGE_PREFIX} {} {INSERT_MESSAGE_SUFFIX}",
+        values_tuples(chunk.len(), MESSAGE_BIND_COLUMNS)
+    );
+    let mut q = sqlx::query(&sql);
+    for row in chunk {
+        q = q
             .bind(conversation_id)
             .bind(&stmts.account_id)
-            .bind(&source)
-            .bind(msg.guid)
-            .bind(msg.timestamp)
-            .bind(msg.timestamp_utc)
-            .bind(msg.is_from_me as i64)
-            .bind(sender_handle_id)
-            .bind(msg.service)
-            .bind(msg.subject)
-            .bind(body)
-            .bind(msg.is_announcement as i64)
-            .bind(msg.is_reply as i64)
-            .bind(msg.thread_originator_guid)
-            .bind(msg.thread_originator_part)
-            .bind(msg.num_replies)
-            .bind(sort_order as i64)
-            .bind(stmts.import_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+            .bind(source)
+            .bind(row.msg.guid.as_deref())
+            .bind(&row.msg.timestamp)
+            .bind(row.msg.timestamp_utc.as_deref())
+            .bind(row.msg.is_from_me as i64)
+            .bind(row.sender_handle_id)
+            .bind(row.msg.service.as_deref())
+            .bind(row.msg.subject.as_deref())
+            .bind(row.body.as_deref())
+            .bind(row.msg.is_announcement as i64)
+            .bind(row.msg.is_reply as i64)
+            .bind(row.msg.thread_originator_guid.as_deref())
+            .bind(row.msg.thread_originator_part)
+            .bind(row.msg.num_replies)
+            .bind(row.sort_order)
+            .bind(stmts.import_id);
+    }
+    let returned = q.fetch_all(&mut *tx).await?;
+    let mut by_sort = HashMap::<i64, i64>::new();
+    for row in &returned {
+        let id: i64 = row.try_get(0)?;
+        let sort_order: i64 = row.try_get(1)?;
+        by_sort.insert(sort_order, id);
+    }
 
-        // `ON CONFLICT DO NOTHING` returns no row for a deduped message.
-        let Some(message_id) = inserted_id else {
+    let mut att_rows = Vec::new();
+    let mut tap_rows = Vec::new();
+    for row in chunk {
+        // Consume the RETURNING id so a conflicted row (duplicate guid) is
+        // skipped instead of attaching children to another message.
+        let message_id = by_sort.remove(&row.sort_order);
+        let Some(message_id) = message_id else {
             stats.messages_deduped += 1;
             continue;
         };
         stats.messages += 1;
 
-        for prepared in attachments {
-            let att = prepared.record;
-            let (sha256, assets_path, mime_type) = match prepared.stored {
+        for prepared in &row.attachments {
+            let att = &prepared.record;
+            let (sha256, assets_path, mime_type) = match &prepared.stored {
                 Some(stored) => (
-                    Some(stored.sha256),
-                    Some(stored.assets_path),
-                    stored.mime_type.or(att.mime_type),
+                    Some(stored.sha256.clone()),
+                    Some(stored.assets_path.clone()),
+                    stored.mime_type.clone().or_else(|| att.mime_type.clone()),
                 ),
-                None => (None, None, att.mime_type),
+                None => (None, None, att.mime_type.clone()),
             };
-
-            let size_bytes = stored_size_bytes(&assets_dir, assets_path.as_deref())
+            let size_bytes = stored_size_bytes(assets_dir, assets_path.as_deref())
                 .or_else(|| att.size_bytes.map(|n| n as i64));
-
-            // Bytes absent and reason set: keep metadata-only placeholder rows.
             let missing_reason = if sha256.is_none() {
-                att.missing_reason
+                att.missing_reason.clone()
             } else {
                 None
             };
-
-            sqlx::query(INSERT_ATTACHMENT)
-                .bind(message_id)
-                .bind(att.path)
-                .bind(att.original_name)
-                .bind(mime_type)
-                .bind(att.is_sticker as i64)
-                .bind(att.transcription)
-                .bind(sha256)
-                .bind(assets_path)
-                .bind(size_bytes)
-                .bind(missing_reason)
-                .execute(&mut *tx)
-                .await?;
-            stats.attachments += 1;
+            att_rows.push(PendingAttachmentRow {
+                message_id,
+                path: att.path.clone(),
+                original_name: att.original_name.clone(),
+                mime_type,
+                is_sticker: att.is_sticker as i64,
+                transcription: att.transcription.clone(),
+                sha256,
+                assets_path,
+                size_bytes,
+                missing_reason,
+            });
         }
 
-        for tap in msg.tapbacks {
-            // Tapback sender: resolved to a handle row (NULL for own tapbacks,
-            // matching the message `sender_handle_id` convention).
+        for tap in &row.msg.tapbacks {
             let sender_handle_id = resolve_incoming_sender_handle(
                 tx,
+                &mut stmts.handles,
                 &stmts.account_id,
                 tap.is_from_me,
                 tap.sender.as_deref(),
                 None,
-                sender_platform.as_str(),
-                &mut stats,
+                &row.sender_platform,
+                stats,
             )
             .await?;
-            sqlx::query(INSERT_TAPBACK)
-                .bind(message_id)
-                .bind(tap.part_index)
-                .bind(tap.kind)
-                .bind(tap.emoji)
-                .bind(tap.is_from_me as i64)
-                .bind(sender_handle_id)
-                .execute(&mut *tx)
-                .await?;
-            stats.tapbacks += 1;
+            tap_rows.push(PendingTapbackRow {
+                message_id,
+                part_index: tap.part_index,
+                kind: tap.kind.clone(),
+                emoji: tap.emoji.clone(),
+                is_from_me: tap.is_from_me as i64,
+                sender_handle_id,
+            });
         }
     }
 
-    Ok(stats)
+    flush_attachment_chunks(tx, &att_rows, stats).await?;
+    flush_tapback_chunks(tx, &tap_rows, stats).await?;
+    Ok(())
+}
+
+async fn flush_attachment_chunks(
+    tx: &mut AnyConnection,
+    rows: &[PendingAttachmentRow],
+    stats: &mut ImportStats,
+) -> Result<()> {
+    let size = max_rows_for_bind_limit(ATTACHMENT_BIND_COLUMNS).max(1);
+    for chunk in rows.chunks(size) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let sql = format!(
+            "{INSERT_ATTACHMENT_PREFIX} {}",
+            values_tuples(chunk.len(), ATTACHMENT_BIND_COLUMNS)
+        );
+        let mut q = sqlx::query(&sql);
+        for row in chunk {
+            q = q
+                .bind(row.message_id)
+                .bind(row.path.as_deref())
+                .bind(row.original_name.as_deref())
+                .bind(row.mime_type.as_deref())
+                .bind(row.is_sticker)
+                .bind(row.transcription.as_deref())
+                .bind(row.sha256.as_deref())
+                .bind(row.assets_path.as_deref())
+                .bind(row.size_bytes)
+                .bind(row.missing_reason.as_deref());
+        }
+        q.execute(&mut *tx).await?;
+        stats.attachments += chunk.len() as u64;
+    }
+    Ok(())
+}
+
+async fn flush_tapback_chunks(
+    tx: &mut AnyConnection,
+    rows: &[PendingTapbackRow],
+    stats: &mut ImportStats,
+) -> Result<()> {
+    let size = max_rows_for_bind_limit(TAPBACK_BIND_COLUMNS).max(1);
+    for chunk in rows.chunks(size) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let sql = format!(
+            "{INSERT_TAPBACK_PREFIX} {}",
+            values_tuples(chunk.len(), TAPBACK_BIND_COLUMNS)
+        );
+        let mut q = sqlx::query(&sql);
+        for row in chunk {
+            q = q
+                .bind(row.message_id)
+                .bind(row.part_index)
+                .bind(&row.kind)
+                .bind(row.emoji.as_deref())
+                .bind(row.is_from_me)
+                .bind(row.sender_handle_id);
+        }
+        q.execute(&mut *tx).await?;
+        stats.tapbacks += chunk.len() as u64;
+    }
+    Ok(())
 }
