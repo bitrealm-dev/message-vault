@@ -64,8 +64,6 @@ describe("VaultLine", () => {
     expect(screen.getByText("127.0.0.1:8080")).toBeInTheDocument();
     expect(screen.getByText("disconnected")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
-    expect(
-      screen.getByText("Start your vault, or enter another address."),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Start your vault, or enter another address.")).toBeInTheDocument();
   });
 });

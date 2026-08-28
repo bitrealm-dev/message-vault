@@ -8,9 +8,9 @@ afterEach(() => {
 
 describe("errorMessageFromBody", () => {
   it("pulls the sentence out of the vault's error envelope", () => {
-    expect(
-      errorMessageFromBody(401, '{"ok":false,"error":"invalid username or password"}'),
-    ).toBe("invalid username or password");
+    expect(errorMessageFromBody(401, '{"ok":false,"error":"invalid username or password"}')).toBe(
+      "invalid username or password",
+    );
   });
 
   it("falls back to the raw body when it is not an envelope", () => {
@@ -22,7 +22,9 @@ describe("errorMessageFromBody", () => {
   });
 
   it("ignores an envelope whose error is blank", () => {
-    expect(errorMessageFromBody(400, '{"ok":false,"error":"  "}')).toBe('{"ok":false,"error":"  "}');
+    expect(errorMessageFromBody(400, '{"ok":false,"error":"  "}')).toBe(
+      '{"ok":false,"error":"  "}',
+    );
   });
 });
 
