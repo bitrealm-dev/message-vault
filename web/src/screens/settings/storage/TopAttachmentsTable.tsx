@@ -69,14 +69,14 @@ export default function TopAttachmentsTable({
                 <Button
                   disabled={page <= 0}
                   onClick={() => onPageChange(Math.max(0, page - 1))}
-                  className="!px-3 !py-1.5 !text-[0.813rem]"
+                  size="sm"
                 >
                   Back
                 </Button>
                 <Button
                   disabled={page >= pageCount - 1}
                   onClick={() => onPageChange(Math.min(pageCount - 1, page + 1))}
-                  className="!px-3 !py-1.5 !text-[0.813rem]"
+                  size="sm"
                 >
                   Next
                 </Button>

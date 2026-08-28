@@ -179,6 +179,7 @@ export default function ContactsSearchFields({
           }}
           aria-label="Activity"
           className="w-full min-w-0"
+          size="sm"
           triggerClassName={compactFieldTriggerClass}
           isDisabled={noHandle}
         >

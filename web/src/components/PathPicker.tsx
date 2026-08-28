@@ -40,7 +40,7 @@ export default function PathPicker({
         autoComplete="off"
         className={`flex-1 ${textInputClassName}`}
       />
-      <Button onClick={browse} className="!px-3 !py-1 !text-[0.813rem]">
+      <Button onClick={browse} size="xs">
         Browse
       </Button>
     </div>

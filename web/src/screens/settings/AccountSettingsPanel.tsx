@@ -112,7 +112,7 @@ export function AccountSettingsPanel() {
               variant="primary"
               onClick={handleChangePassword}
               disabled={isDemo || !currentPw || !newPw || !confirmPw}
-              className="!px-3 !py-1.5"
+              size="sm"
             >
               Change password
             </Button>

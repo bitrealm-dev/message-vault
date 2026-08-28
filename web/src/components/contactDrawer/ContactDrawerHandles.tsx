@@ -200,7 +200,7 @@ export function ContactDrawerHandles({
           variant="primary"
           disabled={loading || busy}
           onClick={() => setAdding(true)}
-          className="!px-2.5 !py-1 !text-[0.75rem]"
+          size="chip"
         >
           Add identity
         </Button>

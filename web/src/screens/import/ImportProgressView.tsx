@@ -74,7 +74,7 @@ export default function ImportProgressView({
         <>
           <ImportSummaryPanel summary={summaryView} embedStepTimings={false} />
           <div className="mt-4">
-            <Button variant="primary" onClick={onBack} className="!px-6 !py-2">
+            <Button variant="primary" onClick={onBack} size="wide">
               Import another
             </Button>
           </div>

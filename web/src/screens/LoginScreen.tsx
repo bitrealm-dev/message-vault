@@ -170,12 +170,7 @@ export default function LoginScreen() {
               placeholder={isTauri() ? "https://vault.example.com" : "Leave blank for this origin"}
             />
             <div className="mt-3 mb-[0.35rem] flex justify-end">
-              <Button
-                variant="primary"
-                onClick={detectMode}
-                disabled={busy}
-                className="!px-4 !py-2"
-              >
+              <Button variant="primary" onClick={detectMode} disabled={busy}>
                 {busy ? "Connecting…" : "Connect"}
               </Button>
             </div>

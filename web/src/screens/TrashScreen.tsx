@@ -66,7 +66,7 @@ export default function TrashScreen() {
             variant="danger"
             disabled={deleting}
             onClick={() => setConfirmOpen(true)}
-            className="!px-3 !py-1.5 !text-[0.813rem]"
+            size="sm"
           >
             Empty trash
           </Button>
@@ -97,7 +97,7 @@ export default function TrashScreen() {
                 {formatLocaleDate(entry.deleted_at)}
               </div>
             </div>
-            <Button onClick={() => void restore(entry.id)} className="!px-3 !py-1 !text-[0.813rem]">
+            <Button onClick={() => void restore(entry.id)} size="xs">
               Restore
             </Button>
           </div>

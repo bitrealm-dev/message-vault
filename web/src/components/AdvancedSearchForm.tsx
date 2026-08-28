@@ -154,7 +154,7 @@ export default function AdvancedSearchForm({
         >
           Search
         </Button>
-        <Button onClick={onClose} className="!px-3 !py-1.5 !text-[0.813rem]">
+        <Button onClick={onClose} size="sm">
           Cancel
         </Button>
       </div>

@@ -106,6 +106,7 @@ export default function DateBoundField({
         }}
         aria-label={`${label} comparison`}
         className="w-full min-w-0"
+        size="sm"
         triggerClassName={compactFieldTriggerClass}
         isDisabled={isDisabled}
       >

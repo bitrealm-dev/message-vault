@@ -199,7 +199,7 @@ export default function CheckedContactsPanel({
       <DataCard
         title={<h2 className="m-0 text-[1.125rem] font-semibold">{heading}</h2>}
         toolbar={
-          <Button variant="secondary" onClick={onClear} className="!px-2.5 !py-1 !text-[0.75rem]">
+          <Button variant="secondary" onClick={onClear} size="chip">
             Clear contacts
           </Button>
         }
