@@ -22,6 +22,41 @@ export function getBaseUrl(): string {
   return baseUrl;
 }
 
+/** An error response from the vault: its own message, plus the HTTP status. */
+export class VaultApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "VaultApiError";
+    this.status = status;
+  }
+}
+
+/**
+ * Human-readable message for a failed response.
+ *
+ * The vault answers `{"ok":false,"error":"..."}`, and that sentence is what a
+ * user should read — not the status code and not the envelope around it.
+ * Anything else (a proxy's HTML error page, an empty body) falls back to the
+ * raw text, then to a generic sentence.
+ */
+export function errorMessageFromBody(status: number, text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return `Request failed (${status})`;
+
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object" && "error" in parsed) {
+      const { error } = parsed as { error: unknown };
+      if (typeof error === "string" && error.trim()) return error.trim();
+    }
+  } catch {
+    // Not JSON — the raw text is the best available message.
+  }
+  return trimmed;
+}
+
 async function request<T>(
   method: string,
   path: string,
@@ -44,7 +79,7 @@ async function request<T>(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`${res.status}: ${text}`);
+    throw new VaultApiError(res.status, errorMessageFromBody(res.status, text));
   }
 
   return res.json() as Promise<T>;
@@ -67,7 +102,7 @@ export async function fetchAssetObjectUrl(
   const res = await fetch(`${baseUrl}${path}`, { method: "GET", headers, signal });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`${res.status}: ${text}`);
+    throw new VaultApiError(res.status, errorMessageFromBody(res.status, text));
   }
   const blob = await res.blob();
   return URL.createObjectURL(blob);
