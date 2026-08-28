@@ -1,4 +1,4 @@
-//! Account rows, profile fields, guest status, and message deletion.
+//! Account rows, profile fields, and message deletion.
 
 use anyhow::{Context, Result, bail};
 use message_ir::HandleType;

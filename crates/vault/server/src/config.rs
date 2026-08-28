@@ -1,5 +1,4 @@
-//! Config file model ([`Config`]) plus path/source validation and the
-//! environment-driven settings ([`GuestDemoSettings`]).
+//! Config file model ([`Config`]) plus path/source validation.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -249,67 +248,6 @@ impl Config {
     }
 }
 
-/// Hosted Try it demo settings, read from `GUEST_DEMO_POOL`,
-/// `GUEST_POOL_MIN`, `GUEST_POOL_MAX`, and `GUEST_SESSION_SECS`.
-#[derive(Debug, Clone, Copy)]
-pub struct GuestDemoSettings {
-    /// Whether the hosted Try it demo is on.
-    pub enabled: bool,
-    /// Minimum unused ready guest accounts kept in the pool.
-    pub pool_min: u32,
-    /// Maximum unused ready guest accounts.
-    pub pool_max: u32,
-    /// Lifetime of one demo session, in seconds.
-    pub session_secs: u64,
-}
-
-fn env_truthy(raw: &str) -> bool {
-    matches!(
-        raw.trim().to_ascii_lowercase().as_str(),
-        "true" | "1" | "yes"
-    )
-}
-
-impl GuestDemoSettings {
-    /// Read demo settings from the environment; unset or malformed values
-    /// fall back to the defaults.
-    pub fn from_env() -> Self {
-        Self::parse(
-            &std::env::var("GUEST_DEMO_POOL").unwrap_or_default(),
-            &std::env::var("GUEST_POOL_MIN").unwrap_or_default(),
-            &std::env::var("GUEST_POOL_MAX").unwrap_or_default(),
-            &std::env::var("GUEST_SESSION_SECS").unwrap_or_default(),
-        )
-    }
-
-    /// Demo settings with the hosted Try it demo off (tests only).
-    #[cfg(test)]
-    pub fn disabled() -> Self {
-        Self {
-            enabled: false,
-            pool_min: 2,
-            pool_max: 20,
-            session_secs: 86_400,
-        }
-    }
-
-    pub(crate) fn parse(pool: &str, min: &str, max: &str, secs: &str) -> Self {
-        let enabled = env_truthy(pool);
-        let pool_min = min.parse::<u32>().unwrap_or(2).max(1);
-        let mut pool_max = max.parse::<u32>().unwrap_or(20).max(1);
-        if pool_max < pool_min {
-            pool_max = pool_min;
-        }
-        let session_secs = secs.parse::<u64>().unwrap_or(86_400).max(60);
-        Self {
-            enabled,
-            pool_min,
-            pool_max,
-            session_secs,
-        }
-    }
-}
-
 fn resolve_path(base: &Path, configured: &Path) -> PathBuf {
     if configured.is_absolute() {
         configured.to_path_buf()
@@ -354,28 +292,6 @@ mod tests {
         let joined = resolve_under_root(&root, "attachments/a.jpg").unwrap();
         assert_eq!(joined, root.join("attachments/a.jpg"));
         assert!(resolve_under_root(&root, "../outside").is_err());
-    }
-
-    #[test]
-    fn guest_demo_settings_default_disabled() {
-        let s = GuestDemoSettings::parse("", "", "", "");
-        assert!(!s.enabled);
-        assert_eq!(s.pool_min, 2);
-        assert_eq!(s.pool_max, 20);
-        assert_eq!(s.session_secs, 86_400);
-    }
-
-    #[test]
-    fn guest_demo_settings_truthy_and_clamps() {
-        let s = GuestDemoSettings::parse("true", "0", "100", "60");
-        assert!(s.enabled);
-        assert_eq!(s.pool_min, 1);
-        assert_eq!(s.pool_max, 100);
-        assert_eq!(s.session_secs, 60);
-        let s = GuestDemoSettings::parse("yes", "5", "3", "not-a-number");
-        assert!(s.enabled);
-        assert_eq!(s.pool_max, 5);
-        assert_eq!(s.session_secs, 86_400);
     }
 
     #[test]
