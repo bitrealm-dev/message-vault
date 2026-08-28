@@ -364,7 +364,7 @@
         "tags": [
           "Account"
         ],
-        "summary": "Load the signed-in account's profile: username, display name, linked\nhandles, and demo/guest flags.",
+        "summary": "Load the signed-in account's profile: username, display name, linked\nhandles, and the demo flag.",
         "operationId": "account_profile_handler",
         "responses": {
           "200": {
@@ -1421,7 +1421,7 @@
         "tags": [
           "Auth"
         ],
-        "summary": "Revoke the presented session token. Guest account data is deleted with the\nsession.",
+        "summary": "Revoke the presented session token.",
         "operationId": "logout_handler",
         "responses": {
           "200": {
@@ -1512,47 +1512,6 @@
           },
           "429": {
             "description": "Rate limited",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/auth/try-demo": {
-      "post": {
-        "tags": [
-          "Auth"
-        ],
-        "summary": "Open a sample account session: the shared demo account self-hosted, or a\nprivate guest copy when the hosted pool is enabled.",
-        "operationId": "try_demo_handler",
-        "responses": {
-          "200": {
-            "description": "Session issued",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AuthTokenResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Guest copy unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -3477,7 +3436,6 @@
           "phones",
           "emails",
           "is_demo",
-          "is_guest",
           "read_only"
         ],
         "properties": {
@@ -3495,10 +3453,6 @@
           "is_demo": {
             "type": "boolean",
             "description": "True for the seeded demo account (cannot be deleted)."
-          },
-          "is_guest": {
-            "type": "boolean",
-            "description": "True when `accounts.guest_status` is set (ready or assigned sample copy)."
           },
           "phones": {
             "type": "array",

@@ -11,13 +11,12 @@ use message_ir::HandleType;
 use serde::Deserialize;
 use sqlx::Row;
 
-use crate::config::{Config, GuestDemoSettings};
+use crate::config::Config;
 use crate::db::account_profile;
 use crate::db::dialect;
 use crate::db::engine;
 use crate::db::schema;
 use crate::dedupe;
-use crate::guest_pool;
 use crate::import::{self, ImportExportArgs, ImportMode};
 use crate::process_assets::{self, ProcessAssetsOptions};
 
@@ -507,41 +506,12 @@ async fn reset_prepared_bundle(
     }
 
     crate::operation_lock::mark_ready(&cfg.paths.db)?;
-    after_reset_refresh_guest_pool(cfg, GuestDemoSettings::from_env()).await?;
 
     Ok(ResetPreparedStats {
         import: import_stats,
         dedupe_keys_filled: dedupe_stats.keys_filled,
         process_assets: process_stats,
     })
-}
-
-/// After a new demo template is live, drop unused ready guests and refill.
-///
-/// Assigned guests are left alone so a visitor who already has a copy keeps it.
-/// When the hosted pool is off this is a no-op.
-///
-/// # Errors
-///
-/// Returns an error when the live database cannot be opened, unused ready
-/// guests cannot be deleted, or a refill clone fails.
-pub async fn after_reset_refresh_guest_pool(
-    cfg: &Config,
-    settings: GuestDemoSettings,
-) -> Result<()> {
-    if !settings.enabled {
-        return Ok(());
-    }
-    let pool = engine::open_pool_for_path(&cfg.paths.db).await?;
-    let mut conn = pool.acquire().await?;
-    guest_pool::drop_ready_guests(&mut conn, &cfg.paths.data_dir).await?;
-    guest_pool::refill_pool(&mut conn, cfg, settings, 0).await?;
-    // Close deterministically: the sqlx worker thread closes a returned
-    // connection asynchronously, and a close that lands after a later
-    // `wal_checkpoint(TRUNCATE)` reads the truncated -shm mapping and crashes.
-    conn.close().await?;
-    pool.close().await;
-    Ok(())
 }
 
 fn validate_prepared_bundle(bundle: &Path) -> Result<PreparedBundle> {
@@ -1207,8 +1177,7 @@ fn remove_tree_if_exists(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{GuestDemoSettings, PathsConfig};
-    use crate::guest_pool;
+    use crate::config::PathsConfig;
     use sqlx::AnyConnection;
 
     fn url_config_for_refuse_tests() -> Config {
@@ -1416,158 +1385,6 @@ read_only = true
         // later — racing the checkpoint/copy that follows can SIGBUS.
         conn.close().await.expect("close test connection");
         pool.close().await;
-    }
-
-    /// A template refresh must delete unused ready guests (they still point at
-    /// the old sample set) and grow the pool back to `pool_min` from the new
-    /// template. Assigned guests keep the snapshot they already received.
-    #[tokio::test]
-    async fn after_reset_refresh_guest_pool_drops_ready_and_refills_to_min() {
-        let (_temp, cfg, stale_id, assigned_id) = guest_pool_refresh_fixture().await;
-        let settings = GuestDemoSettings {
-            enabled: true,
-            pool_min: 2,
-            pool_max: 20,
-            session_secs: 60,
-        };
-
-        after_reset_refresh_guest_pool(&cfg, settings)
-            .await
-            .expect("refresh guest pool");
-
-        let mut conn = test_db_conn(&cfg.paths.db).await;
-        assert!(
-            account_profile::username_for_account(&mut conn, &stale_id)
-                .await
-                .unwrap()
-                .is_none(),
-            "unused ready guest must be deleted so it cannot hand out the old dataset"
-        );
-        assert_eq!(
-            account_profile::guest_status(&mut conn, &assigned_id)
-                .await
-                .unwrap()
-                .as_deref(),
-            Some("assigned"),
-            "assigned guests stay after a template refresh"
-        );
-        assert_eq!(
-            guest_pool::count_ready(&mut conn).await.unwrap(),
-            settings.pool_min
-        );
-        assert!(!cfg.paths.data_dir.join(&stale_id).exists());
-        assert!(cfg.paths.data_dir.join(&assigned_id).is_dir());
-    }
-
-    #[tokio::test]
-    async fn after_reset_refresh_guest_pool_skips_when_disabled() {
-        let (_temp, cfg, stale_id, assigned_id) = guest_pool_refresh_fixture().await;
-        let settings = GuestDemoSettings {
-            enabled: false,
-            pool_min: 2,
-            pool_max: 20,
-            session_secs: 60,
-        };
-
-        after_reset_refresh_guest_pool(&cfg, settings)
-            .await
-            .expect("disabled refresh is a no-op");
-
-        let mut conn = test_db_conn(&cfg.paths.db).await;
-        assert_eq!(
-            account_profile::guest_status(&mut conn, &stale_id)
-                .await
-                .unwrap()
-                .as_deref(),
-            Some("ready")
-        );
-        assert_eq!(
-            account_profile::guest_status(&mut conn, &assigned_id)
-                .await
-                .unwrap()
-                .as_deref(),
-            Some("assigned")
-        );
-        assert_eq!(guest_pool::count_ready(&mut conn).await.unwrap(), 1);
-    }
-
-    async fn guest_pool_refresh_fixture() -> (tempfile::TempDir, Config, String, String) {
-        let temp = tempfile::tempdir().expect("create test directory");
-        let db = temp.path().join("vault.db");
-        let data_dir = temp.path().join("data");
-        fs::create_dir_all(&data_dir).expect("create data dir");
-
-        let mut conn = test_db_conn(&db).await;
-        sqlx::query(
-            "INSERT INTO accounts (id, username, read_only, preferred_name)
-             VALUES ($1, 'demo', 1, 'Alex Demo')",
-        )
-        .bind(DEMO_ACCOUNT_ID)
-        .execute(&mut *conn)
-        .await
-        .expect("insert template account");
-        let hid: i64 = sqlx::query_scalar(
-            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-             VALUES ($1, '+15555550100', '+15555550100', 'phone', 'phone')
-             RETURNING id",
-        )
-        .bind(DEMO_ACCOUNT_ID)
-        .fetch_one(&mut *conn)
-        .await
-        .expect("insert template handle");
-        sqlx::query("INSERT INTO account_handles (account_id, handle_id) VALUES ($1, $2)")
-            .bind(DEMO_ACCOUNT_ID)
-            .bind(hid)
-            .execute(&mut *conn)
-            .await
-            .expect("link template handle");
-        let cid: i64 = sqlx::query_scalar(
-            "INSERT INTO conversations (account_id, chat_handle_id, conversation_type, source_file)
-             VALUES ($1, $2, 'individual', 'a.jsonl')
-             RETURNING id",
-        )
-        .bind(DEMO_ACCOUNT_ID)
-        .bind(hid)
-        .fetch_one(&mut *conn)
-        .await
-        .expect("insert template conversation");
-        sqlx::query(
-            r#"INSERT INTO messages (
-                conversation_id, account_id, source, guid, timestamp, is_from_me, sort_order, body
-            ) VALUES ($1, $2, 'imessage', 'g1', '2020-01-01T00:00:00Z', 1, 0, 'hello')"#,
-        )
-        .bind(cid)
-        .bind(DEMO_ACCOUNT_ID)
-        .execute(&mut *conn)
-        .await
-        .expect("insert template message");
-
-        let stale_id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1".to_string();
-        let assigned_id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2".to_string();
-        account_profile::insert_guest_account(&mut conn, &stale_id, "guest-stale", Some("Guest"))
-            .await
-            .expect("insert stale ready guest");
-        account_profile::insert_guest_account(&mut conn, &assigned_id, "guest-keep", Some("Guest"))
-            .await
-            .expect("insert assigned guest");
-        account_profile::set_guest_status(&mut conn, &assigned_id, "assigned")
-            .await
-            .expect("mark assigned");
-        fs::create_dir_all(data_dir.join(&stale_id)).expect("stale guest dir");
-        fs::create_dir_all(data_dir.join(&assigned_id)).expect("assigned guest dir");
-        drop(conn);
-
-        let cfg = Config {
-            paths: PathsConfig {
-                db,
-                data_dir,
-                assets_dir: "assets".into(),
-                assets_converted_dir: "assets_converted".into(),
-            },
-            server: None,
-            database: crate::config::DatabaseConfig::default(),
-        };
-        (temp, cfg, stale_id, assigned_id)
     }
 
     /// The committed demo bundle ships a `seed.toml`; it must parse with the

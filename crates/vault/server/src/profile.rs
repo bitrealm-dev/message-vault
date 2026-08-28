@@ -27,8 +27,6 @@ pub struct AccountProfileResponse {
     pub emails: Vec<String>,
     /// True for the seeded demo account (cannot be deleted).
     pub is_demo: bool,
-    /// True when `accounts.guest_status` is set (ready or assigned sample copy).
-    pub is_guest: bool,
     /// True when the account is marked read-only.
     pub read_only: bool,
 }
@@ -51,13 +49,12 @@ async fn load_response(
         phones: profile.phones,
         emails: profile.emails,
         is_demo: account_profile::is_demo_account(account_id),
-        is_guest: account_profile::is_guest_account(conn, account_id).await?,
         read_only,
     })
 }
 
 /// Load the signed-in account's profile: username, display name, linked
-/// handles, and demo/guest flags.
+/// handles, and the demo flag.
 #[utoipa::path(
     get,
     path = "/v1/account/profile",
@@ -516,25 +513,6 @@ mod tests {
         let loaded = load_response(&mut conn, &account_id).await.unwrap();
         assert!(loaded.phones.is_empty());
         assert!(loaded.emails.is_empty());
-    }
-
-    #[tokio::test]
-    async fn load_response_sets_is_guest_true_when_guest_status_assigned() {
-        let (pool, _dir, account_id) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let guest_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-        account_profile::insert_guest_account(&mut conn, guest_id, "guest-bbbb", None)
-            .await
-            .unwrap();
-        account_profile::set_guest_status(&mut conn, guest_id, "assigned")
-            .await
-            .unwrap();
-
-        let guest = load_response(&mut conn, guest_id).await.unwrap();
-        assert!(guest.is_guest);
-
-        let regular = load_response(&mut conn, &account_id).await.unwrap();
-        assert!(!regular.is_guest);
     }
 
     #[tokio::test]

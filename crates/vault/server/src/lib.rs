@@ -14,8 +14,6 @@ pub(crate) mod conversations_api;
 pub(crate) mod db;
 pub(crate) mod dedupe;
 pub(crate) mod export_api;
-pub(crate) mod guest_clone;
-pub(crate) mod guest_pool;
 pub(crate) mod import;
 pub(crate) mod import_cli;
 pub(crate) mod import_media;

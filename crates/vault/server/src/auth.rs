@@ -1,8 +1,6 @@
 //! Authentication handlers: register, login, session check, and logout.
 
 use std::collections::{HashMap, VecDeque};
-use std::net::IpAddr;
-use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -16,18 +14,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::Connection;
 use sqlx::{AnyConnection, AnyPool};
 
-use crate::config::Config;
 use crate::db::{account_profile, api_tokens, schema, session_tokens};
 use crate::dedupe;
 use crate::server::{ApiError, AppState, nonempty_query_account, resolve_auth};
-
-/// How long Try it waits for an on-demand guest clone when the ready pool is empty.
-const TRY_DEMO_CLONE_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// Hosted vaults reject password login as the shared `demo` template account.
-pub(crate) fn reject_demo_password_login(enabled: bool, username: &str) -> bool {
-    enabled && username.eq_ignore_ascii_case("demo")
-}
 
 /// Max password bytes accepted before hashing (registration / login / change).
 const MAX_PASSWORD_BYTES: usize = 1024;
@@ -35,11 +24,6 @@ const MIN_PASSWORD_CHARS: usize = 8;
 /// Sliding window for unauthenticated auth endpoints.
 const AUTH_RATE_WINDOW: Duration = Duration::from_secs(60);
 const AUTH_RATE_MAX: usize = 20;
-/// Per visitor address (`CF-Connecting-IP`, or `unknown` when missing).
-const TRY_DEMO_PER_IP_RATE_MAX: usize = 60;
-/// Whole-process Try it cap. Login stays at 20.
-const TRY_DEMO_RATE_MAX: usize = 2000;
-const _: () = assert!(TRY_DEMO_RATE_MAX > AUTH_RATE_MAX);
 
 static AUTH_RATE_LIMITS: Mutex<Option<HashMap<String, VecDeque<Instant>>>> = Mutex::new(None);
 static DUMMY_PASSWORD_HASH: OnceLock<String> = OnceLock::new();
@@ -70,28 +54,6 @@ fn check_auth_rate_limit_max(bucket: &str, max: usize) -> Result<(), ApiError> {
     }
     entry.push_back(now);
     Ok(())
-}
-
-fn check_try_demo_rate_limits(cf_connecting_ip: Option<&str>) -> Result<(), ApiError> {
-    let per_ip = try_demo_client_key(cf_connecting_ip);
-    check_auth_rate_limit_max(&per_ip, TRY_DEMO_PER_IP_RATE_MAX)?;
-    check_auth_rate_limit_max("try-demo", TRY_DEMO_RATE_MAX)?;
-    Ok(())
-}
-
-fn try_demo_client_key(cf_connecting_ip: Option<&str>) -> String {
-    match cf_connecting_ip.and_then(parse_single_ip) {
-        Some(ip) => format!("try-demo:{ip}"),
-        None => "try-demo:unknown".to_string(),
-    }
-}
-
-fn parse_single_ip(raw: &str) -> Option<IpAddr> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() || trimmed.contains(',') || trimmed.contains(' ') {
-        return None;
-    }
-    trimmed.parse().ok()
 }
 
 #[cfg(test)]
@@ -510,7 +472,6 @@ pub async fn login_handler(
     }
 
     let password = req.password.clone();
-    let guest_enabled = state.guest.enabled;
 
     let mut conn = state
         .db
@@ -527,10 +488,6 @@ pub async fn login_handler(
         ));
     };
 
-    if reject_demo_password_login(guest_enabled, &username) {
-        return Err(hosted_demo_login_rejected());
-    }
-
     let password_hash = account_profile::load_password_hash(&mut conn, &account_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -545,150 +502,6 @@ pub async fn login_handler(
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     Ok(Json(response))
-}
-
-/// Self-hosted Try it: session for the shared demo account.
-async fn try_demo_self_hosted(conn: &mut AnyConnection) -> Result<AuthTokenResponse, ApiError> {
-    if account_profile::username_for_account(conn, account_profile::DEMO_ACCOUNT_ID)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .is_none()
-    {
-        return Err(ApiError::ServiceUnavailable(
-            "demo account is not available; run reset-demo first".into(),
-        ));
-    }
-    AuthTokenResponse::for_existing_account(conn, account_profile::DEMO_ACCOUNT_ID.to_string())
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))
-}
-
-/// Hosted Try it: take a ready guest, or clone the template when `clone_if_empty`.
-async fn try_demo_from_pool(
-    conn: &mut AnyConnection,
-    cfg: &Config,
-    session_secs: u64,
-    clone_if_empty: bool,
-) -> Result<Option<AuthTokenResponse>, ApiError> {
-    if let Some((account_id, username, token)) =
-        crate::guest_pool::assign_ready_guest(conn, session_secs)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-    {
-        return Ok(Some(AuthTokenResponse {
-            token,
-            account_id,
-            username,
-        }));
-    }
-    if !clone_if_empty {
-        return Ok(None);
-    }
-    let (account_id, username, token) = crate::guest_clone::clone_and_assign_guest(
-        conn,
-        cfg,
-        account_profile::DEMO_ACCOUNT_ID,
-        session_secs,
-    )
-    .await
-    .map_err(|e| ApiError::ServiceUnavailable(e.to_string()))?;
-    Ok(Some(AuthTokenResponse {
-        token,
-        account_id,
-        username,
-    }))
-}
-
-fn record_try_demo_assignment(state: &AppState) {
-    match state.guest_demand.lock() {
-        Ok(mut demand) => demand.record_assignment(),
-        Err(_) => {
-            eprintln!("guest demand lock poisoned; Try it still succeeded");
-        }
-    }
-}
-
-fn hosted_demo_login_rejected() -> ApiError {
-    ApiError::Unauthorized("use Try it to open a sample account".into())
-}
-
-/// Open a sample account session: the shared demo account self-hosted, or a
-/// private guest copy when the hosted pool is enabled.
-#[utoipa::path(
-    post,
-    path = "/v1/auth/try-demo",
-    tag = "Auth",
-    responses(
-        (status = 200, description = "Session issued", body = AuthTokenResponse),
-        (status = 429, description = "Rate limited", body = crate::server::ErrorBody),
-        (status = 503, description = "Guest copy unavailable", body = crate::server::ErrorBody)
-    )
-)]
-pub async fn try_demo_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<AuthTokenResponse>, ApiError> {
-    let cf_ip = headers
-        .get("cf-connecting-ip")
-        .and_then(|value| value.to_str().ok());
-    check_try_demo_rate_limits(cf_ip)?;
-
-    if !state.guest.enabled {
-        let mut conn = state
-            .db
-            .acquire()
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
-        let result = try_demo_self_hosted(&mut conn).await?;
-        return Ok(Json(result));
-    }
-
-    let cfg = std::sync::Arc::clone(&state.cfg);
-    let session_secs = state.guest.session_secs;
-    let assigned = {
-        let mut conn = state
-            .db
-            .acquire()
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
-        try_demo_from_pool(&mut conn, &cfg, session_secs, false).await?
-    };
-
-    if let Some(response) = assigned {
-        record_try_demo_assignment(&state);
-        return Ok(Json(response));
-    }
-
-    // Own the lock in a detached task so a 60s client timeout cannot drop the
-    // guard while the clone is still running. Dropping the JoinHandle
-    // detaches; the lock stays held until the clone returns.
-    let lock = state.guest_clone_lock.clone();
-    let pool = state.db.clone();
-    let cfg = std::sync::Arc::clone(&state.cfg);
-    let session_secs = state.guest.session_secs;
-    let clone_task = tokio::spawn(async move {
-        let _guard = lock.lock().await;
-        let mut conn = pool
-            .acquire()
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
-        try_demo_from_pool(&mut conn, &cfg, session_secs, true).await
-    });
-
-    match tokio::time::timeout(TRY_DEMO_CLONE_TIMEOUT, clone_task).await {
-        Ok(Ok(Ok(Some(response)))) => {
-            record_try_demo_assignment(&state);
-            Ok(Json(response))
-        }
-        Ok(Ok(Ok(None))) => Err(ApiError::ServiceUnavailable(
-            "guest demo copy is not available".into(),
-        )),
-        Ok(Ok(Err(err))) => Err(err),
-        Ok(Err(join_err)) => Err(ApiError::Internal(format!("try-demo clone: {join_err}"))),
-        Err(_) => Err(ApiError::ServiceUnavailable(
-            "guest demo copy timed out; try again shortly".into(),
-        )),
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -766,29 +579,13 @@ async fn change_password_on_conn(
 // Change-password / delete-account / logout handlers
 // ---------------------------------------------------------------------------
 
-/// Revoke the session token. Guest accounts are deleted with their data dir.
-async fn logout_on_conn(conn: &mut AnyConnection, token: &str, data_dir: &Path) -> Result<()> {
-    let account_id = session_tokens::lookup_account_for_token(conn, token).await?;
+/// Revoke the session token.
+async fn logout_on_conn(conn: &mut AnyConnection, token: &str) -> Result<()> {
     let _ = session_tokens::revoke_session_token(conn, token).await?;
-    let Some(account_id) = account_id else {
-        return Ok(());
-    };
-    if account_profile::is_guest_account(conn, &account_id).await? {
-        account_profile::delete_account(conn, &account_id).await?;
-        let dir = data_dir.join(&account_id);
-        if dir.exists() {
-            let dir_owned = dir.clone();
-            tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&dir_owned))
-                .await
-                .map_err(|e| anyhow::anyhow!("remove guest data dir task: {e}"))?
-                .with_context(|| format!("remove guest data dir {}", dir.display()))?;
-        }
-    }
     Ok(())
 }
 
-/// Revoke the presented session token. Guest account data is deleted with the
-/// session.
+/// Revoke the presented session token.
 #[utoipa::path(
     post,
     path = "/v1/auth/logout",
@@ -804,7 +601,6 @@ pub async fn logout_handler(
     headers: HeaderMap,
 ) -> Result<Json<LogoutResponse>, ApiError> {
     let token = crate::server::bearer_token(&headers)?;
-    let data_dir = state.cfg.paths.data_dir.clone();
     let mut conn = state
         .db
         .acquire()
@@ -813,7 +609,7 @@ pub async fn logout_handler(
     schema::ensure_accounts_schema(&mut conn)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    logout_on_conn(&mut conn, &token, &data_dir)
+    logout_on_conn(&mut conn, &token)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(LogoutResponse { ok: true }))
@@ -846,7 +642,6 @@ pub async fn change_password_handler(
     }
     let auth = crate::server::resolve_auth(&headers, &state).await?;
     crate::server::require_full_access(&auth)?;
-    crate::server::reject_if_guest_account(&state.db, &auth.account_id).await?;
     let account_id = auth.account_id;
     let current_password = req.current_password.clone();
     let new_hash = hash_password(new_password).map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1041,88 +836,6 @@ mod tests {
         reset_auth_rate_limit_bucket_for_test(bucket);
     }
 
-    #[test]
-    fn try_demo_rate_limit_allows_more_than_login() {
-        let bucket = "test:try-demo-rate-limit";
-        reset_auth_rate_limit_bucket_for_test(bucket);
-        for _ in 0..TRY_DEMO_RATE_MAX {
-            check_auth_rate_limit_max(bucket, TRY_DEMO_RATE_MAX).unwrap();
-        }
-        let err = check_auth_rate_limit_max(bucket, TRY_DEMO_RATE_MAX).unwrap_err();
-        match err {
-            ApiError::TooManyRequests(_) => {}
-            other => panic!("expected TooManyRequests, got {other:?}"),
-        }
-        reset_auth_rate_limit_bucket_for_test(bucket);
-    }
-
-    fn with_try_demo_rate_buckets(f: impl FnOnce()) {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        reset_auth_rate_limit_bucket_for_test("try-demo:203.0.113.10");
-        reset_auth_rate_limit_bucket_for_test("try-demo:198.51.100.1");
-        reset_auth_rate_limit_bucket_for_test("try-demo");
-        f();
-        reset_auth_rate_limit_bucket_for_test("try-demo:203.0.113.10");
-        reset_auth_rate_limit_bucket_for_test("try-demo:198.51.100.1");
-        reset_auth_rate_limit_bucket_for_test("try-demo");
-    }
-
-    #[test]
-    fn try_demo_per_ip_trips_at_60_and_does_not_block_another_ip() {
-        with_try_demo_rate_buckets(|| {
-            for _ in 0..TRY_DEMO_PER_IP_RATE_MAX {
-                check_try_demo_rate_limits(Some("203.0.113.10")).unwrap();
-            }
-            match check_try_demo_rate_limits(Some("203.0.113.10")).unwrap_err() {
-                ApiError::TooManyRequests(_) => {}
-                other => panic!("expected TooManyRequests, got {other:?}"),
-            }
-            check_try_demo_rate_limits(Some("198.51.100.1")).unwrap();
-        });
-    }
-
-    #[test]
-    fn try_demo_per_ip_429_does_not_increment_global() {
-        with_try_demo_rate_buckets(|| {
-            for _ in 0..TRY_DEMO_PER_IP_RATE_MAX {
-                check_try_demo_rate_limits(Some("203.0.113.10")).unwrap();
-            }
-            let _ = check_try_demo_rate_limits(Some("203.0.113.10")).unwrap_err();
-            // Global saw only the 60 accepts, not the rejected 61st.
-            for _ in 0..(TRY_DEMO_RATE_MAX - TRY_DEMO_PER_IP_RATE_MAX) {
-                check_auth_rate_limit_max("try-demo", TRY_DEMO_RATE_MAX).unwrap();
-            }
-            match check_auth_rate_limit_max("try-demo", TRY_DEMO_RATE_MAX).unwrap_err() {
-                ApiError::TooManyRequests(_) => {}
-                other => panic!("expected TooManyRequests, got {other:?}"),
-            }
-        });
-    }
-
-    #[test]
-    fn try_demo_client_key_accepts_single_ipv4_and_ipv6() {
-        assert_eq!(
-            try_demo_client_key(Some("203.0.113.10")),
-            "try-demo:203.0.113.10"
-        );
-        assert_eq!(
-            try_demo_client_key(Some(" 2001:db8::1 ")),
-            "try-demo:2001:db8::1"
-        );
-    }
-
-    #[test]
-    fn try_demo_client_key_rejects_missing_list_and_garbage() {
-        assert_eq!(try_demo_client_key(None), "try-demo:unknown");
-        assert_eq!(try_demo_client_key(Some("")), "try-demo:unknown");
-        assert_eq!(
-            try_demo_client_key(Some("203.0.113.10, 198.51.100.1")),
-            "try-demo:unknown"
-        );
-        assert_eq!(try_demo_client_key(Some("not-an-ip")), "try-demo:unknown");
-    }
-
     #[tokio::test]
     async fn change_password_transaction_updates_all_credentials() {
         let (_dir, mut conn, old_session, api_tokens, other_account_token) =
@@ -1170,54 +883,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn reject_demo_password_login_only_when_hosted_demo() {
-        assert!(reject_demo_password_login(true, "demo"));
-        assert!(reject_demo_password_login(true, "DEMO"));
-        assert!(!reject_demo_password_login(true, "alice"));
-        assert!(!reject_demo_password_login(false, "demo"));
-    }
-
-    #[tokio::test]
-    async fn logout_on_conn_deletes_guest_row_and_files() {
-        let tmp = tempfile::tempdir().unwrap();
-        let data_dir = tmp.path().to_path_buf();
-        let (_dir, mut conn) = test_conn().await;
-        let guest_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
-        account_profile::insert_guest_account(&mut conn, guest_id, "guest-cccc", None)
-            .await
-            .unwrap();
-        account_profile::set_guest_status(&mut conn, guest_id, "assigned")
-            .await
-            .unwrap();
-        let token = session_tokens::insert_account_session_token(&mut conn, guest_id)
-            .await
-            .unwrap();
-        let guest_dir = data_dir.join(guest_id);
-        std::fs::create_dir_all(&guest_dir).unwrap();
-        std::fs::write(guest_dir.join("marker.txt"), "x").unwrap();
-
-        logout_on_conn(&mut conn, &token, &data_dir).await.unwrap();
-
-        assert!(
-            account_profile::username_for_account(&mut conn, guest_id)
-                .await
-                .unwrap()
-                .is_none()
-        );
-        assert!(!guest_dir.exists());
-        assert!(
-            session_tokens::lookup_account_for_token(&mut conn, &token)
-                .await
-                .unwrap()
-                .is_none()
-        );
-    }
-
     #[tokio::test]
     async fn logout_on_conn_leaves_registered_account() {
-        let tmp = tempfile::tempdir().unwrap();
-        let data_dir = tmp.path().to_path_buf();
         let (_dir, mut conn) = test_conn().await;
         account_profile::insert_account(&mut conn, TEST_ACCOUNT, "alice", None, None, false)
             .await
@@ -1225,10 +892,8 @@ mod tests {
         let token = session_tokens::insert_account_session_token(&mut conn, TEST_ACCOUNT)
             .await
             .unwrap();
-        let account_dir = data_dir.join(TEST_ACCOUNT);
-        std::fs::create_dir_all(&account_dir).unwrap();
 
-        logout_on_conn(&mut conn, &token, &data_dir).await.unwrap();
+        logout_on_conn(&mut conn, &token).await.unwrap();
 
         assert_eq!(
             account_profile::username_for_account(&mut conn, TEST_ACCOUNT)
@@ -1237,90 +902,11 @@ mod tests {
                 .as_deref(),
             Some("alice")
         );
-        assert!(account_dir.exists());
         assert!(
             session_tokens::lookup_account_for_token(&mut conn, &token)
                 .await
                 .unwrap()
                 .is_none()
-        );
-    }
-
-    #[tokio::test]
-    async fn try_demo_self_hosted_issues_demo_session() {
-        let (_dir, mut conn) = test_conn().await;
-        account_profile::insert_account(
-            &mut conn,
-            account_profile::DEMO_ACCOUNT_ID,
-            "demo",
-            None,
-            None,
-            true,
-        )
-        .await
-        .unwrap();
-
-        let response = try_demo_self_hosted(&mut conn).await.unwrap();
-        assert_eq!(response.account_id, account_profile::DEMO_ACCOUNT_ID);
-        assert_eq!(response.username, "demo");
-        assert!(response.token.starts_with("mv-user-"));
-        assert_eq!(
-            session_tokens::lookup_account_for_token(&mut conn, &response.token)
-                .await
-                .unwrap()
-                .as_deref(),
-            Some(account_profile::DEMO_ACCOUNT_ID)
-        );
-    }
-
-    #[tokio::test]
-    async fn try_demo_self_hosted_missing_account_is_unavailable() {
-        let (_dir, mut conn) = test_conn().await;
-        let err = try_demo_self_hosted(&mut conn).await.unwrap_err();
-        match err {
-            ApiError::ServiceUnavailable(msg) => {
-                assert!(
-                    msg.to_ascii_lowercase().contains("demo"),
-                    "expected a clear demo-account message, got {msg}"
-                );
-            }
-            other => panic!("expected ServiceUnavailable, got {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn try_demo_assigns_ready_guest() {
-        let (pool, _dir) = engine::test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        schema::ensure_vault_schema(&mut conn).await.unwrap();
-        let guest_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
-        account_profile::insert_guest_account(&mut conn, guest_id, "guest-dddd", None)
-            .await
-            .unwrap();
-        let cfg = crate::config::Config {
-            paths: crate::config::PathsConfig {
-                db: std::path::PathBuf::from(":memory:"),
-                data_dir: std::path::PathBuf::from("/tmp"),
-                assets_dir: "assets".into(),
-                assets_converted_dir: "assets_converted".into(),
-            },
-            server: None,
-            database: crate::config::DatabaseConfig::default(),
-        };
-
-        let response = try_demo_from_pool(&mut conn, &cfg, 120, false)
-            .await
-            .unwrap()
-            .expect("ready guest");
-        assert_eq!(response.account_id, guest_id);
-        assert_eq!(response.username, "guest-dddd");
-        assert!(response.token.starts_with("mv-user-"));
-        assert_eq!(
-            account_profile::guest_status(&mut conn, guest_id)
-                .await
-                .unwrap()
-                .as_deref(),
-            Some("assigned")
         );
     }
 
@@ -1337,84 +923,6 @@ mod tests {
                 .as_deref(),
             Some("alice")
         );
-    }
-
-    #[test]
-    fn hosted_demo_login_rejected_is_unauthorized() {
-        match hosted_demo_login_rejected() {
-            ApiError::Unauthorized(msg) => {
-                assert_eq!(msg, "use Try it to open a sample account");
-            }
-            other => panic!("expected Unauthorized, got {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn try_demo_empty_pool_overlapping_clones_both_get_sessions() {
-        let tmp = tempfile::tempdir().unwrap();
-        let db = tmp.path().join("vault.db");
-        let data_dir = tmp.path().join("data");
-        std::fs::create_dir_all(&data_dir).unwrap();
-        let (pool, _dir) = engine::test_pool().await;
-        {
-            let mut conn = pool.acquire().await.unwrap();
-            schema::ensure_vault_schema(&mut conn).await.unwrap();
-            account_profile::insert_account(
-                &mut conn,
-                account_profile::DEMO_ACCOUNT_ID,
-                "demo",
-                None,
-                None,
-                true,
-            )
-            .await
-            .unwrap();
-        }
-        let cfg = crate::config::Config {
-            paths: crate::config::PathsConfig {
-                db: db.clone(),
-                data_dir,
-                assets_dir: "assets".into(),
-                assets_converted_dir: "assets_converted".into(),
-            },
-            server: None,
-            database: crate::config::DatabaseConfig::default(),
-        };
-
-        let results = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        // Production serializes clones with `AppState::guest_clone_lock`; the
-        // plain clone transaction cannot retry a second concurrent writer once
-        // it has read from a stale snapshot, so mirror that lock here.
-        let clone_lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
-        let mut handles = Vec::new();
-        for _ in 0..2 {
-            let pool = pool.clone();
-            let cfg = cfg.clone();
-            let results = std::sync::Arc::clone(&results);
-            let clone_lock = std::sync::Arc::clone(&clone_lock);
-            handles.push(tokio::spawn(async move {
-                let _guard = clone_lock.lock().await;
-                let mut conn = pool.acquire().await.unwrap();
-                let assigned = try_demo_from_pool(&mut conn, &cfg, 120, true)
-                    .await
-                    .unwrap();
-                results.lock().unwrap().push(assigned);
-            }));
-        }
-        for handle in handles {
-            handle.await.expect("clone task");
-        }
-        let got = results.lock().unwrap();
-        let responses: Vec<_> = got
-            .iter()
-            .map(|row| row.as_ref().expect("empty-pool Try it returned no session"))
-            .collect();
-        assert_eq!(responses.len(), 2);
-        assert_ne!(
-            responses[0].account_id, responses[1].account_id,
-            "overlapping empty-pool Try it shared a guest"
-        );
-        assert_ne!(responses[0].token, responses[1].token);
     }
 
     #[tokio::test]

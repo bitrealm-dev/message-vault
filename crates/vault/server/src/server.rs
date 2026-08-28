@@ -10,14 +10,13 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::Arc;
 
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use sqlx::AnyConnection;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
@@ -25,14 +24,13 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::services::ServeDir;
 
 use crate::asset_uploads;
-use crate::config::{Config, GuestDemoSettings};
+use crate::config::Config;
 use crate::db::account_profile;
 use crate::db::api_tokens;
 use crate::db::engine::{self, DbEngine};
 use crate::db::schema;
 use crate::db::session_tokens;
 use crate::export_api::ExportQueryError;
-use crate::guest_pool::{self, GuestPoolState};
 
 /// What a Bearer credential is allowed to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,36 +63,6 @@ pub fn require_full_access(auth: &AuthIdentity) -> Result<(), ApiError> {
                 .into(),
         )),
     }
-}
-
-/// Reject sample (guest) accounts on import, asset upload, and API-token mutations.
-///
-/// # Errors
-///
-/// Returns forbidden when `account_id` has a `guest_status`, or internal when
-/// the lookup fails.
-pub async fn reject_if_guest(conn: &mut AnyConnection, account_id: &str) -> Result<(), ApiError> {
-    if account_profile::is_guest_account(conn, account_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-    {
-        return Err(ApiError::Forbidden(
-            "sample accounts cannot import, export backups, or create API tokens".into(),
-        ));
-    }
-    Ok(())
-}
-
-/// Reject the account when it is a guest, acquiring from the shared pool.
-pub(crate) async fn reject_if_guest_account(
-    pool: &sqlx::AnyPool,
-    account_id: &str,
-) -> Result<(), ApiError> {
-    let mut conn = pool
-        .acquire()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    reject_if_guest(&mut conn, account_id).await
 }
 
 /// Allow session or an API token that includes import.
@@ -149,8 +117,8 @@ pub fn require_import_or_export_access(auth: &AuthIdentity) -> Result<(), ApiErr
 pub struct AppState {
     /// Loaded configuration.
     pub cfg: Arc<Config>,
-    /// Connection pool (SQLite file or `[database] url`). Handlers and the
-    /// guest-pool worker acquire short-lived connections from here.
+    /// Connection pool (SQLite file or `[database] url`). Handlers acquire
+    /// short-lived connections from here.
     pub db: sqlx::AnyPool,
     /// Engine the pool was opened for (SQLite by default, Postgres via URL).
     pub db_engine: DbEngine,
@@ -166,12 +134,6 @@ pub struct AppState {
     pub(crate) upload_limits: asset_uploads::UploadLimits,
     /// Axum request body cap (single PUT or one part); equals `asset_max_bytes`.
     pub(crate) max_body_bytes: usize,
-    /// Hosted guest-demo pool. Off on self-hosted (`GuestDemoSettings::disabled`).
-    pub guest: GuestDemoSettings,
-    /// One on-demand template clone at a time (empty-pool Try it).
-    pub guest_clone_lock: Arc<Mutex<()>>,
-    /// Hosted Try it assignments in the last 15 minutes (refill demand).
-    pub guest_demand: Arc<StdMutex<GuestPoolState>>,
 }
 
 /// API error envelope returned for non-200 responses.
@@ -404,14 +366,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         asset_complete_locks: Arc::new(Mutex::new(HashMap::new())),
         upload_limits,
         max_body_bytes,
-        guest: GuestDemoSettings::from_env(),
-        guest_clone_lock: Arc::new(Mutex::new(())),
-        guest_demand: Arc::new(StdMutex::new(GuestPoolState::new())),
     };
-
-    if state.guest.enabled {
-        spawn_guest_pool_worker(state.clone());
-    }
 
     let app = http_app(state);
     let listener = tokio::net::TcpListener::bind(&bind).await?;
@@ -442,83 +397,6 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
-}
-
-/// Sweep expired guests and refill unused ready copies every 60 seconds.
-///
-/// The first tick runs immediately so the pool is not empty on the first Try it.
-/// Shrink-over-ceiling runs without the clone lock. Each clone takes
-/// `guest_clone_lock` only for that one copy so on-demand Try it can assign a
-/// ready guest (or clone one) between refills. The worker does not take the
-/// vault operation lock; `serve` already holds it.
-fn spawn_guest_pool_worker(worker_state: AppState) {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-        loop {
-            interval.tick().await;
-            let pool = worker_state.db.clone();
-            let cfg = worker_state.cfg.clone();
-            let guest = worker_state.guest;
-            let demand = match worker_state.guest_demand.lock() {
-                Ok(mut guard) => guard.count_last_15m(),
-                Err(_) => {
-                    eprintln!("guest demand lock poisoned; refill uses the floor");
-                    0
-                }
-            };
-            let clone_lock = worker_state.guest_clone_lock.clone();
-            let data_dir = cfg.paths.data_dir.clone();
-
-            let sweep_pool = pool.clone();
-            let sweep_data = data_dir.clone();
-            log_guest_pool_task(
-                "sweep",
-                async move {
-                    let mut conn = sweep_pool.acquire().await?;
-                    guest_pool::sweep_expired_guests(&mut conn, &sweep_data).await
-                }
-                .await,
-            );
-
-            let shrink_pool = pool.clone();
-            let shrink_cfg = cfg.clone();
-            log_guest_pool_task(
-                "shrink",
-                async move {
-                    let mut conn = shrink_pool.acquire().await?;
-                    guest_pool::shrink_over_ceiling(&mut conn, &shrink_cfg, guest).await
-                }
-                .await,
-            );
-
-            loop {
-                let one_pool = pool.clone();
-                let one_cfg = cfg.clone();
-                let result = {
-                    let _guard = clone_lock.lock().await;
-                    async move {
-                        let mut conn = one_pool.acquire().await?;
-                        guest_pool::refill_one(&mut conn, &one_cfg, guest, demand).await
-                    }
-                    .await
-                };
-                match result {
-                    Ok(0) => break,
-                    Ok(_) => {}
-                    Err(err) => {
-                        eprintln!("guest pool refill failed: {err:#}");
-                        break;
-                    }
-                }
-            }
-        }
-    });
-}
-
-fn log_guest_pool_task(what: &str, result: anyhow::Result<u32>) {
-    if let Err(err) = result {
-        eprintln!("guest pool {what} failed: {err:#}");
-    }
 }
 
 async fn shutdown_signal() {
@@ -785,11 +663,9 @@ pub(crate) async fn stream_field_to_file(
 mod tests {
     use super::*;
     use crate::import::{
-        CompleteImportBody, CompleteImportIssueBody, CreateImportBody, imports_complete_handler,
-        imports_create_handler, imports_get_handler,
+        CompleteImportBody, CompleteImportIssueBody, imports_complete_handler, imports_get_handler,
     };
-    use axum::extract::{Path as AxumPath, Query, State};
-    use std::sync::{Arc, Mutex as StdMutex};
+    use axum::extract::{Path as AxumPath, State};
     use tempfile::TempDir;
 
     fn auth_public_router() -> Router<AppState> {
@@ -859,9 +735,6 @@ mod tests {
             asset_complete_locks: Arc::new(Mutex::new(HashMap::new())),
             upload_limits: asset_uploads::UploadLimits::default(),
             max_body_bytes: asset_uploads::DEFAULT_MAX_BYTES as usize,
-            guest: crate::config::GuestDemoSettings::disabled(),
-            guest_clone_lock: Arc::new(Mutex::new(())),
-            guest_demand: Arc::new(StdMutex::new(GuestPoolState::new())),
         };
 
         (tmp, state, token, import_id)
@@ -1021,120 +894,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn try_demo_route_exists() {
-        assert_ne!(
-            auth_route_status("/v1/auth/try-demo").await,
-            StatusCode::NOT_FOUND
-        );
+    async fn try_demo_route_is_gone() {
+        // server.rs's own helper returns (TempDir, AppState, token, import_id).
+        // The shared harness in test_support.rs does not exist until Task 4.
+        let (_tmp, state, _token, _import_id) = test_state().await;
+        let response = get_path(state, "/v1/auth/try-demo").await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
     async fn local_auth_routes_exist() {
         for path in ["/v1/auth/register", "/v1/auth/login"] {
             assert_ne!(auth_route_status(path).await, StatusCode::NOT_FOUND);
-        }
-    }
-
-    async fn guest_test_state() -> (TempDir, AppState, String) {
-        let (tmp, state, _token, _import_id) = test_state().await;
-        let guest_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-        let token = {
-            let mut conn = state.db.acquire().await.unwrap();
-            account_profile::insert_guest_account(&mut conn, guest_id, "guest-bbbb", None)
-                .await
-                .unwrap();
-            account_profile::set_guest_status(&mut conn, guest_id, "assigned")
-                .await
-                .unwrap();
-            crate::db::session_tokens::insert_account_session_token(&mut conn, guest_id)
-                .await
-                .unwrap()
-        };
-        (tmp, state, token)
-    }
-
-    #[tokio::test]
-    async fn guest_cannot_create_imports_but_can_export_messages() {
-        let (_tmp, state, token) = guest_test_state().await;
-
-        let err = imports_create_handler(
-            State(state.clone()),
-            auth_headers(&token),
-            Json(CreateImportBody {
-                source: "ios".into(),
-                mode: "append".into(),
-                tool: None,
-                account: None,
-            }),
-        )
-        .await
-        .unwrap_err();
-        match err {
-            ApiError::Forbidden(msg) => {
-                assert!(
-                    msg.contains("sample accounts"),
-                    "expected sample-account message, got {msg}"
-                );
-            }
-            other => panic!("expected forbidden on POST /v1/imports, got {other:?}"),
-        }
-
-        let export = crate::export_api::export_messages_handler(
-            State(state),
-            auth_headers(&token),
-            Query(crate::export_api::ExportMessagesQuery {
-                q: "hello".into(),
-                limit: None,
-                offset: None,
-                cursor: None,
-                account: None,
-                source: None,
-            }),
-        )
-        .await;
-        match export {
-            Ok(_) => {}
-            Err(ApiError::BadRequest(_)) => {}
-            Err(ApiError::Forbidden(msg)) => {
-                panic!("GET /v1/export/messages must not be 403 for guests, got {msg}")
-            }
-            Err(other) => panic!("unexpected export error: {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn guest_cannot_complete_imports() {
-        let (_tmp, state, token) = guest_test_state().await;
-        let err = imports_complete_handler(
-            State(state),
-            auth_headers(&token),
-            AxumPath(1),
-            Json(CompleteImportBody {
-                ok: true,
-                message_count: Some(1),
-                attachment_count: None,
-                bytes_uploaded: None,
-                duration_ms: None,
-                parse_ms: None,
-                attachments_ms: None,
-                prepare_ms: None,
-                upload_ms: None,
-                summary: None,
-                issues: vec![],
-            }),
-        )
-        .await
-        .unwrap_err();
-        match err {
-            ApiError::Forbidden(msg) => {
-                assert!(
-                    msg.contains("sample accounts"),
-                    "expected sample-account message, got {msg}"
-                );
-            }
-            other => {
-                panic!("expected forbidden on POST /v1/imports/{{id}}/complete, got {other:?}")
-            }
         }
     }
 

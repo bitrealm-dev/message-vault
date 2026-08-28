@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_TAURI_VAULT_URL,
   initialLoginServerUrl,
-  isTryDemoEnabled,
   parsePersistedAuth,
   vaultDisplayHost,
 } from "./authGuards.ts";
@@ -24,14 +23,6 @@ describe("initialLoginServerUrl", () => {
     expect(initialLoginServerUrl("https://vault.example.com", true)).toBe(
       "https://vault.example.com",
     );
-  });
-});
-
-describe("isTryDemoEnabled", () => {
-  it("reads try_demo only when true", () => {
-    expect(isTryDemoEnabled(true)).toBe(true);
-    expect(isTryDemoEnabled(false)).toBe(false);
-    expect(isTryDemoEnabled(undefined)).toBe(false);
   });
 });
 

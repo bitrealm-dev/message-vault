@@ -336,61 +336,6 @@ pub async fn insert_account(
     Ok(())
 }
 
-/// The account's `guest_status` value (`ready` or `assigned`), or `None` when
-/// the account is not a guest.
-pub async fn guest_status(conn: &mut AnyConnection, account_id: &str) -> Result<Option<String>> {
-    schema::ensure_accounts_schema(conn).await?;
-    let status: Option<Option<String>> =
-        sqlx::query_scalar("SELECT guest_status FROM accounts WHERE id = $1")
-            .bind(account_id)
-            .fetch_optional(&mut *conn)
-            .await?;
-    Ok(status.flatten().filter(|s| !s.is_empty()))
-}
-
-/// True when the account has any guest status set.
-pub async fn is_guest_account(conn: &mut AnyConnection, account_id: &str) -> Result<bool> {
-    Ok(guest_status(conn, account_id).await?.is_some())
-}
-
-/// Insert a new guest account with status `ready`, no password, and
-/// `read_only = 0`.
-pub async fn insert_guest_account(
-    conn: &mut AnyConnection,
-    id: &str,
-    username: &str,
-    preferred_name: Option<&str>,
-) -> Result<()> {
-    schema::ensure_accounts_schema(conn).await?;
-    sqlx::query(
-        r#"
-        INSERT INTO accounts (
-            id, username, read_only, password_hash, preferred_name, guest_status
-        ) VALUES ($1, $2, 0, NULL, $3, 'ready')
-        "#,
-    )
-    .bind(id)
-    .bind(username)
-    .bind(preferred_name)
-    .execute(&mut *conn)
-    .await?;
-    Ok(())
-}
-
-/// Overwrite an account's `guest_status` value.
-pub async fn set_guest_status(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    status: &str,
-) -> Result<()> {
-    sqlx::query("UPDATE accounts SET guest_status = $1 WHERE id = $2")
-        .bind(status)
-        .bind(account_id)
-        .execute(&mut *conn)
-        .await?;
-    Ok(())
-}
-
 /// Ensure a phone handle is linked to the account via `account_handles`.
 pub async fn upsert_account_phone(
     conn: &mut AnyConnection,
@@ -661,29 +606,6 @@ mod tests {
                 .unwrap();
         assert_eq!(linked_ids.len(), 2);
         assert!(linked_ids.contains(&email));
-    }
-
-    #[tokio::test]
-    async fn guest_helpers_work() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let guest_id = "22222222-2222-4222-8222-222222222222";
-        insert_guest_account(&mut conn, guest_id, "guest-abc", Some("Guest"))
-            .await
-            .unwrap();
-        assert_eq!(
-            guest_status(&mut conn, guest_id).await.unwrap().as_deref(),
-            Some("ready")
-        );
-        assert!(is_guest_account(&mut conn, guest_id).await.unwrap());
-        set_guest_status(&mut conn, guest_id, "assigned")
-            .await
-            .unwrap();
-        assert_eq!(
-            guest_status(&mut conn, guest_id).await.unwrap().as_deref(),
-            Some("assigned")
-        );
-        assert!(!is_guest_account(&mut conn, ACCOUNT_ID).await.unwrap());
     }
 
     #[tokio::test]

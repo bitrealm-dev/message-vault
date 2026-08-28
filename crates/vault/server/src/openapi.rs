@@ -49,10 +49,9 @@ impl Modify for BearerAddon {
     }
 }
 
-/// Unauthenticated auth JSON (Try it, and register and login).
+/// Unauthenticated auth JSON (register and login).
 pub fn auth_public_openapi() -> OpenApiRouter<AppState> {
     OpenApiRouter::with_openapi(ApiDoc::openapi())
-        .routes(routes!(crate::auth::try_demo_handler))
         .routes(routes!(crate::auth::register_handler))
         .routes(routes!(crate::auth::login_handler))
 }
@@ -198,7 +197,6 @@ mod tests {
         for p in [
             "/v1/auth/register",
             "/v1/auth/login",
-            "/v1/auth/try-demo",
             "/v1/auth/mode",
             "/v1/auth/check",
             "/v1/auth/logout",
