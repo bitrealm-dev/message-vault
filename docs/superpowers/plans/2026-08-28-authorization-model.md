@@ -2648,10 +2648,16 @@ Expected: PASS. These cover the `pg_accounts.sql` twin, which the SQLite-only ru
 - [ ] **Step 4: Confirm the removals are complete**
 
 ```bash
-grep -ril "hanko\|try_demo\|try-demo\|guest_status\|guest_pool\|read_only" crates schema web/src .env.example
+grep -ril "hanko\|try_demo\|try-demo\|guest_status\|guest_pool\|guest_demo\|GuestDemo\|GUEST_POOL\|GUEST_SESSION\|is_guest\|read_only" \
+  crates schema web/src .env.example docker docs/src
 ```
 
 Expected: no output. Hits in `web-next/` are expected and out of scope; the command above does not search it.
+
+The pattern and the search paths are both wider than they look at first glance, deliberately. An earlier version searched only `crates schema web/src .env.example` for `hanko|try_demo|try-demo|guest_status|guest_pool|read_only`, and would have let four leftovers ship: `GuestDemoSettings` in `config.rs`, the `GUEST_DEMO_POOL` / `GUEST_POOL_MIN` / `GUEST_POOL_MAX` / `GUEST_SESSION_SECS` variables in `.env.example` and `docker/compose.release.yml`, the `VAULT_AUTH` variable in that same compose file, and — worst — the published operator documentation at
+`docs/src/content/docs/vault/developer/reference/config-and-accounts.md`, whose "Guest demo pool" section describes behavior that no longer exists.
+
+If this grep reports a hit in `docs/src`, fix the documentation rather than narrowing the grep.
 
 - [ ] **Step 5: Confirm the schema version and the fixture snapshot agree**
 
