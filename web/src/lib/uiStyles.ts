@@ -1,6 +1,13 @@
 /** Shared theme-aware Tailwind class strings using the tokens from theme.css. */
 
-export const pageCenter = "min-h-screen flex items-center justify-center bg-bg p-4";
+/**
+ * The card itself never scrolls or resizes — but at 560px tall, a viewport
+ * shorter than that (phone in landscape, a small desktop window) cannot fit a
+ * vertically-centered flex container without its top overflowing off-screen
+ * and unreachable. `overflow-y-auto` keeps the card centered on a normal
+ * viewport while letting the *page* scroll to reach it on a short one.
+ */
+export const pageCenter = "min-h-screen flex items-center justify-center bg-bg p-4 overflow-y-auto";
 /**
  * Every auth card is the same 448 × 560 box on every screen and in every
  * state — it never resizes and never scrolls, so nothing moves underneath the
@@ -13,8 +20,11 @@ export const authCard =
 export const authCardBody = "flex min-h-0 flex-1 flex-col";
 
 /**
- * Action row pinned to the bottom of the frame, so Sign in, Create account and
- * Continue to Vault all land on the same row on every screen.
+ * Action row pinned to the bottom of the frame: the primary action does not
+ * move when switching between the Login and Create Account tabs. Profile
+ * setup uses the same pinned footer for its own submit and back button, so
+ * the action still lands in the same place on that screen too — it just
+ * carries more below it there.
  */
 export const authCardFooter = "mt-auto";
 export const authTitle = "text-[1.25rem] font-bold text-text mb-6 text-left";
