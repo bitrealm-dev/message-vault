@@ -157,6 +157,67 @@ describe("LoginScreen", () => {
     expect(screen.getByRole("tab", { name: "Login" })).toBeInTheDocument();
   });
 
+  it("reconnects on its own once a probe finds the vault healthy again", async () => {
+    let healthy = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).endsWith("/v1/auth/mode")) {
+          if (!healthy) throw new TypeError("Failed to fetch");
+          return { ok: true, json: async () => ({ mode: "local" }) };
+        }
+        // /health
+        return healthy ? { ok: true, text: async () => "" } : { ok: false, status: 503 };
+      }),
+    );
+    renderScreen();
+
+    await screen.findByText("disconnected");
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+
+    healthy = true;
+
+    expect(
+      await screen.findByRole("tab", { name: "Login" }, { timeout: 3000 }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+  });
+
+  it("carries an abort signal on the mode probe", async () => {
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (String(url).endsWith("/v1/auth/mode")) {
+        return { ok: true, json: async () => ({ mode: "local" }) };
+      }
+      return { ok: true, text: async () => "" };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderScreen();
+
+    await screen.findByRole("tab", { name: "Login" });
+    const modeCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/v1/auth/mode"));
+    expect(modeCall).toBeDefined();
+    expect(modeCall?.[1]).toMatchObject({ signal: expect.any(AbortSignal) });
+  });
+
+  it("keeps the tabs rendered, dimmed, when a connected vault drops", async () => {
+    stubVault();
+    const user = userEvent.setup();
+    renderScreen();
+
+    await screen.findByText("connected");
+    await user.click(screen.getByRole("button", { name: "Change" }));
+
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    const field = screen.getByRole("textbox", { name: "Vault address" });
+    await user.clear(field);
+    await user.type(field, "http://127.0.0.1:9999");
+    await user.click(screen.getByRole("button", { name: "Use" }));
+
+    expect(await screen.findByText("disconnected")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Login" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Username" })).toBeInTheDocument();
+  });
+
   it("falls back to local tabs when the vault reports an unrecognized mode", async () => {
     vi.stubGlobal(
       "fetch",

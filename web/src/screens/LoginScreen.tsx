@@ -5,7 +5,7 @@ import { initialLoginServerUrl, vaultDisplayHost } from "../lib/authGuards";
 import { isTauri } from "../lib/tauri-check";
 import { authCard, authCardBody, pageCenter } from "../lib/uiStyles";
 import { useVaultHealth } from "../lib/useVaultHealth";
-import { probeTimeoutSignal } from "../lib/vaultHealth";
+import { probeTimeoutSignal, type VaultHealthStatus } from "../lib/vaultHealth";
 import LocalAuthTabs from "./auth/LocalAuthTabs";
 import VaultLine, { type VaultConnection } from "./auth/VaultLine";
 
@@ -76,6 +76,20 @@ export default function LoginScreen() {
     started.current = true;
     void connect(address);
   }, [connect, address]);
+
+  // A disconnected card heals itself: when the live health probe finds the
+  // vault reachable again, reconnect without waiting for Retry. Fires only on
+  // the transition into "ok" — not on every render while it stays "ok" — so a
+  // `connect()` that fails and lands back in "disconnected" does not
+  // immediately retry.
+  const previousHealth = useRef<VaultHealthStatus>(health);
+  useEffect(() => {
+    const becameHealthy = previousHealth.current !== "ok" && health === "ok";
+    previousHealth.current = health;
+    if (state === "disconnected" && becameHealthy) {
+      void connect(draft);
+    }
+  }, [health, state, draft, connect]);
 
   const host = vaultDisplayHost(
     state === "connected" ? address : draft,

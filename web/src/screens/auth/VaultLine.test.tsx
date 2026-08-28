@@ -71,4 +71,19 @@ describe("VaultLine", () => {
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     expect(screen.getByText("Start your vault, or enter another address.")).toBeInTheDocument();
   });
+
+  it("tracks the live health value while disconnected, not the card state", () => {
+    renderLine({ state: "disconnected", health: "ok" });
+    expect(screen.getByText("connected")).toBeInTheDocument();
+    expect(screen.queryByText("disconnected")).not.toBeInTheDocument();
+  });
+
+  it("tracks the live health value while editing, not a hard-coded connecting", () => {
+    renderLine({ state: "editing", health: "ok" });
+    expect(screen.getByText("connected")).toBeInTheDocument();
+    cleanup();
+
+    renderLine({ state: "editing", health: "fail" });
+    expect(screen.getByText("disconnected")).toBeInTheDocument();
+  });
 });

@@ -19,6 +19,8 @@ export interface VaultLineProps {
   onSubmit: () => void;
 }
 
+// Collapsed states (no editor open) read their word from the card state: the
+// mode probe that got them there is itself proof of reachability.
 const STATUS_WORD: Record<VaultConnection, string> = {
   connecting: "connecting…",
   connected: "connected",
@@ -31,6 +33,23 @@ const STATUS_COLOR: Record<VaultConnection, string> = {
   connected: "text-ok",
   editing: "text-muted",
   disconnected: "text-danger",
+};
+
+// While the editor is open, the word tracks the live health probe instead —
+// otherwise a vault that comes back up would read "disconnected" next to a
+// green dot until the user pressed Retry.
+const HEALTH_STATUS_WORD: Record<VaultHealthStatus, string> = {
+  ok: "connected",
+  fail: "disconnected",
+  checking: "connecting…",
+  unknown: "connecting…",
+};
+
+const HEALTH_STATUS_COLOR: Record<VaultHealthStatus, string> = {
+  ok: "text-ok",
+  fail: "text-danger",
+  checking: "text-muted",
+  unknown: "text-muted",
 };
 
 /**
@@ -49,14 +68,16 @@ export default function VaultLine({
   onSubmit,
 }: VaultLineProps) {
   const open = state === "editing" || state === "disconnected";
+  const statusWord = open ? HEALTH_STATUS_WORD[health] : STATUS_WORD[state];
+  const statusColor = open ? HEALTH_STATUS_COLOR[health] : STATUS_COLOR[state];
 
   return (
     <div className="mb-3.5">
       <div className="flex items-center gap-1.5 text-[0.75rem] text-muted">
         <span className="min-w-0 truncate font-medium text-text">{host}</span>
         <span aria-hidden="true">·</span>
-        <span className={STATUS_COLOR[state]} aria-live="polite">
-          {STATUS_WORD[state]}
+        <span className={statusColor} aria-live="polite">
+          {statusWord}
         </span>
         <span className="ml-auto flex items-center gap-2">
           {open ? <HealthDot status={health} /> : null}
