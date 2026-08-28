@@ -15,6 +15,9 @@ name: message-vault-pg
 services:
   postgres:
     image: postgres:16-alpine
+    # Docker defaults /dev/shm to 64mb. Parallel VACUUM after --reset-demo
+    # needs ~64mb per worker (up to ~192mb). 512mb leaves a little extra.
+    shm_size: 512mb
     environment:
       POSTGRES_USER: vault
       POSTGRES_PASSWORD: vault
