@@ -142,17 +142,14 @@ becomes:
 
 ```rust
 enum AuthCapability {
-    Session(AccountCapabilities),   // was Full
-    ApiToken(ApiTokenScopes),
-}
-
-struct AccountCapabilities {
-    is_admin: bool,
-    can_import: bool,
-    can_export: bool,
-    can_delete: bool,
+    Session { is_admin: bool, permissions: Permissions },   // was Full
+    ApiToken(Permissions),                                  // account ∩ token, resolved already
 }
 ```
+
+`Permissions` is the shared set defined below. For a session it is the account's own; for an API
+token it is the account's intersected with the token's, computed in `resolve_auth` so no guard has to
+remember to do it.
 
 `resolve_auth` (`server.rs:587`) already performs a database lookup on every request to resolve the
 bearer token. It loads the account's flags in that same lookup, so the capabilities cost no
@@ -165,8 +162,48 @@ scopes and its owner's flags, so revoking a user's import right cannot be routed
 token. Concretely: `require_import_access` passes only when the owning account has `can_import` and,
 for `ApiToken`, when the token's scopes include import.
 
-`ApiTokenScopes` keeps its current vocabulary (`import` | `export` | `both`). Tokens gain no delete
-scope; deletion is not something an API token may do, which is the behavior today and is unchanged.
+### One permission type, two places it is stored
+
+`ApiTokenScopes` today is an enum of three values — `Import`, `Export`, `Both` — stored as a string
+in `account_api_tokens.scopes`. That shape cannot express three independent permissions: adding
+delete would need seven variants to cover the combinations.
+
+It is replaced by a set, shared by accounts and tokens:
+
+```rust
+struct Permissions {
+    import: bool,
+    export: bool,
+    delete: bool,
+}
+```
+
+Stored the same way in both tables — `can_import`, `can_export`, `can_delete` columns on `accounts`
+and on `account_api_tokens` — so the intersection is a field-wise AND rather than a translation
+between two vocabularies. `account_api_tokens.scopes` is dropped.
+
+`is_admin` and `disabled` stay account-only. Neither is a permission a user could sensibly delegate
+to an external tool.
+
+### API tokens may delete
+
+Deletion is currently session-only: `delete-messages` calls `require_full_access`, which rejects API
+tokens outright. It moves to `require_delete_access`, so a token holding delete can call it.
+
+These stay on `require_full_access` and remain session-only, because they are not operations to hand
+to an external tool:
+
+- `POST /v1/auth/delete-account` — closing the account, which belongs behind the danger zone
+- `POST /v1/auth/change-password`
+- the `/v1/account/api-tokens` management endpoints — a token must not mint tokens
+- every `/v1/admin/*` route
+
+**A safety consequence that must not be missed.** The web UI has no scope selector: `useApiTokens.ts`
+hardcodes `scopes: "both"` on creation, so every token made from Settings today receives every
+permission that exists. If delete joins the vocabulary while that stays hardcoded, every token
+silently gains the right to destroy message data. The create-token form must gain a real selector as
+part of this work — it is required, not cosmetic. New tokens default to import and export only;
+delete is opt-in.
 
 ### The guards
 
@@ -174,12 +211,17 @@ Five, four of which exist:
 
 | Guard | Location | Change |
 |---|---|---|
-| `require_full_access` | `server.rs:60` | unchanged: still rejects API tokens and nothing else |
-| `require_import_access` | `server.rs` | must also check `can_import` |
-| `require_export_access` | `server.rs` | must also check `can_export` |
-| `require_import_or_export_access` | `server.rs` | must also check both flags |
-| `require_delete_access` | new | checks `can_delete` |
+| `require_full_access` | `server.rs:60` | unchanged: rejects API tokens, session-only operations |
+| `require_import_access` | `server.rs` | checks `permissions.import` for either credential |
+| `require_export_access` | `server.rs` | checks `permissions.export` |
+| `require_import_or_export_access` | `server.rs` | checks either |
+| `require_delete_access` | new | checks `permissions.delete`; accepts API tokens |
 | `require_admin` | new | checks `is_admin`; rejects API tokens outright |
+
+Because `resolve_auth` has already intersected account and token permissions, each guard reads one
+boolean and does not need to know which kind of credential it holds. This is why delete rides the
+existing wiring instead of arriving by a separate path: the guards keep their shape and gain one
+sibling.
 
 `reject_if_guest` and `reject_if_guest_account` are deleted, and their call sites in `assets.rs`,
 `api_tokens_api.rs`, and `import/mod.rs` fall back to the capability guards already present at those
@@ -316,6 +358,16 @@ Both engines, per the dual-engine rule: `schema/sql/accounts.sql` and `schema/sq
 change together. Every new column needs a `--` comment on the line above it or
 `scripts/check-sql-column-comments.mjs` fails.
 
+Two tables change. On `accounts`: add `is_admin`, `disabled`, `can_import`, `can_export`,
+`can_delete`; drop `hanko_user_id`, `read_only`, `guest_status`, and `ix_accounts_hanko_user_id`. On
+`account_api_tokens`: drop `scopes` and add the same three `can_*` columns, so both tables describe
+permission with identical names and types.
+
+Defaults differ deliberately. On `accounts` the three permissions default to 1, because a new user
+can do everything until an administrator says otherwise. On `account_api_tokens`, `can_delete`
+defaults to 0 — a token is a narrowing of its owner's rights, and destruction should be asked for
+rather than inherited.
+
 `SCHEMA_VERSION` in `crates/vault/server/src/db/schema.rs` goes from `2` to `3`. There are no
 in-place migrations, so every existing database is rebuilt empty and its owner re-imports. This is
 accepted.
@@ -348,13 +400,30 @@ Labels are written for the reader, not after the columns:
 the capability flags so the UI can hide what the account may not do. Hiding remains a courtesy — the
 server is now the thing that actually enforces it.
 
+### The API token form
+
+`web/src/screens/settings/useApiTokens.ts` currently posts `scopes: "both"` as a literal — there is
+no scope selector anywhere in Settings, so every token ever created from the UI holds every
+permission. That is tolerable while the permissions are import and export. It is not tolerable once
+delete exists.
+
+The create-token form gains three checkboxes — Import, Export, Delete — with import and export
+checked and delete unchecked by default. A checkbox for a permission its owner does not hold is
+disabled, with a line saying why, since a token can never exceed its account. `scopesLabel` in
+`apiTokensUtils.ts` is replaced by rendering the set, and `ApiTokensTable` shows which permissions
+each token carries rather than one word.
+
 ## Testing
 
 - The first non-demo registration becomes an administrator; the second does not.
 - On a `--reset-demo` vault, the first human registration still becomes the administrator.
 - Each capability flag, off, produces `403` from its guard, and on, produces success.
-- An API token whose owner lost `can_import` cannot import, even with import scope — the
+- An API token whose owner lost `can_import` cannot import, even with import permission — the
   intersection rule.
+- A token holding delete can call `POST /v1/account/delete-messages`; one without it gets `403`.
+- A token cannot call `delete-account`, `change-password`, the API-token management routes, or any
+  `/v1/admin/*` route, whatever permissions it holds.
+- A token created through the API without an explicit delete permission does not get one.
 - A disabled account's existing session token is rejected on its next request, not merely at login.
 - The last administrator cannot be demoted, disabled, or deleted.
 - `require_admin` rejects both non-admin sessions and API tokens.
