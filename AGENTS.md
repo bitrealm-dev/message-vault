@@ -201,8 +201,9 @@ compose Postgres, runs this checkout's vault with `--db-url
 postgres://vault:vault@127.0.0.1:5432/vault`, and stops the container
 on exit. `--reset` / `--reset-demo` wipe the `vault_pg_data` volume and
 host `data/`. After `--reset-demo`, sign in as `demo` with an empty
-password. Do not run this and `./scripts/run-vault-dev.sh` at once
-(both serve on 127.0.0.1:8080).
+password. Pass `--release` to seed and serve with the optimized binary
+(first compile can take several minutes). Do not run this and
+`./scripts/run-vault-dev.sh` at once (both serve on 127.0.0.1:8080).
 
 **Terminal 2 — UI** (pick one)
 
