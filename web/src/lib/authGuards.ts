@@ -1,5 +1,11 @@
 export type AuthMode = "hanko" | "local";
 
+/** What every vault sign-in route returns: a session token and the account it belongs to. */
+export interface SessionResponse {
+  token: string;
+  account_id: string;
+}
+
 /** Desktop login default. IPv4 loopback, because `localhost` often resolves to IPv6 and Docker Compose publishes 8080 on IPv4 only. */
 export const DEFAULT_TAURI_VAULT_URL = "http://127.0.0.1:8080";
 

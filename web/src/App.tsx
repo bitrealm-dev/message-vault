@@ -10,7 +10,6 @@ import { isTauri } from "./lib/tauri-check";
 import { useAccountProfile } from "./lib/useAccountProfile";
 import LoginScreen from "./screens/LoginScreen";
 import OnboardingScreen from "./screens/OnboardingScreen";
-import RegisterScreen from "./screens/RegisterScreen";
 
 /**
  * Import and export only ever run in the desktop app, so their code — the
@@ -44,17 +43,15 @@ function ImportExportRoute({ children }: { children: ReactNode }) {
 function AppRoutes() {
   const { isAuthenticated, needsOnboarding } = useAuth();
 
-  // Where a signed-in visitor to login/register should go next.
+  // Where a signed-in visitor to the login screen should go next.
   const signedInDestination = <Navigate to={needsOnboarding ? "/onboarding" : "/"} replace />;
 
   return (
     <Routes>
       {/* Public routes — redirect to / if already authenticated */}
       <Route path="/login" element={isAuthenticated ? signedInDestination : <LoginScreen />} />
-      <Route
-        path="/register"
-        element={isAuthenticated ? signedInDestination : <RegisterScreen />}
-      />
+      {/* Registration is now the second tab of the login card, not its own screen. */}
+      <Route path="/register" element={<Navigate to="/login" replace />} />
       <Route
         path="/onboarding"
         element={
