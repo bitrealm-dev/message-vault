@@ -40,7 +40,9 @@ export function useResource<T>(
       })
       .catch((e: unknown) => {
         if (!controller.signal.aborted) {
-          setError(String(e));
+          // `String(err)` on an Error yields "Error: …"; callers render this
+          // straight into the UI, so use the message on its own.
+          setError(e instanceof Error ? e.message : String(e));
           setData(null);
         }
       })

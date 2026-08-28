@@ -1,57 +1,61 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { apiClient } from "../../lib/api";
+import { useAsyncAction } from "../../lib/useAsyncAction";
+import { useResource } from "../../lib/useResource";
 import type { ApiTokenItem } from "./apiTokensUtils";
 
+const fetchTokens = (signal: AbortSignal) =>
+  apiClient
+    .get<{ items: ApiTokenItem[] }>("/v1/account/api-tokens", { signal })
+    .then((res) => res.items ?? []);
+
+/**
+ * The list goes through `useResource` and each mutation through
+ * `useAsyncAction` — the busy flag, the cleared-then-captured error and the
+ * try/catch/finally around each call were previously written out three times
+ * here, matching those hooks line for line.
+ */
 export function useApiTokens() {
-  const [items, setItems] = useState<ApiTokenItem[]>([]);
-  const [loadError, setLoadError] = useState("");
-  const [busy, setBusy] = useState(false);
   const [composing, setComposing] = useState(false);
   const [label, setLabel] = useState("");
-  const [actionError, setActionError] = useState("");
   const [reveal, setReveal] = useState<{ label: string; token: string } | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<ApiTokenItem | null>(null);
   const [renameTarget, setRenameTarget] = useState<ApiTokenItem | null>(null);
   const [renameLabel, setRenameLabel] = useState("");
 
-  const reload = useCallback(async () => {
-    setLoadError("");
-    try {
-      const res = await apiClient.get<{ items: ApiTokenItem[] }>("/v1/account/api-tokens");
-      setItems(res.items ?? []);
-    } catch (e) {
-      setLoadError(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
+  const {
+    data,
+    loading,
+    error: loadError,
+    reload,
+  } = useResource("account/api-tokens", fetchTokens);
+  const { busy, error: actionError, run, clearError } = useAsyncAction();
 
-  useEffect(() => {
-    void reload();
-  }, [reload]);
-
-  const cancelCompose = () => {
+  const cancelCompose = useCallback(() => {
     setComposing(false);
     setLabel("");
-    setActionError("");
-  };
+    clearError();
+  }, [clearError]);
 
-  const openRename = (item: ApiTokenItem) => {
-    setRenameTarget(item);
-    setRenameLabel(item.label);
-    setActionError("");
-  };
+  const openRename = useCallback(
+    (item: ApiTokenItem) => {
+      setRenameTarget(item);
+      setRenameLabel(item.label);
+      clearError();
+    },
+    [clearError],
+  );
 
-  const closeRename = () => {
+  const closeRename = useCallback(() => {
     if (busy) return;
     setRenameTarget(null);
     setRenameLabel("");
-  };
+  }, [busy]);
 
-  const create = async () => {
+  const create = () => {
     const trimmed = label.trim();
-    if (!trimmed) return;
-    setBusy(true);
-    setActionError("");
-    try {
+    if (!trimmed) return Promise.resolve();
+    return run(async () => {
       const res = await apiClient.post<{
         id: string;
         label: string;
@@ -62,50 +66,37 @@ export function useApiTokens() {
       setLabel("");
       setComposing(false);
       setReveal({ label: res.label, token: res.token });
-      await reload();
-    } catch (e) {
-      setActionError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+      reload();
+    });
   };
 
-  const rename = async () => {
-    if (!renameTarget) return;
+  const rename = () => {
+    if (!renameTarget) return Promise.resolve();
     const trimmed = renameLabel.trim();
-    if (!trimmed) return;
-    setBusy(true);
-    setActionError("");
-    try {
+    if (!trimmed) return Promise.resolve();
+    return run(async () => {
       await apiClient.patch(`/v1/account/api-tokens/${encodeURIComponent(renameTarget.id)}`, {
         label: trimmed,
       });
       setRenameTarget(null);
       setRenameLabel("");
-      await reload();
-    } catch (e) {
-      setActionError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+      reload();
+    });
   };
 
-  const revoke = async (item: ApiTokenItem) => {
-    setBusy(true);
-    setActionError("");
-    try {
-      await apiClient.delete(`/v1/account/api-tokens/${encodeURIComponent(item.id)}`);
-      await reload();
-    } catch (e) {
-      setActionError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-      setRevokeTarget(null);
-    }
-  };
+  const revoke = (item: ApiTokenItem) =>
+    run(async () => {
+      try {
+        await apiClient.delete(`/v1/account/api-tokens/${encodeURIComponent(item.id)}`);
+        reload();
+      } finally {
+        setRevokeTarget(null);
+      }
+    });
 
   return {
-    items,
+    items: data ?? [],
+    loading,
     loadError,
     busy,
     composing,

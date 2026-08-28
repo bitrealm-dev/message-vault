@@ -1,6 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import type { AccountProfile } from "../lib/account";
-import { apiClient } from "../lib/api";
 import {
   emptyImessagePathStats,
   IMESSAGE_DEFAULT_METHOD,
@@ -21,6 +19,7 @@ import {
 } from "../lib/system-settings";
 import { invokeHomeDir, invokeIosBackupEncrypted, invokePathStat } from "../lib/tauri";
 import { isTauri } from "../lib/tauri-check";
+import { loadAccountProfile } from "../lib/useAccountProfile";
 import type { AttachmentMediaMode, ContactNameMode } from "../lib/types";
 import {
   emptyWhatsappPathStats,
@@ -117,8 +116,9 @@ export default function ImportScreen() {
     setProfilePhonesError(false);
     void (async () => {
       try {
-        const profile = await apiClient.get<AccountProfile>("/v1/account/profile");
+        const profile = await loadAccountProfile();
         if (cancelled) return;
+        if (!profile) throw new Error("profile unavailable");
         setProfilePhones([...profile.phones]);
         setProfilePhonesError(false);
         setProfilePhonesReady(true);

@@ -14,6 +14,7 @@ import { clearContactDetailCache } from "./contactDetailCache";
 import { invalidateContactGroups } from "./contactGroups";
 import { isTauri } from "./tauri-check";
 import { invalidateThreadTags } from "./threadTags";
+import { clearAccountProfile, loadAccountProfile } from "./useAccountProfile";
 
 interface AuthState {
   serverUrl: string;
@@ -156,8 +157,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // Re-read the profile so a stale "needs setup" flag can correct itself.
         try {
-          const profile = await apiClient.get<Profile>("/v1/account/profile");
-          if (!cancelled) {
+          const profile = await loadAccountProfile(true);
+          if (!cancelled && profile) {
             const needsOnboarding = profileNeedsOnboarding(profile);
             setState((s) => {
               if (s.needsOnboarding === needsOnboarding) return s;
@@ -204,17 +205,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearContactDetailCache();
     invalidateContactGroups();
     invalidateThreadTags();
+    clearAccountProfile();
     setBaseUrl(serverUrl);
     setToken(token);
 
     // New accounts have no profile yet, so send them through setup.
     let needsOnboarding = false;
-    try {
-      const profile = await apiClient.get<Profile>("/v1/account/profile");
-      needsOnboarding = profileNeedsOnboarding(profile);
-    } catch {
-      // Profile request failed. Assume a profile exists so the user is not locked out.
-    }
+    const profile = await loadAccountProfile(true);
+    // A failed profile request leaves `profile` null; assume one exists rather
+    // than locking the user out of the app they just signed in to.
+    if (profile) needsOnboarding = profileNeedsOnboarding(profile);
 
     if (authEpoch.current !== epoch) return; // A later login or logout replaced this one.
 
@@ -255,6 +255,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearContactDetailCache();
     invalidateContactGroups();
     invalidateThreadTags();
+    clearAccountProfile();
     clearPersisted();
     setState((s) => ({
       ...s,
