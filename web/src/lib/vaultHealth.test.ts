@@ -49,11 +49,12 @@ describe("healthProbeUrl", () => {
 });
 
 describe("healthStatusLabel", () => {
-  it("names each status", () => {
-    expect(healthStatusLabel("unknown")).toBe("Server status unknown");
-    expect(healthStatusLabel("checking")).toBe("Checking server");
-    expect(healthStatusLabel("ok")).toBe("Server reachable");
-    expect(healthStatusLabel("fail")).toBe("Server unreachable");
+  it("uses one vocabulary: connecting, connected, disconnected", () => {
+    expect(healthStatusLabel("ok")).toBe("Connected");
+    expect(healthStatusLabel("fail")).toBe("Disconnected");
+    // Not yet answered and still trying read the same from the user's side.
+    expect(healthStatusLabel("checking")).toBe("Connecting…");
+    expect(healthStatusLabel("unknown")).toBe("Connecting…");
   });
 });
 

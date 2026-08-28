@@ -65,16 +65,33 @@ export async function checkVaultHealth(baseUrl: string, signal?: AbortSignal): P
 export function healthStatusLabel(status: VaultHealthStatus): string {
   switch (status) {
     case "ok":
-      return "Server reachable";
+      return "Connected";
     case "fail":
-      return "Server unreachable";
+      return "Disconnected";
+    // "No answer yet" and "still trying" are the same thing to a reader, so
+    // both grey states say the same word.
     case "checking":
-      return "Checking server";
     case "unknown":
-      return "Server status unknown";
+      return "Connecting…";
     default: {
       const _exhaustive: never = status;
       return _exhaustive;
     }
   }
+}
+
+/**
+ * Abort signal giving one request the same budget as one health probe.
+ *
+ * Used for `/v1/auth/mode` on the sign-in card: without it, a host that accepts
+ * the connection and never answers leaves the card saying "connecting…" until
+ * the browser's own default timeout, which can be minutes.
+ */
+export function probeTimeoutSignal(): AbortSignal {
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    return AbortSignal.timeout(HEALTH_PROBE_TIMEOUT_MS);
+  }
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), HEALTH_PROBE_TIMEOUT_MS);
+  return controller.signal;
 }

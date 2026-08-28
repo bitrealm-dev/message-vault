@@ -64,7 +64,7 @@ describe("LoginScreen", () => {
     expect(screen.queryByText("OR")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Extract messages" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Format conversion" })).not.toBeInTheDocument();
-    expect(screen.getByRole("status", { name: "Server status unknown" })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Connecting…" })).toBeInTheDocument();
   });
 
   it("shows Login and Create Account tabs after connecting, with Login first", async () => {
@@ -141,7 +141,7 @@ describe("LoginScreen", () => {
 
     await waitFor(
       () => {
-        expect(screen.getByRole("status", { name: "Server reachable" })).toBeInTheDocument();
+        expect(screen.getByRole("status", { name: "Connected" })).toBeInTheDocument();
       },
       { timeout: 2000 },
     );
@@ -167,7 +167,7 @@ describe("LoginScreen", () => {
 
     await waitFor(
       () => {
-        expect(screen.getByRole("status", { name: "Server reachable" })).toBeInTheDocument();
+        expect(screen.getByRole("status", { name: "Connected" })).toBeInTheDocument();
       },
       { timeout: 2000 },
     );
@@ -193,7 +193,7 @@ describe("LoginScreen", () => {
 
     await waitFor(
       () => {
-        expect(screen.getByRole("status", { name: "Server unreachable" })).toBeInTheDocument();
+        expect(screen.getByRole("status", { name: "Disconnected" })).toBeInTheDocument();
       },
       { timeout: 2000 },
     );
