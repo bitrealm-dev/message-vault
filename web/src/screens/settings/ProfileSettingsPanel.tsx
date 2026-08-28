@@ -7,6 +7,7 @@ import {
   HANDLE_SERVICE_OPTIONS,
   HANDLE_SERVICES,
   type HandleService,
+  handlePlaceholder,
 } from "../../lib/handleService";
 import { phonesMatch } from "../../lib/phoneTokens";
 import { parseSelectKey } from "../../lib/selectKey";
@@ -169,7 +170,7 @@ export function ProfileSettingsPanel() {
           type="text"
           value={newHandle}
           onChange={(e) => setNewHandle(e.target.value)}
-          placeholder={newHandleService === "email" ? "name@example.com" : "+1 555 555 0100"}
+          placeholder={handlePlaceholder(newHandleService)}
           className={`${inputClassName} min-w-[12rem] flex-1`}
           onKeyDown={(e) => {
             if (e.key === "Enter") {

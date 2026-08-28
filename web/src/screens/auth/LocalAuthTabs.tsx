@@ -17,9 +17,15 @@ function tabClassName({ isSelected }: { isSelected: boolean }) {
  * The two ways into a vault in local auth mode. Each panel keeps its own busy
  * and error state, so switching tabs leaves the other form's message behind.
  */
-export default function LocalAuthTabs({ serverUrl }: { serverUrl: string }) {
+export default function LocalAuthTabs({
+  serverUrl,
+  disabled = false,
+}: {
+  serverUrl: string;
+  disabled?: boolean;
+}) {
   return (
-    <Tabs defaultSelectedKey="login">
+    <Tabs defaultSelectedKey="login" className="flex min-h-0 flex-1 flex-col">
       <TabList
         aria-label="Sign in or create an account"
         className="relative mb-6 flex border-b border-border"
@@ -32,11 +38,11 @@ export default function LocalAuthTabs({ serverUrl }: { serverUrl: string }) {
         ))}
       </TabList>
 
-      <TabPanel id="login" className="outline-none">
-        <LoginForm serverUrl={serverUrl} />
+      <TabPanel id="login" className="flex min-h-0 flex-1 flex-col outline-none">
+        <LoginForm serverUrl={serverUrl} disabled={disabled} />
       </TabPanel>
-      <TabPanel id="create" className="outline-none">
-        <CreateAccountForm serverUrl={serverUrl} />
+      <TabPanel id="create" className="flex min-h-0 flex-1 flex-col outline-none">
+        <CreateAccountForm serverUrl={serverUrl} disabled={disabled} />
       </TabPanel>
     </Tabs>
   );

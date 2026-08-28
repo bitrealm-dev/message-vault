@@ -3,13 +3,20 @@ import AuthErrorFooter from "../../components/AuthErrorFooter";
 import AuthSubmitButton from "../../components/AuthSubmitButton";
 import PasswordField from "../../components/PasswordField";
 import TextField from "../../components/TextField";
-import { apiClient } from "../../lib/api";
+import { apiClient, setBaseUrl } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import type { SessionResponse } from "../../lib/authGuards";
+import { authCardFooter } from "../../lib/uiStyles";
 import { useAsyncAction } from "../../lib/useAsyncAction";
 
 /** Username and password sign-in for a vault running in local auth mode. */
-export default function LoginForm({ serverUrl }: { serverUrl: string }) {
+export default function LoginForm({
+  serverUrl,
+  disabled = false,
+}: {
+  serverUrl: string;
+  disabled?: boolean;
+}) {
   const { login } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -21,21 +28,28 @@ export default function LoginForm({ serverUrl }: { serverUrl: string }) {
       if (!username.trim()) {
         throw new Error("Username is required.");
       }
+      const url = serverUrl.trim();
+      // Re-sync the API client with the address this form is showing, the
+      // same as `CreateAccountForm` — `connect()` on the sign-in card can
+      // leave the client pointed at a bad host while the form still holds
+      // the good address.
+      setBaseUrl(url);
       const res = await apiClient.post<SessionResponse>("/v1/auth/login", { username, password });
       // Awaited so the profile lookup inside `login` has decided where to send
       // the user before this form drops its busy state.
-      await login(serverUrl.trim(), res.token, res.account_id);
+      await login(url, res.token, res.account_id);
     });
   };
 
   return (
-    <>
+    <div className="flex min-h-0 flex-1 flex-col">
       <TextField
         label="Username"
         value={username}
         onChange={setUsername}
         onKeyDown={(e) => e.key === "Enter" && submit()}
         autoComplete="username"
+        isDisabled={disabled}
       />
 
       <PasswordField
@@ -47,13 +61,15 @@ export default function LoginForm({ serverUrl }: { serverUrl: string }) {
         autoComplete="current-password"
         showPassword={showPassword}
         onToggle={() => setShowPassword((v) => !v)}
+        isDisabled={disabled}
       />
 
-      <AuthSubmitButton onClick={submit} disabled={busy}>
-        {busy ? "Signing in…" : "Sign in"}
-      </AuthSubmitButton>
-
-      <AuthErrorFooter error={error} />
-    </>
+      <div className={authCardFooter}>
+        <AuthErrorFooter error={error} />
+        <AuthSubmitButton onClick={submit} disabled={busy || disabled}>
+          {busy ? "Signing in…" : "Sign in"}
+        </AuthSubmitButton>
+      </div>
+    </div>
   );
 }

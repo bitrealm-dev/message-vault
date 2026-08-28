@@ -8,7 +8,7 @@ const statusClass: Record<VaultHealthStatus, string> = {
   fail: "bg-danger",
 };
 
-/** Small grey / green / red light for vault reachability next to Server URL. */
+/** Small grey / green / red light for vault reachability, next to the vault line's address field. */
 export default function HealthDot({ status }: { status: VaultHealthStatus }) {
   const label = healthStatusLabel(status);
   return (
