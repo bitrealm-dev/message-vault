@@ -1,8 +1,22 @@
 /** Shared theme-aware Tailwind class strings using the tokens from theme.css. */
 
 export const pageCenter = "min-h-screen flex items-center justify-center bg-bg p-4";
+/**
+ * Every auth card is the same 448 × 560 box on every screen and in every
+ * state — it never resizes and never scrolls, so nothing moves underneath the
+ * user as they step through sign-in and setup.
+ */
 export const authCard =
-  "w-full max-w-md bg-panel border border-border rounded-lg shadow-[0_4px_24px_rgba(0,0,0,0.15)] p-8";
+  "box-border flex h-[35rem] w-full max-w-md flex-col bg-panel border border-border rounded-lg shadow-[0_4px_24px_rgba(0,0,0,0.15)] p-8";
+
+/** Content region of an auth card: everything above the pinned action row. */
+export const authCardBody = "flex min-h-0 flex-1 flex-col";
+
+/**
+ * Action row pinned to the bottom of the frame, so Sign in, Create account and
+ * Continue to Vault all land on the same row on every screen.
+ */
+export const authCardFooter = "mt-auto";
 export const authTitle = "text-[1.25rem] font-bold text-text mb-6 text-left";
 export const authLabel = "block text-[0.875rem] font-medium text-text mb-1";
 export const authInput =
