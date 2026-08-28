@@ -755,6 +755,25 @@ mod tests {
         .unwrap()
     }
 
+    /// Manual ANALYZE count and last_analyze on public.messages.
+    async fn pg_messages_analyze_stat(conn: &mut AnyConnection) -> (i64, Option<String>) {
+        let analyze_count: i64 = sqlx::query_scalar(
+            "SELECT analyze_count FROM pg_stat_user_tables
+             WHERE schemaname = 'public' AND relname = 'messages'",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let last_analyze: Option<String> = sqlx::query_scalar(
+            "SELECT last_analyze::text FROM pg_stat_user_tables
+             WHERE schemaname = 'public' AND relname = 'messages'",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        (analyze_count, last_analyze)
+    }
+
     /// Postgres-gated: the promote path's disable→bulk-fill→enable FTS cycle
     /// on the real engine. Skips unless `MV_TEST_POSTGRES_URL` is set (CI
     /// service / `docker-compose.pg.yml`).
@@ -972,16 +991,16 @@ mod tests {
         .execute(&mut *conn)
         .await
         .unwrap();
+        let (analyze_before, last_analyze_before) = pg_messages_analyze_stat(&mut conn).await;
         let stats = promote_append(&mut conn, ImportMode::Append, TEST_ACCOUNT, false, &[])
             .await
             .unwrap();
         assert_eq!(stats.messages, 1, "one staged message must promote");
-        let last_analyze: Option<String> = sqlx::query_scalar(
-            "SELECT last_analyze::text FROM pg_stat_user_tables WHERE relname = 'messages'",
-        )
-        .fetch_one(&mut *conn)
-        .await
-        .unwrap();
+        let (analyze_after, last_analyze) = pg_messages_analyze_stat(&mut conn).await;
+        assert!(
+            analyze_after > analyze_before,
+            "ANALYZE before BEGIN must increment analyze_count on messages (before={analyze_before}, after={analyze_after}, last_analyze_before={last_analyze_before:?})"
+        );
         assert!(
             last_analyze.is_some(),
             "ANALYZE before BEGIN must set last_analyze on messages"
@@ -1079,6 +1098,100 @@ mod tests {
                 conversation_id, account_id, source, guid, timestamp,
                 is_from_me, sort_order, body
             ) VALUES ($1, $2, 'sms', 'analyze-guid-2', '2020-01-01T00:00:01Z', 0, 1, 'second')
+            "#,
+        )
+        .bind(staging_conv_id)
+        .bind(TEST_ACCOUNT)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let second = promote_append(&mut conn, ImportMode::Append, TEST_ACCOUNT, false, &[])
+            .await
+            .unwrap();
+        assert_eq!(second.messages, 1, "second promote must still insert");
+    }
+
+    /// Postgres-gated: ANALYZE on the shared database must change
+    /// last_analyze before a second promote begins (stop/restart in miniature).
+    #[tokio::test]
+    async fn promote_analyzes_import_tables_before_begin_pg() {
+        let Some(url) = crate::pg_test_url() else {
+            return;
+        };
+        let _pg_guard = crate::acquire_pg_test_lock().await;
+        sqlx::any::install_default_drivers();
+        let pool = sqlx::any::AnyPoolOptions::new()
+            .connect(&url)
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        schema::ensure_vault_schema(&mut conn).await.unwrap();
+        sqlx::query("DELETE FROM accounts WHERE id = $1")
+            .bind(TEST_ACCOUNT)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'promote-analyze-pg')")
+            .bind(TEST_ACCOUNT)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let handle_id: i64 = sqlx::query_scalar(
+            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+             VALUES ($1, '+15555550400', '+15555550400', 'phone', 'phone')
+             RETURNING id",
+        )
+        .bind(TEST_ACCOUNT)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let staging_conv_id: i64 = sqlx::query_scalar(
+            r#"
+            INSERT INTO staging_conversations (
+                account_id, chat_handle_id, conversation_type, source_file
+            ) VALUES ($1, $2, 'individual', 'analyze-pg.json')
+            RETURNING id
+            "#,
+        )
+        .bind(TEST_ACCOUNT)
+        .bind(handle_id)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            r#"
+            INSERT INTO staging_messages (
+                conversation_id, account_id, source, guid, timestamp,
+                is_from_me, sort_order, body
+            ) VALUES ($1, $2, 'sms', 'analyze-pg-guid-1', '2020-01-01T00:00:00Z', 0, 0, 'analyzebody')
+            "#,
+        )
+        .bind(staging_conv_id)
+        .bind(TEST_ACCOUNT)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let (analyze_before, last_analyze_before) = pg_messages_analyze_stat(&mut conn).await;
+        let first = promote_append(&mut conn, ImportMode::Append, TEST_ACCOUNT, false, &[])
+            .await
+            .unwrap();
+        assert_eq!(first.messages, 1);
+        let (analyze_after, last_analyze) = pg_messages_analyze_stat(&mut conn).await;
+        assert!(
+            analyze_after > analyze_before,
+            "ANALYZE before BEGIN must increment analyze_count on messages (before={analyze_before}, after={analyze_after}, last_analyze_before={last_analyze_before:?})"
+        );
+        assert!(
+            last_analyze.is_some(),
+            "ANALYZE before BEGIN must set last_analyze on messages before a second promote"
+        );
+
+        sqlx::query(
+            r#"
+            INSERT INTO staging_messages (
+                conversation_id, account_id, source, guid, timestamp,
+                is_from_me, sort_order, body
+            ) VALUES ($1, $2, 'sms', 'analyze-pg-guid-2', '2020-01-01T00:00:01Z', 0, 1, 'second')
             "#,
         )
         .bind(staging_conv_id)
