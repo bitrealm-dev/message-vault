@@ -129,7 +129,7 @@ Update the module doc comment at line 1 to read:
 
 - [ ] **Step 6: Delete `AuthMode`**
 
-In `crates/vault/server/src/config.rs`, delete the `AuthMode` enum, its `impl`, and `from_env`. In `crates/vault/server/src/auth.rs`, delete `AuthModeResponse` and `auth_mode_handler`'s `mode` field — but **keep the handler and the route**; Task 7 retires the endpoint after moving the web probe off it. The handler becomes:
+In `crates/vault/server/src/config.rs`, delete the `AuthMode` enum, its `impl`, and `from_env`. In `crates/vault/server/src/auth.rs`, delete `AuthModeResponse`'s `hanko_api_url` and `try_demo` fields — but **keep the handler and the route**; **Task 8** retires the endpoint after moving the web probe off it. The handler becomes:
 
 ```rust
 /// Sign-in mode for clients. Retained only as the sign-in card's reachability
@@ -250,7 +250,9 @@ In `crates/vault/server/src/server.rs`, inside `mod tests`:
 ```rust
     #[tokio::test]
     async fn try_demo_route_is_gone() {
-        let state = test_state().await;
+        // server.rs's own helper returns (TempDir, AppState, token, import_id).
+        // The shared harness in test_support.rs does not exist until Task 4.
+        let (_tmp, state, _token, _import_id) = test_state().await;
         let response = get_path(state, "/v1/auth/try-demo").await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
@@ -889,8 +891,10 @@ git commit -m "feat: per-account permissions shared with API tokens"
 The first account created through `POST /v1/auth/register` that is not the demo account becomes an administrator. The reverse rule protects it: the only remaining administrator cannot be demoted, disabled, or deleted, because the first-administrator rule will not fire again on a vault that has accounts.
 
 **Files:**
+- Create: `crates/vault/server/src/test_support.rs`
+- Modify: `crates/vault/server/src/lib.rs` — declare it under `#[cfg(test)]`
 - Modify: `crates/vault/server/src/auth.rs` — `register_handler`
-- Modify: `crates/vault/server/src/db/account_profile.rs` — the two count helpers
+- Modify: `crates/vault/server/src/db/account_profile.rs` — the three helpers
 - Test: inline `mod tests` in `auth.rs`
 
 **Interfaces:**
@@ -899,6 +903,211 @@ The first account created through `POST /v1/auth/register` that is not the demo 
   - `account_profile::vault_has_no_real_accounts(conn) -> Result<bool>`
   - `account_profile::is_last_admin(conn, account_id) -> Result<bool>`
   - `account_profile::set_admin(conn, account_id, is_admin) -> Result<()>`
+  - **The shared HTTP test helpers in `test_support.rs`**, which Tasks 5, 6, and 7 all use:
+    `register_via_api(&state, username, password) -> RegisteredAccount { account_id, username, token }`,
+    `login_status(&state, username, password) -> StatusCode`,
+    `get_status(&state, path, token) -> StatusCode`,
+    `get_json<T: DeserializeOwned>(&state, path, token) -> T`,
+    `post_status(&state, path, token, body: serde_json::Value) -> StatusCode`,
+    `patch_status(&state, path, token, body: serde_json::Value) -> StatusCode`,
+    `delete_status(&state, path, token) -> StatusCode`,
+    `seed_one_message(&state, account_id)`.
+
+- [ ] **Step 0: Build the shared test harness**
+
+Tasks 4 through 7 all drive the API over HTTP, from four different modules. Rust test modules do not share helpers across files, so they go in one `#[cfg(test)]` module.
+
+Note what already exists and do **not** reuse it by that name: `server.rs`'s `test_state()` returns a four-tuple `(TempDir, AppState, String, i64)`, and its `get_path` only issues GETs against a `AppState` it consumes. The harness below is a separate, simpler thing.
+
+Create `crates/vault/server/src/test_support.rs`:
+
+```rust
+//! Shared HTTP helpers for the server's own tests. Each call starts the real
+//! axum app on an ephemeral port, issues one request, and shuts it down.
+
+use axum::http::StatusCode;
+use serde::de::DeserializeOwned;
+use tempfile::TempDir;
+
+use crate::server::{http_app, AppState};
+
+/// A vault plus its temp directory. Drop the `TempDir` last.
+pub struct TestVault {
+    /// Keeps the temp directory alive for the test's lifetime.
+    pub _tmp: TempDir,
+    /// The server state every helper drives.
+    pub state: AppState,
+}
+
+/// An account created through the API, with its session token.
+pub struct RegisteredAccount {
+    /// The new account's id.
+    pub account_id: String,
+    /// The username it was created with.
+    pub username: String,
+    /// A live session token for it.
+    pub token: String,
+}
+
+/// An empty vault with schema applied and no accounts.
+pub async fn test_vault() -> TestVault {
+    let (pool, tmp) = crate::db::engine::test_pool().await;
+    {
+        let mut conn = pool.acquire().await.unwrap();
+        crate::db::schema::ensure_vault_schema(&mut conn).await.unwrap();
+        crate::db::schema::ensure_accounts_schema(&mut conn).await.unwrap();
+    }
+    let state = crate::server::test_app_state(pool, tmp.path()).await;
+    TestVault { _tmp: tmp, state }
+}
+
+async fn request(
+    state: &AppState,
+    method: reqwest::Method,
+    path: &str,
+    token: Option<&str>,
+    body: Option<serde_json::Value>,
+) -> reqwest::Response {
+    let app = http_app(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let mut req = reqwest::Client::new().request(method, format!("http://{address}{path}"));
+    if let Some(token) = token {
+        req = req.bearer_auth(token);
+    }
+    if let Some(body) = body {
+        req = req.json(&body);
+    }
+    let response = req.send().await.unwrap();
+    server.abort();
+    response
+}
+
+/// Register an account through the API and return it with a live token.
+pub async fn register_via_api(
+    state: &AppState,
+    username: &str,
+    password: &str,
+) -> RegisteredAccount {
+    let response = request(
+        state,
+        reqwest::Method::POST,
+        "/v1/auth/register",
+        None,
+        Some(serde_json::json!({ "username": username, "password": password })),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK, "register must succeed");
+    let body: serde_json::Value = response.json().await.unwrap();
+    RegisteredAccount {
+        account_id: body["account_id"].as_str().unwrap().to_string(),
+        username: body["username"].as_str().unwrap().to_string(),
+        token: body["token"].as_str().unwrap().to_string(),
+    }
+}
+
+/// The status of a login attempt.
+pub async fn login_status(state: &AppState, username: &str, password: &str) -> StatusCode {
+    request(
+        state,
+        reqwest::Method::POST,
+        "/v1/auth/login",
+        None,
+        Some(serde_json::json!({ "username": username, "password": password })),
+    )
+    .await
+    .status()
+}
+
+/// GET a path with a Bearer token, returning only the status.
+pub async fn get_status(state: &AppState, path: &str, token: &str) -> StatusCode {
+    request(state, reqwest::Method::GET, path, Some(token), None)
+        .await
+        .status()
+}
+
+/// GET a path with a Bearer token and decode the JSON body.
+pub async fn get_json<T: DeserializeOwned>(state: &AppState, path: &str, token: &str) -> T {
+    let response = request(state, reqwest::Method::GET, path, Some(token), None).await;
+    assert_eq!(response.status(), StatusCode::OK, "GET {path} must succeed");
+    response.json().await.unwrap()
+}
+
+/// POST a JSON body with a Bearer token, returning only the status.
+pub async fn post_status(
+    state: &AppState,
+    path: &str,
+    token: &str,
+    body: serde_json::Value,
+) -> StatusCode {
+    request(state, reqwest::Method::POST, path, Some(token), Some(body))
+        .await
+        .status()
+}
+
+/// PATCH a JSON body with a Bearer token, returning only the status.
+pub async fn patch_status(
+    state: &AppState,
+    path: &str,
+    token: &str,
+    body: serde_json::Value,
+) -> StatusCode {
+    request(state, reqwest::Method::PATCH, path, Some(token), Some(body))
+        .await
+        .status()
+}
+
+/// DELETE a path with a Bearer token, returning only the status.
+pub async fn delete_status(state: &AppState, path: &str, token: &str) -> StatusCode {
+    request(state, reqwest::Method::DELETE, path, Some(token), None)
+        .await
+        .status()
+}
+
+/// Give an account one conversation holding one message, so counts are non-zero.
+pub async fn seed_one_message(state: &AppState, account_id: &str) {
+    let mut conn = state.db.acquire().await.unwrap();
+    sqlx::query(
+        "INSERT INTO conversations (account_id, chat_handle_id) VALUES ($1, $2)",
+    )
+    .bind(account_id)
+    .bind(format!("chat-{account_id}"))
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    let conversation_id: i64 =
+        sqlx::query_scalar("SELECT id FROM conversations WHERE account_id = $1")
+            .bind(account_id)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+    sqlx::query(
+        "INSERT INTO messages (account_id, conversation_id, body) VALUES ($1, $2, 'hello')",
+    )
+    .bind(account_id)
+    .bind(conversation_id)
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+}
+```
+
+Two things to settle while writing this file, both by reading the code rather than guessing:
+
+1. `crate::server::test_app_state(pool, data_dir)` does not exist yet. `server.rs`'s `test_state()` builds an `AppState` inline at line 813 — extract that construction into a `#[cfg(test)] pub fn test_app_state(pool, data_dir) -> AppState` in `server.rs`, and have the existing `test_state()` call it so the two cannot drift.
+2. `conversations` and `messages` require more non-null columns than the three bound above. Run `sed -n '1,60p' schema/sql/messages.sql`, bind every `NOT NULL` column without a default, and keep the inserts minimal otherwise.
+
+Declare the module in `crates/vault/server/src/lib.rs` inside the `pub mod` block:
+
+```rust
+#[cfg(test)]
+pub mod test_support;
+```
+
+Then in each consuming test module, `use crate::test_support::*;`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1053,7 +1262,8 @@ The count and the insert share the register transaction because that is where th
 ```rust
     #[tokio::test]
     async fn register_grants_admin_to_the_first_user_only() {
-        let state = test_state().await;
+        let vault = test_vault().await;
+        let state = vault.state.clone();
 
         let first = register_via_api(&state, "alice", "hunter2hunter2").await;
         let second = register_via_api(&state, "bob", "hunter2hunter2").await;
@@ -1178,7 +1388,8 @@ In `crates/vault/server/src/auth.rs`, in `login_handler`, after the password che
 ```rust
     #[tokio::test]
     async fn disabled_account_cannot_sign_in() {
-        let state = test_state().await;
+        let vault = test_vault().await;
+        let state = vault.state.clone();
         let created = register_via_api(&state, "alice", "hunter2hunter2").await;
 
         let mut conn = state.db.acquire().await.unwrap();
@@ -1237,7 +1448,8 @@ In `crates/vault/server/src/profile.rs`, inside `mod tests`:
 ```rust
     #[tokio::test]
     async fn delete_messages_needs_the_delete_permission() {
-        let state = test_state().await;
+        let vault = test_vault().await;
+        let state = vault.state.clone();
         let created = register_via_api(&state, "alice", "hunter2hunter2").await;
 
         let mut conn = state.db.acquire().await.unwrap();
@@ -1289,7 +1501,8 @@ Expected: PASS.
 ```rust
     #[tokio::test]
     async fn a_token_with_delete_may_delete_but_may_not_close_the_account() {
-        let state = test_state().await;
+        let vault = test_vault().await;
+        let state = vault.state.clone();
         let created = register_via_api(&state, "alice", "hunter2hunter2").await;
         let mut conn = state.db.acquire().await.unwrap();
         let token = api_tokens::create_api_token(
@@ -1367,7 +1580,8 @@ mod tests {
 
     #[tokio::test]
     async fn non_admins_are_refused() {
-        let state = test_state().await;
+        let vault = test_vault().await;
+        let state = vault.state.clone();
         let _admin = register_via_api(&state, "alice", "hunter2hunter2").await;
         let ordinary = register_via_api(&state, "bob", "hunter2hunter2").await;
 
@@ -1377,7 +1591,8 @@ mod tests {
 
     #[tokio::test]
     async fn the_admin_sees_every_account_but_no_messages() {
-        let state = test_state().await;
+        let vault = test_vault().await;
+        let state = vault.state.clone();
         let admin = register_via_api(&state, "alice", "hunter2hunter2").await;
         let _other = register_via_api(&state, "bob", "hunter2hunter2").await;
 
@@ -1393,7 +1608,8 @@ mod tests {
 
     #[tokio::test]
     async fn the_last_admin_cannot_be_demoted_disabled_or_deleted() {
-        let state = test_state().await;
+        let vault = test_vault().await;
+        let state = vault.state.clone();
         let admin = register_via_api(&state, "alice", "hunter2hunter2").await;
         let path = format!("/v1/admin/users/{}", admin.account_id);
 
@@ -1762,7 +1978,8 @@ Add the six paths to the `openapi.rs` route-presence test list.
 ```rust
     #[tokio::test]
     async fn deleting_one_users_messages_leaves_the_others_alone() {
-        let state = test_state().await;
+        let vault = test_vault().await;
+        let state = vault.state.clone();
         let admin = register_via_api(&state, "alice", "hunter2hunter2").await;
         let victim = register_via_api(&state, "bob", "hunter2hunter2").await;
         seed_one_message(&state, &victim.account_id).await;
