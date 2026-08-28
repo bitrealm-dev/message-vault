@@ -13,6 +13,7 @@ use sqlx::Row;
 
 use crate::config::{Config, GuestDemoSettings};
 use crate::db::account_profile;
+use crate::db::dialect;
 use crate::db::engine;
 use crate::db::schema;
 use crate::dedupe;
@@ -358,6 +359,8 @@ async fn reset_prepared_bundle_at_url(
         );
     }
 
+    vacuum_after_demo_url(db_url).await;
+
     Ok(ResetPreparedStats {
         import: import_stats,
         dedupe_keys_filled: dedupe_stats.keys_filled,
@@ -471,6 +474,8 @@ async fn reset_prepared_bundle(
             process_stats.errors
         );
     }
+
+    vacuum_after_demo_path(&prepared_db).await;
 
     verify_non_demo_state_preserved(&cfg.paths.db, &prepared_db, account_id).await?;
     let active_account = cfg.paths.data_dir.join(account_id);
@@ -980,6 +985,49 @@ fn maybe_regenerate_bundle(bundle: &Path) -> Result<demo_seed::GenStats> {
         seed_toml.display(),
         bundle.display()
     );
+}
+
+/// Compact import tables after the sample inbox is fully loaded. Failure is a
+/// warning; the demo rows are already committed.
+async fn vacuum_after_demo_url(db_url: &str) {
+    let pool = match engine::open_pool_from_url(db_url).await {
+        Ok(pool) => pool,
+        Err(err) => {
+            eprintln!("  sql:      warning: vacuum after demo failed to open the database: {err}");
+            return;
+        }
+    };
+    vacuum_after_demo_on_pool(pool).await;
+}
+
+async fn vacuum_after_demo_path(db_path: &Path) {
+    let pool = match engine::open_pool_for_path(db_path).await {
+        Ok(pool) => pool,
+        Err(err) => {
+            eprintln!("  sql:      warning: vacuum after demo failed to open the database: {err}");
+            return;
+        }
+    };
+    vacuum_after_demo_on_pool(pool).await;
+}
+
+async fn vacuum_after_demo_on_pool(pool: sqlx::AnyPool) {
+    let mut conn = match pool.acquire().await {
+        Ok(conn) => conn,
+        Err(err) => {
+            eprintln!("  sql:      warning: vacuum after demo failed to open a connection: {err}");
+            pool.close().await;
+            return;
+        }
+    };
+    dialect::vacuum_import_tables(&mut conn).await;
+    // Close deterministically before reset-demo renames the SQLite file.
+    // `pool.close()` only waits for the connection to be returned; the
+    // sqlx worker runs sqlite3_close later.
+    if let Err(err) = conn.close().await {
+        eprintln!("  sql:      warning: vacuum after demo failed to close the connection: {err}");
+    }
+    pool.close().await;
 }
 
 fn merge_import_stats(into: &mut import::ImportStats, other: &import::ImportStats) {
