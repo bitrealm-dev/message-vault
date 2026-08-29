@@ -61,7 +61,6 @@ pub fn auth_public_openapi() -> OpenApiRouter<AppState> {
 pub fn api_openapi() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(crate::server::health))
-        .routes(routes!(crate::auth::auth_mode_handler))
         .routes(routes!(crate::auth::auth_check))
         .routes(routes!(crate::auth::logout_handler))
         .routes(routes!(crate::auth::change_password_handler))
@@ -204,7 +203,6 @@ mod tests {
         for p in [
             "/v1/auth/register",
             "/v1/auth/login",
-            "/v1/auth/mode",
             "/v1/auth/check",
             "/v1/auth/logout",
             "/v1/auth/change-password",

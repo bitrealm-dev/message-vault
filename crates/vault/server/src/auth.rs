@@ -227,26 +227,6 @@ fn nonempty_trimmed(value: Option<&str>) -> Option<String> {
     }
 }
 
-/// Sign-in mode for clients. Retained only as the sign-in card's reachability
-/// probe until it moves to GET /health; see Task 7.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct AuthModeResponse {
-    /// Always "local". The vault has one sign-in mechanism.
-    pub mode: String,
-}
-
-#[utoipa::path(
-    get,
-    path = "/v1/auth/mode",
-    tag = "Auth",
-    responses((status = 200, description = "Sign-in mode", body = AuthModeResponse))
-)]
-pub(crate) async fn auth_mode_handler() -> Json<AuthModeResponse> {
-    Json(AuthModeResponse {
-        mode: "local".into(),
-    })
-}
-
 #[derive(Debug, Deserialize)]
 pub(crate) struct AuthCheckQuery {
     #[serde(default)]

@@ -422,7 +422,6 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     eprintln!("message-vault-server serve listening on http://{bind}");
     eprintln!("  GET  /health");
-    eprintln!("  GET  /v1/auth/mode     (unauthenticated — always local)");
     eprintln!("  GET  /v1/auth/check   (Bearer session token or API token)");
     eprintln!("  GET  /v1/export/messages?q=&limit=&cursor=&account=  (read-only export)");
     eprintln!("  GET  /v1/export/messages/count?q=&account=&source=  (export match counts)");
@@ -970,10 +969,7 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
         let response = reqwest::Client::new()
-            .request(
-                reqwest::Method::OPTIONS,
-                format!("http://{address}/v1/auth/mode"),
-            )
+            .request(reqwest::Method::OPTIONS, format!("http://{address}/health"))
             .header("Origin", origin)
             .header("Access-Control-Request-Method", "GET")
             .header("Access-Control-Request-Headers", "content-type")
@@ -1074,12 +1070,6 @@ mod tests {
             .unwrap();
         server.abort();
         response.status()
-    }
-
-    #[tokio::test]
-    async fn auth_mode_reports_local() {
-        let Json(value) = crate::auth::auth_mode_handler().await;
-        assert_eq!(value.mode, "local");
     }
 
     #[tokio::test]

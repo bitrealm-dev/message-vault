@@ -1885,26 +1885,6 @@
         ]
       }
     },
-    "/v1/auth/mode": {
-      "get": {
-        "tags": [
-          "Auth"
-        ],
-        "operationId": "auth_mode_handler",
-        "responses": {
-          "200": {
-            "description": "Sign-in mode",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AuthModeResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/auth/register": {
       "post": {
         "tags": [
@@ -4255,19 +4235,6 @@
               "string",
               "null"
             ]
-          }
-        }
-      },
-      "AuthModeResponse": {
-        "type": "object",
-        "description": "Sign-in mode for clients. Retained only as the sign-in card's reachability\nprobe until it moves to GET /health; see Task 7.",
-        "required": [
-          "mode"
-        ],
-        "properties": {
-          "mode": {
-            "type": "string",
-            "description": "Always \"local\". The vault has one sign-in mechanism."
           }
         }
       },

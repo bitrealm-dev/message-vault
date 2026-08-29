@@ -18,20 +18,14 @@ vi.mock("../lib/tauri-check", () => ({
 
 import LoginScreen from "./LoginScreen";
 
-/** Answer `/v1/auth/mode` and `/health` as a healthy local-auth vault. */
+/** Answer `/health` as a healthy vault. Returns the underlying fetch mock. */
 function stubVault() {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (url: string) => {
-      if (String(url).endsWith("/v1/auth/mode")) {
-        return {
-          ok: true,
-          json: async () => ({ mode: "local" }),
-        };
-      }
-      return { ok: true, text: async () => "" };
-    }),
-  );
+  const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => ({
+    ok: true,
+    text: async () => "",
+  }));
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
 }
 
 function renderScreen() {
@@ -74,6 +68,19 @@ describe("LoginScreen", () => {
 
     expect(await screen.findByText("connected")).toBeInTheDocument();
     expect(setServer).toHaveBeenCalledWith("");
+  });
+
+  it("probes /health rather than the auth mode endpoint", async () => {
+    const fetchMock = stubVault();
+    renderScreen();
+
+    await waitFor(() => {
+      expect(screen.getByText(/connected/i)).toBeInTheDocument();
+    });
+
+    const calls = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(calls.some((url) => url.endsWith("/health"))).toBe(true);
+    expect(calls.some((url) => url.endsWith("/v1/auth/mode"))).toBe(false);
   });
 
   it("keeps both tabs, Login first", async () => {
@@ -161,12 +168,7 @@ describe("LoginScreen", () => {
     let healthy = false;
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (url: string) => {
-        if (String(url).endsWith("/v1/auth/mode")) {
-          if (!healthy) throw new TypeError("Failed to fetch");
-          return { ok: true, json: async () => ({ mode: "local" }) };
-        }
-        // /health
+      vi.fn(async () => {
         return healthy ? { ok: true, text: async () => "" } : { ok: false, status: 503 };
       }),
     );
@@ -183,20 +185,14 @@ describe("LoginScreen", () => {
     expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
   });
 
-  it("carries an abort signal on the mode probe", async () => {
-    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
-      if (String(url).endsWith("/v1/auth/mode")) {
-        return { ok: true, json: async () => ({ mode: "local" }) };
-      }
-      return { ok: true, text: async () => "" };
-    });
-    vi.stubGlobal("fetch", fetchMock);
+  it("carries an abort signal on the health probe", async () => {
+    const fetchMock = stubVault();
     renderScreen();
 
     await screen.findByRole("tab", { name: "Login" });
-    const modeCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/v1/auth/mode"));
-    expect(modeCall).toBeDefined();
-    expect(modeCall?.[1]).toMatchObject({ signal: expect.any(AbortSignal) });
+    const healthCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/health"));
+    expect(healthCall).toBeDefined();
+    expect(healthCall?.[1]).toMatchObject({ signal: expect.any(AbortSignal) });
   });
 
   it("keeps the tabs rendered, dimmed, when a connected vault drops", async () => {
@@ -216,21 +212,5 @@ describe("LoginScreen", () => {
     expect(await screen.findByText("disconnected")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Login" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Username" })).toBeInTheDocument();
-  });
-
-  it("falls back to local tabs when the vault reports an unrecognized mode", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string) => {
-        if (String(url).endsWith("/v1/auth/mode")) {
-          return { ok: true, json: async () => ({ mode: "sso" }) };
-        }
-        return { ok: true, text: async () => "" };
-      }),
-    );
-    renderScreen();
-
-    expect(await screen.findByRole("tab", { name: "Login" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Create Account" })).toBeInTheDocument();
   });
 });

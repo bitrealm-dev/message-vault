@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiClient, setBaseUrl } from "../lib/api";
+import { setBaseUrl } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { initialLoginServerUrl, vaultDisplayHost } from "../lib/authGuards";
 import { isTauri } from "../lib/tauri-check";
 import { authCard, authCardBody, pageCenter } from "../lib/uiStyles";
 import { useVaultHealth } from "../lib/useVaultHealth";
-import { probeTimeoutSignal, type VaultHealthStatus } from "../lib/vaultHealth";
+import { checkVaultHealth, type VaultHealthStatus } from "../lib/vaultHealth";
 import LocalAuthTabs from "./auth/LocalAuthTabs";
 import VaultLine, { type VaultConnection } from "./auth/VaultLine";
 
@@ -23,21 +23,23 @@ function FormSkeleton({ dimmed }: { dimmed: boolean }) {
 }
 
 /**
- * The way into a vault. The card resolves an address on mount and detects the
- * auth mode itself, so the only question the old first screen asked — which
- * vault — is answered by default and changed in place when the default is
- * wrong.
+ * The way into a vault. The card resolves an address on mount and confirms
+ * the vault is reachable itself, so the only question the old first screen
+ * asked — which vault — is answered by default and changed in place when the
+ * default is wrong.
  */
 export default function LoginScreen() {
   const { setServer: setAuthServer, serverUrl: savedUrl } = useAuth();
   const [address, setAddress] = useState(() => initialLoginServerUrl(savedUrl, isTauri()));
   const [draft, setDraft] = useState(address);
   const [state, setState] = useState<VaultConnection>("connecting");
-  const [authMode, setAuthMode] = useState<"local" | null>(null);
+  // Sticky once true: once the sign-in form has been shown, keep showing it
+  // (dimmed while disconnected) instead of reverting to the skeleton.
+  const [hasConnectedOnce, setHasConnectedOnce] = useState(false);
 
   const editorOpen = state === "editing" || state === "disconnected";
-  // Only probe while the address is being chosen. Once connected, the mode
-  // request has already proved the vault is there.
+  // Only probe while the address is being chosen. Once connected, the
+  // reachability probe has already proved the vault is there.
   const health = useVaultHealth(editorOpen ? draft : null);
 
   const connect = useCallback(
@@ -45,16 +47,17 @@ export default function LoginScreen() {
       const trimmed = url.trim();
       setState("connecting");
       setBaseUrl(trimmed);
-      try {
-        await apiClient.get("/v1/auth/mode", {
-          signal: probeTimeoutSignal(),
-        });
+      // GET /health answers plain text, not JSON, so this probes it directly
+      // rather than through apiClient (which always parses the body as
+      // JSON). The body is discarded either way — only reachability matters.
+      const reachable = await checkVaultHealth(trimmed);
+      if (reachable) {
         setAddress(trimmed);
         setDraft(trimmed);
-        setAuthMode("local");
+        setHasConnectedOnce(true);
         setAuthServer(trimmed);
         setState("connected");
-      } catch {
+      } else {
         // Nothing answered. That is the vault line's problem, not the form's.
         setState("disconnected");
       }
@@ -107,10 +110,10 @@ export default function LoginScreen() {
             onSubmit={() => void connect(draft)}
           />
 
-          {authMode === null ? (
-            <FormSkeleton dimmed={state === "disconnected"} />
-          ) : (
+          {hasConnectedOnce ? (
             <LocalAuthTabs serverUrl={address} disabled={state !== "connected"} />
+          ) : (
+            <FormSkeleton dimmed={state === "disconnected"} />
           )}
         </div>
       </div>
