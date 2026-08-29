@@ -147,6 +147,25 @@ describe("LoginScreen", () => {
     expect(screen.queryByRole("textbox", { name: "Address" })).not.toBeInTheDocument();
   });
 
+  it("lets the vault be changed while the card is still connecting", async () => {
+    // A vault that never answers holds the card in "connecting": a wrong
+    // address is exactly when you need the settings screen most, so the way
+    // to it must not wait for the probe to give up.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise(() => {})),
+    );
+    const user = userEvent.setup();
+    renderScreen();
+
+    expect(await screen.findByText("Connecting")).toBeInTheDocument();
+    const link = screen.getByRole("button", { name: "Change vault settings" });
+    expect(link).toBeEnabled();
+
+    await user.click(link);
+    expect(screen.getByRole("heading", { name: "Message Vault Settings" })).toBeInTheDocument();
+  });
+
   it("keeps the way out of a red card live", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
     renderScreen();
