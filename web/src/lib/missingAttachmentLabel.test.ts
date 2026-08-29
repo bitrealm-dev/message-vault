@@ -86,10 +86,24 @@ describe("missingAttachmentChipLabel", () => {
     ).toBe("a.bin (could not be imported — gremlins)");
   });
 
-  it("keeps an unrecognized raw reason visible", () => {
+  it("keeps an unrecognized raw reason visible, worded like the unknown case", () => {
     expect(
       missingAttachmentChipLabel(att({ original_name: "a.bin", missing_reason: "weird_reason" })),
-    ).toBe("a.bin (missing — weird_reason)");
+    ).toBe("a.bin (could not be imported — weird_reason)");
+  });
+
+  it("drops the trailing dash when a convert_failed reason has no detail", () => {
+    expect(
+      missingAttachmentChipLabel(
+        att({ original_name: "clip.mov", missing_reason: "convert_failed: " }),
+      ),
+    ).toBe("clip.mov (could not be converted)");
+  });
+
+  it("drops the trailing dash when an unknown reason has no detail", () => {
+    expect(
+      missingAttachmentChipLabel(att({ original_name: "a.bin", missing_reason: "unknown: " })),
+    ).toBe("a.bin (could not be imported)");
   });
 
   it("treats no_path and null as plain missing", () => {

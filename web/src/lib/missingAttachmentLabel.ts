@@ -24,13 +24,17 @@ function missingWhy(reason: string | null | undefined): string {
     return "skipped";
   }
   if (reason.startsWith("convert_failed: ")) {
-    return `could not be converted — ${reason.slice("convert_failed: ".length)}`;
+    const detail = reason.slice("convert_failed: ".length);
+    return detail ? `could not be converted — ${detail}` : "could not be converted";
   }
   if (reason.startsWith("unknown: ")) {
-    return `could not be imported — ${reason.slice("unknown: ".length)}`;
+    const detail = reason.slice("unknown: ".length);
+    return detail ? `could not be imported — ${detail}` : "could not be imported";
   }
-  // Keep an unrecognized reason visible and reportable, never uniform.
-  return `missing — ${reason}`;
+  // Keep an unrecognized reason visible and reportable, never uniform —
+  // spec decision 41's fallback wording, whether or not it carries the
+  // `unknown: ` prefix.
+  return `could not be imported — ${reason}`;
 }
 
 /** Label for an attachment that was imported without the file bytes. */

@@ -62,22 +62,25 @@ function StepGlyph({ status, index }: { status: StepStatus; index: number }) {
   );
 }
 
-type CompletionKind = "ok" | "error" | "muted";
+type CompletionKind = "ok" | "warn" | "error" | "muted";
 
 function completionKind(text: ReactNode): CompletionKind {
   if (text === "Import complete") return "ok";
+  if (text === "Import completed with issues") return "warn";
   if (text === "Import failed") return "error";
   return "muted";
 }
 
 function completionBadgeClass(kind: CompletionKind): string {
   if (kind === "ok") return "bg-ok text-sent-text";
+  if (kind === "warn") return "bg-warn-soft-bg text-warn-soft-text";
   if (kind === "error") return "bg-danger text-sent-text";
   return "bg-border text-muted";
 }
 
 function completionBadgeMark(kind: CompletionKind): string {
   if (kind === "ok") return "✓";
+  if (kind === "warn") return "!";
   if (kind === "error") return "!";
   return "–";
 }
