@@ -112,8 +112,12 @@ export default function AppLayout() {
   const conversationSearch = searchParams.get("q") || "";
   const conversationFilter = searchParams.get("f") || "";
   const contactSearch = searchParams.get("cq") || "";
+  // Trash keeps its own term so leaving and returning to Trash does not inherit
+  // whatever the inbox was last searching for.
+  const trashSearch = searchParams.get("tq") || "";
 
-  const searchQuery = contactsMode ? contactSearch : conversationSearch;
+  const trashMode = mode === "trash";
+  const searchQuery = trashMode ? trashSearch : contactsMode ? contactSearch : conversationSearch;
 
   function updateSearchParams(updates: Record<string, string>) {
     const next = new URLSearchParams(searchParams);
@@ -125,7 +129,9 @@ export default function AppLayout() {
   }
 
   const handleSearch = (q: string) => {
-    if (/\bsearch:contacts\b/i.test(q) || contactsMode) {
+    if (trashMode) {
+      navigate(`/trash${q ? `?tq=${encodeURIComponent(q)}` : ""}`);
+    } else if (/\bsearch:contacts\b/i.test(q) || contactsMode) {
       const params = q ? `?cq=${encodeURIComponent(q)}` : "";
       if (noGroupMode) {
         navigate(`/no-group${params}`);
@@ -153,12 +159,19 @@ export default function AppLayout() {
   };
 
   const handleSearchChange = (q: string) => {
+    if (trashMode) {
+      updateSearchParams({ tq: q });
+      return;
+    }
     if (contactsMode) {
       updateSearchParams({ cq: q });
       return;
     }
     updateSearchParams({ q: q, f: "" });
   };
+
+  /** Trash is always `is:trash`; the search box narrows within it. */
+  const trashListQuery = trashSearch.trim() ? `is:trash ${trashSearch.trim()}` : "is:trash";
 
   const threadListQuery = tagListQuery(tagFilter, conversationFilter || conversationSearch);
 
@@ -199,14 +212,13 @@ export default function AppLayout() {
   };
 
   const isFullScreen = mode === "import" || mode === "export" || mode === "settings";
-  const isTrash = mode === "trash";
 
   return (
     <RightToolbarProvider>
       <div className="flex h-screen flex-col bg-bg font-sans text-text">
         <AppHeader
           searchQuery={searchQuery}
-          searchMode={contactsMode ? "contacts" : "messages"}
+          searchTarget={trashMode ? "trash" : contactsMode ? "contacts" : "messages"}
           onSearchChange={handleSearchChange}
           onSearch={handleSearch}
         />
@@ -269,14 +281,13 @@ export default function AppLayout() {
             )}
 
             {/* Trash: ListColumn shows ConversationList with trash query; main shows TrashScreen via <Outlet /> */}
-            {isTrash && (
+            {trashMode && (
               <>
                 <ListColumn>
                   <ConversationList
                     selectedId={null}
-                    // Trash thread selection is handled by TrashScreen in the outlet.
-                    onSelect={() => {}}
-                    query="is:trash"
+                    onSelect={handleConversationSelect}
+                    query={trashListQuery}
                   />
                 </ListColumn>
                 <RightPane>
