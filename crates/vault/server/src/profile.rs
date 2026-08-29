@@ -10,7 +10,7 @@ use sqlx::AnyConnection;
 use sqlx::Connection;
 
 use crate::db::account_profile;
-use crate::server::{ApiError, AppState, require_full_access, resolve_auth};
+use crate::server::{ApiError, AppState, require_delete_access, require_full_access, resolve_auth};
 
 /// The signed-in account's profile.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -342,7 +342,7 @@ pub async fn delete_messages_handler(
         ));
     }
     let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
+    require_delete_access(&auth)?;
     let account_id = auth.account_id;
     let data_dir = state.cfg.paths.data_dir.clone();
     let assets_name = state.cfg.paths.assets_dir.clone();
@@ -417,7 +417,11 @@ pub(crate) async fn account_storage_handler(
 mod tests {
     use super::*;
 
+    use crate::db::api_tokens;
+    use crate::db::permissions::Permissions;
     use crate::db::{engine, schema};
+    use crate::test_support::*;
+    use axum::http::StatusCode;
 
     async fn setup() -> (sqlx::AnyPool, tempfile::TempDir, String) {
         let (pool, dir) = engine::test_pool().await;
@@ -551,6 +555,69 @@ mod tests {
                 .await
                 .unwrap(),
             None
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_messages_needs_the_delete_permission() {
+        let vault = test_vault().await;
+        let state = vault.state.clone();
+        let created = register_via_api(&state, "alice", "hunter2hunter2").await;
+
+        let mut conn = state.db.acquire().await.unwrap();
+        sqlx::query("UPDATE accounts SET can_delete = 0 WHERE id = $1")
+            .bind(&created.account_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let status = post_status(
+            &state,
+            "/v1/account/delete-messages",
+            &created.token,
+            serde_json::json!({ "confirm": true }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn a_token_with_delete_may_delete_but_may_not_close_the_account() {
+        let vault = test_vault().await;
+        let state = vault.state.clone();
+        let created = register_via_api(&state, "alice", "hunter2hunter2").await;
+        let mut conn = state.db.acquire().await.unwrap();
+        let token = api_tokens::create_api_token(
+            &mut conn,
+            &created.account_id,
+            "tool",
+            Permissions::all(),
+            None,
+        )
+        .await
+        .unwrap()
+        .5;
+
+        let deleted = post_status(
+            &state,
+            "/v1/account/delete-messages",
+            &token,
+            serde_json::json!({ "confirm": true }),
+        )
+        .await;
+        assert_eq!(deleted, StatusCode::OK);
+
+        let closed = post_status(
+            &state,
+            "/v1/auth/delete-account",
+            &token,
+            serde_json::json!({ "confirm": true }),
+        )
+        .await;
+        assert_eq!(
+            closed,
+            StatusCode::FORBIDDEN,
+            "closing the account stays session-only"
         );
     }
 }
