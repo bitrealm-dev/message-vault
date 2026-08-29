@@ -102,6 +102,8 @@ pub(crate) struct CompleteImportArgs<'a> {
     pub key: &'a str,
     pub import_id: i64,
     pub ok: bool,
+    /// Session outcome: `completed`, `completed_with_issues`, or `failed`.
+    pub status: &'a str,
     pub message_count: u64,
     pub attachment_count: u64,
     pub bytes_uploaded: u64,
@@ -699,6 +701,7 @@ impl HttpSession {
             key,
             import_id,
             ok,
+            status,
             message_count,
             attachment_count,
             bytes_uploaded,
@@ -713,6 +716,7 @@ impl HttpSession {
         let url = format!("{base}/v1/imports/{import_id}/complete");
         let body = serde_json::json!({
             "ok": ok,
+            "status": status,
             "message_count": message_count,
             "attachment_count": attachment_count,
             "bytes_uploaded": bytes_uploaded,
