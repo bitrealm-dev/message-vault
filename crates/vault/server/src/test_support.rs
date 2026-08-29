@@ -73,11 +73,19 @@ async fn request(
 }
 
 /// Register an account through the API and return it with a live token.
+///
+/// Resets the register rate-limit bucket for `username` first. The limiter
+/// is a process-global static (`auth::AUTH_RATE_LIMITS`), and this whole
+/// suite reuses a handful of literal usernames ("alice", "bob", ...) across
+/// many test functions that all run in the same test binary; without this,
+/// enough tests registering the same name inside one 60-second window trips
+/// `AUTH_RATE_MAX` and fails an unrelated test with a 429.
 pub async fn register_via_api(
     state: &AppState,
     username: &str,
     password: &str,
 ) -> RegisteredAccount {
+    crate::auth::reset_auth_rate_limit_bucket_for_test(&format!("register:{username}"));
     let response = request(
         state,
         reqwest::Method::POST,
@@ -167,6 +175,17 @@ pub async fn delete_status(state: &AppState, path: &str, token: &str) -> StatusC
     request(state, reqwest::Method::DELETE, path, Some(token), None)
         .await
         .status()
+}
+
+/// DELETE a path with a Bearer token and decode the JSON response.
+pub async fn delete_json<T: DeserializeOwned>(state: &AppState, path: &str, token: &str) -> T {
+    let response = request(state, reqwest::Method::DELETE, path, Some(token), None).await;
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "DELETE {path} must succeed"
+    );
+    response.json().await.unwrap()
 }
 
 /// Give an account one conversation holding one message, so counts are non-zero.

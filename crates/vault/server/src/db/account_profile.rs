@@ -242,22 +242,28 @@ pub async fn vault_has_no_real_accounts(conn: &mut AnyConnection) -> Result<bool
     Ok(count == 0)
 }
 
-/// True when `account_id` is an administrator and no other account is.
+/// True when `account_id` is an administrator and no other *usable* account
+/// is — a disabled admin cannot sign in and so cannot administer the vault,
+/// and must not be counted as "another admin" here. Without this, the vault
+/// could be disabled into a state with zero credentials able to reach
+/// `/v1/admin/*` and no way back in short of hand-editing the database.
 pub async fn is_last_admin(conn: &mut AnyConnection, account_id: &str) -> Result<bool> {
     schema::ensure_accounts_schema(conn).await?;
-    let others: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE is_admin = 1 AND id != $1")
-            .bind(account_id)
-            .fetch_one(&mut *conn)
-            .await?;
+    let others: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM accounts WHERE is_admin = 1 AND disabled = 0 AND id != $1",
+    )
+    .bind(account_id)
+    .fetch_one(&mut *conn)
+    .await?;
     if others > 0 {
         return Ok(false);
     }
-    let self_admin: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE is_admin = 1 AND id = $1")
-            .bind(account_id)
-            .fetch_one(&mut *conn)
-            .await?;
+    let self_admin: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM accounts WHERE is_admin = 1 AND disabled = 0 AND id = $1",
+    )
+    .bind(account_id)
+    .fetch_one(&mut *conn)
+    .await?;
     Ok(self_admin > 0)
 }
 

@@ -57,7 +57,7 @@ fn check_auth_rate_limit_max(bucket: &str, max: usize) -> Result<(), ApiError> {
 }
 
 #[cfg(test)]
-fn reset_auth_rate_limit_bucket_for_test(bucket: &str) {
+pub(crate) fn reset_auth_rate_limit_bucket_for_test(bucket: &str) {
     if let Ok(mut guard) = AUTH_RATE_LIMITS.lock()
         && let Some(map) = guard.as_mut()
     {
