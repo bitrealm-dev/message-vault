@@ -1,11 +1,8 @@
-import { useCallback, useRef, useState } from "react";
-import { useDismissable } from "../lib/useDismissable";
-import { Z_INLINE_PANEL } from "../lib/zLayers";
-import AdvancedSearchForm, { type AdvancedSearchMode } from "./AdvancedSearchForm";
+import { useState } from "react";
+import type { SearchScope } from "../lib/recentSearches";
+import type { AdvancedSearchMode } from "./AdvancedSearchForm";
 import AppAccountMenu from "./AppAccountMenu";
-import ContactSearch from "./ContactSearch";
 import { loadWidth } from "./columnResize";
-import GlobalSearch from "./GlobalSearch";
 import {
   LEFT_PANEL_DEFAULT_WIDTH,
   LEFT_PANEL_MAX_WIDTH,
@@ -13,22 +10,38 @@ import {
   LEFT_PANEL_STORAGE_KEY,
   LEFT_PANEL_WIDTH_VAR,
 } from "./leftPanelWidth";
+import SearchBar from "./SearchBar";
+
+/** Which list the header search runs against. */
+export type HeaderSearchTarget = "contacts" | "messages" | "trash";
+
+/**
+ * Every target uses the same bar; only the wording, the recents bucket, and the
+ * advanced form differ. Trash searches conversations, so it takes the messages
+ * form and its operator autocomplete.
+ */
+const SEARCH_TARGETS: Record<
+  HeaderSearchTarget,
+  { scope: SearchScope; placeholder: string; advancedMode: AdvancedSearchMode }
+> = {
+  contacts: { scope: "contact", placeholder: "Search contacts", advancedMode: "contacts" },
+  messages: { scope: "message", placeholder: "Search messages", advancedMode: "messages" },
+  trash: { scope: "trash", placeholder: "Search Trash", advancedMode: "messages" },
+};
 
 /** Full-width bar: app name on the left, search in the remaining space. */
 export default function AppHeader({
   searchQuery,
-  searchMode,
+  searchTarget,
   onSearchChange,
   onSearch,
 }: {
   searchQuery: string;
-  searchMode: AdvancedSearchMode;
+  searchTarget: HeaderSearchTarget;
   onSearchChange: (v: string) => void;
   onSearch: (q: string) => void;
 }) {
-  const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
-  const conversationsAdvancedRef = useRef<HTMLDivElement>(null);
-  const isContacts = searchMode === "contacts";
+  const target = SEARCH_TARGETS[searchTarget];
   // Same key as LeftPanel so a stored width does not flash at the default.
   const [brandWidth] = useState(() =>
     loadWidth(
@@ -38,9 +51,6 @@ export default function AppHeader({
       LEFT_PANEL_MAX_WIDTH,
     ),
   );
-
-  const closeAdvancedSearch = useCallback(() => setShowAdvancedSearch(false), []);
-  useDismissable(showAdvancedSearch && !isContacts, conversationsAdvancedRef, closeAdvancedSearch);
 
   return (
     <header className="relative z-20 flex shrink-0 items-center border-b border-border bg-panel">
@@ -52,42 +62,15 @@ export default function AppHeader({
       </div>
       <div className="flex min-w-0 flex-1 items-center justify-center px-3 py-2">
         <div className="w-full max-w-xl">
-          {isContacts ? (
-            <ContactSearch value={searchQuery} onChange={onSearchChange} onSubmit={onSearch} />
-          ) : (
-            <div ref={conversationsAdvancedRef} className="relative flex items-center gap-2">
-              <div className="min-w-0 flex-1">
-                <GlobalSearch
-                  value={searchQuery}
-                  mode="search"
-                  onChange={onSearchChange}
-                  onSubmit={onSearch}
-                />
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowAdvancedSearch(!showAdvancedSearch)}
-                className="shrink-0 cursor-pointer border-none bg-none text-[0.688rem] text-muted"
-              >
-                {showAdvancedSearch ? "Hide" : "Advanced"}
-              </button>
-              {showAdvancedSearch ? (
-                <div
-                  className={`absolute top-full left-0 mt-1 w-full min-w-[300px] ${Z_INLINE_PANEL}`}
-                >
-                  <AdvancedSearchForm
-                    mode={searchMode}
-                    onApply={(q) => {
-                      onSearchChange(q);
-                      onSearch(q);
-                      setShowAdvancedSearch(false);
-                    }}
-                    onClose={() => setShowAdvancedSearch(false)}
-                  />
-                </div>
-              ) : null}
-            </div>
-          )}
+          <SearchBar
+            key={searchTarget}
+            value={searchQuery}
+            scope={target.scope}
+            placeholder={target.placeholder}
+            advancedMode={target.advancedMode}
+            onChange={onSearchChange}
+            onSubmit={onSearch}
+          />
         </div>
       </div>
     </header>

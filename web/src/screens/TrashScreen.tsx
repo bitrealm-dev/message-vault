@@ -1,119 +1,66 @@
-import { useCallback, useState } from "react";
-import Button from "../components/Button";
-import ConfirmDialog from "../components/ConfirmDialog";
+import { useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import { apiClient } from "../lib/api";
-import { formatLocaleDate } from "../lib/formatDate";
-import { useAsyncAction } from "../lib/useAsyncAction";
 import { useResource } from "../lib/useResource";
 
-interface TrashEntry {
-  id: string;
-  label: string;
-  message_count: number;
-  deleted_at: string;
-  conversation_exists: boolean;
+/** Only `total` is read; the rows themselves are rendered by the list column. */
+type ConversationsCountPage = { total?: number };
+
+/**
+ * Trashed conversations are listed in the left column by the shared
+ * conversation list; this pane reports how much is in the trash and reflects
+ * the header's trash search. Only the count is fetched — one row is enough to
+ * read `total` off the page response.
+ */
+function trashQuery(search: string): string {
+  const term = search.trim();
+  return term ? `is:trash ${term}` : "is:trash";
 }
 
-const TRASH_RESOURCE_KEY = "trash";
-
 export default function TrashScreen() {
-  const [message, setMessage] = useState("");
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  // Restore and empty are fire-and-forget from a click handler, so their
-  // failures need somewhere to land — otherwise a failed restore is
-  // indistinguishable from a click that never registered.
-  const { busy: deleting, error: actionError, run } = useAsyncAction();
+  const [searchParams] = useSearchParams();
+  const search = searchParams.get("tq") || "";
+  const query = trashQuery(search);
 
-  const fetchTrash = useCallback(async (signal: AbortSignal) => {
-    const res = await apiClient.get<{ trash: TrashEntry[] }>("/v1/export/trash", {
-      signal,
-    });
-    return res.trash;
-  }, []);
+  const fetchCount = useCallback(
+    async (signal: AbortSignal) => {
+      const params = new URLSearchParams({ q: query, limit: "1", offset: "0" });
+      const res = await apiClient.get<ConversationsCountPage>(
+        `/v1/export/conversations?${params}`,
+        {
+          signal,
+        },
+      );
+      return res.total ?? 0;
+    },
+    [query],
+  );
 
-  const { data, loading, error, reload } = useResource(TRASH_RESOURCE_KEY, fetchTrash);
-
-  const entries = data ?? [];
-
-  const restore = (id: string) =>
-    run(async () => {
-      setMessage("");
-      await apiClient.post(`/v1/trash/${id}/restore`);
-      setMessage("Conversation restored.");
-      reload();
-    });
-
-  const emptyTrash = () =>
-    run(async () => {
-      setMessage("");
-      try {
-        await apiClient.post("/v1/trash/empty");
-        setMessage("Trash emptied.");
-        reload();
-      } finally {
-        setConfirmOpen(false);
-      }
-    });
+  const { data, loading, error } = useResource(`trash-count:${query}`, fetchCount);
 
   if (loading) return <div className="p-6 text-[0.875rem] text-muted">Loading…</div>;
 
+  const total = data ?? 0;
+  const searching = search.trim().length > 0;
+
   return (
     <div className="max-w-[700px] p-6">
-      <div className="mb-6 flex items-center justify-between">
-        <h2 className="m-0">Trash</h2>
-        {entries.length > 0 && (
-          <Button
-            variant="danger"
-            disabled={deleting}
-            onClick={() => setConfirmOpen(true)}
-            size="sm"
-          >
-            Empty trash
-          </Button>
-        )}
-      </div>
-      {(error || actionError) && (
+      <h2 className="m-0 mb-6">Trash</h2>
+      {error && (
         <div className="mb-4 rounded border border-danger-soft-border bg-danger-soft-bg px-3 py-2 text-[0.813rem] text-danger">
-          {error || actionError}
+          {error}
         </div>
       )}
-      {message && (
-        <div className="mb-4 rounded bg-ok-soft-bg px-3 py-2 text-[0.813rem] text-ok-soft-text">
-          {message}
+      {total === 0 ? (
+        <div className="text-[0.875rem] text-muted">
+          {searching ? "No trashed conversations match this search." : "Trash is empty."}
         </div>
-      )}
-      {entries.length === 0 ? (
-        <div className="text-[0.875rem] text-muted">Trash is empty.</div>
       ) : (
-        entries.map((entry) => (
-          <div
-            key={entry.id}
-            className="flex items-center justify-between border-b border-border p-3"
-          >
-            <div>
-              <div className="text-[0.875rem] font-medium">{entry.label}</div>
-              <div className="text-[0.75rem] text-muted">
-                {entry.message_count} message{entry.message_count !== 1 ? "s" : ""} · deleted{" "}
-                {formatLocaleDate(entry.deleted_at)}
-              </div>
-            </div>
-            <Button onClick={() => void restore(entry.id)} size="xs">
-              Restore
-            </Button>
-          </div>
-        ))
+        <div className="text-[0.875rem] text-muted">
+          {total} conversation{total !== 1 ? "s" : ""}
+          {searching ? " matching this search" : ""} in Trash. Select one on the left to view it.
+        </div>
       )}
-
-      <ConfirmDialog
-        open={confirmOpen}
-        title="Empty trash?"
-        body="Permanently delete all trashed messages? This cannot be undone."
-        confirmLabel="Empty trash"
-        danger
-        busy={deleting}
-        onClose={() => setConfirmOpen(false)}
-        onConfirm={() => void emptyTrash()}
-      />
     </div>
   );
 }
