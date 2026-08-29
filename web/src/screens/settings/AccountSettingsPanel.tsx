@@ -27,7 +27,6 @@ export function AccountSettingsPanel() {
   }
 
   const isDemo = profile.is_demo === true;
-  const isGuest = profile.is_guest === true;
 
   const handleChangePassword = async () => {
     setPwMsg("");
@@ -67,72 +66,64 @@ export function AccountSettingsPanel() {
           className={`${inputClassName} !text-muted`}
         />
       </div>
-      {isGuest ? (
-        <p className="mb-6 text-[0.875rem] text-muted">
-          This is a temporary sample account. It is removed after 24 hours or when you sign out.
-        </p>
-      ) : (
-        <>
-          <h3 className={sectionTitleClass}>Change Password</h3>
-          <div className="mb-6 max-w-[360px]">
-            <label className="mb-2 block">
-              <span className="mb-1 block text-[0.813rem] font-medium">Current password</span>
-              <input
-                type="password"
-                value={currentPw}
-                onChange={(e) => setCurrentPw(e.target.value)}
-                autoComplete="current-password"
-                disabled={isDemo}
-                className={inputClassName}
-              />
-            </label>
-            <label className="mb-2 block">
-              <span className="mb-1 block text-[0.813rem] font-medium">New password</span>
-              <input
-                type="password"
-                value={newPw}
-                onChange={(e) => setNewPw(e.target.value)}
-                autoComplete="new-password"
-                disabled={isDemo}
-                className={inputClassName}
-              />
-            </label>
-            <label className="mb-2 block">
-              <span className="mb-1 block text-[0.813rem] font-medium">Confirm new password</span>
-              <input
-                type="password"
-                value={confirmPw}
-                onChange={(e) => setConfirmPw(e.target.value)}
-                autoComplete="new-password"
-                disabled={isDemo}
-                className={inputClassName}
-              />
-            </label>
-            <Button
-              variant="primary"
-              onClick={handleChangePassword}
-              disabled={isDemo || !currentPw || !newPw || !confirmPw}
-              size="sm"
-            >
-              Change password
-            </Button>
-            {pwMsg && (
-              <div
-                className="mt-1.5 text-[0.813rem]"
-                style={{ color: pwOk ? "var(--ok)" : "var(--danger)" }}
-              >
-                {pwMsg}
-              </div>
-            )}
-          </div>
-
-          <ApiTokensSection
-            accountCanImport={profile.can_import ?? true}
-            accountCanExport={profile.can_export ?? true}
-            accountCanDelete={profile.can_delete ?? false}
+      <h3 className={sectionTitleClass}>Change Password</h3>
+      <div className="mb-6 max-w-[360px]">
+        <label className="mb-2 block">
+          <span className="mb-1 block text-[0.813rem] font-medium">Current password</span>
+          <input
+            type="password"
+            value={currentPw}
+            onChange={(e) => setCurrentPw(e.target.value)}
+            autoComplete="current-password"
+            disabled={isDemo}
+            className={inputClassName}
           />
-        </>
-      )}
+        </label>
+        <label className="mb-2 block">
+          <span className="mb-1 block text-[0.813rem] font-medium">New password</span>
+          <input
+            type="password"
+            value={newPw}
+            onChange={(e) => setNewPw(e.target.value)}
+            autoComplete="new-password"
+            disabled={isDemo}
+            className={inputClassName}
+          />
+        </label>
+        <label className="mb-2 block">
+          <span className="mb-1 block text-[0.813rem] font-medium">Confirm new password</span>
+          <input
+            type="password"
+            value={confirmPw}
+            onChange={(e) => setConfirmPw(e.target.value)}
+            autoComplete="new-password"
+            disabled={isDemo}
+            className={inputClassName}
+          />
+        </label>
+        <Button
+          variant="primary"
+          onClick={handleChangePassword}
+          disabled={isDemo || !currentPw || !newPw || !confirmPw}
+          size="sm"
+        >
+          Change password
+        </Button>
+        {pwMsg && (
+          <div
+            className="mt-1.5 text-[0.813rem]"
+            style={{ color: pwOk ? "var(--ok)" : "var(--danger)" }}
+          >
+            {pwMsg}
+          </div>
+        )}
+      </div>
+
+      <ApiTokensSection
+        accountCanImport={profile.can_import ?? true}
+        accountCanExport={profile.can_export ?? true}
+        accountCanDelete={profile.can_delete ?? false}
+      />
 
       <ProfileDangerZone isDemo={isDemo} username={profile.username} />
     </div>

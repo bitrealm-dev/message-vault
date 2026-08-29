@@ -6,7 +6,6 @@ export interface AccountProfile {
   phones: string[];
   emails: string[];
   is_demo?: boolean;
-  is_guest?: boolean;
   /** May manage users. */
   is_admin?: boolean;
   /** May call the import endpoints. */

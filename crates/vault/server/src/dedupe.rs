@@ -305,11 +305,6 @@ pub async fn fill_missing_content_keys(conn: &mut AnyConnection, account_id: &st
     recompute_content_keys(conn, true, account_id).await
 }
 
-/// Rebuild every message `content_key` from current chat/time/body/attachments.
-pub async fn recompute_all_content_keys(conn: &mut AnyConnection, account_id: &str) -> Result<u64> {
-    recompute_content_keys(conn, false, account_id).await
-}
-
 async fn insert_content_key_rows(conn: &mut AnyConnection, keys: &[(i64, String)]) -> Result<()> {
     let total = keys.len();
     let mut written = 0usize;
@@ -1148,40 +1143,6 @@ mod tests {
             .collect();
         assert!(values.iter().all(|key| !key.is_empty()));
         assert_eq!(values.iter().copied().collect::<HashSet<_>>().len(), 3);
-    }
-
-    #[tokio::test]
-    async fn recompute_all_content_keys_rewrites_existing_keys() {
-        let (pool, _dir) = engine::test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        setup_db(&mut conn).await;
-        insert_msg(
-            &mut conn,
-            InsertMsgArgs {
-                source: "go-sms-pro",
-                guid: "g-rebuild",
-                utc: "2015-03-12T18:04:22Z",
-                local: "2015-03-12T14:04:22-04:00",
-                from_me: 1,
-                body: "Rebuild me",
-                sort_order: 0,
-            },
-        )
-        .await;
-        let first = fill_missing_content_keys(&mut conn, TEST_ACCOUNT_ID)
-            .await
-            .unwrap();
-        assert_eq!(first, 1);
-        let rebuilt = recompute_all_content_keys(&mut conn, TEST_ACCOUNT_ID)
-            .await
-            .unwrap();
-        assert_eq!(rebuilt, 1);
-        let key: Option<String> =
-            sqlx::query_scalar("SELECT content_key FROM messages WHERE guid = 'g-rebuild'")
-                .fetch_one(&mut *conn)
-                .await
-                .unwrap();
-        assert!(key.as_deref().is_some_and(|k| !k.is_empty()));
     }
 
     #[tokio::test]

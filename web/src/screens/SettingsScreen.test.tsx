@@ -51,7 +51,6 @@ function baseProfile(overrides: Partial<{ is_admin: boolean }>) {
     preferred_name: null,
     phones: [],
     emails: [],
-    is_guest: true,
     can_import: true,
     can_export: true,
     can_delete: false,

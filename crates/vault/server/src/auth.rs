@@ -967,21 +967,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn insert_account_takes_no_hanko_id() {
-        let (_dir, mut conn) = test_conn().await;
-        account_profile::insert_account(&mut conn, TEST_ACCOUNT, "alice", None, None)
-            .await
-            .unwrap();
-        assert_eq!(
-            account_profile::username_for_account(&mut conn, TEST_ACCOUNT)
-                .await
-                .unwrap()
-                .as_deref(),
-            Some("alice")
-        );
-    }
-
-    #[tokio::test]
     async fn change_password_transaction_rolls_back_every_credential() {
         let (_dir, mut conn, old_session, api_tokens, other_account_token) =
             password_change_setup().await;

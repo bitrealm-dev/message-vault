@@ -131,13 +131,6 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(crate::admin_api::delete_user_handler))
 }
 
-#[cfg(test)]
-/// The full OpenAPI router: public auth endpoints for `auth` plus the
-/// session-backed API routes.
-pub fn openapi_router() -> OpenApiRouter<AppState> {
-    auth_public_openapi().merge(api_openapi())
-}
-
 /// Pretty OpenAPI JSON. Same string the CLI writes and the stale-spec test compares.
 pub fn dump_openapi_json() -> String {
     let (_a, mut spec) = auth_public_openapi().split_for_parts();
