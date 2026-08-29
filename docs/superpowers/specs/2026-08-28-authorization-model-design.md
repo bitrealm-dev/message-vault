@@ -280,10 +280,28 @@ destroy exactly the data `can_delete` protects — but it sits behind the danger
 who wants to leave is entitled to. `can_delete` governs deletion of data inside the vault, not the
 right to close the account.
 
-**Implementation note for the plan:** trash mutations do not currently live in a dedicated route
-group. Trashed rows are written from handlers under the `/v1/export/*` namespace
-(`export_api.rs:1797` inserts into `trashed_conversations`). The implementation plan must enumerate
-the exact handler call sites rather than assume a `/v1/trash` route group exists.
+**Correction, made during implementation.** An earlier draft of this section claimed trash mutations
+were written from handlers under the `/v1/export/*` namespace, citing an insert into
+`trashed_conversations` at `export_api.rs:1797`. That was wrong: line 1797 falls after that file's
+`mod tests` at line 1392, so it is a test fixture, not a handler. The same is true of the inserts
+into `trashed_handles` (`conversations_api.rs:1031`, after `mod tests` at 949) and
+`trashed_contacts` (`contacts_api.rs:2102`, after `mod tests` at 1508).
+
+**There is no trash-mutation endpoint in the server at all.** No route matching `trash` is
+registered in `openapi.rs`, and no handler named trash, untrash, or purge exists. The only
+production code that writes the trash tables is `delete_all_messages_for_account`, which clears
+them, and whose only caller is `delete_messages_handler`.
+
+So `can_delete` gates exactly one endpoint today — `POST /v1/account/delete-messages` — and that is
+complete coverage of the deletion paths that exist, not a partial implementation. The rule stated
+above still governs: if trash and purge endpoints are built later, they take `require_delete_access`,
+and contact and handle trashing stays ungated.
+
+**A separate, pre-existing defect this uncovered, outside the scope of this spec.**
+`web/src/screens/TrashScreen.tsx` calls `GET /v1/export/trash`, `POST /v1/trash/{id}/restore`, and
+`POST /v1/trash/empty`. None of the three exists on the server. The Trash screen is therefore
+already broken in the shipped product, independently of any work in this document, and needs its own
+investigation.
 
 ### Disabled accounts
 
