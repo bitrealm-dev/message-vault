@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import Button from "../../components/Button";
 import Checkbox from "../../components/Checkbox";
 import ModalShell, { DialogFooter } from "../../components/ModalShell";
@@ -17,9 +18,18 @@ function PermissionCheckbox({
   allowed: boolean;
   children: string;
 }) {
+  // An admin can now switch an account's own permissions off, so `checked`
+  // can arrive `true` for a permission the account no longer holds. Force it
+  // unchecked — both the display and the value the form would submit —
+  // rather than showing it checked-but-disabled, which reads as a token
+  // claiming a right the account does not have.
+  useEffect(() => {
+    if (!allowed && checked) onChange(false);
+  }, [allowed, checked, onChange]);
+
   return (
     <div>
-      <Checkbox checked={checked} onChange={onChange} disabled={disabled || !allowed}>
+      <Checkbox checked={checked && allowed} onChange={onChange} disabled={disabled || !allowed}>
         {children}
       </Checkbox>
       {!allowed && (

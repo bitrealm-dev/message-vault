@@ -120,4 +120,48 @@ describe("ApiTokensSection create form", () => {
     const importCheckbox = screen.getByRole("checkbox", { name: "Import" });
     expect(importCheckbox).not.toBeDisabled();
   });
+
+  it("forces a permission checkbox unchecked when the account lacks it, even though the form defaults it on", async () => {
+    const user = userEvent.setup();
+    render(
+      <ApiTokensSection
+        accountCanImport={false}
+        accountCanExport={true}
+        accountCanDelete={false}
+      />,
+    );
+    await waitFor(() => {
+      expect(apiGet).toHaveBeenCalled();
+    });
+    await user.click(screen.getByRole("button", { name: "Add" }));
+
+    // The form defaults `canImport` to true, but the account cannot import —
+    // the box must read unchecked, not checked-but-disabled.
+    const importCheckbox = screen.getByRole("checkbox", { name: "Import" });
+    expect(importCheckbox).toBeDisabled();
+    expect(importCheckbox).not.toBeChecked();
+
+    apiPost.mockResolvedValue({
+      id: "tok_3",
+      label: "No import",
+      can_import: false,
+      can_export: true,
+      can_delete: false,
+      created_at: "1700000000",
+      token: "mv-api-secret3",
+      token_hint: "mv-api-se..t3",
+    });
+    await user.type(screen.getByLabelText("API key name"), "No import");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(apiPost).toHaveBeenCalledTimes(1);
+    });
+    expect(apiPost.mock.calls[0][1]).toEqual({
+      label: "No import",
+      can_import: false,
+      can_export: true,
+      can_delete: false,
+    });
+  });
 });
