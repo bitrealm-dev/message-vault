@@ -147,8 +147,8 @@ export default function LoginScreen() {
             />
           ) : (
             <>
-              <h1 className={authScreenTitle}>Message Vault</h1>
-              <VaultStatus state={state} className="mb-4 text-center" />
+              <h1 className={`${authScreenTitle} mb-2`}>Message Vault</h1>
+              <VaultStatus state={state} className="mb-5 text-center" />
 
               {hasConnectedOnce ? (
                 <LocalAuthTabs serverUrl={address} disabled={state !== "connected"} />

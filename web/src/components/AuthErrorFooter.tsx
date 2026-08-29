@@ -4,15 +4,18 @@ function sentenceCase(text: string): string {
 }
 
 /**
- * Error line for an auth form. Always occupies space (transparent when empty)
- * so the surrounding form does not shift when a message appears. Callers place
- * it above the primary action, inside the card's pinned footer, so a message
- * grows upward into the card's slack rather than out of the fixed frame.
+ * Error line for an auth form. Always occupies the same two lines, transparent
+ * when empty, so the surrounding form does not shift when a message appears —
+ * and a long one scrolls inside that band instead of growing the footer. The
+ * card is a fixed height, so an unbounded message would push the primary
+ * action out through the bottom of the frame and onto whatever sits below it.
+ * The right padding is the width of a scrollbar, so a message that scrolls
+ * does not run underneath its own thumb.
  */
 export default function AuthErrorFooter({ error }: { error: string }) {
   return (
     <div
-      className="mb-2 min-h-8 text-[0.813rem] leading-[1.35]"
+      className="mb-2 h-9 overflow-y-auto pr-2 text-[0.813rem] leading-[1.35]"
       style={{ color: error ? "var(--danger)" : "transparent" }}
       aria-live="polite"
     >
