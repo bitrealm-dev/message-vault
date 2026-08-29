@@ -597,6 +597,10 @@ pub(crate) struct CreateImportResponse {
 pub(crate) struct CompleteImportBody {
     #[serde(default = "default_true")]
     pub(crate) ok: bool,
+    /// Explicit session outcome; overrides `ok` when present.
+    /// One of `completed`, `completed_with_issues`, `failed`.
+    #[serde(default)]
+    pub(crate) status: Option<String>,
     #[serde(default)]
     pub(crate) message_count: Option<i64>,
     #[serde(default)]
@@ -644,6 +648,15 @@ fn validate_complete_import_issues(issues: &[CompleteImportIssueBody]) -> Result
         }
     }
     Ok(())
+}
+
+fn validate_import_status(status: Option<&str>) -> Result<(), ApiError> {
+    match status {
+        None | Some("completed") | Some("completed_with_issues") | Some("failed") => Ok(()),
+        Some(other) => Err(ApiError::BadRequest(format!(
+            "invalid import status '{other}'; expected 'completed', 'completed_with_issues', or 'failed'"
+        ))),
+    }
 }
 
 /// Stored session status after completion.
@@ -835,6 +848,7 @@ pub(crate) async fn imports_complete_handler(
     require_import_access(&auth)?;
     let account = resolve_import_account(&auth, None, &state.db).await?;
     validate_complete_import_issues(&body.issues)?;
+    validate_import_status(body.status.as_deref())?;
     let summary_json = match body.summary {
         Some(summary) => Some(
             serde_json::to_string(&summary)
@@ -844,6 +858,7 @@ pub(crate) async fn imports_complete_handler(
     };
     let args = crate::db::vault_imports::CompleteImportArgs {
         ok: body.ok,
+        status: body.status,
         message_count: body.message_count,
         attachment_count: body.attachment_count,
         bytes_uploaded: body.bytes_uploaded,

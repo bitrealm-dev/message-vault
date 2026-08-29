@@ -4359,6 +4359,13 @@
             ],
             "format": "int64"
           },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Explicit session outcome; overrides `ok` when present.\nOne of `completed`, `completed_with_issues`, `failed`."
+          },
           "summary": {},
           "upload_ms": {
             "type": [
