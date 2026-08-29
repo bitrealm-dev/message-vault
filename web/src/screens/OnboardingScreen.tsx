@@ -95,7 +95,7 @@ export default function OnboardingScreen() {
       <div className={authCard}>
         <div className={authCardBody}>
           <h1 className={`${authTitle} !mb-2`}>Profile Setup</h1>
-          <p className="mb-4 text-[0.875rem] text-muted">
+          <p className="mt-0 mb-4 text-[0.875rem] text-muted">
             So we can match imported messages to you.
           </p>
 

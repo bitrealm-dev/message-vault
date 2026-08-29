@@ -26,11 +26,17 @@ export interface VaultStatusProps {
 /**
  * One word naming the vault connection. It replaces the old host-and-dot line:
  * the address is a setting, not something to read on every visit, so what is
- * left is the only part a person acts on.
+ * left is the only part a person acts on. `m-0` because theme.css leaves out
+ * Tailwind's preflight, so a paragraph otherwise carries the browser's own
+ * margins and floats away from the line it belongs under; the gap below is the
+ * caller's to set.
  */
 export default function VaultStatus({ state, className }: VaultStatusProps) {
   return (
-    <p role="status" className={`text-[0.813rem] font-medium ${TONE[state]} ${className ?? ""}`}>
+    <p
+      role="status"
+      className={`m-0 text-[0.813rem] font-medium ${TONE[state]} ${className ?? ""}`}
+    >
       {WORD[state]}
     </p>
   );

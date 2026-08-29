@@ -9,12 +9,14 @@
  */
 export const pageCenter = "min-h-screen flex items-center justify-center bg-bg p-4 overflow-y-auto";
 /**
- * Every auth card is the same 448 × 560 box on every screen and in every
+ * Every auth card is the same 448 × 608 box on every screen and in every
  * state — it never resizes and never scrolls, so nothing moves underneath the
- * user as they step through sign-in and setup.
+ * user as they step through sign-in and setup. The height is set by the
+ * tallest card: Create Account, whose three fields sit above the pinned
+ * action row with room for a two-line error above it.
  */
 export const authCard =
-  "box-border flex h-[35rem] w-full max-w-md flex-col bg-panel border border-border rounded-lg shadow-[0_4px_24px_rgba(0,0,0,0.15)] p-8";
+  "box-border flex h-[38rem] w-full max-w-md flex-col bg-panel border border-border rounded-lg shadow-[0_4px_24px_rgba(0,0,0,0.15)] p-8";
 
 /** Content region of an auth card: everything above the pinned action row. */
 export const authCardBody = "flex min-h-0 flex-1 flex-col";
@@ -27,14 +29,22 @@ export const authCardBody = "flex min-h-0 flex-1 flex-col";
  * carries more below it there.
  */
 export const authCardFooter = "mt-auto flex flex-col";
-export const authTitle = "text-[1.25rem] font-bold text-text mb-6 text-left";
+/**
+ * Heading of a step inside the flow, set left rather than centred. `m-0` for
+ * the same reason as `authScreenTitle`: without Tailwind's preflight a heading
+ * keeps the browser's own margins, which push it off the top of the card and
+ * away from the line under it.
+ */
+export const authTitle = "m-0 text-[1.25rem] font-bold text-text mb-6 text-left";
 /**
  * Name at the top of an auth card. The sign-in card and the vault settings
  * screen share it, so crossing between them never changes the size of the
- * words at the top of the frame.
+ * words at the top of the frame. `m-0` because theme.css leaves out Tailwind's
+ * preflight, so a heading still carries the browser's own margins otherwise;
+ * each screen sets the gap below the name itself.
  */
 export const authScreenTitle =
-  "text-center text-[1.375rem] font-semibold tracking-[-0.015em] text-text";
+  "m-0 text-center text-[1.375rem] font-semibold tracking-[-0.015em] text-text";
 export const authLabel = "block text-[0.875rem] font-medium text-text mb-1";
 export const authInput =
   "w-full box-border px-3 py-2 text-[0.875rem] rounded border border-border bg-elevated text-text focus:outline-none focus:border-accent";
