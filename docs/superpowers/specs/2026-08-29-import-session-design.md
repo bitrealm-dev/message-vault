@@ -439,9 +439,14 @@ Two smaller faults found while tracing this:
     keeps the raw string rather than replacing it, so an unrecognized
     reason is visible and reportable instead of silently uniform.
 
-    `no_path` is not a stored reason. It is a display default in
-    `run.rs` for an attachment with no path and no reason, and should not
-    be added to the set.
+    `no_path` is written by `vault-push` itself, not by an exporter. When an
+    attachment reaches `run.rs` with no path and no `missing_reason` of its
+    own, `run.rs` fills in `no_path` and `project.rs` writes it onto the
+    attachment, so it is serialized like any other reason and lands in
+    `attachments.missing_reason`. It marks an exporter defect — a path
+    dropped without saying why — rather than a user-facing outcome, and the
+    display maps it to plain "missing" rather than adding a sixth reason to
+    the set.
 
 42. **`open_prepared` gains a resume mode** that does not call
     `clean_previous_ir_output`.
