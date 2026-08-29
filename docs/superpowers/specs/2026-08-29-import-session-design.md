@@ -210,36 +210,59 @@ Two smaller faults found while tracing this:
     `digest_sha256`, `size_bytes`, and mime. The digest matters because the
     vault dedupes assets by sha256.
 
-21. **Order: transcode, patch the conversation files, then delete
-    originals.** Reversed, a crash between the last two leaves conversation
-    files pointing at bytes that no longer exist — a staging folder that
-    looks complete and is not. Holding originals until the patch lands is
-    the extra copy this design already accepts.
+21. **Transcode commits per file, through a rename.** For each attachment:
+    transcode to `<derivative>.in_progress`, patch the conversation file,
+    rename `.in_progress` to the final name, delete the original. The final
+    name never exists until the conversation file already points at it.
 
-    A consequence for resume: an interrupted transcode can leave an
-    original whose derivative already exists but whose conversation file
-    was never patched. A resumed run must treat a present derivative as
-    converted and re-patch, not re-transcode. Distinguishing the three
-    states — unconverted original, converted but unpatched, patched — is a
-    requirement on the transcode pass, not an implementation detail to
-    settle later.
+    Two invariants fall out, and they are the whole of transcode resume:
 
-22. **Accepted costs.** A second copy of every attachment while both exist,
-    the initial copy paid before transcoding, and a re-read of the
-    conversation files to patch them. Bought with them: a durable
-    checkpoint, and a transcode failure that destroys nothing.
+    - A file under its final derivative name is fully patched.
+    - An original still on disk means work remains.
 
-23. **Disk headroom is checked before the write phase.** Parse already
-    knows total attachment bytes, and originals and derivatives now coexist
-    by design.
+    So the resume list is every original still present. There is no state
+    to classify and no progress to record.
 
-24. **Worker counts differ by phase.** Writing is IO and hashing — it
+    A resumed run always re-transcodes the file it interrupted rather than
+    adopting the `.in_progress` bytes. This is required, not merely
+    simpler: a crash during the write leaves a truncated file, and nothing
+    distinguishes a complete `.in_progress` from a partial one without
+    hashing it. The cost is one file.
+
+    Reversing the order — deleting an original before its conversation file
+    commits — leaves conversation files pointing at bytes that no longer
+    exist, a staging folder that looks complete and is not.
+
+22. **The patch reads the file on disk; it never replays a captured
+    remap.** ffmpeg output is not guaranteed byte-identical across runs, so
+    a re-transcoded file can carry a different sha256. The vault dedupes
+    assets by sha256, so writing a stale digest would corrupt silently.
+    Digest, size, and mime are recomputed from the derivative each time.
+
+23. **The `.in_progress` marker must survive existing cleanup.**
+    `process_attachments_dir` calls `remove_msgmedia_temps` on entry to
+    clear leftovers from a failed ffmpeg run. The marker has to be named
+    distinctly from ffmpeg's scratch files and be exempt from that sweep,
+    or the resume signal is deleted on the way in.
+
+24. **Accepted costs.** The initial copy paid before transcoding, one
+    attachment held in two forms while its own patch is in flight, and a
+    re-read of the conversation files to patch them. Bought with them: a
+    durable checkpoint, and a transcode failure that destroys nothing.
+
+25. **Disk headroom is checked before the write phase.** Parse already
+    knows total attachment bytes. Because decision 21 commits and deletes
+    per file, peak usage is roughly the original total plus one in-flight
+    derivative, not originals plus derivatives — each original is released
+    as soon as its own patch lands.
+
+26. **Worker counts differ by phase.** Writing is IO and hashing — it
     parallelizes. Transcoding shells out to ffmpeg, which is already
     multithreaded, so one process per core is often slower than sequential
     and makes the machine unusable. Writers scale; transcode uses a small
     bounded pool.
 
-25. **`persist_clone` needs a unique temp suffix.** It builds `{name}.tmp`
+27. **`persist_clone` needs a unique temp suffix.** It builds `{name}.tmp`
     from the content digest, so two workers handling identical bytes would
     collide on the same temp path. Content-addressed dedup is otherwise
     unaffected by parallelism, because it is enforced through the
@@ -247,19 +270,19 @@ Two smaller faults found while tracing this:
 
 ### Resume
 
-26. **Resume asks the vault, then goes where it says.** Get the active
+28. **Resume asks the vault, then goes where it says.** Get the active
     session, open `staging_dir`, confirm it exists and the fingerprint
     still matches, continue at `stage`. Entering Import runs this
     reconciliation first. The form is what appears when it finds nothing —
     not the default.
 
-27. **Behaviour per case.**
+29. **Behaviour per case.**
 
     | Case | Resume |
     |---|---|
     | Died in `parse` | None. Form reopens with settings restored; folder deleted. |
     | Died in `write` | Re-parse, skip conversations already written. |
-    | Died in `transcode` | Re-run it. A rescan finds exactly the unconverted originals. |
+    | Died in `transcode` | Re-run it over every original still on disk. |
     | Died in `awaiting_approval` | Back to the summary, recomputed from the folder. |
     | Died in `pushing` | Re-push the folder. Dedupe and asset HEAD-skip absorb the overlap. |
     | Declined | Terminal. See decision 13. |
@@ -269,38 +292,37 @@ Two smaller faults found while tracing this:
     | Different `device_id` | Told where the session belongs. Discard is offered, never silent. |
     | Source changed or missing | Fatal for `write`; irrelevant for `awaiting_approval` and `pushing`. |
 
-28. **No timeout reclaims a session.** A timer cannot distinguish an
+30. **No timeout reclaims a session.** A timer cannot distinguish an
     abandoned approval gate from a running three-hour transcode, and
     reclaiming a live session would corrupt an import in progress. The
     blocked screen offers an explicit discard instead.
 
-29. **A fingerprint mismatch forces a clean restart, and says so.** A
+31. **A fingerprint mismatch forces a clean restart, and says so.** A
     `chat.db` that grew since the last attempt has different conversation
     boundaries. Mixing old output with a new parse produces a corrupt
     export.
 
-30. **The summary is recomputed on resume, not read back from
+32. **The summary is recomputed on resume, not read back from
     `summary_json`.** The folder is the truth. `summary_json` records what
     the user approved, which is a different question and is used for the
     diff in decision 12.
 
 ### Required fixes
 
-31. **A read error on one attachment becomes a per-item issue**, matching
+33. **A read error on one attachment becomes a per-item issue**, matching
     how a missing file is already handled. It is currently the most
     expensive failure mode in the system.
 
-32. **`open_prepared` gains a resume mode** that does not call
+34. **`open_prepared` gains a resume mode** that does not call
     `clean_previous_ir_output`.
 
-33. **`apply_convert_or_compress` calls the logging variant** so transcode
+35. **`apply_convert_or_compress` calls the logging variant** so transcode
     reports progress. The callback already exists.
 
-34. **`media::process_attachments_dir` takes an explicit file list.**
+36. **`media::process_attachments_dir` takes an explicit file list.**
     Directory-wide operation is what prevents transcode from being scoped
-    to a known set of files. The caller builds the list, which is also how
-    a resumed run expresses "everything not yet converted" — see decision
-    21 for the states it has to tell apart.
+    to a known set of files. The caller builds the list; on a resumed run
+    that list is every original still on disk, per decision 21.
 
 ## Sequencing
 
@@ -308,7 +330,7 @@ This is more than one change. Suggested order, each independently
 shippable:
 
 1. **Verdict and issues.** Read the push report for the outcome; the
-   three-way status; the read-error fix from decision 31. Fixes a live bug
+   three-way status; the read-error fix from decision 33. Fixes a live bug
    where failed imports report success, and needs none of the rest.
 2. **The session record.** New columns, the partial unique index, the
    active-session endpoint, and reconciliation on entering Import. Delivers
