@@ -1,5 +1,3 @@
-export type AuthMode = "hanko" | "local";
-
 /** What every vault sign-in route returns: a session token and the account it belongs to. */
 export interface SessionResponse {
   token: string;
@@ -33,16 +31,6 @@ export interface ParsedPersistedAuth {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** True when the value is one of the two login modes the app supports. */
-export function isAuthMode(value: unknown): value is AuthMode {
-  return value === "hanko" || value === "local";
-}
-
-/** True when GET /v1/auth/mode reports try_demo as the boolean true. */
-export function isTryDemoEnabled(value: unknown): boolean {
-  return value === true;
 }
 
 /**

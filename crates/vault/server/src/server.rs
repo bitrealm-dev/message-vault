@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::Arc;
 
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -25,22 +25,27 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::services::ServeDir;
 
 use crate::asset_uploads;
-use crate::config::{AuthMode, Config, GuestDemoSettings};
+use crate::config::Config;
 use crate::db::account_profile;
 use crate::db::api_tokens;
 use crate::db::engine::{self, DbEngine};
+use crate::db::permissions::Permissions;
 use crate::db::schema;
 use crate::db::session_tokens;
 use crate::export_api::ExportQueryError;
-use crate::guest_pool::{self, GuestPoolState};
 
 /// What a Bearer credential is allowed to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthCapability {
-    /// GUI session token — full API access.
-    Full,
-    /// Named API token with import and/or export rights.
-    ApiToken(crate::db::api_tokens::ApiTokenScopes),
+    /// Signed-in session. Carries the account's own permissions.
+    Session {
+        /// The account may manage users.
+        is_admin: bool,
+        /// What the account may do.
+        permissions: Permissions,
+    },
+    /// Named API token. Already intersected with its owner's permissions.
+    ApiToken(Permissions),
 }
 
 /// Authenticated vault account from a session token or named API token.
@@ -52,96 +57,109 @@ pub struct AuthIdentity {
     pub capability: AuthCapability,
 }
 
+impl AuthIdentity {
+    /// What this credential may do, account and token already intersected.
+    pub fn permissions(&self) -> Permissions {
+        match self.capability {
+            AuthCapability::Session { permissions, .. } => permissions,
+            AuthCapability::ApiToken(permissions) => permissions,
+        }
+    }
+
+    /// True only for a signed-in administrator, never for an API token.
+    pub fn is_admin(&self) -> bool {
+        matches!(
+            self.capability,
+            AuthCapability::Session { is_admin: true, .. }
+        )
+    }
+
+    /// True when the credential is a signed-in session rather than a token.
+    pub fn is_session(&self) -> bool {
+        matches!(self.capability, AuthCapability::Session { .. })
+    }
+}
+
 /// Reject API tokens on routes that require a GUI session.
 ///
 /// # Errors
 ///
 /// Returns forbidden when the credential is a named API token.
 pub fn require_full_access(auth: &AuthIdentity) -> Result<(), ApiError> {
-    match auth.capability {
-        AuthCapability::Full => Ok(()),
-        AuthCapability::ApiToken(_) => Err(ApiError::Forbidden(
-            "this endpoint requires a signed-in session; use an API token only for import/export"
-                .into(),
-        )),
+    if auth.is_session() {
+        return Ok(());
     }
+    Err(ApiError::Forbidden(
+        "this endpoint requires a signed-in session; use an API token only for import/export"
+            .into(),
+    ))
 }
 
-/// Reject sample (guest) accounts on import, asset upload, and API-token mutations.
+/// Reject anything that is not a signed-in administrator.
 ///
 /// # Errors
 ///
-/// Returns forbidden when `account_id` has a `guest_status`, or internal when
-/// the lookup fails.
-pub async fn reject_if_guest(conn: &mut AnyConnection, account_id: &str) -> Result<(), ApiError> {
-    if account_profile::is_guest_account(conn, account_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-    {
-        return Err(ApiError::Forbidden(
-            "sample accounts cannot import, export backups, or create API tokens".into(),
-        ));
+/// Returns forbidden for ordinary sessions and for every API token.
+pub fn require_admin(auth: &AuthIdentity) -> Result<(), ApiError> {
+    if auth.is_admin() {
+        return Ok(());
     }
-    Ok(())
+    Err(ApiError::Forbidden(
+        "this endpoint requires an administrator session".into(),
+    ))
 }
 
-/// Reject the account when it is a guest, acquiring from the shared pool.
-pub(crate) async fn reject_if_guest_account(
-    pool: &sqlx::AnyPool,
-    account_id: &str,
-) -> Result<(), ApiError> {
-    let mut conn = pool
-        .acquire()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    reject_if_guest(&mut conn, account_id).await
-}
-
-/// Allow session or an API token that includes import.
+/// Allow a credential that may import.
 ///
 /// # Errors
 ///
-/// Returns forbidden when the API token does not include import.
+/// Returns forbidden when import is not permitted.
 pub fn require_import_access(auth: &AuthIdentity) -> Result<(), ApiError> {
-    match auth.capability {
-        AuthCapability::Full => Ok(()),
-        AuthCapability::ApiToken(scopes) if scopes.allows_import() => Ok(()),
-        AuthCapability::ApiToken(_) => Err(ApiError::Forbidden(
-            "this API token does not allow import".into(),
-        )),
+    if auth.permissions().import {
+        return Ok(());
     }
+    Err(ApiError::Forbidden("import is not permitted".into()))
 }
 
-/// Allow session or an API token that includes export.
+/// Allow a credential that may export.
 ///
 /// # Errors
 ///
-/// Returns forbidden when the API token does not include export.
+/// Returns forbidden when export is not permitted.
 pub fn require_export_access(auth: &AuthIdentity) -> Result<(), ApiError> {
-    match auth.capability {
-        AuthCapability::Full => Ok(()),
-        AuthCapability::ApiToken(scopes) if scopes.allows_export() => Ok(()),
-        AuthCapability::ApiToken(_) => Err(ApiError::Forbidden(
-            "this API token does not allow export".into(),
-        )),
+    if auth.permissions().export {
+        return Ok(());
     }
+    Err(ApiError::Forbidden("export is not permitted".into()))
 }
 
-/// Allow session or any API token (import, export, or both) for asset probes.
+/// Allow a credential that may import or export, for asset probes.
 ///
 /// # Errors
 ///
-/// Returns forbidden when the API token cannot access assets.
+/// Returns forbidden when neither is permitted.
 pub fn require_import_or_export_access(auth: &AuthIdentity) -> Result<(), ApiError> {
-    match auth.capability {
-        AuthCapability::Full => Ok(()),
-        AuthCapability::ApiToken(scopes) if scopes.allows_import() || scopes.allows_export() => {
-            Ok(())
-        }
-        AuthCapability::ApiToken(_) => Err(ApiError::Forbidden(
-            "this API token cannot access assets".into(),
-        )),
+    let p = auth.permissions();
+    if p.import || p.export {
+        return Ok(());
     }
+    Err(ApiError::Forbidden(
+        "this credential cannot access assets".into(),
+    ))
+}
+
+/// Allow a credential that may destroy message data.
+///
+/// # Errors
+///
+/// Returns forbidden when deletion is not permitted.
+pub fn require_delete_access(auth: &AuthIdentity) -> Result<(), ApiError> {
+    if auth.permissions().delete {
+        return Ok(());
+    }
+    Err(ApiError::Forbidden(
+        "deleting messages is not permitted for this account".into(),
+    ))
 }
 
 /// Shared server state passed to every HTTP handler.
@@ -149,8 +167,8 @@ pub fn require_import_or_export_access(auth: &AuthIdentity) -> Result<(), ApiErr
 pub struct AppState {
     /// Loaded configuration.
     pub cfg: Arc<Config>,
-    /// Connection pool (SQLite file or `[database] url`). Handlers and the
-    /// guest-pool worker acquire short-lived connections from here.
+    /// Connection pool (SQLite file or `[database] url`). Handlers acquire
+    /// short-lived connections from here.
     pub db: sqlx::AnyPool,
     /// Engine the pool was opened for (SQLite by default, Postgres via URL).
     pub db_engine: DbEngine,
@@ -166,12 +184,6 @@ pub struct AppState {
     pub(crate) upload_limits: asset_uploads::UploadLimits,
     /// Axum request body cap (single PUT or one part); equals `asset_max_bytes`.
     pub(crate) max_body_bytes: usize,
-    /// Hosted guest-demo pool. Off on self-hosted (`GuestDemoSettings::disabled`).
-    pub guest: GuestDemoSettings,
-    /// One on-demand template clone at a time (empty-pool Try it).
-    pub guest_clone_lock: Arc<Mutex<()>>,
-    /// Hosted Try it assignments in the last 15 minutes (refill demand).
-    pub guest_demand: Arc<StdMutex<GuestPoolState>>,
 }
 
 /// API error envelope returned for non-200 responses.
@@ -302,13 +314,11 @@ fn build_cors_layer(origins: &[String]) -> CorsLayer {
         .allow_headers(AllowHeaders::mirror_request())
 }
 
-fn limited_auth_router(mode: AuthMode) -> (Router<AppState>, utoipa::openapi::OpenApi) {
-    let (router, spec) =
-        crate::openapi::auth_public_openapi(crate::openapi::SpecAuth::Live(mode)).split_for_parts();
+fn limited_auth_router() -> (Router<AppState>, utoipa::openapi::OpenApi) {
+    let (router, spec) = crate::openapi::auth_public_openapi().split_for_parts();
     (
-        router
-            // Auth JSON is tiny; keep a tight limit so Argon2/JWKS abuse cannot ship 512 MiB bodies.
-            .layer(RequestBodyLimitLayer::new(32 * 1024)),
+        // Auth JSON is tiny; keep a tight limit so Argon2 abuse cannot ship 512 MiB bodies.
+        router.layer(RequestBodyLimitLayer::new(32 * 1024)),
         spec,
     )
 }
@@ -326,8 +336,7 @@ pub(crate) fn http_app(state: AppState) -> Router {
         .as_ref()
         .map(|s| s.cors_origins.clone())
         .unwrap_or_default();
-    let mode = AuthMode::from_env();
-    let (auth_small, mut spec) = limited_auth_router(mode);
+    let (auth_small, mut spec) = limited_auth_router();
     let (doc_router, rest) = crate::openapi::api_openapi().split_for_parts();
     spec.merge(rest);
 
@@ -407,20 +416,12 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         asset_complete_locks: Arc::new(Mutex::new(HashMap::new())),
         upload_limits,
         max_body_bytes,
-        guest: GuestDemoSettings::from_env(),
-        guest_clone_lock: Arc::new(Mutex::new(())),
-        guest_demand: Arc::new(StdMutex::new(GuestPoolState::new())),
     };
-
-    if state.guest.enabled {
-        spawn_guest_pool_worker(state.clone());
-    }
 
     let app = http_app(state);
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     eprintln!("message-vault-server serve listening on http://{bind}");
     eprintln!("  GET  /health");
-    eprintln!("  GET  /v1/auth/mode     (unauthenticated — returns hanko or local)");
     eprintln!("  GET  /v1/auth/check   (Bearer session token or API token)");
     eprintln!("  GET  /v1/export/messages?q=&limit=&cursor=&account=  (read-only export)");
     eprintln!("  GET  /v1/export/messages/count?q=&account=&source=  (export match counts)");
@@ -445,83 +446,6 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
-}
-
-/// Sweep expired guests and refill unused ready copies every 60 seconds.
-///
-/// The first tick runs immediately so the pool is not empty on the first Try it.
-/// Shrink-over-ceiling runs without the clone lock. Each clone takes
-/// `guest_clone_lock` only for that one copy so on-demand Try it can assign a
-/// ready guest (or clone one) between refills. The worker does not take the
-/// vault operation lock; `serve` already holds it.
-fn spawn_guest_pool_worker(worker_state: AppState) {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-        loop {
-            interval.tick().await;
-            let pool = worker_state.db.clone();
-            let cfg = worker_state.cfg.clone();
-            let guest = worker_state.guest;
-            let demand = match worker_state.guest_demand.lock() {
-                Ok(mut guard) => guard.count_last_15m(),
-                Err(_) => {
-                    eprintln!("guest demand lock poisoned; refill uses the floor");
-                    0
-                }
-            };
-            let clone_lock = worker_state.guest_clone_lock.clone();
-            let data_dir = cfg.paths.data_dir.clone();
-
-            let sweep_pool = pool.clone();
-            let sweep_data = data_dir.clone();
-            log_guest_pool_task(
-                "sweep",
-                async move {
-                    let mut conn = sweep_pool.acquire().await?;
-                    guest_pool::sweep_expired_guests(&mut conn, &sweep_data).await
-                }
-                .await,
-            );
-
-            let shrink_pool = pool.clone();
-            let shrink_cfg = cfg.clone();
-            log_guest_pool_task(
-                "shrink",
-                async move {
-                    let mut conn = shrink_pool.acquire().await?;
-                    guest_pool::shrink_over_ceiling(&mut conn, &shrink_cfg, guest).await
-                }
-                .await,
-            );
-
-            loop {
-                let one_pool = pool.clone();
-                let one_cfg = cfg.clone();
-                let result = {
-                    let _guard = clone_lock.lock().await;
-                    async move {
-                        let mut conn = one_pool.acquire().await?;
-                        guest_pool::refill_one(&mut conn, &one_cfg, guest, demand).await
-                    }
-                    .await
-                };
-                match result {
-                    Ok(0) => break,
-                    Ok(_) => {}
-                    Err(err) => {
-                        eprintln!("guest pool refill failed: {err:#}");
-                        break;
-                    }
-                }
-            }
-        }
-    });
-}
-
-fn log_guest_pool_task(what: &str, result: anyhow::Result<u32>) {
-    if let Err(err) = result {
-        eprintln!("guest pool {what} failed: {err:#}");
-    }
 }
 
 async fn shutdown_signal() {
@@ -593,31 +517,71 @@ pub async fn resolve_auth(headers: &HeaderMap, state: &AppState) -> Result<AuthI
         .acquire()
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    schema::ensure_accounts_schema(&mut conn)
+    resolve_auth_on_conn(&mut conn, &token).await
+}
+
+/// Resolve a Bearer credential on an existing connection.
+///
+/// # Errors
+///
+/// Unauthorized when the token matches nothing; forbidden when the account is
+/// disabled.
+pub async fn resolve_auth_on_conn(
+    conn: &mut AnyConnection,
+    token: &str,
+) -> Result<AuthIdentity, ApiError> {
+    schema::ensure_accounts_schema(conn)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    // Credential-specific bit not yet folded into `AuthCapability`: a session
+    // carries no extra state, an API token carries its own (pre-intersection)
+    // permissions. Both branches load `AccountAuth` the same way so the
+    // disabled check below runs exactly once, regardless of credential kind.
+    enum Credential {
+        Session,
+        ApiToken(Permissions),
+    }
+
     let resolved = if let Some(account_id) =
-        session_tokens::lookup_account_for_token(&mut conn, &token)
+        session_tokens::lookup_account_for_token(&mut *conn, token)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?
     {
-        Some(AuthIdentity {
-            account_id,
-            capability: AuthCapability::Full,
-        })
-    } else if let Some(tok) = api_tokens::lookup_account_for_api_token(&mut conn, &token)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-    {
-        Some(AuthIdentity {
-            account_id: tok.account_id,
-            capability: AuthCapability::ApiToken(tok.scopes),
-        })
+        Some((account_id, Credential::Session))
     } else {
-        None
+        api_tokens::lookup_account_for_api_token(&mut *conn, token)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .map(|tok| (tok.account_id, Credential::ApiToken(tok.permissions)))
     };
 
-    resolved.ok_or_else(|| ApiError::Unauthorized("invalid API token".into()))
+    let Some((account_id, credential)) = resolved else {
+        return Err(ApiError::Unauthorized("invalid API token".into()));
+    };
+
+    let auth = account_profile::load_account_auth(&mut *conn, &account_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::Unauthorized("account no longer exists".into()))?;
+    if auth.disabled {
+        return Err(ApiError::Forbidden("this account is disabled".into()));
+    }
+
+    let capability = match credential {
+        Credential::Session => AuthCapability::Session {
+            is_admin: auth.is_admin,
+            permissions: auth.permissions,
+        },
+        Credential::ApiToken(tok_permissions) => {
+            AuthCapability::ApiToken(auth.permissions.intersect(tok_permissions))
+        }
+    };
+
+    Ok(AuthIdentity {
+        account_id,
+        capability,
+    })
 }
 
 /// Resolve the account id for an import or export: Bearer token binds the account.
@@ -784,19 +748,52 @@ pub(crate) async fn stream_field_to_file(
     Ok(written)
 }
 
+/// Build the `AppState` every test in this crate drives: a real `Config`
+/// rooted at `data_dir` (with a sibling `vault.db` path that nothing in the
+/// test suite reads from disk — queries go through `pool`), the given pool,
+/// and default upload limits. `#[cfg(test)]`-gated so it never ships in a
+/// release build; `pub(crate)` so `test_support` and the other test modules
+/// in this crate can reach it.
+#[cfg(test)]
+pub(crate) async fn test_app_state(pool: sqlx::AnyPool, data_dir: &Path) -> AppState {
+    AppState {
+        cfg: Arc::new(crate::config::Config {
+            paths: crate::config::PathsConfig {
+                db: data_dir.join("vault.db"),
+                data_dir: data_dir.to_path_buf(),
+                assets_dir: "assets".into(),
+                assets_converted_dir: "assets_converted".into(),
+            },
+            server: Some(crate::config::ServerConfig {
+                bind: "127.0.0.1:0".into(),
+                asset_max_bytes: 8 * 1024 * 1024,
+                asset_part_size: 1024 * 1024,
+                asset_hash_threshold_bytes: 1024 * 1024,
+                cors_origins: Vec::new(),
+                openapi_ui: false,
+            }),
+            database: crate::config::DatabaseConfig::default(),
+        }),
+        db: pool,
+        db_engine: DbEngine::Sqlite,
+        account_import_locks: Arc::new(Mutex::new(HashMap::new())),
+        asset_complete_locks: Arc::new(Mutex::new(HashMap::new())),
+        upload_limits: asset_uploads::UploadLimits::default(),
+        max_body_bytes: asset_uploads::DEFAULT_MAX_BYTES as usize,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::import::{
-        CompleteImportBody, CompleteImportIssueBody, CreateImportBody, imports_complete_handler,
-        imports_create_handler, imports_get_handler,
+        CompleteImportBody, CompleteImportIssueBody, imports_complete_handler, imports_get_handler,
     };
-    use axum::extract::{Path as AxumPath, Query, State};
-    use std::sync::{Arc, Mutex as StdMutex};
+    use axum::extract::{Path as AxumPath, State};
     use tempfile::TempDir;
 
-    fn auth_public_router(mode: AuthMode) -> Router<AppState> {
-        limited_auth_router(mode).0
+    fn auth_public_router() -> Router<AppState> {
+        limited_auth_router().0
     }
 
     #[test]
@@ -810,9 +807,97 @@ mod tests {
 
     const TEST_ACCOUNT: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
+    /// Test database with the vault schema applied. The temp dir is returned
+    /// too: dropping it deletes the database file out from under the checked-out
+    /// connection, after which SQLite rejects writes with SQLITE_READONLY.
+    async fn test_conn() -> (TempDir, sqlx::pool::PoolConnection<sqlx::Any>) {
+        let (pool, dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        schema::ensure_vault_schema(&mut conn).await.unwrap();
+        (dir, conn)
+    }
+
+    #[tokio::test]
+    async fn api_token_cannot_exceed_its_owner() {
+        let (_dir, mut conn) = test_conn().await;
+        account_profile::insert_account(&mut conn, TEST_ACCOUNT, "alice", None, None)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE accounts SET can_import = 0 WHERE id = $1")
+            .bind(TEST_ACCOUNT)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let created =
+            api_tokens::create_api_token(&mut conn, TEST_ACCOUNT, "tool", Permissions::all(), None)
+                .await
+                .unwrap();
+
+        let identity = resolve_auth_on_conn(&mut conn, &created.5).await.unwrap();
+
+        assert!(
+            !identity.permissions().import,
+            "the account lost import, so its token must not have it"
+        );
+        assert!(identity.permissions().export);
+    }
+
+    #[tokio::test]
+    async fn disabling_an_account_kills_its_live_session() {
+        let (_dir, mut conn) = test_conn().await;
+        account_profile::insert_account(&mut conn, TEST_ACCOUNT, "alice", None, None)
+            .await
+            .unwrap();
+        let token = session_tokens::insert_account_session_token(&mut conn, TEST_ACCOUNT)
+            .await
+            .unwrap();
+
+        // The token works while the account is active.
+        resolve_auth_on_conn(&mut conn, &token).await.unwrap();
+
+        sqlx::query("UPDATE accounts SET disabled = 1 WHERE id = $1")
+            .bind(TEST_ACCOUNT)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let err = resolve_auth_on_conn(&mut conn, &token).await.unwrap_err();
+        assert!(
+            matches!(err, ApiError::Forbidden(_)),
+            "a disabled account's existing token must stop working, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn disabling_an_account_kills_its_live_api_token() {
+        let (_dir, mut conn) = test_conn().await;
+        account_profile::insert_account(&mut conn, TEST_ACCOUNT, "alice", None, None)
+            .await
+            .unwrap();
+        let created =
+            api_tokens::create_api_token(&mut conn, TEST_ACCOUNT, "tool", Permissions::all(), None)
+                .await
+                .unwrap();
+        let token = created.5;
+
+        // The API token works while the account is active.
+        resolve_auth_on_conn(&mut conn, &token).await.unwrap();
+
+        sqlx::query("UPDATE accounts SET disabled = 1 WHERE id = $1")
+            .bind(TEST_ACCOUNT)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let err = resolve_auth_on_conn(&mut conn, &token).await.unwrap_err();
+        assert!(
+            matches!(err, ApiError::Forbidden(_)),
+            "a disabled account's existing API token must stop working, got {err:?}"
+        );
+    }
+
     async fn test_state() -> (TempDir, AppState, String, i64) {
         let (pool, tmp) = crate::db::engine::test_pool().await;
-        let db_path = tmp.path().join("vault.db");
         let data_dir = tmp.path().join("data");
         {
             let mut conn = pool.acquire().await.unwrap();
@@ -838,34 +923,7 @@ mod tests {
         .await
         .unwrap();
 
-        let state = AppState {
-            cfg: Arc::new(crate::config::Config {
-                paths: crate::config::PathsConfig {
-                    db: db_path,
-                    data_dir,
-                    assets_dir: "assets".into(),
-                    assets_converted_dir: "assets_converted".into(),
-                },
-                server: Some(crate::config::ServerConfig {
-                    bind: "127.0.0.1:0".into(),
-                    asset_max_bytes: 8 * 1024 * 1024,
-                    asset_part_size: 1024 * 1024,
-                    asset_hash_threshold_bytes: 1024 * 1024,
-                    cors_origins: Vec::new(),
-                    openapi_ui: false,
-                }),
-                database: crate::config::DatabaseConfig::default(),
-            }),
-            db: pool,
-            db_engine: DbEngine::Sqlite,
-            account_import_locks: Arc::new(Mutex::new(HashMap::new())),
-            asset_complete_locks: Arc::new(Mutex::new(HashMap::new())),
-            upload_limits: asset_uploads::UploadLimits::default(),
-            max_body_bytes: asset_uploads::DEFAULT_MAX_BYTES as usize,
-            guest: crate::config::GuestDemoSettings::disabled(),
-            guest_clone_lock: Arc::new(Mutex::new(())),
-            guest_demand: Arc::new(StdMutex::new(GuestPoolState::new())),
-        };
+        let state = test_app_state(pool, &data_dir).await;
 
         (tmp, state, token, import_id)
     }
@@ -911,10 +969,7 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
         let response = reqwest::Client::new()
-            .request(
-                reqwest::Method::OPTIONS,
-                format!("http://{address}/v1/auth/mode"),
-            )
+            .request(reqwest::Method::OPTIONS, format!("http://{address}/health"))
             .header("Origin", origin)
             .header("Access-Control-Request-Method", "GET")
             .header("Access-Control-Request-Headers", "content-type")
@@ -999,9 +1054,9 @@ mod tests {
         assert!(v["openapi"].as_str().unwrap().starts_with("3."));
     }
 
-    async fn auth_route_status(mode: AuthMode, path: &str) -> StatusCode {
+    async fn auth_route_status(path: &str) -> StatusCode {
         let (_tmp, state, _token, _import_id) = test_state().await;
-        let app = auth_public_router(mode).with_state(state);
+        let app = auth_public_router().with_state(state);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
@@ -1018,143 +1073,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auth_mode_includes_try_demo_flag() {
+    async fn try_demo_route_is_gone() {
+        // server.rs's own helper returns (TempDir, AppState, token, import_id).
+        // The shared harness in test_support.rs does not exist until Task 4.
         let (_tmp, state, _token, _import_id) = test_state().await;
-        let Json(value) = crate::auth::auth_mode_handler(State(state)).await;
-        assert!(!value.try_demo);
-        assert!(!value.mode.is_empty());
+        let response = get_path(state, "/v1/auth/try-demo").await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
-    async fn try_demo_route_exists() {
-        assert_ne!(
-            auth_route_status(AuthMode::Local, "/v1/auth/try-demo").await,
-            StatusCode::NOT_FOUND
-        );
-        assert_ne!(
-            auth_route_status(AuthMode::Hanko, "/v1/auth/try-demo").await,
-            StatusCode::NOT_FOUND
-        );
-    }
-
-    #[tokio::test]
-    async fn hanko_router_excludes_local_auth_routes() {
+    async fn local_auth_routes_exist() {
         for path in ["/v1/auth/register", "/v1/auth/login"] {
-            assert_ne!(
-                auth_route_status(AuthMode::Local, path).await,
-                StatusCode::NOT_FOUND
-            );
-            assert_eq!(
-                auth_route_status(AuthMode::Hanko, path).await,
-                StatusCode::NOT_FOUND
-            );
-        }
-        assert_ne!(
-            auth_route_status(AuthMode::Hanko, "/v1/auth/hanko/session").await,
-            StatusCode::NOT_FOUND
-        );
-    }
-
-    async fn guest_test_state() -> (TempDir, AppState, String) {
-        let (tmp, state, _token, _import_id) = test_state().await;
-        let guest_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-        let token = {
-            let mut conn = state.db.acquire().await.unwrap();
-            account_profile::insert_guest_account(&mut conn, guest_id, "guest-bbbb", None)
-                .await
-                .unwrap();
-            account_profile::set_guest_status(&mut conn, guest_id, "assigned")
-                .await
-                .unwrap();
-            crate::db::session_tokens::insert_account_session_token(&mut conn, guest_id)
-                .await
-                .unwrap()
-        };
-        (tmp, state, token)
-    }
-
-    #[tokio::test]
-    async fn guest_cannot_create_imports_but_can_export_messages() {
-        let (_tmp, state, token) = guest_test_state().await;
-
-        let err = imports_create_handler(
-            State(state.clone()),
-            auth_headers(&token),
-            Json(CreateImportBody {
-                source: "ios".into(),
-                mode: "append".into(),
-                tool: None,
-                account: None,
-            }),
-        )
-        .await
-        .unwrap_err();
-        match err {
-            ApiError::Forbidden(msg) => {
-                assert!(
-                    msg.contains("sample accounts"),
-                    "expected sample-account message, got {msg}"
-                );
-            }
-            other => panic!("expected forbidden on POST /v1/imports, got {other:?}"),
-        }
-
-        let export = crate::export_api::export_messages_handler(
-            State(state),
-            auth_headers(&token),
-            Query(crate::export_api::ExportMessagesQuery {
-                q: "hello".into(),
-                limit: None,
-                offset: None,
-                cursor: None,
-                account: None,
-                source: None,
-            }),
-        )
-        .await;
-        match export {
-            Ok(_) => {}
-            Err(ApiError::BadRequest(_)) => {}
-            Err(ApiError::Forbidden(msg)) => {
-                panic!("GET /v1/export/messages must not be 403 for guests, got {msg}")
-            }
-            Err(other) => panic!("unexpected export error: {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn guest_cannot_complete_imports() {
-        let (_tmp, state, token) = guest_test_state().await;
-        let err = imports_complete_handler(
-            State(state),
-            auth_headers(&token),
-            AxumPath(1),
-            Json(CompleteImportBody {
-                ok: true,
-                message_count: Some(1),
-                attachment_count: None,
-                bytes_uploaded: None,
-                duration_ms: None,
-                parse_ms: None,
-                attachments_ms: None,
-                prepare_ms: None,
-                upload_ms: None,
-                summary: None,
-                issues: vec![],
-            }),
-        )
-        .await
-        .unwrap_err();
-        match err {
-            ApiError::Forbidden(msg) => {
-                assert!(
-                    msg.contains("sample accounts"),
-                    "expected sample-account message, got {msg}"
-                );
-            }
-            other => {
-                panic!("expected forbidden on POST /v1/imports/{{id}}/complete, got {other:?}")
-            }
+            assert_ne!(auth_route_status(path).await, StatusCode::NOT_FOUND);
         }
     }
 
@@ -1282,5 +1212,100 @@ mod tests {
             }
             other => panic!("expected not found, got {other:?}"),
         }
+    }
+
+    /// `require_import_access` guards `GET /v1/imports`: with `can_import`
+    /// off, the endpoint refuses; turned back on, it succeeds. Nothing else
+    /// in the suite calls this route through the real HTTP stack, so
+    /// deleting or inverting the guard inside the handler would ship green
+    /// without this test.
+    #[tokio::test]
+    async fn import_endpoint_honors_can_import_flag() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let admin =
+            crate::test_support::register_via_api(&state, "import-guard-admin", "hunter2hunter2")
+                .await;
+        let user =
+            crate::test_support::register_via_api(&state, "import-guard-user", "hunter2hunter2")
+                .await;
+
+        assert_eq!(
+            crate::test_support::patch_status(
+                &state,
+                &format!("/v1/admin/users/{}", user.account_id),
+                &admin.token,
+                serde_json::json!({ "can_import": false }),
+            )
+            .await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            crate::test_support::get_status(&state, "/v1/imports", &user.token).await,
+            StatusCode::FORBIDDEN,
+            "can_import=false must refuse GET /v1/imports"
+        );
+
+        assert_eq!(
+            crate::test_support::patch_status(
+                &state,
+                &format!("/v1/admin/users/{}", user.account_id),
+                &admin.token,
+                serde_json::json!({ "can_import": true }),
+            )
+            .await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            crate::test_support::get_status(&state, "/v1/imports", &user.token).await,
+            StatusCode::OK,
+            "can_import=true must allow GET /v1/imports"
+        );
+    }
+
+    /// `require_export_access` guards `GET /v1/export/messages/count`: with
+    /// `can_export` off, the endpoint refuses; turned back on, it succeeds.
+    #[tokio::test]
+    async fn export_endpoint_honors_can_export_flag() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let admin =
+            crate::test_support::register_via_api(&state, "export-guard-admin", "hunter2hunter2")
+                .await;
+        let user =
+            crate::test_support::register_via_api(&state, "export-guard-user", "hunter2hunter2")
+                .await;
+
+        assert_eq!(
+            crate::test_support::patch_status(
+                &state,
+                &format!("/v1/admin/users/{}", user.account_id),
+                &admin.token,
+                serde_json::json!({ "can_export": false }),
+            )
+            .await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            crate::test_support::get_status(&state, "/v1/export/messages/count", &user.token).await,
+            StatusCode::FORBIDDEN,
+            "can_export=false must refuse GET /v1/export/messages/count"
+        );
+
+        assert_eq!(
+            crate::test_support::patch_status(
+                &state,
+                &format!("/v1/admin/users/{}", user.account_id),
+                &admin.token,
+                serde_json::json!({ "can_export": true }),
+            )
+            .await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            crate::test_support::get_status(&state, "/v1/export/messages/count", &user.token).await,
+            StatusCode::OK,
+            "can_export=true must allow GET /v1/export/messages/count"
+        );
     }
 }

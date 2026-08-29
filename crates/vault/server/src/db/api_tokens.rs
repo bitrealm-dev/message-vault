@@ -1,58 +1,12 @@
-//! Named CLI API tokens (`mv-api-…`); many per account, import/export scoped.
+//! Named CLI API tokens (`mv-api-…`); many per account, with per-token permissions.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use sqlx::AnyConnection;
 
 use super::session_tokens::{generate_prefixed_token, hash_api_token, unix_secs_string};
 use crate::db::dialect;
 use crate::db::engine::DbEngine;
-
-/// Access granted to a named API token.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ApiTokenScopes {
-    /// Import endpoints only.
-    Import,
-    /// Export endpoints only.
-    Export,
-    /// Both import and export endpoints.
-    Both,
-}
-
-impl ApiTokenScopes {
-    /// Parse `import`, `export`, or `both` (including `import_export` spellings).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `raw` is not one of those values.
-    pub fn parse(raw: &str) -> Result<Self> {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "import" => Ok(Self::Import),
-            "export" => Ok(Self::Export),
-            "both" | "import_export" | "import-export" => Ok(Self::Both),
-            other => bail!("scopes must be import, export, or both (got {other})"),
-        }
-    }
-
-    /// Canonical scope string (`import`, `export`, or `both`) stored in the
-    /// `scopes` column and returned in the API's `scopes` field.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Import => "import",
-            Self::Export => "export",
-            Self::Both => "both",
-        }
-    }
-
-    /// True when this token may call import endpoints.
-    pub fn allows_import(self) -> bool {
-        matches!(self, Self::Import | Self::Both)
-    }
-
-    /// True when this token may call export endpoints.
-    pub fn allows_export(self) -> bool {
-        matches!(self, Self::Export | Self::Both)
-    }
-}
+use crate::db::permissions::Permissions;
 
 /// Metadata for one API token (never includes plaintext or hash).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,8 +15,8 @@ pub struct ApiTokenRow {
     pub id: String,
     /// User-chosen label shown in Settings.
     pub label: String,
-    /// Access granted to the token.
-    pub scopes: ApiTokenScopes,
+    /// What this token may do.
+    pub permissions: Permissions,
     /// Masked secret for Settings, e.g. `mv-api-Sd..mE`.
     pub token_hint: String,
     /// Creation time as a Unix-seconds string.
@@ -101,13 +55,13 @@ pub fn mask_api_token(token: &str) -> String {
     format!("{prefix}{head}..{tail}")
 }
 
-/// Account + scopes for a presented API token Bearer value.
+/// Account + permissions for a presented API token Bearer value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiTokenAuth {
     /// Account the token belongs to.
     pub account_id: String,
-    /// Access granted to the token.
-    pub scopes: ApiTokenScopes,
+    /// What this token may do (not yet intersected with its owner's grant).
+    pub permissions: Permissions,
 }
 
 /// Label validation failures.
@@ -179,15 +133,15 @@ pub async fn lookup_account_for_api_token(
     token: &str,
 ) -> Result<Option<ApiTokenAuth>> {
     let token_hash = hash_api_token(token);
-    let found: Option<(String, String, Option<String>, i64)> = sqlx::query_as(
-        "SELECT account_id, scopes, expires_at, disabled
+    let row: Option<(String, i64, i64, i64, Option<String>, i64)> = sqlx::query_as(
+        "SELECT account_id, can_import, can_export, can_delete, expires_at, disabled
          FROM account_api_tokens WHERE token_hash = $1",
     )
     .bind(token_hash.as_str())
     .fetch_optional(&mut *conn)
     .await?;
-    match found {
-        Some((account_id, scopes_raw, expires_at, disabled)) => {
+    match row {
+        Some((account_id, can_import, can_export, can_delete, expires_at, disabled)) => {
             if disabled != 0 {
                 return Ok(None);
             }
@@ -209,14 +163,14 @@ pub async fn lookup_account_for_api_token(
             .with_context(|| "update API token last_accessed_at")?;
             Ok(Some(ApiTokenAuth {
                 account_id,
-                scopes: ApiTokenScopes::parse(&scopes_raw)?,
+                permissions: Permissions::from_ints(can_import, can_export, can_delete),
             }))
         }
         None => Ok(None),
     }
 }
 
-/// Create a named API token. Returns `(id, label, scopes, created_at, expires_at, plaintext_token)`.
+/// Create a named API token. Returns `(id, label, permissions, created_at, expires_at, plaintext_token)`.
 ///
 /// Returns `ApiTokenMutationError::InvalidLabel` when the label is empty
 /// or longer than 120 characters, and `Other` for database failures.
@@ -225,19 +179,9 @@ pub async fn create_api_token(
     conn: &mut AnyConnection,
     account_id: &str,
     label: &str,
-    scopes: ApiTokenScopes,
+    permissions: Permissions,
     expires_in_days: Option<u64>,
-) -> Result<
-    (
-        String,
-        String,
-        ApiTokenScopes,
-        String,
-        Option<String>,
-        String,
-    ),
-    ApiTokenMutationError,
-> {
+) -> Result<(String, String, Permissions, String, Option<String>, String), ApiTokenMutationError> {
     let label = validate_api_token_label(label)?;
     let id = uuid::Uuid::new_v4().to_string();
     let token = generate_api_token()?;
@@ -249,30 +193,34 @@ pub async fn create_api_token(
     sqlx::query(
         r#"
         INSERT INTO account_api_tokens
-            (id, account_id, label, token_hash, scopes, token_hint, created_at, expires_at, disabled)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0)
+            (id, account_id, label, token_hash, can_import, can_export, can_delete, token_hint, created_at, expires_at, disabled)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0)
         "#,
     )
     .bind(id.as_str())
     .bind(account_id)
     .bind(label_owned.as_str())
     .bind(token_hash.as_str())
-    .bind(scopes.as_str())
+    .bind(permissions.import as i32)
+    .bind(permissions.export as i32)
+    .bind(permissions.delete as i32)
     .bind(token_hint.as_str())
     .bind(created_at.as_str())
     .bind(expires_at.as_deref())
     .execute(&mut *conn)
     .await
     .with_context(|| format!("insert API token for {account_id}"))?;
-    Ok((id, label_owned, scopes, created_at, expires_at, token))
+    Ok((id, label_owned, permissions, created_at, expires_at, token))
 }
 
-/// Raw row for [`list_api_tokens`] before scope parsing and disabled/expiry
-/// mapping into [`ApiTokenRow`].
+/// Raw row for [`list_api_tokens`] before disabled/expiry mapping into
+/// [`ApiTokenRow`].
 type ApiTokenRowRaw = (
     String,
     String,
-    String,
+    i64,
+    i64,
+    i64,
     String,
     String,
     Option<String>,
@@ -284,7 +232,7 @@ type ApiTokenRowRaw = (
 ///
 /// # Errors
 ///
-/// Returns an error when the query fails or a stored scope value is invalid.
+/// Returns an error when the query fails.
 pub async fn list_api_tokens(
     conn: &mut AnyConnection,
     account_id: &str,
@@ -296,7 +244,7 @@ pub async fn list_api_tokens(
         "ORDER BY created_at DESC, label COLLATE NOCASE"
     };
     let rows: Vec<ApiTokenRowRaw> = sqlx::query_as(&format!(
-        "SELECT id, label, scopes, token_hint, created_at, last_accessed_at, expires_at, disabled
+        "SELECT id, label, can_import, can_export, can_delete, token_hint, created_at, last_accessed_at, expires_at, disabled
          FROM account_api_tokens
          WHERE account_id = $1
          {order_by}"
@@ -305,13 +253,23 @@ pub async fn list_api_tokens(
     .fetch_all(&mut *conn)
     .await?;
     let mut out = Vec::with_capacity(rows.len());
-    for (id, label, scopes_raw, token_hint, created_at, last_accessed_at, expires_at, disabled) in
-        rows
+    for (
+        id,
+        label,
+        can_import,
+        can_export,
+        can_delete,
+        token_hint,
+        created_at,
+        last_accessed_at,
+        expires_at,
+        disabled,
+    ) in rows
     {
         out.push(ApiTokenRow {
             id,
             label,
-            scopes: ApiTokenScopes::parse(&scopes_raw)?,
+            permissions: Permissions::from_ints(can_import, can_export, can_delete),
             token_hint,
             created_at,
             last_accessed_at,
@@ -428,17 +386,28 @@ mod tests {
     async fn create_list_lookup_delete() {
         let (pool, _dir, account_id) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
-        let (id, _label, scopes, _created_at, _expires_at, token) = create_api_token(
+        let (id, _label, permissions, _created_at, _expires_at, token) = create_api_token(
             &mut conn,
             &account_id,
             " laptop CLI ",
-            ApiTokenScopes::Export,
+            Permissions {
+                import: false,
+                export: true,
+                delete: false,
+            },
             None,
         )
         .await
         .unwrap();
         assert!(token.starts_with("mv-api-"));
-        assert_eq!(scopes, ApiTokenScopes::Export);
+        assert_eq!(
+            permissions,
+            Permissions {
+                import: false,
+                export: true,
+                delete: false
+            }
+        );
         assert_eq!(
             mask_api_token("mv-api-Sd1abcdefghijklmnopqrsmtuvwxyZmE"),
             "mv-api-Sd..mE"
@@ -452,7 +421,14 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, id);
         assert_eq!(listed[0].label, "laptop CLI");
-        assert_eq!(listed[0].scopes, ApiTokenScopes::Export);
+        assert_eq!(
+            listed[0].permissions,
+            Permissions {
+                import: false,
+                export: true,
+                delete: false
+            }
+        );
         assert_eq!(listed[0].token_hint, mask_api_token(&token));
         assert!(listed[0].last_accessed_at.is_none());
 
@@ -461,7 +437,14 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(auth.account_id, account_id);
-        assert_eq!(auth.scopes, ApiTokenScopes::Export);
+        assert_eq!(
+            auth.permissions,
+            Permissions {
+                import: false,
+                export: true,
+                delete: false
+            }
+        );
 
         let listed_after = list_api_tokens(&mut conn, &account_id).await.unwrap();
         assert!(listed_after[0].last_accessed_at.is_some());
@@ -493,7 +476,7 @@ mod tests {
         let (pool, _dir, account_id) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
         assert!(
-            create_api_token(&mut conn, &account_id, "  ", ApiTokenScopes::Both, None)
+            create_api_token(&mut conn, &account_id, "  ", Permissions::all(), None)
                 .await
                 .is_err()
         );
@@ -503,15 +486,10 @@ mod tests {
     async fn rename_label() {
         let (pool, _dir, account_id) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
-        let (id, _, _, _, _, _) = create_api_token(
-            &mut conn,
-            &account_id,
-            "old name",
-            ApiTokenScopes::Both,
-            None,
-        )
-        .await
-        .unwrap();
+        let (id, _, _, _, _, _) =
+            create_api_token(&mut conn, &account_id, "old name", Permissions::all(), None)
+                .await
+                .unwrap();
         assert!(
             update_api_token_label(&mut conn, &account_id, &id, " new name ")
                 .await
@@ -545,7 +523,7 @@ mod tests {
         let (pool, _dir, account_id) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
 
-        let err = create_api_token(&mut conn, &account_id, "  ", ApiTokenScopes::Both, None)
+        let err = create_api_token(&mut conn, &account_id, "  ", Permissions::all(), None)
             .await
             .unwrap_err();
         match err {
@@ -559,7 +537,7 @@ mod tests {
             &mut conn,
             &account_id,
             &"x".repeat(121),
-            ApiTokenScopes::Both,
+            Permissions::all(),
             None,
         )
         .await

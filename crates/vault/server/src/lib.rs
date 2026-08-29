@@ -4,6 +4,7 @@
 pub mod cli;
 pub mod config;
 
+pub(crate) mod admin_api;
 pub(crate) mod api_tokens_api;
 pub(crate) mod asset_uploads;
 pub(crate) mod assets;
@@ -14,8 +15,6 @@ pub(crate) mod conversations_api;
 pub(crate) mod db;
 pub(crate) mod dedupe;
 pub(crate) mod export_api;
-pub(crate) mod guest_clone;
-pub(crate) mod guest_pool;
 pub(crate) mod import;
 pub(crate) mod import_cli;
 pub(crate) mod import_media;
@@ -31,6 +30,8 @@ pub(crate) mod profile;
 pub(crate) mod reset_demo;
 pub(crate) mod search_query;
 pub(crate) mod server;
+#[cfg(test)]
+pub mod test_support;
 pub(crate) mod thread_tags_api;
 
 pub use server::{ApiError, AppState, AuthCapability, AuthIdentity, ErrorBody, resolve_auth, run};

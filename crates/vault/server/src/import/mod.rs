@@ -45,8 +45,8 @@ use crate::dedupe;
 use crate::import::{self};
 use crate::server::{
     ApiError, AppState, content_type_base, is_jsonl_content_type, is_multipart_content_type,
-    reject_if_guest_account, require_import_access, resolve_auth, resolve_import_account,
-    safe_rel_path, stream_body_to_file, stream_field_to_file,
+    require_import_access, resolve_auth, resolve_import_account, safe_rel_path,
+    stream_body_to_file, stream_field_to_file,
 };
 
 /// What happens to a source's messages that were imported before.
@@ -784,7 +784,6 @@ pub(crate) async fn imports_create_handler(
 ) -> Result<Json<CreateImportResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_import_access(&auth)?;
-    reject_if_guest_account(&state.db, &auth.account_id).await?;
     if body.source.trim().is_empty() {
         return Err(ApiError::BadRequest("body field source is required".into()));
     }
@@ -834,7 +833,6 @@ pub(crate) async fn imports_complete_handler(
 ) -> Result<Json<CompleteImportResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_import_access(&auth)?;
-    reject_if_guest_account(&state.db, &auth.account_id).await?;
     let account = resolve_import_account(&auth, None, &state.db).await?;
     validate_complete_import_issues(&body.issues)?;
     let summary_json = match body.summary {
@@ -966,7 +964,6 @@ pub(crate) async fn import_handler(
 ) -> Result<Json<ImportResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_import_access(&auth)?;
-    reject_if_guest_account(&state.db, &auth.account_id).await?;
 
     let Some(ct) = content_type_base(&headers) else {
         return Err(ApiError::BadRequest(

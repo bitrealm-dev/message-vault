@@ -1517,7 +1517,7 @@ mod tests {
             .unwrap();
         let account = "00000000-0000-4000-8000-0000000000c1".to_string();
         let mut conn = pool.acquire().await.unwrap();
-        sqlx::query("INSERT INTO accounts (id, username, read_only) VALUES ($1, 'alice', 0)")
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'alice')")
             .bind(&account)
             .execute(&mut *conn)
             .await

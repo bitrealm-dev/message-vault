@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import LeftPanel from "./LeftPanel";
 
 const profileState = vi.hoisted(() => ({
-  profile: null as { is_guest?: boolean } | null,
+  profile: null as object | null,
 }));
 const tauriState = vi.hoisted(() => ({ isTauri: false }));
 
@@ -89,7 +89,7 @@ describe("LeftPanel", () => {
   describe("desktop Import/Export Messages section", () => {
     beforeEach(() => {
       tauriState.isTauri = true;
-      profileState.profile = { is_guest: false };
+      profileState.profile = {};
     });
 
     it("shows a left-chevron Messages heading with aria-expanded", () => {

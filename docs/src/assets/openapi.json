@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Message Vault HTTP API",
-    "description": "HTTP API for a local Message Vault. Bearer session tokens come from login. API tokens come from Settings → Account and can import and export only. Register and login exist when VAULT_AUTH is local (the default). POST /v1/auth/hanko/session exists for Hanko sign-in.",
+    "description": "HTTP API for a local Message Vault. Bearer session tokens come from login. API tokens come from Settings → Account.",
     "license": {
       "name": "Fair Core License 1.0 (ALv2 future)",
       "url": "https://github.com/bitrealm-io/message-vault/blob/main/LICENSE.md"
@@ -36,7 +36,7 @@
         "tags": [
           "Account"
         ],
-        "summary": "List the account's named API tokens with their scopes and masked secrets.",
+        "summary": "List the account's named API tokens with their permissions and masked secrets.",
         "operationId": "list_api_tokens_handler",
         "responses": {
           "200": {
@@ -364,7 +364,7 @@
         "tags": [
           "Account"
         ],
-        "summary": "Load the signed-in account's profile: username, display name, linked\nhandles, and demo/guest flags.",
+        "summary": "Load the signed-in account's profile: username, display name, linked\nhandles, and the demo flag.",
         "operationId": "account_profile_handler",
         "responses": {
           "200": {
@@ -498,6 +498,429 @@
             }
           },
           "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/users": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "List every account with its flags, message count, and storage use.",
+        "operationId": "list_users_handler",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListUsersResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Create an account as an administrator. Never grants the first-account\nadministrator flag automatically — this endpoint could not have been\ncalled unless an administrator already exists.",
+        "operationId": "create_user_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUser"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/users/{id}": {
+      "delete": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Permanently delete an account: login, profile, contacts, and every\nmessage it owns. Refuses (`400`) deleting the vault's last administrator.",
+        "operationId": "delete_user_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account id to delete",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Change an account's administrative, disabled, or permission flags.",
+        "description": "Refuses (`400`) a request that would demote, disable, or otherwise leave\nthe vault without an administrator.",
+        "operationId": "patch_user_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account id to modify",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchUserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUser"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/users/{id}/messages": {
+      "delete": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Destroy one account's conversations, messages, and attachments. The\naccount itself, its contacts, and its login survive. Refuses (`400`)\nnothing here — deleting messages never affects the last-admin rule.",
+        "operationId": "delete_user_messages_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account whose messages are destroyed",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteMessagesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/users/{id}/password": {
+      "put": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Set an account's password as an administrator. Invalidates that\naccount's existing session (unlike a self-service password change, which\nleaves other sessions alone) — after this call the target must sign in\nagain with the new password.",
+        "operationId": "set_user_password_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account id whose password is set",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
             "description": "",
             "content": {
               "application/json": {
@@ -1355,57 +1778,6 @@
         ]
       }
     },
-    "/v1/auth/hanko/session": {
-      "post": {
-        "tags": [
-          "Auth"
-        ],
-        "summary": "Verify a Hanko session JSON Web Token and exchange it for a vault session\ntoken.",
-        "operationId": "hanko_session_handler",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/HankoSessionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Session issued",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AuthTokenResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid input",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/auth/login": {
       "post": {
         "tags": [
@@ -1454,6 +1826,16 @@
               }
             }
           },
+          "403": {
+            "description": "Account is disabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limited",
             "content": {
@@ -1472,7 +1854,7 @@
         "tags": [
           "Auth"
         ],
-        "summary": "Revoke the presented session token. Guest account data is deleted with the\nsession.",
+        "summary": "Revoke the presented session token.",
         "operationId": "logout_handler",
         "responses": {
           "200": {
@@ -1501,27 +1883,6 @@
             "bearer": []
           }
         ]
-      }
-    },
-    "/v1/auth/mode": {
-      "get": {
-        "tags": [
-          "Auth"
-        ],
-        "summary": "Returns the server's configured authentication mode so clients\ncan render the correct login form before authenticating.",
-        "operationId": "auth_mode_handler",
-        "responses": {
-          "200": {
-            "description": "Sign-in mode",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AuthModeResponse"
-                }
-              }
-            }
-          }
-        }
       }
     },
     "/v1/auth/register": {
@@ -1564,47 +1925,6 @@
           },
           "429": {
             "description": "Rate limited",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/auth/try-demo": {
-      "post": {
-        "tags": [
-          "Auth"
-        ],
-        "summary": "Open a sample account session: the shared demo account self-hosted, or a\nprivate guest copy when the hosted pool is enabled.",
-        "operationId": "try_demo_handler",
-        "responses": {
-          "200": {
-            "description": "Session issued",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AuthTokenResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Guest copy unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -3529,13 +3849,27 @@
           "phones",
           "emails",
           "is_demo",
-          "is_guest",
-          "read_only"
+          "is_admin",
+          "can_import",
+          "can_export",
+          "can_delete"
         ],
         "properties": {
           "account_id": {
             "type": "string",
             "description": "The signed-in account id."
+          },
+          "can_delete": {
+            "type": "boolean",
+            "description": "May destroy message data."
+          },
+          "can_export": {
+            "type": "boolean",
+            "description": "May call the export endpoints."
+          },
+          "can_import": {
+            "type": "boolean",
+            "description": "May call the import endpoints."
           },
           "emails": {
             "type": "array",
@@ -3544,13 +3878,13 @@
             },
             "description": "Email addresses linked to the account."
           },
+          "is_admin": {
+            "type": "boolean",
+            "description": "May manage users."
+          },
           "is_demo": {
             "type": "boolean",
             "description": "True for the seeded demo account (cannot be deleted)."
-          },
-          "is_guest": {
-            "type": "boolean",
-            "description": "True when `accounts.guest_status` is set (ready or assigned sample copy)."
           },
           "phones": {
             "type": "array",
@@ -3565,10 +3899,6 @@
               "null"
             ],
             "description": "Display name, when set."
-          },
-          "read_only": {
-            "type": "boolean",
-            "description": "True when the account is marked read-only."
           },
           "username": {
             "type": "string",
@@ -3628,18 +3958,87 @@
           }
         }
       },
+      "AdminUser": {
+        "type": "object",
+        "description": "One account as an administrator sees it.",
+        "required": [
+          "account_id",
+          "username",
+          "is_admin",
+          "disabled",
+          "can_import",
+          "can_export",
+          "can_delete",
+          "message_count",
+          "storage_bytes"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "description": "Account id."
+          },
+          "can_delete": {
+            "type": "boolean",
+            "description": "May destroy message data."
+          },
+          "can_export": {
+            "type": "boolean",
+            "description": "May call the export endpoints."
+          },
+          "can_import": {
+            "type": "boolean",
+            "description": "May call the import endpoints."
+          },
+          "disabled": {
+            "type": "boolean",
+            "description": "May not sign in."
+          },
+          "is_admin": {
+            "type": "boolean",
+            "description": "May manage users."
+          },
+          "message_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Messages this account owns."
+          },
+          "storage_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Attachment bytes this account owns."
+          },
+          "username": {
+            "type": "string",
+            "description": "Login username."
+          }
+        }
+      },
       "ApiTokenItem": {
         "type": "object",
-        "description": "One named API token as shown in Settings: label, scopes, and masked secret.",
+        "description": "One named API token as shown in Settings: label, permissions, and masked secret.",
         "required": [
           "id",
           "label",
-          "scopes",
+          "can_import",
+          "can_export",
+          "can_delete",
           "token_hint",
           "created_at",
           "disabled"
         ],
         "properties": {
+          "can_delete": {
+            "type": "boolean",
+            "description": "May destroy message data."
+          },
+          "can_export": {
+            "type": "boolean",
+            "description": "May call the export endpoints."
+          },
+          "can_import": {
+            "type": "boolean",
+            "description": "May call the import endpoints."
+          },
           "created_at": {
             "type": "string",
             "description": "Creation time as a Unix-seconds string."
@@ -3669,10 +4068,6 @@
               "null"
             ],
             "description": "Unix-seconds string of last use; absent when never used."
-          },
-          "scopes": {
-            "type": "string",
-            "description": "Scope string (`import`, `export`, or `both`)."
           },
           "token_hint": {
             "type": "string",
@@ -3840,28 +4235,6 @@
               "string",
               "null"
             ]
-          }
-        }
-      },
-      "AuthModeResponse": {
-        "type": "object",
-        "description": "Sign-in mode and Hanko URL so clients can render the right login form.",
-        "required": [
-          "mode",
-          "try_demo"
-        ],
-        "properties": {
-          "hanko_api_url": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "mode": {
-            "type": "string"
-          },
-          "try_demo": {
-            "type": "boolean"
           }
         }
       },
@@ -4789,11 +5162,23 @@
       },
       "CreateApiTokenRequest": {
         "type": "object",
-        "description": "Body for creating a token: label, scopes, optional expiry.",
+        "description": "Body for creating a token: label, permissions, optional expiry.",
         "required": [
           "label"
         ],
         "properties": {
+          "can_delete": {
+            "type": "boolean",
+            "description": "May destroy message data. Default false — asked for, never inherited."
+          },
+          "can_export": {
+            "type": "boolean",
+            "description": "May call the export endpoints. Default true."
+          },
+          "can_import": {
+            "type": "boolean",
+            "description": "May call the import endpoints. Default true."
+          },
           "expires_in_days": {
             "type": [
               "integer",
@@ -4806,10 +5191,6 @@
           "label": {
             "type": "string",
             "description": "User-chosen label shown in Settings."
-          },
-          "scopes": {
-            "type": "string",
-            "description": "`import`, `export`, or `both` (default `both`)."
           }
         }
       },
@@ -4819,12 +5200,26 @@
         "required": [
           "id",
           "label",
-          "scopes",
+          "can_import",
+          "can_export",
+          "can_delete",
           "created_at",
           "token",
           "token_hint"
         ],
         "properties": {
+          "can_delete": {
+            "type": "boolean",
+            "description": "May destroy message data."
+          },
+          "can_export": {
+            "type": "boolean",
+            "description": "May call the export endpoints."
+          },
+          "can_import": {
+            "type": "boolean",
+            "description": "May call the import endpoints."
+          },
           "created_at": {
             "type": "string",
             "description": "Creation time as a Unix-seconds string."
@@ -4843,10 +5238,6 @@
           "label": {
             "type": "string",
             "description": "User-chosen label."
-          },
-          "scopes": {
-            "type": "string",
-            "description": "Scope string (`import`, `export`, or `both`)."
           },
           "token": {
             "type": "string",
@@ -4899,6 +5290,28 @@
           },
           "ok": {
             "type": "boolean"
+          }
+        }
+      },
+      "CreateUserRequest": {
+        "type": "object",
+        "description": "Body for creating an account as an administrator.",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "is_admin": {
+            "type": "boolean",
+            "description": "Grant the administrative flag. Default false."
+          },
+          "password": {
+            "type": "string",
+            "description": "Initial password. Must satisfy the vault's password policy."
+          },
+          "username": {
+            "type": "string",
+            "description": "Login username."
           }
         }
       },
@@ -5424,19 +5837,6 @@
           }
         }
       },
-      "HankoSessionRequest": {
-        "type": "object",
-        "description": "A raw Hanko session JWT from the client's onSessionCreated callback.",
-        "required": [
-          "hanko_jwt"
-        ],
-        "properties": {
-          "hanko_jwt": {
-            "type": "string",
-            "description": "The raw Hanko session JSON Web Token from the client-side\n`onSessionCreated` callback."
-          }
-        }
-      },
       "ImportDetailIssueResponse": {
         "type": "object",
         "description": "One stored import issue.",
@@ -5826,6 +6226,22 @@
           }
         }
       },
+      "ListUsersResponse": {
+        "type": "object",
+        "description": "Every account in the vault.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminUser"
+            },
+            "description": "One row per account."
+          }
+        }
+      },
       "LoginRequest": {
         "type": "object",
         "description": "Username and password.",
@@ -5867,6 +6283,47 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "PatchUserRequest": {
+        "type": "object",
+        "description": "Body for changing an account's flags. Omitted fields are left alone.",
+        "properties": {
+          "can_delete": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Allow or forbid deleting message data."
+          },
+          "can_export": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Allow or forbid export."
+          },
+          "can_import": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Allow or forbid import."
+          },
+          "disabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Disable or re-enable sign-in."
+          },
+          "is_admin": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Grant or revoke administration."
           }
         }
       },
@@ -5955,6 +6412,19 @@
           "ok": {
             "type": "boolean",
             "description": "Always true when a response is returned."
+          }
+        }
+      },
+      "SetPasswordRequest": {
+        "type": "object",
+        "description": "Body for an administrator setting someone's password.",
+        "required": [
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "description": "The new password. Must satisfy the vault's password policy."
           }
         }
       },
@@ -6179,6 +6649,10 @@
     {
       "name": "Thread tags",
       "description": "Labels on conversations"
+    },
+    {
+      "name": "Admin",
+      "description": "User management for administrators"
     }
   ]
 }

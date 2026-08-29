@@ -9,4 +9,3 @@ emails = ["demo.ingest@example.com"]
 
 [account]
 username = "demo"
-read_only = true

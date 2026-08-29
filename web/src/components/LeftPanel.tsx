@@ -205,7 +205,7 @@ export default function LeftPanel({
           </button>
         </div>
 
-        {/* Import/Export — desktop app only, never on a guest session */}
+        {/* Import/Export — desktop app only */}
         {canUseImportExportWithProfile(isTauri(), profile) && (
           <NavCollapsibleSection
             id="messages-import-export"

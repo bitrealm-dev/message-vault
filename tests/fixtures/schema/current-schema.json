@@ -33,7 +33,6 @@
   ],
   "indexes": [
     "ix_account_emails_one_primary",
-    "ix_accounts_hanko_user_id",
     "ix_vault_imports_account_started",
     "ix_vault_import_issues_import",
     "ix_conversations_account_id",

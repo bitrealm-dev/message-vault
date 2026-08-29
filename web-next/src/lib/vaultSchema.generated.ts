@@ -7,14 +7,20 @@ CREATE TABLE IF NOT EXISTS accounts (
     id TEXT PRIMARY KEY,
     -- Login user id; unique case-insensitively.
     username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    -- 1 = demo/read-only account that must not mutate data; 0 = normal.
-    read_only INTEGER NOT NULL DEFAULT 0,
     -- Password verifier hash; NULL when password auth is unused.
     password_hash TEXT,
     -- Display name for “you” in the UI.
     preferred_name TEXT,
-    -- Optional Hanko identity provider user id.
-    hanko_user_id TEXT
+    -- 1 = may manage users through /v1/admin/*; 0 = ordinary account.
+    is_admin INTEGER NOT NULL DEFAULT 0,
+    -- 1 = may not sign in and existing sessions are refused; 0 = active.
+    disabled INTEGER NOT NULL DEFAULT 0,
+    -- 1 = may call the import endpoints.
+    can_import INTEGER NOT NULL DEFAULT 1,
+    -- 1 = may call the export endpoints.
+    can_export INTEGER NOT NULL DEFAULT 1,
+    -- 1 = may destroy message data (trash, purge, delete-messages, attachments).
+    can_delete INTEGER NOT NULL DEFAULT 1
 );
 
 -- Email addresses attached to an account (not used for login).
@@ -54,7 +60,6 @@ CREATE TABLE IF NOT EXISTS account_session_tokens (
 );
 
 -- Named CLI API tokens (many per account). Prefix: mv-api-
--- scopes: 'import' | 'export' | 'both'
 CREATE TABLE IF NOT EXISTS account_api_tokens (
     -- Opaque token id (primary key).
     id TEXT PRIMARY KEY,
@@ -64,8 +69,12 @@ CREATE TABLE IF NOT EXISTS account_api_tokens (
     label TEXT NOT NULL,
     -- Hash of the API Bearer secret (never store the raw token).
     token_hash TEXT NOT NULL UNIQUE,
-    -- Allowed operations: 'import' | 'export' | 'both'.
-    scopes TEXT NOT NULL DEFAULT 'both',
+    -- 1 = this token may call the import endpoints.
+    can_import INTEGER NOT NULL DEFAULT 1,
+    -- 1 = this token may call the export endpoints.
+    can_export INTEGER NOT NULL DEFAULT 1,
+    -- 1 = this token may destroy message data. Off unless asked for.
+    can_delete INTEGER NOT NULL DEFAULT 0,
     -- Masked form for Settings (e.g. mv-api-Sd..mE). Not enough to recover the secret.
     token_hint TEXT NOT NULL DEFAULT 'mv-api-..',
     -- Unix-seconds string for when this API token was created.
@@ -128,8 +137,10 @@ CREATE TABLE IF NOT EXISTS vault_imports (
     duration_ms INTEGER,
     -- Time spent parsing input in milliseconds.
     parse_ms INTEGER,
-    -- Time spent converting/media work in milliseconds.
-    convert_ms INTEGER,
+    -- Time spent copying, converting, or skipping attachments in milliseconds.
+    attachments_ms INTEGER,
+    -- Time spent preparing conversation files in milliseconds.
+    prepare_ms INTEGER,
     -- Time spent uploading in milliseconds.
     upload_ms INTEGER,
     -- JSON blob with a human-readable run summary for Import History.
@@ -159,10 +170,6 @@ CREATE TABLE IF NOT EXISTS vault_import_issues (
 
 CREATE INDEX IF NOT EXISTS ix_vault_import_issues_import
     ON vault_import_issues(import_id);
-
-CREATE UNIQUE INDEX IF NOT EXISTS ix_accounts_hanko_user_id
-    ON accounts(hanko_user_id)
-    WHERE hanko_user_id IS NOT NULL AND hanko_user_id != '';
 `;
 
 export const MESSAGES_DDL = `-- One chat thread per account + chat handle.
@@ -323,6 +330,26 @@ CREATE TABLE IF NOT EXISTS tapbacks (
 );
 
 CREATE INDEX IF NOT EXISTS ix_tapbacks_message_id ON tapbacks (message_id);
+
+-- Named tag a user can stamp on whole conversations.
+CREATE TABLE IF NOT EXISTS conversation_tags (
+    -- Surrogate primary key for this tag.
+    id INTEGER PRIMARY KEY,
+    -- Owning vault account (\`accounts.id\`).
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    -- Tag text unique per account.
+    name TEXT NOT NULL,
+    UNIQUE(account_id, name)
+);
+
+-- Membership of a conversation in a thread tag.
+CREATE TABLE IF NOT EXISTS conversation_tag_members (
+    -- Tagged conversation (\`conversations.id\`).
+    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    -- Tag that includes the conversation (\`conversation_tags.id\`).
+    tag_id INTEGER NOT NULL REFERENCES conversation_tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (conversation_id, tag_id)
+);
 `;
 
 export const STAGING_DDL = `-- Import scratch copy of conversations; cleared/promoted per account during import.
@@ -516,24 +543,24 @@ CREATE TABLE IF NOT EXISTS contact_handles (
 CREATE INDEX IF NOT EXISTS ix_contact_handles_contact_id
     ON contact_handles (contact_id);
 
--- Named label a user can attach to contacts.
-CREATE TABLE IF NOT EXISTS contact_labels (
-    -- Surrogate primary key for this label.
+-- Named group a user can attach to contacts.
+CREATE TABLE IF NOT EXISTS contact_groups (
+    -- Surrogate primary key for this group.
     id INTEGER PRIMARY KEY,
     -- Owning vault account (\`accounts.id\`).
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    -- Label text unique per account.
+    -- Group text unique per account.
     name TEXT NOT NULL,
     UNIQUE(account_id, name)
 );
 
--- Membership of a contact in a label.
-CREATE TABLE IF NOT EXISTS contact_label_members (
-    -- Contact in the label (\`contacts.id\`).
+-- Membership of a contact in a group.
+CREATE TABLE IF NOT EXISTS contact_group_members (
+    -- Contact in the group (\`contacts.id\`).
     contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-    -- Label that includes the contact (\`contact_labels.id\`).
-    label_id INTEGER NOT NULL REFERENCES contact_labels(id) ON DELETE CASCADE,
-    PRIMARY KEY (contact_id, label_id)
+    -- Group that includes the contact (\`contact_groups.id\`).
+    group_id INTEGER NOT NULL REFERENCES contact_groups(id) ON DELETE CASCADE,
+    PRIMARY KEY (contact_id, group_id)
 );
 
 -- Soft-delete marker for a handle; underlying handle row stays.

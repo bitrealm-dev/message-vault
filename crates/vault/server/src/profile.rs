@@ -10,7 +10,7 @@ use sqlx::AnyConnection;
 use sqlx::Connection;
 
 use crate::db::account_profile;
-use crate::server::{ApiError, AppState, require_full_access, resolve_auth};
+use crate::server::{ApiError, AppState, require_delete_access, require_full_access, resolve_auth};
 
 /// The signed-in account's profile.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -27,10 +27,14 @@ pub struct AccountProfileResponse {
     pub emails: Vec<String>,
     /// True for the seeded demo account (cannot be deleted).
     pub is_demo: bool,
-    /// True when `accounts.guest_status` is set (ready or assigned sample copy).
-    pub is_guest: bool,
-    /// True when the account is marked read-only.
-    pub read_only: bool,
+    /// May manage users.
+    pub is_admin: bool,
+    /// May call the import endpoints.
+    pub can_import: bool,
+    /// May call the export endpoints.
+    pub can_export: bool,
+    /// May destroy message data.
+    pub can_delete: bool,
 }
 
 /// Load the profile JSON for `account_id`.
@@ -43,7 +47,9 @@ async fn load_response(
         .unwrap_or_else(|| account_id.to_string());
     let preferred_name = account_profile::load_preferred_name(conn, account_id).await?;
     let profile = account_profile::load_account_profile(conn, account_id).await?;
-    let read_only = account_profile::account_is_read_only(conn, account_id).await?;
+    let auth = account_profile::load_account_auth(conn, account_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("account no longer exists"))?;
     Ok(AccountProfileResponse {
         account_id: account_id.to_string(),
         username,
@@ -51,13 +57,15 @@ async fn load_response(
         phones: profile.phones,
         emails: profile.emails,
         is_demo: account_profile::is_demo_account(account_id),
-        is_guest: account_profile::is_guest_account(conn, account_id).await?,
-        read_only,
+        is_admin: auth.is_admin,
+        can_import: auth.permissions.import,
+        can_export: auth.permissions.export,
+        can_delete: auth.permissions.delete,
     })
 }
 
 /// Load the signed-in account's profile: username, display name, linked
-/// handles, and demo/guest flags.
+/// handles, and the demo flag.
 #[utoipa::path(
     get,
     path = "/v1/account/profile",
@@ -279,7 +287,7 @@ pub struct DeleteMessagesResponse {
 }
 
 /// Delete on-disk attachment trees for every source under this account.
-fn remove_account_asset_trees(
+pub(crate) fn remove_account_asset_trees(
     data_dir: &std::path::Path,
     account_id: &str,
     assets_name: &str,
@@ -334,7 +342,7 @@ pub async fn delete_messages_handler(
         ));
     }
     let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
+    require_delete_access(&auth)?;
     let account_id = auth.account_id;
     let data_dir = state.cfg.paths.data_dir.clone();
     let assets_name = state.cfg.paths.assets_dir.clone();
@@ -409,7 +417,11 @@ pub(crate) async fn account_storage_handler(
 mod tests {
     use super::*;
 
+    use crate::db::api_tokens;
+    use crate::db::permissions::Permissions;
     use crate::db::{engine, schema};
+    use crate::test_support::*;
+    use axum::http::StatusCode;
 
     async fn setup() -> (sqlx::AnyPool, tempfile::TempDir, String) {
         let (pool, dir) = engine::test_pool().await;
@@ -418,7 +430,7 @@ mod tests {
             .unwrap();
         let account_id = "00000000-0000-4000-8000-000000000001".to_string();
         let mut conn = pool.acquire().await.unwrap();
-        sqlx::query("INSERT INTO accounts (id, username, read_only) VALUES ($1, $2, 0)")
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, $2)")
             .bind(&account_id)
             .bind("alice")
             .execute(&mut *conn)
@@ -519,25 +531,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn load_response_sets_is_guest_true_when_guest_status_assigned() {
-        let (pool, _dir, account_id) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let guest_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-        account_profile::insert_guest_account(&mut conn, guest_id, "guest-bbbb", None)
-            .await
-            .unwrap();
-        account_profile::set_guest_status(&mut conn, guest_id, "assigned")
-            .await
-            .unwrap();
-
-        let guest = load_response(&mut conn, guest_id).await.unwrap();
-        assert!(guest.is_guest);
-
-        let regular = load_response(&mut conn, &account_id).await.unwrap();
-        assert!(!regular.is_guest);
-    }
-
-    #[tokio::test]
     async fn profile_update_rolls_back_when_a_handle_service_is_unsupported() {
         let (pool, _dir, account_id) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
@@ -562,6 +555,69 @@ mod tests {
                 .await
                 .unwrap(),
             None
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_messages_needs_the_delete_permission() {
+        let vault = test_vault().await;
+        let state = vault.state.clone();
+        let created = register_via_api(&state, "alice", "hunter2hunter2").await;
+
+        let mut conn = state.db.acquire().await.unwrap();
+        sqlx::query("UPDATE accounts SET can_delete = 0 WHERE id = $1")
+            .bind(&created.account_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let status = post_status(
+            &state,
+            "/v1/account/delete-messages",
+            &created.token,
+            serde_json::json!({ "confirm": true }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn a_token_with_delete_may_delete_but_may_not_close_the_account() {
+        let vault = test_vault().await;
+        let state = vault.state.clone();
+        let created = register_via_api(&state, "alice", "hunter2hunter2").await;
+        let mut conn = state.db.acquire().await.unwrap();
+        let token = api_tokens::create_api_token(
+            &mut conn,
+            &created.account_id,
+            "tool",
+            Permissions::all(),
+            None,
+        )
+        .await
+        .unwrap()
+        .5;
+
+        let deleted = post_status(
+            &state,
+            "/v1/account/delete-messages",
+            &token,
+            serde_json::json!({ "confirm": true }),
+        )
+        .await;
+        assert_eq!(deleted, StatusCode::OK);
+
+        let closed = post_status(
+            &state,
+            "/v1/auth/delete-account",
+            &token,
+            serde_json::json!({ "confirm": true }),
+        )
+        .await;
+        assert_eq!(
+            closed,
+            StatusCode::FORBIDDEN,
+            "closing the account stays session-only"
         );
     }
 }

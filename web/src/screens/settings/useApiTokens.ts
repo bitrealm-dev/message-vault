@@ -18,6 +18,9 @@ const fetchTokens = (signal: AbortSignal) =>
 export function useApiTokens() {
   const [composing, setComposing] = useState(false);
   const [label, setLabel] = useState("");
+  const [canImport, setCanImport] = useState(true);
+  const [canExport, setCanExport] = useState(true);
+  const [canDelete, setCanDelete] = useState(false);
   const [reveal, setReveal] = useState<{ label: string; token: string } | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<ApiTokenItem | null>(null);
   const [renameTarget, setRenameTarget] = useState<ApiTokenItem | null>(null);
@@ -34,6 +37,9 @@ export function useApiTokens() {
   const cancelCompose = useCallback(() => {
     setComposing(false);
     setLabel("");
+    setCanImport(true);
+    setCanExport(true);
+    setCanDelete(false);
     clearError();
   }, [clearError]);
 
@@ -59,11 +65,21 @@ export function useApiTokens() {
       const res = await apiClient.post<{
         id: string;
         label: string;
-        scopes: string;
+        can_import: boolean;
+        can_export: boolean;
+        can_delete: boolean;
         created_at: string;
         token: string;
-      }>("/v1/account/api-tokens", { label: trimmed, scopes: "both" });
+      }>("/v1/account/api-tokens", {
+        label: trimmed,
+        can_import: canImport,
+        can_export: canExport,
+        can_delete: canDelete,
+      });
       setLabel("");
+      setCanImport(true);
+      setCanExport(true);
+      setCanDelete(false);
       setComposing(false);
       setReveal({ label: res.label, token: res.token });
       reload();
@@ -103,6 +119,12 @@ export function useApiTokens() {
     setComposing,
     label,
     setLabel,
+    canImport,
+    setCanImport,
+    canExport,
+    setCanExport,
+    canDelete,
+    setCanDelete,
     actionError,
     reveal,
     setReveal,

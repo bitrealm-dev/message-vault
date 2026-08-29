@@ -1,6 +1,6 @@
-/** Backup import and export stay in the desktop app, and never on a guest session. */
-export function canUseImportExport(isTauriApp: boolean, isGuest: boolean): boolean {
-  return isTauriApp && !isGuest;
+/** Backup import and export stay in the desktop app. */
+export function canUseImportExport(isTauriApp: boolean): boolean {
+  return isTauriApp;
 }
 
 /**
@@ -9,10 +9,10 @@ export function canUseImportExport(isTauriApp: boolean, isGuest: boolean): boole
  */
 export function canUseImportExportWithProfile(
   isTauriApp: boolean,
-  profile: { is_guest?: boolean } | null | undefined,
+  profile: unknown | null | undefined,
 ): boolean {
   if (profile == null) {
     return false;
   }
-  return canUseImportExport(isTauriApp, profile.is_guest === true);
+  return canUseImportExport(isTauriApp);
 }

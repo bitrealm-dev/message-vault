@@ -5,7 +5,7 @@ import type { ApiTokenItem } from "./apiTokensUtils";
 import {
   displayKeyHint,
   formatTokenDate,
-  scopesLabel,
+  permissionsLabel,
   tdClass,
   tdMuted,
   thClass,
@@ -32,12 +32,12 @@ export default function ApiTokensTable({
         className="w-full table-fixed border-collapse text-left outline-none"
       >
         <TableHeader className="border-b border-border">
-          <Column isRowHeader className={`${thClass} w-[22%]`}>
+          <Column isRowHeader className={`${thClass} w-[20%]`}>
             Name
           </Column>
-          <Column className={`${thClass} w-[24%]`}>Key</Column>
-          <Column className={`${thClass} w-[18%]`}>Scope</Column>
-          <Column className={`${thClass} w-[14%]`}>Created</Column>
+          <Column className={`${thClass} w-[20%]`}>Key</Column>
+          <Column className={`${thClass} w-[25%]`}>Permissions</Column>
+          <Column className={`${thClass} w-[13%]`}>Created</Column>
           <Column className={`${thClass} w-[14%]`}>Last Used</Column>
           <Column className={`${thClass} w-[8%]`} />
         </TableHeader>
@@ -63,7 +63,7 @@ export default function ApiTokensTable({
                   {displayKeyHint(item.token_hint)}
                 </span>
               </Cell>
-              <Cell className={tdClass}>{scopesLabel(item.scopes)}</Cell>
+              <Cell className={tdClass}>{permissionsLabel(item)}</Cell>
               <Cell className={tdMuted}>{formatTokenDate(item.created_at)}</Cell>
               <Cell className={tdMuted}>{formatTokenDate(item.last_accessed_at)}</Cell>
               <Cell className={`${tdClass}`}>

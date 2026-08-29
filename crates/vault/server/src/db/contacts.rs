@@ -619,8 +619,8 @@ mod tests {
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO accounts (id, username, read_only, preferred_name)
-             VALUES ($1, 't', 0, 'T')",
+            "INSERT INTO accounts (id, username, preferred_name)
+             VALUES ($1, 't', 'T')",
         )
         .bind(TEST_ACCOUNT_ID)
         .execute(&mut *conn)
@@ -705,8 +705,8 @@ mod tests {
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO accounts (id, username, read_only, preferred_name)
-             VALUES ($1, 't', 0, 'T')",
+            "INSERT INTO accounts (id, username, preferred_name)
+             VALUES ($1, 't', 'T')",
         )
         .bind(TEST_ACCOUNT_ID)
         .execute(&mut *conn)
@@ -744,8 +744,8 @@ mod tests {
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO accounts (id, username, read_only, preferred_name)
-             VALUES ($1, 't', 0, 'T')",
+            "INSERT INTO accounts (id, username, preferred_name)
+             VALUES ($1, 't', 'T')",
         )
         .bind(TEST_ACCOUNT_ID)
         .execute(&mut *conn)

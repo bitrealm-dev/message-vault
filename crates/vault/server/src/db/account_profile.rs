@@ -1,4 +1,4 @@
-//! Account rows, profile fields, guest status, and message deletion.
+//! Account rows, profile fields, and message deletion.
 
 use anyhow::{Context, Result, bail};
 use message_ir::HandleType;
@@ -56,7 +56,7 @@ async fn query_account_strings(
 /// Ensure `accounts` row exists (stub username = id) for CLI imports.
 pub async fn ensure_account_row(conn: &mut AnyConnection, account_id: &str) -> Result<()> {
     sqlx::query(
-        "INSERT INTO accounts (id, username, read_only) VALUES ($1, $1, 0)
+        "INSERT INTO accounts (id, username) VALUES ($1, $1)
          ON CONFLICT DO NOTHING",
     )
     .bind(account_id)
@@ -230,14 +230,100 @@ pub fn is_demo_account(account_id: &str) -> bool {
     account_id == DEMO_ACCOUNT_ID
 }
 
-/// Whether the account row is marked read-only (demo seed sets this).
-pub async fn account_is_read_only(conn: &mut AnyConnection, account_id: &str) -> Result<bool> {
+/// True when the vault holds no account a person registered — the demo account
+/// does not count, so a `--reset-demo` vault still grants admin to its first
+/// real user.
+pub async fn vault_has_no_real_accounts(conn: &mut AnyConnection) -> Result<bool> {
     schema::ensure_accounts_schema(conn).await?;
-    let flag: Option<i64> = sqlx::query_scalar("SELECT read_only FROM accounts WHERE id = $1")
-        .bind(account_id)
-        .fetch_optional(&mut *conn)
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE id != $1")
+        .bind(DEMO_ACCOUNT_ID)
+        .fetch_one(&mut *conn)
         .await?;
-    Ok(flag.unwrap_or(0) != 0)
+    Ok(count == 0)
+}
+
+/// True when `account_id` is an administrator and no other *usable* account
+/// is — a disabled admin cannot sign in and so cannot administer the vault,
+/// and must not be counted as "another admin" here. Without this, the vault
+/// could be disabled into a state with zero credentials able to reach
+/// `/v1/admin/*` and no way back in short of hand-editing the database.
+pub async fn is_last_admin(conn: &mut AnyConnection, account_id: &str) -> Result<bool> {
+    schema::ensure_accounts_schema(conn).await?;
+    let others: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM accounts WHERE is_admin = 1 AND disabled = 0 AND id != $1",
+    )
+    .bind(account_id)
+    .fetch_one(&mut *conn)
+    .await?;
+    if others > 0 {
+        return Ok(false);
+    }
+    let self_admin: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM accounts WHERE is_admin = 1 AND disabled = 0 AND id = $1",
+    )
+    .bind(account_id)
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(self_admin > 0)
+}
+
+/// True when a non-demo account other than `account_id` exists. Used to allow
+/// a solo administrator (the only account on their own vault) to delete their
+/// own account, while still refusing when doing so would strand other users
+/// with no administrator left to manage them.
+pub async fn other_real_account_exists(conn: &mut AnyConnection, account_id: &str) -> Result<bool> {
+    schema::ensure_accounts_schema(conn).await?;
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE id != $1 AND id != $2")
+            .bind(account_id)
+            .bind(DEMO_ACCOUNT_ID)
+            .fetch_one(&mut *conn)
+            .await?;
+    Ok(count > 0)
+}
+
+/// Grant or revoke the administrative flag.
+pub async fn set_admin(conn: &mut AnyConnection, account_id: &str, is_admin: bool) -> Result<()> {
+    schema::ensure_accounts_schema(conn).await?;
+    sqlx::query("UPDATE accounts SET is_admin = $1 WHERE id = $2")
+        .bind(is_admin as i32)
+        .bind(account_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// An account's administrative flag, disabled flag, and permissions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccountAuth {
+    /// May manage users.
+    pub is_admin: bool,
+    /// May not sign in; existing sessions are refused.
+    pub disabled: bool,
+    /// What this account may do.
+    pub permissions: crate::db::permissions::Permissions,
+}
+
+/// Load one account's authorization row. `None` when the account is gone.
+pub async fn load_account_auth(
+    conn: &mut AnyConnection,
+    account_id: &str,
+) -> Result<Option<AccountAuth>> {
+    schema::ensure_accounts_schema(conn).await?;
+    let row: Option<(i64, i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT is_admin, disabled, can_import, can_export, can_delete
+         FROM accounts WHERE id = $1",
+    )
+    .bind(account_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(
+        row.map(|(is_admin, disabled, import, export, delete)| AccountAuth {
+            is_admin: is_admin != 0,
+            disabled: disabled != 0,
+            permissions: crate::db::permissions::Permissions::from_ints(import, export, delete),
+        }),
+    )
 }
 
 /// Counts from deleting one account's messages.
@@ -296,19 +382,6 @@ pub async fn delete_all_messages_for_account(
     })
 }
 
-/// Look up account id by Hanko user id. Returns None if no account is linked.
-pub async fn lookup_account_by_hanko(
-    conn: &mut AnyConnection,
-    hanko_user_id: &str,
-) -> Result<Option<String>> {
-    schema::ensure_accounts_schema(conn).await?;
-    let id: Option<String> = sqlx::query_scalar("SELECT id FROM accounts WHERE hanko_user_id = $1")
-        .bind(hanko_user_id)
-        .fetch_optional(&mut *conn)
-        .await?;
-    Ok(id)
-}
-
 /// Load the preferred_name for an account, if set.
 pub async fn load_preferred_name(
     conn: &mut AnyConnection,
@@ -326,83 +399,26 @@ pub async fn load_preferred_name(
 }
 
 /// Insert a new account row. All fields except id and username are optional.
+/// The new account gets every permission (`Permissions::all()`); narrow it
+/// afterward if needed.
 pub async fn insert_account(
     conn: &mut AnyConnection,
     id: &str,
     username: &str,
     password_hash: Option<&str>,
     preferred_name: Option<&str>,
-    hanko_user_id: Option<&str>,
-    read_only: bool,
 ) -> Result<()> {
     schema::ensure_accounts_schema(conn).await?;
     sqlx::query(
-        "INSERT INTO accounts (id, username, read_only, password_hash, preferred_name, hanko_user_id) VALUES ($1, $2, $3, $4, $5, $6)",
+        "INSERT INTO accounts (id, username, password_hash, preferred_name) VALUES ($1, $2, $3, $4)",
     )
     .bind(id)
     .bind(username)
-    .bind(read_only as i32)
     .bind(password_hash)
     .bind(preferred_name)
-    .bind(hanko_user_id)
     .execute(&mut *conn)
     .await
     .with_context(|| format!("insert account {username}"))?;
-    Ok(())
-}
-
-/// The account's `guest_status` value (`ready` or `assigned`), or `None` when
-/// the account is not a guest.
-pub async fn guest_status(conn: &mut AnyConnection, account_id: &str) -> Result<Option<String>> {
-    schema::ensure_accounts_schema(conn).await?;
-    let status: Option<Option<String>> =
-        sqlx::query_scalar("SELECT guest_status FROM accounts WHERE id = $1")
-            .bind(account_id)
-            .fetch_optional(&mut *conn)
-            .await?;
-    Ok(status.flatten().filter(|s| !s.is_empty()))
-}
-
-/// True when the account has any guest status set.
-pub async fn is_guest_account(conn: &mut AnyConnection, account_id: &str) -> Result<bool> {
-    Ok(guest_status(conn, account_id).await?.is_some())
-}
-
-/// Insert a new guest account with status `ready`, no password, and
-/// `read_only = 0`.
-pub async fn insert_guest_account(
-    conn: &mut AnyConnection,
-    id: &str,
-    username: &str,
-    preferred_name: Option<&str>,
-) -> Result<()> {
-    schema::ensure_accounts_schema(conn).await?;
-    sqlx::query(
-        r#"
-        INSERT INTO accounts (
-            id, username, read_only, password_hash, preferred_name, guest_status
-        ) VALUES ($1, $2, 0, NULL, $3, 'ready')
-        "#,
-    )
-    .bind(id)
-    .bind(username)
-    .bind(preferred_name)
-    .execute(&mut *conn)
-    .await?;
-    Ok(())
-}
-
-/// Overwrite an account's `guest_status` value.
-pub async fn set_guest_status(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    status: &str,
-) -> Result<()> {
-    sqlx::query("UPDATE accounts SET guest_status = $1 WHERE id = $2")
-        .bind(status)
-        .bind(account_id)
-        .execute(&mut *conn)
-        .await?;
     Ok(())
 }
 
@@ -520,7 +536,7 @@ mod tests {
         let (pool, dir) = crate::db::engine::test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
         schema::ensure_vault_schema(&mut conn).await.unwrap();
-        sqlx::query("INSERT INTO accounts (id, username, read_only) VALUES ($1, $2, 0)")
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, $2)")
             .bind(ACCOUNT_ID)
             .bind("Alice")
             .execute(&mut *conn)
@@ -676,29 +692,6 @@ mod tests {
                 .unwrap();
         assert_eq!(linked_ids.len(), 2);
         assert!(linked_ids.contains(&email));
-    }
-
-    #[tokio::test]
-    async fn guest_helpers_work() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let guest_id = "22222222-2222-4222-8222-222222222222";
-        insert_guest_account(&mut conn, guest_id, "guest-abc", Some("Guest"))
-            .await
-            .unwrap();
-        assert_eq!(
-            guest_status(&mut conn, guest_id).await.unwrap().as_deref(),
-            Some("ready")
-        );
-        assert!(is_guest_account(&mut conn, guest_id).await.unwrap());
-        set_guest_status(&mut conn, guest_id, "assigned")
-            .await
-            .unwrap();
-        assert_eq!(
-            guest_status(&mut conn, guest_id).await.unwrap().as_deref(),
-            Some("assigned")
-        );
-        assert!(!is_guest_account(&mut conn, ACCOUNT_ID).await.unwrap());
     }
 
     #[tokio::test]

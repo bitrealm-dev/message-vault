@@ -15,24 +15,25 @@ export function formatTokenDate(secs: string | null | undefined): string {
   return formatUnixDate(secs);
 }
 
-/** Short label for an API token's allowed operations. */
-export function scopesLabel(scopes: string): string {
-  switch (scopes) {
-    case "import":
-      return "Import";
-    case "export":
-      return "Export";
-    case "both":
-      return "Import / Export";
-    default:
-      return scopes;
-  }
+/** What an API token is allowed to do, as a readable list. */
+export function permissionsLabel(token: {
+  can_import: boolean;
+  can_export: boolean;
+  can_delete: boolean;
+}): string {
+  const parts: string[] = [];
+  if (token.can_import) parts.push("Import");
+  if (token.can_export) parts.push("Export");
+  if (token.can_delete) parts.push("Delete");
+  return parts.length > 0 ? parts.join(" / ") : "None";
 }
 
 export type ApiTokenItem = {
   id: string;
   label: string;
-  scopes: string;
+  can_import: boolean;
+  can_export: boolean;
+  can_delete: boolean;
   /** Masked secret, e.g. `mv-api-Sd..mE`. */
   token_hint: string;
   created_at: string;

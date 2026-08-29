@@ -23,7 +23,7 @@ const ExportScreen = lazy(() => import("./screens/ExportScreen"));
 const SettingsScreen = lazy(() => import("./screens/SettingsScreen"));
 const TrashScreen = lazy(() => import("./screens/TrashScreen"));
 
-/** Import and export stay on the desktop app and are closed to guest sessions. */
+/** Import and export stay on the desktop app. */
 function ImportExportRoute({ children }: { children: ReactNode }) {
   const { profile, loading } = useAccountProfile();
   if (!isTauri()) {
