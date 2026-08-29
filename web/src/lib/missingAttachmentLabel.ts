@@ -16,6 +16,9 @@ function attachmentDisplayName(attachment: MessageAttachment): string {
 function missingWhy(reason: string | null | undefined): string {
   if (reason === "too_large") return "missing — too large";
   if (reason === "file_missing") return "missing — file not found";
+  // Chosen on import ("Do not copy"), so the file is absent by request, not
+  // lost. The shared exporters say "skipped"; iMessage says "embed_disabled".
+  if (reason === "skipped" || reason === "embed_disabled") return "skipped";
   return "missing";
 }
 

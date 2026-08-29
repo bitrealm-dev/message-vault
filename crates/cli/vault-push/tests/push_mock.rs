@@ -1437,3 +1437,146 @@ fn skips_missing_attachment_file_keeps_conversation_ok() {
         "expected skip issue for missing file, got {issues:?}"
     );
 }
+
+/// "Do not copy" leaves attachments with no path but a reason. Importing must
+/// keep the metadata rather than failing the whole conversation.
+#[test]
+fn keeps_conversation_ok_when_skipped_attachment_has_no_path() {
+    let server = MockServer::start();
+    let _auth = server.mock(|when, then| {
+        when.method(GET).path("/v1/auth/check");
+        then.status(200).json_body(json!({
+            "ok": true,
+            "account_id": "acct-1",
+            "username": "alice",
+            "account_ok": true,
+            "sources": ["sms-backup-restore"]
+        }));
+    });
+    let import = server.mock(|when, then| {
+        when.method(POST)
+            .path("/v1/import")
+            .body_contains(r#""missing_reason":"skipped""#)
+            .body_contains("IMG_0421.HEIC")
+            .body_contains("image/heic");
+        then.status(200).json_body(json!({
+            "ok": true,
+            "messages": 1,
+            "messages_appended": 1
+        }));
+    });
+
+    let dir = tempdir().unwrap();
+    let mut doc = sample_doc();
+    doc.messages[0].attachments = vec![IrAttachment {
+        path: None,
+        original_name: Some("IMG_0421.HEIC".into()),
+        mime_type: Some("image/heic".into()),
+        digest_sha256: None,
+        is_sticker: false,
+        transcription: None,
+        sticker_effect: None,
+        size_bytes: Some(2048),
+        missing_reason: Some("skipped".into()),
+        bytes: None,
+    }];
+    write_jsonl(dir.path(), &doc);
+
+    let mut cfg = text_only_config(dir.path(), server.base_url());
+    cfg.force = true;
+
+    let mut issues = Vec::new();
+    let report = {
+        let mut progress = |event: ProgressEvent| {
+            if let ProgressEvent::Issue {
+                kind, item, reason, ..
+            } = event
+            {
+                issues.push((kind, item, reason));
+            }
+        };
+        run(&cfg, Some(&mut progress)).unwrap()
+    };
+
+    assert!(report.ok);
+    assert_eq!(report.conversations_ok, 1);
+    assert_eq!(report.conversations_failed, 0);
+    assert_eq!(report.assets_uploaded, 0);
+    assert_eq!(report.assets_skipped, 1);
+    import.assert();
+    assert!(
+        issues.is_empty(),
+        "a deliberate skip must not fill Import Errors, got {issues:?}"
+    );
+}
+
+/// A pathless attachment with no stated reason is an exporter defect. Import it
+/// as missing, but surface a skip row so the defect stays visible.
+#[test]
+fn reports_pathless_attachment_without_reason_as_no_path() {
+    let server = MockServer::start();
+    let _auth = server.mock(|when, then| {
+        when.method(GET).path("/v1/auth/check");
+        then.status(200).json_body(json!({
+            "ok": true,
+            "account_id": "acct-1",
+            "username": "alice",
+            "account_ok": true,
+            "sources": ["sms-backup-restore"]
+        }));
+    });
+    let import = server.mock(|when, then| {
+        when.method(POST)
+            .path("/v1/import")
+            .body_contains(r#""missing_reason":"no_path""#)
+            .body_contains("mystery.bin");
+        then.status(200).json_body(json!({
+            "ok": true,
+            "messages": 1,
+            "messages_appended": 1
+        }));
+    });
+
+    let dir = tempdir().unwrap();
+    let mut doc = sample_doc();
+    doc.messages[0].attachments = vec![IrAttachment {
+        path: None,
+        original_name: Some("mystery.bin".into()),
+        mime_type: Some("application/octet-stream".into()),
+        digest_sha256: None,
+        is_sticker: false,
+        transcription: None,
+        sticker_effect: None,
+        size_bytes: None,
+        missing_reason: None,
+        bytes: None,
+    }];
+    write_jsonl(dir.path(), &doc);
+
+    let mut cfg = text_only_config(dir.path(), server.base_url());
+    cfg.force = true;
+
+    let mut issues = Vec::new();
+    let report = {
+        let mut progress = |event: ProgressEvent| {
+            if let ProgressEvent::Issue {
+                kind, item, reason, ..
+            } = event
+            {
+                issues.push((kind, item, reason));
+            }
+        };
+        run(&cfg, Some(&mut progress)).unwrap()
+    };
+
+    assert!(report.ok);
+    assert_eq!(report.conversations_ok, 1);
+    assert_eq!(report.assets_skipped, 1);
+    import.assert();
+    assert!(
+        issues.iter().any(|(kind, item, reason)| {
+            kind == "skip" && item.contains("mystery.bin") && reason.contains("no file path")
+        }),
+        "expected skip issue for pathless attachment, got {issues:?}"
+    );
+}

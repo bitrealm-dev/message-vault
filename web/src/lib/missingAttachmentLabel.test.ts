@@ -38,4 +38,27 @@ describe("missingAttachmentChipLabel", () => {
       ),
     ).toBe("gone.bin (missing — file not found)");
   });
+
+  it("labels a deliberately skipped attachment as skipped, not missing", () => {
+    expect(
+      missingAttachmentChipLabel(
+        att({
+          original_name: "IMG_0421.HEIC",
+          mime_type: "image/heic",
+          missing_reason: "skipped",
+        }),
+      ),
+    ).toBe("IMG_0421.HEIC · image/heic (skipped)");
+  });
+
+  it("labels the iMessage embed_disabled reason as skipped too", () => {
+    expect(
+      missingAttachmentChipLabel(
+        att({
+          original_name: "clip.mov",
+          missing_reason: "embed_disabled",
+        }),
+      ),
+    ).toBe("clip.mov (skipped)");
+  });
 });
