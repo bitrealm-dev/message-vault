@@ -2639,11 +2639,14 @@ Expected: no warnings in changed crates.
 - [ ] **Step 3: Run the Postgres engine tests**
 
 ```bash
+docker compose -f docker-compose.pg.yml down -v
 docker compose -f docker-compose.pg.yml up -d
 MV_TEST_POSTGRES_URL=postgres://vault:vault@127.0.0.1:5432/vault cargo test -p message-vault-server
 ```
 
 Expected: PASS. These cover the `pg_accounts.sql` twin, which the SQLite-only run never exercises.
+
+The `down -v` is not optional and not tidiness. Postgres has no `user_version` pragma, so its DDL runs once behind a `schema_meta` marker gate and is never re-applied to a volume that already has it. A named volume left over from before the schema change keeps the old columns, and the run fails with errors that look like code defects but are stale-data artifacts. Task 3's implementer lost time to exactly this.
 
 - [ ] **Step 4: Confirm the removals are complete**
 
