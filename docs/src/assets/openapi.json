@@ -854,11 +854,11 @@
       }
     },
     "/v1/admin/users/{id}/password": {
-      "post": {
+      "put": {
         "tags": [
           "Admin"
         ],
-        "summary": "Set an account's password as an administrator. Does not invalidate that\naccount's existing session.",
+        "summary": "Set an account's password as an administrator. Invalidates that\naccount's existing session (unlike a self-service password change, which\nleaves other sessions alone) — after this call the target must sign in\nagain with the new password.",
         "operationId": "set_user_password_handler",
         "parameters": [
           {

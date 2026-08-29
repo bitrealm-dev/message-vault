@@ -189,4 +189,105 @@ describe("AdminUsersPanel", () => {
     // the server's reason inside it, rather than closing.
     expect(screen.getByRole("dialog", { name: "Delete account" })).toBeInTheDocument();
   });
+
+  it("saving the add-user form POSTs username, password, and is_admin", async () => {
+    const user = userEvent.setup();
+    const created = {
+      account_id: "a2",
+      username: "carol",
+      is_admin: true,
+      disabled: false,
+      can_import: true,
+      can_export: true,
+      can_delete: true,
+      message_count: 0,
+      storage_bytes: 0,
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = requestMethod(init);
+      if (method === "GET" && url === "/v1/admin/users") {
+        return jsonResponse(200, { items: [] });
+      }
+      if (method === "POST" && url === "/v1/admin/users") {
+        return jsonResponse(200, created);
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+
+    render(<AdminUsersPanel />);
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalled();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Add user" }));
+    await user.type(screen.getByLabelText("New user's username"), "carol");
+    await user.type(screen.getByLabelText("New user's password"), "hunter2hunter2");
+    await user.click(screen.getByLabelText("Allow this user to manage the vault"));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      const postCall = fetchMock.mock.calls.find(([, init]) => requestMethod(init) === "POST");
+      expect(postCall).toBeDefined();
+    });
+    const [postUrl, postInit] = fetchMock.mock.calls.find(
+      ([, init]) => requestMethod(init) === "POST",
+    ) as [string, RequestInit];
+    expect(postUrl).toBe("/v1/admin/users");
+    expect(JSON.parse(String(postInit.body))).toEqual({
+      username: "carol",
+      password: "hunter2hunter2",
+      is_admin: true,
+    });
+  });
+
+  it("saving the reset-password dialog PUTs the new password to the account's password route", async () => {
+    const user = userEvent.setup();
+    const listItem = {
+      account_id: "a1",
+      username: "alice",
+      is_admin: true,
+      disabled: false,
+      can_import: true,
+      can_export: true,
+      can_delete: true,
+      message_count: 5,
+      storage_bytes: 0,
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = requestMethod(init);
+      if (method === "GET" && url === "/v1/admin/users") {
+        return jsonResponse(200, { items: [listItem] });
+      }
+      if (method === "PUT" && url === "/v1/admin/users/a1/password") {
+        return jsonResponse(200, { ok: true });
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+
+    render(<AdminUsersPanel />);
+    await waitFor(() => {
+      expect(screen.getByText("alice")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Reset password" }));
+    const dialog = await screen.findByRole("dialog", { name: "Reset password" });
+    await user.type(within(dialog).getByLabelText("New password"), "newpassword123");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      const putCall = fetchMock.mock.calls.find(([, init]) => requestMethod(init) === "PUT");
+      expect(putCall).toBeDefined();
+    });
+    const [putUrl, putInit] = fetchMock.mock.calls.find(
+      ([, init]) => requestMethod(init) === "PUT",
+    ) as [string, RequestInit];
+    expect(putUrl).toBe("/v1/admin/users/a1/password");
+    expect(JSON.parse(String(putInit.body))).toEqual({ password: "newpassword123" });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Reset password" })).not.toBeInTheDocument();
+    });
+  });
 });

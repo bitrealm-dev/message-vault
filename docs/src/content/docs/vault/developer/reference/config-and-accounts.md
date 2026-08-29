@@ -58,16 +58,32 @@ Rows are scoped by `account_id` in a shared `vault.db`.
 
 - Web login uses username + password (Argon2id hash in `accounts.password_hash`).
   Accounts may opt into no password (`password_hash` NULL); empty password is
-  accepted only for those accounts.
+  accepted only for those accounts — except the vault's first registered
+  account, which must set a password, because it becomes an administrator.
 - Login and registration are each rate-limited to 20 attempts per username per
   60 seconds, tracked separately (a username's login attempts do not count
   against its registration attempts, or the reverse).
 - Each account can create named **API tokens** for `vault-push` / `vault-pull`
   (stored hashed; shown once when created). GUI sessions use a separate rotating
   token.
-- New accounts start with browsing edits enabled.
+- Five columns on `accounts` govern what a signed-in session may do, each
+  enforced by a guard in `server.rs` rather than left as decoration:
+  - `is_admin` — may manage other accounts through `/v1/admin/*`. The vault's
+    first real account (the demo account does not count) is granted this
+    automatically at registration; every account after that starts ordinary.
+  - `disabled` — may not sign in; an existing session or API token for a
+    disabled account stops working immediately.
+  - `can_import`, `can_export`, `can_delete` — may call the import endpoints,
+    the export endpoints, and the endpoints that destroy message data,
+    respectively. New accounts default to all three; a named API token
+    defaults to import and export but not delete, since destruction is
+    asked for rather than inherited.
+  An administrator manages another account's flags from Settings → Users
+  (`PATCH /v1/admin/users/{id}`), and can also reset a password
+  (`PUT /v1/admin/users/{id}/password`) or delete an account
+  (`DELETE /v1/admin/users/{id}`) — refused when it would leave the vault with
+  no administrator.
 - Demo seed identity: username `demo` (`crates/vault/demo-seed/config/seed.toml`), always
-  no-password and read-only by default. Sign-in stays username `demo` and an empty
-  password.
+  no-password. Sign-in stays username `demo` and an empty password.
 
 See [Settings](/vault/user/how-to/settings/).

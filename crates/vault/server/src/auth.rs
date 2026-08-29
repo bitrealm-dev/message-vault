@@ -399,6 +399,12 @@ pub async fn register_handler(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
+    if first_account && password_plain.is_empty() {
+        return Err(ApiError::BadRequest(
+            "the vault's first account must set a password".into(),
+        ));
+    }
+
     account_profile::insert_account(
         &mut tx,
         &account_id,
@@ -702,6 +708,17 @@ pub async fn delete_account_handler(
         .acquire()
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if account_profile::is_last_admin(&mut conn, &account_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        && account_profile::other_real_account_exists(&mut conn, &account_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+    {
+        return Err(ApiError::BadRequest(
+            "you are the only administrator; promote another account before deleting yours".into(),
+        ));
+    }
     let password_hash = account_profile::load_password_hash(&mut conn, &account_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1044,6 +1061,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn first_account_registration_requires_a_password() {
+        let vault = test_vault().await;
+        let state = vault.state.clone();
+        reset_auth_rate_limit_bucket_for_test("register:passwordless-first");
+
+        let status = post_status(
+            &state,
+            "/v1/auth/register",
+            "irrelevant-no-token-needed",
+            serde_json::json!({ "username": "passwordless-first" }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "the vault's first account must not be created without a password \
+             (it becomes an administrator)"
+        );
+
+        let mut conn = state.db.acquire().await.unwrap();
+        assert!(
+            account_profile::vault_has_no_real_accounts(&mut conn)
+                .await
+                .unwrap(),
+            "the rejected registration must not have created an account"
+        );
+    }
+
+    #[tokio::test]
+    async fn second_account_may_still_register_without_a_password() {
+        let vault = test_vault().await;
+        let state = vault.state.clone();
+        let _first = register_via_api(&state, "has-a-password", "hunter2hunter2").await;
+        reset_auth_rate_limit_bucket_for_test("register:passwordless-second");
+
+        let status = post_status(
+            &state,
+            "/v1/auth/register",
+            "irrelevant-no-token-needed",
+            serde_json::json!({ "username": "passwordless-second" }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "only the first (admin-granting) account requires a password"
+        );
+
+        let mut conn = state.db.acquire().await.unwrap();
+        let account_id = account_profile::lookup_account_ref(&mut conn, "passwordless-second")
+            .await
+            .unwrap()
+            .unwrap();
+        let auth = account_profile::load_account_auth(&mut conn, &account_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!auth.is_admin);
+    }
+
+    #[tokio::test]
     async fn disabled_account_cannot_sign_in() {
         let vault = test_vault().await;
         let state = vault.state.clone();
@@ -1058,5 +1136,89 @@ mod tests {
 
         let status = login_status(&state, "alice", "hunter2hunter2").await;
         assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    // -----------------------------------------------------------------
+    // Self-service account deletion vs. the last administrator
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn solo_admin_can_delete_their_own_account() {
+        let vault = test_vault().await;
+        let state = vault.state.clone();
+        let admin = register_via_api(&state, "solo-admin", "hunter2hunter2").await;
+
+        let status = post_status(
+            &state,
+            "/v1/auth/delete-account",
+            &admin.token,
+            serde_json::json!({ "confirm": true, "current_password": "hunter2hunter2" }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the only administrator on their own vault must still be able to leave"
+        );
+
+        let mut conn = state.db.acquire().await.unwrap();
+        assert!(
+            account_profile::username_for_account(&mut conn, &admin.account_id)
+                .await
+                .unwrap()
+                .is_none(),
+            "the account must actually be gone"
+        );
+    }
+
+    #[tokio::test]
+    async fn last_admin_with_another_account_present_is_refused() {
+        let vault = test_vault().await;
+        let state = vault.state.clone();
+        let admin = register_via_api(&state, "team-admin", "hunter2hunter2").await;
+        let _other = register_via_api(&state, "team-member", "hunter2hunter2").await;
+
+        let status = post_status(
+            &state,
+            "/v1/auth/delete-account",
+            &admin.token,
+            serde_json::json!({ "confirm": true, "current_password": "hunter2hunter2" }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "the last administrator must not be able to strand the other account"
+        );
+
+        let mut conn = state.db.acquire().await.unwrap();
+        assert!(
+            account_profile::username_for_account(&mut conn, &admin.account_id)
+                .await
+                .unwrap()
+                .is_some(),
+            "the refused deletion must not have removed the account"
+        );
+    }
+
+    #[tokio::test]
+    async fn non_admin_account_deletion_is_unaffected_by_the_last_admin_check() {
+        let vault = test_vault().await;
+        let state = vault.state.clone();
+        let _admin = register_via_api(&state, "org-admin", "hunter2hunter2").await;
+        let member = register_via_api(&state, "org-member", "hunter2hunter2").await;
+
+        let status = post_status(
+            &state,
+            "/v1/auth/delete-account",
+            &member.token,
+            serde_json::json!({ "confirm": true, "current_password": "hunter2hunter2" }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "an ordinary account must be able to delete itself regardless of the admin count"
+        );
     }
 }

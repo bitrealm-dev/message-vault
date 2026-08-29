@@ -388,11 +388,19 @@ outside the product. Message bodies are stored as plaintext (`messages.body TEXT
 attachment transcription, and attachments are ordinary files under `data/assets/<account_id>/`. An
 administrator with shell access reads all of it with one `sqlite3` or `psql` query.
 
-What the design provides is that the product never puts one tenant's messages in front of another.
-That is a real property and worth having, but it must not be described in the UI or the docs as a
-privacy guarantee, because the storage does not provide one. Genuine read protection would require
-per-tenant encryption keyed on the user's password, which would end server-side search, make an
-administrator's password reset destroy access to the data, and is explicitly out of scope.
+What the design provides is narrower than "the product never puts one tenant's messages in front of
+another." That holds between two non-administrator accounts — no browsing, no cross-tenant query, no
+impersonation — but it does not hold against an administrator: `PUT /v1/admin/users/{id}/password`
+lets an administrator set any account's password and then sign in as that account through the
+ordinary login screen, reading everything it holds. That happens entirely inside the product, with
+no audit trail and no notification to the account owner beyond the session it costs them (resetting
+a password invalidates that account's existing session, so the target is signed out, though nothing
+tells them why). This is a deliberate, standard admin capability, not a bug, and removing it is not
+this spec's job — but it must not be described in the UI or the docs as a privacy guarantee between
+an administrator and the accounts they administer, because the storage does not provide one. Genuine
+read protection would require per-tenant encryption keyed on the user's password, which would end
+server-side search, make an administrator's password reset destroy access to the data, and is
+explicitly out of scope.
 
 ## Schema changes
 

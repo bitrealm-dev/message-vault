@@ -282,7 +282,7 @@ mod tests {
         assert!(paths["/v1/admin/users"]["post"].is_object());
         assert!(paths["/v1/admin/users/{id}"]["patch"].is_object());
         assert!(paths["/v1/admin/users/{id}"]["delete"].is_object());
-        assert!(paths["/v1/admin/users/{id}/password"]["post"].is_object());
+        assert!(paths["/v1/admin/users/{id}/password"]["put"].is_object());
         assert!(paths["/v1/admin/users/{id}/messages"]["delete"].is_object());
         let import = &paths["/v1/import"]["post"]["requestBody"]["content"];
         for ct in [

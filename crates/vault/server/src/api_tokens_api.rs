@@ -359,4 +359,46 @@ mod tests {
             other => panic!("expected Internal, got {other:?}"),
         }
     }
+
+    /// A create-token body that omits `can_delete` entirely (as a CLI or
+    /// script caller might) must default to `false` — delete is opt-in, not
+    /// inherited. This exercises the real JSON deserialization path (a bare
+    /// `#[serde(default)]`), which a struct built in Rust would not catch if
+    /// the attribute regressed to `default_true`.
+    #[tokio::test]
+    async fn create_token_without_can_delete_field_defaults_to_false() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let account =
+            crate::test_support::register_via_api(&state, "token-owner", "hunter2hunter2").await;
+
+        let body: serde_json::Value = crate::test_support::post_json(
+            &state,
+            "/v1/account/api-tokens",
+            &account.token,
+            serde_json::json!({ "label": "cli token" }),
+        )
+        .await;
+
+        assert_eq!(
+            body["can_delete"],
+            serde_json::json!(false),
+            "a create-token body omitting can_delete must not grant delete"
+        );
+
+        // Confirm the stored row agrees, not just the immediate response.
+        let mut conn = state.db.acquire().await.unwrap();
+        let can_delete: i64 = sqlx::query_scalar(
+            "SELECT can_delete FROM account_api_tokens WHERE account_id = $1 AND label = $2",
+        )
+        .bind(&account.account_id)
+        .bind("cli token")
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(
+            can_delete, 0,
+            "stored token row must not have can_delete set"
+        );
+    }
 }

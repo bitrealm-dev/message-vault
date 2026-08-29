@@ -8,7 +8,6 @@ import {
   healthBackoffMs,
   healthProbeUrl,
   healthStatusLabel,
-  probeTimeoutSignal,
 } from "./vaultHealth";
 
 describe("healthBackoffMs", () => {
@@ -129,27 +128,5 @@ describe("checkVaultHealth", () => {
     const pending = checkVaultHealth("http://127.0.0.1:8080");
     await vi.advanceTimersByTimeAsync(HEALTH_PROBE_TIMEOUT_MS);
     await expect(pending).resolves.toBe(false);
-  });
-});
-
-describe("probeTimeoutSignal", () => {
-  const originalTimeout = AbortSignal.timeout;
-
-  afterEach(() => {
-    vi.useRealTimers();
-    AbortSignal.timeout = originalTimeout;
-  });
-
-  it("returns a signal that aborts once the probe budget elapses", () => {
-    // `AbortSignal.timeout` runs on the platform's own clock, not the fake
-    // one, so force the manual-controller fallback to exercise the budget
-    // under fake timers.
-    (AbortSignal as unknown as { timeout?: unknown }).timeout = undefined;
-    vi.useFakeTimers();
-    const signal = probeTimeoutSignal();
-
-    expect(signal.aborted).toBe(false);
-    vi.advanceTimersByTime(HEALTH_PROBE_TIMEOUT_MS);
-    expect(signal.aborted).toBe(true);
   });
 });

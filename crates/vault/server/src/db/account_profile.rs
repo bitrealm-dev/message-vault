@@ -267,6 +267,21 @@ pub async fn is_last_admin(conn: &mut AnyConnection, account_id: &str) -> Result
     Ok(self_admin > 0)
 }
 
+/// True when a non-demo account other than `account_id` exists. Used to allow
+/// a solo administrator (the only account on their own vault) to delete their
+/// own account, while still refusing when doing so would strand other users
+/// with no administrator left to manage them.
+pub async fn other_real_account_exists(conn: &mut AnyConnection, account_id: &str) -> Result<bool> {
+    schema::ensure_accounts_schema(conn).await?;
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE id != $1 AND id != $2")
+            .bind(account_id)
+            .bind(DEMO_ACCOUNT_ID)
+            .fetch_one(&mut *conn)
+            .await?;
+    Ok(count > 0)
+}
+
 /// Grant or revoke the administrative flag.
 pub async fn set_admin(conn: &mut AnyConnection, account_id: &str, is_admin: bool) -> Result<()> {
     schema::ensure_accounts_schema(conn).await?;

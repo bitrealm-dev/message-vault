@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { apiClient } from "../../lib/api";
 import { useAsyncAction } from "../../lib/useAsyncAction";
 import { useResource } from "../../lib/useResource";
@@ -25,6 +25,69 @@ const fetchUsers = (signal: AbortSignal) =>
 export function useAdminUsers() {
   const { data, loading, error: loadError, reload } = useResource("admin/users", fetchUsers);
   const { busy, error: actionError, run, clearError } = useAsyncAction();
+
+  const [composing, setComposing] = useState(false);
+  const [newUsername, setNewUsername] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newIsAdmin, setNewIsAdmin] = useState(false);
+
+  const [passwordTarget, setPasswordTarget] = useState<AdminUser | null>(null);
+  const [resetPassword, setResetPassword] = useState("");
+
+  const cancelCompose = useCallback(() => {
+    setComposing(false);
+    setNewUsername("");
+    setNewPassword("");
+    setNewIsAdmin(false);
+    clearError();
+  }, [clearError]);
+
+  const createUser = useCallback(() => {
+    const username = newUsername.trim();
+    const password = newPassword;
+    if (!username || !password) return Promise.resolve();
+    return run(async () => {
+      await apiClient.post("/v1/admin/users", {
+        username,
+        password,
+        is_admin: newIsAdmin,
+      });
+      setNewUsername("");
+      setNewPassword("");
+      setNewIsAdmin(false);
+      setComposing(false);
+      reload();
+    });
+  }, [newUsername, newPassword, newIsAdmin, run, reload]);
+
+  const openPasswordReset = useCallback(
+    (user: AdminUser) => {
+      clearError();
+      setPasswordTarget(user);
+      setResetPassword("");
+    },
+    [clearError],
+  );
+
+  const closePasswordReset = useCallback(() => {
+    if (busy) return;
+    setPasswordTarget(null);
+    setResetPassword("");
+  }, [busy]);
+
+  const setUserPassword = useCallback(() => {
+    if (!passwordTarget) return Promise.resolve();
+    const password = resetPassword;
+    if (!password) return Promise.resolve();
+    return run(async () => {
+      await apiClient.put(
+        `/v1/admin/users/${encodeURIComponent(passwordTarget.account_id)}/password`,
+        { password },
+      );
+      setPasswordTarget(null);
+      setResetPassword("");
+    });
+  }, [passwordTarget, resetPassword, run]);
 
   const patch = useCallback(
     (
@@ -79,5 +142,21 @@ export function useAdminUsers() {
     patch,
     deleteMessages,
     deleteUser,
+    composing,
+    setComposing,
+    newUsername,
+    setNewUsername,
+    newPassword,
+    setNewPassword,
+    newIsAdmin,
+    setNewIsAdmin,
+    cancelCompose,
+    createUser,
+    passwordTarget,
+    resetPassword,
+    setResetPassword,
+    openPasswordReset,
+    closePasswordReset,
+    setUserPassword,
   };
 }

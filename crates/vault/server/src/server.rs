@@ -1213,4 +1213,99 @@ mod tests {
             other => panic!("expected not found, got {other:?}"),
         }
     }
+
+    /// `require_import_access` guards `GET /v1/imports`: with `can_import`
+    /// off, the endpoint refuses; turned back on, it succeeds. Nothing else
+    /// in the suite calls this route through the real HTTP stack, so
+    /// deleting or inverting the guard inside the handler would ship green
+    /// without this test.
+    #[tokio::test]
+    async fn import_endpoint_honors_can_import_flag() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let admin =
+            crate::test_support::register_via_api(&state, "import-guard-admin", "hunter2hunter2")
+                .await;
+        let user =
+            crate::test_support::register_via_api(&state, "import-guard-user", "hunter2hunter2")
+                .await;
+
+        assert_eq!(
+            crate::test_support::patch_status(
+                &state,
+                &format!("/v1/admin/users/{}", user.account_id),
+                &admin.token,
+                serde_json::json!({ "can_import": false }),
+            )
+            .await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            crate::test_support::get_status(&state, "/v1/imports", &user.token).await,
+            StatusCode::FORBIDDEN,
+            "can_import=false must refuse GET /v1/imports"
+        );
+
+        assert_eq!(
+            crate::test_support::patch_status(
+                &state,
+                &format!("/v1/admin/users/{}", user.account_id),
+                &admin.token,
+                serde_json::json!({ "can_import": true }),
+            )
+            .await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            crate::test_support::get_status(&state, "/v1/imports", &user.token).await,
+            StatusCode::OK,
+            "can_import=true must allow GET /v1/imports"
+        );
+    }
+
+    /// `require_export_access` guards `GET /v1/export/messages/count`: with
+    /// `can_export` off, the endpoint refuses; turned back on, it succeeds.
+    #[tokio::test]
+    async fn export_endpoint_honors_can_export_flag() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let admin =
+            crate::test_support::register_via_api(&state, "export-guard-admin", "hunter2hunter2")
+                .await;
+        let user =
+            crate::test_support::register_via_api(&state, "export-guard-user", "hunter2hunter2")
+                .await;
+
+        assert_eq!(
+            crate::test_support::patch_status(
+                &state,
+                &format!("/v1/admin/users/{}", user.account_id),
+                &admin.token,
+                serde_json::json!({ "can_export": false }),
+            )
+            .await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            crate::test_support::get_status(&state, "/v1/export/messages/count", &user.token).await,
+            StatusCode::FORBIDDEN,
+            "can_export=false must refuse GET /v1/export/messages/count"
+        );
+
+        assert_eq!(
+            crate::test_support::patch_status(
+                &state,
+                &format!("/v1/admin/users/{}", user.account_id),
+                &admin.token,
+                serde_json::json!({ "can_export": true }),
+            )
+            .await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            crate::test_support::get_status(&state, "/v1/export/messages/count", &user.token).await,
+            StatusCode::OK,
+            "can_export=true must allow GET /v1/export/messages/count"
+        );
+    }
 }

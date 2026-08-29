@@ -2,6 +2,8 @@ import { useState } from "react";
 import Button from "../../components/Button";
 import Checkbox from "../../components/Checkbox";
 import ConfirmDialog from "../../components/ConfirmDialog";
+import ModalShell, { DialogError, DialogFooter } from "../../components/ModalShell";
+import TextField from "../../components/TextField";
 import { tdClass, tdMuted, thClass } from "./apiTokensUtils";
 import { formatBytes } from "./storage/storageUtils";
 import { type AdminUser, useAdminUsers } from "./useAdminUsers";
@@ -28,6 +30,22 @@ export function AdminUsersPanel() {
     patch,
     deleteMessages,
     deleteUser,
+    composing,
+    setComposing,
+    newUsername,
+    setNewUsername,
+    newPassword,
+    setNewPassword,
+    newIsAdmin,
+    setNewIsAdmin,
+    cancelCompose,
+    createUser,
+    passwordTarget,
+    resetPassword,
+    setResetPassword,
+    openPasswordReset,
+    closePasswordReset,
+    setUserPassword,
   } = useAdminUsers();
   const [confirming, setConfirming] = useState<ConfirmTarget | null>(null);
 
@@ -47,20 +65,79 @@ export function AdminUsersPanel() {
 
   return (
     <section>
-      <h3 className="m-0 text-text">Users</h3>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="m-0 text-text">Users</h3>
+        {!composing && (
+          <Button
+            variant="secondary"
+            size="xs"
+            disabled={busy}
+            onClick={() => {
+              clearError();
+              setComposing(true);
+            }}
+          >
+            Add user
+          </Button>
+        )}
+      </div>
       <p className="mt-[0.35rem] text-[0.875rem] text-muted">
         Everyone with an account on this vault. You can change what they may do, disable them, or
         delete their messages. You cannot read them.
       </p>
 
-      {/* A failure while the delete confirmation is open shows inside that
-          dialog instead (via ConfirmDialog's `error` prop) — showing it here
-          too would duplicate it, and the dialog is where the user is looking. */}
-      {actionError && confirming === null ? (
+      {/* A failure while the delete confirmation or password-reset dialog is
+          open shows inside that dialog instead (via its own `error` prop) —
+          showing it here too would duplicate it, and the dialog is where the
+          user is looking. */}
+      {actionError && confirming === null && passwordTarget === null ? (
         <p className="mt-3 text-[0.875rem] text-danger" role="alert">
           {actionError}
         </p>
       ) : null}
+
+      {composing && (
+        <div className="mt-3 flex flex-col gap-3 rounded-xl border border-border bg-elevated p-3">
+          <div className="flex flex-wrap items-end gap-2">
+            <TextField
+              value={newUsername}
+              onChange={setNewUsername}
+              placeholder="Username"
+              isDisabled={busy}
+              aria-label="New user's username"
+              className="min-w-[10rem] flex-1"
+            />
+            <TextField
+              value={newPassword}
+              onChange={setNewPassword}
+              type="password"
+              placeholder="Password"
+              isDisabled={busy}
+              aria-label="New user's password"
+              className="min-w-[10rem] flex-1"
+            />
+            <Button
+              variant="secondary"
+              disabled={busy || !newUsername.trim() || !newPassword}
+              onClick={() => void createUser()}
+              className="!px-3 !py-1.5 !text-[0.75rem]"
+            >
+              Save
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={busy}
+              onClick={cancelCompose}
+              className="!px-3 !py-1.5 !text-[0.75rem]"
+            >
+              Cancel
+            </Button>
+          </div>
+          <Checkbox checked={newIsAdmin} disabled={busy} onChange={setNewIsAdmin}>
+            Allow this user to manage the vault
+          </Checkbox>
+        </div>
+      )}
 
       <div className="mt-4 overflow-x-auto rounded-xl border border-border bg-elevated">
         <table className="w-full border-collapse">
@@ -133,6 +210,14 @@ export function AdminUsersPanel() {
                       variant="secondary"
                       size="xs"
                       disabled={busy}
+                      onClick={() => openPasswordReset(user)}
+                    >
+                      Reset password
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="xs"
+                      disabled={busy}
                       onClick={() => openConfirm({ user, kind: "messages" })}
                     >
                       Delete messages
@@ -177,6 +262,51 @@ export function AdminUsersPanel() {
           if (ok) setConfirming(null);
         }}
       />
+
+      <ModalShell
+        open={passwordTarget !== null}
+        onOpenChange={(o) => {
+          if (!o) closePasswordReset();
+        }}
+        dismissable={!busy}
+        label="Reset password"
+        title="Reset password"
+        onClose={closePasswordReset}
+        closeDisabled={busy}
+        maxWidth="24rem"
+      >
+        <p className="mb-3 text-[0.813rem] text-muted">
+          Set a new password for {passwordTarget?.username}. This ends their current session — they
+          will need to sign in again with the new password.
+        </p>
+        <TextField
+          label="New password"
+          value={resetPassword}
+          onChange={setResetPassword}
+          type="password"
+          isDisabled={busy}
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void setUserPassword();
+            }
+          }}
+        />
+        <DialogError message={actionError} />
+        <DialogFooter>
+          <Button onPress={closePasswordReset} isDisabled={busy}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            onPress={() => void setUserPassword()}
+            isDisabled={busy || !resetPassword}
+          >
+            {busy ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </ModalShell>
     </section>
   );
 }

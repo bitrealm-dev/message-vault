@@ -315,10 +315,12 @@ pub async fn patch_user_handler(
     Ok(Json(user))
 }
 
-/// Set an account's password as an administrator. Does not invalidate that
-/// account's existing session.
+/// Set an account's password as an administrator. Invalidates that
+/// account's existing session (unlike a self-service password change, which
+/// leaves other sessions alone) — after this call the target must sign in
+/// again with the new password.
 #[utoipa::path(
-    post,
+    put,
     path = "/v1/admin/users/{id}/password",
     tag = "Admin",
     security(("bearer" = [])),
@@ -353,6 +355,9 @@ pub async fn set_user_password_handler(
         return Err(ApiError::NotFound(format!("account {target} not found")));
     }
     account_profile::update_password_hash(&mut conn, &target, &hash)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    crate::db::session_tokens::revoke_account_sessions(&mut conn, &target)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
@@ -470,7 +475,7 @@ mod tests {
     use super::*;
     use crate::test_support::{
         delete_json, delete_status, get_json, get_status, login_status, patch_status, post_json,
-        post_status, register_via_api, seed_one_message, test_vault,
+        post_status, put_status, register_via_api, seed_one_message, test_vault,
     };
 
     #[tokio::test]
@@ -525,7 +530,7 @@ mod tests {
             "PATCH /v1/admin/users/{{id}}"
         );
         assert_eq!(
-            post_status(
+            put_status(
                 &state,
                 &format!("/v1/admin/users/{target}/password"),
                 &ordinary.token,
@@ -533,7 +538,7 @@ mod tests {
             )
             .await,
             StatusCode::FORBIDDEN,
-            "POST /v1/admin/users/{{id}}/password"
+            "PUT /v1/admin/users/{{id}}/password"
         );
         assert_eq!(
             delete_status(
@@ -968,7 +973,7 @@ mod tests {
         let admin = register_via_api(&state, "alice", "hunter2hunter2").await;
         let bob = register_via_api(&state, "bob", "hunter2hunter2").await;
 
-        let status = post_status(
+        let status = put_status(
             &state,
             &format!("/v1/admin/users/{}/password", bob.account_id),
             &admin.token,
@@ -979,6 +984,35 @@ mod tests {
 
         let login = login_status(&state, "bob", "newpassword123").await;
         assert_eq!(login, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn setting_a_password_invalidates_the_targets_existing_session() {
+        let vault = test_vault().await;
+        let state = vault.state.clone();
+        let admin = register_via_api(&state, "alice", "hunter2hunter2").await;
+        let bob = register_via_api(&state, "bob", "hunter2hunter2").await;
+
+        // Bob's registration session must work before the reset.
+        assert_eq!(
+            get_status(&state, "/v1/auth/check", &bob.token).await,
+            StatusCode::OK
+        );
+
+        let status = put_status(
+            &state,
+            &format!("/v1/admin/users/{}/password", bob.account_id),
+            &admin.token,
+            serde_json::json!({ "password": "newpassword123" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        assert_eq!(
+            get_status(&state, "/v1/auth/check", &bob.token).await,
+            StatusCode::UNAUTHORIZED,
+            "an administrator resetting the password must end the target's existing session"
+        );
     }
 
     #[tokio::test]
@@ -1031,7 +1065,7 @@ mod tests {
         let state = vault.state.clone();
         let admin = register_via_api(&state, "alice", "hunter2hunter2").await;
 
-        let status = post_status(
+        let status = put_status(
             &state,
             "/v1/admin/users/does-not-exist/password",
             &admin.token,
