@@ -464,6 +464,7 @@ pub async fn register_handler(
         (status = 200, description = "Session issued", body = AuthTokenResponse),
         (status = 400, description = "Invalid input", body = crate::server::ErrorBody),
         (status = 401, description = "Invalid credentials", body = crate::server::ErrorBody),
+        (status = 403, description = "Account is disabled", body = crate::server::ErrorBody),
         (status = 429, description = "Rate limited", body = crate::server::ErrorBody)
     )
 )]
@@ -504,6 +505,14 @@ pub async fn login_handler(
         return Err(ApiError::Unauthorized(
             "invalid username or password".into(),
         ));
+    }
+
+    let auth = account_profile::load_account_auth(&mut conn, &account_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::BadRequest("invalid username or password".into()))?;
+    if auth.disabled {
+        return Err(ApiError::Forbidden("this account is disabled".into()));
     }
 
     let response = AuthTokenResponse::for_existing_account(&mut conn, account_id)
@@ -747,6 +756,7 @@ mod tests {
     use crate::db::engine;
     use crate::db::permissions::Permissions;
     use crate::test_support::*;
+    use axum::http::StatusCode;
 
     const TEST_ACCOUNT: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const OTHER_ACCOUNT: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -1066,5 +1076,22 @@ mod tests {
                 .unwrap()
                 .is_admin
         );
+    }
+
+    #[tokio::test]
+    async fn disabled_account_cannot_sign_in() {
+        let vault = test_vault().await;
+        let state = vault.state.clone();
+        let created = register_via_api(&state, "alice", "hunter2hunter2").await;
+
+        let mut conn = state.db.acquire().await.unwrap();
+        sqlx::query("UPDATE accounts SET disabled = 1 WHERE id = $1")
+            .bind(&created.account_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let status = login_status(&state, "alice", "hunter2hunter2").await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
     }
 }

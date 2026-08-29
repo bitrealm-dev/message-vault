@@ -520,39 +520,55 @@ pub async fn resolve_auth_on_conn(
     schema::ensure_accounts_schema(conn)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    // Credential-specific bit not yet folded into `AuthCapability`: a session
+    // carries no extra state, an API token carries its own (pre-intersection)
+    // permissions. Both branches load `AccountAuth` the same way so the
+    // disabled check below runs exactly once, regardless of credential kind.
+    enum Credential {
+        Session,
+        ApiToken(Permissions),
+    }
+
     let resolved = if let Some(account_id) =
         session_tokens::lookup_account_for_token(&mut *conn, token)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?
     {
-        let auth = account_profile::load_account_auth(&mut *conn, &account_id)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-            .ok_or_else(|| ApiError::Unauthorized("account no longer exists".into()))?;
-        Some(AuthIdentity {
-            account_id,
-            capability: AuthCapability::Session {
-                is_admin: auth.is_admin,
-                permissions: auth.permissions,
-            },
-        })
-    } else if let Some(tok) = api_tokens::lookup_account_for_api_token(&mut *conn, token)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-    {
-        let auth = account_profile::load_account_auth(&mut *conn, &tok.account_id)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-            .ok_or_else(|| ApiError::Unauthorized("account no longer exists".into()))?;
-        Some(AuthIdentity {
-            account_id: tok.account_id,
-            capability: AuthCapability::ApiToken(auth.permissions.intersect(tok.permissions)),
-        })
+        Some((account_id, Credential::Session))
     } else {
-        None
+        api_tokens::lookup_account_for_api_token(&mut *conn, token)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .map(|tok| (tok.account_id, Credential::ApiToken(tok.permissions)))
     };
 
-    resolved.ok_or_else(|| ApiError::Unauthorized("invalid API token".into()))
+    let Some((account_id, credential)) = resolved else {
+        return Err(ApiError::Unauthorized("invalid API token".into()));
+    };
+
+    let auth = account_profile::load_account_auth(&mut *conn, &account_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::Unauthorized("account no longer exists".into()))?;
+    if auth.disabled {
+        return Err(ApiError::Forbidden("this account is disabled".into()));
+    }
+
+    let capability = match credential {
+        Credential::Session => AuthCapability::Session {
+            is_admin: auth.is_admin,
+            permissions: auth.permissions,
+        },
+        Credential::ApiToken(tok_permissions) => {
+            AuthCapability::ApiToken(auth.permissions.intersect(tok_permissions))
+        }
+    };
+
+    Ok(AuthIdentity {
+        account_id,
+        capability,
+    })
 }
 
 /// Resolve the account id for an import or export: Bearer token binds the account.
@@ -811,6 +827,60 @@ mod tests {
             "the account lost import, so its token must not have it"
         );
         assert!(identity.permissions().export);
+    }
+
+    #[tokio::test]
+    async fn disabling_an_account_kills_its_live_session() {
+        let (_dir, mut conn) = test_conn().await;
+        account_profile::insert_account(&mut conn, TEST_ACCOUNT, "alice", None, None)
+            .await
+            .unwrap();
+        let token = session_tokens::insert_account_session_token(&mut conn, TEST_ACCOUNT)
+            .await
+            .unwrap();
+
+        // The token works while the account is active.
+        resolve_auth_on_conn(&mut conn, &token).await.unwrap();
+
+        sqlx::query("UPDATE accounts SET disabled = 1 WHERE id = $1")
+            .bind(TEST_ACCOUNT)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let err = resolve_auth_on_conn(&mut conn, &token).await.unwrap_err();
+        assert!(
+            matches!(err, ApiError::Forbidden(_)),
+            "a disabled account's existing token must stop working, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn disabling_an_account_kills_its_live_api_token() {
+        let (_dir, mut conn) = test_conn().await;
+        account_profile::insert_account(&mut conn, TEST_ACCOUNT, "alice", None, None)
+            .await
+            .unwrap();
+        let created =
+            api_tokens::create_api_token(&mut conn, TEST_ACCOUNT, "tool", Permissions::all(), None)
+                .await
+                .unwrap();
+        let token = created.5;
+
+        // The API token works while the account is active.
+        resolve_auth_on_conn(&mut conn, &token).await.unwrap();
+
+        sqlx::query("UPDATE accounts SET disabled = 1 WHERE id = $1")
+            .bind(TEST_ACCOUNT)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let err = resolve_auth_on_conn(&mut conn, &token).await.unwrap_err();
+        assert!(
+            matches!(err, ApiError::Forbidden(_)),
+            "a disabled account's existing API token must stop working, got {err:?}"
+        );
     }
 
     async fn test_state() -> (TempDir, AppState, String, i64) {
