@@ -1807,8 +1807,9 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
                 let Some(rel) = att.path.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
                     // No path means the bytes were never staged. "Do not copy"
                     // exports look like this, and the reason the exporter set
-                    // ("skipped" / "embed_disabled") explains why. Keep the
-                    // metadata so the thread still shows the file was there.
+                    // ("not_copied"; older exports say "skipped" or
+                    // "embed_disabled") explains why. Keep the metadata so the
+                    // thread still shows the file was there.
                     scan_skipped += 1;
                     let reason = att.missing_reason.as_deref().unwrap_or("no_path");
                     if att.missing_reason.is_none() {

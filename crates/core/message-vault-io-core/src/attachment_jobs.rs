@@ -61,7 +61,7 @@ pub fn run_attachment_jobs(
     }
     if matches!(mode, MediaMode::Disabled) {
         for job in jobs.iter_mut() {
-            job.attachment.missing_reason = Some("skipped".into());
+            job.attachment.missing_reason = Some("not_copied".into());
         }
         on_progress(AttachmentProgress {
             done: total,
@@ -344,7 +344,7 @@ mod tests {
             .unwrap();
         }
         assert!(!loaded.load(Ordering::SeqCst));
-        assert_eq!(att.missing_reason.as_deref(), Some("skipped"));
+        assert_eq!(att.missing_reason.as_deref(), Some("not_copied"));
         assert!(att.path.is_none());
         assert!(!att_dir.exists() || std::fs::read_dir(&att_dir).unwrap().next().is_none());
     }

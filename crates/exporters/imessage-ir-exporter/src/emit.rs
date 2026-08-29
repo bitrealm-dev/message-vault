@@ -392,7 +392,7 @@ fn mail_message_to_ir(
         let missing_reason = if has_bytes || deferred {
             None
         } else if embed == AttachmentEmbed::Disabled {
-            Some("embed_disabled".to_string())
+            Some("not_copied".to_string())
         } else {
             Some("file_missing".to_string())
         };
@@ -1139,7 +1139,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             ir_disabled.attachments[0].missing_reason.as_deref(),
-            Some("embed_disabled")
+            Some("not_copied")
         );
     }
 }
