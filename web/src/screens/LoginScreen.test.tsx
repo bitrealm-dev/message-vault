@@ -47,36 +47,41 @@ describe("LoginScreen", () => {
     vi.unstubAllGlobals();
   });
 
-  it("signs in without a vault-selection step", async () => {
+  it("logs in without a vault-selection step", async () => {
     stubVault();
     renderScreen();
 
     expect(await screen.findByRole("tab", { name: "Login" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Username" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Log in" })).toBeInTheDocument();
 
     expect(screen.queryByRole("button", { name: "Connect" })).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Server URL" })).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Back to Vault Selection" }),
-    ).not.toBeInTheDocument();
   });
 
-  it("names the vault it connected to", async () => {
+  it("names the product and reports the connection as one word", async () => {
     stubVault();
     renderScreen();
 
-    expect(await screen.findByText("connected")).toBeInTheDocument();
+    expect(await screen.findByText("Connected")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Message Vault" })).toBeInTheDocument();
     expect(setServer).toHaveBeenCalledWith("");
+  });
+
+  it("never shows the vault's host address", async () => {
+    stubVault();
+    renderScreen();
+
+    await screen.findByText("Connected");
+    expect(screen.queryByText(/127\.0\.0\.1/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/localhost/)).not.toBeInTheDocument();
   });
 
   it("probes /health rather than the auth mode endpoint", async () => {
     const fetchMock = stubVault();
     renderScreen();
 
-    await waitFor(() => {
-      expect(screen.getByText(/connected/i)).toBeInTheDocument();
-    });
+    await screen.findByText("Connected");
 
     const calls = fetchMock.mock.calls.map(([url]) => String(url));
     expect(calls.some((url) => url.endsWith("/health"))).toBe(true);
@@ -106,6 +111,17 @@ describe("LoginScreen", () => {
     expect(screen.getByRole("button", { name: "Create account" })).toBeInTheDocument();
   });
 
+  it("drops the password-length claim the server does not enforce", async () => {
+    stubVault();
+    const user = userEvent.setup();
+    renderScreen();
+
+    await screen.findByRole("tab", { name: "Create Account" });
+    await user.click(screen.getByRole("tab", { name: "Create Account" }));
+
+    expect(screen.queryByText(/At least 8 characters/i)).not.toBeInTheDocument();
+  });
+
   it("rejects a new account when the two passwords disagree", async () => {
     stubVault();
     const user = userEvent.setup();
@@ -122,46 +138,116 @@ describe("LoginScreen", () => {
     expect(login).not.toHaveBeenCalled();
   });
 
-  it("offers the address field when nothing answers", async () => {
+  it("says Disconnected when nothing answers", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
     renderScreen();
 
-    expect(await screen.findByText("disconnected")).toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: "Vault address" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Sign in" })).not.toBeInTheDocument();
+    expect(await screen.findByText("Disconnected")).toBeInTheDocument();
+    // The address field belongs to the settings screen now, not the card.
+    expect(screen.queryByRole("textbox", { name: "Address" })).not.toBeInTheDocument();
   });
 
-  it("retries against a typed address", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+  it("lets the vault be changed while the card is still connecting", async () => {
+    // A vault that never answers holds the card in "connecting": a wrong
+    // address is exactly when you need the settings screen most, so the way
+    // to it must not wait for the probe to give up.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise(() => {})),
+    );
     const user = userEvent.setup();
     renderScreen();
 
-    await screen.findByText("disconnected");
+    expect(await screen.findByText("Connecting")).toBeInTheDocument();
+    const link = screen.getByRole("button", { name: "Change vault settings" });
+    expect(link).toBeEnabled();
 
-    stubVault();
-    const field = screen.getByRole("textbox", { name: "Vault address" });
-    await user.clear(field);
-    await user.type(field, "http://127.0.0.1:8080");
-    await user.click(screen.getByRole("button", { name: "Retry" }));
-
-    expect(await screen.findByRole("tab", { name: "Login" })).toBeInTheDocument();
-    await waitFor(() => {
-      expect(setServer).toHaveBeenCalledWith("http://127.0.0.1:8080");
-    });
+    await user.click(link);
+    expect(screen.getByRole("heading", { name: "Message Vault Settings" })).toBeInTheDocument();
   });
 
-  it("opens the address field from Change without losing the form", async () => {
+  it("keeps the way out of a red card live", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    renderScreen();
+
+    await screen.findByText("Disconnected");
+    expect(screen.getByRole("button", { name: "Change vault settings" })).toBeEnabled();
+  });
+
+  it("disables Log in while the vault is unreachable", async () => {
+    stubVault();
+    const user = userEvent.setup();
+    renderScreen();
+
+    await screen.findByText("Connected");
+    await user.click(screen.getByRole("button", { name: "Change vault settings" }));
+
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    const field = screen.getByRole("textbox", { name: "Address" });
+    await user.clear(field);
+    await user.type(field, "http://127.0.0.1:9999");
+    await user.click(screen.getByRole("button", { name: "Change vault address" }));
+
+    expect(await screen.findByText("Disconnected")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Login" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Log in" })).toBeDisabled();
+  });
+
+  it("opens Message Vault Settings from the link and comes back on Cancel", async () => {
     stubVault();
     const user = userEvent.setup();
     renderScreen();
 
     await screen.findByRole("tab", { name: "Login" });
-    await user.click(screen.getByRole("button", { name: "Change" }));
+    await user.click(screen.getByRole("button", { name: "Change vault settings" }));
 
-    expect(screen.getByRole("textbox", { name: "Vault address" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Use" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Login" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Message Vault Settings" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Address" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Test" })).toBeInTheDocument();
+    // The settings screen replaces the card body rather than opening beside it.
+    expect(screen.queryByRole("tab", { name: "Login" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByRole("tab", { name: "Login" })).toBeInTheDocument();
+  });
+
+  it("reports what Test found for the typed address", async () => {
+    stubVault();
+    const user = userEvent.setup();
+    renderScreen();
+
+    await screen.findByRole("tab", { name: "Login" });
+    await user.click(screen.getByRole("button", { name: "Change vault settings" }));
+
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    const field = screen.getByRole("textbox", { name: "Address" });
+    await user.clear(field);
+    await user.type(field, "http://127.0.0.1:9999");
+    await user.click(screen.getByRole("button", { name: "Test" }));
+
+    expect(await screen.findByText("Disconnected")).toBeInTheDocument();
+    // Testing does not commit the address: the card is still connected behind.
+    expect(setServer).not.toHaveBeenCalledWith("http://127.0.0.1:9999");
+  });
+
+  it("applies a typed address and reconnects", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    const user = userEvent.setup();
+    renderScreen();
+
+    await screen.findByText("Disconnected");
+    await user.click(screen.getByRole("button", { name: "Change vault settings" }));
+
+    stubVault();
+    const field = screen.getByRole("textbox", { name: "Address" });
+    await user.clear(field);
+    await user.type(field, "http://127.0.0.1:8080");
+    await user.click(screen.getByRole("button", { name: "Change vault address" }));
+
+    expect(await screen.findByRole("tab", { name: "Login" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(setServer).toHaveBeenCalledWith("http://127.0.0.1:8080");
+    });
   });
 
   it("reconnects on its own once a probe finds the vault healthy again", async () => {
@@ -174,15 +260,14 @@ describe("LoginScreen", () => {
     );
     renderScreen();
 
-    await screen.findByText("disconnected");
-    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    await screen.findByText("Disconnected");
 
     healthy = true;
 
     expect(
       await screen.findByRole("tab", { name: "Login" }, { timeout: 3000 }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    expect(await screen.findByText("Connected")).toBeInTheDocument();
   });
 
   it("carries an abort signal on the health probe", async () => {
@@ -193,24 +278,5 @@ describe("LoginScreen", () => {
     const healthCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/health"));
     expect(healthCall).toBeDefined();
     expect(healthCall?.[1]).toMatchObject({ signal: expect.any(AbortSignal) });
-  });
-
-  it("keeps the tabs rendered, dimmed, when a connected vault drops", async () => {
-    stubVault();
-    const user = userEvent.setup();
-    renderScreen();
-
-    await screen.findByText("connected");
-    await user.click(screen.getByRole("button", { name: "Change" }));
-
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
-    const field = screen.getByRole("textbox", { name: "Vault address" });
-    await user.clear(field);
-    await user.type(field, "http://127.0.0.1:9999");
-    await user.click(screen.getByRole("button", { name: "Use" }));
-
-    expect(await screen.findByText("disconnected")).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Login" })).toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: "Username" })).toBeInTheDocument();
   });
 });

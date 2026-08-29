@@ -3,6 +3,7 @@ import AuthBackButton from "../components/AuthBackButton";
 import AuthErrorFooter from "../components/AuthErrorFooter";
 import AuthSubmitButton from "../components/AuthSubmitButton";
 import Button from "../components/Button";
+import { PersonIcon, PhoneIcon } from "../components/icons";
 import Select, { ListBoxItem, selectItemClassName } from "../components/Select";
 import TextField from "../components/TextField";
 import { apiClient } from "../lib/api";
@@ -32,6 +33,15 @@ interface HandleInput {
 
 function newHandleRow(): HandleInput {
   return { id: crypto.randomUUID(), handle: "", service: "phone" };
+}
+
+/**
+ * A handset for the services reached by phone number, a person for the ones
+ * reached by address. The glyph says what kind of thing the field wants before
+ * the placeholder does.
+ */
+function serviceIcon(service: HandleService) {
+  return service === "email" ? <PersonIcon size={16} /> : <PhoneIcon size={16} />;
 }
 
 export default function OnboardingScreen() {
@@ -118,6 +128,7 @@ export default function OnboardingScreen() {
               <TextField
                 value={h.handle}
                 onChange={(v) => updateHandle(i, "handle", v)}
+                leadingIcon={serviceIcon(h.service)}
                 placeholder={handlePlaceholder(h.service)}
                 className="min-w-0 flex-1"
                 aria-label={`Account ${i + 1} value`}
@@ -136,7 +147,7 @@ export default function OnboardingScreen() {
           ))}
 
           {handles.length < MAX_ACCOUNT_ROWS ? (
-            <div className="mt-1 flex justify-end">
+            <div className="mt-3 flex justify-end">
               <Button variant="secondary" size="sm" onPress={addHandle}>
                 + Add account
               </Button>
@@ -150,10 +161,18 @@ export default function OnboardingScreen() {
 
         <div className={authCardFooter}>
           <AuthErrorFooter error={error} />
-          <AuthSubmitButton onClick={handleSubmit} disabled={!canSubmit || busy}>
-            {busy ? "Saving…" : "Continue to Vault"}
-          </AuthSubmitButton>
-          <AuthBackButton label="Back to Sign In" onClick={logout} />
+          {/* One row: the way back on the left, the way on at half width on
+              the right, matching the button on the card before this one. */}
+          <div className="mt-6 flex items-center justify-between gap-3">
+            <AuthBackButton label="Back to login" onClick={logout} />
+            <AuthSubmitButton
+              onClick={handleSubmit}
+              disabled={!canSubmit || busy}
+              className="w-1/2"
+            >
+              {busy ? "Saving…" : "Continue to vault"}
+            </AuthSubmitButton>
+          </div>
         </div>
       </div>
     </div>

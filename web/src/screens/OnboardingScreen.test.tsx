@@ -77,11 +77,11 @@ describe("OnboardingScreen", () => {
     expect(screen.getByText("Add the rest in Settings after setup.")).toBeInTheDocument();
   });
 
-  it("keeps Continue to Vault disabled until there is a name and an account", async () => {
+  it("keeps Continue to vault disabled until there is a name and an account", async () => {
     const user = userEvent.setup();
     render(<OnboardingScreen />);
 
-    const submit = screen.getByRole("button", { name: "Continue to Vault" });
+    const submit = screen.getByRole("button", { name: "Continue to vault" });
     expect(submit).toBeDisabled();
 
     await user.type(screen.getByRole("textbox", { name: "Display Name" }), "Matt");
@@ -91,11 +91,11 @@ describe("OnboardingScreen", () => {
     expect(submit).toBeEnabled();
   });
 
-  it("goes back one screen, to sign-in", async () => {
+  it("goes back one screen, to login", async () => {
     const user = userEvent.setup();
     render(<OnboardingScreen />);
 
-    await user.click(screen.getByRole("button", { name: "Back to Sign In" }));
+    await user.click(screen.getByRole("button", { name: "Back to login" }));
     expect(logout).toHaveBeenCalledOnce();
   });
 });

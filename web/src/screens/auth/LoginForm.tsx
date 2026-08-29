@@ -1,6 +1,7 @@
 import { useState } from "react";
 import AuthErrorFooter from "../../components/AuthErrorFooter";
 import AuthSubmitButton from "../../components/AuthSubmitButton";
+import { LockIcon, PersonIcon } from "../../components/icons";
 import PasswordField from "../../components/PasswordField";
 import TextField from "../../components/TextField";
 import { apiClient, setBaseUrl } from "../../lib/api";
@@ -9,7 +10,7 @@ import type { SessionResponse } from "../../lib/authGuards";
 import { authCardFooter } from "../../lib/uiStyles";
 import { useAsyncAction } from "../../lib/useAsyncAction";
 
-/** Username and password sign-in for a vault running in local auth mode. */
+/** Username and password login for a vault running in local auth mode. */
 export default function LoginForm({
   serverUrl,
   disabled = false,
@@ -45,6 +46,7 @@ export default function LoginForm({
     <div className="flex min-h-0 flex-1 flex-col">
       <TextField
         label="Username"
+        leadingIcon={<PersonIcon size={16} />}
         value={username}
         onChange={setUsername}
         onKeyDown={(e) => e.key === "Enter" && submit()}
@@ -54,7 +56,8 @@ export default function LoginForm({
 
       <PasswordField
         label="Password"
-        className="mt-3"
+        className="mt-3.5"
+        leadingIcon={<LockIcon size={16} />}
         value={password}
         onChange={setPassword}
         onKeyDown={(e) => e.key === "Enter" && submit()}
@@ -67,7 +70,7 @@ export default function LoginForm({
       <div className={authCardFooter}>
         <AuthErrorFooter error={error} />
         <AuthSubmitButton onClick={submit} disabled={busy || disabled}>
-          {busy ? "Signing in…" : "Sign in"}
+          {busy ? "Logging in…" : "Log in"}
         </AuthSubmitButton>
       </div>
     </div>

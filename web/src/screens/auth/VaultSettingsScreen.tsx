@@ -1,0 +1,67 @@
+import Button from "../../components/Button";
+import TextField from "../../components/TextField";
+import { authLabel, authScreenTitle } from "../../lib/uiStyles";
+import VaultStatus, { type VaultConnection } from "./VaultStatus";
+
+export interface VaultSettingsScreenProps {
+  /** Address being typed. */
+  draft: string;
+  /**
+   * What to report under Connection Status: the card's live connection until
+   * Test is pressed, then whatever Test found for the typed address.
+   */
+  status: VaultConnection;
+  onDraftChange: (value: string) => void;
+  onTest: () => void;
+  onCancel: () => void;
+  onSubmit: () => void;
+}
+
+/**
+ * Where the vault address is chosen. It takes over the auth card rather than
+ * opening a dialog, so the frame never changes size, and it answers the one
+ * question the address raises — will this work? — in place, before you commit
+ * to it.
+ */
+export default function VaultSettingsScreen({
+  draft,
+  status,
+  onDraftChange,
+  onTest,
+  onCancel,
+  onSubmit,
+}: VaultSettingsScreenProps) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <h1 className={`${authScreenTitle} mb-6`}>Message Vault Settings</h1>
+
+      <div className="flex items-end gap-2">
+        <TextField
+          label="Address"
+          value={draft}
+          onChange={onDraftChange}
+          onKeyDown={(e) => e.key === "Enter" && onTest()}
+          placeholder="https://vault.example.com"
+          className="min-w-0 flex-1"
+          spellCheck="false"
+        />
+        <Button variant="secondary" onPress={onTest} className="shrink-0">
+          Test
+        </Button>
+      </div>
+
+      <div className={`mt-3.5 ${authLabel}`}>Connection Status</div>
+      {/* 13px lines the word up with the first character inside the field. */}
+      <VaultStatus state={status} className="pl-[13px]" />
+
+      <div className="mt-6 grid grid-cols-2 gap-2.5">
+        <Button variant="secondary" onPress={onCancel}>
+          Cancel
+        </Button>
+        <Button variant="primary" onPress={onSubmit}>
+          Change vault address
+        </Button>
+      </div>
+    </div>
+  );
+}

@@ -1,6 +1,7 @@
+import type { ReactNode } from "react";
 import { Input, Label, TextField, type TextFieldProps } from "react-aria-components";
 import Button from "./Button";
-import { textInputClassName } from "./TextField";
+import { leadingIconClassName, textInputClassName } from "./TextField";
 
 function EyeIcon({ open }: { open: boolean }) {
   if (open) {
@@ -45,20 +46,23 @@ function EyeIcon({ open }: { open: boolean }) {
 export default function PasswordField(
   props: TextFieldProps & {
     label?: string;
+    /** Optional glyph rendered inside the field, before the text. */
+    leadingIcon?: ReactNode;
     showPassword: boolean;
     onToggle: () => void;
   },
 ) {
-  const { label, showPassword, onToggle, className, ...rest } = props;
+  const { label, leadingIcon, showPassword, onToggle, className, ...rest } = props;
   return (
     <TextField {...rest} className={`block w-full ${className ?? ""}`}>
       {label ? (
         <Label className="mb-1 block text-[0.875rem] font-medium text-text">{label}</Label>
       ) : null}
       <div className="relative">
+        {leadingIcon ? <span className={leadingIconClassName}>{leadingIcon}</span> : null}
         <Input
           type={showPassword ? "text" : "password"}
-          className={`${textInputClassName} pr-11`}
+          className={`${textInputClassName} pr-11 ${leadingIcon ? "pl-10" : ""}`}
         />
         <Button
           variant="ghost"
