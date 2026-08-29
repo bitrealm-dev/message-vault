@@ -54,7 +54,7 @@ export interface PushConfig {
   import_id?: number;
 }
 
-interface PushFinishedReport {
+export interface PushFinishedReport {
   ok: boolean;
   /** Older field: messages counted in successful HTTP requests. */
   messages: number;
