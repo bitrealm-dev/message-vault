@@ -40,21 +40,32 @@ export function useAdminUsers() {
     [run, reload],
   );
 
+  // `run` swallows its error into `actionError` rather than rethrowing, so it
+  // always resolves — a caller cannot tell success from failure just by
+  // awaiting it. These two report it explicitly (via a boolean the caller
+  // awaits) so a confirmation dialog can stay open and show the refusal
+  // instead of closing as though the delete had gone through.
   const deleteMessages = useCallback(
-    (id: string) =>
-      run(async () => {
+    (id: string) => {
+      let succeeded = false;
+      return run(async () => {
         await apiClient.delete(`/v1/admin/users/${encodeURIComponent(id)}/messages`);
+        succeeded = true;
         reload();
-      }),
+      }).then(() => succeeded);
+    },
     [run, reload],
   );
 
   const deleteUser = useCallback(
-    (id: string) =>
-      run(async () => {
+    (id: string) => {
+      let succeeded = false;
+      return run(async () => {
         await apiClient.delete(`/v1/admin/users/${encodeURIComponent(id)}`);
+        succeeded = true;
         reload();
-      }),
+      }).then(() => succeeded);
+    },
     [run, reload],
   );
 

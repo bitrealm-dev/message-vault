@@ -41,6 +41,7 @@ export function AdminUsersPanel() {
 
   const closeConfirm = () => {
     if (busy) return;
+    clearError();
     setConfirming(null);
   };
 
@@ -52,7 +53,10 @@ export function AdminUsersPanel() {
         delete their messages. You cannot read them.
       </p>
 
-      {actionError ? (
+      {/* A failure while the delete confirmation is open shows inside that
+          dialog instead (via ConfirmDialog's `error` prop) — showing it here
+          too would duplicate it, and the dialog is where the user is looking. */}
+      {actionError && confirming === null ? (
         <p className="mt-3 text-[0.875rem] text-danger" role="alert">
           {actionError}
         </p>
@@ -66,6 +70,7 @@ export function AdminUsersPanel() {
               <th className={thClass}>Status</th>
               <th className={thClass}>Messages</th>
               <th className={thClass}>Storage</th>
+              <th className={thClass}>Admin</th>
               <th className={thClass}>Import</th>
               <th className={thClass}>Export</th>
               <th className={thClass}>Delete</th>
@@ -82,6 +87,14 @@ export function AdminUsersPanel() {
                 <td className={tdMuted}>{user.disabled ? "Disabled" : "Active"}</td>
                 <td className={tdMuted}>{user.message_count.toLocaleString()}</td>
                 <td className={tdMuted}>{formatBytes(user.storage_bytes)}</td>
+                <td className={tdClass}>
+                  <Checkbox
+                    checked={user.is_admin}
+                    disabled={busy}
+                    aria-label={`Allow ${user.username} to manage the vault`}
+                    onChange={(checked) => patch(user.account_id, { is_admin: checked })}
+                  />
+                </td>
                 <td className={tdClass}>
                   <Checkbox
                     checked={user.can_import}
@@ -147,14 +160,21 @@ export function AdminUsersPanel() {
         confirmLabel="Delete"
         danger
         busy={busy}
+        error={actionError}
         onClose={closeConfirm}
         onConfirm={async () => {
           if (!confirming) return;
           const { user, kind } = confirming;
-          await (kind === "messages"
-            ? deleteMessages(user.account_id)
-            : deleteUser(user.account_id));
-          setConfirming(null);
+          // `deleteMessages`/`deleteUser` resolve to whether the call actually
+          // succeeded (the shared `run` swallows the error into `actionError`
+          // rather than rejecting). Close only on success — a 400 ("only
+          // administrator") or 404 must keep the dialog open with the reason
+          // showing, not vanish as though the delete had gone through.
+          const ok =
+            kind === "messages"
+              ? await deleteMessages(user.account_id)
+              : await deleteUser(user.account_id);
+          if (ok) setConfirming(null);
         }}
       />
     </section>

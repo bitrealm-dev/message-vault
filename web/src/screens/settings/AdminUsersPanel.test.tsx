@@ -1,12 +1,24 @@
 /** @vitest-environment jsdom */
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AdminUsersPanel } from "./AdminUsersPanel";
 
 afterEach(() => {
   cleanup();
 });
+
+function jsonResponse(status: number, body: unknown) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function requestMethod(init: RequestInit | undefined): string {
+  return (init?.method ?? "GET").toUpperCase();
+}
 
 describe("AdminUsersPanel", () => {
   it("lists each account with its counts and flags", async () => {
@@ -84,5 +96,97 @@ describe("AdminUsersPanel", () => {
     expect(
       screen.getByLabelText("Allow deleting messages and attachments for alice"),
     ).toBeInTheDocument();
+  });
+
+  it("toggling the admin checkbox PATCHes is_admin", async () => {
+    const user = userEvent.setup();
+    const listItem = {
+      account_id: "a1",
+      username: "alice",
+      is_admin: false,
+      disabled: false,
+      can_import: true,
+      can_export: true,
+      can_delete: true,
+      message_count: 10,
+      storage_bytes: 0,
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = requestMethod(init);
+      if (method === "GET" && url === "/v1/admin/users") {
+        return jsonResponse(200, { items: [listItem] });
+      }
+      if (method === "PATCH" && url === "/v1/admin/users/a1") {
+        return jsonResponse(200, { ...listItem, is_admin: true });
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+
+    render(<AdminUsersPanel />);
+    await waitFor(() => {
+      expect(screen.getByText("alice")).toBeInTheDocument();
+    });
+
+    const adminCheckbox = screen.getByLabelText("Allow alice to manage the vault");
+    expect(adminCheckbox).not.toBeChecked();
+    await user.click(adminCheckbox);
+
+    await waitFor(() => {
+      const patchCall = fetchMock.mock.calls.find(([, init]) => requestMethod(init) === "PATCH");
+      expect(patchCall).toBeDefined();
+    });
+    const [patchUrl, patchInit] = fetchMock.mock.calls.find(
+      ([, init]) => requestMethod(init) === "PATCH",
+    ) as [string, RequestInit];
+    expect(patchUrl).toBe("/v1/admin/users/a1");
+    expect(JSON.parse(String(patchInit.body))).toEqual({ is_admin: true });
+  });
+
+  it("keeps the delete confirmation open and shows the server's refusal when the delete fails", async () => {
+    const user = userEvent.setup();
+    const listItem = {
+      account_id: "a1",
+      username: "alice",
+      is_admin: true,
+      disabled: false,
+      can_import: true,
+      can_export: true,
+      can_delete: true,
+      message_count: 5,
+      storage_bytes: 0,
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = requestMethod(init);
+      if (method === "GET" && url === "/v1/admin/users") {
+        return jsonResponse(200, { items: [listItem] });
+      }
+      if (method === "DELETE" && url === "/v1/admin/users/a1") {
+        return jsonResponse(400, {
+          ok: false,
+          error: "this is the only administrator; promote another account first",
+        });
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+
+    render(<AdminUsersPanel />);
+    await waitFor(() => {
+      expect(screen.getByText("alice")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Delete account" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete account" });
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(
+        within(dialog).getByText("this is the only administrator; promote another account first"),
+      ).toBeInTheDocument();
+    });
+    // A failed delete must not read as success: the dialog stays open with
+    // the server's reason inside it, rather than closing.
+    expect(screen.getByRole("dialog", { name: "Delete account" })).toBeInTheDocument();
   });
 });
