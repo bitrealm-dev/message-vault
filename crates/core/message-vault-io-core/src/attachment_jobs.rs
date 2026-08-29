@@ -83,7 +83,14 @@ pub fn run_attachment_jobs(
             return Err("canceled".into());
         }
 
-        let loaded = load(i)?;
+        let loaded = match load(i) {
+            Ok(loaded) => loaded,
+            // A cancel raised inside the loader still stops the run.
+            Err(err) if err == "canceled" => return Err(err),
+            // One unreadable source is that attachment's problem, not the
+            // run's. Fall through to the missing-file handling below.
+            Err(_) => None,
+        };
         let bytes = match loaded {
             Some(bytes) if !bytes.is_empty() => bytes,
             _ => {
@@ -381,6 +388,73 @@ mod tests {
         }
         assert_eq!(a.missing_reason.as_deref(), Some("file_missing"));
         assert!(b.path.is_some());
+    }
+
+    #[test]
+    fn read_error_marks_file_missing_and_continues() {
+        let dir = tempfile::tempdir().unwrap();
+        let att_dir = dir.path().join("attachments");
+        std::fs::create_dir_all(&att_dir).unwrap();
+        let mut a = empty_att("a.jpg");
+        let mut b = empty_att("b.jpg");
+        {
+            let mut jobs = [
+                AttachmentJob {
+                    attachment: &mut a,
+                    timestamp_unix_ms: 0,
+                    size_hint: None,
+                },
+                AttachmentJob {
+                    attachment: &mut b,
+                    timestamp_unix_ms: 0,
+                    size_hint: Some(4),
+                },
+            ];
+            run_attachment_jobs(
+                &mut jobs,
+                &att_dir,
+                MediaMode::Clone,
+                &CompressOptions::default(),
+                |i| {
+                    if i == 0 {
+                        Err("permission denied".into())
+                    } else {
+                        Ok(Some(b"data".to_vec()))
+                    }
+                },
+                |_| {},
+                None,
+            )
+            .unwrap();
+        }
+        assert_eq!(a.missing_reason.as_deref(), Some("file_missing"));
+        assert!(b.path.is_some());
+    }
+
+    #[test]
+    fn canceled_error_from_the_loader_still_aborts() {
+        let dir = tempfile::tempdir().unwrap();
+        let att_dir = dir.path().join("attachments");
+        std::fs::create_dir_all(&att_dir).unwrap();
+        let mut a = empty_att("a.jpg");
+        let err = {
+            let mut jobs = [AttachmentJob {
+                attachment: &mut a,
+                timestamp_unix_ms: 0,
+                size_hint: Some(1),
+            }];
+            run_attachment_jobs(
+                &mut jobs,
+                &att_dir,
+                MediaMode::Clone,
+                &CompressOptions::default(),
+                |_| Err("canceled".into()),
+                |_| {},
+                None,
+            )
+            .unwrap_err()
+        };
+        assert_eq!(err, "canceled");
     }
 
     #[test]
