@@ -68,7 +68,7 @@ Two smaller faults found while tracing this:
 - Building per-import delete. Removing an imported conversation from the
   vault afterwards is planned and is substantial work of its own — staging
   has to be right first. This spec depends on it only for one line of
-  Gate 2 copy (decision 16) and builds none of it. Today the sole delete
+  Gate 2 copy (decision 17) and builds none of it. Today the sole delete
   is `delete_user_messages_handler`, which is admin-only and removes every
   message an account owns; `ix_messages_import_id` is the groundwork for a
   scoped one.
@@ -149,7 +149,7 @@ Two smaller faults found while tracing this:
    awaiting_gate_1 → pushing`, and approving at Gate 1 starts the upload.
 
 7. **Stage names are internal.** `transcode` in particular never reaches
-   the screen; see decision 17. Progress events keep the existing `parse`
+   the screen; see decision 18. Progress events keep the existing `parse`
    / `attachments` / `prepare` vocabulary where it already exists, but the
    session's `stage` column is the list above.
 
@@ -158,7 +158,7 @@ Two smaller faults found while tracing this:
    the media step is absent and there are three. The attachment byte
    counter belongs to Copy to staging, and the media step gets its own —
    `apply_convert_or_compress` currently reports nothing at all, so this
-   depends on decision 41.
+   depends on decision 43.
 
 ### The approval contract
 
@@ -188,41 +188,64 @@ Two smaller faults found while tracing this:
     after the media step, probably still too big, and cannot be processed
     because it is not audio or video.
 
-12. **The verdict heuristic runs only on files over the limit.** Those are
-    by definition few, so each can afford a real `ffprobe` — already a hard
-    requirement for `convert` and `compress`, so no new dependency. The
-    estimate is
+12. **The verdict heuristic estimates in both directions, because the media
+    step can make a file bigger.** Conversion is not a size reduction. In
+    `convert` mode any image that is not already JPEG or GIF is written to
+    JPEG at `-q:v 2`, and HEIC is roughly half the size of equivalent JPEG,
+    so HEIC grows. PNG and TIFF grow. Video prefers a remux, but when that
+    fails it re-encodes to `libx264`, and HEVC to H.264 typically grows
+    30–50%. An iPhone backup is mostly HEIC and HEVC, so this is the common
+    path, not a corner.
+
+    The estimate is therefore
 
     ```
     estimate = size × (target_pixels / source_pixels)
                     × (target_fps / source_fps)
-                    × codec_factor
+                    × format_factor
     ```
 
-    capped at the original size, with targets taken from the compress
-    settings the form already carries and `codec_factor` of `0.7`. Below
-    80% of the limit reads as *likely to fit*; above it as *probably still
-    too big*. The margin stops a near miss from reading as a promise. The
-    screen says it is an estimate.
+    with targets from the media settings the form already carries, and
+    **not** capped at the original size. `format_factor` depends on the
+    source and target formats rather than being a single constant —
+    around `0.7` for a same-format compress, and above `1.0` for
+    HEIC to JPEG or HEVC to H.264.
 
-13. **Gate 2 leads with the delta, not a fresh summary.** The question it
+13. **Files near the limit are classified whether or not they are over
+    it.** Because the media step can push a file across, the candidate set
+    is every media file whose estimate lands near the limit in either
+    direction, not just those already above it. `ffprobe` is a hard
+    requirement for `convert` and `compress` anyway, so no new dependency —
+    but the probe set is larger than the over-limit set, and probing every
+    media file may be too slow. Probe files within a band around the limit
+    and treat the rest by size alone.
+
+    Five states, and the fifth is new: fits as-is; likely to fit after the
+    media step; **may grow past the limit**; probably still too big;
+    cannot be processed because it is not audio or video. Below 80% of the
+    limit reads as likely to fit, above it as probably still too big, and
+    an under-limit file whose estimate crosses the limit reads as may
+    grow. The margin stops a near miss from reading as a promise, and the
+    screen says throughout that these are estimates.
+
+14. **Gate 2 leads with the delta, not a fresh summary.** The question it
     answers is where Gate 1 was wrong: how many files we said would fit
     did, how many we wrote off came in under after all, and what failed
     that nobody flagged. The final upload state follows underneath.
 
-14. **The outcome is diffed against Gate 2's approval, not Gate 1's.**
+15. **The outcome is diffed against Gate 2's approval, not Gate 1's.**
     Gate 1 approved spending time; only Gate 2 gated what enters the
     vault. A skip approved at Gate 2 is an expected omission. A skip
     nobody forecast is an error even if there is only one. This is what
     makes "12 attachments too big" a normal import rather than a failure.
 
-15. **Declining at either gate is terminal.** The session closes, the
+16. **Declining at either gate is terminal.** The session closes, the
     staging folder is deleted, and the next Import opens a clean form. A
     user who changes their mind pays for the work again. Keeping staging
     for a re-push with different settings would leave large folders on
     disk with no owner.
 
-16. **Gate 2 says imported conversations can be removed later.** In full:
+17. **Gate 2 says imported conversations can be removed later.** In full:
     *"Messages are always uploaded. A skipped attachment leaves a
     placeholder in the conversation, and the message text is kept.
     Imported conversations can later be removed from your vault in the
@@ -232,62 +255,66 @@ Two smaller faults found while tracing this:
 
 ### Wording on screen
 
-17. **"Transcode" never appears in the interface.** It is an internal
+18. **"Transcode" never appears in the interface.** It is an internal
     stage name only. The user sees **Convert** or **Compress** according
     to the media mode, and those are two different jobs: convert changes
     the format, compress changes the format *and* targets a smaller size.
 
-18. **In `convert` mode Gate 1 drops the size estimate.** Converting
-    targets a format, not a size, so there is no meaningful forecast to
-    approve. Gate 1 becomes "here is what we found" rather than "here is
-    what we predict", the estimate column disappears, and files over the
-    limit are reported as over the limit without a verdict. Gate 2 still
-    runs, because sizes still change.
+19. **`convert` mode keeps the size estimate, and needs it more than
+    `compress` does.** An earlier draft of this spec dropped it on the
+    reasoning that converting targets a format rather than a size. That is
+    wrong: converting changes size as a side effect, usually upward for
+    Apple formats (decision 12). A file comfortably under the limit before
+    the media step can be over it afterwards, so the forecast a user needs
+    in `convert` mode is the one about files that are currently fine.
 
-19. **Each screen's heading names the stage it is on.** *Review what was
+    The estimate column stays in both modes. Only the wording differs —
+    "after converting" against "after compressing".
+
+20. **Each screen's heading names the stage it is on.** *Review what was
     copied*, *Compressing media* (or *Converting media*), *Ready to
     upload*. Every state is titled "Import Messages" today, which tells
     the user nothing about where they are.
 
 ### Outcome
 
-20. **Three outcomes with a zero floor.** `completed`, `completed with
+21. **Three outcomes with a zero floor.** `completed`, `completed with
     issues`, `failed`. Item-level problems are issues. A session is
     `failed` when it was interrupted, threw, or inserted nothing at all —
     zero conversations succeeded is a failure regardless of what the report
     says.
 
-21. **The verdict is read from the push report.** `conversations_ok`,
+22. **The verdict is read from the push report.** `conversations_ok`,
     `conversations_failed`, `messages_inserted`. Not from whether
     `invokePush` returned.
 
 ### Prepare
 
-22. **Parse must finish before anything is written.** The message stream is
+23. **Parse must finish before anything is written.** The message stream is
     not grouped by conversation, so no conversation is provably complete
     until the scan ends. This is not negotiable and not worth working
     around.
 
-23. **Write is a queue drained by worker threads.** Once parse is done,
+24. **Write is a queue drained by worker threads.** Once parse is done,
     walk the tree, build a queue, and let writers pull from it.
 
-24. **The queue unit is the conversation.** A worker writes a
+25. **The queue unit is the conversation.** A worker writes a
     conversation's attachments, then its conversation file last. That gives
     the invariant resume depends on: if a conversation file exists,
     everything it references exists. Per-file queue items would allow a
     conversation file pointing at bytes that were never written, and the
     resume check would be a lie.
 
-25. **Writers do not transcode.** Writing is cheap, transcoding is not, and
+26. **Writers do not transcode.** Writing is cheap, transcoding is not, and
     mixing them puts the expensive work inside the checkpoint. Writers copy
     originals only.
 
-26. **Transcode is a separate pass that patches the conversation files
+27. **Transcode is a separate pass that patches the conversation files
     afterward.** It updates four fields per attachment: path,
     `digest_sha256`, `size_bytes`, and mime. The digest matters because the
     vault dedupes assets by sha256.
 
-27. **Transcode commits per file, through a rename.** For each attachment:
+28. **Transcode commits per file, through a rename.** For each attachment:
     transcode to `<derivative>.in_progress`, patch the conversation file,
     rename `.in_progress` to the final name, delete the original. The final
     name never exists until the conversation file already points at it.
@@ -310,36 +337,36 @@ Two smaller faults found while tracing this:
     commits — leaves conversation files pointing at bytes that no longer
     exist, a staging folder that looks complete and is not.
 
-28. **The patch reads the file on disk; it never replays a captured
+29. **The patch reads the file on disk; it never replays a captured
     remap.** ffmpeg output is not guaranteed byte-identical across runs, so
     a re-transcoded file can carry a different sha256. The vault dedupes
     assets by sha256, so writing a stale digest would corrupt silently.
     Digest, size, and mime are recomputed from the derivative each time.
 
-29. **The `.in_progress` marker must survive existing cleanup.**
+30. **The `.in_progress` marker must survive existing cleanup.**
     `process_attachments_dir` calls `remove_msgmedia_temps` on entry to
     clear leftovers from a failed ffmpeg run. The marker has to be named
     distinctly from ffmpeg's scratch files and be exempt from that sweep,
     or the resume signal is deleted on the way in.
 
-30. **Accepted costs.** The initial copy paid before transcoding, one
+31. **Accepted costs.** The initial copy paid before transcoding, one
     attachment held in two forms while its own patch is in flight, and a
     re-read of the conversation files to patch them. Bought with them: a
     durable checkpoint, and a transcode failure that destroys nothing.
 
-31. **Disk headroom is checked before the write phase.** Parse already
-    knows total attachment bytes. Because decision 27 commits and deletes
+32. **Disk headroom is checked before the write phase.** Parse already
+    knows total attachment bytes. Because decision 28 commits and deletes
     per file, peak usage is roughly the original total plus one in-flight
     derivative, not originals plus derivatives — each original is released
     as soon as its own patch lands.
 
-32. **Worker counts differ by phase.** Writing is IO and hashing — it
+33. **Worker counts differ by phase.** Writing is IO and hashing — it
     parallelizes. Transcoding shells out to ffmpeg, which is already
     multithreaded, so one process per core is often slower than sequential
     and makes the machine unusable. Writers scale; transcode uses a small
     bounded pool.
 
-33. **`persist_clone` needs a unique temp suffix.** It builds `{name}.tmp`
+34. **`persist_clone` needs a unique temp suffix.** It builds `{name}.tmp`
     from the content digest, so two workers handling identical bytes would
     collide on the same temp path. Content-addressed dedup is otherwise
     unaffected by parallelism, because it is enforced through the
@@ -347,13 +374,13 @@ Two smaller faults found while tracing this:
 
 ### Resume
 
-34. **Resume asks the vault, then goes where it says.** Get the active
+35. **Resume asks the vault, then goes where it says.** Get the active
     session, open `staging_dir`, confirm it exists and the fingerprint
     still matches, continue at `stage`. Entering Import runs this
     reconciliation first. The form is what appears when it finds nothing —
     not the default.
 
-35. **Behaviour per case.**
+36. **Behaviour per case.**
 
     | Case | Resume |
     |---|---|
@@ -362,35 +389,35 @@ Two smaller faults found while tracing this:
     | Died in `transcode` | Re-run it over every original still on disk. |
     | Died at either gate | Back to the summary, recomputed from the folder. |
     | Died in `pushing` | Re-push the folder. Dedupe and asset HEAD-skip absorb the overlap. |
-    | Declined | Terminal. See decision 15. |
+    | Declined | Terminal. See decision 16. |
     | Cancelled mid-run | Same recovery as a crash at that stage; different wording on screen. |
     | Never answered at the gate | Session stays. Broken by an explicit discard, never a timeout. |
     | No folder at the recorded path | Before approval: restart with settings restored. After: discard only. |
     | Different `device_id` | Told where the session belongs. Discard is offered, never silent. |
     | Source changed or missing | Fatal for `write`; irrelevant at either gate and during `pushing`. |
 
-36. **No timeout reclaims a session.** A timer cannot distinguish an
+37. **No timeout reclaims a session.** A timer cannot distinguish an
     abandoned approval gate from a running three-hour transcode, and
     reclaiming a live session would corrupt an import in progress. The
     blocked screen offers an explicit discard instead.
 
-37. **A fingerprint mismatch forces a clean restart, and says so.** A
+38. **A fingerprint mismatch forces a clean restart, and says so.** A
     `chat.db` that grew since the last attempt has different conversation
     boundaries. Mixing old output with a new parse produces a corrupt
     export.
 
-38. **The summary is recomputed on resume, not read back from
+39. **The summary is recomputed on resume, not read back from
     `summary_json`.** The folder is the truth. `summary_json` records what
     the user approved, which is a different question and is used for the
-    diff in decision 14.
+    diff in decision 15.
 
 ### Required fixes
 
-39. **A read error on one attachment becomes a per-item issue**, matching
+40. **A read error on one attachment becomes a per-item issue**, matching
     how a missing file is already handled. It is currently the most
     expensive failure mode in the system.
 
-40. **The missing-attachment reasons become a closed set with an explicit
+41. **The missing-attachment reasons become a closed set with an explicit
     unknown.** Today `missing_reason` is a free-form `Option<String>` with
     no enum, and the display side flattens anything it does not recognize
     to a bare `"missing"`. There is no `other` — unrecognized reasons are
@@ -416,16 +443,28 @@ Two smaller faults found while tracing this:
     `run.rs` for an attachment with no path and no reason, and should not
     be added to the set.
 
-41. **`open_prepared` gains a resume mode** that does not call
+42. **`open_prepared` gains a resume mode** that does not call
     `clean_previous_ir_output`.
 
-42. **`apply_convert_or_compress` calls the logging variant** so transcode
+43. **`apply_convert_or_compress` calls the logging variant** so transcode
     reports progress. The callback already exists.
 
-43. **`media::process_attachments_dir` takes an explicit file list.**
+44. **Keep the smaller file.** `finalize` deletes the original and keeps
+    whatever ffmpeg produced, with no comparison between the two. A
+    conversion that makes a file larger wins anyway, and in `compress`
+    mode that plainly defeats the point. Compare the produced file against
+    the original and keep the smaller one, discarding the other.
+
+    This bounds the risk in decision 12 as well: with the guard in place,
+    the media step can never push a file over the limit that was under it
+    before, so the *may grow past the limit* state exists only to explain
+    a file that stays at its original size. Without the guard it is a real
+    failure the user gets no warning about.
+
+45. **`media::process_attachments_dir` takes an explicit file list.**
     Directory-wide operation is what prevents transcode from being scoped
     to a known set of files. The caller builds the list; on a resumed run
-    that list is every original still on disk, per decision 27.
+    that list is every original still on disk, per decision 28.
 
 ## Sequencing
 
@@ -433,8 +472,8 @@ This is more than one change. Suggested order, each independently
 shippable:
 
 1. **Verdict and reason vocabulary.** Read the push report for the outcome
-   (decision 21); the three-way status; the read-error fix (decision 39);
-   the closed reason set with its explicit unknown (decision 40). Fixes a
+   (decision 22); the three-way status; the read-error fix (decision 40);
+   the closed reason set with its explicit unknown (decision 41). Fixes a
    live bug where failed imports report success, and needs none of the
    rest.
 2. **The session record.** New columns, the partial unique index, the
@@ -442,10 +481,10 @@ shippable:
    resume at both gates and during `pushing`, which are the cheap cases
    and cover the logout scenario, without touching the exporters.
 3. **The gates and the screens.** Both gates, the verdict heuristic
-   (decision 12), the contract diff (decision 14), the convert/compress
-   wording (decisions 17–19), and the redesigned Import screens.
+   (decision 12), the contract diff (decision 15), the convert/compress
+   wording (decisions 18–20), and the redesigned Import screens.
 4. **The prepare restructure.** Write/transcode split, the queue and
-   writers, and the four library fixes (decisions 39–43). Largest,
+   writers, and the four library fixes (decisions 40–45). Largest,
    riskiest, and the only one that touches shared crates every exporter
    depends on.
 
@@ -454,4 +493,4 @@ resumes from the first gate onward and tells the truth about outcomes.
 Step 4 extends resume backward into prepare.
 
 Per-import delete is not in this sequence. It is separate work, named in
-the non-goals, and only decision 16's wording anticipates it.
+the non-goals, and only decision 17's wording anticipates it.
