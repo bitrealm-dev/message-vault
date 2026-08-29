@@ -53,7 +53,7 @@ const PG_FKS_DDL: &str = include_str!("../../../../../schema/sql/pg_fks.sql");
 /// `PRAGMA user_version`. Bump this whenever any `schema/sql/*.sql` file
 /// changes; a database at any other version is rebuilt empty (see
 /// [`migrate_vault_schema`]).
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// Bring the database to [`SCHEMA_VERSION`].
 ///
@@ -952,11 +952,13 @@ mod tests {
             [
                 "id",
                 "username",
-                "read_only",
                 "password_hash",
                 "preferred_name",
-                "hanko_user_id",
-                "guest_status"
+                "is_admin",
+                "disabled",
+                "can_import",
+                "can_export",
+                "can_delete"
             ]
         );
         assert_eq!(
@@ -1205,26 +1207,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn guest_status_column_exists_and_defaults_null() {
-        let (pool, _dir) = test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        ensure_accounts_schema(&mut conn).await.unwrap();
-        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'alice')")
-            .bind(A1)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        let status: Option<String> =
-            sqlx::query_scalar("SELECT guest_status FROM accounts WHERE id = $1")
-                .bind(A1)
-                .fetch_one(&mut *conn)
-                .await
-                .unwrap();
-        assert_eq!(status, None);
-    }
-
-    #[tokio::test]
-    async fn fresh_accounts_default_to_writable() {
+    async fn fresh_accounts_default_to_full_permissions() {
         let (pool, _dir) = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
         ensure_accounts_schema(&mut conn).await.unwrap();
@@ -1233,12 +1216,14 @@ mod tests {
             .execute(&mut *conn)
             .await
             .unwrap();
-        let read_only: i64 = sqlx::query_scalar("SELECT read_only FROM accounts WHERE id = $1")
-            .bind(A1)
-            .fetch_one(&mut *conn)
-            .await
-            .unwrap();
-        assert_eq!(read_only, 0);
+        let row: (i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT is_admin, can_import, can_export, can_delete FROM accounts WHERE id = $1",
+        )
+        .bind(A1)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(row, (0, 1, 1, 1));
     }
 
     #[tokio::test]

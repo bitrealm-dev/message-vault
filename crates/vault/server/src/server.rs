@@ -17,6 +17,7 @@ use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+use sqlx::AnyConnection;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
@@ -28,6 +29,7 @@ use crate::config::Config;
 use crate::db::account_profile;
 use crate::db::api_tokens;
 use crate::db::engine::{self, DbEngine};
+use crate::db::permissions::Permissions;
 use crate::db::schema;
 use crate::db::session_tokens;
 use crate::export_api::ExportQueryError;
@@ -35,10 +37,15 @@ use crate::export_api::ExportQueryError;
 /// What a Bearer credential is allowed to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthCapability {
-    /// GUI session token — full API access.
-    Full,
-    /// Named API token with import and/or export rights.
-    ApiToken(crate::db::api_tokens::ApiTokenScopes),
+    /// Signed-in session. Carries the account's own permissions.
+    Session {
+        /// The account may manage users.
+        is_admin: bool,
+        /// What the account may do.
+        permissions: Permissions,
+    },
+    /// Named API token. Already intersected with its owner's permissions.
+    ApiToken(Permissions),
 }
 
 /// Authenticated vault account from a session token or named API token.
@@ -50,66 +57,95 @@ pub struct AuthIdentity {
     pub capability: AuthCapability,
 }
 
+impl AuthIdentity {
+    /// What this credential may do, account and token already intersected.
+    pub fn permissions(&self) -> Permissions {
+        match self.capability {
+            AuthCapability::Session { permissions, .. } => permissions,
+            AuthCapability::ApiToken(permissions) => permissions,
+        }
+    }
+
+    /// True only for a signed-in administrator, never for an API token.
+    pub fn is_admin(&self) -> bool {
+        matches!(
+            self.capability,
+            AuthCapability::Session { is_admin: true, .. }
+        )
+    }
+
+    /// True when the credential is a signed-in session rather than a token.
+    pub fn is_session(&self) -> bool {
+        matches!(self.capability, AuthCapability::Session { .. })
+    }
+}
+
 /// Reject API tokens on routes that require a GUI session.
 ///
 /// # Errors
 ///
 /// Returns forbidden when the credential is a named API token.
 pub fn require_full_access(auth: &AuthIdentity) -> Result<(), ApiError> {
-    match auth.capability {
-        AuthCapability::Full => Ok(()),
-        AuthCapability::ApiToken(_) => Err(ApiError::Forbidden(
-            "this endpoint requires a signed-in session; use an API token only for import/export"
-                .into(),
-        )),
+    if auth.is_session() {
+        return Ok(());
     }
+    Err(ApiError::Forbidden(
+        "this endpoint requires a signed-in session; use an API token only for import/export"
+            .into(),
+    ))
 }
 
-/// Allow session or an API token that includes import.
+/// Allow a credential that may import.
 ///
 /// # Errors
 ///
-/// Returns forbidden when the API token does not include import.
+/// Returns forbidden when import is not permitted.
 pub fn require_import_access(auth: &AuthIdentity) -> Result<(), ApiError> {
-    match auth.capability {
-        AuthCapability::Full => Ok(()),
-        AuthCapability::ApiToken(scopes) if scopes.allows_import() => Ok(()),
-        AuthCapability::ApiToken(_) => Err(ApiError::Forbidden(
-            "this API token does not allow import".into(),
-        )),
+    if auth.permissions().import {
+        return Ok(());
     }
+    Err(ApiError::Forbidden("import is not permitted".into()))
 }
 
-/// Allow session or an API token that includes export.
+/// Allow a credential that may export.
 ///
 /// # Errors
 ///
-/// Returns forbidden when the API token does not include export.
+/// Returns forbidden when export is not permitted.
 pub fn require_export_access(auth: &AuthIdentity) -> Result<(), ApiError> {
-    match auth.capability {
-        AuthCapability::Full => Ok(()),
-        AuthCapability::ApiToken(scopes) if scopes.allows_export() => Ok(()),
-        AuthCapability::ApiToken(_) => Err(ApiError::Forbidden(
-            "this API token does not allow export".into(),
-        )),
+    if auth.permissions().export {
+        return Ok(());
     }
+    Err(ApiError::Forbidden("export is not permitted".into()))
 }
 
-/// Allow session or any API token (import, export, or both) for asset probes.
+/// Allow a credential that may import or export, for asset probes.
 ///
 /// # Errors
 ///
-/// Returns forbidden when the API token cannot access assets.
+/// Returns forbidden when neither is permitted.
 pub fn require_import_or_export_access(auth: &AuthIdentity) -> Result<(), ApiError> {
-    match auth.capability {
-        AuthCapability::Full => Ok(()),
-        AuthCapability::ApiToken(scopes) if scopes.allows_import() || scopes.allows_export() => {
-            Ok(())
-        }
-        AuthCapability::ApiToken(_) => Err(ApiError::Forbidden(
-            "this API token cannot access assets".into(),
-        )),
+    let p = auth.permissions();
+    if p.import || p.export {
+        return Ok(());
     }
+    Err(ApiError::Forbidden(
+        "this credential cannot access assets".into(),
+    ))
+}
+
+/// Allow a credential that may destroy message data.
+///
+/// # Errors
+///
+/// Returns forbidden when deletion is not permitted.
+pub fn require_delete_access(auth: &AuthIdentity) -> Result<(), ApiError> {
+    if auth.permissions().delete {
+        return Ok(());
+    }
+    Err(ApiError::Forbidden(
+        "deleting messages is not permitted for this account".into(),
+    ))
 }
 
 /// Shared server state passed to every HTTP handler.
@@ -468,25 +504,49 @@ pub async fn resolve_auth(headers: &HeaderMap, state: &AppState) -> Result<AuthI
         .acquire()
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    schema::ensure_accounts_schema(&mut conn)
+    resolve_auth_on_conn(&mut conn, &token).await
+}
+
+/// Resolve a Bearer credential on an existing connection.
+///
+/// # Errors
+///
+/// Unauthorized when the token matches nothing; forbidden when the account is
+/// disabled.
+pub async fn resolve_auth_on_conn(
+    conn: &mut AnyConnection,
+    token: &str,
+) -> Result<AuthIdentity, ApiError> {
+    schema::ensure_accounts_schema(conn)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     let resolved = if let Some(account_id) =
-        session_tokens::lookup_account_for_token(&mut conn, &token)
+        session_tokens::lookup_account_for_token(&mut *conn, token)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?
     {
+        let auth = account_profile::load_account_auth(&mut *conn, &account_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .ok_or_else(|| ApiError::Unauthorized("account no longer exists".into()))?;
         Some(AuthIdentity {
             account_id,
-            capability: AuthCapability::Full,
+            capability: AuthCapability::Session {
+                is_admin: auth.is_admin,
+                permissions: auth.permissions,
+            },
         })
-    } else if let Some(tok) = api_tokens::lookup_account_for_api_token(&mut conn, &token)
+    } else if let Some(tok) = api_tokens::lookup_account_for_api_token(&mut *conn, token)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
     {
+        let auth = account_profile::load_account_auth(&mut *conn, &tok.account_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .ok_or_else(|| ApiError::Unauthorized("account no longer exists".into()))?;
         Some(AuthIdentity {
             account_id: tok.account_id,
-            capability: AuthCapability::ApiToken(tok.scopes),
+            capability: AuthCapability::ApiToken(auth.permissions.intersect(tok.permissions)),
         })
     } else {
         None
@@ -682,6 +742,41 @@ mod tests {
     }
 
     const TEST_ACCOUNT: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+
+    /// Test database with the vault schema applied. The temp dir is returned
+    /// too: dropping it deletes the database file out from under the checked-out
+    /// connection, after which SQLite rejects writes with SQLITE_READONLY.
+    async fn test_conn() -> (TempDir, sqlx::pool::PoolConnection<sqlx::Any>) {
+        let (pool, dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        schema::ensure_vault_schema(&mut conn).await.unwrap();
+        (dir, conn)
+    }
+
+    #[tokio::test]
+    async fn api_token_cannot_exceed_its_owner() {
+        let (_dir, mut conn) = test_conn().await;
+        account_profile::insert_account(&mut conn, TEST_ACCOUNT, "alice", None, None)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE accounts SET can_import = 0 WHERE id = $1")
+            .bind(TEST_ACCOUNT)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let created =
+            api_tokens::create_api_token(&mut conn, TEST_ACCOUNT, "tool", Permissions::all(), None)
+                .await
+                .unwrap();
+
+        let identity = resolve_auth_on_conn(&mut conn, &created.5).await.unwrap();
+
+        assert!(
+            !identity.permissions().import,
+            "the account lost import, so its token must not have it"
+        );
+        assert!(identity.permissions().export);
+    }
 
     async fn test_state() -> (TempDir, AppState, String, i64) {
         let (pool, tmp) = crate::db::engine::test_pool().await;

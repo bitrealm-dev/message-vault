@@ -56,7 +56,7 @@ async fn query_account_strings(
 /// Ensure `accounts` row exists (stub username = id) for CLI imports.
 pub async fn ensure_account_row(conn: &mut AnyConnection, account_id: &str) -> Result<()> {
     sqlx::query(
-        "INSERT INTO accounts (id, username, read_only) VALUES ($1, $1, 0)
+        "INSERT INTO accounts (id, username) VALUES ($1, $1)
          ON CONFLICT DO NOTHING",
     )
     .bind(account_id)
@@ -230,14 +230,37 @@ pub fn is_demo_account(account_id: &str) -> bool {
     account_id == DEMO_ACCOUNT_ID
 }
 
-/// Whether the account row is marked read-only (demo seed sets this).
-pub async fn account_is_read_only(conn: &mut AnyConnection, account_id: &str) -> Result<bool> {
+/// An account's administrative flag, disabled flag, and permissions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccountAuth {
+    /// May manage users.
+    pub is_admin: bool,
+    /// May not sign in; existing sessions are refused.
+    pub disabled: bool,
+    /// What this account may do.
+    pub permissions: crate::db::permissions::Permissions,
+}
+
+/// Load one account's authorization row. `None` when the account is gone.
+pub async fn load_account_auth(
+    conn: &mut AnyConnection,
+    account_id: &str,
+) -> Result<Option<AccountAuth>> {
     schema::ensure_accounts_schema(conn).await?;
-    let flag: Option<i64> = sqlx::query_scalar("SELECT read_only FROM accounts WHERE id = $1")
-        .bind(account_id)
-        .fetch_optional(&mut *conn)
-        .await?;
-    Ok(flag.unwrap_or(0) != 0)
+    let row: Option<(i64, i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT is_admin, disabled, can_import, can_export, can_delete
+         FROM accounts WHERE id = $1",
+    )
+    .bind(account_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(
+        row.map(|(is_admin, disabled, import, export, delete)| AccountAuth {
+            is_admin: is_admin != 0,
+            disabled: disabled != 0,
+            permissions: crate::db::permissions::Permissions::from_ints(import, export, delete),
+        }),
+    )
 }
 
 /// Counts from deleting one account's messages.
@@ -313,21 +336,21 @@ pub async fn load_preferred_name(
 }
 
 /// Insert a new account row. All fields except id and username are optional.
+/// The new account gets every permission (`Permissions::all()`); narrow it
+/// afterward if needed.
 pub async fn insert_account(
     conn: &mut AnyConnection,
     id: &str,
     username: &str,
     password_hash: Option<&str>,
     preferred_name: Option<&str>,
-    read_only: bool,
 ) -> Result<()> {
     schema::ensure_accounts_schema(conn).await?;
     sqlx::query(
-        "INSERT INTO accounts (id, username, read_only, password_hash, preferred_name) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO accounts (id, username, password_hash, preferred_name) VALUES ($1, $2, $3, $4)",
     )
     .bind(id)
     .bind(username)
-    .bind(read_only as i32)
     .bind(password_hash)
     .bind(preferred_name)
     .execute(&mut *conn)
@@ -450,7 +473,7 @@ mod tests {
         let (pool, dir) = crate::db::engine::test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
         schema::ensure_vault_schema(&mut conn).await.unwrap();
-        sqlx::query("INSERT INTO accounts (id, username, read_only) VALUES ($1, $2, 0)")
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, $2)")
             .bind(ACCOUNT_ID)
             .bind("Alice")
             .execute(&mut *conn)

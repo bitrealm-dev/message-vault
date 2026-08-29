@@ -998,7 +998,7 @@ mod tests {
 
     async fn setup_db(conn: &mut AnyConnection) {
         schema::ensure_vault_schema(conn).await.unwrap();
-        sqlx::query("INSERT INTO accounts (id, username, read_only) VALUES ($1, 'test', 0)")
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'test')")
             .bind(TEST_ACCOUNT_ID)
             .execute(&mut *conn)
             .await

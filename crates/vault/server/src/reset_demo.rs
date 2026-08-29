@@ -59,7 +59,6 @@ struct DemoOwner {
 #[derive(Debug, Deserialize)]
 struct DemoAccount {
     username: String,
-    read_only: bool,
 }
 
 struct PreparedBundle {
@@ -1051,19 +1050,19 @@ async fn seed_demo_account_on_conn(
     sqlx::query(
         r#"
         INSERT INTO accounts (
-            id, username, read_only, password_hash, preferred_name
+            id, username, password_hash, preferred_name, can_import, can_export, can_delete
         )
-        VALUES ($1, $2, $3, NULL, $4)
+        VALUES ($1, $2, NULL, $3, 0, 0, 0)
         ON CONFLICT(id) DO UPDATE SET
             username = excluded.username,
-            read_only = excluded.read_only,
-            password_hash = NULL,
-            preferred_name = excluded.preferred_name
+            preferred_name = excluded.preferred_name,
+            can_import = excluded.can_import,
+            can_export = excluded.can_export,
+            can_delete = excluded.can_delete
         "#,
     )
     .bind(account_id)
     .bind(&seed.account.username)
-    .bind(seed.account.read_only as i64)
     .bind(&seed.owner.display_name)
     .execute(&mut *conn)
     .await?;
@@ -1235,7 +1234,6 @@ emails = ["demo.ingest@example.com"]
 
 [account]
 username = "demo"
-read_only = true
 "#,
         )
         .expect("write seed.toml");
@@ -1401,7 +1399,6 @@ read_only = true
         assert_eq!(*handle_type, HandleType::Phone);
         assert_eq!(seed.owner.emails, vec!["demo.ingest@example.com"]);
         assert_eq!(seed.account.username, "demo");
-        assert!(seed.account.read_only);
     }
 
     #[tokio::test]

@@ -27,8 +27,14 @@ pub struct AccountProfileResponse {
     pub emails: Vec<String>,
     /// True for the seeded demo account (cannot be deleted).
     pub is_demo: bool,
-    /// True when the account is marked read-only.
-    pub read_only: bool,
+    /// May manage users.
+    pub is_admin: bool,
+    /// May call the import endpoints.
+    pub can_import: bool,
+    /// May call the export endpoints.
+    pub can_export: bool,
+    /// May destroy message data.
+    pub can_delete: bool,
 }
 
 /// Load the profile JSON for `account_id`.
@@ -41,7 +47,9 @@ async fn load_response(
         .unwrap_or_else(|| account_id.to_string());
     let preferred_name = account_profile::load_preferred_name(conn, account_id).await?;
     let profile = account_profile::load_account_profile(conn, account_id).await?;
-    let read_only = account_profile::account_is_read_only(conn, account_id).await?;
+    let auth = account_profile::load_account_auth(conn, account_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("account no longer exists"))?;
     Ok(AccountProfileResponse {
         account_id: account_id.to_string(),
         username,
@@ -49,7 +57,10 @@ async fn load_response(
         phones: profile.phones,
         emails: profile.emails,
         is_demo: account_profile::is_demo_account(account_id),
-        read_only,
+        is_admin: auth.is_admin,
+        can_import: auth.permissions.import,
+        can_export: auth.permissions.export,
+        can_delete: auth.permissions.delete,
     })
 }
 
@@ -415,7 +426,7 @@ mod tests {
             .unwrap();
         let account_id = "00000000-0000-4000-8000-000000000001".to_string();
         let mut conn = pool.acquire().await.unwrap();
-        sqlx::query("INSERT INTO accounts (id, username, read_only) VALUES ($1, $2, 0)")
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, $2)")
             .bind(&account_id)
             .bind("alice")
             .execute(&mut *conn)

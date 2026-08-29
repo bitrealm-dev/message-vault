@@ -3436,12 +3436,27 @@
           "phones",
           "emails",
           "is_demo",
-          "read_only"
+          "is_admin",
+          "can_import",
+          "can_export",
+          "can_delete"
         ],
         "properties": {
           "account_id": {
             "type": "string",
             "description": "The signed-in account id."
+          },
+          "can_delete": {
+            "type": "boolean",
+            "description": "May destroy message data."
+          },
+          "can_export": {
+            "type": "boolean",
+            "description": "May call the export endpoints."
+          },
+          "can_import": {
+            "type": "boolean",
+            "description": "May call the import endpoints."
           },
           "emails": {
             "type": "array",
@@ -3449,6 +3464,10 @@
               "type": "string"
             },
             "description": "Email addresses linked to the account."
+          },
+          "is_admin": {
+            "type": "boolean",
+            "description": "May manage users."
           },
           "is_demo": {
             "type": "boolean",
@@ -3467,10 +3486,6 @@
               "null"
             ],
             "description": "Display name, when set."
-          },
-          "read_only": {
-            "type": "boolean",
-            "description": "True when the account is marked read-only."
           },
           "username": {
             "type": "string",
@@ -3532,16 +3547,30 @@
       },
       "ApiTokenItem": {
         "type": "object",
-        "description": "One named API token as shown in Settings: label, scopes, and masked secret.",
+        "description": "One named API token as shown in Settings: label, permissions, and masked secret.",
         "required": [
           "id",
           "label",
-          "scopes",
+          "can_import",
+          "can_export",
+          "can_delete",
           "token_hint",
           "created_at",
           "disabled"
         ],
         "properties": {
+          "can_delete": {
+            "type": "boolean",
+            "description": "May destroy message data."
+          },
+          "can_export": {
+            "type": "boolean",
+            "description": "May call the export endpoints."
+          },
+          "can_import": {
+            "type": "boolean",
+            "description": "May call the import endpoints."
+          },
           "created_at": {
             "type": "string",
             "description": "Creation time as a Unix-seconds string."
@@ -3571,10 +3600,6 @@
               "null"
             ],
             "description": "Unix-seconds string of last use; absent when never used."
-          },
-          "scopes": {
-            "type": "string",
-            "description": "Scope string (`import`, `export`, or `both`)."
           },
           "token_hint": {
             "type": "string",
@@ -4682,11 +4707,23 @@
       },
       "CreateApiTokenRequest": {
         "type": "object",
-        "description": "Body for creating a token: label, scopes, optional expiry.",
+        "description": "Body for creating a token: label, permissions, optional expiry.",
         "required": [
           "label"
         ],
         "properties": {
+          "can_delete": {
+            "type": "boolean",
+            "description": "May destroy message data. Default false — asked for, never inherited."
+          },
+          "can_export": {
+            "type": "boolean",
+            "description": "May call the export endpoints. Default true."
+          },
+          "can_import": {
+            "type": "boolean",
+            "description": "May call the import endpoints. Default true."
+          },
           "expires_in_days": {
             "type": [
               "integer",
@@ -4699,10 +4736,6 @@
           "label": {
             "type": "string",
             "description": "User-chosen label shown in Settings."
-          },
-          "scopes": {
-            "type": "string",
-            "description": "`import`, `export`, or `both` (default `both`)."
           }
         }
       },
@@ -4712,12 +4745,26 @@
         "required": [
           "id",
           "label",
-          "scopes",
+          "can_import",
+          "can_export",
+          "can_delete",
           "created_at",
           "token",
           "token_hint"
         ],
         "properties": {
+          "can_delete": {
+            "type": "boolean",
+            "description": "May destroy message data."
+          },
+          "can_export": {
+            "type": "boolean",
+            "description": "May call the export endpoints."
+          },
+          "can_import": {
+            "type": "boolean",
+            "description": "May call the import endpoints."
+          },
           "created_at": {
             "type": "string",
             "description": "Creation time as a Unix-seconds string."
@@ -4736,10 +4783,6 @@
           "label": {
             "type": "string",
             "description": "User-chosen label."
-          },
-          "scopes": {
-            "type": "string",
-            "description": "Scope string (`import`, `export`, or `both`)."
           },
           "token": {
             "type": "string",

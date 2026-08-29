@@ -5,19 +5,24 @@ use axum::extract::{Path as AxumPath, State};
 use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
 
-use crate::db::api_tokens::{self, ApiTokenScopes};
+use crate::db::api_tokens;
+use crate::db::permissions::Permissions;
 use crate::db::schema;
 use crate::server::{ApiError, AppState, require_full_access, resolve_auth};
 
-/// One named API token as shown in Settings: label, scopes, and masked secret.
+/// One named API token as shown in Settings: label, permissions, and masked secret.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ApiTokenItem {
     /// Token id (the secret itself is stored hashed).
     pub id: String,
     /// User-chosen label shown in Settings.
     pub label: String,
-    /// Scope string (`import`, `export`, or `both`).
-    pub scopes: String,
+    /// May call the import endpoints.
+    pub can_import: bool,
+    /// May call the export endpoints.
+    pub can_export: bool,
+    /// May destroy message data.
+    pub can_delete: bool,
     /// Masked secret for Settings (e.g. `mv-api-Sd..mE`).
     pub token_hint: String,
     /// Creation time as a Unix-seconds string.
@@ -37,7 +42,9 @@ impl From<api_tokens::ApiTokenRow> for ApiTokenItem {
         Self {
             id: row.id,
             label: row.label,
-            scopes: row.scopes.as_str().to_string(),
+            can_import: row.permissions.import,
+            can_export: row.permissions.export,
+            can_delete: row.permissions.delete,
             token_hint: row.token_hint,
             created_at: row.created_at,
             last_accessed_at: row.last_accessed_at,
@@ -63,21 +70,27 @@ pub struct ListApiTokensResponse {
     pub items: Vec<ApiTokenItem>,
 }
 
-/// Body for creating a token: label, scopes, optional expiry.
+/// Body for creating a token: label, permissions, optional expiry.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateApiTokenRequest {
     /// User-chosen label shown in Settings.
     pub label: String,
-    /// `import`, `export`, or `both` (default `both`).
-    #[serde(default = "default_scopes")]
-    pub scopes: String,
+    /// May call the import endpoints. Default true.
+    #[serde(default = "default_true")]
+    pub can_import: bool,
+    /// May call the export endpoints. Default true.
+    #[serde(default = "default_true")]
+    pub can_export: bool,
+    /// May destroy message data. Default false — asked for, never inherited.
+    #[serde(default)]
+    pub can_delete: bool,
     /// Days until expiry. Omit for the default (365 days). Pass `0` for no expiry.
     #[serde(default)]
     pub expires_in_days: Option<u64>,
 }
 
-fn default_scopes() -> String {
-    "both".into()
+const fn default_true() -> bool {
+    true
 }
 
 /// The created token, including its plaintext secret (returned once).
@@ -87,8 +100,12 @@ pub struct CreateApiTokenResponse {
     pub id: String,
     /// User-chosen label.
     pub label: String,
-    /// Scope string (`import`, `export`, or `both`).
-    pub scopes: String,
+    /// May call the import endpoints.
+    pub can_import: bool,
+    /// May call the export endpoints.
+    pub can_export: bool,
+    /// May destroy message data.
+    pub can_delete: bool,
     /// Creation time as a Unix-seconds string.
     pub created_at: String,
     /// Unix-seconds expiry; absent means no expiry.
@@ -185,8 +202,11 @@ pub async fn create_api_token_handler(
     require_full_access(&auth)?;
     let account_id = auth.account_id;
     let label = req.label;
-    let scopes =
-        ApiTokenScopes::parse(&req.scopes).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let permissions = Permissions {
+        import: req.can_import,
+        export: req.can_export,
+        delete: req.can_delete,
+    };
     let expires_in_days = req.expires_in_days;
 
     let mut conn = state
@@ -198,14 +218,16 @@ pub async fn create_api_token_handler(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     let created =
-        api_tokens::create_api_token(&mut conn, &account_id, &label, scopes, expires_in_days)
+        api_tokens::create_api_token(&mut conn, &account_id, &label, permissions, expires_in_days)
             .await
             .map_err(map_label_error)?;
 
     Ok(Json(CreateApiTokenResponse {
         id: created.0,
         label: created.1,
-        scopes: created.2.as_str().to_string(),
+        can_import: created.2.import,
+        can_export: created.2.export,
+        can_delete: created.2.delete,
         created_at: created.3,
         expires_at: created.4,
         token_hint: api_tokens::mask_api_token(&created.5),

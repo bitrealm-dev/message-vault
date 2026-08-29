@@ -880,7 +880,7 @@ mod tests {
             .await
             .unwrap();
         let mut conn = pool.acquire().await.unwrap();
-        sqlx::query("INSERT INTO accounts (id, username, read_only) VALUES ('acc', 'demo', 0)")
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ('acc', 'demo')")
             .execute(&mut *conn)
             .await
             .unwrap();
@@ -953,7 +953,7 @@ mod tests {
         let mut conn = pool.acquire().await.unwrap();
         sqlx::query(&format!(
             r#"
-            INSERT INTO accounts (id, username, read_only) VALUES ('acc', 'demo', 0);
+            INSERT INTO accounts (id, username) VALUES ('acc', 'demo');
             INSERT INTO handles (account_id, raw, normalized, handle_type, service)
                 VALUES ('acc', '+1', '+1', 'phone', 'phone');
             INSERT INTO conversations (id, account_id, chat_handle_id, conversation_type, source_file)

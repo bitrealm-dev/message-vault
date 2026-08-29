@@ -4,16 +4,20 @@ CREATE TABLE IF NOT EXISTS accounts (
     id TEXT PRIMARY KEY,
     -- Login user id; unique case-insensitively.
     username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    -- 1 = demo/read-only account that must not mutate data; 0 = normal.
-    read_only INTEGER NOT NULL DEFAULT 0,
     -- Password verifier hash; NULL when password auth is unused.
     password_hash TEXT,
     -- Display name for “you” in the UI.
     preferred_name TEXT,
-    -- Optional Hanko identity provider user id.
-    hanko_user_id TEXT,
-    -- 'ready' | 'assigned' for hosted guest copies; NULL for every other account.
-    guest_status TEXT
+    -- 1 = may manage users through /v1/admin/*; 0 = ordinary account.
+    is_admin INTEGER NOT NULL DEFAULT 0,
+    -- 1 = may not sign in and existing sessions are refused; 0 = active.
+    disabled INTEGER NOT NULL DEFAULT 0,
+    -- 1 = may call the import endpoints.
+    can_import INTEGER NOT NULL DEFAULT 1,
+    -- 1 = may call the export endpoints.
+    can_export INTEGER NOT NULL DEFAULT 1,
+    -- 1 = may destroy message data (trash, purge, delete-messages, attachments).
+    can_delete INTEGER NOT NULL DEFAULT 1
 );
 
 -- Email addresses attached to an account (not used for login).
@@ -53,7 +57,6 @@ CREATE TABLE IF NOT EXISTS account_session_tokens (
 );
 
 -- Named CLI API tokens (many per account). Prefix: mv-api-
--- scopes: 'import' | 'export' | 'both'
 CREATE TABLE IF NOT EXISTS account_api_tokens (
     -- Opaque token id (primary key).
     id TEXT PRIMARY KEY,
@@ -63,8 +66,12 @@ CREATE TABLE IF NOT EXISTS account_api_tokens (
     label TEXT NOT NULL,
     -- Hash of the API Bearer secret (never store the raw token).
     token_hash TEXT NOT NULL UNIQUE,
-    -- Allowed operations: 'import' | 'export' | 'both'.
-    scopes TEXT NOT NULL DEFAULT 'both',
+    -- 1 = this token may call the import endpoints.
+    can_import INTEGER NOT NULL DEFAULT 1,
+    -- 1 = this token may call the export endpoints.
+    can_export INTEGER NOT NULL DEFAULT 1,
+    -- 1 = this token may destroy message data. Off unless asked for.
+    can_delete INTEGER NOT NULL DEFAULT 0,
     -- Masked form for Settings (e.g. mv-api-Sd..mE). Not enough to recover the secret.
     token_hint TEXT NOT NULL DEFAULT 'mv-api-..',
     -- Unix-seconds string for when this API token was created.
@@ -160,7 +167,3 @@ CREATE TABLE IF NOT EXISTS vault_import_issues (
 
 CREATE INDEX IF NOT EXISTS ix_vault_import_issues_import
     ON vault_import_issues(import_id);
-
-CREATE UNIQUE INDEX IF NOT EXISTS ix_accounts_hanko_user_id
-    ON accounts(hanko_user_id)
-    WHERE hanko_user_id IS NOT NULL AND hanko_user_id != '';

@@ -1409,7 +1409,7 @@ mod tests {
             .await
             .unwrap();
         let mut conn = pool.acquire().await.unwrap();
-        sqlx::query("INSERT INTO accounts (id, username, read_only) VALUES ($1, 'alice', 0)")
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'alice')")
             .bind("a1")
             .execute(&mut *conn)
             .await
@@ -1843,7 +1843,7 @@ mod tests {
     async fn export_does_not_leak_other_account_messages() {
         let (pool, _dir) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
-        sqlx::query("INSERT INTO accounts (id, username, read_only) VALUES ('a2', 'bob', 0)")
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ('a2', 'bob')")
             .execute(&mut *conn)
             .await
             .unwrap();

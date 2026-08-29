@@ -421,7 +421,6 @@ pub async fn register_handler(
         &username,
         password_hash.as_deref(),
         preferred_name.as_deref(),
-        false, // read_only
     )
     .await
     .map_err(|e| ApiError::BadRequest(e.to_string()))?;
@@ -735,8 +734,8 @@ pub async fn delete_account_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::api_tokens::ApiTokenScopes;
     use crate::db::engine;
+    use crate::db::permissions::Permissions;
 
     const TEST_ACCOUNT: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const OTHER_ACCOUNT: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -762,26 +761,12 @@ mod tests {
         let mut conn = pool.acquire().await.unwrap();
         schema::ensure_vault_schema(&mut conn).await.unwrap();
         let old_hash = hash_password("old-password").unwrap();
-        account_profile::insert_account(
-            &mut conn,
-            TEST_ACCOUNT,
-            "alice",
-            Some(&old_hash),
-            None,
-            false,
-        )
-        .await
-        .unwrap();
-        account_profile::insert_account(
-            &mut conn,
-            OTHER_ACCOUNT,
-            "bob",
-            Some(&old_hash),
-            None,
-            false,
-        )
-        .await
-        .unwrap();
+        account_profile::insert_account(&mut conn, TEST_ACCOUNT, "alice", Some(&old_hash), None)
+            .await
+            .unwrap();
+        account_profile::insert_account(&mut conn, OTHER_ACCOUNT, "bob", Some(&old_hash), None)
+            .await
+            .unwrap();
         let old_session = session_tokens::insert_account_session_token(&mut conn, TEST_ACCOUNT)
             .await
             .unwrap();
@@ -789,7 +774,7 @@ mod tests {
             &mut conn,
             TEST_ACCOUNT,
             "backup client",
-            ApiTokenScopes::Both,
+            Permissions::all(),
             None,
         )
         .await
@@ -798,7 +783,11 @@ mod tests {
             &mut conn,
             TEST_ACCOUNT,
             "export client",
-            ApiTokenScopes::Export,
+            Permissions {
+                import: false,
+                export: true,
+                delete: false,
+            },
             None,
         )
         .await
@@ -807,7 +796,7 @@ mod tests {
             &mut conn,
             OTHER_ACCOUNT,
             "other account client",
-            ApiTokenScopes::Both,
+            Permissions::all(),
             None,
         )
         .await
@@ -886,7 +875,7 @@ mod tests {
     #[tokio::test]
     async fn logout_on_conn_leaves_registered_account() {
         let (_dir, mut conn) = test_conn().await;
-        account_profile::insert_account(&mut conn, TEST_ACCOUNT, "alice", None, None, false)
+        account_profile::insert_account(&mut conn, TEST_ACCOUNT, "alice", None, None)
             .await
             .unwrap();
         let token = session_tokens::insert_account_session_token(&mut conn, TEST_ACCOUNT)
@@ -913,7 +902,7 @@ mod tests {
     #[tokio::test]
     async fn insert_account_takes_no_hanko_id() {
         let (_dir, mut conn) = test_conn().await;
-        account_profile::insert_account(&mut conn, TEST_ACCOUNT, "alice", None, None, false)
+        account_profile::insert_account(&mut conn, TEST_ACCOUNT, "alice", None, None)
             .await
             .unwrap();
         assert_eq!(
