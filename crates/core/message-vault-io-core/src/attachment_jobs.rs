@@ -34,12 +34,16 @@ pub struct AttachmentJob<'a> {
 /// Load, write, and optionally convert each attachment.
 ///
 /// `load(i)` returns `Ok(None)` when the source is missing. `Ok(Some(bytes))`
-/// is the file to stage. Cancel is checked before each job.
+/// is the file to stage. An `Err` from `load(i)` other than `"canceled"` is
+/// caught here and treated the same as a missing source: the attachment gets
+/// `missing_reason = "file_missing"` and the run continues rather than
+/// aborting. Cancel is checked before each job.
 ///
 /// # Errors
 ///
-/// Returns `"canceled"` when the flag is set before a job starts. Returns an
-/// I/O or convert error string when the staging directory cannot be used.
+/// Returns `"canceled"` when the flag is set before a job starts, or when
+/// `load(i)` itself returns `"canceled"`. Returns an I/O or convert error
+/// string when the staging directory cannot be used.
 pub fn run_attachment_jobs(
     jobs: &mut [AttachmentJob<'_>],
     attachments_dir: &Path,

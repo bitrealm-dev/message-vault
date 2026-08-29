@@ -294,7 +294,17 @@ fn stage_conversation_attachments(
         &compress,
         |i| match loads.get(i) {
             Some(AttachmentLoad::Path { path, .. }) => {
-                let bytes = read_resolved_attachment(session, path).map_err(|e| e.to_string())?;
+                let bytes = read_resolved_attachment(session, path).map_err(|e| {
+                    // run_attachment_jobs turns any Err other than "canceled" into a
+                    // file_missing attachment and moves on. Log the real reason here
+                    // first, or a systemic failure (a revoked Full Disk Access, a
+                    // failing disk) degrades into a run's worth of unexplained chips.
+                    session.options.emit_log(format!(
+                        "warning: attachment {} could not be read: {e}",
+                        path.display()
+                    ));
+                    e.to_string()
+                })?;
                 Ok((!bytes.is_empty()).then_some(bytes))
             }
             Some(AttachmentLoad::Bytes(bytes)) => Ok(Some(bytes.clone())),
