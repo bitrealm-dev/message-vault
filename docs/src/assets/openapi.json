@@ -36,7 +36,7 @@
         "tags": [
           "Account"
         ],
-        "summary": "List the account's named API tokens with their scopes and masked secrets.",
+        "summary": "List the account's named API tokens with their permissions and masked secrets.",
         "operationId": "list_api_tokens_handler",
         "responses": {
           "200": {

@@ -29,6 +29,8 @@ pub(crate) mod profile;
 pub(crate) mod reset_demo;
 pub(crate) mod search_query;
 pub(crate) mod server;
+#[cfg(test)]
+pub mod test_support;
 pub(crate) mod thread_tags_api;
 
 pub use server::{ApiError, AppState, AuthCapability, AuthIdentity, ErrorBody, resolve_auth, run};

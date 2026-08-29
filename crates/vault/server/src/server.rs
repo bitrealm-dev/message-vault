@@ -719,6 +719,41 @@ pub(crate) async fn stream_field_to_file(
     Ok(written)
 }
 
+/// Build the `AppState` every test in this crate drives: a real `Config`
+/// rooted at `data_dir` (with a sibling `vault.db` path that nothing in the
+/// test suite reads from disk — queries go through `pool`), the given pool,
+/// and default upload limits. `#[cfg(test)]`-gated so it never ships in a
+/// release build; `pub(crate)` so `test_support` and the other test modules
+/// in this crate can reach it.
+#[cfg(test)]
+pub(crate) async fn test_app_state(pool: sqlx::AnyPool, data_dir: &Path) -> AppState {
+    AppState {
+        cfg: Arc::new(crate::config::Config {
+            paths: crate::config::PathsConfig {
+                db: data_dir.join("vault.db"),
+                data_dir: data_dir.to_path_buf(),
+                assets_dir: "assets".into(),
+                assets_converted_dir: "assets_converted".into(),
+            },
+            server: Some(crate::config::ServerConfig {
+                bind: "127.0.0.1:0".into(),
+                asset_max_bytes: 8 * 1024 * 1024,
+                asset_part_size: 1024 * 1024,
+                asset_hash_threshold_bytes: 1024 * 1024,
+                cors_origins: Vec::new(),
+                openapi_ui: false,
+            }),
+            database: crate::config::DatabaseConfig::default(),
+        }),
+        db: pool,
+        db_engine: DbEngine::Sqlite,
+        account_import_locks: Arc::new(Mutex::new(HashMap::new())),
+        asset_complete_locks: Arc::new(Mutex::new(HashMap::new())),
+        upload_limits: asset_uploads::UploadLimits::default(),
+        max_body_bytes: asset_uploads::DEFAULT_MAX_BYTES as usize,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -780,7 +815,6 @@ mod tests {
 
     async fn test_state() -> (TempDir, AppState, String, i64) {
         let (pool, tmp) = crate::db::engine::test_pool().await;
-        let db_path = tmp.path().join("vault.db");
         let data_dir = tmp.path().join("data");
         {
             let mut conn = pool.acquire().await.unwrap();
@@ -806,31 +840,7 @@ mod tests {
         .await
         .unwrap();
 
-        let state = AppState {
-            cfg: Arc::new(crate::config::Config {
-                paths: crate::config::PathsConfig {
-                    db: db_path,
-                    data_dir,
-                    assets_dir: "assets".into(),
-                    assets_converted_dir: "assets_converted".into(),
-                },
-                server: Some(crate::config::ServerConfig {
-                    bind: "127.0.0.1:0".into(),
-                    asset_max_bytes: 8 * 1024 * 1024,
-                    asset_part_size: 1024 * 1024,
-                    asset_hash_threshold_bytes: 1024 * 1024,
-                    cors_origins: Vec::new(),
-                    openapi_ui: false,
-                }),
-                database: crate::config::DatabaseConfig::default(),
-            }),
-            db: pool,
-            db_engine: DbEngine::Sqlite,
-            account_import_locks: Arc::new(Mutex::new(HashMap::new())),
-            asset_complete_locks: Arc::new(Mutex::new(HashMap::new())),
-            upload_limits: asset_uploads::UploadLimits::default(),
-            max_body_bytes: asset_uploads::DEFAULT_MAX_BYTES as usize,
-        };
+        let state = test_app_state(pool, &data_dir).await;
 
         (tmp, state, token, import_id)
     }

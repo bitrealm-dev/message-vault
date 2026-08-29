@@ -230,6 +230,48 @@ pub fn is_demo_account(account_id: &str) -> bool {
     account_id == DEMO_ACCOUNT_ID
 }
 
+/// True when the vault holds no account a person registered — the demo account
+/// does not count, so a `--reset-demo` vault still grants admin to its first
+/// real user.
+pub async fn vault_has_no_real_accounts(conn: &mut AnyConnection) -> Result<bool> {
+    schema::ensure_accounts_schema(conn).await?;
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE id != $1")
+        .bind(DEMO_ACCOUNT_ID)
+        .fetch_one(&mut *conn)
+        .await?;
+    Ok(count == 0)
+}
+
+/// True when `account_id` is an administrator and no other account is.
+pub async fn is_last_admin(conn: &mut AnyConnection, account_id: &str) -> Result<bool> {
+    schema::ensure_accounts_schema(conn).await?;
+    let others: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE is_admin = 1 AND id != $1")
+            .bind(account_id)
+            .fetch_one(&mut *conn)
+            .await?;
+    if others > 0 {
+        return Ok(false);
+    }
+    let self_admin: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE is_admin = 1 AND id = $1")
+            .bind(account_id)
+            .fetch_one(&mut *conn)
+            .await?;
+    Ok(self_admin > 0)
+}
+
+/// Grant or revoke the administrative flag.
+pub async fn set_admin(conn: &mut AnyConnection, account_id: &str, is_admin: bool) -> Result<()> {
+    schema::ensure_accounts_schema(conn).await?;
+    sqlx::query("UPDATE accounts SET is_admin = $1 WHERE id = $2")
+        .bind(is_admin as i32)
+        .bind(account_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
 /// An account's administrative flag, disabled flag, and permissions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AccountAuth {

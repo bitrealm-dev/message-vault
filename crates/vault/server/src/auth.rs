@@ -415,6 +415,10 @@ pub async fn register_handler(
         )));
     }
 
+    let first_account = account_profile::vault_has_no_real_accounts(&mut tx)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
     account_profile::insert_account(
         &mut tx,
         &account_id,
@@ -424,6 +428,12 @@ pub async fn register_handler(
     )
     .await
     .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+
+    if first_account {
+        account_profile::set_admin(&mut tx, &account_id, true)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+    }
 
     if let Some(ref phone) = phone {
         account_profile::upsert_account_phone(&mut tx, &account_id, phone)
@@ -736,6 +746,7 @@ mod tests {
     use super::*;
     use crate::db::engine;
     use crate::db::permissions::Permissions;
+    use crate::test_support::*;
 
     const TEST_ACCOUNT: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const OTHER_ACCOUNT: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -748,6 +759,72 @@ mod tests {
         let mut conn = pool.acquire().await.unwrap();
         schema::ensure_vault_schema(&mut conn).await.unwrap();
         (dir, conn)
+    }
+
+    #[tokio::test]
+    async fn first_real_account_becomes_admin_and_second_does_not() {
+        let (_dir, mut conn) = test_conn().await;
+
+        // The demo account exists first and must not count.
+        account_profile::insert_account(
+            &mut conn,
+            account_profile::DEMO_ACCOUNT_ID,
+            "demo",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            account_profile::vault_has_no_real_accounts(&mut conn)
+                .await
+                .unwrap(),
+            "the demo account must not occupy first place"
+        );
+
+        account_profile::insert_account(&mut conn, "acct-1", "alice", None, None)
+            .await
+            .unwrap();
+        assert!(
+            !account_profile::vault_has_no_real_accounts(&mut conn)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn last_admin_is_protected() {
+        let (_dir, mut conn) = test_conn().await;
+        account_profile::insert_account(&mut conn, "acct-1", "alice", None, None)
+            .await
+            .unwrap();
+        account_profile::set_admin(&mut conn, "acct-1", true)
+            .await
+            .unwrap();
+        account_profile::insert_account(&mut conn, "acct-2", "bob", None, None)
+            .await
+            .unwrap();
+
+        assert!(
+            account_profile::is_last_admin(&mut conn, "acct-1")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !account_profile::is_last_admin(&mut conn, "acct-2")
+                .await
+                .unwrap()
+        );
+
+        account_profile::set_admin(&mut conn, "acct-2", true)
+            .await
+            .unwrap();
+        assert!(
+            !account_profile::is_last_admin(&mut conn, "acct-1")
+                .await
+                .unwrap(),
+            "with two admins neither is the last"
+        );
     }
 
     async fn password_change_setup() -> (
@@ -963,6 +1040,31 @@ mod tests {
                 .unwrap()
                 .account_id,
             OTHER_ACCOUNT
+        );
+    }
+
+    #[tokio::test]
+    async fn register_grants_admin_to_the_first_user_only() {
+        let vault = test_vault().await;
+        let state = vault.state.clone();
+
+        let first = register_via_api(&state, "alice", "hunter2hunter2").await;
+        let second = register_via_api(&state, "bob", "hunter2hunter2").await;
+
+        let mut conn = state.db.acquire().await.unwrap();
+        assert!(
+            account_profile::load_account_auth(&mut conn, &first.account_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_admin
+        );
+        assert!(
+            !account_profile::load_account_auth(&mut conn, &second.account_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_admin
         );
     }
 }
