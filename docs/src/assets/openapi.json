@@ -515,6 +515,429 @@
         ]
       }
     },
+    "/v1/admin/users": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "List every account with its flags, message count, and storage use.",
+        "operationId": "list_users_handler",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListUsersResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Create an account as an administrator. Never grants the first-account\nadministrator flag automatically — this endpoint could not have been\ncalled unless an administrator already exists.",
+        "operationId": "create_user_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUser"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/users/{id}": {
+      "delete": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Permanently delete an account: login, profile, contacts, and every\nmessage it owns. Refuses (`400`) deleting the vault's last administrator.",
+        "operationId": "delete_user_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account id to delete",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Change an account's administrative, disabled, or permission flags.",
+        "description": "Refuses (`400`) a request that would demote, disable, or otherwise leave\nthe vault without an administrator.",
+        "operationId": "patch_user_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account id to modify",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchUserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUser"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/users/{id}/messages": {
+      "delete": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Destroy one account's conversations, messages, and attachments. The\naccount itself, its contacts, and its login survive. Refuses (`400`)\nnothing here — deleting messages never affects the last-admin rule.",
+        "operationId": "delete_user_messages_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account whose messages are destroyed",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteMessagesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/users/{id}/password": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Set an account's password as an administrator. Does not invalidate that\naccount's existing session.",
+        "operationId": "set_user_password_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account id whose password is set",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/assets/{sha256}": {
       "get": {
         "tags": [
@@ -3555,6 +3978,61 @@
           }
         }
       },
+      "AdminUser": {
+        "type": "object",
+        "description": "One account as an administrator sees it.",
+        "required": [
+          "account_id",
+          "username",
+          "is_admin",
+          "disabled",
+          "can_import",
+          "can_export",
+          "can_delete",
+          "message_count",
+          "storage_bytes"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "description": "Account id."
+          },
+          "can_delete": {
+            "type": "boolean",
+            "description": "May destroy message data."
+          },
+          "can_export": {
+            "type": "boolean",
+            "description": "May call the export endpoints."
+          },
+          "can_import": {
+            "type": "boolean",
+            "description": "May call the import endpoints."
+          },
+          "disabled": {
+            "type": "boolean",
+            "description": "May not sign in."
+          },
+          "is_admin": {
+            "type": "boolean",
+            "description": "May manage users."
+          },
+          "message_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Messages this account owns."
+          },
+          "storage_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Attachment bytes this account owns."
+          },
+          "username": {
+            "type": "string",
+            "description": "Login username."
+          }
+        }
+      },
       "ApiTokenItem": {
         "type": "object",
         "description": "One named API token as shown in Settings: label, permissions, and masked secret.",
@@ -4848,6 +5326,28 @@
           }
         }
       },
+      "CreateUserRequest": {
+        "type": "object",
+        "description": "Body for creating an account as an administrator.",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "is_admin": {
+            "type": "boolean",
+            "description": "Grant the administrative flag. Default false."
+          },
+          "password": {
+            "type": "string",
+            "description": "Initial password. Must satisfy the vault's password policy."
+          },
+          "username": {
+            "type": "string",
+            "description": "Login username."
+          }
+        }
+      },
       "DedupeResponse": {
         "type": "object",
         "description": "Cross-source dedupe outcome.",
@@ -5759,6 +6259,22 @@
           }
         }
       },
+      "ListUsersResponse": {
+        "type": "object",
+        "description": "Every account in the vault.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminUser"
+            },
+            "description": "One row per account."
+          }
+        }
+      },
       "LoginRequest": {
         "type": "object",
         "description": "Username and password.",
@@ -5800,6 +6316,47 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "PatchUserRequest": {
+        "type": "object",
+        "description": "Body for changing an account's flags. Omitted fields are left alone.",
+        "properties": {
+          "can_delete": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Allow or forbid deleting message data."
+          },
+          "can_export": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Allow or forbid export."
+          },
+          "can_import": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Allow or forbid import."
+          },
+          "disabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Disable or re-enable sign-in."
+          },
+          "is_admin": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Grant or revoke administration."
           }
         }
       },
@@ -5888,6 +6445,19 @@
           "ok": {
             "type": "boolean",
             "description": "Always true when a response is returned."
+          }
+        }
+      },
+      "SetPasswordRequest": {
+        "type": "object",
+        "description": "Body for an administrator setting someone's password.",
+        "required": [
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "description": "The new password. Must satisfy the vault's password policy."
           }
         }
       },
@@ -6112,6 +6682,10 @@
     {
       "name": "Thread tags",
       "description": "Labels on conversations"
+    },
+    {
+      "name": "Admin",
+      "description": "User management for administrators"
     }
   ]
 }

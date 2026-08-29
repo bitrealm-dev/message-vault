@@ -122,6 +122,22 @@ pub async fn get_json<T: DeserializeOwned>(state: &AppState, path: &str, token: 
     response.json().await.unwrap()
 }
 
+/// POST a JSON body with a Bearer token and decode the JSON response.
+pub async fn post_json<T: DeserializeOwned>(
+    state: &AppState,
+    path: &str,
+    token: &str,
+    body: serde_json::Value,
+) -> T {
+    let response = request(state, reqwest::Method::POST, path, Some(token), Some(body)).await;
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "POST {path} must succeed"
+    );
+    response.json().await.unwrap()
+}
+
 /// POST a JSON body with a Bearer token, returning only the status.
 pub async fn post_status(
     state: &AppState,

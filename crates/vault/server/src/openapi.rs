@@ -31,7 +31,8 @@ use crate::server::AppState;
         (name = "Assets", description = "Attachment bytes"),
         (name = "Contacts", description = "Address book and contact groups"),
         (name = "Conversations", description = "Conversation list and sources"),
-        (name = "Thread tags", description = "Labels on conversations")
+        (name = "Thread tags", description = "Labels on conversations"),
+        (name = "Admin", description = "User management for administrators")
     )
 )]
 /// OpenAPI document definition assembled from the utoipa-annotated handlers.
@@ -123,6 +124,12 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(crate::assets::asset_upload_part_handler))
         .routes(routes!(crate::assets::asset_upload_complete_handler))
         .routes(routes!(crate::assets::asset_upload_abort_handler))
+        .routes(routes!(crate::admin_api::list_users_handler))
+        .routes(routes!(crate::admin_api::create_user_handler))
+        .routes(routes!(crate::admin_api::patch_user_handler))
+        .routes(routes!(crate::admin_api::set_user_password_handler))
+        .routes(routes!(crate::admin_api::delete_user_messages_handler))
+        .routes(routes!(crate::admin_api::delete_user_handler))
 }
 
 #[cfg(test)]
@@ -266,6 +273,26 @@ mod tests {
         ] {
             assert!(paths.contains_key(p), "missing {p}");
         }
+    }
+
+    #[test]
+    fn dump_includes_admin_paths() {
+        let v: serde_json::Value = serde_json::from_str(&dump_openapi_json()).unwrap();
+        let paths = v["paths"].as_object().unwrap();
+        for p in [
+            "/v1/admin/users",
+            "/v1/admin/users/{id}",
+            "/v1/admin/users/{id}/password",
+            "/v1/admin/users/{id}/messages",
+        ] {
+            assert!(paths.contains_key(p), "missing {p}");
+        }
+        assert!(paths["/v1/admin/users"]["get"].is_object());
+        assert!(paths["/v1/admin/users"]["post"].is_object());
+        assert!(paths["/v1/admin/users/{id}"]["patch"].is_object());
+        assert!(paths["/v1/admin/users/{id}"]["delete"].is_object());
+        assert!(paths["/v1/admin/users/{id}/password"]["post"].is_object());
+        assert!(paths["/v1/admin/users/{id}/messages"]["delete"].is_object());
         let import = &paths["/v1/import"]["post"]["requestBody"]["content"];
         for ct in [
             "application/x-ndjson",

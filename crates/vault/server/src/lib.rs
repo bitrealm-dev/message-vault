@@ -4,6 +4,7 @@
 pub mod cli;
 pub mod config;
 
+pub(crate) mod admin_api;
 pub(crate) mod api_tokens_api;
 pub(crate) mod asset_uploads;
 pub(crate) mod assets;

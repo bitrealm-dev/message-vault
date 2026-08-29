@@ -134,7 +134,7 @@ impl AuthTokenResponse {
 /// # Errors
 ///
 /// Returns an error when the password cannot be hashed.
-fn hash_password(password: &str) -> Result<String> {
+pub(crate) fn hash_password(password: &str) -> Result<String> {
     let mut salt_bytes = [0u8; 16];
     rand::rngs::SysRng
         .try_fill_bytes(&mut salt_bytes)
@@ -188,7 +188,7 @@ fn verify_login_password(password_hash: Option<&str>, password: &str) -> bool {
 }
 
 /// Reject passwords that are too short or too long.
-fn validate_password_policy(password: &str) -> Result<(), ApiError> {
+pub(crate) fn validate_password_policy(password: &str) -> Result<(), ApiError> {
     if password.len() < MIN_PASSWORD_CHARS {
         return Err(ApiError::BadRequest(format!(
             "password must be at least {MIN_PASSWORD_CHARS} characters"
@@ -204,11 +204,11 @@ fn validate_password_policy(password: &str) -> Result<(), ApiError> {
 // Username validation
 // ---------------------------------------------------------------------------
 
-fn normalize_username(raw: &str) -> String {
+pub(crate) fn normalize_username(raw: &str) -> String {
     raw.trim().to_string()
 }
 
-fn is_valid_username(s: &str) -> bool {
+pub(crate) fn is_valid_username(s: &str) -> bool {
     let s = s.trim();
     if s.is_empty() || s.len() > 128 {
         return false;

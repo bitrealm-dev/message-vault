@@ -95,6 +95,20 @@ pub fn require_full_access(auth: &AuthIdentity) -> Result<(), ApiError> {
     ))
 }
 
+/// Reject anything that is not a signed-in administrator.
+///
+/// # Errors
+///
+/// Returns forbidden for ordinary sessions and for every API token.
+pub fn require_admin(auth: &AuthIdentity) -> Result<(), ApiError> {
+    if auth.is_admin() {
+        return Ok(());
+    }
+    Err(ApiError::Forbidden(
+        "this endpoint requires an administrator session".into(),
+    ))
+}
+
 /// Allow a credential that may import.
 ///
 /// # Errors

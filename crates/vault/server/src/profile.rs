@@ -287,7 +287,7 @@ pub struct DeleteMessagesResponse {
 }
 
 /// Delete on-disk attachment trees for every source under this account.
-fn remove_account_asset_trees(
+pub(crate) fn remove_account_asset_trees(
     data_dir: &std::path::Path,
     account_id: &str,
     assets_name: &str,
