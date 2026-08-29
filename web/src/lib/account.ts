@@ -7,5 +7,12 @@ export interface AccountProfile {
   emails: string[];
   is_demo?: boolean;
   is_guest?: boolean;
-  read_only?: boolean;
+  /** May manage users. */
+  is_admin?: boolean;
+  /** May call the import endpoints. */
+  can_import?: boolean;
+  /** May call the export endpoints. */
+  can_export?: boolean;
+  /** May destroy message data. */
+  can_delete?: boolean;
 }

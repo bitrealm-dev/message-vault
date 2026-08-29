@@ -126,7 +126,11 @@ export function AccountSettingsPanel() {
             )}
           </div>
 
-          <ApiTokensSection />
+          <ApiTokensSection
+            accountCanImport={profile.can_import ?? true}
+            accountCanExport={profile.can_export ?? true}
+            accountCanDelete={profile.can_delete ?? false}
+          />
         </>
       )}
 

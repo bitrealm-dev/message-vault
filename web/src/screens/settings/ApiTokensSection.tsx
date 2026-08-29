@@ -5,8 +5,17 @@ import { ApiTokenCreateForm, ApiTokenRenameDialog } from "./ApiTokenForms";
 import ApiTokensTable from "./ApiTokensTable";
 import { useApiTokens } from "./useApiTokens";
 
-/** Named CLI API keys (import/export). Separate from the rotating GUI session token. */
-export function ApiTokensSection() {
+/** Named CLI API keys (import/export/delete). Separate from the rotating GUI session token. */
+export function ApiTokensSection({
+  accountCanImport,
+  accountCanExport,
+  accountCanDelete,
+}: {
+  /** The signed-in account's own permissions — a token can never exceed them. */
+  accountCanImport: boolean;
+  accountCanExport: boolean;
+  accountCanDelete: boolean;
+}) {
   const {
     items,
     loadError,
@@ -15,6 +24,12 @@ export function ApiTokensSection() {
     setComposing,
     label,
     setLabel,
+    canImport,
+    setCanImport,
+    canExport,
+    setCanExport,
+    canDelete,
+    setCanDelete,
     actionError,
     reveal,
     setReveal,
@@ -59,6 +74,15 @@ export function ApiTokensSection() {
           label={label}
           busy={busy}
           onLabelChange={setLabel}
+          canImport={canImport}
+          onCanImportChange={setCanImport}
+          canExport={canExport}
+          onCanExportChange={setCanExport}
+          canDelete={canDelete}
+          onCanDeleteChange={setCanDelete}
+          accountCanImport={accountCanImport}
+          accountCanExport={accountCanExport}
+          accountCanDelete={accountCanDelete}
           onSave={() => void create()}
           onCancel={cancelCompose}
         />
@@ -73,8 +97,9 @@ export function ApiTokensSection() {
       />
 
       <p className="mt-3 text-[0.75rem] leading-relaxed text-muted">
-        API keys give secure, programmatic access so vault tools can import and export message data.
-        Treat them like passwords: keep them private and never share them publicly.
+        API keys give secure, programmatic access so vault tools can import, export, and (if
+        granted) delete message data. Treat them like passwords: keep them private and never share
+        them publicly.
       </p>
 
       <ApiTokenRevealDialog
