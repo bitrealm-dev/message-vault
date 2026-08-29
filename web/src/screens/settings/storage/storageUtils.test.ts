@@ -75,6 +75,12 @@ describe("toImportSummaryView", () => {
     expect(toImportSummaryView(detail({ status: "exploded" })).status).toBe("failed");
   });
 
+  it("passes completed_with_issues through", () => {
+    expect(toImportSummaryView(detail({ status: "completed_with_issues" })).status).toBe(
+      "completed_with_issues",
+    );
+  });
+
   it("falls back messagesInserted to message_count", () => {
     expect(toImportSummaryView(detail({ message_count: 42 })).messagesInserted).toBe(42);
   });

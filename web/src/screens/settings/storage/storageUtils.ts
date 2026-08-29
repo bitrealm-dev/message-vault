@@ -81,6 +81,8 @@ function toSummaryStatus(status: string): ImportSummaryView["status"] {
   switch (status) {
     case "completed":
       return "completed";
+    case "completed_with_issues":
+      return "completed_with_issues";
     case "canceled":
       return "canceled";
     case "running":
