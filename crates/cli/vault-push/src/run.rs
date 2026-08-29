@@ -743,6 +743,18 @@ fn safe_rel(rel: &str) -> Result<()> {
     Ok(())
 }
 
+/// Name an attachment that has no path, for an Import Errors row.
+///
+/// Falls back to the position in the message so two pathless attachments in one
+/// conversation stay distinguishable.
+fn attachment_label(att: &message_ir::IrAttachment, index: usize) -> String {
+    att.original_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map_or_else(|| format!("attachment {index}"), str::to_string)
+}
+
 /// Check the API key against the vault without importing any messages.
 ///
 /// # Errors
@@ -1775,7 +1787,27 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
             for (att_i, att) in msg.attachments.iter().enumerate() {
                 attachment_count += 1;
                 let Some(rel) = att.path.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
-                    bail!("{name}: attachment {att_i} has no path");
+                    // No path means the bytes were never staged. "Do not copy"
+                    // exports look like this, and the reason the exporter set
+                    // ("skipped" / "embed_disabled") explains why. Keep the
+                    // metadata so the thread still shows the file was there.
+                    scan_skipped += 1;
+                    let reason = att.missing_reason.as_deref().unwrap_or("no_path");
+                    if att.missing_reason.is_none() {
+                        // An exporter dropped the path without saying why. That
+                        // is a defect, so it earns an Import Errors row; a
+                        // deliberate skip does not.
+                        attachment_skips.push(AttachmentSkipIssue {
+                            item: format!("{name}:{}", attachment_label(att, att_i)),
+                            reason: "attachment has no file path in the export".into(),
+                        });
+                    }
+                    projections.push(project::AttachmentProjection::Missing {
+                        index: att_i,
+                        reason: reason.into(),
+                        size: att.size_bytes,
+                    });
+                    continue;
                 };
                 safe_rel(rel)?;
                 let Some(abs) = resolve_attachment(input, rel) else {
