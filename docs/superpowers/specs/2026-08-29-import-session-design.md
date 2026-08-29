@@ -449,19 +449,34 @@ Two smaller faults found while tracing this:
 43. **`apply_convert_or_compress` calls the logging variant** so transcode
     reports progress. The callback already exists.
 
-44. **Keep the smaller file.** `finalize` deletes the original and keeps
-    whatever ffmpeg produced, with no comparison between the two. A
-    conversion that makes a file larger wins anyway, and in `compress`
-    mode that plainly defeats the point. Compare the produced file against
-    the original and keep the smaller one, discarding the other.
+44. **Keep the smaller file only when the format does not change.**
+    `finalize` deletes the original and keeps whatever ffmpeg produced,
+    with no comparison between the two. Where the conversion changes
+    format, that is correct and must stay: the user picked Convert or
+    Compress because they want the target format, and handing back a
+    smaller HEIC or HEVC gives them a file the browser cannot display —
+    the very thing they chose the mode to avoid. If they wanted the
+    original bytes they would have picked Copy as-is.
 
-    This bounds the risk in decision 12 as well: with the guard in place,
-    the media step can never push a file over the limit that was under it
-    before, so the *may grow past the limit* state exists only to explain
-    a file that stays at its original size. Without the guard it is a real
-    failure the user gets no warning about.
+    The guard applies only to same-format re-encodes, where no format
+    benefit is bought and a larger output is pure loss. There are two:
+    a JPEG over 500 KB re-encoded to JPEG, and an MP3 over 100 KB
+    re-encoded to MP3, both in `compress` mode. In those two cases,
+    compare and keep the smaller.
 
-45. **`media::process_attachments_dir` takes an explicit file list.**
+    So the media step **can** push a file past the size limit, and nothing
+    prevents it. That is a real outcome, not a defect, and it is why
+    decision 13 carries a *may grow past the limit* state — the forecast is
+    the only warning the user gets.
+
+45. **A file that crosses the limit during the media step is skipped, not
+    reverted.** It becomes `too_large`, the message keeps its text and a
+    placeholder, and Gate 2 reports it. Falling back to the original would
+    store a file in the format the user asked to be rid of, which is worse
+    than storing nothing. Gate 2's delta needs a row for it: *was under the
+    limit, now over*.
+
+46. **`media::process_attachments_dir` takes an explicit file list.**
     Directory-wide operation is what prevents transcode from being scoped
     to a known set of files. The caller builds the list; on a resumed run
     that list is every original still on disk, per decision 28.
@@ -484,7 +499,7 @@ shippable:
    (decision 12), the contract diff (decision 15), the convert/compress
    wording (decisions 18–20), and the redesigned Import screens.
 4. **The prepare restructure.** Write/transcode split, the queue and
-   writers, and the four library fixes (decisions 40–45). Largest,
+   writers, and the four library fixes (decisions 40–46). Largest,
    riskiest, and the only one that touches shared crates every exporter
    depends on.
 
