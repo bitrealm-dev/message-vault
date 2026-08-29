@@ -1,18 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { setBaseUrl } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { initialLoginServerUrl, vaultDisplayHost } from "../lib/authGuards";
+import { initialLoginServerUrl } from "../lib/authGuards";
 import { isTauri } from "../lib/tauri-check";
-import { authCard, authCardBody, pageCenter } from "../lib/uiStyles";
+import { accentLink, authCard, authCardBody, authScreenTitle, pageCenter } from "../lib/uiStyles";
 import { useVaultHealth } from "../lib/useVaultHealth";
 import { checkVaultHealth, type VaultHealthStatus } from "../lib/vaultHealth";
 import LocalAuthTabs from "./auth/LocalAuthTabs";
-import VaultLine, { type VaultConnection } from "./auth/VaultLine";
+import VaultSettingsScreen from "./auth/VaultSettingsScreen";
+import VaultStatus, { type VaultConnection } from "./auth/VaultStatus";
 
 /** Placeholder shaped like the form, so the card does not flicker into shape. */
 function FormSkeleton({ dimmed }: { dimmed: boolean }) {
   return (
-    <div className={dimmed ? "opacity-40" : ""} aria-hidden="true">
+    <div className={`min-h-0 flex-1 ${dimmed ? "opacity-40" : ""}`} aria-hidden="true">
       <div className="mb-6 h-9 rounded bg-elevated" />
       <div className="h-3.5 w-1/3 rounded bg-elevated" />
       <div className="mt-2 h-10 rounded bg-elevated" />
@@ -22,11 +23,22 @@ function FormSkeleton({ dimmed }: { dimmed: boolean }) {
   );
 }
 
+/** Hairline either side of the word, parting the way in from the way out. */
+function OrRule() {
+  return (
+    <div className="mt-2.5 flex items-center gap-3 text-[0.75rem] text-muted">
+      <span className="h-px flex-1 bg-border" />
+      or
+      <span className="h-px flex-1 bg-border" />
+    </div>
+  );
+}
+
 /**
- * The way into a vault. The card resolves an address on mount and confirms
- * the vault is reachable itself, so the only question the old first screen
- * asked — which vault — is answered by default and changed in place when the
- * default is wrong.
+ * The way into a vault. The card resolves an address on mount and confirms the
+ * vault is reachable itself, so the only question the old first screen asked —
+ * which vault — is answered by default, reported as a single word under the
+ * product name, and changed on a settings screen when the default is wrong.
  */
 export default function LoginScreen() {
   const { setServer: setAuthServer, serverUrl: savedUrl } = useAuth();
@@ -36,11 +48,16 @@ export default function LoginScreen() {
   // Sticky once true: once the sign-in form has been shown, keep showing it
   // (dimmed while disconnected) instead of reverting to the skeleton.
   const [hasConnectedOnce, setHasConnectedOnce] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // What Test reported for the address currently typed, or null when it has
+  // not been tested since the last edit. Null falls back to the card's own
+  // connection, so a stale green cannot outlive the address that earned it.
+  const [tested, setTested] = useState<VaultConnection | null>(null);
 
-  const editorOpen = state === "editing" || state === "disconnected";
-  // Only probe while the address is being chosen. Once connected, the
-  // reachability probe has already proved the vault is there.
-  const health = useVaultHealth(editorOpen ? draft : null);
+  // A disconnected card keeps checking the address it already has, so it can
+  // heal itself the moment the vault comes back. Nothing else probes: the
+  // settings screen asks explicitly, with Test.
+  const health = useVaultHealth(state === "disconnected" ? address : null);
 
   const connect = useCallback(
     async (url: string) => {
@@ -58,14 +75,14 @@ export default function LoginScreen() {
         setAuthServer(trimmed);
         setState("connected");
       } else {
-        // Nothing answered. That is the vault line's problem, not the form's.
+        // Nothing answered. That is the status line's problem, not the form's.
         setState("disconnected");
       }
     },
     [setAuthServer],
   );
 
-  // Resolve the vault once on mount; Use and Retry call `connect` again.
+  // Resolve the vault once on mount; Change vault address calls `connect` again.
   const started = useRef(false);
   useEffect(() => {
     if (started.current) return;
@@ -74,7 +91,7 @@ export default function LoginScreen() {
   }, [connect, address]);
 
   // A disconnected card heals itself: when the live health probe finds the
-  // vault reachable again, reconnect without waiting for Retry. Fires only on
+  // vault reachable again, reconnect without waiting to be asked. Fires only on
   // the transition into "ok" — not on every render while it stays "ok" — so a
   // `connect()` that fails and lands back in "disconnected" does not
   // immediately retry.
@@ -83,37 +100,77 @@ export default function LoginScreen() {
     const becameHealthy = previousHealth.current !== "ok" && health === "ok";
     previousHealth.current = health;
     if (state === "disconnected" && becameHealthy) {
-      void connect(draft);
+      void connect(address);
     }
-  }, [health, state, draft, connect]);
+  }, [health, state, address, connect]);
 
-  const host = vaultDisplayHost(
-    state === "connected" ? address : draft,
-    typeof window === "undefined" ? "" : window.location.host,
-  );
+  // Only the newest Test may write the result: an earlier slow probe must not
+  // stamp its answer over a later one, or over a screen that has since closed.
+  const testRun = useRef(0);
+  const runTest = useCallback(async () => {
+    const run = testRun.current + 1;
+    testRun.current = run;
+    setTested("connecting");
+    const reachable = await checkVaultHealth(draft.trim());
+    if (testRun.current !== run) return;
+    setTested(reachable ? "connected" : "disconnected");
+  }, [draft]);
+
+  const closeSettings = () => {
+    testRun.current += 1;
+    setTested(null);
+    setSettingsOpen(false);
+  };
 
   return (
     <div className={pageCenter}>
       <div className={authCard}>
         <div className={authCardBody}>
-          <VaultLine
-            state={state}
-            host={host}
-            draft={draft}
-            health={health}
-            onDraftChange={setDraft}
-            onEdit={() => setState("editing")}
-            onCancel={() => {
-              setDraft(address);
-              setState("connected");
-            }}
-            onSubmit={() => void connect(draft)}
-          />
-
-          {hasConnectedOnce ? (
-            <LocalAuthTabs serverUrl={address} disabled={state !== "connected"} />
+          {settingsOpen ? (
+            <VaultSettingsScreen
+              draft={draft}
+              status={tested ?? state}
+              onDraftChange={(value) => {
+                setDraft(value);
+                setTested(null);
+              }}
+              onTest={() => void runTest()}
+              onCancel={() => {
+                setDraft(address);
+                closeSettings();
+              }}
+              onSubmit={() => {
+                const next = draft;
+                closeSettings();
+                void connect(next);
+              }}
+            />
           ) : (
-            <FormSkeleton dimmed={state === "disconnected"} />
+            <>
+              <h1 className={authScreenTitle}>Message Vault</h1>
+              <VaultStatus state={state} className="mb-4 text-center" />
+
+              {hasConnectedOnce ? (
+                <LocalAuthTabs serverUrl={address} disabled={state !== "connected"} />
+              ) : (
+                <FormSkeleton dimmed={state === "disconnected"} />
+              )}
+
+              <OrRule />
+              <div className="mt-4 text-center">
+                <button
+                  type="button"
+                  className={accentLink}
+                  onClick={() => {
+                    setDraft(address);
+                    setTested(null);
+                    setSettingsOpen(true);
+                  }}
+                >
+                  Change vault settings
+                </button>
+              </div>
+            </>
           )}
         </div>
       </div>

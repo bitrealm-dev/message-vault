@@ -173,3 +173,22 @@ export function XIcon({ size, className, ...rest }: IconProps) {
     </IconShell>
   );
 }
+
+/** Padlock — body and shackle. Marks a password field. */
+export function LockIcon({ size, className, ...rest }: IconProps) {
+  return (
+    <IconShell size={size} className={className} {...rest}>
+      <rect x="4" y="10.5" width="16" height="10" rx="2" />
+      <path d="M8 10.5V7a4 4 0 0 1 8 0v3.5" />
+    </IconShell>
+  );
+}
+
+/** Handset — marks an account reached by phone number rather than by address. */
+export function PhoneIcon({ size, className, ...rest }: IconProps) {
+  return (
+    <IconShell size={size} className={className} {...rest}>
+      <path d="M6.6 3.6h2.6l1.3 3.2-1.9 1.1a10.4 10.4 0 0 0 4.6 4.6l1.1-1.9 3.2 1.3v2.6a1.5 1.5 0 0 1-1.6 1.5A13.6 13.6 0 0 1 5.1 5.2a1.5 1.5 0 0 1 1.5-1.6Z" />
+    </IconShell>
+  );
+}

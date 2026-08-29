@@ -58,17 +58,3 @@ export function parsePersistedAuth(raw: string): ParsedPersistedAuth | null {
     needsOnboarding: parsed.needsOnboarding === true,
   };
 }
-
-/**
- * Host to show on the vault line. A blank address means this origin, so the
- * line names a real host instead of showing emptiness.
- */
-export function vaultDisplayHost(url: string, locationHost: string): string {
-  const trimmed = url.trim();
-  if (!trimmed) return locationHost;
-  try {
-    return new URL(trimmed).host;
-  } catch {
-    return trimmed;
-  }
-}

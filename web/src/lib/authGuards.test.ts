@@ -3,7 +3,6 @@ import {
   DEFAULT_TAURI_VAULT_URL,
   initialLoginServerUrl,
   parsePersistedAuth,
-  vaultDisplayHost,
 } from "./authGuards.ts";
 
 describe("initialLoginServerUrl", () => {
@@ -52,25 +51,5 @@ describe("parsePersistedAuth", () => {
     expect(
       parsePersistedAuth(JSON.stringify({ serverUrl: "", token: "", accountId: "" })),
     ).toBeNull();
-  });
-});
-
-describe("vaultDisplayHost", () => {
-  it("shows this page's host for a blank address", () => {
-    expect(vaultDisplayHost("", "vault.bitrealm.io")).toBe("vault.bitrealm.io");
-  });
-
-  it("shows host and port for an absolute address", () => {
-    expect(vaultDisplayHost("http://127.0.0.1:8080", "example.test")).toBe("127.0.0.1:8080");
-  });
-
-  it("drops a trailing path and slash", () => {
-    expect(vaultDisplayHost("https://vault.example.com/", "example.test")).toBe(
-      "vault.example.com",
-    );
-  });
-
-  it("shows an unparseable address as typed, rather than nothing", () => {
-    expect(vaultDisplayHost("not a url", "example.test")).toBe("not a url");
   });
 });

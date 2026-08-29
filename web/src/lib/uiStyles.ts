@@ -26,8 +26,15 @@ export const authCardBody = "flex min-h-0 flex-1 flex-col";
  * the action still lands in the same place on that screen too — it just
  * carries more below it there.
  */
-export const authCardFooter = "mt-auto";
+export const authCardFooter = "mt-auto flex flex-col";
 export const authTitle = "text-[1.25rem] font-bold text-text mb-6 text-left";
+/**
+ * Name at the top of an auth card. The sign-in card and the vault settings
+ * screen share it, so crossing between them never changes the size of the
+ * words at the top of the frame.
+ */
+export const authScreenTitle =
+  "text-center text-[1.375rem] font-semibold tracking-[-0.015em] text-text";
 export const authLabel = "block text-[0.875rem] font-medium text-text mb-1";
 export const authInput =
   "w-full box-border px-3 py-2 text-[0.875rem] rounded border border-border bg-elevated text-text focus:outline-none focus:border-accent";

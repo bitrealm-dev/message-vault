@@ -1,6 +1,7 @@
 import { useState } from "react";
 import AuthErrorFooter from "../../components/AuthErrorFooter";
 import AuthSubmitButton from "../../components/AuthSubmitButton";
+import { LockIcon, PersonIcon } from "../../components/icons";
 import PasswordField from "../../components/PasswordField";
 import TextField from "../../components/TextField";
 import { apiClient, setBaseUrl } from "../../lib/api";
@@ -59,6 +60,7 @@ export default function CreateAccountForm({
     <div className="flex min-h-0 flex-1 flex-col">
       <TextField
         label="Username"
+        leadingIcon={<PersonIcon size={16} />}
         value={username}
         onChange={setUsername}
         onKeyDown={(e) => e.key === "Enter" && submit()}
@@ -66,9 +68,12 @@ export default function CreateAccountForm({
         isDisabled={disabled}
       />
 
+      {/* The two password fields belong together; the username does not, so the
+          gap above Password is wider than the one below it. */}
       <PasswordField
         label="Password"
-        className="mt-3"
+        className="mt-5"
+        leadingIcon={<LockIcon size={16} />}
         value={password}
         onChange={setPassword}
         onKeyDown={(e) => e.key === "Enter" && submit()}
@@ -77,11 +82,11 @@ export default function CreateAccountForm({
         onToggle={() => setShowPassword((v) => !v)}
         isDisabled={disabled}
       />
-      <p className="mt-1 text-[0.75rem] text-muted">At least 8 characters.</p>
 
       <PasswordField
         label="Confirm Password"
-        className="mt-3"
+        className="mt-3.5"
+        leadingIcon={<LockIcon size={16} />}
         value={confirmPassword}
         onChange={setConfirmPassword}
         onKeyDown={(e) => e.key === "Enter" && submit()}
