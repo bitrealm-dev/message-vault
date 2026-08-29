@@ -423,8 +423,11 @@ pub struct IrAttachment {
     /// On-disk / vault asset length in bytes (not file contents).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size_bytes: Option<u64>,
-    /// None when the attachment was imported; set (`too_large` / `file_missing`)
-    /// only when bytes were skipped.
+    /// None when the attachment was imported; set only when bytes were
+    /// skipped, to one of a closed set: `file_missing`, `too_large`,
+    /// `not_copied`, `convert_failed: <detail>`, or `unknown: <raw>`. Older
+    /// exports may still carry the retired `skipped` / `embed_disabled`
+    /// spellings of `not_copied`; readers keep recognizing them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub missing_reason: Option<String>,
     /// In-memory bytes for EML embedding; never written to JSON.

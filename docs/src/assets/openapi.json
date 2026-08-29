@@ -6191,7 +6191,7 @@
           },
           "status": {
             "type": "string",
-            "description": "Lifecycle status (`running`, `completed`, or `failed`)."
+            "description": "Lifecycle status (`running`, `completed`, `completed_with_issues`, or `failed`)."
           },
           "tool": {
             "type": [

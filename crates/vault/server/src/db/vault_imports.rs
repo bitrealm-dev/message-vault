@@ -25,7 +25,7 @@ pub struct VaultImportRow {
     pub tool: Option<String>,
     /// Import mode (`replace` or `append`).
     pub mode: String,
-    /// Lifecycle status (`running`, `completed`, or `failed`).
+    /// Lifecycle status (`running`, `completed`, `completed_with_issues`, or `failed`).
     pub status: String,
     /// UTC time the session started.
     pub started_at: String,
@@ -484,7 +484,7 @@ pub struct ImportSummary {
     pub tool: Option<String>,
     /// Import mode (`replace` or `append`).
     pub mode: String,
-    /// Lifecycle status (`running`, `completed`, or `failed`).
+    /// Lifecycle status (`running`, `completed`, `completed_with_issues`, or `failed`).
     pub status: String,
     /// UTC time the session started.
     pub started_at: String,
