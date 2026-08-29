@@ -142,7 +142,7 @@ pub struct RenameApiTokenResponse {
     pub label: String,
 }
 
-/// List the account's named API tokens with their scopes and masked secrets.
+/// List the account's named API tokens with their permissions and masked secrets.
 #[utoipa::path(
     get,
     path = "/v1/account/api-tokens",

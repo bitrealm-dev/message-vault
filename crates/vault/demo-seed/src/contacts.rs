@@ -109,7 +109,6 @@ emails = ["demo.ingest@example.com"]
 
 [account]
 username = "demo"
-read_only = true
 "#
     );
     fs::write(&path, body).with_context(|| format!("write {}", path.display()))?;
