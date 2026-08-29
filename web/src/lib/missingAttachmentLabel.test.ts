@@ -61,4 +61,41 @@ describe("missingAttachmentChipLabel", () => {
       ),
     ).toBe("clip.mov (skipped)");
   });
+
+  it("labels not_copied and both legacy spellings as skipped", () => {
+    for (const reason of ["not_copied", "skipped", "embed_disabled"]) {
+      expect(
+        missingAttachmentChipLabel(att({ original_name: "a.jpg", missing_reason: reason })),
+      ).toBe("a.jpg (skipped)");
+    }
+  });
+
+  it("keeps the ffmpeg detail from a convert_failed reason", () => {
+    expect(
+      missingAttachmentChipLabel(
+        att({ original_name: "clip.mov", missing_reason: "convert_failed: no video stream" }),
+      ),
+    ).toBe("clip.mov (could not be converted — no video stream)");
+  });
+
+  it("shows an explicit unknown reason instead of swallowing it", () => {
+    expect(
+      missingAttachmentChipLabel(
+        att({ original_name: "a.bin", missing_reason: "unknown: gremlins" }),
+      ),
+    ).toBe("a.bin (could not be imported — gremlins)");
+  });
+
+  it("keeps an unrecognized raw reason visible", () => {
+    expect(
+      missingAttachmentChipLabel(att({ original_name: "a.bin", missing_reason: "weird_reason" })),
+    ).toBe("a.bin (missing — weird_reason)");
+  });
+
+  it("treats no_path and null as plain missing", () => {
+    expect(
+      missingAttachmentChipLabel(att({ original_name: "a.bin", missing_reason: "no_path" })),
+    ).toBe("a.bin (missing)");
+    expect(missingAttachmentChipLabel(att({ original_name: "a.bin" }))).toBe("a.bin (missing)");
+  });
 });
