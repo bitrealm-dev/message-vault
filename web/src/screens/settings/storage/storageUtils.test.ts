@@ -3,6 +3,7 @@ import {
   formatBytes,
   formatImportDate,
   type ImportDetailResponse,
+  importStatusLabel,
   toImportSummaryView,
 } from "./storageUtils";
 
@@ -40,6 +41,20 @@ describe("formatBytes", () => {
     expect(formatBytes(512)).toBe("512 B");
     expect(formatBytes(1536)).toBe("1.5 KB");
     expect(formatBytes(5 * 1024 * 1024)).toBe("5.0 MB");
+  });
+});
+
+describe("importStatusLabel", () => {
+  it("reads sentence-case for every status the server can return", () => {
+    expect(importStatusLabel("running")).toBe("Running");
+    expect(importStatusLabel("completed")).toBe("Completed");
+    expect(importStatusLabel("completed_with_issues")).toBe("Completed with issues");
+    expect(importStatusLabel("failed")).toBe("Failed");
+    expect(importStatusLabel("canceled")).toBe("Canceled");
+  });
+
+  it("falls back to the raw string for anything unrecognized", () => {
+    expect(importStatusLabel("mystery")).toBe("mystery");
   });
 });
 

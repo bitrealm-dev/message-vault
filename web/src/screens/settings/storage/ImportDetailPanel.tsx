@@ -2,7 +2,13 @@ import ImportSummaryPanel, {
   type ImportSummaryView,
 } from "../../../components/import/ImportSummaryPanel";
 import type { ImportDetailResponse } from "./storageUtils";
-import { formatBytes, formatImportDate, sectionHint, sectionTitle } from "./storageUtils";
+import {
+  formatBytes,
+  formatImportDate,
+  importStatusLabel,
+  sectionHint,
+  sectionTitle,
+} from "./storageUtils";
 
 export default function ImportDetailPanel({
   detailId,
@@ -32,8 +38,8 @@ export default function ImportDetailPanel({
               <span className="rounded-full border border-border bg-elevated px-2.5 py-1 capitalize text-text">
                 Mode: {selectedImport.mode}
               </span>
-              <span className="rounded-full border border-border bg-elevated px-2.5 py-1 capitalize text-text">
-                Status: {selectedImport.status}
+              <span className="rounded-full border border-border bg-elevated px-2.5 py-1 text-text">
+                Status: {importStatusLabel(selectedImport.status)}
               </span>
             </div>
           ) : (
