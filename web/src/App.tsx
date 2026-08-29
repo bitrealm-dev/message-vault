@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import AppLayout from "./components/AppLayout";
 import { AuthGuard } from "./components/AuthGuard";
 import MessageRoute from "./components/MessageRoute";
+import { useMouseHistoryNavigation } from "./hooks/useMouseHistoryNavigation";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { canUseImportExportWithProfile } from "./lib/desktopFeatures";
 import { ThemeProvider } from "./lib/ThemeProvider";
@@ -42,6 +43,7 @@ function ImportExportRoute({ children }: { children: ReactNode }) {
 
 function AppRoutes() {
   const { isAuthenticated, needsOnboarding } = useAuth();
+  useMouseHistoryNavigation();
 
   // Where a signed-in visitor to the login screen should go next.
   const signedInDestination = <Navigate to={needsOnboarding ? "/onboarding" : "/"} replace />;
