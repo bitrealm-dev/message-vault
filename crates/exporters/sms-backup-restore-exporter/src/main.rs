@@ -24,6 +24,7 @@ fn main() -> Result<()> {
             cancel: None,
             log: None,
             output_format,
+            resume: false,
             source: SourceConfig::SmsBackupRestore(SmsBackupRestoreConfig {
                 owner_phones: cli.owner_phones,
             }),

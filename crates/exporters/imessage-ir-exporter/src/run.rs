@@ -227,6 +227,7 @@ mod tests {
             cancel: None,
             log: None,
             output_format: OutputFormat::Jsonl,
+            resume: false,
             source: SourceConfig::Apple(apple),
         }
     }

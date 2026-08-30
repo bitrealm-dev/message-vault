@@ -549,6 +549,7 @@ fn build_exporter_config(
                 cancel: None,
                 log: None,
                 output_format: OutputFormat::Jsonl,
+                resume: false,
                 source: source_config,
             })
         }

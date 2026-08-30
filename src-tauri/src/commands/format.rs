@@ -59,6 +59,7 @@ pub async fn format(
                 let _ = log_app.emit("extract:log", line.to_string());
             })),
             output_format: fmt,
+            resume: false,
             source: SourceConfig::Format(FormatConfig {}),
         };
 

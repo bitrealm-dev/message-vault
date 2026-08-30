@@ -35,6 +35,7 @@ fn main() -> Result<()> {
         cancel: None,
         log: None,
         output_format,
+        resume: false,
         source: SourceConfig::Format(FormatConfig {}),
     };
     for line in run(&config)?.messages {

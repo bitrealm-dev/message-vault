@@ -473,6 +473,7 @@ mod tests {
             cancel: None,
             log: None,
             output_format,
+            resume: false,
             source: SourceConfig::Format(FormatConfig {}),
         }
     }

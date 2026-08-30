@@ -24,6 +24,7 @@ fn main() -> Result<()> {
             cancel: None,
             log: None,
             output_format,
+            resume: false,
             source: SourceConfig::OpenExtract(OpenExtractConfig {}),
         },
         run,

@@ -124,6 +124,10 @@ pub struct ExporterConfig {
     pub log: Option<LogSink>,
     /// Packaging format (`csv` / `eml` / `mbox` / `json` / `jsonl` / `xml`).
     pub output_format: OutputFormat,
+    /// Continue an interrupted export in the same output directory: previous
+    /// output is kept, and conversations already written are skipped. Only
+    /// the desktop's import resume sets this; CLI runs leave it false.
+    pub resume: bool,
     /// Exporter-specific options; exactly one variant is set per run.
     pub source: SourceConfig,
 }
