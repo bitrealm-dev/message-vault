@@ -101,6 +101,18 @@ function mediaDoneDetail(mode: AttachmentMediaMode): string {
 }
 
 /**
+ * True for the "canceled"/"cancelled" text a cancelled Tauri job's
+ * `extract:error` carries. The media pass's own cancellation is spelled
+ * "canceled" (one L, `transcode.rs`'s `check_cancel_now`); other layers of
+ * the Rust side spell it "cancelled" (two L, `message-vault-io-core`'s
+ * `check_cancel`) — matched case- and spelling-insensitively so this reads
+ * either.
+ */
+function isCancellation(message: string): boolean {
+  return /^cancell?ed$/i.test(message.trim());
+}
+
+/**
  * Extract stages originals regardless of the chosen media mode (ffmpeg is
  * only required once Gate 1 is approved, not up front) — convert and
  * compress run afterward, against the staged folder, via
@@ -316,6 +328,13 @@ export function useImportJob() {
   const importStartedAtRef = useRef(0);
   const formRef = useRef<ImportJobFormValues | null>(null);
   const attachmentModeRef = useRef<AttachmentMediaMode>("copy");
+  // What extract is actually doing to attachments right now — "copy" under
+  // convert/compress too, since extract only stages originals (ruling 3);
+  // the media step (index 2), not this row, tells the convert/compress
+  // story. Kept separate from attachmentModeRef, which stays the mode the
+  // user chose and drives the media step's own wording and the step-list
+  // layout.
+  const extractMediaModeRef = useRef<AttachmentMediaMode>("copy");
   const lastAttachmentProgressRef = useRef<AttachmentProgressCounts | null>(null);
   // Guards approveGate/declineGate against a double click doing the work
   // twice — the same in-flight-ref pattern ImportScreen.tsx uses for its
@@ -370,7 +389,7 @@ export function useImportJob() {
     const detail =
       event.step === "attachments"
         ? formatAttachmentProgress({
-            mode: attachmentModeRef.current,
+            mode: extractMediaModeRef.current,
             done: event.done,
             total: event.total,
             bytesDone: event.bytes_done ?? lastAttachment?.bytesDone ?? 0,
@@ -406,42 +425,50 @@ export function useImportJob() {
 
   /**
    * Move a live session to another stage, carrying the summary the user just
-   * approved only when there is one to carry (Decision: the stage call that
-   * moves past a gate carries the plan; every other transition omits the
-   * third argument entirely rather than sending an explicit `null`).
+   * approved when there is one — `approvedPlan` is simply forwarded, undefined
+   * and all. `setImportStage` posts `{ stage, summary: approvedPlan }`, and
+   * `JSON.stringify` drops an `undefined`-valued property outright, so an
+   * omitted plan and an explicit `undefined` reach the server identically:
+   * no `summary` key at all, leaving whatever plan is already stored
+   * untouched.
    */
   async function moveStage(
     sessionId: number,
     stage: ImportStage,
     approvedPlan?: StagingSummary,
   ): Promise<void> {
-    if (approvedPlan) {
-      await setImportStage(sessionId, stage, approvedPlan).catch(() => {});
-    } else {
-      await setImportStage(sessionId, stage).catch(() => {});
-    }
+    await setImportStage(sessionId, stage, approvedPlan).catch(() => {});
   }
 
   /**
    * Build the finished-import summary, record it, and post `/complete` —
    * the terminal step for every path (a failure before either gate, a failed
-   * media pass, or a push that ran to completion or failed).
+   * or cancelled media pass, or a push that ran to completion or failed).
+   *
+   * `canceled` overrides `importOutcome`'s verdict outright: the user asked
+   * for this, so it is never read as a failure. The session's `stage`
+   * column is untouched here — the caller simply doesn't call `moveStage`
+   * again after a cancellation, so it stays wherever the run last recorded
+   * it (e.g. `transcode`), not advanced to a stage the run never reached.
    */
   async function finishImport(args: {
     sessionId: number | null;
     form: ImportJobFormValues;
     threw: boolean;
+    canceled?: boolean;
     pushReport: PushFinishedReport | null;
     uploadMs: number | null;
   }): Promise<void> {
-    const { sessionId, form, threw, pushReport, uploadMs } = args;
+    const { sessionId, form, threw, canceled, pushReport, uploadMs } = args;
     const { parseMs, attachmentsMs, prepareMs } = durationsRef.current;
     const durationMs = performance.now() - importStartedAtRef.current;
-    const outcome = importOutcome({
-      report: pushReport ?? undefined,
-      threw,
-      issues: issuesRef.current,
-    });
+    const outcome: ImportSummaryView["status"] = canceled
+      ? "canceled"
+      : importOutcome({
+          report: pushReport ?? undefined,
+          threw,
+          issues: issuesRef.current,
+        });
     const finalSummary: ImportSummaryView = {
       status: outcome,
       ...countsRef.current,
@@ -480,7 +507,7 @@ export function useImportJob() {
     if (sessionId) {
       try {
         await apiClient.post(`/v1/imports/${String(sessionId)}/complete`, {
-          ok: outcome !== "failed",
+          ok: outcome !== "failed" && outcome !== "canceled",
           status: outcome,
           message_count: pushReport?.messages_inserted,
           attachment_count: pushReport?.assets_uploaded,
@@ -625,11 +652,15 @@ export function useImportJob() {
       ),
     );
 
-    await moveStage(sessionId, "transcode");
+    // Carries the plan approved at Gate 1 even on this stage — a crash
+    // mid-pass must not leave `summary_json` null with no baseline for a
+    // later resume to diff against.
+    await moveStage(sessionId, "transcode", approvedSummary);
 
     const mediaStartedAt = performance.now();
     let transcodeReport: TranscodeFinishedReport | undefined;
     let threw = false;
+    let canceled = false;
     try {
       const result = await runTauriJob(
         () =>
@@ -641,20 +672,27 @@ export function useImportJob() {
       );
       transcodeReport = result.transcode;
     } catch (e: unknown) {
-      threw = true;
       const msg = e instanceof Error ? e.message : String(e);
-      issuesRef.current = [
-        ...issuesRef.current,
-        { kind: "error", step: activeStepRef.current, item: "Import", reason: msg },
-      ];
+      if (isCancellation(msg)) {
+        // The user asked for this — not an error, so no issue row for it.
+        canceled = true;
+      } else {
+        threw = true;
+        issuesRef.current = [
+          ...issuesRef.current,
+          { kind: "error", step: activeStepRef.current, item: "Import", reason: msg },
+        ];
+      }
     }
     const mediaMs = performance.now() - mediaStartedAt;
 
-    if (threw) {
+    if (threw || canceled) {
       setSteps((current) =>
         current.map((step) => (step.status === "active" ? { ...step, status: "error" } : step)),
       );
-      await finishImport({ sessionId, form, threw: true, pushReport: null, uploadMs: null });
+      // Neither path writes another stage: the session stays at `transcode`,
+      // which is exactly where the run actually got to.
+      await finishImport({ sessionId, form, threw, canceled, pushReport: null, uploadMs: null });
       return;
     }
 
@@ -672,17 +710,31 @@ export function useImportJob() {
     );
 
     setComputingSummary(true);
-    const actual = await invokeSummarizeStaging({
-      staging_dir: outputDir,
-      ...stagingMediaFields(form),
-    });
-    const delta = computeGateDelta(approvedSummary, actual, transcodeReport);
-    setGateSummary(actual);
-    setGateDeltaState(delta);
-    await moveStage(sessionId, "awaiting_gate_2", approvedSummary);
-    setComputingSummary(false);
-    setRunning(false);
-    setPhase("gate_2");
+    try {
+      const actual = await invokeSummarizeStaging({
+        staging_dir: outputDir,
+        ...stagingMediaFields(form),
+      });
+      const delta = computeGateDelta(approvedSummary, actual, transcodeReport);
+      setGateSummary(actual);
+      setGateDeltaState(delta);
+      await moveStage(sessionId, "awaiting_gate_2", approvedSummary);
+      setComputingSummary(false);
+      setRunning(false);
+      setPhase("gate_2");
+    } catch (e: unknown) {
+      // The pass itself succeeded; only the recompute after it failed. Still
+      // a failed import, not an unhandled rejection on a frozen gate screen
+      // — and still no later stage written, so the session stays at
+      // `transcode`.
+      const msg = e instanceof Error ? e.message : String(e);
+      issuesRef.current = [
+        ...issuesRef.current,
+        { kind: "error", step: "media", item: "Import", reason: msg },
+      ];
+      setComputingSummary(false);
+      await finishImport({ sessionId, form, threw: true, pushReport: null, uploadMs: null });
+    }
   }
 
   async function startImport(form: ImportJobFormValues, resume?: ResumePush): Promise<void> {
@@ -695,6 +747,7 @@ export function useImportJob() {
     durationsRef.current = { ...EMPTY_DURATIONS };
     lastAttachmentProgressRef.current = null;
     attachmentModeRef.current = form.attachmentMedia;
+    extractMediaModeRef.current = extractAttachmentMedia(form.attachmentMedia);
     formRef.current = form;
     setRunning(true);
     setPhase("progress");
@@ -818,8 +871,10 @@ export function useImportJob() {
         extractFinishedAt,
       );
       durationsRef.current = { parseMs, attachmentsMs, prepareMs };
+      // What extract actually did ("Copied", not "Converted", under
+      // convert/compress too) — see extractMediaModeRef's comment.
       const attachmentDoneLine = attachmentDoneDetail(
-        form.attachmentMedia,
+        extractAttachmentMedia(form.attachmentMedia),
         lastAttachmentProgressRef.current,
       );
       // The staging row folds both the attachment copy and the
@@ -937,6 +992,10 @@ export function useImportJob() {
     importSessionId,
     gateSummary,
     gateDelta: gateDeltaState,
+    // The mode the gate screens actually approved, not whatever the (hidden,
+    // and in practice unchanged) form fields currently hold — read from the
+    // submitted form so the gates never depend on live form state.
+    gateAttachmentMedia: formRef.current?.attachmentMedia ?? "copy",
     mediaToolsMissing,
     computingSummary,
     completionText: phase === "done" ? completionTextFor(summaryView?.status) : undefined,

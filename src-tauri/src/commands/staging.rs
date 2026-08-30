@@ -219,8 +219,16 @@ fn transcode_summary(report: &TranscodeReport) -> String {
 /// Follows `extract`'s job shape: the cancel flag is reset through
 /// [`reset_and_clone_cancel`], the pass runs on a background thread, and
 /// progress/log/finished go back as `extract:*` events so the UI reuses one
-/// progress view. A cancelled pass ends quietly (an `extract:log` line, no
-/// `extract:error`) rather than surfacing the cancellation as a failure.
+/// progress view. A cancelled pass is reported through `extract:error` the
+/// same way any other failure is — exactly how a cancelled `extract` run
+/// already behaves (`extract` never special-cases its own cancellation
+/// either; `spawn_job`'s generic `Err` handling covers both). An earlier
+/// version of this command ended a cancelled pass quietly instead (an
+/// `extract:log` line, `Ok(())`, no `extract:error`); that left
+/// `awaitTauriJob`'s promise on the web side permanently unsettled — no
+/// `extract:finished`, no `extract:error` — wedging the screen with `running`
+/// stuck true and no way back except restarting the app. Do not restore the
+/// quiet path.
 ///
 /// The report only carries counts, not per-file reasons, so a nonzero
 /// `failed`/`too_large` count is surfaced as one summarizing `extract:log`
@@ -232,8 +240,8 @@ fn transcode_summary(report: &TranscodeReport) -> String {
 /// Returns an error if a form field is invalid, `staging_dir` is not a
 /// direct child of `staging_root` or is missing the export sentinel, or
 /// another thread panicked while holding the shared state lock. Failures
-/// during the pass — including ffmpeg/ffprobe being unavailable — are sent
-/// as `extract:error`, verbatim, not returned here.
+/// during the pass — including a cancellation and ffmpeg/ffprobe being
+/// unavailable — are sent as `extract:error`, verbatim, not returned here.
 #[tauri::command]
 pub async fn transcode_staging(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
@@ -281,20 +289,12 @@ pub async fn transcode_staging(
             },
         );
 
-        let report = match outcome {
-            Ok(report) => report,
-            // `transcode_staged` spells its cancellation error "canceled"
-            // (one L) precisely so this layer can tell it apart from a real
-            // failure — see the doc comment on `transcode.rs`'s
-            // `check_cancel_now`. A cancelled pass is not an error: the user
-            // asked for it, so it ends quietly rather than through
-            // `extract:error`.
-            Err(error) if error.to_string() == "canceled" => {
-                let _ = app_handle.emit("extract:log", "Canceled.".to_string());
-                return Ok(());
-            }
-            Err(error) => return Err(error),
-        };
+        // A cancellation is just another `Err` here — `spawn_job` reports it
+        // as `extract:error` with the error chain as `detail`, the same
+        // generic path a cancelled `extract` run already goes through. See
+        // this function's doc comment for why the earlier quiet-cancel
+        // special case was removed.
+        let report = outcome?;
 
         let summary = transcode_summary(&report);
         if report.failed > 0 || report.too_large > 0 {

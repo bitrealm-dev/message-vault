@@ -78,6 +78,7 @@ export default function ImportScreen() {
     stagingDir,
     gateSummary,
     gateDelta,
+    gateAttachmentMedia,
     mediaToolsMissing,
     computingSummary,
     completionText,
@@ -628,7 +629,7 @@ export default function ImportScreen() {
         <GateOneScreen
           summary={gateSummary}
           unknownContacts={unknownContacts}
-          mode={attachmentMedia}
+          mode={gateAttachmentMedia}
           onApprove={() => void approveGate()}
           onDecline={() => void declineGate()}
           busy={running}
@@ -640,7 +641,7 @@ export default function ImportScreen() {
         <GateTwoScreen
           delta={gateDelta}
           actual={gateSummary}
-          mode={attachmentMedia}
+          mode={gateAttachmentMedia}
           onApprove={() => void approveGate()}
           onDecline={() => void declineGate()}
           busy={running}

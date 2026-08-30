@@ -250,8 +250,10 @@ describe("useImportJob wiring", () => {
   it("records the stage as it goes", async () => {
     const { result } = renderHook(() => useImportJob());
     await act(() => result.current.startImport(form({ attachmentMedia: "convert" })));
-    expect(setImportStageMock).toHaveBeenCalledWith(1, "write");
-    expect(setImportStageMock).toHaveBeenCalledWith(1, "awaiting_gate_1");
+    // No plan exists yet at either call — `setImportStage` still receives a
+    // (harmlessly `undefined`) third argument; see `moveStage`.
+    expect(setImportStageMock).toHaveBeenCalledWith(1, "write", undefined);
+    expect(setImportStageMock).toHaveBeenCalledWith(1, "awaiting_gate_1", undefined);
   });
 
   it("runs the media pass then stops at the second gate", async () => {
@@ -298,7 +300,10 @@ describe("useImportJob wiring", () => {
     expect(invokeSummarizeStagingMock).toHaveBeenCalledTimes(1);
   });
 
-  it("writes transcode, then awaiting_gate_2 carrying the plan approved at Gate 1", async () => {
+  it("writes transcode carrying the Gate-1 plan, then awaiting_gate_2 carrying it too", async () => {
+    // Important 4: a crash mid-pass must not leave summary_json null with
+    // no baseline for a later resume — so the plan rides the "transcode"
+    // stage call too, not only the one after it.
     runMock.mockImplementationOnce(
       runResult({ summary: "Transcode finished.", transcode: undefined }),
     );
@@ -308,7 +313,7 @@ describe("useImportJob wiring", () => {
     await act(() => result.current.startImport(form({ attachmentMedia: "convert" })));
     await act(() => result.current.approveGate());
 
-    expect(setImportStageMock).toHaveBeenCalledWith(1, "transcode");
+    expect(setImportStageMock).toHaveBeenCalledWith(1, "transcode", approved);
     expect(setImportStageMock).toHaveBeenCalledWith(1, "awaiting_gate_2", approved);
   });
 
@@ -333,6 +338,117 @@ describe("useImportJob wiring", () => {
     expect(invokeDeleteStagingMock).toHaveBeenCalled();
   });
 
+  it("still discards the session, and still returns to the form, even when deleting the folder fails", async () => {
+    // The other direction of the same guarantee: a regression to sequential
+    // discard-then-delete (each awaited without independent handling) would
+    // let a rejected delete propagate out of declineGate and skip
+    // returnToForm — leaving the screen stuck on Gate 1 with a session the
+    // vault already considers discarded.
+    invokeDeleteStagingMock.mockRejectedValueOnce(new Error("disk full"));
+    const { result } = renderHook(() => useImportJob());
+    await act(() => result.current.startImport(form({ attachmentMedia: "convert" })));
+    await act(() => result.current.declineGate());
+    expect(discardImportSessionMock).toHaveBeenCalledWith(1);
+    expect(result.current.phase).toBe("form");
+  });
+
+  it("declines from Gate 2 the same way — closes the session and deletes the folder", async () => {
+    resolveImportStagingDirMock.mockResolvedValue("/staging/run-2");
+    runMock.mockImplementationOnce(
+      runResult({ summary: "Transcode finished.", transcode: undefined }),
+    );
+    const { result } = renderHook(() => useImportJob());
+    await act(() => result.current.startImport(form({ attachmentMedia: "convert" })));
+    await act(() => result.current.approveGate());
+    expect(result.current.phase).toBe("gate_2");
+
+    await act(() => result.current.declineGate());
+
+    expect(discardImportSessionMock).toHaveBeenCalledWith(1);
+    expect(invokeDeleteStagingMock).toHaveBeenCalledWith({ staging_dir: "/staging/run-2" });
+    expect(result.current.phase).toBe("form");
+  });
+
+  it("approving at Gate 2 writes pushing carrying the recomputed summary, not Gate 1's", async () => {
+    // Decision 15: the diff at Gate 2 is against what was approved at Gate
+    // 1, but what gets approved when Gate 2 itself is approved is the
+    // summary Gate 2 is showing — the recomputed one, not the original.
+    runMock.mockImplementationOnce(
+      runResult({ summary: "Transcode finished.", transcode: undefined }),
+    );
+    runMock.mockImplementationOnce(runResult({ summary: "Push finished.", report: okReport() }));
+    const gate1Approved = stagingSummary({ conversations: 1 });
+    const recomputed = stagingSummary({ conversations: 1, attachments: 4 });
+    invokeSummarizeStagingMock.mockResolvedValueOnce(gate1Approved);
+    invokeSummarizeStagingMock.mockResolvedValueOnce(recomputed);
+
+    const { result } = renderHook(() => useImportJob());
+    await act(() => result.current.startImport(form({ attachmentMedia: "convert" })));
+    await act(() => result.current.approveGate()); // Gate 1 -> media pass -> Gate 2
+    expect(result.current.phase).toBe("gate_2");
+
+    await act(() => result.current.approveGate()); // Gate 2 -> pushing
+
+    expect(setImportStageMock).toHaveBeenCalledWith(1, "pushing", recomputed);
+    expect(setImportStageMock).not.toHaveBeenCalledWith(1, "pushing", gate1Approved);
+  });
+
+  it("reaches a failed push through Gate 2 the same way copy mode does through Gate 1", async () => {
+    runMock.mockImplementationOnce(
+      runResult({ summary: "Transcode finished.", transcode: undefined }),
+    );
+    runMock.mockImplementationOnce(
+      runResult({ summary: "Push finished.", report: failedReport() }),
+    );
+    const { result } = renderHook(() => useImportJob());
+    await act(() => result.current.startImport(form({ attachmentMedia: "convert" })));
+    await act(() => result.current.approveGate());
+    expect(result.current.phase).toBe("gate_2");
+
+    await act(() => result.current.approveGate());
+
+    expect(result.current.phase).toBe("done");
+    expect(result.current.summaryView?.status).toBe("failed");
+  });
+
+  it("unwedges on a cancelled media pass instead of freezing the screen", async () => {
+    // Critical: transcode_staging used to end a cancelled pass quietly (an
+    // extract:log line, Ok(())) with no extract:finished and no
+    // extract:error, so awaitTauriJob's promise never settled and the
+    // screen was stuck. It now reports through extract:error like any other
+    // failure, so run() rejects here exactly as it would for a real error.
+    runMock.mockImplementationOnce(async (fn: () => Promise<unknown>) => {
+      await fn();
+      throw new Error("canceled");
+    });
+    const { result } = renderHook(() => useImportJob());
+    await act(() => result.current.startImport(form({ attachmentMedia: "convert" })));
+    await act(() => result.current.approveGate());
+
+    expect(invokePushMock).not.toHaveBeenCalled();
+    expect(result.current.phase).toBe("done");
+    expect(result.current.summaryView?.status).toBe("canceled");
+    // The session stays wherever the run actually got to — "transcode" —
+    // never advanced to a stage the cancelled run never reached.
+    expect(setImportStageMock).not.toHaveBeenCalledWith(1, "awaiting_gate_2", expect.anything());
+    expect(setImportStageMock).not.toHaveBeenCalledWith(1, "pushing", expect.anything());
+  });
+
+  it("a failed recompute after a successful media pass is a failed import, not an unhandled rejection", async () => {
+    runMock.mockImplementationOnce(
+      runResult({ summary: "Transcode finished.", transcode: undefined }),
+    );
+    invokeSummarizeStagingMock.mockRejectedValueOnce(new Error("disk full"));
+    const { result } = renderHook(() => useImportJob());
+    await act(() => result.current.startImport(form({ attachmentMedia: "convert" })));
+    await act(() => result.current.approveGate());
+
+    expect(invokePushMock).not.toHaveBeenCalled();
+    expect(result.current.phase).toBe("done");
+    expect(result.current.summaryView?.status).toBe("failed");
+    expect(setImportStageMock).not.toHaveBeenCalledWith(1, "awaiting_gate_2", expect.anything());
+  });
+
   it("does not run the media pass twice on a double click", async () => {
     let resolveTranscode!: (value: TauriJobResult) => void;
     const pending = new Promise<TauriJobResult>((resolve) => {
@@ -344,6 +460,13 @@ describe("useImportJob wiring", () => {
       await fn();
       return pending;
     });
+    // A fallback that keeps calling through, so if the double-click guard
+    // were ever removed, a genuine second (or third) run() call would show
+    // up as a genuine second call to invokeTranscodeStagingMock below —
+    // without this, the mock's one-time queue would just exhaust and return
+    // `undefined` without invoking anything, and the guard could be deleted
+    // without this test noticing.
+    runMock.mockImplementation(runResult({ summary: "Transcode finished.", transcode: undefined }));
 
     const { result } = renderHook(() => useImportJob());
     await act(() => result.current.startImport(form({ attachmentMedia: "convert" })));
@@ -355,6 +478,7 @@ describe("useImportJob wiring", () => {
     });
 
     expect(invokeTranscodeStagingMock).toHaveBeenCalledTimes(1);
+    expect(runMock).toHaveBeenCalledTimes(2); // extract, then exactly one media pass
   });
 
   it("a failed media pass is a failed import, not a silent skip to upload", async () => {
@@ -476,6 +600,19 @@ describe("useImportJob wiring", () => {
     expect(result.current.steps[2]?.status).toBe("done");
   });
 
+  it("says the staging row was Copied under convert, since extract only stages originals now", async () => {
+    // Important 5: extract stages originals under convert/compress too
+    // (ruling 3) — the staging row must say what extract actually did, not
+    // what the user ultimately asked for. The media row (index 2) still
+    // tells the convert/compress story once the pass itself runs.
+    resolveImportStagingDirMock.mockResolvedValue("/tmp/staging");
+    const { result } = renderHook(() => useImportJob());
+    await act(() => result.current.startImport({ ...baseForm, attachmentMedia: "convert" }));
+
+    expect(result.current.steps[1]?.detail).toMatch(/^Copied /);
+    expect(result.current.steps[1]?.detail).not.toMatch(/^Converted /);
+  });
+
   it("never probes ffmpeg tools under copy mode, which never needs them", async () => {
     const { result } = renderHook(() => useImportJob());
     await act(() => result.current.startImport(form({ attachmentMedia: "copy" })));
@@ -555,7 +692,9 @@ describe("useImportJob resume path", () => {
     // baseForm uses attachmentMedia "copy", which has no media step: Read
     // backup, Copy to staging, Upload to vault — three rows, not four.
     // Nothing was ever gated on a resumed run, so there is no approved plan
-    // to carry — the stage call omits the third argument entirely.
+    // to carry — `setImportStage` still receives a third argument, but it's
+    // `undefined`, which reaches the server identically to omitting it
+    // entirely (JSON.stringify drops it).
     const { result } = renderHook(() => useImportJob());
 
     await act(async () => {
@@ -565,7 +704,7 @@ describe("useImportJob resume path", () => {
       });
     });
 
-    expect(setImportStageMock).toHaveBeenCalledWith(99, "pushing");
+    expect(setImportStageMock).toHaveBeenCalledWith(99, "pushing", undefined);
 
     expect(result.current.steps).toHaveLength(3);
     for (const step of result.current.steps.slice(0, 2)) {
