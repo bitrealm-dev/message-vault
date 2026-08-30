@@ -180,6 +180,10 @@ pub struct AppState {
     /// Serialize multipart complete per (account, sha256) so two clients cannot
     /// race `store_verified` on the same SHA-256 fingerprint.
     pub(crate) asset_complete_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    /// Sliding-window hit counts for the unauthenticated auth endpoints. Held
+    /// here, not in a static, so tests in one binary cannot rate-limit each
+    /// other; a served vault has a single state, so the limit still spans it.
+    pub(crate) auth_rate_limits: crate::auth::AuthRateLimits,
     /// Multipart / asset size limits from `[server]` (env may override part size).
     pub(crate) upload_limits: asset_uploads::UploadLimits,
     /// Axum request body cap (single PUT or one part); equals `asset_max_bytes`.
@@ -414,6 +418,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         db_engine: engine,
         account_import_locks: Arc::new(Mutex::new(HashMap::new())),
         asset_complete_locks: Arc::new(Mutex::new(HashMap::new())),
+        auth_rate_limits: Arc::new(std::sync::Mutex::new(HashMap::new())),
         upload_limits,
         max_body_bytes,
     };
@@ -778,6 +783,7 @@ pub(crate) async fn test_app_state(pool: sqlx::AnyPool, data_dir: &Path) -> AppS
         db_engine: DbEngine::Sqlite,
         account_import_locks: Arc::new(Mutex::new(HashMap::new())),
         asset_complete_locks: Arc::new(Mutex::new(HashMap::new())),
+        auth_rate_limits: Arc::new(std::sync::Mutex::new(HashMap::new())),
         upload_limits: asset_uploads::UploadLimits::default(),
         max_body_bytes: asset_uploads::DEFAULT_MAX_BYTES as usize,
     }
