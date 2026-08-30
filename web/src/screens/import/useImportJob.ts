@@ -251,7 +251,7 @@ export function useImportJob() {
     setImportSessionId(null);
     setSteps(initialSteps("active", form.attachmentMedia));
 
-    let importSessionId: number | null = null;
+    let sessionId: number | null = null;
     let threw = false;
     let parseMs: number | null = null;
     let attachmentsMs: number | null = null;
@@ -275,8 +275,8 @@ export function useImportJob() {
         form: formSnapshot(form),
         source_fingerprint: backupStat ? buildSourceFingerprint(form.backupPath, backupStat) : null,
       });
-      importSessionId = importSession.id;
-      setImportSessionId(importSessionId);
+      sessionId = importSession.id;
+      setImportSessionId(sessionId);
 
       setSteps((current) =>
         current.map((step, i) => (i === 0 ? { ...step, detail: "Extracting…" } : step)),
@@ -376,10 +376,10 @@ export function useImportJob() {
       ]);
 
       activeStepRef.current = "upload";
-      if (importSessionId != null) {
+      if (sessionId != null) {
         // Best effort: a stale stage costs a slower resume, never a wrong
         // one — resume correctness is recomputed from the folder.
-        await setImportStage(importSessionId, "pushing").catch(() => {});
+        await setImportStage(sessionId, "pushing").catch(() => {});
       }
       const uploadStartedAt = performance.now();
       pushResult = await runTauriJob(
@@ -453,9 +453,9 @@ export function useImportJob() {
           return { ...step, durationMs: duration };
         }),
       );
-      if (importSessionId) {
+      if (sessionId) {
         try {
-          await apiClient.post(`/v1/imports/${String(importSessionId)}/complete`, {
+          await apiClient.post(`/v1/imports/${String(sessionId)}/complete`, {
             ok: outcome !== "failed",
             status: outcome,
             message_count: pushReport?.messages_inserted,
@@ -483,9 +483,9 @@ export function useImportJob() {
           // Completing the session on the server is optional. The summary still shows local results.
         }
       }
-      if (importSessionId != null) {
+      if (sessionId != null) {
         saveImportSavedGroup({
-          importSessionId,
+          importSessionId: sessionId,
           source: form.source,
           messagesInserted: pushReport?.messages_inserted,
         });
