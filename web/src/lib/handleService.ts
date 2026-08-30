@@ -35,6 +35,63 @@ export function handlePlaceholder(service: HandleService): string {
   return HANDLE_SERVICE_OPTIONS.find((option) => option.value === service)?.placeholder ?? "";
 }
 
+/**
+ * Why a handle cannot be used, or null when it can. An empty value is not an
+ * error here: a blank row is one the person has not filled in yet, and the
+ * screens that collect handles decide separately how many they need.
+ *
+ * The number check counts digits rather than matching a shape, so the
+ * separators people actually type — spaces, dots, dashes, parentheses — all
+ * pass. Seven digits is the shortest real subscriber number and fifteen is the
+ * most E.164 allows.
+ */
+export function handleValidationError(service: HandleService, value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  if (service === "email") {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)
+      ? null
+      : "Enter an email address like you@example.com.";
+  }
+
+  const digits = trimmed.replace(/\D/g, "");
+  const onlyNumberCharacters = /^\+?[\d\s().-]+$/.test(trimmed);
+  if (!onlyNumberCharacters || digits.length < 7 || digits.length > 15) {
+    return "Enter a phone number like +1 555-123-4567.";
+  }
+  return null;
+}
+
+/** Shown against the second and later rows carrying an account already listed. */
+export const DUPLICATE_HANDLE_MESSAGE = "This account is already in the list.";
+
+/**
+ * Key two handles share when they are the same account, or null for a value
+ * with nothing to compare. Two rows match when their keys are equal.
+ *
+ * The service is part of the key because the same number on Text Message and
+ * on WhatsApp is two accounts, not one, and listing both is the right thing to
+ * do. Within a service the comparison ignores how the value was typed: an
+ * email folds to lower case, and a number falls back to its digits so
+ * `+1 (555) 123-4567` and `+15551234567` land on the same key.
+ *
+ * The digits are compared whole rather than by their last ten, so a number
+ * written once with its country code and once without is not caught. That is
+ * deliberate — guessing at country codes would let this refuse two numbers
+ * that really are different, and a missed duplicate costs far less than an
+ * error the person cannot talk their way out of.
+ */
+export function handleDuplicateKey(service: HandleService, value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const normalized =
+    service === "email"
+      ? trimmed.toLowerCase()
+      : trimmed.replace(/\D/g, "") || trimmed.toLowerCase();
+  return `${service}:${normalized}`;
+}
+
 /** Contact drawer "Add identity" picker (labels match the handles table). */
 export const CONTACT_IDENTITY_SERVICE_OPTIONS = [
   { value: "phone", label: "Text message" },

@@ -28,7 +28,7 @@ cors_origins = [
 
 - Paths resolve relative to the repo root (parent of `config/`).
 - `[server]` is required for `serve`. The demo config comments it out.
-- `cors_origins` is empty by default (same-origin only). The desktop app loads from a different origin than the API, so Connect fails until this list includes the Vite `:5173` origins (dev) and the three packaged origins (`tauri://localhost`, `http://tauri.localhost`, `https://tauri.localhost`).
+- `cors_origins` lists origins allowed on top of the three the packaged desktop app runs from (`tauri://localhost`, `http://tauri.localhost`, `https://tauri.localhost`), which the server allows whether or not you name them. The website the vault serves is same-origin and needs no entry either, so an empty list is the right setting for most installs. Add the Vite origins (`http://localhost:5173`, `http://127.0.0.1:5173`) when running the dev UI against this vault.
 - Source names are **not** listed in TOML — each import registers its own
   source slug for that account under `data/<account_id>/<source_id>/`.
 

@@ -6,8 +6,15 @@
  * vertically-centered flex container without its top overflowing off-screen
  * and unreachable. `overflow-y-auto` keeps the card centered on a normal
  * viewport while letting the *page* scroll to reach it on a short one.
+ *
+ * `box-border` is what keeps a normal viewport free of a scrollbar. theme.css
+ * leaves out Tailwind's preflight, so there is no global `border-box` reset and
+ * every box opts in by hand. Without it this one measured `100vh` of content
+ * *plus* its own 32px of padding, so the page stood 32px taller than the window
+ * it was drawn in and the browser fitted a scrollbar it had no use for.
  */
-export const pageCenter = "min-h-screen flex items-center justify-center bg-bg p-4 overflow-y-auto";
+export const pageCenter =
+  "min-h-screen box-border flex items-center justify-center bg-bg p-4 overflow-y-auto";
 /**
  * Every auth card is the same 448 × 608 box on every screen and in every
  * state — it never resizes and never scrolls, so nothing moves underneath the

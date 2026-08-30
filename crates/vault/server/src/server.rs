@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use futures_util::StreamExt;
@@ -285,32 +285,59 @@ impl From<anyhow::Error> for ApiError {
     }
 }
 
+/// Origins the packaged desktop app runs from. A Tauri window is not a page on
+/// the web, so its origin is fixed by the platform rather than chosen by
+/// anyone: `tauri://localhost` on Linux and macOS, and `http(s)://tauri.localhost`
+/// on Windows.
+///
+/// These are allowed whatever the config says. A vault built from source starts
+/// with `cors_origins` commented out, and the desktop app pointed at it then
+/// fails in a way that reads as a network problem — the browser refuses the
+/// response before any code can see it, so the app reports the server as
+/// unreachable while `curl` to the same port succeeds. That sends people to
+/// their firewall for a missing line of TOML.
+///
+/// Allowing them by default gives away nothing a listed origin does not. The
+/// browser sets `Origin` itself and a page on the web cannot claim to be one of
+/// these, so this widens what the desktop app can reach, not what a website can.
+pub(crate) const PACKAGED_DESKTOP_ORIGINS: &[&str] = &[
+    "tauri://localhost",
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+];
+
 /// Build the Cross-Origin Resource Sharing (CORS) layer from
 /// `[server].cors_origins`. CORS is the browser rule that decides which other
 /// websites may call this API.
 ///
-/// - empty → no cross-origin allow list (same-origin UI / API is fine)
 /// - `["*"]` → fully permissive (local debugging only)
-/// - otherwise → exact origin allow list
+/// - otherwise → exact origin allow list, always including
+///   [`PACKAGED_DESKTOP_ORIGINS`]
+///
+/// An empty list is therefore not "no CORS" but "the desktop app and nothing
+/// else", which is what an unconfigured vault wants: the browser UI it serves
+/// itself is same-origin and needs no header at all.
 fn build_cors_layer(origins: &[String]) -> CorsLayer {
     if origins.iter().any(|o| o.trim() == "*") {
         return CorsLayer::permissive();
     }
-    if origins.is_empty() {
-        return CorsLayer::new();
-    }
-    let mut allowed = Vec::new();
-    for origin in origins {
+    let mut allowed: Vec<HeaderValue> = Vec::new();
+    for origin in origins
+        .iter()
+        .map(String::as_str)
+        .chain(PACKAGED_DESKTOP_ORIGINS.iter().copied())
+    {
         let trimmed = origin.trim();
         if trimmed.is_empty() {
             continue;
         }
-        if let Ok(value) = trimmed.parse() {
+        // A config that lists a packaged origin by hand is the common case, and
+        // naming the same origin twice in the allow list helps no one.
+        if let Ok(value) = trimmed.parse::<HeaderValue>()
+            && !allowed.contains(&value)
+        {
             allowed.push(value);
         }
-    }
-    if allowed.is_empty() {
-        return CorsLayer::new();
     }
     CorsLayer::new()
         .allow_origin(AllowOrigin::list(allowed))
@@ -1020,6 +1047,30 @@ mod tests {
                 "preflight Origin {origin}"
             );
         }
+    }
+
+    /// A vault built from source starts with `cors_origins` commented out. The
+    /// desktop app still has to reach it, so the packaged origins do not wait
+    /// to be configured.
+    #[tokio::test]
+    async fn cors_preflight_allows_packaged_desktop_without_configuration() {
+        let (_tmp, state, _token, _import_id) = test_state().await;
+        for origin in PACKAGED_DESKTOP_ORIGINS {
+            let response = cors_preflight(with_cors(state.clone(), &[]), origin).await;
+            assert_eq!(
+                allow_origin(&response),
+                Some(*origin),
+                "unconfigured preflight Origin {origin}"
+            );
+        }
+    }
+
+    /// Built in does not mean open: everything else still has to be listed.
+    #[tokio::test]
+    async fn cors_preflight_rejects_unknown_origin_without_configuration() {
+        let (_tmp, state, _token, _import_id) = test_state().await;
+        let response = cors_preflight(with_cors(state, &[]), "https://evil.example").await;
+        assert_eq!(allow_origin(&response), None);
     }
 
     #[tokio::test]

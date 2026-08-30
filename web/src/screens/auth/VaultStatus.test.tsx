@@ -16,6 +16,18 @@ describe("VaultStatus", () => {
 
     rerender(<VaultStatus state="disconnected" />);
     expect(screen.getByText("Disconnected")).toBeInTheDocument();
+
+    rerender(<VaultStatus state="untested" />);
+    expect(screen.getByText("Not tested")).toBeInTheDocument();
+  });
+
+  it("keeps an untested address out of the answered colours", () => {
+    render(<VaultStatus state="untested" />);
+    const status = screen.getByRole("status");
+    expect(status).toHaveClass("text-muted");
+    expect(status).not.toHaveClass("text-ok");
+    expect(status).not.toHaveClass("text-danger");
+    expect(status).not.toHaveClass("motion-safe:animate-pulse");
   });
 
   it("colours the word to agree with what it says", () => {

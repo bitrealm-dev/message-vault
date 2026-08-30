@@ -4,8 +4,10 @@ import {
   formatHandleServiceLabel,
   HANDLE_SERVICE_OPTIONS,
   HANDLE_SERVICES,
+  handleDuplicateKey,
   handlePlaceholder,
   handleServiceSelectValue,
+  handleValidationError,
   inferService,
 } from "./handleService";
 
@@ -57,5 +59,73 @@ describe("handlePlaceholder", () => {
 
   it("calls a phone number what the contact drawer calls it", () => {
     expect(HANDLE_SERVICE_OPTIONS.find((o) => o.value === "phone")?.label).toBe("Text message");
+  });
+});
+
+describe("handleValidationError", () => {
+  it("passes an empty value, which is a row not filled in yet", () => {
+    expect(handleValidationError("phone", "")).toBeNull();
+    expect(handleValidationError("email", "   ")).toBeNull();
+  });
+
+  it("accepts the separators people actually type in a number", () => {
+    expect(handleValidationError("phone", "+1 555-123-4567")).toBeNull();
+    expect(handleValidationError("phone", "(555) 123.4567")).toBeNull();
+    expect(handleValidationError("whatsapp", "+44 20 7946 0958")).toBeNull();
+  });
+
+  it("rejects a number that is not one", () => {
+    expect(handleValidationError("phone", "notaphone")).toMatch(/phone number/);
+    expect(handleValidationError("phone", "123")).toMatch(/phone number/);
+    expect(handleValidationError("phone", "you@example.com")).toMatch(/phone number/);
+  });
+
+  it("rejects a number longer than E.164 allows", () => {
+    expect(handleValidationError("phone", "+1234567890123456")).toMatch(/phone number/);
+  });
+
+  it("accepts an address and rejects what is not one", () => {
+    expect(handleValidationError("email", "you@example.com")).toBeNull();
+    expect(handleValidationError("email", "you@example")).toMatch(/email address/);
+    expect(handleValidationError("email", "+1 555-123-4567")).toMatch(/email address/);
+  });
+});
+
+describe("handleDuplicateKey", () => {
+  it("has no key for a value with nothing to compare", () => {
+    expect(handleDuplicateKey("phone", "")).toBeNull();
+    expect(handleDuplicateKey("email", "   ")).toBeNull();
+  });
+
+  it("matches the same number however it was typed", () => {
+    expect(handleDuplicateKey("phone", "+1 (555) 123-4567")).toBe(
+      handleDuplicateKey("phone", "+15551234567"),
+    );
+  });
+
+  it("matches an address regardless of case", () => {
+    expect(handleDuplicateKey("email", "You@Example.com")).toBe(
+      handleDuplicateKey("email", "you@example.com"),
+    );
+  });
+
+  it("keeps the same number on two services apart, because that is two accounts", () => {
+    expect(handleDuplicateKey("phone", "+15551234567")).not.toBe(
+      handleDuplicateKey("whatsapp", "+15551234567"),
+    );
+  });
+
+  it("does not fold a number written with and without its country code", () => {
+    // Deliberate: guessing at country codes would let this refuse two numbers
+    // that really are different.
+    expect(handleDuplicateKey("phone", "+1 555-123-4567")).not.toBe(
+      handleDuplicateKey("phone", "555-123-4567"),
+    );
+  });
+
+  it("separates two different accounts", () => {
+    expect(handleDuplicateKey("email", "a@example.com")).not.toBe(
+      handleDuplicateKey("email", "b@example.com"),
+    );
   });
 });

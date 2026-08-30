@@ -13,11 +13,16 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ### Fixed
 
+- 2026-08-30: Message Vault Settings no longer reports an address it has not probed. Editing the address after a failed Test used to fall back to the card's own connection — which belongs to the vault already saved — and turn the line green. An address typed but not tried now reads `Not tested`.
+- 2026-08-30: The login and profile-setup pages no longer carry a scrollbar on a viewport tall enough to hold the card. The centring page measured a full viewport height plus its own padding, so opening a select, which locks scrolling, shifted the card sideways.
+- 2026-08-30: Profile setup refuses an account already in the list, marking the later row rather than the first to carry it. Numbers are compared regardless of formatting, and the same number on Text Message and on WhatsApp stays two accounts.
+- 2026-08-30: Profile setup leaves `+ Add account` disabled while the row above it is empty, and re-shows a repeated validation message by clearing the line first, so a second check is visible rather than looking like nothing happened.
 - 2026-08-27: Desktop Import opens the vault session as `imessage` or `whatsapp` instead of the Platform method id (`imessage-ios`, `whatsapp-android`, …), so conversation uploads no longer fail with a source mismatch.
 - 2026-08-27: Import Errors groups identical `step` + `reason` + `kind` into one row with an `N files` count. Expanding the row lists the filenames. Stored per-file issues are unchanged.
 
 ### Changed
 
+- 2026-08-30: The vault allows the packaged desktop app's three origins (`tauri://localhost`, `http://tauri.localhost`, `https://tauri.localhost`) without being configured to. A vault built from source ships `cors_origins` commented out, and the desktop app pointed at it failed in a way that reads as an unreachable server while `curl` to the same port succeeded. `cors_origins` still governs every other origin, and `["*"]` is unchanged.
 - 2026-08-28: Postgres JSONL staging writes up to 1000 rows per `INSERT` (SQLite stays at the 999-bind cap, about 55 message rows). Same statement shape on both engines.
 - 2026-08-27: Import writes staging messages, attachments, and tapbacks in multi-row chunks and reuses sender handle ids for the rest of the import, so JSONL staging is no longer one database call per row.
 - 2026-08-27: Import promote runs `ANALYZE` on `messages`, `attachments`, and `tapbacks` before it opens the write transaction, so a later source can use the guid index. `--reset-demo` runs `VACUUM` once after all three sources, dedupe, and media. Analyze or vacuum failure is a warning; the import still succeeds.
