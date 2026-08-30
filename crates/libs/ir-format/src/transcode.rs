@@ -438,6 +438,38 @@ fn patch_all_matching(
     }
 }
 
+/// What a heal recovery repoints an attachment at: the recovered original,
+/// read fresh off disk.
+struct RecoveredOriginal {
+    rel: String,
+    digest: String,
+    size: u64,
+    mime: Option<String>,
+}
+
+/// Compute the fields a heal repoint writes, from `src` (the recovered
+/// original) on disk.
+///
+/// Shared by both places a heal has to fall back to the original rather than
+/// a derivative: the media step declining the file (`Skipped`), and ffmpeg
+/// failing on it (`Err`). In both cases `recorded_rel` — the phantom `-mv`
+/// name a crashed prior run already wrote into the document — must not be
+/// left standing, since nothing will ever exist under it.
+fn recovered_original_fields(src: &Path) -> Result<RecoveredOriginal> {
+    let rel = attachment_rel(src)?;
+    let digest = media::file_sha256(src)?;
+    let size = std::fs::metadata(src)
+        .with_context(|| format!("stat {}", src.display()))?
+        .len();
+    let mime = mime_for_rel(&rel);
+    Ok(RecoveredOriginal {
+        rel,
+        digest,
+        size,
+        mime,
+    })
+}
+
 /// Transcode `src` and commit it, in the order decision 28 fixes: derivative
 /// written, conversation file patched, derivative renamed into its final
 /// name, original deleted. Reversing any pair leaves the folder lying about
@@ -470,16 +502,34 @@ fn apply_transcode(
 
     match media::transcode_file(src, &marker, options.mode, &options.compress) {
         Err(err) => {
-            // The original is untouched on disk. Clearing `path` here would
-            // sever the only reference to bytes that still exist, turning a
-            // transient failure into permanent loss, and `pending_in` (which
-            // skips `path == None`) would never retry it — so only the
-            // reason changes; everything else (path, digest, size, mime)
-            // stays exactly as recorded.
             let reason = format!("convert_failed: {err}");
-            patch_all_matching(doc, recorded_rel, |att| {
-                att.missing_reason = Some(reason.clone());
-            });
+            if is_heal {
+                // `recorded_rel` is the phantom `-mv` name a crashed prior
+                // run already wrote into the document; nothing will ever
+                // exist under it. Keeping it here — the way a non-heal
+                // failure keeps its path — would strand the document
+                // pointing at a name that can never exist. Repoint at the
+                // recovered original first, exactly like the `Skipped` heal
+                // arm below, then record the failure on it.
+                let r = recovered_original_fields(src)?;
+                patch_all_matching(doc, recorded_rel, |att| {
+                    att.path = Some(r.rel.clone());
+                    att.digest_sha256 = Some(r.digest.clone());
+                    att.size_bytes = Some(r.size);
+                    att.mime_type = r.mime.clone();
+                    att.missing_reason = Some(reason.clone());
+                });
+            } else {
+                // The original is untouched on disk. Clearing `path` here
+                // would sever the only reference to bytes that still exist,
+                // turning a transient failure into permanent loss, and
+                // `pending_in` (which skips `path == None`) would never
+                // retry it — so only the reason changes; everything else
+                // (path, digest, size, mime) stays exactly as recorded.
+                patch_all_matching(doc, recorded_rel, |att| {
+                    att.missing_reason = Some(reason.clone());
+                });
+            }
             write_conversation_jsonl_to(jsonl, doc)?;
             report.failed += 1;
             Ok(())
@@ -490,17 +540,12 @@ fn apply_transcode(
                 // nothing will ever produce — the media step declined this
                 // file. Repoint it back at the recovered original so a
                 // resume does not chase a name that can never exist.
-                let rel = attachment_rel(src)?;
-                let digest = media::file_sha256(src)?;
-                let size = std::fs::metadata(src)
-                    .with_context(|| format!("stat {}", src.display()))?
-                    .len();
-                let mime = mime_for_rel(&rel);
+                let r = recovered_original_fields(src)?;
                 patch_all_matching(doc, recorded_rel, |att| {
-                    att.path = Some(rel.clone());
-                    att.digest_sha256 = Some(digest.clone());
-                    att.size_bytes = Some(size);
-                    att.mime_type = mime.clone();
+                    att.path = Some(r.rel.clone());
+                    att.digest_sha256 = Some(r.digest.clone());
+                    att.size_bytes = Some(r.size);
+                    att.mime_type = r.mime.clone();
                     att.missing_reason = None;
                 });
                 write_conversation_jsonl_to(jsonl, doc)?;
@@ -1022,6 +1067,117 @@ mod tests {
             Some("attachments/photo-mv.jpg"),
             "the doc points at the healed derivative"
         );
+    }
+
+    #[test]
+    fn a_heal_that_fails_to_transcode_repoints_at_the_original_before_recording_the_failure() {
+        if !ffmpeg_available() {
+            return;
+        }
+        // Same crash-window simulation as the other heal tests, but this
+        // time the recovered original is garbage ffmpeg will fail on. The
+        // Err arm must not simply "keep the path" the way a non-heal
+        // failure does: `recorded_rel` here is the phantom -mv name from the
+        // crashed run, which will never exist. It must repoint at the
+        // recovered original first, then record the failure on it.
+        let (dir, jsonl, original) = staged_one("broken.png", b"not a png at all");
+        let mut doc = read_conversation_jsonl(&jsonl).unwrap();
+        {
+            let att = &mut doc.messages[0].attachments[0];
+            att.path = Some("attachments/broken-mv.jpg".into());
+            att.digest_sha256 = Some("deadbeef".repeat(8));
+            att.size_bytes = Some(1234);
+            att.mime_type = Some("image/jpeg".into());
+        }
+        write_conversation_jsonl_to(&jsonl, &doc).unwrap();
+        assert!(
+            original.exists(),
+            "the original is still there before the pass runs"
+        );
+
+        let report = transcode_staged(
+            dir.path(),
+            &options(MediaMode::Convert, u64::MAX),
+            None,
+            &mut |_| {},
+        )
+        .unwrap();
+
+        assert_eq!(report.failed, 1);
+        let doc = read_conversation_jsonl(&jsonl).unwrap();
+        let att = &doc.messages[0].attachments[0];
+        assert_eq!(
+            att.path.as_deref(),
+            Some("attachments/broken.png"),
+            "repointed at the recovered original, not left on the phantom -mv name"
+        );
+        let reason = att.missing_reason.clone().unwrap();
+        assert!(
+            reason.starts_with("convert_failed: "),
+            "reason must stay inside the closed set: {reason}"
+        );
+        assert_eq!(
+            att.digest_sha256.as_deref(),
+            Some(hex_sha256(&std::fs::read(&original).unwrap()).as_str()),
+            "digest recomputed from the recovered original, not the stale pre-crash value"
+        );
+        assert!(
+            original.exists(),
+            "the recovered original is untouched by a failed transcode"
+        );
+    }
+
+    #[test]
+    fn a_heal_that_the_media_step_skips_repoints_at_the_original_deterministically() {
+        if !ffmpeg_available() {
+            return;
+        }
+        // A small mp4 under compress's min_size_bytes returns
+        // TranscodeOutcome::Skipped without looking at the video's content
+        // at all — compress_video's `ext == "mp4"` branch short-circuits
+        // before any ffmpeg probe or encode — so this Skip is deterministic
+        // regardless of the installed ffmpeg's version or behaviour, unlike
+        // (say) an already-efficient-codec skip, which depends on what that
+        // ffmpeg actually reports.
+        let (dir, jsonl, original) = staged_one("clip.mp4", b"not really a video, but small");
+        let mut doc = read_conversation_jsonl(&jsonl).unwrap();
+        {
+            let att = &mut doc.messages[0].attachments[0];
+            att.path = Some("attachments/clip-mv.mp4".into());
+            att.digest_sha256 = Some("deadbeef".repeat(8));
+            att.size_bytes = Some(1234);
+            att.mime_type = Some("video/mp4".into());
+        }
+        write_conversation_jsonl_to(&jsonl, &doc).unwrap();
+        assert!(
+            original.exists(),
+            "the original is still there before the pass runs"
+        );
+        // Default min_size_bytes is 20 MB; our fixture is a few dozen bytes.
+        assert!(CompressOptions::default().min_size_bytes > 1000);
+
+        let report = transcode_staged(
+            dir.path(),
+            &options(MediaMode::Compress, u64::MAX),
+            None,
+            &mut |_| {},
+        )
+        .unwrap();
+
+        assert_eq!(report.skipped, 1);
+        let doc = read_conversation_jsonl(&jsonl).unwrap();
+        let att = &doc.messages[0].attachments[0];
+        assert_eq!(
+            att.path.as_deref(),
+            Some("attachments/clip.mp4"),
+            "repointed at the recovered original, not left on the phantom -mv name"
+        );
+        assert!(att.missing_reason.is_none());
+        assert_eq!(
+            att.digest_sha256.as_deref(),
+            Some(hex_sha256(&std::fs::read(&original).unwrap()).as_str())
+        );
+        assert!(original.exists(), "a skipped file's original is left alone");
     }
 
     #[test]
