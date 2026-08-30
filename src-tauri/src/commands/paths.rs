@@ -23,6 +23,11 @@ pub struct PathStat {
     pub is_file: bool,
     /// `true` when the path is a directory.
     pub is_directory: bool,
+    /// Size in bytes; `0` when the path does not exist.
+    pub size_bytes: u64,
+    /// Last modification time in milliseconds since the Unix epoch, or
+    /// `None` when the platform does not report one.
+    pub modified_unix_ms: Option<i64>,
 }
 
 /// Stat a path without canonicalizing it (the path may not exist yet).
@@ -33,13 +38,23 @@ pub(crate) fn path_stat_inner(path: &str) -> Result<PathStat, String> {
             exists: false,
             is_file: false,
             is_directory: false,
+            size_bytes: 0,
+            modified_unix_ms: None,
         });
     }
     let path = Path::new(trimmed);
+    let meta = std::fs::metadata(path).ok();
+    let modified_unix_ms = meta
+        .as_ref()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|d| i64::try_from(d.as_millis()).ok());
     Ok(PathStat {
         exists: path.exists(),
         is_file: path.is_file(),
         is_directory: path.is_dir(),
+        size_bytes: meta.as_ref().map(std::fs::Metadata::len).unwrap_or(0),
+        modified_unix_ms,
     })
 }
 

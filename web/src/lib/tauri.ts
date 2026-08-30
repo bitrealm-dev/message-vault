@@ -159,6 +159,8 @@ export interface PathStat {
   exists: boolean;
   isFile: boolean;
   isDirectory: boolean;
+  sizeBytes: number;
+  modifiedUnixMs: number | null;
 }
 
 /** Whether a path exists and whether it is a file or directory. */
