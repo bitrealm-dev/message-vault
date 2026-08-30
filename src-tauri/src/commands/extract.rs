@@ -170,6 +170,9 @@ pub struct ExtractArgs {
     pub whatsapp_db: Option<String>,
     /// WhatsApp Business backup (iPhone only; Android stays false).
     pub whatsapp_business: Option<bool>,
+    /// Continue an interrupted export in the same output folder: previous
+    /// output is kept and conversations already written are skipped.
+    pub resume: Option<bool>,
 }
 
 /// Ask this process to parse a phone backup and write conversation files.
@@ -230,6 +233,7 @@ pub async fn extract(
 
     let output_dir = args.output_dir;
     let mut config = build_exporter_config(&args.source, &args.path, &output_dir, &options)?;
+    config.resume = args.resume.unwrap_or(false);
 
     let cancel = reset_and_clone_cancel(&state)?;
 

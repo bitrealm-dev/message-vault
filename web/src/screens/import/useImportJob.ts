@@ -241,6 +241,12 @@ export type ImportJobFormValues = {
 };
 
 /** Pick up a session whose staging folder is already complete. */
+/** A session whose copy was interrupted, and the folder it was writing into. */
+export type ResumeWrite = {
+  sessionId: number;
+  stagingDir: string;
+};
+
 export type ResumePush = {
   sessionId: number;
   stagingDir: string;
@@ -596,11 +602,11 @@ export function useImportJob() {
    * one-active-session slot and drop the session out of
    * `GET /v1/imports/active`, stranding the staged folder (and the time
    * already spent on it) with no session left to resume it through. The
-   * caller sets this only for a cancelled *media pass*; a cancelled
-   * extract has nothing approved yet, so the spec sends it to restart
-   * regardless and it completes normally, same as a failed pass does (a
-   * broken ffmpeg must not lock the account out of importing — the failed
-   * run still frees the slot).
+   * caller sets this for a cancelled media pass and for a cancelled copy:
+   * both stages resume from what is already on disk, so both are worth
+   * keeping. A genuine failure at either stage still completes normally (a
+   * broken ffmpeg or an unreadable backup must not lock the account out of
+   * importing — the failed run still frees the slot).
    */
   async function finishImport(args: {
     sessionId: number | null;
@@ -915,7 +921,11 @@ export function useImportJob() {
     }
   }
 
-  async function startImport(form: ImportJobFormValues, resume?: ResumePush): Promise<void> {
+  async function startImport(
+    form: ImportJobFormValues,
+    resume?: ResumePush,
+    resumeWrite?: ResumeWrite,
+  ): Promise<void> {
     if (!isTauri()) return;
     importStartedAtRef.current = performance.now();
     activeStepRef.current = "parse";
@@ -971,26 +981,45 @@ export function useImportJob() {
         return;
       }
 
-      const outputDir = await resolveImportStagingDir(form.backupPath, form.source);
-      setStagingDir(outputDir);
+      let outputDir: string;
+      if (resumeWrite) {
+        // The session already exists and its copy was interrupted. Reuse it
+        // and its staging folder: the exporter reads the backup again and
+        // skips the conversations already written.
+        outputDir = resumeWrite.stagingDir;
+        setStagingDir(outputDir);
+        sessionId = resumeWrite.sessionId;
+        setImportSessionId(sessionId);
 
-      const backupStat = await invokePathStat(form.backupPath).catch(() => null);
-      const importSession = await apiClient.post<{ id: number }>("/v1/imports", {
-        ...importSessionCreateBody(form.source),
-        stage: "parse",
-        staging_dir: outputDir,
-        device_id: getDeviceId(),
-        form: formSnapshot(form),
-        source_fingerprint: backupStat ? buildSourceFingerprint(form.backupPath, backupStat) : null,
-      });
-      sessionId = importSession.id;
-      setImportSessionId(sessionId);
+        setSteps((current) =>
+          current.map((step, i) => (i === 0 ? { ...step, detail: "Extracting…" } : step)),
+        );
 
-      setSteps((current) =>
-        current.map((step, i) => (i === 0 ? { ...step, detail: "Extracting…" } : step)),
-      );
+        await moveStage(sessionId, "write");
+      } else {
+        outputDir = await resolveImportStagingDir(form.backupPath, form.source);
+        setStagingDir(outputDir);
 
-      await moveStage(sessionId, "write");
+        const backupStat = await invokePathStat(form.backupPath).catch(() => null);
+        const importSession = await apiClient.post<{ id: number }>("/v1/imports", {
+          ...importSessionCreateBody(form.source),
+          stage: "parse",
+          staging_dir: outputDir,
+          device_id: getDeviceId(),
+          form: formSnapshot(form),
+          source_fingerprint: backupStat
+            ? buildSourceFingerprint(form.backupPath, backupStat)
+            : null,
+        });
+        sessionId = importSession.id;
+        setImportSessionId(sessionId);
+
+        setSteps((current) =>
+          current.map((step, i) => (i === 0 ? { ...step, detail: "Extracting…" } : step)),
+        );
+
+        await moveStage(sessionId, "write");
+      }
 
       timingRef.current.extractStartedAt = performance.now();
       const extractResult = await runTauriJob(
@@ -999,6 +1028,7 @@ export function useImportJob() {
             source: form.source,
             path: form.backupPath,
             output_dir: outputDir,
+            ...(resumeWrite ? { resume: true } : {}),
             ...(isImessageMethod(form.source)
               ? imessageExtractFields({
                   source: form.source,
@@ -1131,15 +1161,31 @@ export function useImportJob() {
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      issuesRef.current = [
-        ...issuesRef.current,
-        { kind: "error", step: activeStepRef.current, item: "Import", reason: msg },
-      ];
+      // A cancelled copy is not a failure: the conversations already written
+      // are real work, and the write stage can pick up from them. Leaving the
+      // session running at `write` is what lets the next Import visit offer
+      // that. A genuine failure still completes — a broken backup must not
+      // lock the account out of importing.
+      const canceled = isCancellation(msg);
+      if (!canceled) {
+        issuesRef.current = [
+          ...issuesRef.current,
+          { kind: "error", step: activeStepRef.current, item: "Import", reason: msg },
+        ];
+      }
       setSteps((current) =>
         current.map((step) => (step.status === "active" ? { ...step, status: "error" } : step)),
       );
       setComputingSummary(false);
-      await finishImport({ sessionId, form, threw: true, pushReport: null, uploadMs: null });
+      await finishImport({
+        sessionId,
+        form,
+        threw: !canceled,
+        canceled,
+        pushReport: null,
+        uploadMs: null,
+        skipComplete: canceled,
+      });
     }
   }
 
