@@ -194,8 +194,9 @@ Two smaller faults found while tracing this:
     JPEG at `-q:v 2`, and HEIC is roughly half the size of equivalent JPEG,
     so HEIC grows. PNG and TIFF grow. Video prefers a remux, but when that
     fails it re-encodes to `libx264`, and HEVC to H.264 typically grows
-    30–50%. An iPhone backup is mostly HEIC and HEVC, so this is the common
-    path, not a corner.
+    30–50%. Compress mode re-encodes with libx265 first, so growth from HEVC
+    applies to convert, not compress. An iPhone backup is mostly HEIC and
+    HEVC, so this is the common path, not a corner.
 
     The estimate is therefore
 
@@ -451,8 +452,10 @@ Two smaller faults found while tracing this:
 42. **`open_prepared` gains a resume mode** that does not call
     `clean_previous_ir_output`.
 
-43. **`apply_convert_or_compress` calls the logging variant** so transcode
-    reports progress. The callback already exists.
+43. **Convert and compress report progress on every path.** The desktop's
+    media pass reports through its own events; the CLI's write queue and
+    media pass log through the shared sink (the old inline pass reported
+    nothing at all).
 
 44. **Keep the smaller file only when the format does not change.**
     `finalize` deletes the original and keeps whatever ffmpeg produced,
