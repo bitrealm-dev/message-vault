@@ -45,8 +45,11 @@ pub(crate) fn read_resolved_attachment(
     {
         // A missing attachment (not present in the encrypted backup's
         // Manifest.db) is non-fatal: log it and continue without bytes rather
-        // than dropping the entire message. Genuinely fatal errors (temp file
-        // creation, I/O, crypto failures) still propagate.
+        // than dropping the entire message. Other errors (temp file creation,
+        // I/O, crypto failures) still propagate as an `Err` from this
+        // function, but they no longer kill the run: the loader closure in
+        // `emit.rs` logs them, and `run_attachment_jobs` downgrades them to
+        // a `file_missing` attachment rather than aborting.
         let temp = match decrypt_file(backup, &source) {
             Ok(temp) => temp,
             Err(RuntimeError::BackupError(BackupError::FileNotFoundInBackup(_))) => {

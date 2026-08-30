@@ -3,6 +3,7 @@ import {
   formatBytes,
   formatImportDate,
   type ImportDetailResponse,
+  importStatusLabel,
   toImportSummaryView,
 } from "./storageUtils";
 
@@ -43,6 +44,20 @@ describe("formatBytes", () => {
   });
 });
 
+describe("importStatusLabel", () => {
+  it("reads sentence-case for every status the server can return", () => {
+    expect(importStatusLabel("running")).toBe("Running");
+    expect(importStatusLabel("completed")).toBe("Completed");
+    expect(importStatusLabel("completed_with_issues")).toBe("Completed with issues");
+    expect(importStatusLabel("failed")).toBe("Failed");
+    expect(importStatusLabel("canceled")).toBe("Canceled");
+  });
+
+  it("falls back to the raw string for anything unrecognized", () => {
+    expect(importStatusLabel("mystery")).toBe("mystery");
+  });
+});
+
 describe("formatImportDate", () => {
   it("returns em dash for empty", () => {
     expect(formatImportDate(null)).toBe("—");
@@ -73,6 +88,12 @@ describe("toImportSummaryView", () => {
 
   it("treats unknown status as failed", () => {
     expect(toImportSummaryView(detail({ status: "exploded" })).status).toBe("failed");
+  });
+
+  it("passes completed_with_issues through", () => {
+    expect(toImportSummaryView(detail({ status: "completed_with_issues" })).status).toBe(
+      "completed_with_issues",
+    );
   });
 
   it("falls back messagesInserted to message_count", () => {

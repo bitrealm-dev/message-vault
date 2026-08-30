@@ -296,6 +296,23 @@ pub fn format_duration_ms(ms: u64) -> String {
     }
 }
 
+/// Three-way session status for `/v1/imports/{id}/complete` (import-session
+/// spec, decisions 21–22). `failed` has a zero floor: aborted, or nothing
+/// landed at all. A skip-only re-push is a no-op, not a failure. Item-level
+/// failures beside successes are `completed_with_issues`.
+pub fn outcome_status(report: &PushReport, aborted: bool) -> &'static str {
+    let nothing_landed = report.conversations_total > 0
+        && report.conversations_ok == 0
+        && report.conversations_skipped == 0;
+    if aborted || nothing_landed {
+        return "failed";
+    }
+    if report.conversations_failed > 0 || report.messages_failed > 0 {
+        return "completed_with_issues";
+    }
+    "completed"
+}
+
 /// Build the multi-line "Import success / completed with errors" blurb for the log.
 pub fn format_push_summary(report: &PushReport) -> String {
     let status = if report.ok {
@@ -1077,6 +1094,7 @@ fn finish_run(
             key: &cfg.key,
             import_id,
             ok: report.ok,
+            status: outcome_status(&report, aborted),
             message_count: report.messages,
             attachment_count: attachments,
             bytes_uploaded: assets_bytes,
@@ -1789,8 +1807,9 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
                 let Some(rel) = att.path.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
                     // No path means the bytes were never staged. "Do not copy"
                     // exports look like this, and the reason the exporter set
-                    // ("skipped" / "embed_disabled") explains why. Keep the
-                    // metadata so the thread still shows the file was there.
+                    // ("not_copied"; older exports say "skipped" or
+                    // "embed_disabled") explains why. Keep the metadata so the
+                    // thread still shows the file was there.
                     scan_skipped += 1;
                     let reason = att.missing_reason.as_deref().unwrap_or("no_path");
                     if att.missing_reason.is_none() {
@@ -3075,5 +3094,64 @@ mod tests {
             !summary.lines().any(|l| l.starts_with(' ')),
             "summary lines must not be indented"
         );
+    }
+
+    fn sample_report() -> PushReport {
+        PushReport {
+            ok: true,
+            account: "acct".into(),
+            username: "user".into(),
+            mode: "append".into(),
+            started_at: "2026-08-29T00:00:00Z".into(),
+            finished_at: "2026-08-29T00:01:00Z".into(),
+            elapsed_ms: 60_000,
+            conversations_total: 10,
+            conversations_ok: 10,
+            conversations_failed: 0,
+            conversations_skipped: 0,
+            messages_attempted: 100,
+            messages_inserted: 90,
+            messages_deduped: 10,
+            messages_failed: 0,
+            messages: 100,
+            assets_uploaded: 5,
+            assets_skipped: 0,
+            assets_bytes: 1_000,
+            results: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn outcome_status_matches_the_spec_verdicts() {
+        // Clean run.
+        assert_eq!(outcome_status(&sample_report(), false), "completed");
+
+        // Aborted is failed regardless of counts.
+        assert_eq!(outcome_status(&sample_report(), true), "failed");
+
+        // Nothing landed at all: the zero floor.
+        let mut nothing = sample_report();
+        nothing.ok = false;
+        nothing.conversations_ok = 0;
+        nothing.conversations_failed = 10;
+        assert_eq!(outcome_status(&nothing, false), "failed");
+
+        // A skip-only re-push is a no-op, not a failure.
+        let mut skips = sample_report();
+        skips.conversations_ok = 0;
+        skips.conversations_skipped = 10;
+        assert_eq!(outcome_status(&skips, false), "completed");
+
+        // Item-level failures beside successes.
+        let mut partial = sample_report();
+        partial.ok = false;
+        partial.conversations_ok = 8;
+        partial.conversations_failed = 2;
+        assert_eq!(outcome_status(&partial, false), "completed_with_issues");
+
+        // Message failures inside ok conversations.
+        let mut msgs = sample_report();
+        msgs.messages_failed = 3;
+        assert_eq!(outcome_status(&msgs, false), "completed_with_issues");
     }
 }

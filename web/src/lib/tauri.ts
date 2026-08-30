@@ -54,7 +54,7 @@ export interface PushConfig {
   import_id?: number;
 }
 
-interface PushFinishedReport {
+export interface PushFinishedReport {
   ok: boolean;
   /** Older field: messages counted in successful HTTP requests. */
   messages: number;
@@ -247,12 +247,14 @@ function isPushFinishedReport(value: unknown): value is PushFinishedReport {
     typeof value.assets_uploaded === "number" &&
     typeof value.assets_bytes === "number" &&
     typeof value.conversations_ok === "number" &&
-    typeof value.conversations_total === "number"
+    typeof value.conversations_total === "number" &&
+    typeof value.conversations_failed === "number" &&
+    typeof value.conversations_skipped === "number"
   );
 }
 
 /** Turn a finished-job summary string into a structured result when it is JSON. */
-function parseTauriJobResult(summary: string): TauriJobResult {
+export function parseTauriJobResult(summary: string): TauriJobResult {
   try {
     const parsed: unknown = JSON.parse(summary);
     if (!isRecord(parsed)) return { summary };

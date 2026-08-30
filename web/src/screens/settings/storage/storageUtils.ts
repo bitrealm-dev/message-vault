@@ -76,17 +76,37 @@ function toNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-/** Map a server import status onto the summary panel's four statuses. */
+/** Map a server import status onto the summary panel's five statuses. */
 function toSummaryStatus(status: string): ImportSummaryView["status"] {
   switch (status) {
     case "completed":
       return "completed";
+    case "completed_with_issues":
+      return "completed_with_issues";
     case "canceled":
       return "canceled";
     case "running":
       return "running";
     default:
       return "failed";
+  }
+}
+
+/** Human label for a raw server import status, for the import detail panel. */
+export function importStatusLabel(status: string): string {
+  switch (status) {
+    case "running":
+      return "Running";
+    case "completed":
+      return "Completed";
+    case "completed_with_issues":
+      return "Completed with issues";
+    case "failed":
+      return "Failed";
+    case "canceled":
+      return "Canceled";
+    default:
+      return status;
   }
 }
 

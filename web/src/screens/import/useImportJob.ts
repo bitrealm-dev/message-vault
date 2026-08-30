@@ -25,6 +25,7 @@ import type {
 import { importSessionCreateBody } from "../../lib/vaultSource";
 import { whatsappExtractFields } from "../../lib/whatsappExtractFields";
 import { isWhatsappMethod } from "../../lib/whatsappImport";
+import { importOutcome } from "./importOutcome";
 import {
   type AttachmentProgressCounts,
   attachmentDoneDetail,
@@ -240,7 +241,7 @@ export function useImportJob() {
     setSteps(initialSteps("active", form.attachmentMedia));
 
     let importSessionId: number | null = null;
-    let importCompleted = false;
+    let threw = false;
     let parseMs: number | null = null;
     let attachmentsMs: number | null = null;
     let prepareMs: number | null = null;
@@ -381,7 +382,6 @@ export function useImportJob() {
         { onProgress: applyProgress, onIssue: recordIssue },
       );
       uploadMs = performance.now() - uploadStartedAt;
-      importCompleted = true;
 
       setSteps((current) =>
         current.map((step, i) =>
@@ -391,6 +391,7 @@ export function useImportJob() {
         ),
       );
     } catch (e: unknown) {
+      threw = true;
       const msg = e instanceof Error ? e.message : String(e);
       issuesRef.current = [
         ...issuesRef.current,
@@ -402,8 +403,9 @@ export function useImportJob() {
     } finally {
       const durationMs = performance.now() - importStartedAt;
       const pushReport = pushResult?.report;
+      const outcome = importOutcome({ report: pushReport, threw, issues: issuesRef.current });
       const finalSummary: ImportSummaryView = {
-        status: importCompleted ? "completed" : "failed",
+        status: outcome,
         ...countsRef.current,
         filesTotal: pushReport?.conversations_total ?? countsRef.current.filesParsed,
         filesSucceeded: pushReport?.conversations_ok,
@@ -431,7 +433,8 @@ export function useImportJob() {
       if (importSessionId) {
         try {
           await apiClient.post(`/v1/imports/${String(importSessionId)}/complete`, {
-            ok: importCompleted,
+            ok: outcome !== "failed",
+            status: outcome,
             message_count: pushReport?.messages_inserted,
             attachment_count: pushReport?.assets_uploaded,
             bytes_uploaded: pushReport?.assets_bytes,

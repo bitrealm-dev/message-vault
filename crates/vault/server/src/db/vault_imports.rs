@@ -25,7 +25,7 @@ pub struct VaultImportRow {
     pub tool: Option<String>,
     /// Import mode (`replace` or `append`).
     pub mode: String,
-    /// Lifecycle status (`running`, `completed`, or `failed`).
+    /// Lifecycle status (`running`, `completed`, `completed_with_issues`, or `failed`).
     pub status: String,
     /// UTC time the session started.
     pub started_at: String,
@@ -56,6 +56,8 @@ pub struct VaultImportRow {
 pub struct CompleteImportArgs {
     /// True when the import finished successfully.
     pub ok: bool,
+    /// Explicit outcome status; falls back to `ok` when `None`.
+    pub status: Option<String>,
     /// Messages imported; counted from the database when omitted.
     pub message_count: Option<i64>,
     /// Attachments imported; counted from the database when omitted.
@@ -320,7 +322,10 @@ pub async fn complete_import(
 ) -> Result<VaultImportRow> {
     let existing = get_owned_import(&mut *conn, account_id, import_id).await?;
     let finished_at = Utc::now().to_rfc3339();
-    let status = if args.ok { "completed" } else { "failed" };
+    let status = args
+        .status
+        .as_deref()
+        .unwrap_or(if args.ok { "completed" } else { "failed" });
 
     for issue in &args.issues {
         validate_issue_kind(&issue.kind)?;
@@ -479,7 +484,7 @@ pub struct ImportSummary {
     pub tool: Option<String>,
     /// Import mode (`replace` or `append`).
     pub mode: String,
-    /// Lifecycle status (`running`, `completed`, or `failed`).
+    /// Lifecycle status (`running`, `completed`, `completed_with_issues`, or `failed`).
     pub status: String,
     /// UTC time the session started.
     pub started_at: String,
@@ -697,6 +702,7 @@ mod tests {
             import_id,
             &CompleteImportArgs {
                 ok: true,
+                status: None,
                 message_count: Some(10),
                 attachment_count: Some(2),
                 bytes_uploaded: Some(100),
@@ -756,6 +762,7 @@ mod tests {
             import_id,
             &CompleteImportArgs {
                 ok: false,
+                status: None,
                 message_count: None,
                 attachment_count: None,
                 bytes_uploaded: None,
@@ -868,6 +875,7 @@ mod tests {
             import_id,
             &CompleteImportArgs {
                 ok: true,
+                status: None,
                 message_count: Some(10),
                 attachment_count: Some(2),
                 bytes_uploaded: Some(100),
@@ -927,6 +935,7 @@ mod tests {
             import_id,
             &CompleteImportArgs {
                 ok: true,
+                status: None,
                 message_count: Some(10),
                 attachment_count: Some(2),
                 bytes_uploaded: Some(100),

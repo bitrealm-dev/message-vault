@@ -2,7 +2,10 @@
 
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import ImportSummaryPanel, { type ImportSummaryView } from "./ImportSummaryPanel";
+import ImportSummaryPanel, {
+  completionTextFor,
+  type ImportSummaryView,
+} from "./ImportSummaryPanel";
 
 const baseSummary: ImportSummaryView = {
   status: "completed",
@@ -70,5 +73,11 @@ describe("ImportSummaryPanel", () => {
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Import errors")).toBeInTheDocument();
     expect(screen.queryByText("Open import log")).not.toBeInTheDocument();
+  });
+});
+
+describe("completionTextFor", () => {
+  it("names the with-issues outcome", () => {
+    expect(completionTextFor("completed_with_issues")).toBe("Import completed with issues");
   });
 });

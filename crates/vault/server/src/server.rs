@@ -1093,6 +1093,7 @@ mod tests {
         let (_tmp, state, token, import_id) = test_state().await;
         let body = CompleteImportBody {
             ok: true,
+            status: None,
             message_count: Some(10),
             attachment_count: Some(2),
             bytes_uploaded: Some(100),
@@ -1153,10 +1154,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn imports_complete_stores_completed_with_issues_status() {
+        let (_tmp, state, token, import_id) = test_state().await;
+        let body = CompleteImportBody {
+            ok: true,
+            status: Some("completed_with_issues".into()),
+            message_count: Some(10),
+            attachment_count: Some(2),
+            bytes_uploaded: Some(100),
+            duration_ms: None,
+            parse_ms: None,
+            attachments_ms: None,
+            prepare_ms: None,
+            upload_ms: None,
+            summary: None,
+            issues: Vec::new(),
+        };
+        let response = imports_complete_handler(
+            State(state.clone()),
+            auth_headers(&token),
+            AxumPath(import_id),
+            Json(body),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.0.status, "completed_with_issues");
+    }
+
+    #[tokio::test]
+    async fn imports_complete_rejects_unknown_status() {
+        let (_tmp, state, token, import_id) = test_state().await;
+        let body = CompleteImportBody {
+            ok: true,
+            status: Some("victorious".into()),
+            message_count: None,
+            attachment_count: None,
+            bytes_uploaded: None,
+            duration_ms: None,
+            parse_ms: None,
+            attachments_ms: None,
+            prepare_ms: None,
+            upload_ms: None,
+            summary: None,
+            issues: Vec::new(),
+        };
+        let err = imports_complete_handler(
+            State(state.clone()),
+            auth_headers(&token),
+            AxumPath(import_id),
+            Json(body),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, ApiError::BadRequest(_)));
+
+        // The session is untouched.
+        let mut conn = state.db.acquire().await.unwrap();
+        let status: String = sqlx::query_scalar("SELECT status FROM vault_imports WHERE id = $1")
+            .bind(import_id)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(status, "running");
+    }
+
+    #[tokio::test]
     async fn imports_complete_rejects_invalid_issue_kind_before_db_write() {
         let (_tmp, state, token, import_id) = test_state().await;
         let body = CompleteImportBody {
             ok: true,
+            status: None,
             message_count: Some(10),
             attachment_count: Some(2),
             bytes_uploaded: Some(100),

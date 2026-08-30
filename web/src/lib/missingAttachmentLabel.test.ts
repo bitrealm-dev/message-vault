@@ -61,4 +61,55 @@ describe("missingAttachmentChipLabel", () => {
       ),
     ).toBe("clip.mov (skipped)");
   });
+
+  it("labels not_copied and both legacy spellings as skipped", () => {
+    for (const reason of ["not_copied", "skipped", "embed_disabled"]) {
+      expect(
+        missingAttachmentChipLabel(att({ original_name: "a.jpg", missing_reason: reason })),
+      ).toBe("a.jpg (skipped)");
+    }
+  });
+
+  it("keeps the ffmpeg detail from a convert_failed reason", () => {
+    expect(
+      missingAttachmentChipLabel(
+        att({ original_name: "clip.mov", missing_reason: "convert_failed: no video stream" }),
+      ),
+    ).toBe("clip.mov (could not be converted — no video stream)");
+  });
+
+  it("shows an explicit unknown reason instead of swallowing it", () => {
+    expect(
+      missingAttachmentChipLabel(
+        att({ original_name: "a.bin", missing_reason: "unknown: gremlins" }),
+      ),
+    ).toBe("a.bin (could not be imported — gremlins)");
+  });
+
+  it("keeps an unrecognized raw reason visible, worded like the unknown case", () => {
+    expect(
+      missingAttachmentChipLabel(att({ original_name: "a.bin", missing_reason: "weird_reason" })),
+    ).toBe("a.bin (could not be imported — weird_reason)");
+  });
+
+  it("drops the trailing dash when a convert_failed reason has no detail", () => {
+    expect(
+      missingAttachmentChipLabel(
+        att({ original_name: "clip.mov", missing_reason: "convert_failed: " }),
+      ),
+    ).toBe("clip.mov (could not be converted)");
+  });
+
+  it("drops the trailing dash when an unknown reason has no detail", () => {
+    expect(
+      missingAttachmentChipLabel(att({ original_name: "a.bin", missing_reason: "unknown: " })),
+    ).toBe("a.bin (could not be imported)");
+  });
+
+  it("treats no_path and null as plain missing", () => {
+    expect(
+      missingAttachmentChipLabel(att({ original_name: "a.bin", missing_reason: "no_path" })),
+    ).toBe("a.bin (missing)");
+    expect(missingAttachmentChipLabel(att({ original_name: "a.bin" }))).toBe("a.bin (missing)");
+  });
 });
