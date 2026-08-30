@@ -13,14 +13,9 @@ afterEach(() => {
 
 function delta(overrides: Partial<GateDelta> = {}): GateDelta {
   return {
-    forecastHeld: 0,
-    forecastHeldFiles: [],
-    betterThanForecast: 0,
-    betterThanForecastFiles: [],
-    worseThanForecast: 0,
-    worseThanForecastFiles: [],
-    failed: 0,
-    failedFiles: [],
+    lostCount: 0,
+    stillFlagged: [],
+    cameOutFine: 0,
     hasChanges: false,
     ...overrides,
   };
@@ -72,8 +67,9 @@ describe("GateTwoScreen", () => {
   });
 
   it("leads with the delta, not a fresh summary", () => {
-    // Decision 14: where was Gate 1 wrong. The final state follows underneath.
-    render(<GateTwoScreen {...props({ delta: { worseThanForecast: 2, hasChanges: true } })} />);
+    // Decision 14: where the last check's estimate was wrong. The final
+    // state follows underneath.
+    render(<GateTwoScreen {...props({ delta: { lostCount: 2, hasChanges: true } })} />);
     const headings = screen.getAllByRole("heading");
     expect(headings[1]).toHaveTextContent(/what changed/i);
   });
@@ -111,11 +107,38 @@ describe("GateTwoScreen", () => {
     expect(screen.getByText("42")).toBeInTheDocument();
   });
 
-  it("says what happened to the files nobody flagged, without naming a cause", () => {
+  it("says what happened to the lost files, without naming a cause", () => {
     // Decision 45: too_large and convert_failed are indistinguishable from
     // the recomputed summary, so the copy states the effect, not a cause.
-    render(<GateTwoScreen {...props({ delta: { worseThanForecast: 2, hasChanges: true } })} />);
+    render(<GateTwoScreen {...props({ delta: { lostCount: 2, hasChanges: true } })} />);
     expect(screen.getByText(/will not be uploaded/i)).toBeInTheDocument();
+  });
+
+  it("does not say 'will not be uploaded' when nothing was lost", () => {
+    render(
+      <GateTwoScreen {...props({ delta: { lostCount: 0, cameOutFine: 3, hasChanges: true } })} />,
+    );
+    expect(screen.queryByText(/will not be uploaded/i)).not.toBeInTheDocument();
+  });
+
+  it("gives a regressed row decision 45's framing, not 'could not be processed'", () => {
+    render(
+      <GateTwoScreen
+        {...props({
+          delta: {
+            hasChanges: true,
+            stillFlagged: [{ name: "clip.mov", verdict: "probably_too_big", regressed: true }],
+          },
+        })}
+      />,
+    );
+    expect(screen.getByText(/fine at the last check/i)).toBeInTheDocument();
+    expect(screen.queryByText(/could not be processed/i)).not.toBeInTheDocument();
+  });
+
+  it("never says Gate 1", () => {
+    render(<GateTwoScreen {...props()} />);
+    expect(document.body.textContent).not.toContain("Gate 1");
   });
 
   it("never says transcode", () => {
