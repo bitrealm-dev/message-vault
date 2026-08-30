@@ -1,7 +1,7 @@
 //! Authentication handlers: register, login, session check, and logout.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
@@ -25,20 +25,23 @@ const MIN_PASSWORD_CHARS: usize = 8;
 const AUTH_RATE_WINDOW: Duration = Duration::from_secs(60);
 const AUTH_RATE_MAX: usize = 20;
 
-static AUTH_RATE_LIMITS: Mutex<Option<HashMap<String, VecDeque<Instant>>>> = Mutex::new(None);
 static DUMMY_PASSWORD_HASH: OnceLock<String> = OnceLock::new();
 
-/// Reject when `bucket` has seen more than [`AUTH_RATE_MAX`] hits in [`AUTH_RATE_WINDOW`].
-fn check_auth_rate_limit(bucket: &str) -> Result<(), ApiError> {
-    check_auth_rate_limit_max(bucket, AUTH_RATE_MAX)
-}
+/// Sliding-window hit counts for the unauthenticated auth endpoints, keyed by
+/// bucket (`register:<username>`, `login:<username>`).
+///
+/// This lives on [`AppState`] rather than in a process-global static: a served
+/// vault builds exactly one state, so the limiter still spans the whole server,
+/// while each test vault gets its own counts and cannot rate-limit an unrelated
+/// test running beside it in the same binary.
+pub(crate) type AuthRateLimits = Arc<Mutex<HashMap<String, VecDeque<Instant>>>>;
 
-/// Reject when `bucket` has seen at least `max` hits in [`AUTH_RATE_WINDOW`].
-fn check_auth_rate_limit_max(bucket: &str, max: usize) -> Result<(), ApiError> {
-    let mut guard = AUTH_RATE_LIMITS
+/// Reject when `bucket` has seen at least [`AUTH_RATE_MAX`] hits in
+/// [`AUTH_RATE_WINDOW`].
+fn check_auth_rate_limit(limits: &AuthRateLimits, bucket: &str) -> Result<(), ApiError> {
+    let mut map = limits
         .lock()
         .map_err(|_| ApiError::Internal("auth rate limiter poisoned".into()))?;
-    let map = guard.get_or_insert_with(HashMap::new);
     let now = Instant::now();
     let entry = map.entry(bucket.to_string()).or_default();
     while let Some(oldest) = entry.front() {
@@ -47,22 +50,13 @@ fn check_auth_rate_limit_max(bucket: &str, max: usize) -> Result<(), ApiError> {
         }
         entry.pop_front();
     }
-    if entry.len() >= max {
+    if entry.len() >= AUTH_RATE_MAX {
         return Err(ApiError::TooManyRequests(
             "too many authentication attempts; try again shortly".into(),
         ));
     }
     entry.push_back(now);
     Ok(())
-}
-
-#[cfg(test)]
-pub(crate) fn reset_auth_rate_limit_bucket_for_test(bucket: &str) {
-    if let Ok(mut guard) = AUTH_RATE_LIMITS.lock()
-        && let Some(map) = guard.as_mut()
-    {
-        map.remove(bucket);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -358,7 +352,7 @@ pub async fn register_handler(
             "username must be 1–128 chars (alphanumeric, _, -, .)".into(),
         ));
     }
-    check_auth_rate_limit(&format!("register:{username}"))?;
+    check_auth_rate_limit(&state.auth_rate_limits, &format!("register:{username}"))?;
 
     let password_plain = req.password.as_deref().unwrap_or("").to_string();
     if !password_plain.is_empty() {
@@ -462,7 +456,7 @@ pub async fn login_handler(
     if username.is_empty() {
         return Err(ApiError::BadRequest("username is required".into()));
     }
-    check_auth_rate_limit(&format!("login:{username}"))?;
+    check_auth_rate_limit(&state.auth_rate_limits, &format!("login:{username}"))?;
     if req.password.len() > MAX_PASSWORD_BYTES {
         return Err(ApiError::BadRequest("password is too long".into()));
     }
@@ -896,17 +890,29 @@ mod tests {
 
     #[test]
     fn auth_rate_limit_trips_after_max() {
-        let bucket = "test:rate-limit-unique";
-        reset_auth_rate_limit_bucket_for_test(bucket);
+        let limits: AuthRateLimits = Arc::new(Mutex::new(HashMap::new()));
+        let bucket = "register:someone";
         for _ in 0..AUTH_RATE_MAX {
-            check_auth_rate_limit(bucket).unwrap();
+            check_auth_rate_limit(&limits, bucket).unwrap();
         }
-        let err = check_auth_rate_limit(bucket).unwrap_err();
+        let err = check_auth_rate_limit(&limits, bucket).unwrap_err();
         match err {
             ApiError::TooManyRequests(_) => {}
             other => panic!("expected TooManyRequests, got {other:?}"),
         }
-        reset_auth_rate_limit_bucket_for_test(bucket);
+    }
+
+    #[test]
+    fn auth_rate_limits_do_not_cross_vaults() {
+        let one: AuthRateLimits = Arc::new(Mutex::new(HashMap::new()));
+        let two: AuthRateLimits = Arc::new(Mutex::new(HashMap::new()));
+        let bucket = "register:someone";
+        for _ in 0..AUTH_RATE_MAX {
+            check_auth_rate_limit(&one, bucket).unwrap();
+        }
+        check_auth_rate_limit(&one, bucket).unwrap_err();
+        check_auth_rate_limit(&two, bucket)
+            .expect("a second vault's limiter must not see the first vault's hits");
     }
 
     #[tokio::test]
@@ -1064,7 +1070,6 @@ mod tests {
     async fn first_account_registration_requires_a_password() {
         let vault = test_vault().await;
         let state = vault.state.clone();
-        reset_auth_rate_limit_bucket_for_test("register:passwordless-first");
 
         let status = post_status(
             &state,
@@ -1094,7 +1099,6 @@ mod tests {
         let vault = test_vault().await;
         let state = vault.state.clone();
         let _first = register_via_api(&state, "has-a-password", "hunter2hunter2").await;
-        reset_auth_rate_limit_bucket_for_test("register:passwordless-second");
 
         let status = post_status(
             &state,
