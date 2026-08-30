@@ -25,8 +25,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use anyhow::{Context, Result};
 use media::{CompressOptions, MediaMode};
 use message_ir::ConversationDocument;
-use message_vault_io_core::{AttachmentJob, LogSink, OutputFormat, emit_log, run_attachment_jobs};
+use message_vault_io_core::{
+    AttachmentJob, CancelFlag, LogSink, OutputFormat, emit_log, run_attachment_jobs,
+};
 
+use crate::transcode::{TranscodeOptions, transcode_staged};
 use crate::write::write_format;
 
 /// Where a unit's attachment bytes come from at write time.
@@ -181,7 +184,7 @@ pub fn drain_write_queue_with_loader(
     options: &WriteQueueOptions,
     load: &mut dyn FnMut(&mut AttachmentSource) -> Result<Option<Vec<u8>>, String>,
     log: Option<&LogSink>,
-    cancel: Option<&std::sync::atomic::AtomicBool>,
+    cancel: Option<&CancelFlag>,
 ) -> Result<WriteQueueReport> {
     check_headroom(output_dir, &units)?;
     let attachments_dir = output_dir.join("attachments");
@@ -233,6 +236,7 @@ pub fn drain_write_queue_with_loader(
         }
     }
 
+    report.media = run_media_post_pass(output_dir, options, log, cancel)?;
     announce_finish(log, &report, options.resume);
     Ok(report)
 }
@@ -261,7 +265,7 @@ pub fn drain_write_queue(
     units: Vec<ConversationUnit>,
     options: &WriteQueueOptions,
     log: Option<&LogSink>,
-    cancel: Option<&AtomicBool>,
+    cancel: Option<&CancelFlag>,
 ) -> Result<WriteQueueReport> {
     check_headroom(output_dir, &units)?;
 
@@ -370,14 +374,75 @@ pub fn drain_write_queue(
         anyhow::bail!(msg);
     }
 
-    let report = WriteQueueReport {
+    let mut report = WriteQueueReport {
         conversations_written: written.load(Ordering::Relaxed),
         conversations_skipped: skipped.load(Ordering::Relaxed),
         attachments_saved: attachments_saved.load(Ordering::Relaxed),
         media: media::MediaReport::default(),
     };
+    report.media = run_media_post_pass(output_dir, options, log, cancel)?;
     announce_finish(log, &report, options.resume);
     Ok(report)
+}
+
+/// Convert or compress the staged originals, once every writer is done.
+///
+/// Writers stage originals and nothing else, so this is where convert and
+/// compress actually happen. Running it as its own pass buys the CLI what the
+/// desktop already had: per-file commits, so an interruption keeps every
+/// derivative already finished, and progress worth printing.
+fn run_media_post_pass(
+    output_dir: &Path,
+    options: &WriteQueueOptions,
+    log: Option<&LogSink>,
+    cancel: Option<&CancelFlag>,
+) -> Result<media::MediaReport> {
+    if !matches!(options.media, MediaMode::Convert | MediaMode::Compress) {
+        return Ok(media::MediaReport::default());
+    }
+
+    let transcode_options = TranscodeOptions {
+        mode: options.media,
+        compress: options.compress.clone(),
+        // No vault limit applies to a local export, so nothing here is
+        // written off as too large. The desktop's own media pass, which does
+        // enforce the real limit, never reaches this code: it stages with
+        // Clone and converts on its own.
+        asset_max_bytes: u64::MAX,
+    };
+    // Deliberately inert to the desktop's log scraper: no `attachments`
+    // prefix and no `preparing` keyword. The desktop never runs this branch;
+    // the CLI just prints it.
+    let report = transcode_staged(output_dir, &transcode_options, cancel, &mut |p| {
+        emit_log(log, format!("  media {}/{}", p.done, p.total));
+    })?;
+
+    let mut media = media::MediaReport {
+        processed: report.converted,
+        skipped: report.skipped + report.repointed,
+        bytes_before: report.bytes_before,
+        bytes_after: report.bytes_after,
+        errors: Vec::new(),
+    };
+    if report.failed > 0 {
+        // The per-file reasons are already on the attachments themselves.
+        media.errors.push(format!(
+            "{} file(s) could not be converted; their conversation entries say why",
+            report.failed
+        ));
+    }
+    emit_log(
+        log,
+        format!(
+            "Attachment {} done: converted={} skipped={} size {} → {}",
+            options.media,
+            media.processed,
+            media.skipped,
+            human_bytes(media.bytes_before),
+            human_bytes(media.bytes_after)
+        ),
+    );
+    Ok(media)
 }
 
 /// Slack above the measured need, for the derivative a convert holds in
@@ -472,7 +537,7 @@ fn write_one_unit(
     options: &WriteQueueOptions,
     load: &mut dyn FnMut(&mut AttachmentSource) -> Result<Option<Vec<u8>>, String>,
     on_progress: &dyn Fn(UnitProgress),
-    cancel: Option<&AtomicBool>,
+    cancel: Option<&CancelFlag>,
 ) -> Result<UnitOutcome> {
     if cancel.is_some_and(|f| f.load(Ordering::SeqCst)) {
         anyhow::bail!("canceled");
@@ -560,7 +625,7 @@ fn write_one_unit(
                 unit_bytes_extra = extra;
             },
             None,
-            cancel,
+            cancel.map(|flag| flag.as_ref()),
         )
         .map_err(anyhow::Error::msg)?;
     }
@@ -969,5 +1034,64 @@ mod tests {
     fn default_writer_count_is_bounded() {
         let n = default_writer_count();
         assert!((1..=8).contains(&n));
+    }
+    /// A minimal valid 1x1 RGB PNG that ffmpeg reads cleanly.
+    #[rustfmt::skip]
+    const PNG_1X1_RGB: &[u8] = &[
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+        0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0x00,
+        0x00, 0x03, 0x01, 0x01, 0x00, 0xc9, 0xfe, 0x92, 0xef, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e,
+        0x44, 0xae, 0x42, 0x60, 0x82,
+    ];
+
+    #[test]
+    fn clone_mode_runs_no_media_pass() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tmp.path().join("out");
+        fs::create_dir_all(&out).unwrap();
+        let units = vec![unit_from(
+            doc_with("+15550000001", 1),
+            vec![AttachmentSource::Bytes(b"plain".to_vec())],
+        )];
+        let report = drain(&out, units, &options(MediaMode::Clone, false)).unwrap();
+        assert_eq!(report.media, media::MediaReport::default());
+    }
+
+    #[test]
+    fn convert_runs_as_a_pass_after_the_drain_stages_originals() {
+        if !media::ffmpeg_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tmp.path().join("out");
+        fs::create_dir_all(&out).unwrap();
+
+        let mut doc = doc_with("+15550000001", 1);
+        doc.messages[0].attachments[0].original_name = Some("shot.png".into());
+        let units = vec![unit_from(
+            doc,
+            vec![AttachmentSource::Bytes(PNG_1X1_RGB.to_vec())],
+        )];
+
+        let report = drain(&out, units, &options(MediaMode::Convert, false)).unwrap();
+
+        assert_eq!(report.conversations_written, 1);
+        assert_eq!(
+            report.media.processed, 1,
+            "the post-pass converted the staged original"
+        );
+
+        let stem = doc_with("+15550000001", 0).filename_stem();
+        let written = read_conversation_jsonl(&out.join(format!("{stem}.jsonl"))).unwrap();
+        let path = written.messages[0].attachments[0].path.as_deref().unwrap();
+        assert!(
+            path.ends_with(".jpg"),
+            "convert repoints the attachment at its derivative: {path}"
+        );
+        assert!(
+            out.join(path).is_file(),
+            "the derivative the conversation names is on disk"
+        );
     }
 }
