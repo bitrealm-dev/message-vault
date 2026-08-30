@@ -30,4 +30,4 @@ vault-push = { path = "../vault-push", default-features = false }
 
 [dev-dependencies]
 tempfile = "3.27.0"
-httpmock = "0.7"
+httpmock = "0.8"
