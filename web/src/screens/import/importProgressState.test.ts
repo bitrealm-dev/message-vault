@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ImportProgressEvent } from "../../lib/types";
 import {
   attachmentDoneDetail,
   isProgressStepComplete,
@@ -23,22 +24,14 @@ describe("isProgressStepComplete", () => {
 
 describe("attachmentDoneDetail", () => {
   it("uses zero counts when no attachments event arrived", () => {
-    expect(attachmentDoneDetail("skip", null, "Message attachments skipped")).toBe(
-      "Skipped 0/0 attachments (0 B / 0 B)",
-    );
-    expect(attachmentDoneDetail("copy", null, "Copied attachments")).toBe(
-      "Copied 0/0 attachments (0 B / 0 B)",
-    );
+    expect(attachmentDoneDetail("skip", null)).toBe("Skipped 0/0 attachments (0 B / 0 B)");
+    expect(attachmentDoneDetail("copy", null)).toBe("Copied 0/0 attachments (0 B / 0 B)");
   });
 
   it("formats the last live counts when present", () => {
-    expect(
-      attachmentDoneDetail(
-        "copy",
-        { done: 2, total: 4, bytesDone: 10, bytesTotal: 20 },
-        "Copied attachments",
-      ),
-    ).toBe("Copied 2/4 attachments (10 B / 20 B)");
+    expect(attachmentDoneDetail("copy", { done: 2, total: 4, bytesDone: 10, bytesTotal: 20 })).toBe(
+      "Copied 2/4 attachments (10 B / 20 B)",
+    );
   });
 });
 
@@ -99,6 +92,15 @@ describe("stepIndexFor", () => {
     // its progress on the upload bar.
     expect(stepIndexFor("media", "copy")).toBe(-1);
   });
+
+  it("returns -1, not undefined, for a step string this build doesn't recognise", () => {
+    // The event comes off the wire unvalidated. A lookup miss must resolve
+    // to "no row" — `undefined` would make every `index < stepIndex` and
+    // `index > stepIndex` comparison false at once, marking every row
+    // active/done simultaneously, worse than the old single-wrong-row bug.
+    const unknownStep = "unknown-step" as unknown as ImportProgressEvent["step"];
+    expect(stepIndexFor(unknownStep, "convert")).toBe(-1);
+  });
 });
 
 describe("progressHeading", () => {
@@ -136,5 +138,11 @@ describe("progressHeading", () => {
   it("falls back to the first step rather than an empty heading", () => {
     // Nothing active yet, one render frame before the first event arrives.
     expect(progressHeading(stepsFor("convert"), "progress")).toBe("Reading your backup");
+  });
+
+  it("returns nothing for an empty step list rather than claiming completion", () => {
+    // Unreachable in practice (stepsFor never returns an empty list), but an
+    // empty list must never read as "Import finished".
+    expect(progressHeading([], "progress")).toBe("");
   });
 });

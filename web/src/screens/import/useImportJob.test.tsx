@@ -198,6 +198,52 @@ describe("useImportJob wiring", () => {
     const stageCall = postMock.mock.calls.find(([path]) => String(path).endsWith("/stage"));
     expect(stageCall?.[1]).toEqual({ stage: "pushing" });
   });
+
+  it("assembles a 4-row step list in convert mode, with the media row still pending once extract finishes", async () => {
+    // Pins the mode-dependent assembly stepsFor/stepIndexFor exist for: this
+    // hook doesn't run the media pass itself (that lands in a later task),
+    // so the row must sit pending, not silently vanish or get marked done.
+    resolveImportStagingDirMock.mockResolvedValue("/tmp/staging");
+    invokePathStatMock.mockResolvedValue(null);
+    postMock.mockResolvedValue({ id: 45 });
+
+    let resolvePush!: (value: TauriJobResult) => void;
+    const pushPromise = new Promise<TauriJobResult>((resolve) => {
+      resolvePush = resolve;
+    });
+    runMock.mockReset();
+    runMock
+      .mockResolvedValueOnce({
+        summary: "Extracted 10 messages.",
+        extraction: { files_parsed: 1, messages_parsed: 10 },
+      })
+      // Deliberately left unresolved: lets the assertions below observe the
+      // step list in the gap between extract finishing and push starting.
+      .mockReturnValueOnce(pushPromise);
+
+    const { result } = renderHook(() => useImportJob());
+
+    let startPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      startPromise = result.current.startImport({ ...baseForm, attachmentMedia: "convert" });
+      // Drain every microtask up to the (intentionally unresolved) push call.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(result.current.steps.map((s) => s.label)).toEqual([
+      "Read backup",
+      "Copy to staging",
+      "Convert media",
+      "Upload to vault",
+    ]);
+    expect(result.current.steps[2]?.status).toBe("pending");
+    expect(result.current.steps[3]?.status).toBe("active");
+
+    await act(async () => {
+      resolvePush({ summary: "Push finished.", report: failedReport() });
+      await startPromise;
+    });
+  });
 });
 
 describe("useImportJob resume path", () => {

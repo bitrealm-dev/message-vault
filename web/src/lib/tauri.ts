@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { resolveImportStagingParent } from "./system-settings";
 import type {
   AttachmentMediaMode,
   ExtractConfig,
@@ -45,15 +46,31 @@ export async function invokeCancel(): Promise<void> {
  * Form fields shared by `summarize_staging` and `transcode_staging` — the
  * same media fields `ExtractConfig` carries, addressed at an already-staged
  * folder instead of a fresh backup.
+ *
+ * There is no `staging_root` field: the wrappers below resolve it themselves
+ * via `resolveImportStagingParent`, the same source `openPathInExplorer`
+ * uses, so no caller can pass a root that disagrees with the Rust-side
+ * containment guard.
  */
 export interface StagingConfig {
   staging_dir: string;
-  /** Import Staging Directory root every staging folder must live under. */
-  staging_root: string;
   attachment_media?: AttachmentMediaMode;
   media_max_resolution?: string;
   media_max_fps?: string;
   media_min_size?: string;
+}
+
+/**
+ * Resolve the Import Staging Directory root every staging command must
+ * check `staging_dir` against, throwing when it cannot be determined —
+ * mirrors `openPathInExplorer`'s own resolution and error.
+ */
+async function resolveStagingRoot(): Promise<string> {
+  const root = await resolveImportStagingParent();
+  if (!root) {
+    throw new Error("Could not determine the import staging directory");
+  }
+  return root;
 }
 
 /** How a staged attachment is expected to land against the size limit. */
@@ -95,10 +112,11 @@ export interface StagingSummary {
 
 /** Recompute what a staged folder holds, for the first approval gate. */
 export async function invokeSummarizeStaging(config: StagingConfig): Promise<StagingSummary> {
+  const stagingRoot = await resolveStagingRoot();
   return invoke("summarize_staging", {
     args: {
       stagingDir: config.staging_dir,
-      stagingRoot: config.staging_root,
+      stagingRoot,
       attachmentMedia: config.attachment_media ?? null,
       mediaMaxResolution: config.media_max_resolution ?? null,
       mediaMaxFps: config.media_max_fps ?? null,
@@ -113,10 +131,11 @@ export async function invokeSummarizeStaging(config: StagingConfig): Promise<Sta
  * job, so `runTauriJob` drives it exactly as it drives extract and push.
  */
 export async function invokeTranscodeStaging(config: StagingConfig): Promise<void> {
+  const stagingRoot = await resolveStagingRoot();
   return invoke("transcode_staging", {
     args: {
       stagingDir: config.staging_dir,
-      stagingRoot: config.staging_root,
+      stagingRoot,
       attachmentMedia: config.attachment_media ?? null,
       mediaMaxResolution: config.media_max_resolution ?? null,
       mediaMaxFps: config.media_max_fps ?? null,
@@ -129,14 +148,12 @@ export async function invokeTranscodeStaging(config: StagingConfig): Promise<voi
  * Delete a staging folder — the decline path's terminal action: closing an
  * approval gate without approving deletes the folder outright.
  */
-export async function invokeDeleteStaging(config: {
-  staging_dir: string;
-  staging_root: string;
-}): Promise<void> {
+export async function invokeDeleteStaging(config: { staging_dir: string }): Promise<void> {
+  const stagingRoot = await resolveStagingRoot();
   return invoke("delete_staging", {
     args: {
       stagingDir: config.staging_dir,
-      stagingRoot: config.staging_root,
+      stagingRoot,
     },
   });
 }
@@ -178,6 +195,24 @@ export interface PushFinishedReport {
   }>;
 }
 
+/**
+ * What `transcode_staging`'s job did, from its `extract:finished` payload.
+ * `TranscodeReport` (`ir-format`) has no serde derive: `transcode_staging`
+ * (`src-tauri/src/commands/staging.rs`) hand-builds the payload with these
+ * fields flat at the top level, alongside `summary` — not nested under a
+ * `report` key — so this mirrors the wire shape exactly, snake_case included.
+ */
+export interface TranscodeFinishedReport {
+  converted: number;
+  skipped: number;
+  too_large: number;
+  failed: number;
+  missing: number;
+  repointed: number;
+  bytes_before: number;
+  bytes_after: number;
+}
+
 export interface TauriJobResult {
   summary: string;
   report?: PushFinishedReport;
@@ -185,6 +220,7 @@ export interface TauriJobResult {
     files_parsed: number;
     messages_parsed: number;
   };
+  transcode?: TranscodeFinishedReport;
 }
 
 /** Upload extracted conversations to a vault server. */
@@ -356,6 +392,20 @@ function isPushFinishedReport(value: unknown): value is PushFinishedReport {
   );
 }
 
+function isTranscodeFinishedReport(value: unknown): value is TranscodeFinishedReport {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.converted === "number" &&
+    typeof value.skipped === "number" &&
+    typeof value.too_large === "number" &&
+    typeof value.failed === "number" &&
+    typeof value.missing === "number" &&
+    typeof value.repointed === "number" &&
+    typeof value.bytes_before === "number" &&
+    typeof value.bytes_after === "number"
+  );
+}
+
 /** Turn a finished-job summary string into a structured result when it is JSON. */
 export function parseTauriJobResult(summary: string): TauriJobResult {
   try {
@@ -382,6 +432,25 @@ export function parseTauriJobResult(summary: string): TauriJobResult {
       return {
         summary: summaryText,
         report: parsed,
+      };
+    }
+
+    if (isTranscodeFinishedReport(parsed)) {
+      // Picked field by field, not spread: `parsed` also carries the raw
+      // `summary` string this same object holds the report fields
+      // alongside, which isn't part of `TranscodeFinishedReport`.
+      return {
+        summary: summaryText,
+        transcode: {
+          converted: parsed.converted,
+          skipped: parsed.skipped,
+          too_large: parsed.too_large,
+          failed: parsed.failed,
+          missing: parsed.missing,
+          repointed: parsed.repointed,
+          bytes_before: parsed.bytes_before,
+          bytes_after: parsed.bytes_after,
+        },
       };
     }
   } catch {

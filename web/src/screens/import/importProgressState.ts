@@ -70,28 +70,30 @@ export function stepsFor(mode: AttachmentMediaMode): ImportStep[] {
 }
 
 /**
+ * Row index for every step this build knows, keyed by the step name — a
+ * `Record` over `ImportProgressEvent["step"]` so a step added to that union
+ * without a row here is a compile error, not a silent runtime fallback.
+ */
+const STEP_ROW_INDEX: Record<ImportProgressEvent["step"], (mode: AttachmentMediaMode) => number> = {
+  parse: () => 0,
+  // Writing conversation files ("prepare") lands on the staging step, not
+  // a row of its own.
+  attachments: () => 1,
+  prepare: () => 1,
+  media: (mode) => (hasMediaStep(mode) ? 2 : -1),
+  upload: (mode) => (hasMediaStep(mode) ? 3 : 2),
+};
+
+/**
  * Index of the progress step that matches this server event, in this mode's
- * step list. Writing conversation files (`prepare`) lands on the staging
- * step, not a row of its own. Returns -1 for a step with no row in this
- * mode (`media` under copy/skip) — callers must treat that as "no row to
+ * step list. Returns -1 for a step with no row in this mode (`media` under
+ * copy/skip), or for a step string this build does not recognise at all —
+ * the event comes off the wire unvalidated, so a lookup miss must resolve
+ * to "no row", never `undefined`. Callers must treat -1 as "no row to
  * update", not index with it.
  */
 export function stepIndexFor(step: ImportProgressEvent["step"], mode: AttachmentMediaMode): number {
-  switch (step) {
-    case "parse":
-      return 0;
-    case "attachments":
-    case "prepare":
-      return 1;
-    case "media":
-      return hasMediaStep(mode) ? 2 : -1;
-    case "upload":
-      return hasMediaStep(mode) ? 3 : 2;
-    default: {
-      const _exhaustive: never = step;
-      return _exhaustive;
-    }
-  }
+  return STEP_ROW_INDEX[step]?.(mode) ?? -1;
 }
 
 /**
@@ -99,11 +101,15 @@ export function stepIndexFor(step: ImportProgressEvent["step"], mode: Attachment
  * of the active step's label, falling back to the first step when nothing
  * is active yet (one render frame before the first event arrives), or a
  * fixed heading once the import is done.
+ *
+ * An empty step list is unreachable in practice (`stepsFor` never returns
+ * one), but it must not read as "Import finished" if it ever happens —
+ * that would claim a completion that never occurred.
  */
 export function progressHeading(steps: ImportStep[], phase: ImportPhase): string {
   if (phase === "done") return DONE_HEADING;
   const current = steps.find((step) => step.status === "active") ?? steps[0];
-  if (!current) return DONE_HEADING;
+  if (!current) return "";
   return HEADING_BY_LABEL.get(current.label) ?? current.label;
 }
 
@@ -121,7 +127,6 @@ export function isProgressStepComplete(
 export function attachmentDoneDetail(
   mode: AttachmentMediaMode,
   counts: AttachmentProgressCounts | null,
-  _fallback: string,
 ): string {
   return formatAttachmentProgress({
     mode,

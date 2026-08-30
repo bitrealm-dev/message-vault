@@ -7,7 +7,6 @@ import {
 import { useTauriJob } from "../../hooks/useTauriJob";
 import { apiClient, getBaseUrl } from "../../lib/api";
 import { formatAttachmentProgress } from "../../lib/attachmentProgressCopy";
-import { attachmentStepCopy } from "../../lib/attachmentStepCopy";
 import { useAuth } from "../../lib/auth";
 import { getDeviceId } from "../../lib/deviceId";
 import { imessageExtractFields } from "../../lib/imessageExtractFields";
@@ -75,24 +74,31 @@ function initialSteps(
   return steps;
 }
 
-/** Present-tense verb shown while a step is running. */
-function progressVerb(step: ImportProgressEvent["step"]): string {
-  switch (step) {
-    case "upload":
-      return "Uploading";
-    case "prepare":
-      return "Preparing";
-    case "attachments":
-      return "Copied";
-    case "media":
-      return "Converting";
-    case "parse":
-      return "Reading";
-    default: {
-      const _exhaustive: never = step;
-      return _exhaustive;
-    }
-  }
+/** Present-tense verb for the media step, following the mode so compress mode never says "Converting". */
+function mediaVerb(mode: AttachmentMediaMode): string {
+  return mode === "compress" ? "Compressing" : "Converting";
+}
+
+/**
+ * Present-tense verb for every step but `media` (which needs the mode —
+ * see `mediaVerb`), keyed by step name so a step added to the wire union
+ * without an entry here is a compile error rather than a silent fallback.
+ */
+const STEP_VERB: Record<Exclude<ImportProgressEvent["step"], "media">, string> = {
+  parse: "Reading",
+  attachments: "Copied",
+  prepare: "Preparing",
+  upload: "Uploading",
+};
+
+/**
+ * Present-tense verb shown while a step is running. Falls back to a plain
+ * verb for a step string this build doesn't recognise — the event comes
+ * off the wire unvalidated.
+ */
+function progressVerb(step: ImportProgressEvent["step"], mode: AttachmentMediaMode): string {
+  if (step === "media") return mediaVerb(mode);
+  return STEP_VERB[step] ?? "Working";
 }
 
 /** Parse, attachment, and prepare durations from timestamps recorded during extract. */
@@ -252,7 +258,6 @@ export function useImportJob() {
 
   function applyProgress(event: ImportProgressEvent): void {
     const now = performance.now();
-    activeStepRef.current = event.step;
 
     if (event.step === "parse") {
       timingRef.current.parseStartedAt ??= now;
@@ -273,7 +278,11 @@ export function useImportJob() {
     }
 
     const stepIndex = stepIndexFor(event.step, attachmentModeRef.current);
-    if (stepIndex === -1) return; // No row for this step in the current mode.
+    // No row for this step in the current mode (or an unrecognised step off
+    // the wire) — leave activeStepRef pointing at whatever step actually has
+    // a row, so a dropped event here never mislabels the next error.
+    if (stepIndex < 0) return;
+    activeStepRef.current = event.step;
 
     let rawDetail = `${event.done}/${event.total}`;
     if (event.status) {
@@ -290,7 +299,7 @@ export function useImportJob() {
             bytesDone: event.bytes_done ?? lastAttachment?.bytesDone ?? 0,
             bytesTotal: event.bytes_total ?? lastAttachment?.bytesTotal ?? 0,
           })
-        : `${progressVerb(event.step)} ${rawDetail}`;
+        : `${progressVerb(event.step, attachmentModeRef.current)} ${rawDetail}`;
     const done = isProgressStepComplete(event.step, event.done, event.total);
 
     setSteps((current) =>
@@ -449,7 +458,6 @@ export function useImportJob() {
         const attachmentDoneLine = attachmentDoneDetail(
           form.attachmentMedia,
           lastAttachmentProgressRef.current,
-          attachmentStepCopy(form.attachmentMedia).doneDetail,
         );
         // The staging row folds both the attachment copy and the
         // conversation-file write ("prepare") into one duration — from the
