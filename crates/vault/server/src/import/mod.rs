@@ -874,8 +874,10 @@ pub(crate) async fn imports_create_handler(
     let id = crate::db::vault_imports::start_import(&mut conn, &args)
         .await
         .map_err(|e| match e {
-            crate::db::vault_imports::StartImportError::AlreadyActive => {
-                ApiError::Conflict("this account already has an active import session".into())
+            err @ crate::db::vault_imports::StartImportError::AlreadyActive => {
+                // One wording for the 409, shared with the CLI paths that
+                // surface the same error through anyhow.
+                ApiError::Conflict(err.to_string())
             }
             crate::db::vault_imports::StartImportError::Db(err) => {
                 ApiError::Internal(err.to_string())
@@ -1427,8 +1429,10 @@ async fn run_import_path(
         )
         .await
         .map_err(|e| match e {
-            crate::db::vault_imports::StartImportError::AlreadyActive => {
-                ApiError::Conflict("this account already has an active import session".into())
+            err @ crate::db::vault_imports::StartImportError::AlreadyActive => {
+                // One wording for the 409, shared with the CLI paths that
+                // surface the same error through anyhow.
+                ApiError::Conflict(err.to_string())
             }
             crate::db::vault_imports::StartImportError::Db(err) => {
                 ApiError::Internal(err.to_string())
@@ -2151,9 +2155,15 @@ mod tests {
         let err = run_import_path(state, query, jsonl_path, None)
             .await
             .unwrap_err();
+        let ApiError::Conflict(message) = &err else {
+            panic!("expected Conflict, got {err:?}");
+        };
+        // The 409 has to name the way out: the only place a stranded
+        // session can be resumed or discarded is the desktop app's Import
+        // screen.
         assert!(
-            matches!(err, ApiError::Conflict(_)),
-            "expected Conflict, got {err:?}"
+            message.contains("Import in the desktop app"),
+            "the conflict names how to clear the session: {message}"
         );
     }
 

@@ -1350,7 +1350,16 @@ mod tests {
         let err = imports_create_handler(State(state.clone()), auth_headers(&token), Json(body))
             .await
             .unwrap_err();
-        assert!(matches!(err, ApiError::Conflict(_)));
+        let ApiError::Conflict(message) = &err else {
+            panic!("expected Conflict, got {err:?}");
+        };
+        // The 409 has to name the way out: the only place a stranded
+        // session can be resumed or discarded is the desktop app's Import
+        // screen.
+        assert!(
+            message.contains("Import in the desktop app"),
+            "the conflict names how to clear the session: {message}"
+        );
     }
 
     #[tokio::test]

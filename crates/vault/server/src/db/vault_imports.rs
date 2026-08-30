@@ -302,7 +302,13 @@ pub enum StartImportError {
 impl std::fmt::Display for StartImportError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::AlreadyActive => write!(f, "this account already has an active import session"),
+            // Naming the way out matters: a killed CLI import leaves a
+            // session open that blocks every later one, and the desktop
+            // app's Import screen is where it can be resumed or discarded.
+            Self::AlreadyActive => write!(
+                f,
+                "this account already has an active import session; open Import in the desktop app to resume or discard it"
+            ),
             Self::Db(e) => write!(f, "{e}"),
         }
     }
