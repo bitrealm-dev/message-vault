@@ -1,10 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ConversationRow from "../components/ConversationRow";
+import ConversationSortMenu from "../components/ConversationSortMenu";
 import ListRangeHeader from "../components/ListRangeHeader";
+import ListRangePill, {
+  RANGE_PILL_OVERLAY_INSET,
+  RANGE_PILL_SCROLL_PAD,
+} from "../components/ListRangePill";
 import TagsMenu from "../components/TagsMenu";
 import { useSetRightToolbar } from "../components/useRightToolbar";
 import VirtualList, { type VisibleRange } from "../components/VirtualList";
 import { apiClient } from "../lib/api";
+import {
+  type ConversationSortState,
+  loadConversationSort,
+  saveConversationSort,
+} from "../lib/conversationSort";
 import { checksFromMembers } from "../lib/membershipChecks";
 import { createThreadTag, setConversationTagMembership } from "../lib/threadTags";
 import type { Conversation } from "../lib/types";
@@ -34,6 +44,7 @@ export default function ConversationList({
   const [checkedIds, setCheckedIds] = useState<Set<string>>(() => new Set());
   const [tagOverrides, setTagOverrides] = useState<Record<string, string[]>>({});
   const [membershipRev, setMembershipRev] = useState(0);
+  const [sortState, setSortState] = useState<ConversationSortState>(() => loadConversationSort());
   const { tags: allTags } = useThreadTags();
   const setRightToolbar = useSetRightToolbar();
 
@@ -63,6 +74,8 @@ export default function ConversationList({
         q: debouncedQ,
         limit: String(limit),
         offset: String(offset),
+        sort: sortState.sort,
+        order: sortState.order,
       });
       const res = await apiClient.get<ConversationsPage>(`/v1/export/conversations?${params}`, {
         signal,
@@ -72,7 +85,7 @@ export default function ConversationList({
         total: res.total ?? 0,
       };
     },
-    [debouncedQ],
+    [debouncedQ, sortState],
   );
 
   const {
@@ -84,7 +97,10 @@ export default function ConversationList({
     error,
     hasMore,
     loadMore,
-  } = usePagedList(`${debouncedQ}#${membershipRev}`, fetchPage);
+  } = usePagedList(
+    `${debouncedQ}#${membershipRev}#${sortState.sort}:${sortState.order}`,
+    fetchPage,
+  );
 
   const displayConversations = useMemo(
     () => conversations.map((c) => (tagOverrides[c.id] ? { ...c, tags: tagOverrides[c.id] } : c)),
@@ -177,6 +193,9 @@ export default function ConversationList({
     loading && conversations.length === 0
       ? "Loading…"
       : formatVisibleRange(visibleRange.start, visibleRange.end, total, conversations.length);
+  // Once there are rows the count rides at the bottom of the panel, the way the
+  // contact list shows it; the header keeps it only while the list is still empty.
+  const showRangePill = displayConversations.length > 0;
 
   if (error && conversations.length === 0) {
     return (
@@ -185,11 +204,11 @@ export default function ConversationList({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 flex-1 flex-col">
       <ListRangeHeader
-        rangeLabel={rangeLabel}
-        refreshing={refreshing}
-        filling={filling}
+        rangeLabel={showRangePill ? undefined : rangeLabel}
+        refreshing={!showRangePill && refreshing}
+        filling={!showRangePill && filling}
         selectAllChecked={selectAllChecked}
         selectAllIndeterminate={selectAllIndeterminate}
         onSelectAllChange={(on) => {
@@ -197,12 +216,24 @@ export default function ConversationList({
         }}
         selectAllLabel="Select all conversations"
         selectAllDisabled={displayConversations.length === 0}
+        actions={
+          <ConversationSortMenu
+            sort={sortState.sort}
+            order={sortState.order}
+            onChange={(next) => {
+              setSortState(next);
+              saveConversationSort(next);
+            }}
+          />
+        }
       />
       <VirtualList
         count={displayConversations.length}
         estimateSize={64}
         dynamicSize
         onVisibleRangeChange={setVisibleRange}
+        visibleBottomInset={RANGE_PILL_OVERLAY_INSET}
+        footer={<div aria-hidden className="shrink-0" style={{ height: RANGE_PILL_SCROLL_PAD }} />}
         onNearEnd={() => {
           if (hasMore) loadMore();
         }}
@@ -230,6 +261,14 @@ export default function ConversationList({
           );
         }}
       />
+      {showRangePill ? (
+        <ListRangePill
+          rangeLabel={rangeLabel}
+          refreshing={refreshing}
+          filling={filling}
+          testId="conversation-list-range-pill"
+        />
+      ) : null}
     </div>
   );
 }

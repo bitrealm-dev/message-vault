@@ -10,6 +10,7 @@ import {
   updateGroup,
 } from "../lib/savedGroups";
 import { isTauri } from "../lib/tauri-check";
+import { resizeHandleGutter } from "../lib/tw";
 import { useAccountProfile } from "../lib/useAccountProfile";
 import { useContactGroups } from "../lib/useContactGroups";
 import { useThreadTags } from "../lib/useThreadTags";
@@ -170,7 +171,7 @@ export default function LeftPanel({
       className="relative flex h-full shrink-0 flex-col overflow-hidden border-r border-border bg-panel text-text"
     >
       <div className={LIST_TOOLBAR_CLASS} aria-hidden />
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className={`min-h-0 flex-1 overflow-auto ${resizeHandleGutter}`}>
         {/* Browse */}
         <div className="px-3 py-2">
           <button
