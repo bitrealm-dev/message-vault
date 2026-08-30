@@ -383,6 +383,7 @@ fn stage_conversation_attachments(
                 ),
             );
         },
+        log,
         cancel_flag,
     )
     .map_err(anyhow::Error::msg)?;

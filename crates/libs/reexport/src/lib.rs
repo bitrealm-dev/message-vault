@@ -152,6 +152,7 @@ fn apply_reexport_convert(
         },
         |_| {},
         None,
+        None,
     )
     .map_err(anyhow::Error::msg)?;
     Ok(())

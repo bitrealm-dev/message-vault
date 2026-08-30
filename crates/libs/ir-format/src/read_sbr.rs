@@ -208,6 +208,7 @@ fn stage_read_attachments(
                 ),
             );
         },
+        options.log,
         options.cancel.map(|flag| flag.as_ref()),
     )
     .map_err(anyhow::Error::msg)?;

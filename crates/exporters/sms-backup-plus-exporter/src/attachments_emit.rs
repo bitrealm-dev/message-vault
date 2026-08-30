@@ -127,6 +127,7 @@ pub(super) fn stage_conversation_attachments(
                 ),
             );
         },
+        log,
         cancel.map(|flag| flag.as_ref()),
     )?;
 

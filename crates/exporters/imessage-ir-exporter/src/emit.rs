@@ -316,6 +316,7 @@ fn stage_conversation_attachments(
                 progress.done, progress.total, progress.bytes_done, progress.bytes_total
             ));
         },
+        session.options.log.as_ref(),
         cancel,
     )
     .map_err(RuntimeError::InvalidOptions)?;

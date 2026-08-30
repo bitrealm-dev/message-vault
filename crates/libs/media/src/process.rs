@@ -31,7 +31,12 @@ const JPEG_COMPRESS_FLOOR: u64 = 500 * 1024;
 /// MP3s at or under this size are left alone in compress mode.
 const MP3_COMPRESS_FLOOR: u64 = 100 * 1024;
 
-/// Convert or compress media under `output_dir/attachments`.
+/// Convert or compress the given attachment files in place.
+///
+/// The caller builds `files` (usually via [`collect_media_files`]), so a
+/// resumed or scoped pass can name exactly the files it means instead of
+/// sweeping the whole directory. Paths must live under `output_dir`'s
+/// `attachments/` directory.
 ///
 /// Returns a path remap (`old_rel` → `new_rel`, forward-slash relative to
 /// `output_dir`) for callers that update IR / CSV themselves.
@@ -40,22 +45,9 @@ const MP3_COMPRESS_FLOOR: u64 = 100 * 1024;
 ///
 /// Returns an error when ffmpeg/ffprobe are missing or fail, an input path
 /// escapes the output directory, or IO fails.
-pub fn process_attachments_dir(
+pub fn process_attachment_files(
     output_dir: &Path,
-    mode: MediaMode,
-    compress: &CompressOptions,
-) -> Result<(MediaReport, HashMap<String, String>)> {
-    process_attachments_dir_with_log(output_dir, mode, compress, None)
-}
-
-/// Same as [`process_attachments_dir`], with optional progress lines via `log`.
-///
-/// # Errors
-///
-/// Returns an error when ffmpeg/ffprobe are missing or fail, an input path
-/// escapes the output directory, or IO fails.
-pub fn process_attachments_dir_with_log(
-    output_dir: &Path,
+    files: &[PathBuf],
     mode: MediaMode,
     compress: &CompressOptions,
     mut log: Option<&mut dyn FnMut(&str)>,
@@ -75,7 +67,6 @@ pub fn process_attachments_dir_with_log(
 
     let mut report = MediaReport::default();
     let mut remap = HashMap::new();
-    let files = collect_media_files(&attachments)?;
     let total = files.len();
     if total == 0 {
         return Ok((report, remap));
@@ -97,7 +88,7 @@ pub fn process_attachments_dir_with_log(
 
     let mut done = 0usize;
     for path in files {
-        match process_one(output_dir, &path, mode, compress) {
+        match process_one(output_dir, path, mode, compress) {
             Ok(Outcome::Changed { old_rel, new_rel }) => {
                 report.processed += 1;
                 remap.insert(old_rel, new_rel);
@@ -187,7 +178,16 @@ pub(crate) enum Kind {
     Audio,
 }
 
-fn collect_media_files(root: &Path) -> Result<Vec<PathBuf>> {
+/// List the files a media pass would touch under `root`.
+///
+/// Every non-temp file [`classify`] recognizes, recursively, sorted so two
+/// runs enumerate in the same order. Callers hand the result — or a subset of
+/// it — to [`process_attachment_files`].
+///
+/// # Errors
+///
+/// Returns an error when a directory under `root` cannot be read.
+pub fn collect_media_files(root: &Path) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -954,9 +954,15 @@ mod tests {
              keep-smaller guard exists"
         );
 
-        let (report, remap) =
-            process_attachments_dir(dir.path(), MediaMode::Compress, &CompressOptions::default())
-                .unwrap();
+        let files = collect_media_files(&attachments).unwrap();
+        let (report, remap) = process_attachment_files(
+            dir.path(),
+            &files,
+            MediaMode::Compress,
+            &CompressOptions::default(),
+            None,
+        )
+        .unwrap();
 
         assert_eq!(fs::read(&jpeg).unwrap(), before, "original bytes replaced");
         assert!(
@@ -1148,9 +1154,14 @@ mod tests {
     #[test]
     fn clone_is_noop() {
         let dir = tempfile::tempdir().unwrap();
-        let (report, remap) =
-            process_attachments_dir(dir.path(), MediaMode::Clone, &CompressOptions::default())
-                .unwrap();
+        let (report, remap) = process_attachment_files(
+            dir.path(),
+            &[],
+            MediaMode::Clone,
+            &CompressOptions::default(),
+            None,
+        )
+        .unwrap();
         assert_eq!(report.processed, 0);
         assert!(remap.is_empty());
     }
@@ -1196,13 +1207,53 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut lines = Vec::new();
         let mut log = |line: &str| lines.push(line.to_string());
-        let _ = process_attachments_dir_with_log(
+        let _ = process_attachment_files(
             dir.path(),
+            &[],
             MediaMode::Clone,
             &CompressOptions::default(),
             Some(&mut log),
         )
         .unwrap();
         assert!(lines.is_empty());
+    }
+    #[test]
+    fn process_attachment_files_touches_only_the_listed_files() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let attachments = dir.path().join("attachments");
+        fs::create_dir_all(&attachments).unwrap();
+        let listed = attachments.join("a.png");
+        let unlisted = attachments.join("b.png");
+        write_test_png(&listed);
+        write_test_png(&unlisted);
+        let unlisted_before = fs::read(&unlisted).unwrap();
+
+        let (_report, remap) = process_attachment_files(
+            dir.path(),
+            std::slice::from_ref(&listed),
+            MediaMode::Convert,
+            &CompressOptions::default(),
+            None,
+        )
+        .unwrap();
+
+        assert!(
+            remap.contains_key("attachments/a.png"),
+            "the listed file must be converted"
+        );
+        assert!(
+            !remap.contains_key("attachments/b.png"),
+            "a file the caller did not list must be left alone: scoping the pass \
+             to an explicit list is the whole point of taking one"
+        );
+        assert!(unlisted.is_file(), "unlisted file must survive the pass");
+        assert_eq!(
+            fs::read(&unlisted).unwrap(),
+            unlisted_before,
+            "unlisted file was rewritten"
+        );
     }
 }
