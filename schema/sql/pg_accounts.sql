@@ -153,11 +153,34 @@ CREATE TABLE IF NOT EXISTS vault_imports (
     -- Time spent uploading in milliseconds.
     upload_ms INTEGER,
     -- JSON blob with a human-readable run summary for Import History.
-    summary_json TEXT
+    summary_json TEXT,
+    -- Where a live session is: parse, write, awaiting_gate_1, transcode,
+    -- awaiting_gate_2, or pushing. NULL once the run is over, and on rows
+    -- written before sessions existed. `status` says how a run ended;
+    -- `stage` says where it is.
+    stage TEXT,
+    -- Absolute path to this session's staging folder on the client. The
+    -- database holds the pointer so resuming means asking the vault where
+    -- to go, rather than guessing from a directory listing.
+    staging_dir TEXT,
+    -- Which install created the session, so another machine can say where
+    -- it belongs instead of failing to open a path that was never local.
+    device_id TEXT,
+    -- Import form snapshot: restores the screen, and restarts the run with
+    -- the same settings.
+    form_json TEXT,
+    -- Source path, size, mtime, and message count. A backup that grew
+    -- between attempts has different conversation boundaries.
+    source_fingerprint TEXT
 );
 
 CREATE INDEX IF NOT EXISTS ix_vault_imports_account_started
     ON vault_imports(account_id, started_at DESC);
+
+-- At most one live import session per account. A partial unique index
+-- rather than application logic, so it holds against a racing client.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_vault_imports_active_account
+    ON vault_imports(account_id) WHERE status = 'running';
 
 -- Per-item warning or error recorded during an import run.
 CREATE TABLE IF NOT EXISTS vault_import_issues (

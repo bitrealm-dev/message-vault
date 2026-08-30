@@ -2035,19 +2035,43 @@ mod tests {
 
         let import_a = vault_imports::start_import(
             &mut conn,
+            &vault_imports::StartImportArgs {
+                account_id: &account,
+                source: "imessage-ios",
+                mode: "append",
+                tool: Some("test"),
+                stage: vault_imports::ImportStage::Parse,
+                staging_dir: None,
+                device_id: None,
+                form_json: None,
+                source_fingerprint: None,
+            },
+        )
+        .await
+        .unwrap();
+        // Only one session may be `running` per account (the partial unique
+        // index); finish `import_a` so `import_b` can start.
+        vault_imports::complete_import(
+            &mut conn,
             &account,
-            "imessage-ios",
-            "append",
-            Some("test"),
+            import_a,
+            &vault_imports::CompleteImportArgs::succeeded(1, 0),
         )
         .await
         .unwrap();
         let import_b = vault_imports::start_import(
             &mut conn,
-            &account,
-            "imessage-ios",
-            "append",
-            Some("test"),
+            &vault_imports::StartImportArgs {
+                account_id: &account,
+                source: "imessage-ios",
+                mode: "append",
+                tool: Some("test"),
+                stage: vault_imports::ImportStage::Parse,
+                staging_dir: None,
+                device_id: None,
+                form_json: None,
+                source_fingerprint: None,
+            },
         )
         .await
         .unwrap();
@@ -2220,10 +2244,17 @@ mod tests {
 
         let import_a = vault_imports::start_import(
             &mut conn,
-            &account,
-            "imessage-ios",
-            "append",
-            Some("test"),
+            &vault_imports::StartImportArgs {
+                account_id: &account,
+                source: "imessage-ios",
+                mode: "append",
+                tool: Some("test"),
+                stage: vault_imports::ImportStage::Parse,
+                staging_dir: None,
+                device_id: None,
+                form_json: None,
+                source_fingerprint: None,
+            },
         )
         .await
         .unwrap();
@@ -2336,10 +2367,17 @@ mod tests {
 
         let import_a = vault_imports::start_import(
             &mut conn,
-            &account,
-            "imessage-ios",
-            "append",
-            Some("test"),
+            &vault_imports::StartImportArgs {
+                account_id: &account,
+                source: "imessage-ios",
+                mode: "append",
+                tool: Some("test"),
+                stage: vault_imports::ImportStage::Parse,
+                staging_dir: None,
+                device_id: None,
+                form_json: None,
+                source_fingerprint: None,
+            },
         )
         .await
         .unwrap();

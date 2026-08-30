@@ -53,7 +53,7 @@ const PG_FKS_DDL: &str = include_str!("../../../../../schema/sql/pg_fks.sql");
 /// `PRAGMA user_version`. Bump this whenever any `schema/sql/*.sql` file
 /// changes; a database at any other version is rebuilt empty (see
 /// [`migrate_vault_schema`]).
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// Bring the database to [`SCHEMA_VERSION`].
 ///
@@ -156,6 +156,72 @@ async fn apply_vault_ddl(conn: &mut AnyConnection) -> Result<()> {
     Ok(())
 }
 
+/// The Postgres DDL that creates the vault's own tables, in the order the
+/// vault installs it. The installer, the rebuild's drop list, and the drift
+/// guard all read this one array, so a new DDL file cannot reach one of them
+/// and miss the others.
+const PG_VAULT_TABLE_DDL: [&str; 4] = [
+    PG_ACCOUNTS_DDL,
+    // Contacts before messages: the messages DDL references contact tables.
+    PG_CONTACTS_TABLES_DDL,
+    PG_MESSAGE_TABLES_DDL,
+    PG_STAGING_TABLES_DDL,
+];
+
+/// Every table name the embedded Postgres DDL creates, parsed from the DDL
+/// itself so the rebuild's drop list cannot drift from what the vault
+/// installs.
+///
+/// A SQLite database file belongs to the vault alone, but a Postgres schema
+/// may be shared with another application. The rebuild therefore names the
+/// vault's own tables instead of sweeping `current_schema()`.
+fn pg_vault_table_names() -> Vec<&'static str> {
+    const CREATE_TABLE: &str = "CREATE TABLE IF NOT EXISTS ";
+    let mut names: Vec<&'static str> = Vec::new();
+    for ddl in PG_VAULT_TABLE_DDL {
+        for line in ddl.lines() {
+            let Some(rest) = line.trim_start().strip_prefix(CREATE_TABLE) else {
+                continue;
+            };
+            let name = rest
+                .trim_start()
+                .split(|c: char| c.is_whitespace() || c == '(' || c == ';')
+                .next()
+                .unwrap_or_default();
+            if !name.is_empty() && !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+    names
+}
+
+/// Drop the vault's own tables in the current schema. Postgres twin of
+/// [`rebuild_vault_schema`]: a vault stamped with an older marker is
+/// rebuilt empty rather than patched in place.
+///
+/// Only the tables [`pg_vault_table_names`] lists are dropped, and each is
+/// schema-qualified, so a vault sharing its schema with another application
+/// rebuilds its own data without touching the neighbour's.
+///
+/// `CASCADE` takes the FTS triggers and foreign keys down with their
+/// tables; the sync functions are recreated with `CREATE OR REPLACE`.
+async fn drop_pg_user_tables(conn: &mut AnyConnection) -> Result<()> {
+    // `::text` because the Any driver has no mapping for Postgres's `name`.
+    let schema: String = sqlx::query_scalar("SELECT current_schema()::text")
+        .fetch_one(&mut *conn)
+        .await?;
+    let schema = schema.replace('"', "\"\"");
+    for table in pg_vault_table_names() {
+        sqlx::query(&format!(
+            "DROP TABLE IF EXISTS \"{schema}\".\"{table}\" CASCADE"
+        ))
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(())
+}
+
 /// Apply the Postgres DDL variants. The DDL is idempotent (`IF NOT EXISTS`),
 /// so applying it again is a no-op.
 async fn apply_postgres_vault_ddl(conn: &mut AnyConnection) -> Result<()> {
@@ -173,11 +239,19 @@ async fn apply_postgres_vault_ddl(conn: &mut AnyConnection) -> Result<()> {
         .execute(&mut *tx)
         .await?;
     if !pg_vault_schema_ready(&mut tx).await? {
-        execute_batch(&mut tx, PG_ACCOUNTS_DDL).await?;
+        // A vault carrying an older marker (or none, with tables present)
+        // is rebuilt empty — the same contract SQLite's user_version
+        // gives. Re-importing is the migration.
+        if table_exists(&mut tx, "vault_imports").await? {
+            eprintln!(
+                "warning: vault schema predates {VAULT_SCHEMA_META_KEY}; rebuilding empty (re-import your data)"
+            );
+            drop_pg_user_tables(&mut tx).await?;
+        }
         // Same ordering as the SQLite variant: contacts before messages.
-        execute_batch(&mut tx, PG_CONTACTS_TABLES_DDL).await?;
-        execute_batch(&mut tx, PG_MESSAGE_TABLES_DDL).await?;
-        execute_batch(&mut tx, PG_STAGING_TABLES_DDL).await?;
+        for ddl in PG_VAULT_TABLE_DDL {
+            execute_batch(&mut tx, ddl).await?;
+        }
         // Post-hoc FKs last: they reference tables from both the accounts
         // and contacts DDL sets.
         execute_batch(&mut tx, PG_FKS_DDL).await?;
@@ -230,7 +304,9 @@ pub async fn ensure_vault_schema(conn: &mut AnyConnection) -> Result<()> {
 pub const MESSAGES_FTS_TRIGGERS_META_KEY: &str = "messages_fts_triggers_v1";
 
 /// Marker that the one-time Postgres vault DDL install has completed.
-pub const VAULT_SCHEMA_META_KEY: &str = "vault_schema_v1";
+/// Bumped with the schema: a vault holding an older marker is rebuilt
+/// empty, matching SQLite's `user_version` behaviour.
+pub const VAULT_SCHEMA_META_KEY: &str = "vault_schema_v2";
 
 /// Advisory lock id serializing the one-time Postgres DDL install so two
 /// concurrent first-touches cannot interleave the trigger drop/create pair
@@ -597,12 +673,19 @@ pub async fn ensure_accounts_schema(conn: &mut AnyConnection) -> Result<()> {
 /// Branches on the engine: `pg_catalog.pg_tables` for Postgres, `sqlite_master`
 /// for SQLite. Used by [`crate::process_assets::run`] to skip the account
 /// sweep on a database that has no vault schema yet.
+///
+/// The Postgres lookup is restricted to `current_schema()` — the schema the
+/// vault reads, writes, and rebuilds — so a same-named table in another
+/// schema of the same database never stands in for the vault's own.
 pub async fn table_exists(conn: &mut AnyConnection, name: &str) -> Result<bool> {
     let found: i64 = if dialect::engine_of(conn) == DbEngine::Postgres {
-        sqlx::query_scalar("SELECT COUNT(*) FROM pg_catalog.pg_tables WHERE tablename = $1")
-            .bind(name)
-            .fetch_one(&mut *conn)
-            .await?
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_catalog.pg_tables
+             WHERE tablename = $1 AND schemaname = current_schema()",
+        )
+        .bind(name)
+        .fetch_one(&mut *conn)
+        .await?
     } else {
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = $1")
             .bind(name)
@@ -1207,6 +1290,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn one_running_import_per_account() {
+        let (pool, _dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        ensure_vault_schema(&mut conn).await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ('acct', 'alice')")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let insert = r#"
+            INSERT INTO vault_imports (
+                account_id, source, mode, status, started_at,
+                message_count, attachment_count, bytes_uploaded
+            ) VALUES ('acct', 'imessage', 'append', $1, '2026-08-30T00:00:00Z', 0, 0, 0)
+        "#;
+
+        sqlx::query(insert)
+            .bind("running")
+            .execute(&mut *conn)
+            .await
+            .expect("first running session inserts");
+
+        let second = sqlx::query(insert)
+            .bind("running")
+            .execute(&mut *conn)
+            .await;
+        assert!(second.is_err(), "a second running session must be rejected");
+
+        // A finished session does not occupy the slot.
+        sqlx::query(insert)
+            .bind("completed")
+            .execute(&mut *conn)
+            .await
+            .expect("a completed session is not covered by the partial index");
+    }
+
+    #[tokio::test]
+    async fn vault_imports_carries_the_session_columns() {
+        let (pool, _dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        ensure_vault_schema(&mut conn).await.unwrap();
+        sqlx::query(
+            "SELECT stage, staging_dir, device_id, form_json, source_fingerprint
+             FROM vault_imports WHERE 1 = 0",
+        )
+        .fetch_optional(&mut *conn)
+        .await
+        .expect("session columns exist");
+    }
+
+    #[tokio::test]
     async fn fresh_accounts_default_to_full_permissions() {
         let (pool, _dir) = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
@@ -1388,6 +1522,188 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(pg_fts_hits(&mut conn, "goodbye").await, 0);
+    }
+
+    /// The `old_vault_rebuilds_empty_at_current_version` twin for Postgres: a
+    /// vault stamped with a stale [`VAULT_SCHEMA_META_KEY`] is rebuilt empty
+    /// by [`drop_pg_user_tables`] rather than patched in place, so the new
+    /// session columns land on an already-installed vault too. Skips unless
+    /// `MV_TEST_POSTGRES_URL` is set.
+    #[tokio::test]
+    async fn stale_postgres_marker_rebuilds_vault_schema_empty() {
+        let Some(url) = crate::pg_test_url() else {
+            return;
+        };
+        let _pg_guard = crate::acquire_pg_test_lock().await;
+        sqlx::any::install_default_drivers();
+        let pool = sqlx::any::AnyPoolOptions::new()
+            .connect(&url)
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        ensure_vault_schema(&mut conn).await.unwrap();
+        // The Postgres test database is shared across runs, so clear anything
+        // a previous run left behind (the account FK cascades to handles,
+        // conversations, messages, attachments, and tapbacks).
+        sqlx::query("DELETE FROM accounts WHERE id = $1")
+            .bind(A1)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'alice')")
+            .bind(A1)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        // Roll the marker back to what a vault installed before this schema
+        // change would carry, simulating the upgrade scenario the rebuild
+        // path exists for.
+        sqlx::query("DELETE FROM schema_meta WHERE key = $1")
+            .bind(VAULT_SCHEMA_META_KEY)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO schema_meta (key, value) VALUES ('vault_schema_v1', '1')
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        ensure_vault_schema(&mut conn).await.unwrap();
+
+        let accounts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(accounts, 0, "a stale marker rebuilds the vault empty");
+
+        let ready: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM schema_meta WHERE key = $1")
+            .bind(VAULT_SCHEMA_META_KEY)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(ready, 1, "the rebuild stamps the current marker");
+
+        sqlx::query(
+            "SELECT stage, staging_dir, device_id, form_json, source_fingerprint
+             FROM vault_imports WHERE 1 = 0",
+        )
+        .fetch_optional(&mut *conn)
+        .await
+        .expect("the rebuilt Postgres vault carries the session columns");
+    }
+
+    /// A vault sharing its Postgres schema with another application rebuilds
+    /// its own tables and leaves the neighbour's alone. Skips unless
+    /// `MV_TEST_POSTGRES_URL` is set.
+    #[tokio::test]
+    async fn postgres_rebuild_spares_tables_the_vault_does_not_own() {
+        let Some(url) = crate::pg_test_url() else {
+            return;
+        };
+        let _pg_guard = crate::acquire_pg_test_lock().await;
+        sqlx::any::install_default_drivers();
+        let pool = sqlx::any::AnyPoolOptions::new()
+            .connect(&url)
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        ensure_vault_schema(&mut conn).await.unwrap();
+
+        // A co-tenant application's table, sitting in the same schema.
+        sqlx::query("DROP TABLE IF EXISTS mv_test_neighbour")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE mv_test_neighbour (id BIGINT PRIMARY KEY, note TEXT)")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO mv_test_neighbour (id, note) VALUES (1, 'keep me')")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        // Roll the marker back so the next ensure takes the rebuild path.
+        sqlx::query("DELETE FROM schema_meta WHERE key = $1")
+            .bind(VAULT_SCHEMA_META_KEY)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO schema_meta (key, value) VALUES ('vault_schema_v1', '1')
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        ensure_vault_schema(&mut conn).await.unwrap();
+
+        let note: Option<String> =
+            sqlx::query_scalar("SELECT note FROM mv_test_neighbour WHERE id = 1")
+                .fetch_optional(&mut *conn)
+                .await
+                .expect("a table the vault does not own survives the rebuild")
+                .flatten();
+        assert_eq!(
+            note.as_deref(),
+            Some("keep me"),
+            "the neighbour's rows survive the rebuild too"
+        );
+
+        // The vault's own tables were still rebuilt.
+        let ready: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM schema_meta WHERE key = $1")
+            .bind(VAULT_SCHEMA_META_KEY)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(ready, 1, "the rebuild stamps the current marker");
+
+        sqlx::query("DROP TABLE IF EXISTS mv_test_neighbour")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+    }
+
+    /// The drop list is read out of the embedded DDL, so it covers every
+    /// table the vault installs and nothing else.
+    #[test]
+    fn pg_vault_table_names_match_the_embedded_ddl() {
+        let names = pg_vault_table_names();
+        for expected in [
+            "accounts",
+            "account_api_tokens",
+            "schema_meta",
+            "vault_imports",
+            "vault_import_issues",
+            "contacts",
+            "handles",
+            "trashed_conversations",
+            "conversations",
+            "messages",
+            "attachments",
+            "conversation_tags",
+            "staging_messages",
+        ] {
+            assert!(
+                names.contains(&expected),
+                "{expected} missing from {names:?}"
+            );
+        }
+        let declared = PG_VAULT_TABLE_DDL
+            .iter()
+            .flat_map(|ddl| ddl.lines())
+            .filter(|line| line.trim_start().starts_with("CREATE TABLE"))
+            .count();
+        assert_eq!(
+            names.len(),
+            declared,
+            "every CREATE TABLE in the Postgres DDL is on the drop list"
+        );
     }
 
     #[test]

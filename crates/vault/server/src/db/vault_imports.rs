@@ -11,6 +11,58 @@ use sqlx::{AnyConnection, Connection, Row};
 
 use crate::db::dialect;
 
+/// Where a live import session is in its lifecycle.
+///
+/// `status` records how a run ended; this records where it is. Both are
+/// needed: a session can sit at `Write` while running, and at `Write`
+/// having failed.
+///
+/// All six stages exist because they are the design's vocabulary, but the
+/// gates and the media pass are not built yet — only `Parse`, `Write`, and
+/// `Pushing` are reachable today.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportStage {
+    /// Reading the backup. Nothing durable exists yet.
+    Parse,
+    /// Writing conversation files and staging attachments.
+    Write,
+    /// Waiting for the user to approve spending time on the media step.
+    AwaitingGate1,
+    /// Converting or compressing staged media.
+    Transcode,
+    /// Waiting for the user to approve what lands in the vault.
+    AwaitingGate2,
+    /// Uploading to the vault.
+    Pushing,
+}
+
+impl ImportStage {
+    /// Stored spelling of this stage.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Parse => "parse",
+            Self::Write => "write",
+            Self::AwaitingGate1 => "awaiting_gate_1",
+            Self::Transcode => "transcode",
+            Self::AwaitingGate2 => "awaiting_gate_2",
+            Self::Pushing => "pushing",
+        }
+    }
+
+    /// Parse a stored spelling, or `None` when it is not one of the six.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "parse" => Some(Self::Parse),
+            "write" => Some(Self::Write),
+            "awaiting_gate_1" => Some(Self::AwaitingGate1),
+            "transcode" => Some(Self::Transcode),
+            "awaiting_gate_2" => Some(Self::AwaitingGate2),
+            "pushing" => Some(Self::Pushing),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 /// One row of `vault_imports`: a per-account import session record.
 #[allow(dead_code)]
@@ -49,6 +101,16 @@ pub struct VaultImportRow {
     pub upload_ms: Option<i64>,
     /// Client-provided summary payload.
     pub summary_json: Option<String>,
+    /// Lifecycle stage while the session is live; `None` once it is over.
+    pub stage: Option<String>,
+    /// Absolute path to the staging folder on the client that owns it.
+    pub staging_dir: Option<String>,
+    /// Which install created the session.
+    pub device_id: Option<String>,
+    /// Import form snapshot, for restoring the screen.
+    pub form_json: Option<String>,
+    /// Source path, size, mtime, and message count.
+    pub source_fingerprint: Option<String>,
 }
 
 /// Outcome fields written when a session completes.
@@ -203,38 +265,121 @@ impl From<anyhow::Error> for ImportLookupError {
     }
 }
 
-/// Start a running import session for `account_id`.
+/// Everything recorded when a session begins.
+pub struct StartImportArgs<'a> {
+    /// Owning vault account.
+    pub account_id: &'a str,
+    /// IR source family (`imessage`, `whatsapp`, …), not a method id.
+    pub source: &'a str,
+    /// Import mode recorded by the importer.
+    pub mode: &'a str,
+    /// Client/tool name, when the caller names one.
+    pub tool: Option<&'a str>,
+    /// Stage the session opens at.
+    pub stage: ImportStage,
+    /// Absolute staging path on the client.
+    pub staging_dir: Option<&'a str>,
+    /// Which install is creating this session.
+    pub device_id: Option<&'a str>,
+    /// Import form snapshot as JSON.
+    pub form_json: Option<&'a str>,
+    /// Source fingerprint as JSON.
+    pub source_fingerprint: Option<&'a str>,
+}
+
+/// Why a session could not be started.
+#[derive(Debug)]
+pub enum StartImportError {
+    /// This account already has a live session. The partial unique index
+    /// rejected the insert, so this holds even against a racing client.
+    AlreadyActive,
+    /// Anything else.
+    Db(anyhow::Error),
+}
+
+impl std::fmt::Display for StartImportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            // Naming the way out matters: a killed CLI import leaves a
+            // session open that blocks every later one, and the desktop
+            // app's Import screen is where it can be resumed or discarded.
+            Self::AlreadyActive => write!(
+                f,
+                "this account already has an active import session; open Import in the desktop app to resume or discard it"
+            ),
+            Self::Db(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl Error for StartImportError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::AlreadyActive => None,
+            Self::Db(err) => err.source(),
+        }
+    }
+}
+
+/// Open a new import session.
+///
+/// # Errors
+///
+/// [`StartImportError::AlreadyActive`] when a live session already exists
+/// for this account; [`StartImportError::Db`] for any other failure.
 pub async fn start_import(
     conn: &mut AnyConnection,
-    account_id: &str,
-    source: &str,
-    mode: &str,
-    tool: Option<&str>,
-) -> Result<i64> {
+    args: &StartImportArgs<'_>,
+) -> std::result::Result<i64, StartImportError> {
     let started_at = Utc::now().to_rfc3339();
-    let id: i64 = sqlx::query_scalar(
+    let inserted: std::result::Result<i64, sqlx::Error> = sqlx::query_scalar(
         r#"
         INSERT INTO vault_imports (
             account_id, source, tool, mode, status, started_at,
-            message_count, attachment_count, bytes_uploaded
-        ) VALUES ($1, $2, $3, $4, 'running', $5, 0, 0, 0)
+            message_count, attachment_count, bytes_uploaded,
+            stage, staging_dir, device_id, form_json, source_fingerprint
+        ) VALUES ($1, $2, $3, $4, 'running', $5, 0, 0, 0, $6, $7, $8, $9, $10)
         RETURNING id
         "#,
     )
-    .bind(account_id)
-    .bind(source)
-    .bind(tool)
-    .bind(mode)
+    .bind(args.account_id)
+    .bind(args.source)
+    .bind(args.tool)
+    .bind(args.mode)
     .bind(started_at)
+    .bind(args.stage.as_str())
+    .bind(args.staging_dir)
+    .bind(args.device_id)
+    .bind(args.form_json)
+    .bind(args.source_fingerprint)
     .fetch_one(&mut *conn)
-    .await?;
-    Ok(id)
+    .await;
+
+    match inserted {
+        Ok(id) => Ok(id),
+        Err(err) if is_unique_violation(&err) => Err(StartImportError::AlreadyActive),
+        Err(err) => Err(StartImportError::Db(err.into())),
+    }
+}
+
+/// Whether this error is a unique-constraint violation on either engine.
+///
+/// SQLite reports `2067` / `1555`; Postgres reports SQLSTATE `23505`.
+fn is_unique_violation(err: &sqlx::Error) -> bool {
+    let Some(db_err) = err.as_database_error() else {
+        return false;
+    };
+    if db_err.code().as_deref() == Some("23505") {
+        return true;
+    }
+    matches!(db_err.code().as_deref(), Some("2067") | Some("1555"))
 }
 
 /// Column list for `vault_imports`, in the order reads map to a row.
 const VAULT_IMPORT_COLUMNS: &str = "id, account_id, source, tool, mode, status, started_at, \
      finished_at, message_count, attachment_count, bytes_uploaded, duration_ms, parse_ms, \
-     attachments_ms, prepare_ms, upload_ms, summary_json";
+     attachments_ms, prepare_ms, upload_ms, summary_json, stage, staging_dir, device_id, \
+     form_json, source_fingerprint";
 
 fn vault_import_from_row(row: &AnyRow) -> Result<VaultImportRow, sqlx::Error> {
     Ok(VaultImportRow {
@@ -255,6 +400,11 @@ fn vault_import_from_row(row: &AnyRow) -> Result<VaultImportRow, sqlx::Error> {
         prepare_ms: row.try_get(14)?,
         upload_ms: row.try_get(15)?,
         summary_json: row.try_get(16)?,
+        stage: row.try_get(17)?,
+        staging_dir: row.try_get(18)?,
+        device_id: row.try_get(19)?,
+        form_json: row.try_get(20)?,
+        source_fingerprint: row.try_get(21)?,
     })
 }
 
@@ -277,6 +427,99 @@ pub async fn get_owned_import(
         Some(data) => Ok(vault_import_from_row(&data)?),
         None => Err(ImportLookupError::NotFound { import_id }),
     }
+}
+
+/// The account's live session, if it has one.
+///
+/// "Live" is `status = 'running'` — the same predicate the partial unique
+/// index uses, so this can never return two rows.
+///
+/// # Errors
+///
+/// Returns an error when the query fails.
+pub async fn get_active_import(
+    conn: &mut AnyConnection,
+    account_id: &str,
+) -> Result<Option<VaultImportRow>> {
+    let row = sqlx::query(&format!(
+        "SELECT {VAULT_IMPORT_COLUMNS}
+         FROM vault_imports
+         WHERE account_id = $1 AND status = 'running'"
+    ))
+    .bind(account_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    match row {
+        Some(data) => Ok(Some(vault_import_from_row(&data)?)),
+        None => Ok(None),
+    }
+}
+
+/// Move a live session to another stage.
+///
+/// # Errors
+///
+/// [`ImportLookupError::NotFound`] when the account owns no such import,
+/// [`ImportLookupError::InvalidSession`] when it is no longer running.
+pub async fn set_import_stage(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    import_id: i64,
+    stage: ImportStage,
+) -> std::result::Result<(), ImportLookupError> {
+    let existing = get_owned_import(&mut *conn, account_id, import_id).await?;
+    if existing.status != "running" {
+        return Err(ImportLookupError::InvalidSession {
+            message: format!(
+                "import {import_id} is not running (status={})",
+                existing.status
+            ),
+        });
+    }
+    sqlx::query("UPDATE vault_imports SET stage = $1 WHERE id = $2 AND account_id = $3")
+        .bind(stage.as_str())
+        .bind(import_id)
+        .bind(account_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// Close a live session the user gave up on.
+///
+/// Records `cancelled` and clears `stage`, which frees the account's
+/// single active slot. Nothing reclaims a session on a timer — a session
+/// is broken by an explicit discard or not at all.
+///
+/// # Errors
+///
+/// [`ImportLookupError::NotFound`] when the account owns no such import,
+/// [`ImportLookupError::InvalidSession`] when it is no longer running.
+pub async fn discard_import(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    import_id: i64,
+) -> std::result::Result<(), ImportLookupError> {
+    let existing = get_owned_import(&mut *conn, account_id, import_id).await?;
+    if existing.status != "running" {
+        return Err(ImportLookupError::InvalidSession {
+            message: format!(
+                "import {import_id} is not running (status={})",
+                existing.status
+            ),
+        });
+    }
+    sqlx::query(
+        "UPDATE vault_imports
+         SET status = 'cancelled', stage = NULL, finished_at = $1
+         WHERE id = $2 AND account_id = $3",
+    )
+    .bind(Utc::now().to_rfc3339())
+    .bind(import_id)
+    .bind(account_id)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
 }
 
 /// Like [`get_owned_import`], but the session must still be `running` and match
@@ -381,7 +624,8 @@ pub async fn complete_import(
             attachments_ms = $8,
             prepare_ms = $9,
             upload_ms = $10,
-            summary_json = $11
+            summary_json = $11,
+            stage = NULL
         WHERE id = $12 AND account_id = $13
         "#,
     )
@@ -682,19 +926,29 @@ mod tests {
         (pool, dir)
     }
 
+    /// A default session-open for tests that only care that a running
+    /// import exists, not about its stage or session fields.
+    fn default_start_args(account_id: &str) -> StartImportArgs<'_> {
+        StartImportArgs {
+            account_id,
+            source: "ios",
+            mode: "append",
+            tool: Some("message-vault-io"),
+            stage: ImportStage::Parse,
+            staging_dir: None,
+            device_id: None,
+            form_json: None,
+            source_fingerprint: None,
+        }
+    }
+
     #[tokio::test]
     async fn complete_import_persists_timings_and_issues() {
         let (pool, _dir) = setup_accounts_only().await;
         let mut conn = pool.acquire().await.unwrap();
-        let import_id = start_import(
-            &mut conn,
-            ACCOUNT_ID,
-            "ios",
-            "append",
-            Some("message-vault-io"),
-        )
-        .await
-        .unwrap();
+        let import_id = start_import(&mut conn, &default_start_args(ACCOUNT_ID))
+            .await
+            .unwrap();
 
         let row = complete_import(
             &mut conn,
@@ -746,15 +1000,9 @@ mod tests {
     async fn complete_import_rejects_invalid_issue_kind() {
         let (pool, _dir) = setup_accounts_only().await;
         let mut conn = pool.acquire().await.unwrap();
-        let import_id = start_import(
-            &mut conn,
-            ACCOUNT_ID,
-            "ios",
-            "append",
-            Some("message-vault-io"),
-        )
-        .await
-        .unwrap();
+        let import_id = start_import(&mut conn, &default_start_args(ACCOUNT_ID))
+            .await
+            .unwrap();
 
         let err = complete_import(
             &mut conn,
@@ -806,15 +1054,9 @@ mod tests {
     async fn require_reusable_import_rejects_completed_and_mismatched() {
         let (pool, _dir) = setup_accounts_only().await;
         let mut conn = pool.acquire().await.unwrap();
-        let import_id = start_import(
-            &mut conn,
-            ACCOUNT_ID,
-            "ios",
-            "append",
-            Some("message-vault-io"),
-        )
-        .await
-        .unwrap();
+        let import_id = start_import(&mut conn, &default_start_args(ACCOUNT_ID))
+            .await
+            .unwrap();
         complete_import(
             &mut conn,
             ACCOUNT_ID,
@@ -830,15 +1072,9 @@ mod tests {
             .to_string();
         assert!(err.contains("not running"), "{err}");
 
-        let running = start_import(
-            &mut conn,
-            ACCOUNT_ID,
-            "ios",
-            "append",
-            Some("message-vault-io"),
-        )
-        .await
-        .unwrap();
+        let running = start_import(&mut conn, &default_start_args(ACCOUNT_ID))
+            .await
+            .unwrap();
         let src_err = require_reusable_import(&mut conn, ACCOUNT_ID, running, "android", "append")
             .await
             .unwrap_err()
@@ -860,15 +1096,9 @@ mod tests {
     async fn get_import_detail_returns_issues() {
         let (pool, _dir) = setup_accounts_only().await;
         let mut conn = pool.acquire().await.unwrap();
-        let import_id = start_import(
-            &mut conn,
-            ACCOUNT_ID,
-            "ios",
-            "append",
-            Some("message-vault-io"),
-        )
-        .await
-        .unwrap();
+        let import_id = start_import(&mut conn, &default_start_args(ACCOUNT_ID))
+            .await
+            .unwrap();
         complete_import(
             &mut conn,
             ACCOUNT_ID,
@@ -920,15 +1150,9 @@ mod tests {
     async fn list_imports_includes_duration_ms() {
         let (pool, _dir) = setup_accounts_only().await;
         let mut conn = pool.acquire().await.unwrap();
-        let import_id = start_import(
-            &mut conn,
-            ACCOUNT_ID,
-            "ios",
-            "append",
-            Some("message-vault-io"),
-        )
-        .await
-        .unwrap();
+        let import_id = start_import(&mut conn, &default_start_args(ACCOUNT_ID))
+            .await
+            .unwrap();
         complete_import(
             &mut conn,
             ACCOUNT_ID,
@@ -954,5 +1178,150 @@ mod tests {
         let imports = list_imports(&mut conn, ACCOUNT_ID).await.unwrap();
         assert_eq!(imports.len(), 1);
         assert_eq!(imports[0].duration_ms, Some(48_000));
+    }
+
+    #[tokio::test]
+    async fn active_session_round_trips_and_blocks_a_second() {
+        let (pool, _dir) = setup_accounts_only().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let account = ACCOUNT_ID;
+
+        assert!(
+            get_active_import(&mut conn, account)
+                .await
+                .unwrap()
+                .is_none(),
+            "no session before one starts"
+        );
+
+        let args = StartImportArgs {
+            account_id: account,
+            source: "imessage",
+            mode: "append",
+            tool: Some("message-vault-io"),
+            stage: ImportStage::Parse,
+            staging_dir: Some("/home/u/message-vault/staging-iphone-260830"),
+            device_id: Some("device-a"),
+            form_json: Some(r#"{"source":"imessage-ios"}"#),
+            source_fingerprint: Some(r#"{"path":"/b","size_bytes":10}"#),
+        };
+        let id = start_import(&mut conn, &args).await.unwrap();
+
+        let active = get_active_import(&mut conn, account)
+            .await
+            .unwrap()
+            .expect("the session is active");
+        assert_eq!(active.id, id);
+        assert_eq!(active.stage.as_deref(), Some("parse"));
+        assert_eq!(
+            active.staging_dir.as_deref(),
+            Some("/home/u/message-vault/staging-iphone-260830")
+        );
+        assert_eq!(active.device_id.as_deref(), Some("device-a"));
+        assert_eq!(
+            active.form_json.as_deref(),
+            Some(r#"{"source":"imessage-ios"}"#)
+        );
+
+        assert!(
+            matches!(
+                start_import(&mut conn, &args).await,
+                Err(StartImportError::AlreadyActive)
+            ),
+            "a second session is refused by the index, not by a race-prone check"
+        );
+    }
+
+    #[tokio::test]
+    async fn stage_advances_and_discard_frees_the_slot() {
+        let (pool, _dir) = setup_accounts_only().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let account = ACCOUNT_ID;
+        let args = StartImportArgs {
+            account_id: account,
+            source: "imessage",
+            mode: "append",
+            tool: None,
+            stage: ImportStage::Parse,
+            staging_dir: None,
+            device_id: None,
+            form_json: None,
+            source_fingerprint: None,
+        };
+        let id = start_import(&mut conn, &args).await.unwrap();
+
+        set_import_stage(&mut conn, account, id, ImportStage::Pushing)
+            .await
+            .unwrap();
+        let active = get_active_import(&mut conn, account)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(active.stage.as_deref(), Some("pushing"));
+
+        discard_import(&mut conn, account, id).await.unwrap();
+        assert!(
+            get_active_import(&mut conn, account)
+                .await
+                .unwrap()
+                .is_none(),
+            "a discarded session is no longer active"
+        );
+        let row = get_owned_import(&mut conn, account, id).await.unwrap();
+        assert_eq!(row.status, "cancelled");
+        assert!(row.finished_at.is_some(), "a discard closes the run");
+
+        // The slot is genuinely free.
+        start_import(&mut conn, &args)
+            .await
+            .expect("a new session can start");
+    }
+
+    #[tokio::test]
+    async fn completing_a_session_frees_the_slot_too() {
+        let (pool, _dir) = setup_accounts_only().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let account = ACCOUNT_ID;
+        let args = StartImportArgs {
+            account_id: account,
+            source: "imessage",
+            mode: "append",
+            tool: None,
+            stage: ImportStage::Parse,
+            staging_dir: None,
+            device_id: None,
+            form_json: None,
+            source_fingerprint: None,
+        };
+        let id = start_import(&mut conn, &args).await.unwrap();
+        complete_import(
+            &mut conn,
+            account,
+            id,
+            &CompleteImportArgs::succeeded(10, 2),
+        )
+        .await
+        .unwrap();
+        assert!(
+            get_active_import(&mut conn, account)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn every_stage_round_trips_through_its_string() {
+        for stage in [
+            ImportStage::Parse,
+            ImportStage::Write,
+            ImportStage::AwaitingGate1,
+            ImportStage::Transcode,
+            ImportStage::AwaitingGate2,
+            ImportStage::Pushing,
+        ] {
+            assert_eq!(ImportStage::parse(stage.as_str()), Some(stage));
+        }
+        assert_eq!(ImportStage::parse("gate_1"), None);
     }
 }
