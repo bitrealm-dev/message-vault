@@ -233,4 +233,39 @@ describe("ResumeImportPanel", () => {
     expect(onDiscard).toHaveBeenCalledTimes(1);
     expect(onResume).not.toHaveBeenCalled();
   });
+
+  it("says nothing extra when there is no error to report", () => {
+    const decision: ResumeDecision = {
+      kind: "resume_gate",
+      canResume: true,
+      session: session({ stage: "awaiting_gate_1" }),
+    };
+    render(<ResumeImportPanel decision={decision} onResume={vi.fn()} onDiscard={vi.fn()} />);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("surfaces a failed resume attempt without blocking the retry", async () => {
+    const user = userEvent.setup();
+    const onResume = vi.fn();
+    const decision: ResumeDecision = {
+      kind: "resume_gate",
+      canResume: true,
+      session: session({ stage: "awaiting_gate_1" }),
+    };
+    render(
+      <ResumeImportPanel
+        decision={decision}
+        error="disk unavailable"
+        onResume={onResume}
+        onDiscard={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent("disk unavailable");
+    // The panel's own copy for the decision still renders underneath.
+    expect(screen.getByText("Pick up where you left off")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Show me the summary" }));
+    expect(onResume).toHaveBeenCalledTimes(1);
+  });
 });

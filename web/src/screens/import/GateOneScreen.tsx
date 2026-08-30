@@ -25,6 +25,7 @@ export default function GateOneScreen({
   onDecline,
   busy,
   mediaToolsMissing,
+  mediaPartiallyRan,
 }: {
   summary: StagingSummary;
   /** Null while the contact-match lookup is in flight or failed — the "new
@@ -38,6 +39,11 @@ export default function GateOneScreen({
   /** True when convert/compress is selected and ffmpeg was not found —
    * disables approval rather than letting the media step fail later. */
   mediaToolsMissing?: boolean;
+  /** True only when this landing is a resume that found the media step
+   * partway through (ffmpeg went missing mid pass). The folder may already
+   * hold a mix of originals and converted files, so the estimates line
+   * below would be wrong — it claims the media step hasn't run yet. */
+  mediaPartiallyRan?: boolean;
 }) {
   const verb = mediaJobVerb(mode);
   const groups = verb ? forecastGroups(summary.verdictCounts, mode) : [];
@@ -100,7 +106,9 @@ export default function GateOneScreen({
         <section className="mt-5">
           <h2 className="m-0 text-base font-semibold">What to expect after {verb}</h2>
           <p className="m-0 mt-1 text-[0.813rem] text-muted">
-            The media step has not run yet, so these are estimates based on the files as staged.
+            {mediaPartiallyRan
+              ? "The media step needs its tools to finish. Approving here picks up where it left off, once they're available."
+              : "The media step has not run yet, so these are estimates based on the files as staged."}
           </p>
           <div className="mt-3 flex flex-col gap-3">
             {groups.map((group) => (

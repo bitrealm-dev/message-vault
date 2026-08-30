@@ -88,7 +88,9 @@ vi.mock("../../lib/importSession", async (importOriginal) => {
 });
 
 // Imported after the mocks above so useImportJob picks up the mocked modules.
-const { useImportJob, restoreFormFromSnapshot } = await import("./useImportJob");
+const { useImportJob, restoreFormFromSnapshot, parseStoredStagingSummary } = await import(
+  "./useImportJob"
+);
 
 /**
  * `runMock` stands in for `useTauriJob().run`, which always calls the
@@ -872,7 +874,7 @@ describe("useImportJob resumeAtGate", () => {
     const { result } = renderHook(() => useImportJob());
 
     await act(async () => {
-      await result.current.resumeAtGate(activeSession({ stage: "awaiting_gate_1" }));
+      await result.current.resumeAtGate(activeSession({ stage: "awaiting_gate_1" }), form());
     });
 
     expect(invokeSummarizeStagingMock).toHaveBeenCalledTimes(1);
@@ -880,6 +882,37 @@ describe("useImportJob resumeAtGate", () => {
     expect(result.current.gateSummary?.conversations).toBe(9);
     // Decision 39: landing on a gate to look at it again writes nothing.
     expect(setImportStageMock).not.toHaveBeenCalled();
+    // Copy mode has no media row -- three rows, the staged ones already
+    // marked done, matching the state a fresh startImport run would show
+    // right before Gate 1.
+    expect(result.current.steps.map((s) => s.status)).toEqual(["done", "done", "pending"]);
+    expect(result.current.mediaPartiallyRan).toBe(false);
+  });
+
+  it("rebuilds a 4-row step list for a convert-mode session resuming at Gate 1, media row pending", async () => {
+    invokeSummarizeStagingMock.mockResolvedValueOnce(stagingSummary({ conversations: 9 }));
+    const { result } = renderHook(() => useImportJob());
+
+    await act(async () => {
+      await result.current.resumeAtGate(
+        activeSession({ stage: "awaiting_gate_1" }),
+        form({ attachmentMedia: "convert" }),
+      );
+    });
+
+    expect(result.current.phase).toBe("gate_1");
+    expect(result.current.steps.map((s) => s.label)).toEqual([
+      "Read backup",
+      "Copy to staging",
+      "Convert media",
+      "Upload to vault",
+    ]);
+    expect(result.current.steps.map((s) => s.status)).toEqual([
+      "done",
+      "done",
+      "pending",
+      "pending",
+    ]);
   });
 
   it("resumes at Gate 2 by diffing the STORED approved plan against a RECOMPUTED actual summary", async () => {
@@ -909,6 +942,7 @@ describe("useImportJob resumeAtGate", () => {
     await act(async () => {
       await result.current.resumeAtGate(
         activeSession({ stage: "awaiting_gate_2", summary: approved }),
+        form({ attachmentMedia: "convert" }),
       );
     });
 
@@ -924,6 +958,10 @@ describe("useImportJob resumeAtGate", () => {
     expect(result.current.gateDelta?.lostCount).toBeGreaterThan(0);
     // Decision 39: landing on a gate to look at it again writes nothing.
     expect(setImportStageMock).not.toHaveBeenCalled();
+    // The media pass already ran (in an earlier session) to get here -- its
+    // row shows done, not pending, and there are 4 of them.
+    expect(result.current.steps).toHaveLength(4);
+    expect(result.current.steps[2]).toMatchObject({ label: "Convert media", status: "done" });
   });
 
   it("re-runs the media pass on a resume at transcode, then lands on Gate 2", async () => {
@@ -936,11 +974,8 @@ describe("useImportJob resumeAtGate", () => {
     const { result } = renderHook(() => useImportJob());
     await act(async () => {
       await result.current.resumeAtGate(
-        activeSession({
-          stage: "transcode",
-          summary: approved,
-          form: { ...validSnapshot, attachmentMedia: "convert" },
-        }),
+        activeSession({ stage: "transcode", summary: approved }),
+        form({ attachmentMedia: "convert" }),
       );
     });
 
@@ -951,6 +986,48 @@ describe("useImportJob resumeAtGate", () => {
     // plan stored at the last gate.
     expect(setImportStageMock).toHaveBeenCalledWith(1, "transcode", approved);
     expect(setImportStageMock).toHaveBeenCalledWith(1, "awaiting_gate_2", approved);
+  });
+
+  it("shows a 4-row list with the media row active while the pass re-runs on a transcode resume", async () => {
+    // A deliberately unresolved run() call, so the state mid-pass can be
+    // inspected before the pass (and the resume) finishes -- the same
+    // pattern the double-click guard test above uses.
+    let resolveTranscode!: (value: TauriJobResult) => void;
+    const pending = new Promise<TauriJobResult>((resolve) => {
+      resolveTranscode = resolve;
+    });
+    runMock.mockImplementationOnce(async (fn: () => Promise<unknown>) => {
+      await fn();
+      return pending;
+    });
+    invokeSummarizeStagingMock.mockResolvedValueOnce(stagingSummary({ conversations: 7 }));
+
+    const { result } = renderHook(() => useImportJob());
+    let resumed!: Promise<void>;
+    await act(async () => {
+      resumed = result.current.resumeAtGate(
+        activeSession({ stage: "transcode" }),
+        form({ attachmentMedia: "convert" }),
+      );
+      // Let the microtasks up to (and including) invokeTranscodeStaging's
+      // own call run, without waiting for `pending` to settle.
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.steps).toHaveLength(4);
+    expect(result.current.steps.map((s) => s.status)).toEqual([
+      "done",
+      "done",
+      "active",
+      "pending",
+    ]);
+
+    await act(async () => {
+      resolveTranscode({ summary: "Transcode finished.", transcode: undefined });
+      await resumed;
+    });
+    expect(result.current.phase).toBe("gate_2");
   });
 
   it("falls back to Gate 1 instead of running the pass when ffmpeg is missing on a transcode resume", async () => {
@@ -965,16 +1042,23 @@ describe("useImportJob resumeAtGate", () => {
     const { result } = renderHook(() => useImportJob());
     await act(async () => {
       await result.current.resumeAtGate(
-        activeSession({
-          stage: "transcode",
-          form: { ...validSnapshot, attachmentMedia: "convert" },
-        }),
+        activeSession({ stage: "transcode" }),
+        form({ attachmentMedia: "convert" }),
       );
     });
 
     expect(invokeTranscodeStagingMock).not.toHaveBeenCalled();
     expect(result.current.phase).toBe("gate_1");
     expect(result.current.mediaToolsMissing).toBe(true);
+    // The folder may hold a mix of originals and already-converted files --
+    // Gate 1's "has not run yet" copy would be wrong here.
+    expect(result.current.mediaPartiallyRan).toBe(true);
+    expect(result.current.steps.map((s) => s.status)).toEqual([
+      "done",
+      "done",
+      "pending",
+      "pending",
+    ]);
   });
 
   it("a malformed stored summary does not block a resume — it proceeds with no approved plan", async () => {
@@ -1003,6 +1087,7 @@ describe("useImportJob resumeAtGate", () => {
     await act(async () => {
       await result.current.resumeAtGate(
         activeSession({ stage: "awaiting_gate_2", summary: "not a valid staging summary" }),
+        form({ attachmentMedia: "convert" }),
       );
     });
 
@@ -1014,17 +1099,109 @@ describe("useImportJob resumeAtGate", () => {
     expect(result.current.gateDelta?.stillFlagged[0]?.regressed).toBe(true);
   });
 
-  it("does nothing when the session's form snapshot can't be read", async () => {
+  it("does nothing for a session at a stage this function doesn't handle", async () => {
     const { result } = renderHook(() => useImportJob());
-    let resumed: boolean | undefined;
     await act(async () => {
-      resumed = await result.current.resumeAtGate(
-        activeSession({ stage: "awaiting_gate_1", form: { not: "a valid snapshot" } }),
-      );
+      await result.current.resumeAtGate(activeSession({ stage: "pushing" }), form());
     });
 
-    expect(resumed).toBe(false);
     expect(invokeSummarizeStagingMock).not.toHaveBeenCalled();
     expect(result.current.phase).toBe("form");
+  });
+
+  it.each(["awaiting_gate_1", "awaiting_gate_2"] as const)(
+    "a recompute failure at %s does not complete the session or write a stage — it retries from the form",
+    async (stage) => {
+      invokeSummarizeStagingMock.mockRejectedValueOnce(new Error("disk unavailable"));
+
+      const { result } = renderHook(() => useImportJob());
+      await act(async () => {
+        await result.current.resumeAtGate(
+          activeSession({ stage, summary: stagingSummary() }),
+          form({ attachmentMedia: "convert" }),
+        );
+      });
+
+      // Decision 37: only an explicit discard ends a waiting session. A
+      // transient read failure must not complete it (freeing the slot) or
+      // move it to a stage the folder never actually reached.
+      expect(postMock.mock.calls.some(([path]) => String(path).endsWith("/complete"))).toBe(false);
+      expect(setImportStageMock).not.toHaveBeenCalled();
+      expect(result.current.phase).toBe("form");
+      expect(result.current.resumeError).toContain("disk unavailable");
+    },
+  );
+
+  it("clears a stale resumeError once a later resume attempt starts", async () => {
+    invokeSummarizeStagingMock.mockRejectedValueOnce(new Error("disk unavailable"));
+    const { result } = renderHook(() => useImportJob());
+    await act(async () => {
+      await result.current.resumeAtGate(
+        activeSession({ stage: "awaiting_gate_1" }),
+        form({ attachmentMedia: "convert" }),
+      );
+    });
+    expect(result.current.resumeError).not.toBeNull();
+
+    invokeSummarizeStagingMock.mockResolvedValueOnce(stagingSummary());
+    await act(async () => {
+      await result.current.resumeAtGate(
+        activeSession({ stage: "awaiting_gate_1" }),
+        form({ attachmentMedia: "convert" }),
+      );
+    });
+    expect(result.current.resumeError).toBeNull();
+    expect(result.current.phase).toBe("gate_1");
+  });
+});
+
+describe("parseStoredStagingSummary", () => {
+  it("round-trips a valid stored summary", () => {
+    const valid = stagingSummary({ conversations: 3, attachments: 2 });
+    valid.forecasts = [
+      {
+        path: "attachments/x.mov",
+        name: "x.mov",
+        sizeBytes: 10,
+        estimateBytes: 8,
+        verdict: "likely_fits",
+      },
+    ];
+    expect(parseStoredStagingSummary(valid)).toEqual(valid);
+  });
+
+  it("returns undefined for null, non-objects, and an empty object", () => {
+    expect(parseStoredStagingSummary(null)).toBeUndefined();
+    expect(parseStoredStagingSummary(undefined)).toBeUndefined();
+    expect(parseStoredStagingSummary("not a summary")).toBeUndefined();
+    expect(parseStoredStagingSummary({})).toBeUndefined();
+  });
+
+  it("returns undefined when a required field is missing", () => {
+    const valid = stagingSummary();
+    const { attachmentBytes: _attachmentBytes, ...missingAttachmentBytes } = valid;
+    expect(parseStoredStagingSummary(missingAttachmentBytes)).toBeUndefined();
+  });
+
+  it("returns undefined when a forecasts row is malformed", () => {
+    const missingVerdict = {
+      ...stagingSummary(),
+      forecasts: [{ path: "attachments/x.mov", name: "x.mov", sizeBytes: 1, estimateBytes: 1 }],
+    };
+    expect(parseStoredStagingSummary(missingVerdict)).toBeUndefined();
+
+    const badVerdict = {
+      ...stagingSummary(),
+      forecasts: [
+        {
+          path: "attachments/x.mov",
+          name: "x.mov",
+          sizeBytes: 1,
+          estimateBytes: 1,
+          verdict: "not_a_real_verdict",
+        },
+      ],
+    };
+    expect(parseStoredStagingSummary(badVerdict)).toBeUndefined();
   });
 });

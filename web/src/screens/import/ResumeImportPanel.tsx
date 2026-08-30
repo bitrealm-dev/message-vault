@@ -70,10 +70,19 @@ const COPY: Record<ResumableKind, PanelCopy> = {
 /** Renders one resume decision and calls back on the user's choice. */
 export default function ResumeImportPanel({
   decision,
+  error,
   onResume,
   onDiscard,
 }: {
   decision: ResumeDecision;
+  /**
+   * Set when the last attempt to act on this decision failed partway
+   * through — today, only a gate/media resume whose recompute of the
+   * staged folder failed (a transient read, not a run that actually
+   * failed: decision 37 means the session is still here to try again).
+   * Null the rest of the time.
+   */
+  error?: string | null;
   onResume: () => void;
   onDiscard: () => void;
 }) {
@@ -85,6 +94,11 @@ export default function ResumeImportPanel({
     <>
       <h1 className="m-0 mb-1 text-2xl font-bold">{copy.heading(session)}</h1>
       <p className="m-0 mb-5 text-[0.875rem] text-muted">{copy.body(session)}</p>
+      {error ? (
+        <p className="m-0 mb-5 text-[0.813rem] text-danger" role="alert">
+          That didn't go through: {error}. You can try again.
+        </p>
+      ) : null}
       <div className="flex items-center gap-3">
         <Button
           variant="primary"

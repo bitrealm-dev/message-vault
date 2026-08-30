@@ -80,6 +80,8 @@ export default function ImportScreen() {
     gateDelta,
     gateAttachmentMedia,
     mediaToolsMissing,
+    mediaPartiallyRan,
+    resumeError,
     computingSummary,
     completionText,
     startImport,
@@ -276,7 +278,7 @@ export default function ImportScreen() {
       if (resume.kind === "resume_gate" || resume.kind === "resume_media") {
         if (!session.staging_dir) return; // resumeDecisionFor guarantees this; defensive only.
         setResume(NO_RESUME);
-        await resumeAtGate(session);
+        await resumeAtGate(session, restoredForm);
         return;
       }
 
@@ -614,6 +616,7 @@ export default function ImportScreen() {
       {phase === "form" && resumeChecked && resume.kind !== "none" && (
         <ResumeImportPanel
           decision={resume}
+          error={resumeError}
           onResume={() => void handleResumeAction()}
           onDiscard={() => void handleDiscardResume()}
         />
@@ -642,6 +645,7 @@ export default function ImportScreen() {
           onDecline={() => void declineGate()}
           busy={running}
           mediaToolsMissing={mediaToolsMissing}
+          mediaPartiallyRan={mediaPartiallyRan}
         />
       )}
 

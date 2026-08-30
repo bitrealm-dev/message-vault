@@ -18,6 +18,8 @@ const hookState = vi.hoisted(() => ({
   gateSummary: null as StagingSummary | null,
   gateDelta: null as GateDelta | null,
   mediaToolsMissing: false,
+  mediaPartiallyRan: false,
+  resumeError: null as string | null,
 }));
 const startImportMock = vi.hoisted(() => vi.fn());
 const resumeAtGateMock = vi.hoisted(() => vi.fn());
@@ -46,6 +48,8 @@ vi.mock("./import/useImportJob", async (importOriginal) => {
       gateSummary: hookState.gateSummary,
       gateDelta: hookState.gateDelta,
       mediaToolsMissing: hookState.mediaToolsMissing,
+      mediaPartiallyRan: hookState.mediaPartiallyRan,
+      resumeError: hookState.resumeError,
       computingSummary: false,
       completionText: undefined,
       startImport: startImportMock,
@@ -92,9 +96,15 @@ vi.mock("./import/ImportProgressView", () => ({
 }));
 
 vi.mock("./import/ResumeImportPanel", () => ({
-  default: (props: { decision: ResumeDecision; onResume: () => void; onDiscard: () => void }) => (
+  default: (props: {
+    decision: ResumeDecision;
+    error?: string | null;
+    onResume: () => void;
+    onDiscard: () => void;
+  }) => (
     <div data-testid="resume-panel">
       <span data-testid="resume-kind">{props.decision.kind}</span>
+      {props.error ? <span data-testid="resume-error">{props.error}</span> : null}
       <button type="button" onClick={props.onResume}>
         resume-action
       </button>
@@ -192,9 +202,11 @@ describe("ImportScreen entering Import", () => {
     hookState.gateSummary = null;
     hookState.gateDelta = null;
     hookState.mediaToolsMissing = false;
+    hookState.mediaPartiallyRan = false;
+    hookState.resumeError = null;
     startImportMock.mockReset();
     resumeAtGateMock.mockReset();
-    resumeAtGateMock.mockResolvedValue(true);
+    resumeAtGateMock.mockResolvedValue(undefined);
     approveGateMock.mockReset();
     declineGateMock.mockReset();
     cancelMock.mockReset();
@@ -347,13 +359,54 @@ describe("ImportScreen entering Import", () => {
       await user.click(screen.getByText("resume-action"));
 
       expect(resumeAtGateMock).toHaveBeenCalledTimes(1);
-      const [resumedSession] = resumeAtGateMock.mock.calls[0] as [ActiveImportSession];
+      const [resumedSession, resumedForm] = resumeAtGateMock.mock.calls[0] as [
+        ActiveImportSession,
+        unknown,
+      ];
       expect(resumedSession.id).toBe(7);
       expect(resumedSession.stage).toBe(stage);
+      // The screen's own already-validated parse, not a second one inside
+      // the hook.
+      expect(resumedForm).toMatchObject({ source: "imessage-ios", attachmentMedia: "copy" });
       expect(startImportMock).not.toHaveBeenCalled();
       expect(discardImportSessionMock).not.toHaveBeenCalled();
     },
   );
+
+  it("re-fetches and reshows the resume panel with the failure surfaced when a gate resume's recompute fails", async () => {
+    // Decision 37: only an explicit discard ends a waiting session, so a
+    // failed recompute (useImportJob's resumeAtGate) never completes or
+    // discards it -- it returns to the form phase instead. That phase
+    // transition is what re-triggers this screen's own active-session
+    // check, and since nothing was touched server-side, it finds the exact
+    // same session and shows the panel again -- this is the retry.
+    getActiveImportSessionMock.mockResolvedValue(
+      session({ stage: "awaiting_gate_1", form: restorableForm }),
+    );
+    const { rerender } = render(<ImportScreen />);
+
+    await screen.findByTestId("resume-panel");
+    expect(screen.getByTestId("resume-kind")).toHaveTextContent("resume_gate");
+    expect(getActiveImportSessionMock).toHaveBeenCalledTimes(1);
+
+    // Simulate resumeAtGate's failure path from inside the (mocked) hook:
+    // phase moves to "progress" while it recomputes, then back to "form"
+    // with the failure left on `resumeError`.
+    hookState.phase = "progress";
+    await act(async () => {
+      rerender(<ImportScreen />);
+    });
+    hookState.phase = "form";
+    hookState.resumeError = "disk unavailable";
+    await act(async () => {
+      rerender(<ImportScreen />);
+    });
+
+    expect(getActiveImportSessionMock).toHaveBeenCalledTimes(2);
+    expect(await screen.findByTestId("resume-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("resume-kind")).toHaveTextContent("resume_gate");
+    expect(screen.getByTestId("resume-error")).toHaveTextContent("disk unavailable");
+  });
 
   it("discards the old session before restarting when the extract never finished", async () => {
     const user = userEvent.setup();
@@ -549,9 +602,11 @@ describe("ImportScreen gates", () => {
     hookState.gateSummary = null;
     hookState.gateDelta = null;
     hookState.mediaToolsMissing = false;
+    hookState.mediaPartiallyRan = false;
+    hookState.resumeError = null;
     startImportMock.mockReset();
     resumeAtGateMock.mockReset();
-    resumeAtGateMock.mockResolvedValue(true);
+    resumeAtGateMock.mockResolvedValue(undefined);
     approveGateMock.mockReset();
     declineGateMock.mockReset();
     cancelMock.mockReset();

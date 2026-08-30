@@ -174,6 +174,27 @@ function initialSteps(
   return steps;
 }
 
+/**
+ * Step list for a session resumed at a gate or mid media pass — the read
+ * and staging rows are already done (nothing here re-extracts), the upload
+ * row is always still pending (nothing here has uploaded yet), and the
+ * media row (when this mode has one) is done only when `mediaDone` says
+ * the pass already finished in an earlier run. A resume at `transcode`
+ * passes `mediaDone: false` and then calls `runMediaPass`, which marks
+ * that same row active once it actually starts running against this list.
+ */
+function resumeSteps(attachmentMedia: AttachmentMediaMode, mediaDone: boolean): ImportStep[] {
+  const template = stepsFor(attachmentMedia);
+  const lastIndex = template.length - 1;
+  return template.map((step, i) => {
+    if (i === lastIndex) return step;
+    if (i === 0 || i === 1) return { ...step, status: "done", detail: "Already staged" };
+    // The media row, the only one left (index 2, only present under
+    // convert/compress).
+    return mediaDone ? { ...step, status: "done", detail: mediaDoneDetail(attachmentMedia) } : step;
+  });
+}
+
 /** Parse, attachment, and prepare durations from timestamps recorded during extract. */
 function stageDurations(
   timing: StageTiming,
@@ -387,6 +408,17 @@ export function useImportJob() {
   const [gateSummary, setGateSummary] = useState<StagingSummary | null>(null);
   const [gateDeltaState, setGateDeltaState] = useState<GateDelta | null>(null);
   const [mediaToolsMissing, setMediaToolsMissing] = useState(false);
+  // True only for a resume that landed on Gate 1 because ffmpeg went missing
+  // mid media pass, not for the genuine not-yet-run case — Gate 1's copy
+  // must not claim the media step hasn't run when it partly has.
+  const [mediaPartiallyRan, setMediaPartiallyRan] = useState(false);
+  // A resume's own recompute failing (a transient read of the staging
+  // folder, not the run itself) — surfaced on the resume panel rather than
+  // completing the session (decision 37: only an explicit discard ends a
+  // waiting one). Cleared at the start of the next resume attempt or a
+  // fresh import; deliberately *not* cleared by returnToForm, since the
+  // failure path below returns there itself and still needs it read.
+  const [resumeError, setResumeError] = useState<string | null>(null);
   // True only while a not-cancellable summarize call is in flight (Decision:
   // the gate screens render once the summary resolves; until then the
   // progress view stays up with its Cancel disabled, since there is nothing
@@ -424,6 +456,7 @@ export function useImportJob() {
     setGateSummary(null);
     setGateDeltaState(null);
     setMediaToolsMissing(false);
+    setMediaPartiallyRan(false);
     setComputingSummary(false);
   }
 
@@ -870,6 +903,8 @@ export function useImportJob() {
     setGateSummary(null);
     setGateDeltaState(null);
     setMediaToolsMissing(false);
+    setMediaPartiallyRan(false);
+    setResumeError(null);
     setComputingSummary(false);
     setSteps(initialSteps("active", form.attachmentMedia));
 
@@ -1088,6 +1123,11 @@ export function useImportJob() {
    * instead, then routes exactly the way the normal flow would have
    * gotten here.
    *
+   * `resumedForm` is the caller's already-validated `restoreFormFromSnapshot`
+   * result — the caller needs that check anyway (to fall back to
+   * `settings_unreadable`), so this trusts it rather than parsing
+   * `session.form` a second time.
+   *
    * Decision 39: the folder is the truth. Every landing recomputes the
    * summary fresh from the staging folder via `invokeSummarizeStaging` —
    * the session's stored `summary` is read only as the *approved baseline*
@@ -1095,28 +1135,33 @@ export function useImportJob() {
    * it plays in the normal flow, never as something restored and shown
    * directly.
    *
-   * Returns false when the session's form snapshot can't be read (the
-   * caller falls back to `settings_unreadable`) or the session isn't at a
-   * stage this handles — the caller should not have offered `resume_gate`
-   * / `resume_media` for anything else, so this is defensive only.
+   * A recompute failing here is a transient read of the staging folder,
+   * not a run that actually failed — decision 37 says only an explicit
+   * discard ends a waiting session, so this must not complete it or write
+   * a stage. It returns to the form phase instead (the resume check there
+   * re-runs and finds the same session, so the panel reappears — that is
+   * the retry) and leaves the failure on `resumeError` for the panel to
+   * show.
    */
-  async function resumeAtGate(session: ActiveImportSession): Promise<boolean> {
-    if (!isTauri()) return false;
+  async function resumeAtGate(
+    session: ActiveImportSession,
+    resumedForm: ImportJobFormValues,
+  ): Promise<void> {
+    if (!isTauri()) return;
     if (
       session.stage !== "awaiting_gate_1" &&
       session.stage !== "awaiting_gate_2" &&
       session.stage !== "transcode"
     ) {
-      return false;
+      return;
     }
-    const restoredForm = restoreFormFromSnapshot(session.form);
-    if (!restoredForm || !session.staging_dir) return false;
-    const resumedForm: ImportJobFormValues = restoredForm;
+    if (!session.staging_dir) return; // resumeDecisionFor guarantees this; defensive only.
 
     const sessionId = session.id;
     const outputDir = session.staging_dir;
     const approved = parseStoredStagingSummary(session.summary);
 
+    setResumeError(null);
     importStartedAtRef.current = performance.now();
     activeStepRef.current = session.stage === "transcode" ? "media" : "parse";
     issuesRef.current = [];
@@ -1133,6 +1178,7 @@ export function useImportJob() {
     setGateSummary(null);
     setGateDeltaState(null);
     setMediaToolsMissing(false);
+    setMediaPartiallyRan(false);
 
     async function toolsMissing(): Promise<boolean> {
       if (mediaJobVerb(resumedForm.attachmentMedia) === null) return false;
@@ -1144,8 +1190,14 @@ export function useImportJob() {
       }
     }
 
-    /** Recompute the summary fresh from the folder and land on Gate 1. */
-    async function landOnGate1(): Promise<void> {
+    /**
+     * Recompute the summary fresh from the folder and land on Gate 1.
+     * `partiallyRan` is true only for the transcode-resume fallback below,
+     * where the folder may hold a mix of originals and converted files —
+     * Gate 1's "has not run yet" copy would be wrong there.
+     */
+    async function landOnGate1(partiallyRan: boolean): Promise<void> {
+      setSteps(resumeSteps(resumedForm.attachmentMedia, false));
       setComputingSummary(true);
       setPhase("progress");
       setRunning(true);
@@ -1157,32 +1209,26 @@ export function useImportJob() {
         const missing = await toolsMissing();
         setGateSummary(actual);
         setMediaToolsMissing(missing);
+        setMediaPartiallyRan(partiallyRan);
         setComputingSummary(false);
         setRunning(false);
         setPhase("gate_1");
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
-        issuesRef.current = [
-          ...issuesRef.current,
-          { kind: "error", step: activeStepRef.current, item: "Import", reason: msg },
-        ];
+        setResumeError(msg);
         setComputingSummary(false);
-        await finishImport({
-          sessionId,
-          form: resumedForm,
-          threw: true,
-          pushReport: null,
-          uploadMs: null,
-        });
+        setRunning(false);
+        returnToForm();
       }
     }
 
     if (session.stage === "awaiting_gate_1") {
-      await landOnGate1();
-      return true;
+      await landOnGate1(false);
+      return;
     }
 
     if (session.stage === "awaiting_gate_2") {
+      setSteps(resumeSteps(resumedForm.attachmentMedia, true));
       setComputingSummary(true);
       setPhase("progress");
       setRunning(true);
@@ -1202,20 +1248,12 @@ export function useImportJob() {
         setPhase("gate_2");
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
-        issuesRef.current = [
-          ...issuesRef.current,
-          { kind: "error", step: activeStepRef.current, item: "Import", reason: msg },
-        ];
+        setResumeError(msg);
         setComputingSummary(false);
-        await finishImport({
-          sessionId,
-          form: resumedForm,
-          threw: true,
-          pushReport: null,
-          uploadMs: null,
-        });
+        setRunning(false);
+        returnToForm();
       }
-      return true;
+      return;
     }
 
     // transcode: the media pass died mid-run. Re-running it is safe (Task 3
@@ -1224,11 +1262,11 @@ export function useImportJob() {
     // summary instead of starting a job that can only fail, using the same
     // `mediaToolsMissing` gate the normal flow shows there.
     if (await toolsMissing()) {
-      await landOnGate1();
-      return true;
+      await landOnGate1(true);
+      return;
     }
+    setSteps(resumeSteps(resumedForm.attachmentMedia, false));
     await runMediaPass(resumedForm, sessionId, outputDir, approved);
-    return true;
   }
 
   async function declineGate(): Promise<void> {
@@ -1264,6 +1302,8 @@ export function useImportJob() {
     // submitted form so the gates never depend on live form state.
     gateAttachmentMedia: formRef.current?.attachmentMedia ?? "copy",
     mediaToolsMissing,
+    mediaPartiallyRan,
+    resumeError,
     computingSummary,
     completionText: phase === "done" ? completionTextFor(summaryView?.status) : undefined,
     startImport,

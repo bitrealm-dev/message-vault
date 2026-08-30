@@ -38,6 +38,7 @@ function props(
     onDecline?: () => void;
     busy?: boolean;
     mediaToolsMissing?: boolean;
+    mediaPartiallyRan?: boolean;
   } = {},
 ) {
   return {
@@ -48,6 +49,7 @@ function props(
     onDecline: overrides.onDecline ?? vi.fn(),
     busy: overrides.busy ?? false,
     mediaToolsMissing: overrides.mediaToolsMissing ?? false,
+    mediaPartiallyRan: overrides.mediaPartiallyRan ?? false,
   };
 }
 
@@ -88,6 +90,28 @@ describe("GateOneScreen", () => {
     // The screen says throughout that these are estimates (decision 13).
     render(<GateOneScreen {...props({ mode: "convert" })} />);
     expect(screen.getByText(/estimate/i)).toBeInTheDocument();
+  });
+
+  it("says the media step has not run yet in the genuine not-yet-run case", () => {
+    render(<GateOneScreen {...props({ mode: "convert", mediaPartiallyRan: false })} />);
+    expect(
+      screen.getByText(
+        "The media step has not run yet, so these are estimates based on the files as staged.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("does not claim the media step hasn't run when a resume found it partway through", () => {
+    // A resume that landed here because ffmpeg went missing mid pass may
+    // have a folder that already holds some converted files -- the
+    // not-yet-run sentence would be false there.
+    render(<GateOneScreen {...props({ mode: "convert", mediaPartiallyRan: true })} />);
+    expect(screen.queryByText(/has not run yet/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "The media step needs its tools to finish. Approving here picks up where it left off, once they're available.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("offers to start the media step under convert", () => {
