@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -108,7 +108,7 @@ describe("LoginScreen", () => {
 
     expect(screen.getByLabelText("Password")).toBeInTheDocument();
     expect(screen.getByLabelText("Confirm Password")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Create account" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeInTheDocument();
   });
 
   it("drops the password-length claim the server does not enforce", async () => {
@@ -132,7 +132,7 @@ describe("LoginScreen", () => {
     await user.type(screen.getByRole("textbox", { name: "Username" }), "ada");
     await user.type(screen.getByLabelText("Password"), "hunter22");
     await user.type(screen.getByLabelText("Confirm Password"), "hunter23");
-    await user.click(screen.getByRole("button", { name: "Create account" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
 
     expect(await screen.findByText("Passwords do not match.")).toBeInTheDocument();
     expect(login).not.toHaveBeenCalled();
@@ -278,5 +278,72 @@ describe("LoginScreen", () => {
     const healthCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/health"));
     expect(healthCall).toBeDefined();
     expect(healthCall?.[1]).toMatchObject({ signal: expect.any(AbortSignal) });
+  });
+
+  it("puts the credentials in a real form, so a password manager can fill it", async () => {
+    stubVault();
+    renderScreen();
+
+    const password = await screen.findByLabelText("Password");
+    // A password field outside a form is one browsers decline to offer to save.
+    expect(password.closest("form")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Log in" })).toHaveAttribute("type", "submit");
+  });
+
+  // The fields carry no Enter handler of their own any more: submitting is the
+  // form's job, which is what lets the browser submit on Enter by itself.
+  // jsdom does not perform that implicit submission, so this drives the form
+  // element directly — that the key reaches it is the browser's part.
+  it("runs the sign-in from the form's own submit event", async () => {
+    stubVault();
+    renderScreen();
+
+    await screen.findByRole("tab", { name: "Login" });
+    const form = screen.getByLabelText("Password").closest("form");
+    expect(form).not.toBeNull();
+
+    fireEvent.submit(form as HTMLFormElement);
+
+    // Submitting with the username still empty reaches the handler's own check,
+    // which is enough to show the form is what drives it.
+    expect(await screen.findByText("Username is required.")).toBeInTheDocument();
+  });
+
+  it("calls the new-account action Continue, since profile setup finishes it", async () => {
+    stubVault();
+    const user = userEvent.setup();
+    renderScreen();
+
+    await screen.findByRole("tab", { name: "Create Account" });
+    await user.click(screen.getByRole("tab", { name: "Create Account" }));
+
+    expect(screen.getByRole("button", { name: "Continue" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create account" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the action under the fields and the error down by the or-rule", async () => {
+    stubVault();
+    const user = userEvent.setup();
+    renderScreen();
+
+    await screen.findByRole("tab", { name: "Create Account" });
+    await user.click(screen.getByRole("tab", { name: "Create Account" }));
+    await user.type(screen.getByRole("textbox", { name: "Username" }), "ada");
+    await user.type(screen.getByLabelText("Password"), "hunter22");
+    await user.type(screen.getByLabelText("Confirm Password"), "hunter23");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    const message = await screen.findByText("Passwords do not match.");
+    const confirmField = screen.getByLabelText("Confirm Password");
+    const action = screen.getByRole("button", { name: "Continue" });
+    const orRule = screen.getByText("or");
+
+    // Document order stands in for the layout: field, then action, then the
+    // message, then the rule that closes the card.
+    const precedes = (a: Element, b: Element) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(precedes(confirmField, action)).toBe(true);
+    expect(precedes(action, message)).toBe(true);
+    expect(precedes(message, orRule)).toBe(true);
   });
 });

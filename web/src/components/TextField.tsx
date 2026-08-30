@@ -12,9 +12,15 @@ import {
 export const textInputClassName =
   "box-border w-full rounded-xl border border-border bg-bg px-3 py-2.5 text-[0.875rem] text-text outline-none focus:border-accent disabled:opacity-50";
 
-/** Position of a decorative glyph inside a field, left of the text. */
+/**
+ * Position of a decorative glyph inside a field, left of the text. `flex` is
+ * what centres it: as an inline span the box is as tall as the line box, not
+ * as the glyph, so the icon inside it sat low against the field's own text.
+ * Laying the span out as a flex box shrinks it to the glyph, and only then
+ * does centring on the field's midpoint put the glyph there.
+ */
 export const leadingIconClassName =
-  "pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted";
+  "pointer-events-none absolute top-1/2 left-3 flex -translate-y-1/2 items-center text-muted";
 
 /**
  * Shared text input wrapping React Aria's TextField + Input.

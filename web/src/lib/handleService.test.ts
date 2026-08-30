@@ -6,6 +6,7 @@ import {
   HANDLE_SERVICES,
   handlePlaceholder,
   handleServiceSelectValue,
+  handleValidationError,
   inferService,
 } from "./handleService";
 
@@ -57,5 +58,34 @@ describe("handlePlaceholder", () => {
 
   it("calls a phone number what the contact drawer calls it", () => {
     expect(HANDLE_SERVICE_OPTIONS.find((o) => o.value === "phone")?.label).toBe("Text message");
+  });
+});
+
+describe("handleValidationError", () => {
+  it("passes an empty value, which is a row not filled in yet", () => {
+    expect(handleValidationError("phone", "")).toBeNull();
+    expect(handleValidationError("email", "   ")).toBeNull();
+  });
+
+  it("accepts the separators people actually type in a number", () => {
+    expect(handleValidationError("phone", "+1 555-123-4567")).toBeNull();
+    expect(handleValidationError("phone", "(555) 123.4567")).toBeNull();
+    expect(handleValidationError("whatsapp", "+44 20 7946 0958")).toBeNull();
+  });
+
+  it("rejects a number that is not one", () => {
+    expect(handleValidationError("phone", "notaphone")).toMatch(/phone number/);
+    expect(handleValidationError("phone", "123")).toMatch(/phone number/);
+    expect(handleValidationError("phone", "you@example.com")).toMatch(/phone number/);
+  });
+
+  it("rejects a number longer than E.164 allows", () => {
+    expect(handleValidationError("phone", "+1234567890123456")).toMatch(/phone number/);
+  });
+
+  it("accepts an address and rejects what is not one", () => {
+    expect(handleValidationError("email", "you@example.com")).toBeNull();
+    expect(handleValidationError("email", "you@example")).toMatch(/email address/);
+    expect(handleValidationError("email", "+1 555-123-4567")).toMatch(/email address/);
   });
 });

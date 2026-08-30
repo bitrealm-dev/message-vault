@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type FormEvent, useState } from "react";
 import AuthErrorFooter from "../../components/AuthErrorFooter";
 import AuthSubmitButton from "../../components/AuthSubmitButton";
 import { LockIcon, PersonIcon } from "../../components/icons";
@@ -7,14 +7,16 @@ import TextField from "../../components/TextField";
 import { apiClient, setBaseUrl } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import type { SessionResponse } from "../../lib/authGuards";
-import { authCardFooter } from "../../lib/uiStyles";
 import { useAsyncAction } from "../../lib/useAsyncAction";
 
 /**
  * New vault account: username plus the password twice.
  *
- * The name and phone numbers are not asked for here — the account is created
- * with an empty profile, which sends the user straight to profile setup.
+ * This is the first half of creating an account, not the whole of it. The name
+ * and phone numbers are not asked for here — the account opens with an empty
+ * profile, which sends the user straight to profile setup, and only finishing
+ * that leaves them with a fully set up account. The action is labelled
+ * "Continue" for that reason.
  */
 export default function CreateAccountForm({
   serverUrl,
@@ -31,7 +33,12 @@ export default function CreateAccountForm({
   const [showConfirm, setShowConfirm] = useState(false);
   const { busy, error, run } = useAsyncAction();
 
-  const submit = () => {
+  // A real submit, the same as `LoginForm`: Enter submits from any field, and
+  // a password manager can recognise the pair of new-password fields and offer
+  // to store what it generates.
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (busy || disabled) return;
     void run(async () => {
       if (!username.trim()) {
         throw new Error("Username is required.");
@@ -57,26 +64,26 @@ export default function CreateAccountForm({
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <form className="flex min-h-0 flex-1 flex-col" onSubmit={submit}>
       <TextField
         label="Username"
         leadingIcon={<PersonIcon size={16} />}
         value={username}
         onChange={setUsername}
-        onKeyDown={(e) => e.key === "Enter" && submit()}
+        name="username"
         autoComplete="username"
         isDisabled={disabled}
       />
 
-      {/* The two password fields belong together; the username does not, so the
-          gap above Password is wider than the one below it. */}
+      {/* The same gap the Login tab puts above its Password field, so the field
+          does not shift under the pointer when the tabs are switched. */}
       <PasswordField
         label="Password"
-        className="mt-5"
+        className="mt-3.5"
         leadingIcon={<LockIcon size={16} />}
         value={password}
         onChange={setPassword}
-        onKeyDown={(e) => e.key === "Enter" && submit()}
+        name="new-password"
         autoComplete="new-password"
         showPassword={showPassword}
         onToggle={() => setShowPassword((v) => !v)}
@@ -89,19 +96,26 @@ export default function CreateAccountForm({
         leadingIcon={<LockIcon size={16} />}
         value={confirmPassword}
         onChange={setConfirmPassword}
-        onKeyDown={(e) => e.key === "Enter" && submit()}
+        name="confirm-password"
         autoComplete="new-password"
         showPassword={showConfirm}
         onToggle={() => setShowConfirm((v) => !v)}
         isDisabled={disabled}
       />
 
-      <div className={authCardFooter}>
-        <AuthErrorFooter error={error} />
-        <AuthSubmitButton onClick={submit} disabled={busy || disabled}>
-          {busy ? "Creating account…" : "Create account"}
-        </AuthSubmitButton>
+      {/* "Continue", not "Create account": this step opens the account but does
+          not finish it — the profile setup screen it leads to does. */}
+      <AuthSubmitButton disabled={busy || disabled}>
+        {busy ? "Continuing…" : "Continue"}
+      </AuthSubmitButton>
+
+      {/* Pushed to the foot of the panel so the message lands just above the
+          rule that closes the card, clear of the action that produced it. The
+          band is taller than the default because the space above it is empty
+          anyway, and a message that wraps grows up into it. */}
+      <div className="mt-auto">
+        <AuthErrorFooter error={error} className="h-16" />
       </div>
-    </div>
+    </form>
   );
 }

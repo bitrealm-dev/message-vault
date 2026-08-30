@@ -35,6 +35,34 @@ export function handlePlaceholder(service: HandleService): string {
   return HANDLE_SERVICE_OPTIONS.find((option) => option.value === service)?.placeholder ?? "";
 }
 
+/**
+ * Why a handle cannot be used, or null when it can. An empty value is not an
+ * error here: a blank row is one the person has not filled in yet, and the
+ * screens that collect handles decide separately how many they need.
+ *
+ * The number check counts digits rather than matching a shape, so the
+ * separators people actually type — spaces, dots, dashes, parentheses — all
+ * pass. Seven digits is the shortest real subscriber number and fifteen is the
+ * most E.164 allows.
+ */
+export function handleValidationError(service: HandleService, value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  if (service === "email") {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)
+      ? null
+      : "Enter an email address like you@example.com.";
+  }
+
+  const digits = trimmed.replace(/\D/g, "");
+  const onlyNumberCharacters = /^\+?[\d\s().-]+$/.test(trimmed);
+  if (!onlyNumberCharacters || digits.length < 7 || digits.length > 15) {
+    return "Enter a phone number like +1 555-123-4567.";
+  }
+  return null;
+}
+
 /** Contact drawer "Add identity" picker (labels match the handles table). */
 export const CONTACT_IDENTITY_SERVICE_OPTIONS = [
   { value: "phone", label: "Text message" },

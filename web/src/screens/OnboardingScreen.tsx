@@ -13,17 +13,18 @@ import {
   HANDLE_SERVICES,
   type HandleService,
   handlePlaceholder,
+  handleValidationError,
 } from "../lib/handleService";
 import { parseSelectKey } from "../lib/selectKey";
 import { authCard, authCardBody, authCardFooter, authTitle, pageCenter } from "../lib/uiStyles";
 import { useAsyncAction } from "../lib/useAsyncAction";
 
 /**
- * The card never scrolls and never resizes, so the list of accounts is bounded.
- * Three covers a number, an address, and one more; longer lists finish in
- * Settings → Profile.
+ * The card never scrolls and never resizes, so the list of accounts is bounded
+ * by what fits inside the frame. Five rows fill the space the card has;
+ * anyone with more finishes the list in Settings → Profile.
  */
-const MAX_ACCOUNT_ROWS = 3;
+const MAX_ACCOUNT_ROWS = 5;
 
 interface HandleInput {
   id: string;
@@ -38,20 +39,43 @@ function newHandleRow(): HandleInput {
 /**
  * A handset for the services reached by phone number, a person for the ones
  * reached by address. The glyph says what kind of thing the field wants before
- * the placeholder does.
+ * the placeholder does, so it is set slightly larger than the icons that only
+ * decorate a label.
  */
 function serviceIcon(service: HandleService) {
-  return service === "email" ? <PersonIcon size={16} /> : <PhoneIcon size={16} />;
+  return service === "email" ? <PersonIcon size={18} /> : <PhoneIcon size={18} />;
 }
 
 export default function OnboardingScreen() {
   const { login, logout, token, serverUrl, accountId } = useAuth();
   const [displayName, setDisplayName] = useState("");
   const [handles, setHandles] = useState<HandleInput[]>(() => [newHandleRow()]);
+  // Rows whose value does not read as the kind of account it is set to. Held
+  // by id rather than index so removing a row cannot move the mark onto a
+  // different one.
+  const [invalidIds, setInvalidIds] = useState<string[]>([]);
+  const [validationError, setValidationError] = useState("");
   const { busy, error, run } = useAsyncAction();
+
+  /**
+   * Check every filled-in row, mark the ones that do not read as a usable
+   * account, and report the first reason. Returns whether the list is usable.
+   * Empty rows are left alone — they are rows not filled in yet, not mistakes.
+   */
+  const revalidate = (rows: HandleInput[]) => {
+    const failures = rows.filter((row) => handleValidationError(row.service, row.handle));
+    setInvalidIds(failures.map((row) => row.id));
+    setValidationError(
+      failures.length ? (handleValidationError(failures[0].service, failures[0].handle) ?? "") : "",
+    );
+    return failures.length === 0;
+  };
 
   const addHandle = () => {
     if (handles.length >= MAX_ACCOUNT_ROWS) return;
+    // A new empty row while one above it is wrong just buries the mistake, so
+    // the list does not grow until what is already in it holds up.
+    if (!revalidate(handles)) return;
     setHandles([...handles, newHandleRow()]);
   };
 
@@ -65,14 +89,25 @@ export default function OnboardingScreen() {
       next[index] = { ...next[index], handle: value };
     }
     setHandles(next);
+
+    // A row being edited stops reading as wrong straight away rather than
+    // staying red under the cursor; leaving the field checks it again.
+    const remaining = invalidIds.filter((id) => id !== next[index].id);
+    if (remaining.length !== invalidIds.length) setInvalidIds(remaining);
+    if (remaining.length === 0) setValidationError("");
   };
 
   const removeHandle = (index: number) => {
     if (handles.length === 1) return;
-    setHandles(handles.filter((_, i) => i !== index));
+    // Removing a row is itself a way to fix the list, so the row goes first and
+    // what is left is judged after.
+    const next = handles.filter((_, i) => i !== index);
+    setHandles(next);
+    revalidate(next);
   };
 
   const handleSubmit = () => {
+    if (!revalidate(handles)) return;
     void run(async () => {
       if (!token || !accountId) {
         throw new Error("Not signed in");
@@ -108,43 +143,49 @@ export default function OnboardingScreen() {
 
           <div className="mt-4 mb-2 block text-[0.875rem] font-medium text-text">Your Accounts</div>
 
-          {handles.map((h, i) => (
-            <div key={h.id} className="mb-2 flex items-center gap-2">
-              <Select
-                selectedKey={h.service}
-                onSelectionChange={(k) => {
-                  const service = parseSelectKey(k, HANDLE_SERVICES);
-                  if (service) updateHandle(i, "service", service);
-                }}
-                className="w-[140px] shrink-0"
-                aria-label={`Account ${i + 1} type`}
-              >
-                {HANDLE_SERVICE_OPTIONS.map((s) => (
-                  <ListBoxItem key={s.value} id={s.value} className={selectItemClassName}>
-                    {s.label}
-                  </ListBoxItem>
-                ))}
-              </Select>
-              <TextField
-                value={h.handle}
-                onChange={(v) => updateHandle(i, "handle", v)}
-                leadingIcon={serviceIcon(h.service)}
-                placeholder={handlePlaceholder(h.service)}
-                className="min-w-0 flex-1"
-                aria-label={`Account ${i + 1} value`}
-              />
-              {handles.length > 1 ? (
-                <Button
-                  variant="ghostDanger"
-                  size="icon"
-                  onPress={() => removeHandle(i)}
-                  aria-label={`Remove account ${i + 1}`}
+          {handles.map((h, i) => {
+            const invalid = invalidIds.includes(h.id);
+            return (
+              <div key={h.id} className="mb-2 flex items-center gap-2">
+                <Select
+                  selectedKey={h.service}
+                  onSelectionChange={(k) => {
+                    const service = parseSelectKey(k, HANDLE_SERVICES);
+                    if (service) updateHandle(i, "service", service);
+                  }}
+                  className="w-[140px] shrink-0"
+                  aria-label={`Account ${i + 1} type`}
                 >
-                  ×
-                </Button>
-              ) : null}
-            </div>
-          ))}
+                  {HANDLE_SERVICE_OPTIONS.map((s) => (
+                    <ListBoxItem key={s.value} id={s.value} className={selectItemClassName}>
+                      {s.label}
+                    </ListBoxItem>
+                  ))}
+                </Select>
+                <TextField
+                  value={h.handle}
+                  onChange={(v) => updateHandle(i, "handle", v)}
+                  onBlur={() => revalidate(handles)}
+                  leadingIcon={serviceIcon(h.service)}
+                  placeholder={handlePlaceholder(h.service)}
+                  className="min-w-0 flex-1"
+                  inputClassName={invalid ? "!border-danger" : undefined}
+                  isInvalid={invalid}
+                  aria-label={`Account ${i + 1} value`}
+                />
+                {handles.length > 1 ? (
+                  <Button
+                    variant="ghostDanger"
+                    size="icon"
+                    onPress={() => removeHandle(i)}
+                    aria-label={`Remove account ${i + 1}`}
+                  >
+                    ×
+                  </Button>
+                ) : null}
+              </div>
+            );
+          })}
 
           {handles.length < MAX_ACCOUNT_ROWS ? (
             <div className="mt-3 flex justify-end">
@@ -160,7 +201,10 @@ export default function OnboardingScreen() {
         </div>
 
         <div className={authCardFooter}>
-          <AuthErrorFooter error={error} />
+          {/* A value that does not read as an account is reported in the same
+              place as anything the server sends back, so there is one line on
+              this card that carries what is wrong. */}
+          <AuthErrorFooter error={validationError || error} />
           {/* One row: the way back on the left, the way on at half width on
               the right, matching the button on the card before this one. */}
           <div className="mt-6 flex items-center justify-between gap-3">

@@ -4,22 +4,36 @@ function sentenceCase(text: string): string {
 }
 
 /**
- * Error line for an auth form. Always occupies the same two lines, transparent
- * when empty, so the surrounding form does not shift when a message appears —
- * and a long one scrolls inside that band instead of growing the footer. The
- * card is a fixed height, so an unbounded message would push the primary
- * action out through the bottom of the frame and onto whatever sits below it.
- * The right padding is the width of a scrollbar, so a message that scrolls
- * does not run underneath its own thumb.
+ * Error line for an auth form. The band is a reserved, fixed height and is
+ * transparent when empty, so the surrounding form does not shift when a
+ * message appears — the card is a fixed height, and an unbounded message would
+ * push what sits below it out through the bottom of the frame.
+ *
+ * The message sits at the *foot* of that band, so a one-line message lands
+ * directly above whatever closes the card and a message long enough to wrap
+ * grows upward into the space above rather than downward into the rule. The
+ * right padding is the width of a scrollbar, so a message that scrolls does
+ * not run underneath its own thumb.
  */
-export default function AuthErrorFooter({ error }: { error: string }) {
+export default function AuthErrorFooter({
+  error,
+  className,
+}: {
+  error: string;
+  /** Overrides the height of the reserved band, e.g. to allow more wrapping. */
+  className?: string;
+}) {
   return (
     <div
-      className="mb-2 h-9 overflow-y-auto pr-2 text-[0.813rem] leading-[1.35]"
+      className={`mb-2 flex flex-col overflow-y-auto pr-2 text-[0.813rem] leading-[1.35] ${className ?? "h-9"}`}
       style={{ color: error ? "var(--danger)" : "transparent" }}
       aria-live="polite"
     >
-      {sentenceCase(error) || " "}
+      {/* `mt-auto` rather than `justify-end`: it settles the message on the
+          bottom edge just the same, but a message too long for the band still
+          scrolls, where `justify-end` would push the overflow out through a top
+          edge no scrollbar can reach. */}
+      <div className="mt-auto">{sentenceCase(error) || " "}</div>
     </div>
   );
 }

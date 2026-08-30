@@ -188,7 +188,13 @@ export function LockIcon({ size, className, ...rest }: IconProps) {
 export function PhoneIcon({ size, className, ...rest }: IconProps) {
   return (
     <IconShell size={size} className={className} {...rest}>
-      <path d="M6.6 3.6h2.6l1.3 3.2-1.9 1.1a10.4 10.4 0 0 0 4.6 4.6l1.1-1.9 3.2 1.3v2.6a1.5 1.5 0 0 1-1.6 1.5A13.6 13.6 0 0 1 5.1 5.2a1.5 1.5 0 0 1 1.5-1.6Z" />
+      {/* The handset is drawn from y=3.6 to y=16, so its own middle is 2.2
+          above the middle of the 24-unit box. Centring the box therefore left
+          the glyph sitting high in whatever it was placed in; the shift puts
+          the glyph itself on the centre line, which is what the eye reads. */}
+      <g transform="translate(0 2.2)">
+        <path d="M6.6 3.6h2.6l1.3 3.2-1.9 1.1a10.4 10.4 0 0 0 4.6 4.6l1.1-1.9 3.2 1.3v2.6a1.5 1.5 0 0 1-1.6 1.5A13.6 13.6 0 0 1 5.1 5.2a1.5 1.5 0 0 1 1.5-1.6Z" />
+      </g>
     </IconShell>
   );
 }
