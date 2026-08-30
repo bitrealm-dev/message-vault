@@ -240,4 +240,22 @@ describe("gateDelta", () => {
     expect(delta.stillFlagged[0]?.regressed).toBe(false);
     expect(delta.hasChanges).toBe(false);
   });
+
+  it("does not throw with no approved baseline — a resumed session whose stored plan failed to parse", () => {
+    const actual = summary({ likelyFits: 1 });
+    actual.forecasts[0] = {
+      path: "attachments/2024-05-01-ab12cd.mov",
+      name: "clip.mov",
+      sizeBytes: 10_000_000,
+      estimateBytes: 9_000_000,
+      verdict: "likely_fits",
+    };
+
+    const delta = gateDelta(undefined, actual);
+    expect(delta.lostCount).toBe(0);
+    // No baseline to diff against -- an unknown history reads as the
+    // mildest severity, so anything actually flagged now is new
+    // information rather than a silently assumed non-issue.
+    expect(delta.stillFlagged[0]?.regressed).toBe(true);
+  });
 });

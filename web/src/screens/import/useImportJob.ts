@@ -11,6 +11,7 @@ import { useAuth } from "../../lib/auth";
 import { getDeviceId } from "../../lib/deviceId";
 import { imessageExtractFields } from "../../lib/imessageExtractFields";
 import { isImessageMethod } from "../../lib/imessageImport";
+import type { ActiveImportSession } from "../../lib/importSession";
 import {
   buildSourceFingerprint,
   discardImportSession,
@@ -21,6 +22,7 @@ import { saveImportSavedGroup } from "../../lib/savedGroups";
 import { mediaExtractFields, sbrExtractFields } from "../../lib/sbrExtractFields";
 import { resolveImportStagingDir } from "../../lib/system-settings";
 import {
+  type AttachmentForecast,
   invokeDeleteStaging,
   invokeExtract,
   invokePathStat,
@@ -29,6 +31,7 @@ import {
   invokeTranscodeStaging,
   type PushFinishedReport,
   probeFfmpegTools,
+  type SizeVerdict,
   type StagingConfig,
   type StagingSummary,
   type TauriJobResult,
@@ -296,6 +299,78 @@ export function restoreFormFromSnapshot(raw: unknown): ImportJobFormValues | nul
     whatsappMedia: r.whatsappMedia,
     whatsappDb: r.whatsappDb,
     whatsappBusiness: r.whatsappBusiness,
+  };
+}
+
+const SIZE_VERDICTS: readonly SizeVerdict[] = [
+  "fits_as_is",
+  "likely_fits",
+  "may_grow",
+  "probably_too_big",
+  "cannot_process",
+];
+
+function isAttachmentForecast(value: unknown): value is AttachmentForecast {
+  if (typeof value !== "object" || value === null) return false;
+  const r = value as Record<string, unknown>;
+  return (
+    typeof r.path === "string" &&
+    typeof r.name === "string" &&
+    typeof r.sizeBytes === "number" &&
+    typeof r.estimateBytes === "number" &&
+    typeof r.verdict === "string" &&
+    SIZE_VERDICTS.includes(r.verdict as SizeVerdict)
+  );
+}
+
+/**
+ * Parse a session's stored `summary` (Task 6) back into a `StagingSummary`
+ * — the plan approved at the last gate the session passed.
+ *
+ * Read only as the *approved baseline* on resume, never shown directly:
+ * decision 39 says the summary actually on screen is always recomputed
+ * fresh from the folder. Like `restoreFormFromSnapshot`, this value came
+ * from the database rather than from this session's own state, so its
+ * shape is checked field by field rather than trusted; returns `undefined`
+ * — not a throw — for anything that doesn't match. A resume with no usable
+ * baseline still proceeds: `gateDelta` and `importOutcome` both tolerate an
+ * absent one, they just can't diff against one.
+ */
+export function parseStoredStagingSummary(raw: unknown): StagingSummary | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.conversations !== "number") return undefined;
+  if (typeof r.messages !== "number") return undefined;
+  if (!isStringArray(r.contactIdentifiers)) return undefined;
+  if (typeof r.attachments !== "number") return undefined;
+  if (typeof r.attachmentBytes !== "number") return undefined;
+  if (typeof r.verdictCounts !== "object" || r.verdictCounts === null) return undefined;
+  const vc = r.verdictCounts as Record<string, unknown>;
+  if (
+    typeof vc.fitsAsIs !== "number" ||
+    typeof vc.likelyFits !== "number" ||
+    typeof vc.mayGrow !== "number" ||
+    typeof vc.probablyTooBig !== "number" ||
+    typeof vc.cannotProcess !== "number"
+  ) {
+    return undefined;
+  }
+  if (!Array.isArray(r.forecasts) || !r.forecasts.every(isAttachmentForecast)) return undefined;
+
+  return {
+    conversations: r.conversations,
+    messages: r.messages,
+    contactIdentifiers: r.contactIdentifiers,
+    attachments: r.attachments,
+    attachmentBytes: r.attachmentBytes,
+    verdictCounts: {
+      fitsAsIs: vc.fitsAsIs,
+      likelyFits: vc.likelyFits,
+      mayGrow: vc.mayGrow,
+      probablyTooBig: vc.probablyTooBig,
+      cannotProcess: vc.cannotProcess,
+    },
+    forecasts: r.forecasts,
   };
 }
 
@@ -653,12 +728,17 @@ export function useImportJob() {
    * the folder is the truth, not the last estimate) and move on to Gate 2.
    * A failed pass ends the import the same way a failed push does — never a
    * silent fall-through to upload.
+   *
+   * `approvedSummary` is undefined on a resume whose stored plan failed to
+   * parse (`parseStoredStagingSummary`) — `moveStage` and `computeGateDelta`
+   * both already tolerate that absence, so the pass still runs rather than
+   * blocking the resume over a plan that can no longer be read.
    */
   async function runMediaPass(
     form: ImportJobFormValues,
     sessionId: number,
     outputDir: string,
-    approvedSummary: StagingSummary,
+    approvedSummary?: StagingSummary,
   ): Promise<void> {
     setRunning(true);
     setPhase("progress");
@@ -997,6 +1077,160 @@ export function useImportJob() {
     }
   }
 
+  /**
+   * Resume a session the vault reports waiting at a gate (`awaiting_gate_1`
+   * / `awaiting_gate_2`) or mid media pass (`transcode`).
+   *
+   * `approveGate` can't do this itself: it depends on in-memory state
+   * (`gateSummary`, `formRef`, `stagingDir`, `importSessionId`) that a
+   * reload has none of, and it branches on `phase` rather than the
+   * session's own stored stage. This rebuilds that state from `session`
+   * instead, then routes exactly the way the normal flow would have
+   * gotten here.
+   *
+   * Decision 39: the folder is the truth. Every landing recomputes the
+   * summary fresh from the staging folder via `invokeSummarizeStaging` —
+   * the session's stored `summary` is read only as the *approved baseline*
+   * for Gate 2's delta and the media pass's own bookkeeping, the same role
+   * it plays in the normal flow, never as something restored and shown
+   * directly.
+   *
+   * Returns false when the session's form snapshot can't be read (the
+   * caller falls back to `settings_unreadable`) or the session isn't at a
+   * stage this handles — the caller should not have offered `resume_gate`
+   * / `resume_media` for anything else, so this is defensive only.
+   */
+  async function resumeAtGate(session: ActiveImportSession): Promise<boolean> {
+    if (!isTauri()) return false;
+    if (
+      session.stage !== "awaiting_gate_1" &&
+      session.stage !== "awaiting_gate_2" &&
+      session.stage !== "transcode"
+    ) {
+      return false;
+    }
+    const restoredForm = restoreFormFromSnapshot(session.form);
+    if (!restoredForm || !session.staging_dir) return false;
+    const resumedForm: ImportJobFormValues = restoredForm;
+
+    const sessionId = session.id;
+    const outputDir = session.staging_dir;
+    const approved = parseStoredStagingSummary(session.summary);
+
+    importStartedAtRef.current = performance.now();
+    activeStepRef.current = session.stage === "transcode" ? "media" : "parse";
+    issuesRef.current = [];
+    countsRef.current = {};
+    timingRef.current = { ...EMPTY_TIMING };
+    durationsRef.current = { ...EMPTY_DURATIONS };
+    lastAttachmentProgressRef.current = null;
+    attachmentModeRef.current = resumedForm.attachmentMedia;
+    extractMediaModeRef.current = extractAttachmentMedia(resumedForm.attachmentMedia);
+    formRef.current = resumedForm;
+    setSummaryView(null);
+    setStagingDir(outputDir);
+    setImportSessionId(sessionId);
+    setGateSummary(null);
+    setGateDeltaState(null);
+    setMediaToolsMissing(false);
+
+    async function toolsMissing(): Promise<boolean> {
+      if (mediaJobVerb(resumedForm.attachmentMedia) === null) return false;
+      try {
+        const probe = await probeFfmpegTools(null);
+        return !probe.ok;
+      } catch {
+        return true;
+      }
+    }
+
+    /** Recompute the summary fresh from the folder and land on Gate 1. */
+    async function landOnGate1(): Promise<void> {
+      setComputingSummary(true);
+      setPhase("progress");
+      setRunning(true);
+      try {
+        const actual = await invokeSummarizeStaging({
+          staging_dir: outputDir,
+          ...stagingMediaFields(resumedForm),
+        });
+        const missing = await toolsMissing();
+        setGateSummary(actual);
+        setMediaToolsMissing(missing);
+        setComputingSummary(false);
+        setRunning(false);
+        setPhase("gate_1");
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        issuesRef.current = [
+          ...issuesRef.current,
+          { kind: "error", step: activeStepRef.current, item: "Import", reason: msg },
+        ];
+        setComputingSummary(false);
+        await finishImport({
+          sessionId,
+          form: resumedForm,
+          threw: true,
+          pushReport: null,
+          uploadMs: null,
+        });
+      }
+    }
+
+    if (session.stage === "awaiting_gate_1") {
+      await landOnGate1();
+      return true;
+    }
+
+    if (session.stage === "awaiting_gate_2") {
+      setComputingSummary(true);
+      setPhase("progress");
+      setRunning(true);
+      try {
+        const actual = await invokeSummarizeStaging({
+          staging_dir: outputDir,
+          ...stagingMediaFields(resumedForm),
+        });
+        setGateSummary(actual);
+        // No transcode report to diff against on a resume -- the pass
+        // already ran in an earlier session -- so this falls back to
+        // gateDelta's conservation math (or, when `approved` itself is
+        // undefined, treats everything actual still flags as new).
+        setGateDeltaState(computeGateDelta(approved, actual, undefined));
+        setComputingSummary(false);
+        setRunning(false);
+        setPhase("gate_2");
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        issuesRef.current = [
+          ...issuesRef.current,
+          { kind: "error", step: activeStepRef.current, item: "Import", reason: msg },
+        ];
+        setComputingSummary(false);
+        await finishImport({
+          sessionId,
+          form: resumedForm,
+          threw: true,
+          pushReport: null,
+          uploadMs: null,
+        });
+      }
+      return true;
+    }
+
+    // transcode: the media pass died mid-run. Re-running it is safe (Task 3
+    // made it resumable), so long as the tools it needs are actually there
+    // -- a resume with ffmpeg missing falls back to Gate 1's recomputed
+    // summary instead of starting a job that can only fail, using the same
+    // `mediaToolsMissing` gate the normal flow shows there.
+    if (await toolsMissing()) {
+      await landOnGate1();
+      return true;
+    }
+    await runMediaPass(resumedForm, sessionId, outputDir, approved);
+    return true;
+  }
+
   async function declineGate(): Promise<void> {
     if (gateActionRef.current) return;
     gateActionRef.current = true;
@@ -1035,6 +1269,7 @@ export function useImportJob() {
     startImport,
     approveGate,
     declineGate,
+    resumeAtGate,
     cancel,
     returnToForm,
   };

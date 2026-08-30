@@ -20,6 +20,7 @@ const hookState = vi.hoisted(() => ({
   mediaToolsMissing: false,
 }));
 const startImportMock = vi.hoisted(() => vi.fn());
+const resumeAtGateMock = vi.hoisted(() => vi.fn());
 const approveGateMock = vi.hoisted(() => vi.fn());
 const declineGateMock = vi.hoisted(() => vi.fn());
 const cancelMock = vi.hoisted(() => vi.fn());
@@ -48,6 +49,7 @@ vi.mock("./import/useImportJob", async (importOriginal) => {
       computingSummary: false,
       completionText: undefined,
       startImport: startImportMock,
+      resumeAtGate: resumeAtGateMock,
       approveGate: approveGateMock,
       declineGate: declineGateMock,
       cancel: cancelMock,
@@ -191,6 +193,8 @@ describe("ImportScreen entering Import", () => {
     hookState.gateDelta = null;
     hookState.mediaToolsMissing = false;
     startImportMock.mockReset();
+    resumeAtGateMock.mockReset();
+    resumeAtGateMock.mockResolvedValue(true);
     approveGateMock.mockReset();
     declineGateMock.mockReset();
     cancelMock.mockReset();
@@ -300,6 +304,56 @@ describe("ImportScreen entering Import", () => {
     expect(resume).toEqual({ sessionId: 7, stagingDir: "/home/u/message-vault/staging-260830" });
     expect(discardImportSessionMock).not.toHaveBeenCalled();
   });
+
+  const restorableForm = {
+    source: "imessage-ios",
+    backupPath: "/backups/iphone.tar",
+    attachmentMedia: "copy",
+    maxResolution: "720p",
+    maxFps: "30",
+    minSizeMb: "20",
+    contactNameMode: "fill_missing",
+    ownerPhones: [],
+    force: false,
+    obfuscate: false,
+    isSbr: false,
+    attachmentRoot: "",
+    appleContacts: "",
+    whatsappWa: "",
+    whatsappMedia: "",
+    whatsappDb: "",
+    whatsappBusiness: false,
+  };
+
+  it.each([
+    ["awaiting_gate_1", "resume_gate"],
+    ["awaiting_gate_2", "resume_gate"],
+    ["transcode", "resume_media"],
+  ] as const)(
+    "routes a session at %s through resumeAtGate, not startImport or discard",
+    async (stage, kind) => {
+      const user = userEvent.setup();
+      getActiveImportSessionMock.mockResolvedValue(
+        session({
+          stage,
+          staging_dir: "/home/u/message-vault/staging-260830",
+          form: restorableForm,
+        }),
+      );
+      render(<ImportScreen />);
+
+      await screen.findByTestId("resume-panel");
+      expect(screen.getByTestId("resume-kind")).toHaveTextContent(kind);
+      await user.click(screen.getByText("resume-action"));
+
+      expect(resumeAtGateMock).toHaveBeenCalledTimes(1);
+      const [resumedSession] = resumeAtGateMock.mock.calls[0] as [ActiveImportSession];
+      expect(resumedSession.id).toBe(7);
+      expect(resumedSession.stage).toBe(stage);
+      expect(startImportMock).not.toHaveBeenCalled();
+      expect(discardImportSessionMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("discards the old session before restarting when the extract never finished", async () => {
     const user = userEvent.setup();
@@ -496,6 +550,8 @@ describe("ImportScreen gates", () => {
     hookState.gateDelta = null;
     hookState.mediaToolsMissing = false;
     startImportMock.mockReset();
+    resumeAtGateMock.mockReset();
+    resumeAtGateMock.mockResolvedValue(true);
     approveGateMock.mockReset();
     declineGateMock.mockReset();
     cancelMock.mockReset();

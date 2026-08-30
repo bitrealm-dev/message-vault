@@ -85,6 +85,7 @@ export default function ImportScreen() {
     startImport,
     approveGate,
     declineGate,
+    resumeAtGate,
     cancel,
     returnToForm,
   } = useImportJob();
@@ -269,6 +270,13 @@ export default function ImportScreen() {
         if (!session.staging_dir) return; // resumeDecisionFor guarantees this; defensive only.
         setResume(NO_RESUME);
         await startImport(restoredForm, { sessionId: session.id, stagingDir: session.staging_dir });
+        return;
+      }
+
+      if (resume.kind === "resume_gate" || resume.kind === "resume_media") {
+        if (!session.staging_dir) return; // resumeDecisionFor guarantees this; defensive only.
+        setResume(NO_RESUME);
+        await resumeAtGate(session);
         return;
       }
 

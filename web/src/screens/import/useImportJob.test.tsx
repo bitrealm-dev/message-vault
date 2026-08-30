@@ -15,6 +15,7 @@
 
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ActiveImportSession } from "../../lib/importSession";
 import type {
   FfmpegToolsProbe,
   PushFinishedReport,
@@ -22,6 +23,7 @@ import type {
   TauriJobResult,
 } from "../../lib/tauri";
 import type { AttachmentMediaMode } from "../../lib/types";
+import { gateDelta } from "./gateDelta";
 
 const runMock = vi.fn<(fn: () => Promise<unknown>) => Promise<TauriJobResult>>();
 const cancelMock = vi.fn();
@@ -824,5 +826,205 @@ describe("restoreFormFromSnapshot", () => {
     ["a non-boolean force", { ...validSnapshot, force: "yes" }],
   ])("returns null for a malformed snapshot (%s)", (_label, raw) => {
     expect(restoreFormFromSnapshot(raw)).toBeNull();
+  });
+});
+
+function activeSession(overrides: Partial<ActiveImportSession> = {}): ActiveImportSession {
+  return {
+    id: 1,
+    source: "imessage",
+    mode: "append",
+    status: "running",
+    started_at: "2026-08-30T00:00:00Z",
+    stage: "awaiting_gate_1",
+    staging_dir: "/home/u/message-vault/staging-260830",
+    device_id: "this-device",
+    form: validSnapshot,
+    source_fingerprint: null,
+    summary: null,
+    ...overrides,
+  };
+}
+
+describe("useImportJob resumeAtGate", () => {
+  beforeEach(() => {
+    runMock.mockReset();
+    cancelMock.mockReset();
+    postMock.mockReset();
+    postMock.mockImplementation(async () => ({}));
+    resolveImportStagingDirMock.mockReset();
+    invokePathStatMock.mockReset();
+    invokeExtractMock.mockReset();
+    invokePushMock.mockReset();
+    invokeSummarizeStagingMock.mockReset();
+    invokeTranscodeStagingMock.mockReset();
+    invokeDeleteStagingMock.mockReset();
+    probeFfmpegToolsMock.mockReset();
+    probeFfmpegToolsMock.mockResolvedValue(okProbe());
+    setImportStageMock.mockReset();
+    setImportStageMock.mockResolvedValue(undefined);
+    discardImportSessionMock.mockReset();
+    discardImportSessionMock.mockResolvedValue(undefined);
+  });
+
+  it("recomputes the summary fresh from the folder and lands on Gate 1 for a session waiting there", async () => {
+    invokeSummarizeStagingMock.mockResolvedValueOnce(stagingSummary({ conversations: 9 }));
+    const { result } = renderHook(() => useImportJob());
+
+    await act(async () => {
+      await result.current.resumeAtGate(activeSession({ stage: "awaiting_gate_1" }));
+    });
+
+    expect(invokeSummarizeStagingMock).toHaveBeenCalledTimes(1);
+    expect(result.current.phase).toBe("gate_1");
+    expect(result.current.gateSummary?.conversations).toBe(9);
+    // Decision 39: landing on a gate to look at it again writes nothing.
+    expect(setImportStageMock).not.toHaveBeenCalled();
+  });
+
+  it("resumes at Gate 2 by diffing the STORED approved plan against a RECOMPUTED actual summary", async () => {
+    const approved = stagingSummary({
+      conversations: 3,
+      verdictCounts: {
+        fitsAsIs: 5,
+        likelyFits: 0,
+        mayGrow: 0,
+        probablyTooBig: 0,
+        cannotProcess: 0,
+      },
+    });
+    const actual = stagingSummary({
+      conversations: 3,
+      verdictCounts: {
+        fitsAsIs: 2,
+        likelyFits: 0,
+        mayGrow: 0,
+        probablyTooBig: 0,
+        cannotProcess: 0,
+      },
+    });
+    invokeSummarizeStagingMock.mockResolvedValueOnce(actual);
+
+    const { result } = renderHook(() => useImportJob());
+    await act(async () => {
+      await result.current.resumeAtGate(
+        activeSession({ stage: "awaiting_gate_2", summary: approved }),
+      );
+    });
+
+    expect(invokeSummarizeStagingMock).toHaveBeenCalledTimes(1);
+    expect(result.current.phase).toBe("gate_2");
+    // What's shown is always the recomputed summary, never the stored one.
+    expect(result.current.gateSummary).toEqual(actual);
+    // And the delta is exactly what gateDelta(storedApproved, recomputed,
+    // undefined) says — both inputs actually feed it, not just one.
+    expect(result.current.gateDelta).toEqual(gateDelta(approved, actual, undefined));
+    // Sanity: the two summaries genuinely differ, so a bug that fed the
+    // same value in for both (or ignored the stored plan) would zero this.
+    expect(result.current.gateDelta?.lostCount).toBeGreaterThan(0);
+    // Decision 39: landing on a gate to look at it again writes nothing.
+    expect(setImportStageMock).not.toHaveBeenCalled();
+  });
+
+  it("re-runs the media pass on a resume at transcode, then lands on Gate 2", async () => {
+    runMock.mockImplementationOnce(
+      runResult({ summary: "Transcode finished.", transcode: undefined }),
+    );
+    const approved = stagingSummary({ conversations: 7 });
+    invokeSummarizeStagingMock.mockResolvedValueOnce(stagingSummary({ conversations: 7 }));
+
+    const { result } = renderHook(() => useImportJob());
+    await act(async () => {
+      await result.current.resumeAtGate(
+        activeSession({
+          stage: "transcode",
+          summary: approved,
+          form: { ...validSnapshot, attachmentMedia: "convert" },
+        }),
+      );
+    });
+
+    expect(invokeTranscodeStagingMock).toHaveBeenCalled();
+    expect(result.current.phase).toBe("gate_2");
+    // The stage write sequence matches the normal flow: "transcode" is
+    // (idempotently) set again, then "awaiting_gate_2", both carrying the
+    // plan stored at the last gate.
+    expect(setImportStageMock).toHaveBeenCalledWith(1, "transcode", approved);
+    expect(setImportStageMock).toHaveBeenCalledWith(1, "awaiting_gate_2", approved);
+  });
+
+  it("falls back to Gate 1 instead of running the pass when ffmpeg is missing on a transcode resume", async () => {
+    probeFfmpegToolsMock.mockResolvedValue({
+      ok: false,
+      ffmpeg_path: null,
+      ffprobe_path: null,
+      error: "ffmpeg not found",
+    });
+    invokeSummarizeStagingMock.mockResolvedValueOnce(stagingSummary({ conversations: 7 }));
+
+    const { result } = renderHook(() => useImportJob());
+    await act(async () => {
+      await result.current.resumeAtGate(
+        activeSession({
+          stage: "transcode",
+          form: { ...validSnapshot, attachmentMedia: "convert" },
+        }),
+      );
+    });
+
+    expect(invokeTranscodeStagingMock).not.toHaveBeenCalled();
+    expect(result.current.phase).toBe("gate_1");
+    expect(result.current.mediaToolsMissing).toBe(true);
+  });
+
+  it("a malformed stored summary does not block a resume — it proceeds with no approved plan", async () => {
+    const actual = stagingSummary({
+      conversations: 4,
+      verdictCounts: {
+        fitsAsIs: 0,
+        likelyFits: 1,
+        mayGrow: 0,
+        probablyTooBig: 0,
+        cannotProcess: 0,
+      },
+    });
+    actual.forecasts = [
+      {
+        path: "attachments/x.mov",
+        name: "x.mov",
+        sizeBytes: 1,
+        estimateBytes: 1,
+        verdict: "likely_fits",
+      },
+    ];
+    invokeSummarizeStagingMock.mockResolvedValueOnce(actual);
+
+    const { result } = renderHook(() => useImportJob());
+    await act(async () => {
+      await result.current.resumeAtGate(
+        activeSession({ stage: "awaiting_gate_2", summary: "not a valid staging summary" }),
+      );
+    });
+
+    expect(result.current.phase).toBe("gate_2");
+    // No baseline to diff against: an unknown history reads as the mildest
+    // severity, so the currently-flagged row shows as new information
+    // instead of the resume silently blocking or throwing.
+    expect(result.current.gateDelta).toEqual(gateDelta(undefined, actual, undefined));
+    expect(result.current.gateDelta?.stillFlagged[0]?.regressed).toBe(true);
+  });
+
+  it("does nothing when the session's form snapshot can't be read", async () => {
+    const { result } = renderHook(() => useImportJob());
+    let resumed: boolean | undefined;
+    await act(async () => {
+      resumed = await result.current.resumeAtGate(
+        activeSession({ stage: "awaiting_gate_1", form: { not: "a valid snapshot" } }),
+      );
+    });
+
+    expect(resumed).toBe(false);
+    expect(invokeSummarizeStagingMock).not.toHaveBeenCalled();
+    expect(result.current.phase).toBe("form");
   });
 });

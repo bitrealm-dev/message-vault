@@ -121,14 +121,24 @@ export interface GateDelta {
  * - actual.fitsAsIs` recovers the same total the report would have given,
  * as long as nothing outside that arithmetic moved (see the module's tests
  * for the two directions this covers and does not).
+ *
+ * `approved` itself is absent when a session resumes at Gate 2 (or through
+ * a re-run of the media pass) with a stored plan that failed to parse — a
+ * crash mid-write, or data from before this field existed. There is
+ * nothing to diff against in that case, so every named row in `actual` is
+ * treated as new information (an unknown baseline is the mildest severity,
+ * `fits_as_is`, so anything actually flagged now reads as a regression)
+ * and the conservation math above simply sees zero approved counts and
+ * zero vanished rows — never blocks the resume, just under-informs it.
  */
 export function gateDelta(
-  approved: StagingSummary,
+  approved: StagingSummary | undefined,
   actual: StagingSummary,
   transcode?: TranscodeFinishedReport,
 ): GateDelta {
+  const approvedForecasts = approved?.forecasts ?? [];
   const approvedByStem = new Map<string, AttachmentForecast>();
-  for (const row of approved.forecasts) {
+  for (const row of approvedForecasts) {
     approvedByStem.set(stableStem(row.path), row);
   }
   const actualByStem = new Map<string, AttachmentForecast>();
@@ -137,7 +147,7 @@ export function gateDelta(
   }
 
   let vanishedNamedRowCount = 0;
-  for (const row of approved.forecasts) {
+  for (const row of approvedForecasts) {
     if (!actualByStem.has(stableStem(row.path))) {
       vanishedNamedRowCount += 1;
     }
@@ -147,7 +157,9 @@ export function gateDelta(
     ? transcode.too_large + transcode.failed + transcode.missing
     : Math.max(
         0,
-        approved.verdictCounts.fitsAsIs + vanishedNamedRowCount - actual.verdictCounts.fitsAsIs,
+        (approved?.verdictCounts.fitsAsIs ?? 0) +
+          vanishedNamedRowCount -
+          actual.verdictCounts.fitsAsIs,
       );
 
   const cameOutFine = Math.max(0, vanishedNamedRowCount - lostCount);

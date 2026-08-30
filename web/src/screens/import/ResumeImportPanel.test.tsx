@@ -84,6 +84,56 @@ describe("ResumeImportPanel", () => {
     expect(onDiscard).toHaveBeenCalledTimes(1);
   });
 
+  it("offers to show the summary again for a session waiting at a gate", async () => {
+    const user = userEvent.setup();
+    const onResume = vi.fn();
+    const onDiscard = vi.fn();
+    const decision: ResumeDecision = {
+      kind: "resume_gate",
+      canResume: true,
+      session: session({ stage: "awaiting_gate_1" }),
+    };
+    render(<ResumeImportPanel decision={decision} onResume={onResume} onDiscard={onDiscard} />);
+
+    expect(screen.getByText("Pick up where you left off")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Your messages are staged. Opening the import again shows you the same summary, read fresh from the folder.",
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Show me the summary" }));
+    expect(onResume).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Discard this import" }));
+    expect(onDiscard).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers to carry on for a session that died mid media pass", async () => {
+    const user = userEvent.setup();
+    const onResume = vi.fn();
+    const onDiscard = vi.fn();
+    const decision: ResumeDecision = {
+      kind: "resume_media",
+      canResume: true,
+      session: session({ stage: "transcode" }),
+    };
+    render(<ResumeImportPanel decision={decision} onResume={onResume} onDiscard={onDiscard} />);
+
+    expect(screen.getByText("Finish preparing your media")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "The media step did not finish. Carrying on picks up the files it had not reached yet.",
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Carry on" }));
+    expect(onResume).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Discard this import" }));
+    expect(onDiscard).toHaveBeenCalledTimes(1);
+  });
+
   it("offers discard alone, naming the path, when the staged files are gone", async () => {
     const user = userEvent.setup();
     const onResume = vi.fn();

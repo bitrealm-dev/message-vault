@@ -67,6 +67,42 @@ describe("resumeDecisionFor", () => {
     }
   });
 
+  it("sends a session waiting at a gate back to its gate", () => {
+    for (const stage of ["awaiting_gate_1", "awaiting_gate_2"] as const) {
+      const decision = resumeDecisionFor({
+        session: session({ stage }),
+        deviceId: "this-device",
+        folderExists: true,
+      });
+      expect(decision.kind).toBe("resume_gate");
+      expect(decision.canResume).toBe(true);
+    }
+  });
+
+  it("sends a session that died converting back to the media pass", () => {
+    const decision = resumeDecisionFor({
+      session: session({ stage: "transcode" }),
+      deviceId: "this-device",
+      folderExists: true,
+    });
+    expect(decision.kind).toBe("resume_media");
+    expect(decision.canResume).toBe(true);
+  });
+
+  it("still offers discard only when the folder is gone at a gate", () => {
+    // Decision 36: after approval, discard only. There is nothing to
+    // recompute a summary from.
+    for (const stage of ["awaiting_gate_1", "awaiting_gate_2", "transcode"] as const) {
+      expect(
+        resumeDecisionFor({
+          session: session({ stage }),
+          deviceId: "this-device",
+          folderExists: false,
+        }).kind,
+      ).toBe("folder_missing");
+    }
+  });
+
   it("treats a missing device id as this install rather than locking the user out", () => {
     expect(
       resumeDecisionFor({

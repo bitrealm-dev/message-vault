@@ -26,6 +26,20 @@ const COPY: Record<ResumableKind, PanelCopy> = {
     primary: { label: "Start over", action: "resume" },
     secondary: { label: "Discard this import", action: "discard" },
   },
+  resume_gate: {
+    heading: () => "Pick up where you left off",
+    body: () =>
+      "Your messages are staged. Opening the import again shows you the same summary, read fresh from the folder.",
+    primary: { label: "Show me the summary", action: "resume" },
+    secondary: { label: "Discard this import", action: "discard" },
+  },
+  resume_media: {
+    heading: () => "Finish preparing your media",
+    body: () =>
+      "The media step did not finish. Carrying on picks up the files it had not reached yet.",
+    primary: { label: "Carry on", action: "resume" },
+    secondary: { label: "Discard this import", action: "discard" },
+  },
   // resumeDecisionFor routes here both when the staged folder has gone
   // missing and when the session never recorded one — every session created
   // outside the desktop app stores a null staging_dir — so the copy names
