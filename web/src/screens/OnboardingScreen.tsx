@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import AuthBackButton from "../components/AuthBackButton";
 import AuthErrorFooter from "../components/AuthErrorFooter";
 import AuthSubmitButton from "../components/AuthSubmitButton";
@@ -9,9 +9,11 @@ import TextField from "../components/TextField";
 import { apiClient } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import {
+  DUPLICATE_HANDLE_MESSAGE,
   HANDLE_SERVICE_OPTIONS,
   HANDLE_SERVICES,
   type HandleService,
+  handleDuplicateKey,
   handlePlaceholder,
   handleValidationError,
 } from "../lib/handleService";
@@ -26,6 +28,22 @@ import { useAsyncAction } from "../lib/useAsyncAction";
  */
 const MAX_ACCOUNT_ROWS = 5;
 
+/**
+ * How long the error line stays blank before the same message is put back.
+ * Long enough that the line is visibly empty for a moment, short enough that
+ * the answer still feels like a reply to what was just done.
+ */
+const REPEATED_ERROR_BLINK_MS = 250;
+
+/**
+ * Checks this close together are one gesture rather than a second look.
+ * Releasing the pointer on "+ Add account" both leaves the field and presses
+ * the button, so the row is checked twice within a few milliseconds; without
+ * this the message would blink on the very first time it appeared. A person
+ * clicking a second time is far slower than this.
+ */
+const SAME_GESTURE_MS = 150;
+
 interface HandleInput {
   id: string;
   handle: string;
@@ -34,6 +52,31 @@ interface HandleInput {
 
 function newHandleRow(): HandleInput {
   return { id: crypto.randomUUID(), handle: "", service: "phone" };
+}
+
+/**
+ * Why each row cannot be used, keyed by row id. A row is judged on its own
+ * value first; only a value that reads correctly is then compared against the
+ * rows above it. The blame for a repeat falls on the later row, since the
+ * first one to carry an account is not the mistake.
+ */
+function rowErrors(rows: HandleInput[]): Map<string, string> {
+  const errors = new Map<string, string>();
+  const seen = new Set<string>();
+
+  for (const row of rows) {
+    const malformed = handleValidationError(row.service, row.handle);
+    if (malformed) {
+      errors.set(row.id, malformed);
+      continue;
+    }
+    const key = handleDuplicateKey(row.service, row.handle);
+    if (!key) continue;
+    if (seen.has(key)) errors.set(row.id, DUPLICATE_HANDLE_MESSAGE);
+    else seen.add(key);
+  }
+
+  return errors;
 }
 
 /**
@@ -57,18 +100,58 @@ export default function OnboardingScreen() {
   const [validationError, setValidationError] = useState("");
   const { busy, error, run } = useAsyncAction();
 
+  const blinkTimer = useRef<number | null>(null);
+  const lastAsked = useRef<{ message: string; at: number }>({ message: "", at: 0 });
+  useEffect(() => {
+    return () => {
+      if (blinkTimer.current !== null) clearTimeout(blinkTimer.current);
+    };
+  }, []);
+
+  /**
+   * Put `message` on the error line, blanking the line first when a separate
+   * look produced the same words that are already sitting there.
+   *
+   * Re-checking a field that is still wrong otherwise changes nothing on
+   * screen, which reads as the check not having happened at all. Taking the
+   * message away and bringing it back a moment later is what makes the second
+   * look visible. The line keeps its height throughout, so nothing shifts.
+   */
+  const showValidationError = (message: string) => {
+    if (blinkTimer.current !== null) {
+      clearTimeout(blinkTimer.current);
+      blinkTimer.current = null;
+    }
+
+    const now = Date.now();
+    const previous = lastAsked.current;
+    lastAsked.current = { message, at: now };
+
+    const isSecondLook =
+      Boolean(message) && message === previous.message && now - previous.at > SAME_GESTURE_MS;
+    if (!isSecondLook) {
+      setValidationError(message);
+      return;
+    }
+
+    setValidationError("");
+    blinkTimer.current = window.setTimeout(() => {
+      blinkTimer.current = null;
+      setValidationError(message);
+    }, REPEATED_ERROR_BLINK_MS);
+  };
+
   /**
    * Check every filled-in row, mark the ones that do not read as a usable
-   * account, and report the first reason. Returns whether the list is usable.
+   * account, and report the topmost reason. Returns whether the list is usable.
    * Empty rows are left alone — they are rows not filled in yet, not mistakes.
    */
   const revalidate = (rows: HandleInput[]) => {
-    const failures = rows.filter((row) => handleValidationError(row.service, row.handle));
-    setInvalidIds(failures.map((row) => row.id));
-    setValidationError(
-      failures.length ? (handleValidationError(failures[0].service, failures[0].handle) ?? "") : "",
-    );
-    return failures.length === 0;
+    const errors = rowErrors(rows);
+    setInvalidIds(rows.filter((row) => errors.has(row.id)).map((row) => row.id));
+    const firstBad = rows.find((row) => errors.has(row.id));
+    showValidationError(firstBad ? (errors.get(firstBad.id) ?? "") : "");
+    return errors.size === 0;
   };
 
   const addHandle = () => {
@@ -94,7 +177,9 @@ export default function OnboardingScreen() {
     // staying red under the cursor; leaving the field checks it again.
     const remaining = invalidIds.filter((id) => id !== next[index].id);
     if (remaining.length !== invalidIds.length) setInvalidIds(remaining);
-    if (remaining.length === 0) setValidationError("");
+    // `showValidationError` rather than the setter, so a blink waiting to put
+    // the old message back does not fire over a field being corrected.
+    if (remaining.length === 0) showValidationError("");
   };
 
   const removeHandle = (index: number) => {
@@ -124,6 +209,11 @@ export default function OnboardingScreen() {
   };
 
   const canSubmit = Boolean(displayName.trim()) && handles.some((h) => h.handle.trim());
+
+  // The empty row at the bottom of the list is already the place to put the
+  // next account, so adding another one on top of it would only produce a
+  // second blank. The control wakes up once that row holds something.
+  const canAddHandle = Boolean(handles[handles.length - 1]?.handle.trim());
 
   return (
     <div className={pageCenter}>
@@ -189,7 +279,7 @@ export default function OnboardingScreen() {
 
           {handles.length < MAX_ACCOUNT_ROWS ? (
             <div className="mt-3 flex justify-end">
-              <Button variant="secondary" size="sm" onPress={addHandle}>
+              <Button variant="secondary" size="sm" onPress={addHandle} disabled={!canAddHandle}>
                 + Add account
               </Button>
             </div>
