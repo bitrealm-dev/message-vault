@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  AttachmentMediaMode,
   ExtractConfig,
   ExtractErrorEvent,
   ImportIssueEvent,
@@ -38,6 +39,106 @@ export async function invokeExtract(config: ExtractConfig): Promise<void> {
 /** Ask the desktop backend to stop the job that is currently running. */
 export async function invokeCancel(): Promise<void> {
   return invoke("cancel");
+}
+
+/**
+ * Form fields shared by `summarize_staging` and `transcode_staging` — the
+ * same media fields `ExtractConfig` carries, addressed at an already-staged
+ * folder instead of a fresh backup.
+ */
+export interface StagingConfig {
+  staging_dir: string;
+  /** Import Staging Directory root every staging folder must live under. */
+  staging_root: string;
+  attachment_media?: AttachmentMediaMode;
+  media_max_resolution?: string;
+  media_max_fps?: string;
+  media_min_size?: string;
+}
+
+/** How a staged attachment is expected to land against the size limit. */
+export type SizeVerdict =
+  | "fits_as_is"
+  | "likely_fits"
+  | "may_grow"
+  | "probably_too_big"
+  | "cannot_process";
+
+/** One attachment the user should see before approving. */
+export interface AttachmentForecast {
+  path: string;
+  name: string;
+  sizeBytes: number;
+  estimateBytes: number;
+  verdict: SizeVerdict;
+}
+
+/** How many attachments landed in each verdict. */
+export interface VerdictCounts {
+  fitsAsIs: number;
+  likelyFits: number;
+  mayGrow: number;
+  probablyTooBig: number;
+  cannotProcess: number;
+}
+
+/** What a staged folder holds, recomputed for the first approval gate. */
+export interface StagingSummary {
+  conversations: number;
+  messages: number;
+  contactIdentifiers: string[];
+  attachments: number;
+  attachmentBytes: number;
+  verdictCounts: VerdictCounts;
+  forecasts: AttachmentForecast[];
+}
+
+/** Recompute what a staged folder holds, for the first approval gate. */
+export async function invokeSummarizeStaging(config: StagingConfig): Promise<StagingSummary> {
+  return invoke("summarize_staging", {
+    args: {
+      stagingDir: config.staging_dir,
+      stagingRoot: config.staging_root,
+      attachmentMedia: config.attachment_media ?? null,
+      mediaMaxResolution: config.media_max_resolution ?? null,
+      mediaMaxFps: config.media_max_fps ?? null,
+      mediaMinSize: config.media_min_size ?? null,
+    },
+  });
+}
+
+/**
+ * Run the convert/compress pass over a staged folder, after the first gate
+ * approves it. Reports through the `extract:*` events like every other long
+ * job, so `runTauriJob` drives it exactly as it drives extract and push.
+ */
+export async function invokeTranscodeStaging(config: StagingConfig): Promise<void> {
+  return invoke("transcode_staging", {
+    args: {
+      stagingDir: config.staging_dir,
+      stagingRoot: config.staging_root,
+      attachmentMedia: config.attachment_media ?? null,
+      mediaMaxResolution: config.media_max_resolution ?? null,
+      mediaMaxFps: config.media_max_fps ?? null,
+      mediaMinSize: config.media_min_size ?? null,
+    },
+  });
+}
+
+/**
+ * Delete a staging folder — the decline path's terminal action: closing an
+ * approval gate without approving deletes the folder outright.
+ */
+export async function invokeDeleteStaging(config: {
+  staging_dir: string;
+  staging_root: string;
+}): Promise<void> {
+  return invoke("delete_staging", {
+    args: {
+      stagingDir: config.staging_dir,
+      stagingRoot: config.staging_root,
+    },
+  });
 }
 
 export interface PushConfig {

@@ -258,7 +258,9 @@ describe("useImportJob resume path", () => {
     expect(result.current.importSessionId).toBe(99);
   });
 
-  it("marks the first three steps already staged and moves the session to pushing", async () => {
+  it("marks the staging steps already staged and moves the session to pushing", async () => {
+    // baseForm uses attachmentMedia "copy", which has no media step: Read
+    // backup, Copy to staging, Upload to vault — three rows, not four.
     const { result } = renderHook(() => useImportJob());
 
     await act(async () => {
@@ -271,12 +273,13 @@ describe("useImportJob resume path", () => {
     const stageCall = postMock.mock.calls.find(([path]) => String(path).endsWith("/stage"));
     expect(stageCall).toEqual(["/v1/imports/99/stage", { stage: "pushing" }]);
 
-    for (const step of result.current.steps.slice(0, 3)) {
+    expect(result.current.steps).toHaveLength(3);
+    for (const step of result.current.steps.slice(0, 2)) {
       expect(step.status).toBe("done");
       expect(step.detail).toBe("Already staged");
       expect(step.durationMs).toBeUndefined();
     }
-    expect(result.current.steps[3]).toMatchObject({ label: "Upload to vault" });
+    expect(result.current.steps[2]).toMatchObject({ label: "Upload to vault" });
   });
 
   it("still posts /complete against the resumed session id", async () => {

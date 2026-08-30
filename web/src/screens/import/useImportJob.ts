@@ -31,17 +31,14 @@ import { importOutcome } from "./importOutcome";
 import {
   type AttachmentProgressCounts,
   attachmentDoneDetail,
+  type ImportPhase,
+  type ImportStep,
   isProgressStepComplete,
+  stepIndexFor,
+  stepsFor,
 } from "./importProgressState";
 
-export type ImportStep = {
-  label: string;
-  status: "pending" | "active" | "done" | "error";
-  detail?: string;
-  durationMs?: number | null;
-};
-
-export type ImportPhase = "form" | "progress" | "done";
+export type { ImportPhase, ImportStep } from "./importProgressState";
 
 export const PUSH_LOG_NAME = "vault-push.log";
 
@@ -65,34 +62,37 @@ const EMPTY_TIMING: StageTiming = {
   prepareEndedAt: null,
 };
 
-/** Four import steps shown in the progress view. */
+/** Progress steps for this mode (Decision 8), with the first step optionally marked active. */
 function initialSteps(
   status: ImportStep["status"] = "pending",
   attachmentMedia: AttachmentMediaMode = "copy",
 ): ImportStep[] {
-  const attachments = attachmentStepCopy(attachmentMedia);
-  return [
-    { label: "Parse backup", status, detail: status === "active" ? "Parsing backup…" : undefined },
-    { label: attachments.label, status: "pending" },
-    { label: "Preparing messages", status: "pending" },
-    { label: "Upload to vault", status: "pending" },
-  ];
-}
-
-/** Index of the progress step that matches this server event. */
-function stepIndexFor(step: ImportProgressEvent["step"]): number {
-  if (step === "parse") return 0;
-  if (step === "attachments") return 1;
-  if (step === "prepare") return 2;
-  return 3;
+  const steps = stepsFor(attachmentMedia);
+  const first = steps[0];
+  if (status === "active" && first) {
+    steps[0] = { ...first, status, detail: "Reading backup…" };
+  }
+  return steps;
 }
 
 /** Present-tense verb shown while a step is running. */
 function progressVerb(step: ImportProgressEvent["step"]): string {
-  if (step === "upload") return "Uploading";
-  if (step === "prepare") return "Preparing";
-  if (step === "attachments") return "Copied";
-  return "Parsing";
+  switch (step) {
+    case "upload":
+      return "Uploading";
+    case "prepare":
+      return "Preparing";
+    case "attachments":
+      return "Copied";
+    case "media":
+      return "Converting";
+    case "parse":
+      return "Reading";
+    default: {
+      const _exhaustive: never = step;
+      return _exhaustive;
+    }
+  }
 }
 
 /** Parse, attachment, and prepare durations from timestamps recorded during extract. */
@@ -272,13 +272,14 @@ export function useImportJob() {
       timingRef.current.prepareStartedAt ??= now;
     }
 
-    const stepIndex = stepIndexFor(event.step);
+    const stepIndex = stepIndexFor(event.step, attachmentModeRef.current);
+    if (stepIndex === -1) return; // No row for this step in the current mode.
+
     let rawDetail = `${event.done}/${event.total}`;
     if (event.status) {
       rawDetail = `${event.done}/${event.total} (${event.status})`;
     }
 
-    const attachments = attachmentStepCopy(attachmentModeRef.current);
     const lastAttachment = lastAttachmentProgressRef.current;
     const detail =
       event.step === "attachments"
@@ -291,7 +292,6 @@ export function useImportJob() {
           })
         : `${progressVerb(event.step)} ${rawDetail}`;
     const done = isProgressStepComplete(event.step, event.done, event.total);
-    const attachmentLabel = event.step === "attachments" ? attachments.label : undefined;
 
     setSteps((current) =>
       current.map((step, index) => {
@@ -301,7 +301,6 @@ export function useImportJob() {
         if (index > stepIndex) return step;
         return {
           ...step,
-          ...(attachmentLabel ? { label: attachmentLabel } : {}),
           status: done ? "done" : "active",
           detail,
         };
@@ -356,16 +355,15 @@ export function useImportJob() {
         sessionId = resume.sessionId;
         setImportSessionId(sessionId);
 
-        setSteps([
-          { label: "Parse backup", status: "done", detail: "Already staged" },
-          {
-            label: attachmentStepCopy(form.attachmentMedia).label,
-            status: "done",
-            detail: "Already staged",
-          },
-          { label: "Preparing messages", status: "done", detail: "Already staged" },
-          { label: "Upload to vault", status: "active", detail: "Uploading to vault…" },
-        ]);
+        const resumeTemplate = stepsFor(form.attachmentMedia);
+        const resumeLastIndex = resumeTemplate.length - 1;
+        setSteps(
+          resumeTemplate.map((step, i) =>
+            i === resumeLastIndex
+              ? { ...step, status: "active", detail: "Uploading to vault…" }
+              : { ...step, status: "done", detail: "Already staged" },
+          ),
+        );
       } else {
         outputDir = await resolveImportStagingDir(form.backupPath, form.source);
         setStagingDir(outputDir);
@@ -448,38 +446,43 @@ export function useImportJob() {
           timingRef.current,
           extractFinishedAt,
         ));
-        const attachments = attachmentStepCopy(form.attachmentMedia);
         const attachmentDoneLine = attachmentDoneDetail(
           form.attachmentMedia,
           lastAttachmentProgressRef.current,
-          attachments.doneDetail,
+          attachmentStepCopy(form.attachmentMedia).doneDetail,
         );
+        // The staging row folds both the attachment copy and the
+        // conversation-file write ("prepare") into one duration — from the
+        // user's side that is all part of staging, not two separate steps.
+        const stagingMs = attachmentsMs + prepareMs;
 
-        setSteps([
-          {
-            label: "Parse backup",
-            status: "done",
-            detail: "Extraction complete",
-            durationMs: parseMs,
-          },
-          {
-            label: attachments.label,
-            status: "done",
-            detail: attachmentDoneLine,
-            durationMs: attachmentsMs,
-          },
-          {
-            label: "Preparing messages",
-            status: "done",
-            detail: "Preparation complete",
-            durationMs: prepareMs,
-          },
-          {
-            label: "Upload to vault",
-            status: "active",
-            detail: "Uploading to vault…",
-          },
-        ]);
+        const extractedTemplate = stepsFor(form.attachmentMedia);
+        const extractedLastIndex = extractedTemplate.length - 1;
+        setSteps(
+          extractedTemplate.map((step, i) => {
+            if (i === 0) {
+              return {
+                ...step,
+                status: "done" as const,
+                detail: "Extraction complete",
+                durationMs: parseMs,
+              };
+            }
+            if (i === 1) {
+              return {
+                ...step,
+                status: "done" as const,
+                detail: attachmentDoneLine,
+                durationMs: stagingMs,
+              };
+            }
+            if (i === extractedLastIndex) {
+              return { ...step, status: "active" as const, detail: "Uploading to vault…" };
+            }
+            // A media step (Convert/Compress) row: not run by this job yet.
+            return step;
+          }),
+        );
       }
 
       activeStepRef.current = "upload";
@@ -515,7 +518,7 @@ export function useImportJob() {
 
       setSteps((current) =>
         current.map((step, i) =>
-          i === 3
+          i === current.length - 1
             ? { ...step, status: "done", detail: "Upload complete", durationMs: uploadMs }
             : step,
         ),
@@ -552,10 +555,19 @@ export function useImportJob() {
         durationMs,
         issues: issuesRef.current,
       };
-      const durations = [parseMs, attachmentsMs, prepareMs, uploadMs];
+      // Keyed by label, not index: the staging row folds attachments and
+      // prepare into one duration, and a mode with no media step has fewer
+      // rows than one with it — see stepsFor.
+      const finalStagingMs =
+        attachmentsMs != null || prepareMs != null ? (attachmentsMs ?? 0) + (prepareMs ?? 0) : null;
+      const durationByLabel = new Map<string, number | null>([
+        ["Read backup", parseMs],
+        ["Copy to staging", finalStagingMs],
+        ["Upload to vault", uploadMs],
+      ]);
       setSteps((current) =>
-        current.map((step, index) => {
-          const duration = durations[index];
+        current.map((step) => {
+          const duration = durationByLabel.get(step.label);
           if (duration == null) return step;
           return { ...step, durationMs: duration };
         }),

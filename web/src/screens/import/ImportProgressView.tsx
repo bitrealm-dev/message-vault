@@ -4,6 +4,7 @@ import ImportSummaryPanel, {
 } from "../../components/import/ImportSummaryPanel";
 import OpenPathButton from "../../components/OpenPathButton";
 import StepProgress from "../../components/StepProgress";
+import { progressHeading } from "./importProgressState";
 import type { ImportPhase, ImportStep } from "./useImportJob";
 import { PUSH_LOG_NAME } from "./useImportJob";
 
@@ -31,7 +32,7 @@ export default function ImportProgressView({
 
   return (
     <>
-      <h1 className="m-0 mb-4 text-2xl font-bold">Import Messages</h1>
+      <h1 className="m-0 mb-4 text-2xl font-bold">{progressHeading(steps, phase)}</h1>
       {trimmedStaging && logPath ? (
         <div className="mb-4 max-w-[min(36rem,70vw)] text-[0.813rem]">
           <div>
