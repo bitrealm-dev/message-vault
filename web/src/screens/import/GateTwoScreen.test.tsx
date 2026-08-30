@@ -121,6 +121,25 @@ describe("GateTwoScreen", () => {
     expect(screen.queryByText(/will not be uploaded/i)).not.toBeInTheDocument();
   });
 
+  it("shows a still-pending row alongside 'came out as expected', not hidden behind it", () => {
+    // A cannot_process file is never touched by the media step in any mode,
+    // so it is common for `stillFlagged` to hold only non-regressed rows —
+    // no delta, but the file still will not upload. That must not vanish
+    // behind the "no surprises" line.
+    render(
+      <GateTwoScreen
+        {...props({
+          delta: {
+            hasChanges: false,
+            stillFlagged: [{ name: "archive.zip", verdict: "cannot_process", regressed: false }],
+          },
+        })}
+      />,
+    );
+    expect(screen.getByText(/came out as expected/i)).toBeInTheDocument();
+    expect(screen.getByText(/not audio or video/i)).toBeInTheDocument();
+  });
+
   it("gives a regressed row decision 45's framing, not 'could not be processed'", () => {
     render(
       <GateTwoScreen

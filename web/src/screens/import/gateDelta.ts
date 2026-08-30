@@ -56,6 +56,18 @@ export interface GateDelta {
    * conversion, failed to convert outright, or gone missing. A pure count —
    * none of those sources name individual files, so there is nothing to
    * list.
+   *
+   * When `transcode` is supplied, this is a **pass-wide total** —
+   * `too_large + failed + missing` across every attachment the pass
+   * touched, not bucketed by which approved verdict a lost file came from.
+   * Today's `convert`/`compress` pipeline only ever touches attachments
+   * that were already flagged (`likely_fits`/`may_grow`/`probably_too_big`),
+   * so every loss the report counts corresponds to a vanished named row and
+   * `cameOutFine`'s subtraction below is exact. If a future media mode ever
+   * processes `fits_as_is`-approved attachments too, a loss from that
+   * bucket would inflate this total with no corresponding named row to
+   * subtract, and `cameOutFine` would undercount genuine successes by the
+   * same amount.
    */
   lostCount: number;
   /**
@@ -69,7 +81,8 @@ export interface GateDelta {
    * every approved verdict on purpose: once a row vanishes, the data cannot
    * say which specific file among several converted successfully and which
    * were lost, only how many of each, so the screen does not pretend to
-   * attribute individual files either.
+   * attribute individual files either. See `lostCount`'s doc comment for
+   * the one condition under which this undercounts.
    */
   cameOutFine: number;
   /** False only when nothing above is worth a word. */

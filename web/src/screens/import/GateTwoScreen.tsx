@@ -1,8 +1,8 @@
 import Button from "../../components/Button";
 import { formatBytes } from "../../lib/attachmentProgressCopy";
-import type { StagingSummary } from "../../lib/tauri";
+import type { SizeVerdict, StagingSummary } from "../../lib/tauri";
 import type { AttachmentMediaMode } from "../../lib/types";
-import type { GateDelta, StillFlaggedItem } from "./gateDelta";
+import type { GateDelta } from "./gateDelta";
 import { mediaJobVerb, verdictCopy } from "./gateForecast";
 
 interface DeltaRow {
@@ -13,11 +13,13 @@ interface DeltaRow {
 /**
  * The delta rows worth showing, worst first — mirrors Gate 1's own
  * "what needs attention first" ordering. A bucket with nothing in it is
- * dropped; a row reading "0 files" is noise.
+ * dropped; a row reading "0 files" is noise. Does not include still-pending
+ * rows — those render unconditionally alongside this, not as part of it
+ * (see the component body).
  */
-function deltaRows(delta: GateDelta, mode: AttachmentMediaMode): DeltaRow[] {
+function deltaRows(delta: GateDelta): DeltaRow[] {
   const regressed = delta.stillFlagged.filter((item) => item.regressed);
-  const rows: DeltaRow[] = [
+  return [
     {
       key: "lost",
       text:
@@ -46,22 +48,24 @@ function deltaRows(delta: GateDelta, mode: AttachmentMediaMode): DeltaRow[] {
           : "",
     },
   ].filter((row) => row.text.length > 0);
-
-  const stillPending = delta.stillFlagged.filter((item) => !item.regressed);
-  if (stillPending.length > 0) {
-    rows.push(...stillPendingRows(stillPending, mode));
-  }
-  return rows;
 }
 
-/** Groups the not-yet-resolved rows by verdict, using Gate 1's own wording. */
-function stillPendingRows(items: StillFlaggedItem[], mode: AttachmentMediaMode): DeltaRow[] {
-  const counts = new Map<string, number>();
-  for (const item of items) {
+/**
+ * Groups the not-yet-resolved rows (still flagged, not regressed — e.g. a
+ * `cannot_process` file every mode leaves alone) by verdict, using Gate 1's
+ * own wording. Rendered unconditionally, never folded into `hasChanges`: an
+ * import holding nothing but an unconvertible file has no "delta" to
+ * report, but "will not upload" is still true and must not be hidden behind
+ * "everything came out as expected".
+ */
+function stillPendingRows(delta: GateDelta, mode: AttachmentMediaMode): DeltaRow[] {
+  const counts = new Map<SizeVerdict, number>();
+  for (const item of delta.stillFlagged) {
+    if (item.regressed) continue;
     counts.set(item.verdict, (counts.get(item.verdict) ?? 0) + 1);
   }
   return [...counts.entries()].map(([verdict, count]) => {
-    const copy = verdictCopy(verdict as StillFlaggedItem["verdict"], mode);
+    const copy = verdictCopy(verdict, mode);
     return {
       key: `pending-${verdict}`,
       text: `${count.toLocaleString()} files — ${copy.label}`,
@@ -93,7 +97,8 @@ export default function GateTwoScreen({
   busy?: boolean;
 }) {
   const verb = mediaJobVerb(mode);
-  const rows = deltaRows(delta, mode);
+  const rows = deltaRows(delta);
+  const pendingRows = stillPendingRows(delta, mode);
 
   return (
     <>
@@ -105,19 +110,27 @@ export default function GateTwoScreen({
 
       <section>
         <h2 className="m-0 text-base font-semibold">What changed since you approved</h2>
-        {delta.hasChanges ? (
-          <div className="mt-3 flex flex-col gap-3">
-            {rows.map((row) => (
+        <div className="mt-3 flex flex-col gap-3">
+          {delta.hasChanges ? (
+            rows.map((row) => (
               <div key={row.key} className="rounded-lg border border-border p-3">
                 <p className="m-0 text-[0.875rem] font-semibold text-text">{row.text}</p>
               </div>
-            ))}
-          </div>
-        ) : (
-          <p className="m-0 mt-1 text-[0.813rem] text-muted">
-            Everything came out as expected — no surprises since you approved.
-          </p>
-        )}
+            ))
+          ) : (
+            <p className="m-0 text-[0.813rem] text-muted">
+              Everything came out as expected — no surprises since you approved.
+            </p>
+          )}
+          {/* Still-pending rows sit alongside the delta, not inside its
+              conditional — an import holding only an unconvertible file has
+              no delta to report, but the file still will not upload. */}
+          {pendingRows.map((row) => (
+            <div key={row.key} className="rounded-lg border border-border p-3">
+              <p className="m-0 text-[0.875rem] font-semibold text-text">{row.text}</p>
+            </div>
+          ))}
+        </div>
       </section>
 
       <div className="mt-5 min-w-0 overflow-hidden rounded-lg border border-border">
