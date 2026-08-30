@@ -1811,6 +1811,16 @@ mod tests {
         )
         .await
         .unwrap();
+        // Only one session may be `running` per account (the partial unique
+        // index); finish `import_a` so `import_b` can start.
+        vault_imports::complete_import(
+            &mut conn,
+            &account,
+            import_a,
+            &vault_imports::CompleteImportArgs::succeeded(1, 0),
+        )
+        .await
+        .unwrap();
         let import_b = vault_imports::start_import(
             &mut conn,
             &account,

@@ -53,7 +53,7 @@ const PG_FKS_DDL: &str = include_str!("../../../../../schema/sql/pg_fks.sql");
 /// `PRAGMA user_version`. Bump this whenever any `schema/sql/*.sql` file
 /// changes; a database at any other version is rebuilt empty (see
 /// [`migrate_vault_schema`]).
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// Bring the database to [`SCHEMA_VERSION`].
 ///
@@ -156,6 +156,25 @@ async fn apply_vault_ddl(conn: &mut AnyConnection) -> Result<()> {
     Ok(())
 }
 
+/// Drop every user table in the current schema. Postgres twin of
+/// [`rebuild_vault_schema`]: a vault stamped with an older marker is
+/// rebuilt empty rather than patched in place.
+///
+/// `CASCADE` takes the FTS triggers and foreign keys down with their
+/// tables; the sync functions are recreated with `CREATE OR REPLACE`.
+async fn drop_pg_user_tables(conn: &mut AnyConnection) -> Result<()> {
+    let tables: Vec<String> =
+        sqlx::query_scalar("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()")
+            .fetch_all(&mut *conn)
+            .await?;
+    for table in &tables {
+        sqlx::query(&format!("DROP TABLE IF EXISTS \"{table}\" CASCADE"))
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
+}
+
 /// Apply the Postgres DDL variants. The DDL is idempotent (`IF NOT EXISTS`),
 /// so applying it again is a no-op.
 async fn apply_postgres_vault_ddl(conn: &mut AnyConnection) -> Result<()> {
@@ -173,6 +192,15 @@ async fn apply_postgres_vault_ddl(conn: &mut AnyConnection) -> Result<()> {
         .execute(&mut *tx)
         .await?;
     if !pg_vault_schema_ready(&mut tx).await? {
+        // A vault carrying an older marker (or none, with tables present)
+        // is rebuilt empty — the same contract SQLite's user_version
+        // gives. Re-importing is the migration.
+        if table_exists(&mut tx, "vault_imports").await? {
+            eprintln!(
+                "warning: vault schema predates {VAULT_SCHEMA_META_KEY}; rebuilding empty (re-import your data)"
+            );
+            drop_pg_user_tables(&mut tx).await?;
+        }
         execute_batch(&mut tx, PG_ACCOUNTS_DDL).await?;
         // Same ordering as the SQLite variant: contacts before messages.
         execute_batch(&mut tx, PG_CONTACTS_TABLES_DDL).await?;
@@ -230,7 +258,9 @@ pub async fn ensure_vault_schema(conn: &mut AnyConnection) -> Result<()> {
 pub const MESSAGES_FTS_TRIGGERS_META_KEY: &str = "messages_fts_triggers_v1";
 
 /// Marker that the one-time Postgres vault DDL install has completed.
-pub const VAULT_SCHEMA_META_KEY: &str = "vault_schema_v1";
+/// Bumped with the schema: a vault holding an older marker is rebuilt
+/// empty, matching SQLite's `user_version` behaviour.
+pub const VAULT_SCHEMA_META_KEY: &str = "vault_schema_v2";
 
 /// Advisory lock id serializing the one-time Postgres DDL install so two
 /// concurrent first-touches cannot interleave the trigger drop/create pair
@@ -1207,6 +1237,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn one_running_import_per_account() {
+        let (pool, _dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        ensure_vault_schema(&mut conn).await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ('acct', 'alice')")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let insert = r#"
+            INSERT INTO vault_imports (
+                account_id, source, mode, status, started_at,
+                message_count, attachment_count, bytes_uploaded
+            ) VALUES ('acct', 'imessage', 'append', $1, '2026-08-30T00:00:00Z', 0, 0, 0)
+        "#;
+
+        sqlx::query(insert)
+            .bind("running")
+            .execute(&mut *conn)
+            .await
+            .expect("first running session inserts");
+
+        let second = sqlx::query(insert)
+            .bind("running")
+            .execute(&mut *conn)
+            .await;
+        assert!(second.is_err(), "a second running session must be rejected");
+
+        // A finished session does not occupy the slot.
+        sqlx::query(insert)
+            .bind("completed")
+            .execute(&mut *conn)
+            .await
+            .expect("a completed session is not covered by the partial index");
+    }
+
+    #[tokio::test]
+    async fn vault_imports_carries_the_session_columns() {
+        let (pool, _dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        ensure_vault_schema(&mut conn).await.unwrap();
+        sqlx::query(
+            "SELECT stage, staging_dir, device_id, form_json, source_fingerprint
+             FROM vault_imports WHERE 1 = 0",
+        )
+        .fetch_optional(&mut *conn)
+        .await
+        .expect("session columns exist");
+    }
+
+    #[tokio::test]
     async fn fresh_accounts_default_to_full_permissions() {
         let (pool, _dir) = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
@@ -1388,6 +1469,78 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(pg_fts_hits(&mut conn, "goodbye").await, 0);
+    }
+
+    /// The `old_vault_rebuilds_empty_at_current_version` twin for Postgres: a
+    /// vault stamped with a stale [`VAULT_SCHEMA_META_KEY`] is rebuilt empty
+    /// by [`drop_pg_user_tables`] rather than patched in place, so the new
+    /// session columns land on an already-installed vault too. Skips unless
+    /// `MV_TEST_POSTGRES_URL` is set.
+    #[tokio::test]
+    async fn stale_postgres_marker_rebuilds_vault_schema_empty() {
+        let Some(url) = crate::pg_test_url() else {
+            return;
+        };
+        let _pg_guard = crate::acquire_pg_test_lock().await;
+        sqlx::any::install_default_drivers();
+        let pool = sqlx::any::AnyPoolOptions::new()
+            .connect(&url)
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        ensure_vault_schema(&mut conn).await.unwrap();
+        // The Postgres test database is shared across runs, so clear anything
+        // a previous run left behind (the account FK cascades to handles,
+        // conversations, messages, attachments, and tapbacks).
+        sqlx::query("DELETE FROM accounts WHERE id = $1")
+            .bind(A1)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'alice')")
+            .bind(A1)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        // Roll the marker back to what a vault installed before this schema
+        // change would carry, simulating the upgrade scenario the rebuild
+        // path exists for.
+        sqlx::query("DELETE FROM schema_meta WHERE key = $1")
+            .bind(VAULT_SCHEMA_META_KEY)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO schema_meta (key, value) VALUES ('vault_schema_v1', '1')
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        ensure_vault_schema(&mut conn).await.unwrap();
+
+        let accounts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(accounts, 0, "a stale marker rebuilds the vault empty");
+
+        let ready: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM schema_meta WHERE key = $1")
+            .bind(VAULT_SCHEMA_META_KEY)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(ready, 1, "the rebuild stamps the current marker");
+
+        sqlx::query(
+            "SELECT stage, staging_dir, device_id, form_json, source_fingerprint
+             FROM vault_imports WHERE 1 = 0",
+        )
+        .fetch_optional(&mut *conn)
+        .await
+        .expect("the rebuilt Postgres vault carries the session columns");
     }
 
     #[test]
