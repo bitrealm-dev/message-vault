@@ -26,7 +26,9 @@ use message_ir::{
     IrConversationType, IrDirection, IrImessage, IrMessage, IrMessageKind, IrParticipant,
     IrService, SCHEMA_VERSION, owner_sender, parse_json_value,
 };
-use message_ir_format::{FormatSink, FormatSinkResult};
+use message_ir_format::{
+    AttachmentSource, ConversationUnit, FormatSink, FormatSinkResult, WriteQueueOptions,
+};
 use message_vault_io_core::{AttachmentJob, OutputFormat, run_attachment_jobs};
 
 use crate::{
@@ -90,12 +92,21 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
     // Prepare the sink before the message stream. Attachment files are written
     // after parse by the shared runner, so prior IR artifacts (including stale
     // attachments/) must be cleaned first — same pattern as WhatsApp / SMS
-    // Backup & Restore.
-    let (mut sink, attachments_dir) = FormatSink::open_prepared(
-        &session.options.export_path,
-        format,
-        session.options.transforms.clone(),
-    )
+    // Backup & Restore. A resumed run is the exception: what the interrupted
+    // run wrote is exactly the work this one gets to skip.
+    let (mut sink, attachments_dir) = if session.options.resume {
+        FormatSink::open_resume(
+            &session.options.export_path,
+            format,
+            session.options.transforms.clone(),
+        )
+    } else {
+        FormatSink::open_prepared(
+            &session.options.export_path,
+            format,
+            session.options.transforms.clone(),
+        )
+    }
     .map_err(|e| RuntimeError::InvalidOptions(format!("open export sink: {e:#}")))?;
 
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
@@ -160,6 +171,16 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
         ));
     }
 
+    // JSONL without obfuscation is the import path: it goes on the write
+    // queue, which writes each conversation's attachments before the
+    // conversation file and can therefore skip what a previous run finished.
+    // Obfuscation is stateful across documents and the other formats merge or
+    // embed at finish, so they keep the sink path.
+    let use_queue = format == OutputFormat::Jsonl && !session.options.transforms.obfuscate;
+    if use_queue {
+        return drain_conversations(session, conversations);
+    }
+
     if matches!(
         format,
         OutputFormat::Csv | OutputFormat::Json | OutputFormat::Jsonl | OutputFormat::Xml
@@ -181,36 +202,7 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
         if convo.messages.is_empty() {
             continue;
         }
-        let export = ExportMeta {
-            source: EXPORT_SOURCE.into(),
-            tool: EXPORT_TOOL.into(),
-            tool_version: env!("CARGO_PKG_VERSION").into(),
-            owner_handle: (!convo.owner_handle.is_empty()).then(|| convo.owner_handle.clone()),
-            owner_display_name: convo
-                .owner_display_name
-                .or_else(|| session.options.use_caller_id.then(|| ME.to_string())),
-        };
-        let (owner_handle, owner_display_name) = owner_sender(&export);
-        let mut messages = convo.messages;
-        for msg in &mut messages {
-            if msg.direction == IrDirection::Outgoing {
-                msg.sender_handle = owner_handle.clone();
-                msg.sender_display_name = owner_display_name.clone();
-            }
-        }
-        let doc = ConversationDocument {
-            schema_version: SCHEMA_VERSION,
-            export,
-            conversation: ConversationMeta {
-                chat_identifier,
-                conversation_type: convo.conversation_type,
-                group_title: convo.group_title,
-                participants: mail_participants_to_ir(convo.participants),
-                stats: Default::default(),
-            },
-            messages,
-            packaging_stem_suffix: None,
-        };
+        let doc = pending_to_document(chat_identifier, convo, session.options.use_caller_id);
         let document_id = doc.conversation.chat_identifier.clone();
         sink.write_document(doc).map_err(|e| {
             RuntimeError::InvalidOptions(format!(
@@ -233,6 +225,140 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
         .map_err(|e| RuntimeError::InvalidOptions(format!("finish export sink: {e:#}")))?;
 
     Ok(sink_result)
+}
+
+/// Project one accumulated conversation into the shared document shape.
+fn pending_to_document(
+    chat_identifier: String,
+    convo: PendingConversation,
+    use_caller_id: bool,
+) -> ConversationDocument {
+    let export = ExportMeta {
+        source: EXPORT_SOURCE.into(),
+        tool: EXPORT_TOOL.into(),
+        tool_version: env!("CARGO_PKG_VERSION").into(),
+        owner_handle: (!convo.owner_handle.is_empty()).then(|| convo.owner_handle.clone()),
+        owner_display_name: convo
+            .owner_display_name
+            .or_else(|| use_caller_id.then(|| ME.to_string())),
+    };
+    let (owner_handle, owner_display_name) = owner_sender(&export);
+    let mut messages = convo.messages;
+    for msg in &mut messages {
+        if msg.direction == IrDirection::Outgoing {
+            msg.sender_handle = owner_handle.clone();
+            msg.sender_display_name = owner_display_name.clone();
+        }
+    }
+    ConversationDocument {
+        schema_version: SCHEMA_VERSION,
+        export,
+        conversation: ConversationMeta {
+            chat_identifier,
+            conversation_type: convo.conversation_type,
+            group_title: convo.group_title,
+            participants: mail_participants_to_ir(convo.participants),
+            stats: Default::default(),
+        },
+        messages,
+        packaging_stem_suffix: None,
+    }
+}
+
+/// Pair a conversation's document with its attachment sources.
+///
+/// `attachment_loads` is positional: it runs in the same order as the
+/// conversation's flattened `messages[].attachments`, so the sources are
+/// consumed in that order and land on the attachment each was collected for.
+fn pending_to_unit(
+    chat_identifier: String,
+    mut convo: PendingConversation,
+    use_caller_id: bool,
+) -> ConversationUnit {
+    let loads = std::mem::take(&mut convo.attachment_loads);
+    let doc = pending_to_document(chat_identifier, convo, use_caller_id);
+    let mut loads = loads.into_iter();
+    ConversationUnit::from_doc(doc, |_, att| match loads.next() {
+        Some(AttachmentLoad::Path { path, size_hint }) => (AttachmentSource::Path(path), size_hint),
+        Some(AttachmentLoad::Bytes(bytes)) => {
+            let hint = Some(bytes.len() as u64);
+            (AttachmentSource::Bytes(bytes), hint)
+        }
+        Some(AttachmentLoad::Missing) | None => (AttachmentSource::Missing, att.size_bytes),
+    })
+}
+
+/// Write every conversation through the shared write queue.
+fn drain_conversations(
+    session: &MailSession,
+    conversations: BTreeMap<String, PendingConversation>,
+) -> Result<FormatSinkResult, RuntimeError> {
+    let use_caller_id = session.options.use_caller_id;
+    let units: Vec<ConversationUnit> = conversations
+        .into_iter()
+        .filter(|(_, convo)| !convo.messages.is_empty())
+        .map(|(chat_identifier, convo)| pending_to_unit(chat_identifier, convo, use_caller_id))
+        .collect();
+
+    let options = WriteQueueOptions {
+        media: session.options.transforms.media,
+        compress: session.options.transforms.compress.clone(),
+        resume: session.options.resume,
+        writer_count: 0,
+    };
+    let log = session.options.log.clone();
+    let cancel = session.options.cancel.as_ref();
+
+    let encrypted = session
+        .data_source
+        .backup
+        .as_ref()
+        .is_some_and(|b| b.is_encrypted());
+
+    let report = if encrypted {
+        // crabapple's Backup holds a SQLite connection, which is not Sync, so
+        // the decrypt loader cannot cross threads. One writer keeps every
+        // invariant; decrypt-bound throughput would not have parallelized well
+        // anyway.
+        let mut load = |source: &mut AttachmentSource| match source {
+            AttachmentSource::Path(path) => {
+                let bytes = read_resolved_attachment(session, path).map_err(|e| {
+                    // Say why before it becomes a chip: a systemic failure
+                    // otherwise reads as a run's worth of unexplained gaps.
+                    session.options.emit_log(format!(
+                        "warning: attachment {} could not be read: {e}",
+                        path.display()
+                    ));
+                    e.to_string()
+                })?;
+                Ok((!bytes.is_empty()).then_some(bytes))
+            }
+            other => message_ir_format::load_attachment_source(other),
+        };
+        message_ir_format::drain_write_queue_with_loader(
+            &session.options.export_path,
+            units,
+            &options,
+            &mut load,
+            log.as_ref(),
+            cancel,
+        )
+    } else {
+        message_ir_format::drain_write_queue(
+            &session.options.export_path,
+            units,
+            &options,
+            log.as_ref(),
+            cancel,
+        )
+    }
+    .map_err(|e| RuntimeError::InvalidOptions(format!("write conversations: {e:#}")))?;
+
+    Ok(FormatSinkResult {
+        xml_path: None,
+        media: report.media,
+        obfuscated_docs: 0,
+    })
 }
 
 /// Map mail-crate participants onto the shared [`IrParticipant`] shape.
@@ -1152,5 +1278,78 @@ mod tests {
             ir_disabled.attachments[0].missing_reason.as_deref(),
             Some("not_copied")
         );
+    }
+
+    /// A bare message carrying `count` attachments, for pairing tests.
+    fn msg_with_attachments(ts: i64, count: usize) -> IrMessage {
+        IrMessage {
+            guid: format!("guid-{ts}"),
+            timestamp_unix_ms: ts,
+            direction: IrDirection::Incoming,
+            service: IrService::IMessage,
+            message_kind: IrMessageKind::IMessage,
+            sender_handle: Some("+15555550101".into()),
+            sender_display_name: None,
+            subject: None,
+            text: "hi".into(),
+            attachments: (0..count)
+                .map(|i| IrAttachment {
+                    path: None,
+                    original_name: Some(format!("a{i}.jpg")),
+                    mime_type: None,
+                    digest_sha256: None,
+                    is_sticker: false,
+                    transcription: None,
+                    sticker_effect: None,
+                    size_bytes: None,
+                    missing_reason: None,
+                    bytes: None,
+                })
+                .collect(),
+            imessage: None,
+            source: None,
+        }
+    }
+
+    #[test]
+    fn unit_sources_land_on_the_attachment_each_was_collected_for() {
+        // attachment_loads is positional against the conversation's flattened
+        // attachments, so the first load belongs to the first message's
+        // attachment and the second to the next message's.
+        let first = std::path::PathBuf::from("first.jpg");
+        let convo = PendingConversation {
+            conversation_type: IrConversationType::Individual,
+            group_title: None,
+            participants: Vec::new(),
+            owner_handle: String::new(),
+            owner_display_name: None,
+            messages: vec![msg_with_attachments(1000, 1), msg_with_attachments(2000, 1)],
+            attachment_loads: vec![
+                AttachmentLoad::Path {
+                    path: first.clone(),
+                    size_hint: Some(11),
+                },
+                AttachmentLoad::Bytes(b"second".to_vec()),
+            ],
+        };
+
+        let unit = pending_to_unit("+15555550101".into(), convo, false);
+
+        assert_eq!(unit.attachments.len(), 2);
+        assert_eq!(unit.attachments[0].message_index, 0);
+        assert_eq!(unit.attachments[0].attachment_index, 0);
+        assert_eq!(unit.attachments[0].timestamp_unix_ms, 1000);
+        assert_eq!(unit.attachments[0].size_hint, Some(11));
+        match &unit.attachments[0].source {
+            AttachmentSource::Path(p) => assert_eq!(p, &first),
+            other => panic!("first attachment lost its path source: {other:?}"),
+        }
+
+        assert_eq!(unit.attachments[1].message_index, 1);
+        assert_eq!(unit.attachments[1].timestamp_unix_ms, 2000);
+        match &unit.attachments[1].source {
+            AttachmentSource::Bytes(b) => assert_eq!(b, b"second"),
+            other => panic!("second attachment lost its bytes source: {other:?}"),
+        }
     }
 }

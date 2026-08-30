@@ -64,6 +64,9 @@ pub(crate) struct MailOptions {
     pub log: Option<LogSink>,
     /// Cooperative cancel flag, checked periodically inside long loops.
     pub cancel: Option<CancelFlag>,
+    /// Continue an interrupted export: keep previous output and skip the
+    /// conversations already written.
+    pub resume: bool,
 }
 
 impl MailOptions {
