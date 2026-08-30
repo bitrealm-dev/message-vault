@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use crate::process::classify;
+use crate::process::{Kind, classify, is_efficient};
 use crate::{CompressOptions, MediaMode, MediaProbe};
 
 /// Files smaller than this fraction of the limit are not probed.
@@ -45,6 +45,9 @@ pub fn needs_probe(size_bytes: u64, limit_bytes: u64) -> bool {
 }
 
 /// Estimated size after the media step, in bytes. Never capped at the original.
+///
+/// `ext` is matched case-insensitively (normalized internally), so callers
+/// may pass it exactly as read from a file name.
 #[must_use]
 pub fn estimate_bytes(
     size_bytes: u64,
@@ -53,6 +56,11 @@ pub fn estimate_bytes(
     mode: MediaMode,
     compress: &CompressOptions,
 ) -> u64 {
+    let ext = ext.to_ascii_lowercase();
+    let ext = ext.as_str();
+    if skipped_as_efficient(ext, probe, mode, compress) {
+        return size_bytes;
+    }
     let factor = format_factor(ext, probe, mode);
     let scale = match (probe, mode) {
         // Only compress scales video. convert_video re-encodes at the source
@@ -66,6 +74,9 @@ pub fn estimate_bytes(
 }
 
 /// Classify one file, probing it first when it is close enough to matter.
+///
+/// `ext` is matched case-insensitively (normalized internally), so callers
+/// may pass it exactly as read from a file name.
 #[must_use]
 pub fn classify_probed(
     size_bytes: u64,
@@ -75,10 +86,12 @@ pub fn classify_probed(
     compress: &CompressOptions,
     limit_bytes: u64,
 ) -> SizeVerdict {
+    let ext = ext.to_ascii_lowercase();
+    let ext = ext.as_str();
     if !processable(ext) {
         return size_only(size_bytes, limit_bytes, SizeVerdict::CannotProcess);
     }
-    if untouched_by(ext, mode) {
+    if untouched_by(ext, mode) || skipped_as_efficient(ext, probe, mode, compress) {
         return size_only(size_bytes, limit_bytes, SizeVerdict::ProbablyTooBig);
     }
     if !needs_probe(size_bytes, limit_bytes) {
@@ -121,8 +134,10 @@ fn processable(ext: &str) -> bool {
 /// independent of size?
 ///
 /// Mirrors the early returns in `process_one`/`run_one` that do not depend on
-/// a size gate: GIF in either mode, JPEG already in `Convert`, MP3 already in
-/// `Convert`. Deliberately hand-written rather than delegated to
+/// a size gate: nothing is touched in `Clone`/`Disabled` (`run_one`'s last
+/// arm skips every file), GIF is untouched in either of the remaining modes,
+/// JPEG is already in `Convert`'s target form, MP3 already in `Convert`'s.
+/// Deliberately hand-written rather than delegated to
 /// [`crate::derivative_name`]: that function decides the JPEG/MP3 `Compress`
 /// case by statting the file on disk, and this classifier is handed a size it
 /// already knows for a file that may not exist on disk at all (a forecast
@@ -134,9 +149,49 @@ fn processable(ext: &str) -> bool {
 /// (`classify_probed` already answered `FitsAsIs` before probing), so leaving
 /// them out cannot make this function disagree with the pass.
 fn untouched_by(ext: &str, mode: MediaMode) -> bool {
+    if matches!(mode, MediaMode::Clone | MediaMode::Disabled) {
+        return true;
+    }
     matches!(
         (ext, mode),
         ("gif", _) | ("jpg" | "jpeg", MediaMode::Convert) | ("mp3", MediaMode::Convert)
+    )
+}
+
+/// Would `compress_video` skip re-encoding this file and only remux it,
+/// because it is already an efficient HEVC stream?
+///
+/// Calls the pass's own [`is_efficient`] predicate rather than restating its
+/// codec/resolution/bitrate thresholds, so the forecast cannot drift from
+/// what `compress_video` (process.rs) actually decides. Only applies to
+/// video in `Compress` mode with `skip_efficient` on and an actual probe in
+/// hand — an un-probed file (outside the probe band, or an audio/image file
+/// this crate never calls ffprobe for) cannot be judged efficient, so this
+/// answers `false` rather than guessing.
+fn skipped_as_efficient(
+    ext: &str,
+    probe: Option<&MediaProbe>,
+    mode: MediaMode,
+    compress: &CompressOptions,
+) -> bool {
+    if !matches!(mode, MediaMode::Compress) || !compress.skip_efficient {
+        return false;
+    }
+    if !matches!(
+        classify(&Path::new("f").with_extension(ext)),
+        Some(Kind::Video)
+    ) {
+        return false;
+    }
+    let Some(probe) = probe else {
+        return false;
+    };
+    is_efficient(
+        &probe.codec,
+        probe.width,
+        probe.height,
+        probe.bitrate,
+        compress,
     )
 }
 
@@ -186,14 +241,17 @@ fn format_factor(ext: &str, probe: Option<&MediaProbe>, mode: MediaMode) -> f64 
         // source codec and so is not size-changing at all; only its re-encode
         // fallback is format_factor's concern), so a source already on a more
         // efficient codec grows — decision 12's headline case.
-        // `compress_video` re-encodes to HEVC (libx265) first and only falls
-        // back to H.264 when that fails, so a source that is already HEVC (or
-        // another efficient codec) does not pay that tax when compressing;
-        // the resolution/fps caps above do most of the shrinking, and the
-        // fixed-CRF re-encode shrinks it a bit further.
+        //
+        // `compress_video` re-encodes to HEVC (libx265) at a fixed CRF, so an
+        // already-efficient HEVC source never reaches this arm at all — it is
+        // caught upstream by `skipped_as_efficient` and judged on its
+        // unchanged size instead. What *does* land here in `Compress` mode is
+        // a codec (HEVC included) that failed the efficiency check — too big,
+        // too high-bitrate, or the wrong resolution — so the flat 0.7 general
+        // compress factor applies uniformly; there is no case left where the
+        // convert-mode growth factor also belongs to a compressing file.
         _ => match probe.map(|p| p.codec.as_str()) {
-            Some("hevc" | "vp9" | "av1") if compressing => 0.3,
-            Some("hevc" | "vp9" | "av1") => 1.4,
+            Some("hevc" | "vp9" | "av1") if !compressing => 1.4,
             Some(_) if compressing => 0.7,
             _ => 1.0,
         },
@@ -206,12 +264,13 @@ mod tests {
 
     const LIMIT: u64 = 50 * 1024 * 1024;
 
-    fn probe(codec: &str, width: u32, height: u32, fps: Option<f32>) -> MediaProbe {
+    fn probe(codec: &str, width: u32, height: u32, fps: Option<f32>, bitrate: u64) -> MediaProbe {
         MediaProbe {
             codec: codec.into(),
             width,
             height,
             fps,
+            bitrate,
         }
     }
 
@@ -235,7 +294,7 @@ mod tests {
     fn heic_under_the_limit_may_grow_past_it() {
         // Decision 12's headline case: HEIC is about half an equivalent JPEG,
         // so converting grows it. 30 MB in, over 50 MB out.
-        let p = probe("hevc", 4032, 3024, None);
+        let p = probe("hevc", 4032, 3024, None, 0);
         assert_eq!(
             classify_probed(
                 30 * 1024 * 1024,
@@ -250,10 +309,35 @@ mod tests {
     }
 
     #[test]
+    fn uppercase_extension_is_matched_case_insensitively() {
+        // Same fixture and expectation as the test above, spelled the way a
+        // real file name would be: `IMG_0001.HEIC`. `format_factor` matches
+        // extensions as lowercase literals, so an ext this function does not
+        // normalize first would miss the "heic" arm, fall through to the
+        // video codec arm instead, and read as `FitsAsIs`.
+        let p = probe("hevc", 4032, 3024, None, 0);
+        assert_eq!(
+            classify_probed(
+                30 * 1024 * 1024,
+                Some(&p),
+                "HEIC",
+                MediaMode::Convert,
+                &CompressOptions::default(),
+                LIMIT
+            ),
+            SizeVerdict::MayGrow
+        );
+    }
+
+    #[test]
     fn a_huge_video_compressed_down_is_likely_to_fit() {
-        // 4K30 at 400 MB, compressed to 1080p30: the pixel ratio alone is
-        // about a quarter, and it lands comfortably under 80% of the limit.
-        let p = probe("hevc", 3840, 2160, Some(30.0));
+        // 4K60 at 400 MB, compressed to 1080p30: pixel ratio 0.25, fps ratio
+        // 0.5, format factor 0.7 (HEVC over the efficient-skip's resolution
+        // cap, so it actually gets re-encoded) — 400 * 0.25 * 0.5 * 0.7 =
+        // 35 MB, comfortably under the 40 MB margin. The bitrate is set high
+        // so the efficient-skip gate (which the resolution already fails)
+        // isn't what's carrying this test.
+        let p = probe("hevc", 3840, 2160, Some(60.0), 20_000_000);
         assert_eq!(
             classify_probed(
                 400 * 1024 * 1024,
@@ -269,7 +353,7 @@ mod tests {
 
     #[test]
     fn a_video_that_stays_over_the_limit_says_so() {
-        let p = probe("h264", 1920, 1080, Some(30.0));
+        let p = probe("h264", 1920, 1080, Some(30.0), 0);
         assert_eq!(
             classify_probed(
                 900 * 1024 * 1024,
@@ -286,7 +370,7 @@ mod tests {
     #[test]
     fn an_estimate_just_under_the_limit_still_reads_as_too_big() {
         // The 80% margin: a near miss must not read as a promise.
-        let p = probe("h264", 1920, 1080, Some(30.0));
+        let p = probe("h264", 1920, 1080, Some(30.0), 0);
         let size = 60 * 1024 * 1024;
         let estimate = estimate_bytes(
             size,
@@ -300,6 +384,30 @@ mod tests {
         assert_eq!(
             classify_probed(
                 size,
+                Some(&p),
+                "mp4",
+                MediaMode::Compress,
+                &CompressOptions::default(),
+                LIMIT
+            ),
+            SizeVerdict::ProbablyTooBig
+        );
+    }
+
+    #[test]
+    fn efficient_hevc_is_skipped_by_compress_so_it_stays_too_big() {
+        // Decision the review caught: `compress_video` skips re-encoding
+        // (and only remuxes) an HEVC source that is already within the
+        // resolution cap and under the ~12 Mbps efficient-bitrate threshold
+        // (`is_efficient` in process.rs). A forecast that does not know this
+        // scales the file down as if it were being re-encoded — 55 MB * 0.7
+        // = 38.5 MB, under the 40 MB margin — and promises `LikelyFits` for
+        // a file the pass will not actually touch. It stays 55 MB, over the
+        // 50 MB limit: `ProbablyTooBig`.
+        let p = probe("hevc", 1920, 1080, Some(30.0), 9_000_000);
+        assert_eq!(
+            classify_probed(
+                55 * 1024 * 1024,
                 Some(&p),
                 "mp4",
                 MediaMode::Compress,
@@ -353,9 +461,100 @@ mod tests {
     }
 
     #[test]
+    fn gif_in_compress_mode_is_also_judged_on_its_own_size() {
+        // Same guarantee as the Convert-mode test above, but for Compress —
+        // a regression that narrowed `untouched_by`'s GIF arm to Convert
+        // only would still pass every other test here (GIF's fallback
+        // `format_factor` also happens to be a no-op for an un-probed file),
+        // so this uses a probed GIF (ffprobe does report a stream for an
+        // animated GIF) specifically to make the wrong branch compute a
+        // different number: 55 MB * format_factor 0.7 = 38.5 MB, under the
+        // margin, reads `LikelyFits` instead of the correct `ProbablyTooBig`.
+        let p = probe("gif", 800, 600, Some(15.0), 0);
+        assert_eq!(
+            classify_probed(
+                55 * 1024 * 1024,
+                Some(&p),
+                "gif",
+                MediaMode::Compress,
+                &CompressOptions::default(),
+                LIMIT
+            ),
+            SizeVerdict::ProbablyTooBig
+        );
+    }
+
+    #[test]
+    fn jpeg_in_convert_is_untouched_so_a_big_one_stays_too_big() {
+        // Convert mode leaves an already-JPEG file alone (`run_one`'s early
+        // return). Dropping that arm from `untouched_by` would instead run
+        // it through `format_factor`'s 0.7 "already JPEG" shrink and read
+        // `LikelyFits` for a file whose size never actually changes.
+        assert_eq!(
+            classify_probed(
+                55 * 1024 * 1024,
+                None,
+                "jpg",
+                MediaMode::Convert,
+                &CompressOptions::default(),
+                LIMIT
+            ),
+            SizeVerdict::ProbablyTooBig
+        );
+    }
+
+    #[test]
+    fn mp3_in_convert_is_untouched_so_a_big_one_stays_too_big() {
+        // Same shape as the JPEG case above, for MP3 (`format_factor`'s 0.6
+        // "already MP3" shrink is a Compress-mode fact, not a Convert one).
+        assert_eq!(
+            classify_probed(
+                60 * 1024 * 1024,
+                None,
+                "mp3",
+                MediaMode::Convert,
+                &CompressOptions::default(),
+                LIMIT
+            ),
+            SizeVerdict::ProbablyTooBig
+        );
+    }
+
+    #[test]
+    fn clone_and_disabled_leave_every_file_alone() {
+        // `run_one`'s last arm skips every file in Clone/Disabled mode
+        // regardless of kind or extension. A forecast that does not know
+        // this still applies HEIC's 1.8 convert-growth factor and predicts
+        // `MayGrow` for a file that will be copied byte-for-byte.
+        let p = probe("hevc", 4032, 3024, None, 0);
+        assert_eq!(
+            classify_probed(
+                30 * 1024 * 1024,
+                Some(&p),
+                "heic",
+                MediaMode::Clone,
+                &CompressOptions::default(),
+                LIMIT
+            ),
+            SizeVerdict::FitsAsIs
+        );
+        assert_eq!(
+            classify_probed(
+                30 * 1024 * 1024,
+                None,
+                "heic",
+                MediaMode::Disabled,
+                &CompressOptions::default(),
+                LIMIT
+            ),
+            SizeVerdict::FitsAsIs
+        );
+    }
+
+    #[test]
     fn the_estimate_is_not_capped_at_the_original_size() {
         // Decision 12 says so in as many words. A cap would erase MayGrow.
-        let p = probe("hevc", 4032, 3024, None);
+        let p = probe("hevc", 4032, 3024, None, 0);
         let size = 10 * 1024 * 1024;
         assert!(
             estimate_bytes(

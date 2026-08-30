@@ -272,17 +272,30 @@ pub(crate) struct Probe {
 
 /// Build a `Command` for ffprobe, resolved the same way as every other tool
 /// lookup in this module. The one place that decides where ffprobe lives, so
-/// [`probe_video`] and the public [`crate::probe_media`] agree with each other.
-pub(crate) fn ffprobe_command() -> Command {
-    let ffprobe =
-        resolve_tool("ffprobe").unwrap_or_else(|| PathBuf::from(executable_name("ffprobe")));
+/// [`probe_video`] and the public [`crate::probe_media`] agree with each
+/// other and report the same error when the tool is missing.
+///
+/// # Errors
+///
+/// Returns a named "ffprobe not found…" error when ffprobe cannot be
+/// resolved anywhere this module looks — deliberately, rather than falling
+/// back to a bare `ffprobe` command name: a bare name that then fails to
+/// spawn surfaces as an IO error pointing at the *input file* ("No such file
+/// or directory"), which reads as a problem with the user's file rather than
+/// a missing tool.
+pub(crate) fn ffprobe_command() -> Result<Command> {
+    let ffprobe = resolve_tool("ffprobe").ok_or_else(|| {
+        anyhow::anyhow!(
+            "ffprobe not found in lib/ (or beside this program), in MESSAGE_VAULT_IO_BIN, or on PATH"
+        )
+    })?;
     let mut cmd = Command::new(ffprobe);
     cmd.stdin(Stdio::null());
-    cmd
+    Ok(cmd)
 }
 
 pub(crate) fn probe_video(path: &std::path::Path) -> Result<Probe> {
-    let mut cmd = ffprobe_command();
+    let mut cmd = ffprobe_command()?;
     cmd.args([
         "-v",
         "error",
@@ -387,6 +400,28 @@ mod tests {
         assert!(ffmpeg_available());
         set_tools_dir(None);
         assert_eq!(tools_dir(), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn missing_ffprobe_names_the_tool_not_the_input_file() {
+        // A `Command` built from a bare, unresolved "ffprobe" would fail to
+        // spawn with an IO error naming whatever path was passed as the
+        // *input* — "No such file or directory" on `/path/to/IMG_0001.HEIC"
+        // — which reads as a problem with the user's file, not the missing
+        // tool. `ffprobe_command` must fail before that, with a message that
+        // names ffprobe.
+        let _guard = tools_state_lock();
+        let _restore = RestoreToolsDir::capture();
+        let empty = tempfile::tempdir().unwrap();
+        set_tools_dir(Some(empty.path().to_path_buf()));
+
+        let err = ffprobe_command().expect_err("no ffprobe in an empty override dir");
+        let message = err.to_string();
+        assert!(
+            message.contains("ffprobe not found"),
+            "message was {message:?}"
+        );
     }
 
     #[cfg(unix)]

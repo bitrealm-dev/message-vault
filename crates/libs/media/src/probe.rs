@@ -20,6 +20,9 @@ pub struct MediaProbe {
     pub height: u32,
     /// Frames per second, `None` for stills.
     pub fps: Option<f32>,
+    /// Bits per second, as ffprobe reports it. `0` when unreported (a still,
+    /// or a stream ffprobe could not measure).
+    pub bitrate: u64,
 }
 
 impl MediaProbe {
@@ -37,14 +40,14 @@ impl MediaProbe {
 /// Returns an error when ffprobe is missing, exits non-zero, or reports a
 /// line this cannot read.
 pub fn probe_media(path: &Path) -> Result<MediaProbe> {
-    let mut cmd: Command = ffprobe_command();
+    let mut cmd: Command = ffprobe_command()?;
     cmd.args([
         "-v",
         "error",
         "-select_streams",
         "v:0",
         "-show_entries",
-        "stream=codec_name,width,height,avg_frame_rate",
+        "stream=codec_name,width,height,avg_frame_rate,bit_rate",
         "-of",
         "csv=p=0",
     ]);
@@ -67,7 +70,12 @@ pub fn probe_media(path: &Path) -> Result<MediaProbe> {
     parse_probe_line(line.trim())
 }
 
-/// Read one `codec,width,height,avg_frame_rate` line.
+/// Read one `codec,width,height,avg_frame_rate,bit_rate` line.
+///
+/// `bit_rate` is trailing and optional-in-practice: absent, ffprobe writes
+/// `N/A`, or a still simply has none. All of those default to `0` rather
+/// than erroring, same as a malformed width/height — only a genuinely
+/// missing codec/width/height column fails the read.
 fn parse_probe_line(line: &str) -> Result<MediaProbe> {
     let mut parts = line.split(',');
     let codec = parts.next().unwrap_or_default().trim().to_ascii_lowercase();
@@ -78,11 +86,13 @@ fn parse_probe_line(line: &str) -> Result<MediaProbe> {
         .next()
         .ok_or_else(|| anyhow!("no height in {line:?}"))?;
     let rate = parts.next().unwrap_or_default();
+    let bitrate = parts.next().unwrap_or_default();
     Ok(MediaProbe {
         codec,
         width: width.trim().parse().unwrap_or(0),
         height: height.trim().parse().unwrap_or(0),
         fps: parse_frame_rate(rate.trim()),
+        bitrate: bitrate.trim().parse().unwrap_or(0),
     })
 }
 
@@ -123,6 +133,9 @@ mod tests {
         assert_eq!(probe.width, 3840);
         assert_eq!(probe.height, 2160);
         assert_eq!(probe.fps, Some(29.97003));
+        // No bit_rate column on this line: defaults rather than errors, same
+        // as a malformed width/height would.
+        assert_eq!(probe.bitrate, 0);
     }
 
     #[test]
@@ -130,6 +143,14 @@ mod tests {
         // A defaulted probe reads as a 0x0 file, which the estimate would
         // divide by. Fail loudly instead.
         assert!(parse_probe_line("hevc,3840").is_err());
+    }
+
+    #[test]
+    fn reads_the_bit_rate_column_when_present() {
+        // The efficient-video skip (`is_efficient` in process.rs) gates on
+        // bitrate, so this column has to come through, not just default.
+        let probe = parse_probe_line("hevc,1920,1080,30/1,9000000").unwrap();
+        assert_eq!(probe.bitrate, 9_000_000);
     }
 
     /// The parsing tests above never touch ffprobe itself: they hand-craft

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-use crate::tools::{Probe, probe_video, require_ffmpeg, run_ffmpeg};
+use crate::tools::{probe_video, require_ffmpeg, run_ffmpeg};
 use crate::{CompressOptions, MediaMode};
 
 /// Aggregate counts and errors from one media convert/compress pass.
@@ -731,7 +731,9 @@ fn compress_video(
     }
 
     let probe = probe_video(path).unwrap_or_default();
-    if opts.skip_efficient && is_efficient(&probe, opts) {
+    if opts.skip_efficient
+        && is_efficient(&probe.codec, probe.width, probe.height, probe.bitrate, opts)
+    {
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
@@ -808,17 +810,30 @@ fn base_video_args(path: &Path, _tmp: &Path, vf: &str) -> Vec<String> {
     ]
 }
 
-fn is_efficient(probe: &Probe, opts: &CompressOptions) -> bool {
-    let hevc = matches!(probe.codec.as_str(), "hevc" | "h265");
+/// Would `compress_video` skip re-encoding this stream and only remux it?
+///
+/// Takes plain fields rather than [`crate::tools::Probe`] so the size
+/// forecast in `estimate.rs` (which has its own [`crate::MediaProbe`] from a
+/// public ffprobe call, not this module's private `Probe`) can call the exact
+/// predicate `compress_video` uses instead of copying its thresholds — one
+/// place decides what counts as "already efficient enough."
+pub(crate) fn is_efficient(
+    codec: &str,
+    width: u32,
+    height: u32,
+    bitrate: u64,
+    opts: &CompressOptions,
+) -> bool {
+    let hevc = matches!(codec, "hevc" | "h265");
     if !hevc {
         return false;
     }
-    let long = probe.width.max(probe.height);
+    let long = width.max(height);
     if long > opts.max_resolution.max_long_edge() {
         return false;
     }
     // ~12 Mbps threshold (archive-tools style)
-    if probe.bitrate > 12_000_000 {
+    if bitrate > 12_000_000 {
         return false;
     }
     true
