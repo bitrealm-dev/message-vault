@@ -25,6 +25,12 @@ pub struct MediaReport {
 /// How often to write `…n/total` progress lines during convert/compress.
 const MEDIA_PROGRESS_EVERY: usize = 100;
 
+/// JPEGs at or under this size are left alone in compress mode: re-encoding
+/// them buys nothing.
+const JPEG_COMPRESS_FLOOR: u64 = 500 * 1024;
+/// MP3s at or under this size are left alone in compress mode.
+const MP3_COMPRESS_FLOOR: u64 = 100 * 1024;
+
 /// Convert or compress media under `output_dir/attachments`.
 ///
 /// Returns a path remap (`old_rel` → `new_rel`, forward-slash relative to
@@ -175,7 +181,7 @@ enum Outcome {
 }
 
 #[derive(Clone, Copy)]
-enum Kind {
+pub(crate) enum Kind {
     Image,
     Video,
     Audio,
@@ -222,6 +228,32 @@ fn remove_msgmedia_temps(root: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Delete ffmpeg scratch left beside `path` by an earlier interrupted run.
+///
+/// Scoped to this file's own siblings, and matched on the same
+/// `.msgmedia.tmp.` marker `remove_msgmedia_temps` uses — which is why a
+/// `.in_progress` file survives it (decision 30).
+fn remove_temps_beside(path: &Path) {
+    let (Some(dir), Some(stem)) = (path.parent(), path.file_stem().and_then(|s| s.to_str())) else {
+        return;
+    };
+    let prefix = format!("{stem}.");
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let candidate = entry.path();
+        if is_msgmedia_temp(&candidate)
+            && candidate
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(&prefix))
+        {
+            let _ = fs::remove_file(&candidate);
+        }
+    }
+}
+
 fn temp_sibling(path: &Path, ext: &str) -> PathBuf {
     path.with_extension(format!("msgmedia.tmp.{ext}"))
 }
@@ -237,13 +269,13 @@ fn with_temp_output<T>(tmp: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
     }
 }
 
-fn try_remux_replace(path: &Path) -> Result<Option<PathBuf>> {
+fn try_remux_replace(path: &Path, commit: Commit<'_>) -> Result<Option<PathBuf>> {
     let tmp = temp_sibling(path, "mp4");
     if remux_mp4(path, &tmp).is_err() {
         let _ = fs::remove_file(&tmp);
         return Ok(None);
     }
-    match replace_original(path, &tmp) {
+    match commit_produced(commit, path, &tmp) {
         Ok(p) => Ok(Some(p)),
         Err(err) => {
             let _ = fs::remove_file(&tmp);
@@ -252,7 +284,7 @@ fn try_remux_replace(path: &Path) -> Result<Option<PathBuf>> {
     }
 }
 
-fn classify(path: &Path) -> Option<Kind> {
+pub(crate) fn classify(path: &Path) -> Option<Kind> {
     if is_msgmedia_temp(path) {
         return None;
     }
@@ -273,14 +305,18 @@ fn classify(path: &Path) -> Option<Kind> {
     }
 }
 
-fn process_one(
-    output_dir: &Path,
+/// Run the media step over one file, committing however `commit` says.
+///
+/// Returns the produced path, or `None` when the media step leaves this file
+/// alone — either because the mode does not touch it, or because a same-format
+/// re-encode came out no smaller (decision 44).
+fn run_one(
     path: &Path,
     mode: MediaMode,
     compress: &CompressOptions,
-) -> Result<Outcome> {
+    commit: Commit<'_>,
+) -> Result<Option<PathBuf>> {
     let kind = classify(path).context("unknown media kind")?;
-    let old_rel = rel_path(output_dir, path)?;
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -291,43 +327,139 @@ fn process_one(
         (Kind::Image, MediaMode::Convert) => {
             // Keep GIF as-is (animation); jpg already in target form.
             if matches!(ext.as_str(), "jpg" | "jpeg" | "gif") {
-                return Ok(Outcome::Skipped);
+                return Ok(None);
             }
-            convert_image(path, false).map(|new_path| changed(output_dir, &old_rel, &new_path))?
+            convert_image(path, false, false, commit)
         }
         (Kind::Image, MediaMode::Compress) => {
             if ext == "gif" {
-                return Ok(Outcome::Skipped);
+                return Ok(None);
             }
-            let meta = fs::metadata(path)?;
-            if matches!(ext.as_str(), "jpg" | "jpeg") && meta.len() <= 500 * 1024 {
-                return Ok(Outcome::Skipped);
+            let same_format = matches!(ext.as_str(), "jpg" | "jpeg");
+            if same_format && fs::metadata(path)?.len() <= JPEG_COMPRESS_FLOOR {
+                return Ok(None);
             }
-            convert_image(path, true).map(|new_path| changed(output_dir, &old_rel, &new_path))?
+            convert_image(path, true, same_format, commit)
         }
         (Kind::Audio, MediaMode::Convert) => {
             if ext == "mp3" {
-                return Ok(Outcome::Skipped);
+                return Ok(None);
             }
-            convert_audio(path, false).map(|new_path| changed(output_dir, &old_rel, &new_path))?
+            convert_audio(path, false, false, commit)
         }
         (Kind::Audio, MediaMode::Compress) => {
-            let meta = fs::metadata(path)?;
-            if ext == "mp3" && meta.len() <= 100 * 1024 {
-                return Ok(Outcome::Skipped);
+            let same_format = ext == "mp3";
+            if same_format && fs::metadata(path)?.len() <= MP3_COMPRESS_FLOOR {
+                return Ok(None);
             }
-            convert_audio(path, true).map(|new_path| changed(output_dir, &old_rel, &new_path))?
+            convert_audio(path, true, same_format, commit)
         }
-        (Kind::Video, MediaMode::Convert) => {
-            convert_video(path).map(|new_path| changed(output_dir, &old_rel, &new_path))?
+        (Kind::Video, MediaMode::Convert) => convert_video(path, commit).map(Some),
+        (Kind::Video, MediaMode::Compress) => compress_video(path, compress, commit),
+        (_, MediaMode::Clone | MediaMode::Disabled) => Ok(None),
+    }
+}
+
+fn process_one(
+    output_dir: &Path,
+    path: &Path,
+    mode: MediaMode,
+    compress: &CompressOptions,
+) -> Result<Outcome> {
+    let old_rel = rel_path(output_dir, path)?;
+    match run_one(path, mode, compress, Commit::InPlace)? {
+        Some(new_path) => changed(output_dir, &old_rel, &new_path),
+        None => Ok(Outcome::Skipped),
+    }
+}
+
+/// What [`transcode_file`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TranscodeOutcome {
+    /// Nothing was written: the mode does not touch this file, or a
+    /// same-format re-encode came out no smaller.
+    Skipped,
+    /// A derivative was written to the destination the caller named.
+    Produced,
+}
+
+/// File name the media step would produce for `src`, or `None` when it leaves
+/// the file alone.
+///
+/// Reads the same decision tree as the pass itself, so the name a caller
+/// patches into a conversation file is the name the pass writes.
+#[must_use]
+pub fn derivative_name(src: &Path, mode: MediaMode) -> Option<String> {
+    let kind = classify(src)?;
+    let ext = src
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let stem = src.file_stem().and_then(|s| s.to_str())?;
+    let target = match (kind, mode) {
+        (_, MediaMode::Clone | MediaMode::Disabled) => return None,
+        (Kind::Image, MediaMode::Convert) => {
+            if matches!(ext.as_str(), "jpg" | "jpeg" | "gif") {
+                return None;
+            }
+            "jpg"
         }
-        (Kind::Video, MediaMode::Compress) => {
-            compress_video(path, compress).map(|outcome| match outcome {
-                Some(new_path) => changed(output_dir, &old_rel, &new_path),
-                None => Ok(Outcome::Skipped),
-            })?
+        (Kind::Image, MediaMode::Compress) => {
+            if ext == "gif" {
+                return None;
+            }
+            if matches!(ext.as_str(), "jpg" | "jpeg")
+                && fs::metadata(src).map(|m| m.len()).unwrap_or(0) <= JPEG_COMPRESS_FLOOR
+            {
+                return None;
+            }
+            "jpg"
         }
-        (_, MediaMode::Clone | MediaMode::Disabled) => Ok(Outcome::Skipped),
+        (Kind::Audio, MediaMode::Convert) => {
+            if ext == "mp3" {
+                return None;
+            }
+            "mp3"
+        }
+        (Kind::Audio, MediaMode::Compress) => {
+            if ext == "mp3" && fs::metadata(src).map(|m| m.len()).unwrap_or(0) <= MP3_COMPRESS_FLOOR
+            {
+                return None;
+            }
+            "mp3"
+        }
+        (Kind::Video, _) => "mp4",
+    };
+    Some(format!("{stem}.{target}"))
+}
+
+/// Transcode `src` and write the derivative to exactly `dest`.
+///
+/// `src` is never modified or deleted: committing is the caller's, because it
+/// has to patch whatever points at the original first (decision 28). Scratch
+/// left beside `src` by an interrupted run is cleared; scratch belonging to
+/// other files, and any `.in_progress` marker, is left alone.
+///
+/// # Errors
+///
+/// Returns an error when ffmpeg/ffprobe are missing or fail, or IO fails.
+pub fn transcode_file(
+    src: &Path,
+    dest: &Path,
+    mode: MediaMode,
+    compress: &CompressOptions,
+) -> Result<TranscodeOutcome> {
+    // Clear this file's own scratch before checking the mode: an interrupted
+    // run can leave scratch beside a file regardless of what mode retries it.
+    remove_temps_beside(src);
+    if matches!(mode, MediaMode::Clone | MediaMode::Disabled) {
+        return Ok(TranscodeOutcome::Skipped);
+    }
+    require_ffmpeg()?;
+    match run_one(src, mode, compress, Commit::To(dest))? {
+        Some(_) => Ok(TranscodeOutcome::Produced),
+        None => Ok(TranscodeOutcome::Skipped),
     }
 }
 
@@ -372,6 +504,44 @@ fn sibling_with_ext(path: &Path, ext: &str) -> PathBuf {
     }
 }
 
+/// Where a freshly produced derivative goes.
+#[derive(Debug, Clone, Copy)]
+enum Commit<'a> {
+    /// Replace the original in place, deleting it. The directory pass's
+    /// behaviour, unchanged.
+    InPlace,
+    /// Move the derivative to exactly this path and leave the original alone.
+    ///
+    /// The caller commits: it patches whatever points at the original, renames
+    /// this file into its final name, and only then deletes the original
+    /// (decision 28).
+    To(&'a Path),
+}
+
+fn commit_produced(commit: Commit<'_>, original: &Path, produced: &Path) -> Result<PathBuf> {
+    match commit {
+        Commit::InPlace => replace_original(original, produced),
+        Commit::To(dest) => {
+            if let Some(parent) = dest.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("create {}", parent.display()))?;
+            }
+            fs::rename(produced, dest)
+                .with_context(|| format!("rename {} to {}", produced.display(), dest.display()))?;
+            Ok(dest.to_path_buf())
+        }
+    }
+}
+
+/// Is `produced` actually smaller than `original`?
+///
+/// Only meaningful for a same-format re-encode. Where the format changes the
+/// user asked for the target format, and a smaller file in the source format
+/// is not a substitute for it.
+fn is_smaller(produced: &Path, original: &Path) -> Result<bool> {
+    Ok(fs::metadata(produced)?.len() < fs::metadata(original)?.len())
+}
+
 fn replace_original(original: &Path, produced: &Path) -> Result<PathBuf> {
     if produced == original {
         return Ok(original.to_path_buf());
@@ -402,7 +572,12 @@ fn replace_original(original: &Path, produced: &Path) -> Result<PathBuf> {
     Ok(final_path)
 }
 
-fn convert_image(path: &Path, compress: bool) -> Result<PathBuf> {
+fn convert_image(
+    path: &Path,
+    compress: bool,
+    keep_smaller: bool,
+    commit: Commit<'_>,
+) -> Result<Option<PathBuf>> {
     let tmp = temp_sibling(path, "jpg");
     let quality = if compress { "5" } else { "2" }; // ffmpeg -q:v (2 best … 31 worst for mjpeg)
     // `-frames:v 1 -update 1`: animated GIF/WebP must write a single still, not an
@@ -421,11 +596,20 @@ fn convert_image(path: &Path, compress: bool) -> Result<PathBuf> {
     ];
     with_temp_output(&tmp, || {
         run_ffmpeg(&args).with_context(|| format!("convert image {}", path.display()))?;
-        replace_original(path, &tmp)
+        if keep_smaller && !is_smaller(&tmp, path)? {
+            let _ = fs::remove_file(&tmp);
+            return Ok(None);
+        }
+        commit_produced(commit, path, &tmp).map(Some)
     })
 }
 
-fn convert_audio(path: &Path, compress: bool) -> Result<PathBuf> {
+fn convert_audio(
+    path: &Path,
+    compress: bool,
+    keep_smaller: bool,
+    commit: Commit<'_>,
+) -> Result<Option<PathBuf>> {
     let tmp = temp_sibling(path, "mp3");
     let mut args = vec![
         "-y".into(),
@@ -443,17 +627,21 @@ fn convert_audio(path: &Path, compress: bool) -> Result<PathBuf> {
     args.push(path_str(&tmp));
     with_temp_output(&tmp, || {
         run_ffmpeg(&args).with_context(|| format!("convert audio {}", path.display()))?;
-        replace_original(path, &tmp)
+        if keep_smaller && !is_smaller(&tmp, path)? {
+            let _ = fs::remove_file(&tmp);
+            return Ok(None);
+        }
+        commit_produced(commit, path, &tmp).map(Some)
     })
 }
 
-fn convert_video(path: &Path) -> Result<PathBuf> {
+fn convert_video(path: &Path, commit: Commit<'_>) -> Result<PathBuf> {
     let tmp = temp_sibling(path, "mp4");
 
     with_temp_output(&tmp, || {
         // Prefer remux into mp4 when already a video file.
         if remux_mp4(path, &tmp).is_ok() {
-            return replace_original(path, &tmp);
+            return commit_produced(commit, path, &tmp);
         }
         let _ = fs::remove_file(&tmp);
 
@@ -479,7 +667,7 @@ fn convert_video(path: &Path) -> Result<PathBuf> {
             path_str(&tmp),
         ];
         run_ffmpeg(&args).with_context(|| format!("convert video {}", path.display()))?;
-        replace_original(path, &tmp)
+        commit_produced(commit, path, &tmp)
     })
 }
 
@@ -497,7 +685,11 @@ fn remux_mp4(path: &Path, tmp: &Path) -> Result<()> {
     run_ffmpeg(&args)
 }
 
-fn compress_video(path: &Path, opts: &CompressOptions) -> Result<Option<PathBuf>> {
+fn compress_video(
+    path: &Path,
+    opts: &CompressOptions,
+    commit: Commit<'_>,
+) -> Result<Option<PathBuf>> {
     let meta = fs::metadata(path)?;
     if meta.len() < opts.min_size_bytes {
         // Still remux non-mp4 small files for container consistency.
@@ -509,7 +701,7 @@ fn compress_video(path: &Path, opts: &CompressOptions) -> Result<Option<PathBuf>
         if ext == "mp4" {
             return Ok(None);
         }
-        return try_remux_replace(path);
+        return try_remux_replace(path, commit);
     }
 
     let probe = probe_video(path).unwrap_or_default();
@@ -522,7 +714,7 @@ fn compress_video(path: &Path, opts: &CompressOptions) -> Result<Option<PathBuf>
         if ext == "mp4" {
             return Ok(None);
         }
-        return try_remux_replace(path);
+        return try_remux_replace(path, commit);
     }
 
     let max_edge = opts.max_resolution.max_long_edge();
@@ -576,7 +768,7 @@ fn compress_video(path: &Path, opts: &CompressOptions) -> Result<Option<PathBuf>
             ]);
             run_ffmpeg(&avc_args).with_context(|| format!("compress video {}", path.display()))?;
         }
-        Ok(Some(replace_original(path, &tmp)?))
+        Ok(Some(commit_produced(commit, path, &tmp)?))
     })
 }
 
@@ -613,6 +805,188 @@ fn path_str(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::ffmpeg_available;
+
+    /// Write a minimal valid 1x1 PNG, readable by ffmpeg, for conversion tests.
+    ///
+    /// Plain RGB (PNG color type 2), not RGBA: this build's ffmpeg PNG decoder
+    /// chokes on a 1x1 RGBA image ("chunk too big" / decode error) but reads
+    /// this one cleanly.
+    fn write_test_png(path: &Path) {
+        #[rustfmt::skip]
+        const PNG_1X1_RGB: &[u8] = &[
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+            0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0x00,
+            0x00, 0x03, 0x01, 0x01, 0x00, 0xc9, 0xfe, 0x92, 0xef, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e,
+            0x44, 0xae, 0x42, 0x60, 0x82,
+        ];
+        fs::write(path, PNG_1X1_RGB).unwrap();
+    }
+
+    /// Write a random-noise JPEG through ffmpeg at `-q:v 20`, sized so a
+    /// compress-mode re-encode at `-q:v 5` is not smaller.
+    ///
+    /// Calibrated empirically against this repo's ffmpeg build: random RGB
+    /// noise at `-q:v 20` runs about 0.44 bytes/pixel, and re-encoding it at
+    /// `-q:v 5` (much less quantization) comes out roughly 50% *larger* —
+    /// noise has no redundancy for the finer quantization step to exploit,
+    /// so asking for more detail just spends more bits recording the same
+    /// randomness. That is the opposite of the usual "worse quality = smaller
+    /// file" case a typical photo re-encode hits, which is exactly why it
+    /// exercises the keep-smaller guard.
+    fn write_incompressible_jpeg(path: &Path, target_size: u64) {
+        let pixels = (target_size as f64 / 0.44).max(4.0);
+        let mut width = ((pixels * 4.0 / 3.0).sqrt() as u32).max(2);
+        width -= width % 2;
+        let mut height = width * 3 / 4;
+        height -= height % 2;
+        let args = vec![
+            "-y".into(),
+            "-f".into(),
+            "lavfi".into(),
+            "-i".into(),
+            format!("nullsrc=size={width}x{height},geq=random(1)*255:random(1)*255:random(1)*255"),
+            "-frames:v".into(),
+            "1".into(),
+            "-update".into(),
+            "1".into(),
+            "-q:v".into(),
+            "20".into(),
+            path_str(path),
+        ];
+        run_ffmpeg(&args).expect("generate incompressible jpeg fixture");
+    }
+
+    #[test]
+    fn compress_keeps_the_original_jpeg_when_the_re_encode_is_not_smaller() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let attachments = dir.path().join("attachments");
+        fs::create_dir_all(&attachments).unwrap();
+
+        // A JPEG that is already tight for its pixel count: re-encoding at -q:v 5
+        // produces a file no smaller than the source. Over 500 KB so the size gate
+        // in process_one does not skip it outright.
+        let jpeg = attachments.join("already-tight.jpg");
+        write_incompressible_jpeg(&jpeg, 900 * 1024);
+        let before = fs::read(&jpeg).unwrap();
+
+        let (report, remap) =
+            process_attachments_dir(dir.path(), MediaMode::Compress, &CompressOptions::default())
+                .unwrap();
+
+        assert_eq!(fs::read(&jpeg).unwrap(), before, "original bytes replaced");
+        assert!(
+            !remap.contains_key("attachments/already-tight.jpg"),
+            "a kept file must not be remapped: a remap entry tells the caller to \
+             recompute a digest that did not change"
+        );
+        assert_eq!(report.processed, 0);
+        assert_eq!(report.skipped, 1);
+    }
+
+    #[test]
+    fn transcode_file_writes_the_derivative_and_leaves_the_original_alone() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("photo.png");
+        write_test_png(&src);
+        let before = fs::read(&src).unwrap();
+
+        let name = derivative_name(&src, MediaMode::Convert).expect("png is converted");
+        assert_eq!(name, "photo.jpg");
+        let dest = dir.path().join(format!("{name}.in_progress"));
+
+        let outcome =
+            transcode_file(&src, &dest, MediaMode::Convert, &CompressOptions::default()).unwrap();
+
+        assert_eq!(outcome, TranscodeOutcome::Produced);
+        assert!(dest.exists(), "derivative written where the caller asked");
+        assert!(
+            !dir.path().join("photo.jpg").exists(),
+            "the final name must not exist until the caller renames it: a file \
+             under its final name means fully patched"
+        );
+        assert_eq!(
+            fs::read(&src).unwrap(),
+            before,
+            "the original is the caller's to delete, after it commits"
+        );
+    }
+
+    #[test]
+    fn derivative_name_is_none_for_a_file_the_mode_leaves_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let gif = dir.path().join("loop.gif");
+        fs::write(&gif, b"not really a gif").unwrap();
+        assert_eq!(derivative_name(&gif, MediaMode::Convert), None);
+
+        let jpeg = dir.path().join("photo.jpg");
+        fs::write(&jpeg, b"not really a jpeg").unwrap();
+        assert_eq!(derivative_name(&jpeg, MediaMode::Convert), None);
+
+        let doc = dir.path().join("notes.pdf");
+        fs::write(&doc, b"%PDF").unwrap();
+        assert_eq!(derivative_name(&doc, MediaMode::Convert), None);
+    }
+
+    #[test]
+    fn derivative_name_matches_what_the_media_step_actually_produces() {
+        if !ffmpeg_available() {
+            return;
+        }
+        // The forecast and the patch both trust derivative_name. If it disagrees
+        // with the pass, a conversation file points at a name nothing wrote.
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("photo.png");
+        write_test_png(&src);
+        let name = derivative_name(&src, MediaMode::Convert).unwrap();
+        let dest = dir.path().join("out").join(&name);
+        transcode_file(&src, &dest, MediaMode::Convert, &CompressOptions::default()).unwrap();
+        assert_eq!(
+            dest.file_name().and_then(|n| n.to_str()),
+            Some(name.as_str())
+        );
+    }
+
+    #[test]
+    fn transcode_file_clears_scratch_beside_the_source_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("photo.png");
+        write_test_png(&src);
+        let own_scratch = dir.path().join("photo.msgmedia.tmp.jpg");
+        fs::write(&own_scratch, b"leftover").unwrap();
+        let other_scratch = dir.path().join("other.msgmedia.tmp.jpg");
+        fs::write(&other_scratch, b"in flight").unwrap();
+        let marker = dir.path().join("photo.jpg.in_progress");
+        fs::write(&marker, b"a previous attempt").unwrap();
+
+        // Clone mode returns before any ffmpeg work, which is enough to show what
+        // the entry point sweeps.
+        let _ = transcode_file(
+            &src,
+            &dir.path().join("photo.jpg.in_progress"),
+            MediaMode::Clone,
+            &CompressOptions::default(),
+        );
+
+        assert!(!own_scratch.exists(), "this file's own leftovers go");
+        assert!(
+            other_scratch.exists(),
+            "another file's in-flight scratch must survive: a folder-wide sweep \
+             destroys work that is still running"
+        );
+        assert!(
+            marker.exists(),
+            "the .in_progress marker is the resume signal and must survive the \
+             scratch sweep (decision 30)"
+        );
+    }
 
     #[test]
     fn classify_kinds() {

@@ -15,7 +15,10 @@ mod process;
 mod size;
 mod tools;
 
-pub use process::{MediaReport, process_attachments_dir, process_attachments_dir_with_log};
+pub use process::{
+    MediaReport, TranscodeOutcome, derivative_name, process_attachments_dir,
+    process_attachments_dir_with_log, transcode_file,
+};
 use size::parse_size;
 pub use tools::{FfmpegToolsProbe, ffmpeg_available, probe_ffmpeg_tools, set_tools_dir, tools_dir};
 
