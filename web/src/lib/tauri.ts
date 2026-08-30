@@ -33,6 +33,7 @@ export async function invokeExtract(config: ExtractConfig): Promise<void> {
       whatsappMedia: config.whatsapp_media ?? null,
       whatsappDb: config.whatsapp_db ?? null,
       whatsappBusiness: config.whatsapp_business ?? null,
+      resume: config.resume ?? null,
     },
   });
 }

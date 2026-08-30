@@ -32,6 +32,7 @@ fn main() -> Result<()> {
                     cancel: None,
                     log: None,
                     output_format,
+                    resume: false,
                     source: SourceConfig::SmsBackupPlus(SmsBackupPlusConfig {
                         owner_phones,
                         owner_emails,

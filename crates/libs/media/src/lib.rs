@@ -22,8 +22,8 @@ pub use estimate::{
 };
 pub use probe::{MediaProbe, probe_media};
 pub use process::{
-    MediaReport, TranscodeOutcome, derivative_name, derivative_name_for_missing,
-    process_attachments_dir, process_attachments_dir_with_log, transcode_file,
+    MediaReport, TranscodeOutcome, collect_media_files, derivative_name,
+    derivative_name_for_missing, process_attachment_files, transcode_file,
 };
 use size::parse_size;
 pub use tools::{FfmpegToolsProbe, ffmpeg_available, probe_ffmpeg_tools, set_tools_dir, tools_dir};

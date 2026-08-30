@@ -527,11 +527,11 @@ describe("useImportJob wiring", () => {
     expect(body.status).toBe("failed");
   });
 
-  it("still completes the session on a cancelled extract — nothing was approved yet to protect", async () => {
-    // Only a cancellation *after* Gate 1 (mid-transcode, with an approved
-    // plan and a staged folder worth protecting) skips /complete. A
-    // cancelled extract has nothing approved yet, so the spec sends it to
-    // restart regardless, same as before this fix.
+  it("does not complete the session on a cancelled extract, so the copy can be picked up", async () => {
+    // Decision 36 gives a cancellation the same recovery as a crash at that
+    // stage, and the write stage is resumable now: the conversations already
+    // copied are real work. Completing here would free the one-active-session
+    // slot and strand them with no session left to resume through.
     runMock.mockReset();
     runMock.mockImplementationOnce(async (fn: () => Promise<unknown>) => {
       await fn();
@@ -540,9 +540,25 @@ describe("useImportJob wiring", () => {
     const { result } = renderHook(() => useImportJob());
     await act(() => result.current.startImport(form({ attachmentMedia: "convert" })));
 
-    expect(result.current.phase).toBe("done");
+    expect(result.current.summaryView?.status).toBe("canceled");
+    expect(postMock.mock.calls.some(([path]) => path === "/v1/imports/1/complete")).toBe(false);
+  });
+
+  it("still completes the session as failed when the extract genuinely fails", async () => {
+    // A real failure must not lock the account out of importing: the run
+    // completes and frees the slot, and restart-with-settings covers it.
+    runMock.mockReset();
+    runMock.mockImplementationOnce(async (fn: () => Promise<unknown>) => {
+      await fn();
+      throw new Error("chat.db is not readable");
+    });
+    const { result } = renderHook(() => useImportJob());
+    await act(() => result.current.startImport(form({ attachmentMedia: "convert" })));
+
     const completeCall = postMock.mock.calls.find(([path]) => path === "/v1/imports/1/complete");
     expect(completeCall).toBeDefined();
+    const [, body] = completeCall as [string, Record<string, unknown>];
+    expect(body.status).toBe("failed");
   });
 
   it("does not strand the folder when the post-extract summarize fails right after a successful extract", async () => {

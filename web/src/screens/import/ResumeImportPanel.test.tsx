@@ -268,4 +268,73 @@ describe("ResumeImportPanel", () => {
     await user.click(screen.getByRole("button", { name: "Show me the summary" }));
     expect(onResume).toHaveBeenCalledTimes(1);
   });
+  it("offers to pick up a copy that did not finish", async () => {
+    const user = userEvent.setup();
+    const onResume = vi.fn();
+    const onDiscard = vi.fn();
+    const decision: ResumeDecision = {
+      kind: "resume_write",
+      canResume: true,
+      session: session({ stage: "write" }),
+    };
+    render(<ResumeImportPanel decision={decision} onResume={onResume} onDiscard={onDiscard} />);
+
+    expect(screen.getByText("Finish copying your backup")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "The copy did not finish. Picking up where you left off reads the backup again and skips the conversations already copied.",
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Pick up" }));
+    expect(onResume).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Discard this import" }));
+    expect(onDiscard).toHaveBeenCalledTimes(1);
+  });
+
+  it("names the backup that changed, and offers to start over", async () => {
+    const user = userEvent.setup();
+    const onResume = vi.fn();
+    const onDiscard = vi.fn();
+    const decision: ResumeDecision = {
+      kind: "source_changed",
+      canResume: false,
+      session: session({
+        stage: "write",
+        source_fingerprint: {
+          path: "/backups/iphone.tar",
+          size_bytes: 10,
+          modified_unix_ms: 1,
+          message_count: null,
+        },
+      }),
+    };
+    render(<ResumeImportPanel decision={decision} onResume={onResume} onDiscard={onDiscard} />);
+
+    expect(screen.getByText("The backup has changed")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "This import was reading /backups/iphone.tar, and that backup is different now. Starting over reads it fresh with the same settings.",
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Start over" }));
+    expect(onResume).toHaveBeenCalledTimes(1);
+  });
+
+  it("says the backup changed without a path when the session recorded none", () => {
+    const decision: ResumeDecision = {
+      kind: "source_changed",
+      canResume: false,
+      session: session({ stage: "write" }),
+    };
+    render(<ResumeImportPanel decision={decision} onResume={vi.fn()} onDiscard={vi.fn()} />);
+
+    expect(
+      screen.getByText(
+        "The backup this import was reading is different now. Starting over reads it fresh with the same settings.",
+      ),
+    ).toBeInTheDocument();
+  });
 });

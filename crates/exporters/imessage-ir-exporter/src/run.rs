@@ -193,6 +193,7 @@ fn options_from_export_config(config: &ExporterConfig) -> Result<MailOptions, Ru
         output_format: config.output_format,
         log: config.log.clone(),
         cancel: config.cancel.clone(),
+        resume: config.resume,
     })
 }
 
@@ -227,6 +228,7 @@ mod tests {
             cancel: None,
             log: None,
             output_format: OutputFormat::Jsonl,
+            resume: false,
             source: SourceConfig::Apple(apple),
         }
     }

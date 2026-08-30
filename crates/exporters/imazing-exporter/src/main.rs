@@ -30,6 +30,7 @@ fn main() -> Result<()> {
             cancel: None,
             log: None,
             output_format,
+            resume: false,
             source: SourceConfig::Imazing(ImazingConfig {}),
         },
         run,

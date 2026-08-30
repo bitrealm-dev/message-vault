@@ -283,6 +283,7 @@ pub(crate) fn stage_path_attachments(
                 ),
             );
         },
+        log,
         cancel.map(|flag| flag.as_ref()),
     )?;
     for job in &jobs {

@@ -7,8 +7,8 @@ use media::MediaMode;
 use message_csv::DateRange;
 use message_ir::{ConversationDocument, HandleType};
 use message_ir_format::{
-    ExportTransforms, FormatSink, FormatSinkResult, SbrReadOptions, SbrReadReport,
-    read_sbr_documents,
+    AttachmentSource, ConversationUnit, ExportTransforms, FormatSink, FormatSinkResult,
+    SbrReadOptions, SbrReadReport, WriteQueueOptions, read_sbr_documents,
 };
 use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat, emit_log};
 use std::path::Path;
@@ -82,6 +82,9 @@ pub(crate) struct ConvertExportArgs<'a> {
     pub transforms: ExportTransforms,
     pub output_format: OutputFormat,
     pub cancel: Option<&'a CancelFlag>,
+    /// Continue an interrupted export: keep previous output and skip the
+    /// conversations already written.
+    pub resume: bool,
 }
 
 /// Convert SMS Backup & Restore XML into the shared conversation structure,
@@ -102,8 +105,14 @@ pub(crate) fn convert_export(
     };
     let compress = args.transforms.compress.clone();
     let log = args.transforms.log.clone();
-    let (mut sink, attachments_dir) =
-        FormatSink::open_prepared(args.output_dir, args.output_format, args.transforms)?;
+    // Captured before `transforms` moves into the sink: the queue path is for
+    // the import, which is JSONL and never obfuscated.
+    let use_queue = args.output_format == OutputFormat::Jsonl && !args.transforms.obfuscate;
+    let (mut sink, attachments_dir) = if args.resume {
+        FormatSink::open_resume(args.output_dir, args.output_format, args.transforms)
+    } else {
+        FormatSink::open_prepared(args.output_dir, args.output_format, args.transforms)
+    }?;
     let (mut documents, report) = read_sbr_documents(
         args.input,
         SbrReadOptions {
@@ -111,15 +120,58 @@ pub(crate) fn convert_export(
             date_range: args.date_range,
             attachments_dir: Some(&attachments_dir),
             copy_attachments,
-            // FormatSink reloads staged bytes after media transforms.
-            keep_attachment_bytes: false,
+            // On the queue path the bytes ride into the engine, which stages
+            // them a conversation at a time; otherwise FormatSink reloads
+            // staged bytes after media transforms.
+            keep_attachment_bytes: use_queue,
+            stage_attachments: !use_queue,
             media,
-            compress,
+            compress: compress.clone(),
             log: log.as_ref(),
             cancel: args.cancel,
         },
     )?;
     enrich_contacts(args.contacts, &mut documents);
+
+    if use_queue {
+        let units: Vec<ConversationUnit> = documents
+            .into_iter()
+            .map(|doc| {
+                ConversationUnit::from_doc(doc, |_, att| {
+                    let hint = att
+                        .size_bytes
+                        .or_else(|| att.bytes.as_ref().map(|b| b.len() as u64));
+                    match att.bytes.take() {
+                        Some(bytes) => (AttachmentSource::Bytes(bytes), hint),
+                        None => (AttachmentSource::Missing, hint),
+                    }
+                })
+            })
+            .collect();
+        let options = WriteQueueOptions {
+            media,
+            compress,
+            resume: args.resume,
+            writer_count: 0,
+        };
+        let queue_report = message_ir_format::drain_write_queue(
+            args.output_dir,
+            units,
+            &options,
+            log.as_ref(),
+            args.cancel,
+        )?;
+        let mut core = to_core_report(report);
+        core.attachments_saved = queue_report.attachments_saved as u64;
+        return Ok((
+            core,
+            FormatSinkResult {
+                xml_path: None,
+                media: queue_report.media,
+                obfuscated_docs: 0,
+            },
+        ));
+    }
 
     let total_conversations = documents.len() as u64;
     emit_log(log.as_ref(), "");

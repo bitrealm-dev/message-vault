@@ -14,7 +14,10 @@ use message_ir::{
     IrService, IrSource, PendingAttachment, PendingConversation, PendingMessage, SCHEMA_VERSION,
     owner_sender,
 };
-use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
+use message_ir_format::{
+    AttachmentSource, ConversationUnit, ExportTransforms, FormatSink, FormatSinkResult,
+    WriteQueueOptions,
+};
 use message_vault_io_core::{
     AttachmentJob, CancelFlag, ExportReport, LogSink, OutputFormat, emit_log, run_attachment_jobs,
 };
@@ -57,6 +60,7 @@ pub(crate) fn convert_json(
     media_search_roots: &[PathBuf],
     output_format: OutputFormat,
     cancel: Option<&CancelFlag>,
+    resume: bool,
 ) -> Result<(ExportReport, FormatSinkResult)> {
     fs::create_dir_all(output).with_context(|| format!("create {}", output.display()))?;
     // Load the chat store BEFORE cleaning the output directory. The JSON may live
@@ -71,7 +75,14 @@ pub(crate) fn convert_json(
     };
     let compress = transforms.compress.clone();
     let log = transforms.log.clone();
-    let (mut sink, attachments_dir) = FormatSink::open_prepared(output, output_format, transforms)?;
+    // Captured before `transforms` moves into the sink: the queue path is for
+    // the import, which is JSONL and never obfuscated.
+    let use_queue = output_format == OutputFormat::Jsonl && !transforms.obfuscate;
+    let (mut sink, attachments_dir) = if resume {
+        FormatSink::open_resume(output, output_format, transforms)
+    } else {
+        FormatSink::open_prepared(output, output_format, transforms)
+    }?;
     let mut report = ExportReport::default();
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
 
@@ -99,13 +110,52 @@ pub(crate) fn convert_json(
 
     let mut documents = Vec::new();
     let mut media_sources = Vec::new();
+    let mut units: Vec<ConversationUnit> = Vec::new();
     for (chat_id, mut convo) in conversations {
         message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
         if !prepare_conversation(&mut convo, &mut report) {
             continue;
         }
+        if use_queue {
+            // Same positional collection as the flat path, kept per
+            // conversation so each unit carries its own sources.
+            let mut convo_sources = Vec::new();
+            collect_media_sources(&convo, &mut convo_sources);
+            let doc = pending_to_document(&chat_id, &convo, &mut report)?;
+            let mut source_iter = convo_sources.into_iter();
+            units.push(ConversationUnit::from_doc(doc, |_, att| {
+                let hint = att.size_bytes;
+                match source_iter.next().flatten() {
+                    Some(path) => (AttachmentSource::Path(path), hint),
+                    None => (AttachmentSource::Missing, hint),
+                }
+            }));
+            continue;
+        }
         collect_media_sources(&convo, &mut media_sources);
         documents.push(pending_to_document(&chat_id, &convo, &mut report)?);
+    }
+
+    if use_queue {
+        let options = WriteQueueOptions {
+            media: media_mode,
+            compress: compress.clone(),
+            resume,
+            writer_count: 0,
+        };
+        let queue_report =
+            message_ir_format::drain_write_queue(output, units, &options, log.as_ref(), cancel)?;
+        report.conversations +=
+            (queue_report.conversations_written + queue_report.conversations_skipped) as u64;
+        report.attachments_saved += queue_report.attachments_saved as u64;
+        return Ok((
+            report,
+            FormatSinkResult {
+                xml_path: None,
+                media: queue_report.media,
+                obfuscated_docs: 0,
+            },
+        ));
     }
 
     stage_conversation_attachments(
@@ -383,6 +433,7 @@ fn stage_conversation_attachments(
                 ),
             );
         },
+        log,
         cancel_flag,
     )
     .map_err(anyhow::Error::msg)?;

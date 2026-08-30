@@ -108,6 +108,39 @@ impl FormatSink {
         Ok((sink, att_dir))
     }
 
+    /// Reopen `output` to continue an interrupted export.
+    ///
+    /// Unlike [`open_prepared`](Self::open_prepared), nothing is cleaned: the
+    /// conversation files and staged attachments the interrupted run left
+    /// behind are exactly the work a resumed run gets to skip. The directory
+    /// must already be an export folder — it carries the sentinel — because
+    /// resuming into anything else is a caller bug, not something to repair
+    /// by cleaning.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the directory or its sentinel is missing, or the
+    /// attachments directory cannot be created.
+    pub fn open_resume(
+        output: &Path,
+        format: OutputFormat,
+        transforms: ExportTransforms,
+    ) -> Result<(Self, PathBuf)> {
+        if !output.join(crate::clean::EXPORT_SENTINEL).is_file() {
+            anyhow::bail!(
+                "cannot resume into {}: it is not a staging folder from a previous run",
+                output.display()
+            );
+        }
+        let att_dir = output.join("attachments");
+        if transforms.copies_attachments() {
+            fs::create_dir_all(&att_dir)
+                .with_context(|| format!("create {}", att_dir.display()))?;
+        }
+        let sink = Self::open(output, format, transforms)?;
+        Ok((sink, att_dir))
+    }
+
     /// Output format this sink will write.
     pub fn format(&self) -> OutputFormat {
         self.format
@@ -307,5 +340,35 @@ mod tests {
             }
         }
         assert!(found, "expected obfuscated csv");
+    }
+    #[test]
+    fn open_resume_keeps_previous_output_and_requires_the_sentinel() {
+        let tmp = tempfile::tempdir().unwrap();
+        // A directory that was never an export folder is refused: resuming
+        // into one is a caller bug, not something to repair by cleaning.
+        assert!(
+            FormatSink::open_resume(tmp.path(), OutputFormat::Jsonl, ExportTransforms::none())
+                .is_err()
+        );
+
+        let (_sink, att_dir) =
+            FormatSink::open_prepared(tmp.path(), OutputFormat::Jsonl, ExportTransforms::none())
+                .unwrap();
+        std::fs::create_dir_all(&att_dir).unwrap();
+        std::fs::write(tmp.path().join("keep.jsonl"), "x").unwrap();
+        std::fs::write(att_dir.join("keep.jpg"), "y").unwrap();
+
+        let (_sink, att_dir2) =
+            FormatSink::open_resume(tmp.path(), OutputFormat::Jsonl, ExportTransforms::none())
+                .unwrap();
+
+        assert!(
+            tmp.path().join("keep.jsonl").is_file(),
+            "a resumed run keeps the conversations the interrupted one wrote"
+        );
+        assert!(
+            att_dir2.join("keep.jpg").is_file(),
+            "and the attachments they point at"
+        );
     }
 }

@@ -538,6 +538,7 @@ impl Form {
             cancel: None,
             log: None,
             output_format,
+            resume: false,
             source: SourceConfig::Format(FormatConfig {}),
         };
 
@@ -590,6 +591,7 @@ impl Form {
             cancel: None,
             log: None,
             output_format: self.output_format,
+            resume: false,
             source: SourceConfig::Apple(AppleConfig {
                 platform,
                 attachment_root: non_empty(self.attachment_root.trim()).map(str::to_string),
@@ -632,6 +634,7 @@ impl Form {
             cancel: None,
             log: None,
             output_format: self.output_format,
+            resume: false,
             source: SourceConfig::Whatsapp(WhatsappConfig {
                 platform: Some(self.whatsapp_platform),
                 json: None,
@@ -678,6 +681,7 @@ impl Form {
             cancel: None,
             log: None,
             output_format: self.output_format,
+            resume: false,
             source: SourceConfig::Imazing(ImazingConfig {}),
         }
     }
@@ -708,6 +712,7 @@ impl Form {
             cancel: None,
             log: None,
             output_format: self.output_format,
+            resume: false,
             source: SourceConfig::OpenExtract(OpenExtractConfig {}),
         }
     }
@@ -730,6 +735,7 @@ impl Form {
             cancel: None,
             log: None,
             output_format: self.output_format,
+            resume: false,
             source: SourceConfig::GoSmsPro(GoSmsProConfig { owner_phones }),
         }
     }
@@ -752,6 +758,7 @@ impl Form {
             cancel: None,
             log: None,
             output_format: self.output_format,
+            resume: false,
             source: SourceConfig::SmsBackupRestore(SmsBackupRestoreConfig { owner_phones }),
         }
     }
@@ -781,6 +788,7 @@ impl Form {
             cancel: None,
             log: None,
             output_format: self.output_format,
+            resume: false,
             source: SourceConfig::SmsBackupPlus(SmsBackupPlusConfig {
                 owner_phones,
                 owner_emails,

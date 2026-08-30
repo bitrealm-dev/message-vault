@@ -152,6 +152,7 @@ fn apply_reexport_convert(
         },
         |_| {},
         None,
+        None,
     )
     .map_err(anyhow::Error::msg)?;
     Ok(())
@@ -174,6 +175,7 @@ fn load_documents(
                 attachments_dir: Some(&attachments_dir),
                 copy_attachments,
                 keep_attachment_bytes: false,
+                stage_attachments: true,
                 media: if copy_attachments {
                     MediaMode::Clone
                 } else {
@@ -472,6 +474,7 @@ mod tests {
             cancel: None,
             log: None,
             output_format,
+            resume: false,
             source: SourceConfig::Format(FormatConfig {}),
         }
     }

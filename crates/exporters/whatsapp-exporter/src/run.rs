@@ -116,6 +116,7 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
         &media_roots,
         config.output_format,
         config.cancel.as_ref(),
+        config.resume,
     )?;
     // Drop tempdir after convert (media files already copied).
     drop(_work_keep_alive);

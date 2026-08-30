@@ -59,6 +59,7 @@ pub(crate) fn build_config_from_cli(cli: &Cli) -> Result<ExporterConfig> {
         cancel: None,
         log: None,
         output_format,
+        resume: false,
         source: SourceConfig::Apple(AppleConfig {
             platform,
             attachment_root: cli.attachment_root.clone(),

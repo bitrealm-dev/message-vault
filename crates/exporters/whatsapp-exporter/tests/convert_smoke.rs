@@ -19,6 +19,7 @@ fn convert_fixture_json_individual_and_group() {
         &[],
         OutputFormat::Csv,
         None,
+        false,
     )
     .expect("convert");
 
@@ -87,6 +88,7 @@ fn copies_ios_style_media_true_data_paths() {
         &[media_root.path().to_path_buf()],
         OutputFormat::Csv,
         None,
+        false,
     )
     .expect("convert");
 
@@ -114,4 +116,64 @@ fn copies_ios_style_media_true_data_paths() {
         .collect();
     assert_eq!(files.len(), 1);
     assert_eq!(fs::read(&files[0]).unwrap(), b"fake-jpeg");
+}
+
+#[test]
+fn jsonl_drains_the_write_queue_and_a_second_run_resumes_it() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/result.json");
+    let tmp = tempfile::tempdir().expect("tempdir");
+
+    let (report, _) = convert_json(
+        &fixture,
+        tmp.path(),
+        &DateRange::default(),
+        ExportTransforms::none(),
+        &[],
+        OutputFormat::Jsonl,
+        None,
+        false,
+    )
+    .expect("convert");
+    assert_eq!(report.conversations, 2);
+
+    let jsonl_files = |dir: &std::path::Path| -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .expect("read output")
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.ends_with(".jsonl"))
+            .collect();
+        names.sort();
+        names
+    };
+    let first = jsonl_files(tmp.path());
+    assert_eq!(first.len(), 2, "the queue wrote a file per conversation");
+    let bodies: Vec<String> = first
+        .iter()
+        .map(|n| fs::read_to_string(tmp.path().join(n)).expect("read jsonl"))
+        .collect();
+
+    // Resuming into the same folder finds both conversations already written
+    // and leaves them exactly as they were.
+    let (resumed, _) = convert_json(
+        &fixture,
+        tmp.path(),
+        &DateRange::default(),
+        ExportTransforms::none(),
+        &[],
+        OutputFormat::Jsonl,
+        None,
+        true,
+    )
+    .expect("resume convert");
+
+    assert_eq!(resumed.conversations, 2, "resume still accounts for both");
+    assert_eq!(jsonl_files(tmp.path()), first, "same file set");
+    for (name, before) in first.iter().zip(bodies) {
+        assert_eq!(
+            fs::read_to_string(tmp.path().join(name)).expect("reread"),
+            before,
+            "a resumed run must not rewrite {name}"
+        );
+    }
 }

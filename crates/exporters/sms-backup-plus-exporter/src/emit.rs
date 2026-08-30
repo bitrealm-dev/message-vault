@@ -19,7 +19,10 @@ use message_ir::{
     IrService, IrSource, PendingAttachment, PendingConversation, PendingMessage, SCHEMA_VERSION,
     owner_sender, parse_android_type,
 };
-use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
+use message_ir_format::{
+    AttachmentSource, ConversationUnit, ExportTransforms, FormatSink, FormatSinkResult,
+    WriteQueueOptions,
+};
 use message_vault_io_core::{
     CancelFlag, ExportReport, LogSink, OutputFormat, emit_log, prepare_outputs,
 };
@@ -452,6 +455,9 @@ pub(crate) struct ConvertExportArgs<'a, P: AsRef<Path>> {
     pub output_format: OutputFormat,
     pub cancel: Option<&'a CancelFlag>,
     pub log: Option<&'a LogSink>,
+    /// Continue an interrupted export: keep previous output and skip the
+    /// conversations already written.
+    pub resume: bool,
 }
 
 /// Convert SMS Backup+ EML tree(s) into the shared conversation structure, then
@@ -482,6 +488,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
         output_format,
         cancel,
         log,
+        resume,
     } = args;
     let owners = OwnerHandleSet::from_phones(owner_phones)?;
     let primary = owners
@@ -527,8 +534,14 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
         MediaMode::Disabled
     };
     let compress = transforms.compress.clone();
-    let (mut sink, attachments_dir) =
-        FormatSink::open_prepared(&output_dir, output_format, transforms)?;
+    // Captured before `transforms` moves into the sink: the queue path is for
+    // the import, which is JSONL and never obfuscated.
+    let use_queue = output_format == OutputFormat::Jsonl && !transforms.obfuscate;
+    let (mut sink, attachments_dir) = if resume {
+        FormatSink::open_resume(&output_dir, output_format, transforms)
+    } else {
+        FormatSink::open_prepared(&output_dir, output_format, transforms)
+    }?;
     let mut blob_bytes: std::collections::HashMap<String, Vec<u8>> =
         std::collections::HashMap::new();
 
@@ -674,41 +687,74 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
         )?);
     }
 
-    stage_conversation_attachments(
-        &mut documents,
-        &attachments_dir,
-        media_mode,
-        &compress,
-        log,
-        cancel,
-        &mut report,
-    )
-    .map_err(anyhow::Error::msg)?;
+    let sink_result = if use_queue {
+        let units: Vec<ConversationUnit> = documents
+            .into_iter()
+            .map(|doc| {
+                ConversationUnit::from_doc(doc, |_, att| {
+                    let hint = att
+                        .size_bytes
+                        .or_else(|| att.bytes.as_ref().map(|b| b.len() as u64));
+                    match att.bytes.take() {
+                        Some(bytes) => (AttachmentSource::Bytes(bytes), hint),
+                        None => (AttachmentSource::Missing, hint),
+                    }
+                })
+            })
+            .collect();
+        let options = WriteQueueOptions {
+            media: media_mode,
+            compress: compress.clone(),
+            resume,
+            writer_count: 0,
+        };
+        let queue_report =
+            message_ir_format::drain_write_queue(&output_dir, units, &options, log, cancel)?;
+        report.conversations +=
+            (queue_report.conversations_written + queue_report.conversations_skipped) as u64;
+        report.attachments_saved += queue_report.attachments_saved as u64;
+        FormatSinkResult {
+            xml_path: None,
+            media: queue_report.media,
+            obfuscated_docs: 0,
+        }
+    } else {
+        stage_conversation_attachments(
+            &mut documents,
+            &attachments_dir,
+            media_mode,
+            &compress,
+            log,
+            cancel,
+            &mut report,
+        )
+        .map_err(anyhow::Error::msg)?;
 
-    let convo_total = documents.len() as u64;
-    emit_log(log, "");
-    emit_log(
-        log,
-        format!("Preparing {convo_total} conversation file(s)..."),
-    );
-    vlog(
-        verbose,
-        log,
-        format!(
-            "writing {convo_total} conversation files (duplicates dropped so far: {})",
-            report.duplicates_dropped
-        ),
-    );
-    let mut written = 0u64;
-    for doc in documents {
-        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
-        sink.write_document(doc)?;
-        report.conversations += 1;
-        written += 1;
-        emit_log(log, format!("  preparing {written}/{convo_total}"));
-        report_progress(verbose, log, "wrote", written, convo_total);
-    }
-    let sink_result = sink.finish()?;
+        let convo_total = documents.len() as u64;
+        emit_log(log, "");
+        emit_log(
+            log,
+            format!("Preparing {convo_total} conversation file(s)..."),
+        );
+        vlog(
+            verbose,
+            log,
+            format!(
+                "writing {convo_total} conversation files (duplicates dropped so far: {})",
+                report.duplicates_dropped
+            ),
+        );
+        let mut written = 0u64;
+        for doc in documents {
+            message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+            sink.write_document(doc)?;
+            report.conversations += 1;
+            written += 1;
+            emit_log(log, format!("  preparing {written}/{convo_total}"));
+            report_progress(verbose, log, "wrote", written, convo_total);
+        }
+        sink.finish()?
+    };
 
     vlog(
         verbose,

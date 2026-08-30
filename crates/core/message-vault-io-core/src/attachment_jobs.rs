@@ -1,12 +1,13 @@
 //! Copy, convert, or skip attachment files after parse.
 
 use crate::attachments::attachment_dest_name;
+use crate::process::{LogSink, emit_log};
 use media::{CompressOptions, MediaMode};
 use message_ir::IrAttachment;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// File and byte counts emitted after each attachment job (and once for skip).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +52,7 @@ pub fn run_attachment_jobs(
     compress: &CompressOptions,
     mut load: impl FnMut(usize) -> Result<Option<Vec<u8>>, String>,
     mut on_progress: impl FnMut(AttachmentProgress),
+    log: Option<&LogSink>,
     cancel: Option<&AtomicBool>,
 ) -> Result<(), String> {
     let total = jobs.len();
@@ -127,7 +129,7 @@ pub fn run_attachment_jobs(
         if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
             return Err("canceled".into());
         }
-        apply_convert_or_compress(jobs, attachments_dir, mode, compress)?;
+        apply_convert_or_compress(jobs, attachments_dir, mode, compress, log)?;
         on_progress(AttachmentProgress {
             done: total,
             total,
@@ -137,6 +139,20 @@ pub fn run_attachment_jobs(
     }
 
     Ok(())
+}
+
+/// Monotonic counter distinguishing concurrent temp files.
+///
+/// The final name is content-addressed, so two workers staging identical
+/// bytes produce the same `dest` — that is fine, the second rename is a
+/// no-op overwrite of identical bytes — but they must not share a temp path
+/// mid-write, or one worker's rename pulls the file out from under the
+/// other's still-open write.
+static CLONE_TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn next_clone_temp_name(name: &str) -> String {
+    let seq = CLONE_TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("{name}.{seq}.tmp")
 }
 
 fn persist_clone(
@@ -149,7 +165,7 @@ fn persist_clone(
     let secs = job.timestamp_unix_ms.div_euclid(1000);
     let name = attachment_dest_name(secs, &digest_hex, &ext);
     let dest = attachments_dir.join(&name);
-    let tmp = attachments_dir.join(format!("{name}.tmp"));
+    let tmp = attachments_dir.join(next_clone_temp_name(&name));
     fs::write(&tmp, bytes).map_err(|e| format!("write {}: {e}", tmp.display()))?;
     fs::rename(&tmp, &dest).map_err(|e| format!("rename {}: {e}", dest.display()))?;
     job.attachment.path = Some(format!("attachments/{name}"));
@@ -164,12 +180,16 @@ fn apply_convert_or_compress(
     attachments_dir: &Path,
     mode: MediaMode,
     compress: &CompressOptions,
+    log: Option<&LogSink>,
 ) -> Result<(), String> {
     let Some(output_dir) = attachments_dir.parent() else {
         return Err("attachments directory has no parent".into());
     };
+    let files = media::collect_media_files(attachments_dir).map_err(|e| e.to_string())?;
+    let mut emit = |line: &str| emit_log(log, line);
     let (report, remap) =
-        media::process_attachments_dir(output_dir, mode, compress).map_err(|e| e.to_string())?;
+        media::process_attachment_files(output_dir, &files, mode, compress, Some(&mut emit))
+            .map_err(|e| e.to_string())?;
     apply_remap_to_jobs(jobs, &remap, output_dir);
     for err in &report.errors {
         mark_convert_error(jobs, err);
@@ -311,6 +331,7 @@ mod tests {
                 |_| Ok(Some(bytes.to_vec())),
                 |p| progress.lock().unwrap().push(p),
                 None,
+                None,
             )
             .unwrap();
         }
@@ -348,6 +369,7 @@ mod tests {
                     Ok(Some(b"x".to_vec()))
                 },
                 |_| {},
+                None,
                 None,
             )
             .unwrap();
@@ -392,6 +414,7 @@ mod tests {
                 },
                 |_| {},
                 None,
+                None,
             )
             .unwrap();
         }
@@ -433,6 +456,7 @@ mod tests {
                 },
                 |_| {},
                 None,
+                None,
             )
             .unwrap();
         }
@@ -459,6 +483,7 @@ mod tests {
                 &CompressOptions::default(),
                 |_| Err("canceled".into()),
                 |_| {},
+                None,
                 None,
             )
             .unwrap_err()
@@ -499,6 +524,7 @@ mod tests {
                     Ok(Some(b"x".to_vec()))
                 },
                 |_| {},
+                None,
                 Some(&cancel),
             )
             .unwrap_err()
@@ -520,6 +546,7 @@ mod tests {
             &CompressOptions::default(),
             |_| Ok(None),
             |p| progress.lock().unwrap().push(p),
+            None,
             None,
         )
         .unwrap();
@@ -568,5 +595,54 @@ mod tests {
         assert_eq!(ok.digest_sha256.as_ref().unwrap().len(), 64);
         assert_eq!(missing.missing_reason.as_deref(), Some("file_missing"));
         assert!(ok.missing_reason.is_none());
+    }
+    #[test]
+    fn convert_mode_emits_progress_through_the_log_sink() {
+        // Clone has no media pass, so nothing should reach the sink. This
+        // pins that the new `log` parameter is wired end to end without
+        // requiring ffmpeg in this crate's tests.
+        let dir = tempfile::tempdir().unwrap();
+        let att_dir = dir.path().join("attachments");
+        std::fs::create_dir_all(&att_dir).unwrap();
+        let mut att = empty_att("photo.jpg");
+        let bytes = b"hello-photo";
+        let lines = std::sync::Arc::new(Mutex::new(Vec::<String>::new()));
+        let sink_lines = std::sync::Arc::clone(&lines);
+        let sink = crate::process::LogSink::new(move |l: &str| {
+            sink_lines.lock().unwrap().push(l.to_string());
+        });
+        {
+            let mut jobs = [AttachmentJob {
+                attachment: &mut att,
+                timestamp_unix_ms: 1_609_459_200_000,
+                size_hint: Some(bytes.len() as u64),
+            }];
+            run_attachment_jobs(
+                &mut jobs,
+                &att_dir,
+                MediaMode::Clone,
+                &CompressOptions::default(),
+                |_| Ok(Some(bytes.to_vec())),
+                |_| {},
+                Some(&sink),
+                None,
+            )
+            .unwrap();
+        }
+        assert!(
+            lines.lock().unwrap().is_empty(),
+            "clone mode runs no media pass, so it has nothing to report"
+        );
+    }
+    #[test]
+    fn clone_temp_paths_are_unique_per_call() {
+        // Two workers staging identical bytes land on the same
+        // content-addressed dest, which is harmless, but they must not share
+        // the temp path they write through on the way there.
+        let a = next_clone_temp_name("x.jpg");
+        let b = next_clone_temp_name("x.jpg");
+        assert_ne!(a, b);
+        assert!(a.starts_with("x.jpg."));
+        assert!(a.ends_with(".tmp"));
     }
 }

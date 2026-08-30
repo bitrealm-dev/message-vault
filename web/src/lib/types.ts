@@ -140,6 +140,9 @@ export interface ExtractConfig {
   whatsapp_db?: string;
   /** iPhone WhatsApp Business default files (`--business`). */
   whatsapp_business?: boolean;
+  /** Continue an interrupted export in the same folder: previous output is
+   * kept and conversations already written are skipped. */
+  resume?: boolean;
 }
 
 export interface ExtractErrorEvent {
