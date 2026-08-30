@@ -21,6 +21,7 @@ fn convert(
         transforms: ExportTransforms::none(),
         output_format: OutputFormat::Csv,
         cancel: None,
+        resume: false,
     })
 }
 
@@ -110,5 +111,54 @@ fn convert_export_root_recursively_keeps_services_separate() {
             .copied()
             .unwrap_or(0),
         0
+    );
+}
+
+#[test]
+fn jsonl_drains_the_write_queue_and_a_second_run_resumes_it() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let messages = fixture.join("messages.csv");
+    let contacts = fixture.join("contacts.csv");
+    let book = ContactsBook::load_vcard_csv(&contacts).expect("load contacts");
+    let tmp = tempfile::tempdir().expect("tempdir");
+
+    let convert_jsonl = |resume: bool| {
+        convert_export(ConvertExportArgs {
+            input: &messages,
+            output: tmp.path(),
+            book: &book,
+            timezone: Some("UTC"),
+            date_range: &DateRange::default(),
+            transforms: ExportTransforms::none(),
+            output_format: OutputFormat::Jsonl,
+            cancel: None,
+            resume,
+        })
+    };
+
+    let (report, _) = convert_jsonl(false).expect("convert");
+    assert_eq!(report.conversations, 1);
+
+    let jsonl_files = |dir: &Path| -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .expect("read output")
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.ends_with(".jsonl"))
+            .collect();
+        names.sort();
+        names
+    };
+    let first = jsonl_files(tmp.path());
+    assert_eq!(first.len(), 1, "the queue wrote a file per conversation");
+    let before = fs::read_to_string(tmp.path().join(&first[0])).expect("read jsonl");
+
+    let (resumed, _) = convert_jsonl(true).expect("resume convert");
+    assert_eq!(resumed.conversations, 1, "resume still accounts for it");
+    assert_eq!(jsonl_files(tmp.path()), first, "same file set");
+    assert_eq!(
+        fs::read_to_string(tmp.path().join(&first[0])).expect("reread"),
+        before,
+        "a resumed run must not rewrite a conversation it already has"
     );
 }

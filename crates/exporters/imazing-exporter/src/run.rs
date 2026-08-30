@@ -52,6 +52,7 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
                 transforms,
                 output_format: config.output_format,
                 cancel: config.cancel.as_ref(),
+                resume: config.resume,
             })
         },
     )?;

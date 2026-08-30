@@ -17,7 +17,10 @@ use message_ir::{
     IrService, IrSource, PendingAttachment, PendingConversation, PendingMessage, SCHEMA_VERSION,
     owner_sender,
 };
-use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
+use message_ir_format::{
+    AttachmentSource, ConversationUnit, ExportTransforms, FormatSink, FormatSinkResult,
+    WriteQueueOptions,
+};
 use message_vault_io_core::{
     CancelFlag, ExportReport, LogSink, OutputFormat, emit_log, prepare_outputs,
 };
@@ -60,6 +63,9 @@ pub(crate) struct ConvertExportArgs<'a> {
     pub transforms: ExportTransforms,
     pub output_format: OutputFormat,
     pub cancel: Option<&'a CancelFlag>,
+    /// Continue an interrupted export: keep previous output and skip the
+    /// conversations already written.
+    pub resume: bool,
 }
 
 /// Convert iMazing Messages / WhatsApp CSV(s) under `input` using `book` from a contacts VCF/vCard CSV.
@@ -84,6 +90,7 @@ pub(crate) fn convert_export(
         transforms,
         output_format,
         cancel,
+        resume,
     } = args;
     let tz = resolve_tz(timezone)?;
     let (inputs, output) = prepare_outputs(&[input.to_path_buf()], output)?;
@@ -96,8 +103,14 @@ pub(crate) fn convert_export(
     };
     let compress = transforms.compress.clone();
     let log = transforms.log.clone();
-    let (mut sink, attachments_dir) =
-        FormatSink::open_prepared(&output, output_format, transforms)?;
+    // Captured before `transforms` moves into the sink: the queue path is for
+    // the import, which is JSONL and never obfuscated.
+    let use_queue = output_format == OutputFormat::Jsonl && !transforms.obfuscate;
+    let (mut sink, attachments_dir) = if resume {
+        FormatSink::open_resume(&output, output_format, transforms)
+    } else {
+        FormatSink::open_prepared(&output, output_format, transforms)
+    }?;
     // Walk the input tree once; per-attachment lookups hit this index.
     let attachment_index = copy_attachments.then(|| AttachmentIndex::build(input));
 
@@ -303,6 +316,7 @@ pub(crate) fn convert_export(
 
     let mut documents = Vec::new();
     let mut sources = Vec::new();
+    let mut units: Vec<ConversationUnit> = Vec::new();
     for (key, mut convo) in conversations {
         let chat_id = key
             .split_once('|')
@@ -311,8 +325,52 @@ pub(crate) fn convert_export(
         if !prepare_conversation(&mut convo, &mut report) {
             continue;
         }
+        if use_queue {
+            // Same positional collection as the flat path, kept per
+            // conversation so each unit carries its own sources.
+            let mut convo_sources = Vec::new();
+            collect_attachment_sources(&convo, &mut convo_sources);
+            let doc = pending_to_document(&chat_id, &convo, &mut report)?;
+            let mut source_iter = convo_sources.into_iter();
+            units.push(ConversationUnit::from_doc(doc, |_, att| {
+                match source_iter.next().flatten() {
+                    Some(path) => {
+                        // iMazing's rows carry no size; stat the source so the
+                        // byte counters and the headroom check see it.
+                        let hint = att
+                            .size_bytes
+                            .or_else(|| std::fs::metadata(&path).ok().map(|m| m.len()));
+                        (AttachmentSource::Path(path), hint)
+                    }
+                    None => (AttachmentSource::Missing, att.size_bytes),
+                }
+            }));
+            continue;
+        }
         collect_attachment_sources(&convo, &mut sources);
         documents.push(pending_to_document(&chat_id, &convo, &mut report)?);
+    }
+
+    if use_queue {
+        let options = WriteQueueOptions {
+            media: media_mode,
+            compress: compress.clone(),
+            resume,
+            writer_count: 0,
+        };
+        let queue_report =
+            message_ir_format::drain_write_queue(&output, units, &options, log.as_ref(), cancel)?;
+        report.conversations +=
+            (queue_report.conversations_written + queue_report.conversations_skipped) as u64;
+        report.attachments_saved += queue_report.attachments_saved as u64;
+        return Ok((
+            report,
+            FormatSinkResult {
+                xml_path: None,
+                media: queue_report.media,
+                obfuscated_docs: 0,
+            },
+        ));
     }
 
     stage_conversation_attachments(
@@ -659,6 +717,7 @@ mod tests {
             transforms: ExportTransforms::none(),
             output_format: OutputFormat::Csv,
             cancel: None,
+            resume: false,
         })
     }
 
