@@ -24,6 +24,7 @@ mod staging_summary;
 mod transcode;
 mod util;
 mod write;
+mod write_queue;
 mod write_sbr;
 
 pub use clean::{EXPORT_SENTINEL, clean_previous_ir_output};
@@ -40,6 +41,10 @@ pub use staging_summary::{
 pub use transcode::{TranscodeOptions, TranscodeProgress, TranscodeReport, transcode_staged};
 pub use util::UNSAFE_ATTACHMENT_PATH_PREFIX;
 pub use write::{CSV_HEADERS, document_to_mail_messages, write_conversation_jsonl_to};
+pub use write_queue::{
+    AttachmentSource, ConversationUnit, UnitAttachment, WriteQueueOptions, WriteQueueReport,
+    drain_write_queue_with_loader, load_attachment_source,
+};
 
 #[cfg(test)]
 use normalize::normalize_document_for_compare;

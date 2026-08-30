@@ -8,7 +8,7 @@ use crate::tools::{probe_video, require_ffmpeg, run_ffmpeg};
 use crate::{CompressOptions, MediaMode};
 
 /// Aggregate counts and errors from one media convert/compress pass.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct MediaReport {
     /// Number of files converted or compressed.
     pub processed: usize,
