@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 
 struct ToolsState {
     override_dir: Option<PathBuf>,
@@ -270,26 +270,33 @@ pub(crate) struct Probe {
     pub bitrate: u64,
 }
 
+/// Build a `Command` for ffprobe, resolved the same way as every other tool
+/// lookup in this module. The one place that decides where ffprobe lives, so
+/// [`probe_video`] and the public [`crate::probe_media`] agree with each other.
+pub(crate) fn ffprobe_command() -> Command {
+    let ffprobe =
+        resolve_tool("ffprobe").unwrap_or_else(|| PathBuf::from(executable_name("ffprobe")));
+    let mut cmd = Command::new(ffprobe);
+    cmd.stdin(Stdio::null());
+    cmd
+}
+
 pub(crate) fn probe_video(path: &std::path::Path) -> Result<Probe> {
-    let ffprobe = resolve_tool("ffprobe").ok_or_else(|| {
-        anyhow::anyhow!(
-            "ffprobe not found in lib/ (or beside this program), in MESSAGE_VAULT_IO_BIN, or on PATH"
-        )
-    })?;
-    let output = Command::new(ffprobe)
-        .args([
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=codec_name,width,height,bit_rate",
-            "-of",
-            "csv=p=0",
-            path.to_str().unwrap_or(""),
-        ])
-        .stdin(Stdio::null())
-        .output()?;
+    let mut cmd = ffprobe_command();
+    cmd.args([
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=codec_name,width,height,bit_rate",
+        "-of",
+        "csv=p=0",
+        path.to_str().unwrap_or(""),
+    ]);
+    let output = cmd
+        .output()
+        .with_context(|| format!("run ffprobe on {}", path.display()))?;
     if !output.status.success() {
         bail!("ffprobe failed for {}", path.display());
     }

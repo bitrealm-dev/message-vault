@@ -11,10 +11,16 @@
 
 #![warn(missing_docs)]
 
+mod estimate;
+mod probe;
 mod process;
 mod size;
 mod tools;
 
+pub use estimate::{
+    PROBABLY_FITS_MARGIN, SizeVerdict, classify_probed, estimate_bytes, needs_probe,
+};
+pub use probe::{MediaProbe, probe_media};
 pub use process::{
     MediaReport, TranscodeOutcome, derivative_name, process_attachments_dir,
     process_attachments_dir_with_log, transcode_file,
