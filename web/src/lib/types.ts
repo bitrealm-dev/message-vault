@@ -148,7 +148,7 @@ export interface ExtractErrorEvent {
 }
 
 export interface ImportProgressEvent {
-  step: "parse" | "attachments" | "prepare" | "upload";
+  step: "parse" | "attachments" | "prepare" | "media" | "upload";
   done: number;
   total: number;
   bytes_done?: number;
@@ -158,7 +158,7 @@ export interface ImportProgressEvent {
 
 export interface ImportIssueEvent {
   kind: "error" | "skip";
-  step: "parse" | "attachments" | "prepare" | "upload";
+  step: "parse" | "attachments" | "prepare" | "media" | "upload";
   item: string;
   reason: string;
 }

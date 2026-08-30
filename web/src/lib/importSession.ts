@@ -31,6 +31,9 @@ export type ActiveImportSession = {
   device_id: string | null;
   form: unknown;
   source_fingerprint: SourceFingerprint | null;
+  /** What was approved at the last gate passed, or null. Mirrors what
+   * `setImportStage`'s `approvedPlan` argument last wrote. */
+  summary: unknown;
 };
 
 /** The account's live session, or null when there is none. */
@@ -39,9 +42,19 @@ export async function getActiveImportSession(): Promise<ActiveImportSession | nu
   return res.session ?? null;
 }
 
-/** Move a live session to another stage. */
-export async function setImportStage(id: number, stage: ImportStage): Promise<void> {
-  await apiClient.post(`/v1/imports/${String(id)}/stage`, { stage });
+/**
+ * Move a live session to another stage.
+ *
+ * `approvedPlan`, when given, is recorded as the session's `summary_json` —
+ * what the user approved at the gate they just passed. Omitting it leaves
+ * whatever plan is already stored untouched; it is never nulled out.
+ */
+export async function setImportStage(
+  id: number,
+  stage: ImportStage,
+  approvedPlan?: unknown,
+): Promise<void> {
+  await apiClient.post(`/v1/imports/${String(id)}/stage`, { stage, summary: approvedPlan });
 }
 
 /** Close a session the user gave up on, freeing the account's slot. */

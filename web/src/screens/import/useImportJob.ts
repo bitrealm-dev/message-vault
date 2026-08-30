@@ -7,16 +7,37 @@ import {
 import { useTauriJob } from "../../hooks/useTauriJob";
 import { apiClient, getBaseUrl } from "../../lib/api";
 import { formatAttachmentProgress } from "../../lib/attachmentProgressCopy";
-import { attachmentStepCopy } from "../../lib/attachmentStepCopy";
 import { useAuth } from "../../lib/auth";
 import { getDeviceId } from "../../lib/deviceId";
 import { imessageExtractFields } from "../../lib/imessageExtractFields";
 import { isImessageMethod } from "../../lib/imessageImport";
-import { buildSourceFingerprint, setImportStage } from "../../lib/importSession";
+import type { ActiveImportSession } from "../../lib/importSession";
+import {
+  buildSourceFingerprint,
+  discardImportSession,
+  type ImportStage,
+  setImportStage,
+} from "../../lib/importSession";
 import { saveImportSavedGroup } from "../../lib/savedGroups";
-import { sbrExtractFields } from "../../lib/sbrExtractFields";
+import { mediaExtractFields, sbrExtractFields } from "../../lib/sbrExtractFields";
 import { resolveImportStagingDir } from "../../lib/system-settings";
-import { invokeExtract, invokePathStat, invokePush, type TauriJobResult } from "../../lib/tauri";
+import {
+  type AttachmentForecast,
+  invokeDeleteStaging,
+  invokeExtract,
+  invokePathStat,
+  invokePush,
+  invokeSummarizeStaging,
+  invokeTranscodeStaging,
+  onExtractEvents,
+  type PushFinishedReport,
+  probeFfmpegTools,
+  type SizeVerdict,
+  type StagingConfig,
+  type StagingSummary,
+  type TauriJobResult,
+  type TranscodeFinishedReport,
+} from "../../lib/tauri";
 import { isTauri } from "../../lib/tauri-check";
 import type {
   AttachmentMediaMode,
@@ -27,21 +48,20 @@ import type {
 import { importSessionCreateBody } from "../../lib/vaultSource";
 import { whatsappExtractFields } from "../../lib/whatsappExtractFields";
 import { isWhatsappMethod } from "../../lib/whatsappImport";
+import { gateDelta as computeGateDelta, type GateDelta } from "./gateDelta";
+import { mediaJobVerb } from "./gateForecast";
 import { importOutcome } from "./importOutcome";
 import {
   type AttachmentProgressCounts,
   attachmentDoneDetail,
+  type ImportPhase,
+  type ImportStep,
   isProgressStepComplete,
+  stepIndexFor,
+  stepsFor,
 } from "./importProgressState";
 
-export type ImportStep = {
-  label: string;
-  status: "pending" | "active" | "done" | "error";
-  detail?: string;
-  durationMs?: number | null;
-};
-
-export type ImportPhase = "form" | "progress" | "done";
+export type { ImportPhase, ImportStep } from "./importProgressState";
 
 export const PUSH_LOG_NAME = "vault-push.log";
 
@@ -65,34 +85,115 @@ const EMPTY_TIMING: StageTiming = {
   prepareEndedAt: null,
 };
 
-/** Four import steps shown in the progress view. */
+/** Parse/attachments/prepare durations, fixed once extract finishes and read again at finish time. */
+type ExtractDurations = {
+  parseMs: number | null;
+  attachmentsMs: number | null;
+  prepareMs: number | null;
+};
+
+const EMPTY_DURATIONS: ExtractDurations = { parseMs: null, attachmentsMs: null, prepareMs: null };
+
+/** Present-tense verb for the media step, following the mode so compress mode never says "Converting". */
+function mediaVerb(mode: AttachmentMediaMode): string {
+  return mode === "compress" ? "Compressing" : "Converting";
+}
+
+/** Sentence shown on the media step's row once the pass finishes. */
+function mediaDoneDetail(mode: AttachmentMediaMode): string {
+  return mode === "compress" ? "Compression complete" : "Conversion complete";
+}
+
+/**
+ * True for the "canceled"/"cancelled" text a cancelled Tauri job's
+ * `extract:error` carries. The media pass's own cancellation is spelled
+ * "canceled" (one L, `transcode.rs`'s `check_cancel_now`); other layers of
+ * the Rust side spell it "cancelled" (two L, `message-vault-io-core`'s
+ * `check_cancel`) — matched case- and spelling-insensitively so this reads
+ * either.
+ */
+function isCancellation(message: string): boolean {
+  return /^cancell?ed$/i.test(message.trim());
+}
+
+/**
+ * Extract stages originals regardless of the chosen media mode (ffmpeg is
+ * only required once Gate 1 is approved, not up front) — convert and
+ * compress run afterward, against the staged folder, via
+ * `invokeTranscodeStaging`. Copy and skip pass through unchanged.
+ */
+function extractAttachmentMedia(mode: AttachmentMediaMode): AttachmentMediaMode {
+  return mode === "convert" || mode === "compress" ? "copy" : mode;
+}
+
+/** The media fields `summarize_staging` and `transcode_staging` share, read from the submitted form. */
+function stagingMediaFields(
+  form: Pick<ImportJobFormValues, "attachmentMedia" | "maxResolution" | "maxFps" | "minSizeMb">,
+): Pick<
+  StagingConfig,
+  "attachment_media" | "media_max_resolution" | "media_max_fps" | "media_min_size"
+> {
+  return mediaExtractFields({
+    attachmentMedia: form.attachmentMedia,
+    maxResolution: form.maxResolution,
+    maxFps: form.maxFps,
+    minSizeMb: form.minSizeMb,
+  });
+}
+
+/** Present-tense verb for every step but `media` (which needs the mode —
+ * see `mediaVerb`), keyed by step name so a step added to the wire union
+ * without an entry here is a compile error rather than a silent fallback.
+ */
+const STEP_VERB: Record<Exclude<ImportProgressEvent["step"], "media">, string> = {
+  parse: "Reading",
+  attachments: "Copied",
+  prepare: "Preparing",
+  upload: "Uploading",
+};
+
+/**
+ * Present-tense verb shown while a step is running. Falls back to a plain
+ * verb for a step string this build doesn't recognise — the event comes
+ * off the wire unvalidated.
+ */
+function progressVerb(step: ImportProgressEvent["step"], mode: AttachmentMediaMode): string {
+  if (step === "media") return mediaVerb(mode);
+  return STEP_VERB[step] ?? "Working";
+}
+
+/** Progress steps for this mode (Decision 8), with the first step optionally marked active. */
 function initialSteps(
   status: ImportStep["status"] = "pending",
   attachmentMedia: AttachmentMediaMode = "copy",
 ): ImportStep[] {
-  const attachments = attachmentStepCopy(attachmentMedia);
-  return [
-    { label: "Parse backup", status, detail: status === "active" ? "Parsing backup…" : undefined },
-    { label: attachments.label, status: "pending" },
-    { label: "Preparing messages", status: "pending" },
-    { label: "Upload to vault", status: "pending" },
-  ];
+  const steps = stepsFor(attachmentMedia);
+  const first = steps[0];
+  if (status === "active" && first) {
+    steps[0] = { ...first, status, detail: "Reading backup…" };
+  }
+  return steps;
 }
 
-/** Index of the progress step that matches this server event. */
-function stepIndexFor(step: ImportProgressEvent["step"]): number {
-  if (step === "parse") return 0;
-  if (step === "attachments") return 1;
-  if (step === "prepare") return 2;
-  return 3;
-}
-
-/** Present-tense verb shown while a step is running. */
-function progressVerb(step: ImportProgressEvent["step"]): string {
-  if (step === "upload") return "Uploading";
-  if (step === "prepare") return "Preparing";
-  if (step === "attachments") return "Copied";
-  return "Parsing";
+/**
+ * Step list for a session resumed at a gate or mid media pass — the read
+ * and staging rows are already done (nothing here re-extracts), the upload
+ * row is always still pending (nothing here has uploaded yet), and the
+ * media row (when this mode has one) is done only when `mediaDone` says
+ * the pass already finished in an earlier run. A resume at `transcode`
+ * passes `mediaDone: false` and then calls `runMediaPass`, which marks
+ * that same row active once it actually starts running against this list.
+ */
+function resumeSteps(attachmentMedia: AttachmentMediaMode, mediaDone: boolean): ImportStep[] {
+  const template = stepsFor(attachmentMedia);
+  const lastIndex = template.length - 1;
+  return template.map((step, i) => {
+    if (i === lastIndex) return step;
+    if (i === 0 || i === 1) return { ...step, status: "done", detail: "Already staged" };
+    // The media row, the only one left (index 2, only present under
+    // convert/compress).
+    return mediaDone ? { ...step, status: "done", detail: mediaDoneDetail(attachmentMedia) } : step;
+  });
 }
 
 /** Parse, attachment, and prepare durations from timestamps recorded during extract. */
@@ -143,6 +244,13 @@ export type ImportJobFormValues = {
 export type ResumePush = {
   sessionId: number;
   stagingDir: string;
+  /** The plan approved at the last gate this session passed, parsed from
+   * its stored `summary` (`parseStoredStagingSummary`). Undefined when the
+   * session recorded nothing usable — `runPush`/`finishImport` already
+   * tolerate that absence, they just can't diff a resumed push's expected
+   * omissions against it, which demotes an honest `completed` outcome to
+   * `completed_with_issues` for exactly the interrupted-and-resumed case. */
+  approved?: StagingSummary;
 };
 
 const ATTACHMENT_MEDIA_MODES: readonly AttachmentMediaMode[] = [
@@ -223,6 +331,78 @@ export function restoreFormFromSnapshot(raw: unknown): ImportJobFormValues | nul
   };
 }
 
+const SIZE_VERDICTS: readonly SizeVerdict[] = [
+  "fits_as_is",
+  "likely_fits",
+  "may_grow",
+  "probably_too_big",
+  "cannot_process",
+];
+
+function isAttachmentForecast(value: unknown): value is AttachmentForecast {
+  if (typeof value !== "object" || value === null) return false;
+  const r = value as Record<string, unknown>;
+  return (
+    typeof r.path === "string" &&
+    typeof r.name === "string" &&
+    typeof r.sizeBytes === "number" &&
+    typeof r.estimateBytes === "number" &&
+    typeof r.verdict === "string" &&
+    SIZE_VERDICTS.includes(r.verdict as SizeVerdict)
+  );
+}
+
+/**
+ * Parse a session's stored `summary` (Task 6) back into a `StagingSummary`
+ * — the plan approved at the last gate the session passed.
+ *
+ * Read only as the *approved baseline* on resume, never shown directly:
+ * decision 39 says the summary actually on screen is always recomputed
+ * fresh from the folder. Like `restoreFormFromSnapshot`, this value came
+ * from the database rather than from this session's own state, so its
+ * shape is checked field by field rather than trusted; returns `undefined`
+ * — not a throw — for anything that doesn't match. A resume with no usable
+ * baseline still proceeds: `gateDelta` and `importOutcome` both tolerate an
+ * absent one, they just can't diff against one.
+ */
+export function parseStoredStagingSummary(raw: unknown): StagingSummary | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.conversations !== "number") return undefined;
+  if (typeof r.messages !== "number") return undefined;
+  if (!isStringArray(r.contactIdentifiers)) return undefined;
+  if (typeof r.attachments !== "number") return undefined;
+  if (typeof r.attachmentBytes !== "number") return undefined;
+  if (typeof r.verdictCounts !== "object" || r.verdictCounts === null) return undefined;
+  const vc = r.verdictCounts as Record<string, unknown>;
+  if (
+    typeof vc.fitsAsIs !== "number" ||
+    typeof vc.likelyFits !== "number" ||
+    typeof vc.mayGrow !== "number" ||
+    typeof vc.probablyTooBig !== "number" ||
+    typeof vc.cannotProcess !== "number"
+  ) {
+    return undefined;
+  }
+  if (!Array.isArray(r.forecasts) || !r.forecasts.every(isAttachmentForecast)) return undefined;
+
+  return {
+    conversations: r.conversations,
+    messages: r.messages,
+    contactIdentifiers: r.contactIdentifiers,
+    attachments: r.attachments,
+    attachmentBytes: r.attachmentBytes,
+    verdictCounts: {
+      fitsAsIs: vc.fitsAsIs,
+      likelyFits: vc.likelyFits,
+      mayGrow: vc.mayGrow,
+      probablyTooBig: vc.probablyTooBig,
+      cannotProcess: vc.cannotProcess,
+    },
+    forecasts: r.forecasts,
+  };
+}
+
 /** Run extract then upload for one import, and keep step progress for the UI. */
 export function useImportJob() {
   const { token } = useAuth();
@@ -233,6 +413,25 @@ export function useImportJob() {
   const [summaryView, setSummaryView] = useState<ImportSummaryView | null>(null);
   const [stagingDir, setStagingDir] = useState<string | null>(null);
   const [importSessionId, setImportSessionId] = useState<number | null>(null);
+  const [gateSummary, setGateSummary] = useState<StagingSummary | null>(null);
+  const [gateDeltaState, setGateDeltaState] = useState<GateDelta | null>(null);
+  const [mediaToolsMissing, setMediaToolsMissing] = useState(false);
+  // True only for a resume that landed on Gate 1 because ffmpeg went missing
+  // mid media pass, not for the genuine not-yet-run case — Gate 1's copy
+  // must not claim the media step hasn't run when it partly has.
+  const [mediaPartiallyRan, setMediaPartiallyRan] = useState(false);
+  // A resume's own recompute failing (a transient read of the staging
+  // folder, not the run itself) — surfaced on the resume panel rather than
+  // completing the session (decision 37: only an explicit discard ends a
+  // waiting one). Cleared at the start of the next resume attempt or a
+  // fresh import; deliberately *not* cleared by returnToForm, since the
+  // failure path below returns there itself and still needs it read.
+  const [resumeError, setResumeError] = useState<string | null>(null);
+  // True only while a not-cancellable summarize call is in flight (Decision:
+  // the gate screens render once the summary resolves; until then the
+  // progress view stays up with its Cancel disabled, since there is nothing
+  // for it to stop).
+  const [computingSummary, setComputingSummary] = useState(false);
   const activeStepRef = useRef<ImportIssue["step"]>("parse");
   const issuesRef = useRef<ImportIssue[]>([]);
   const countsRef = useRef<{
@@ -240,19 +439,37 @@ export function useImportJob() {
     messagesParsed?: number;
   }>({});
   const timingRef = useRef({ ...EMPTY_TIMING });
+  const durationsRef = useRef<ExtractDurations>({ ...EMPTY_DURATIONS });
+  const importStartedAtRef = useRef(0);
+  const formRef = useRef<ImportJobFormValues | null>(null);
   const attachmentModeRef = useRef<AttachmentMediaMode>("copy");
+  // What extract is actually doing to attachments right now — "copy" under
+  // convert/compress too, since extract only stages originals (ruling 3);
+  // the media step (index 2), not this row, tells the convert/compress
+  // story. Kept separate from attachmentModeRef, which stays the mode the
+  // user chose and drives the media step's own wording and the step-list
+  // layout.
+  const extractMediaModeRef = useRef<AttachmentMediaMode>("copy");
   const lastAttachmentProgressRef = useRef<AttachmentProgressCounts | null>(null);
+  // Guards approveGate/declineGate against a double click doing the work
+  // twice — the same in-flight-ref pattern ImportScreen.tsx uses for its
+  // resume actions.
+  const gateActionRef = useRef(false);
 
   function returnToForm(): void {
     setPhase("form");
     setSummaryView(null);
     setStagingDir(null);
     setImportSessionId(null);
+    setGateSummary(null);
+    setGateDeltaState(null);
+    setMediaToolsMissing(false);
+    setMediaPartiallyRan(false);
+    setComputingSummary(false);
   }
 
   function applyProgress(event: ImportProgressEvent): void {
     const now = performance.now();
-    activeStepRef.current = event.step;
 
     if (event.step === "parse") {
       timingRef.current.parseStartedAt ??= now;
@@ -272,26 +489,30 @@ export function useImportJob() {
       timingRef.current.prepareStartedAt ??= now;
     }
 
-    const stepIndex = stepIndexFor(event.step);
+    const stepIndex = stepIndexFor(event.step, attachmentModeRef.current);
+    // No row for this step in the current mode (or an unrecognised step off
+    // the wire) — leave activeStepRef pointing at whatever step actually has
+    // a row, so a dropped event here never mislabels the next error.
+    if (stepIndex < 0) return;
+    activeStepRef.current = event.step;
+
     let rawDetail = `${event.done}/${event.total}`;
     if (event.status) {
       rawDetail = `${event.done}/${event.total} (${event.status})`;
     }
 
-    const attachments = attachmentStepCopy(attachmentModeRef.current);
     const lastAttachment = lastAttachmentProgressRef.current;
     const detail =
       event.step === "attachments"
         ? formatAttachmentProgress({
-            mode: attachmentModeRef.current,
+            mode: extractMediaModeRef.current,
             done: event.done,
             total: event.total,
             bytesDone: event.bytes_done ?? lastAttachment?.bytesDone ?? 0,
             bytesTotal: event.bytes_total ?? lastAttachment?.bytesTotal ?? 0,
           })
-        : `${progressVerb(event.step)} ${rawDetail}`;
+        : `${progressVerb(event.step, attachmentModeRef.current)} ${rawDetail}`;
     const done = isProgressStepComplete(event.step, event.done, event.total);
-    const attachmentLabel = event.step === "attachments" ? attachments.label : undefined;
 
     setSteps((current) =>
       current.map((step, index) => {
@@ -301,7 +522,6 @@ export function useImportJob() {
         if (index > stepIndex) return step;
         return {
           ...step,
-          ...(attachmentLabel ? { label: attachmentLabel } : {}),
           status: done ? "done" : "active",
           detail,
         };
@@ -313,182 +533,209 @@ export function useImportJob() {
     issuesRef.current = [...issuesRef.current, issue];
   }
 
+  /**
+   * `invokeSummarizeStaging`, with a listener on the same `extract:progress`
+   * channel the extract/media passes use. `summarize_staging` (Rust) emits
+   * progress on the `prepare` step while it walks a big folder — every call
+   * site used to invoke it directly with nothing subscribed, so those events
+   * had nowhere to go and a huge folder's gate looked frozen. `applyProgress`
+   * already knows what to do with a `prepare` step (Task 7's ruling: it
+   * drives the staging row that just finished, not a row of its own), so
+   * this just has to make sure the event reaches it.
+   */
+  async function summarizeStagingWithProgress(config: StagingConfig): Promise<StagingSummary> {
+    const unlisten = await onExtractEvents({
+      onLog: () => {},
+      onProgress: applyProgress,
+      onFinished: () => {},
+      onError: () => {},
+    });
+    try {
+      return await invokeSummarizeStaging(config);
+    } finally {
+      unlisten();
+    }
+  }
+
   /** Form snapshot for the session record, without the secrets. */
   function formSnapshot(form: ImportJobFormValues): Record<string, unknown> {
     const { backupPassword: _backupPassword, whatsappKey: _whatsappKey, ...rest } = form;
     return rest;
   }
 
-  async function startImport(form: ImportJobFormValues, resume?: ResumePush): Promise<void> {
-    if (!isTauri()) return;
-    const importStartedAt = performance.now();
-    activeStepRef.current = "parse";
-    issuesRef.current = [];
-    countsRef.current = {};
-    timingRef.current = { ...EMPTY_TIMING };
-    lastAttachmentProgressRef.current = null;
-    attachmentModeRef.current = form.attachmentMedia;
+  /**
+   * Move a live session to another stage, carrying the summary the user just
+   * approved when there is one — `approvedPlan` is simply forwarded, undefined
+   * and all. `setImportStage` posts `{ stage, summary: approvedPlan }`, and
+   * `JSON.stringify` drops an `undefined`-valued property outright, so an
+   * omitted plan and an explicit `undefined` reach the server identically:
+   * no `summary` key at all, leaving whatever plan is already stored
+   * untouched.
+   */
+  async function moveStage(
+    sessionId: number,
+    stage: ImportStage,
+    approvedPlan?: StagingSummary,
+  ): Promise<void> {
+    await setImportStage(sessionId, stage, approvedPlan).catch(() => {});
+  }
+
+  /**
+   * Build the finished-import summary, record it, and — usually — post
+   * `/complete`, the terminal step for every path except one (a failure
+   * before either gate, a failed media pass, or a push that ran to
+   * completion or failed all complete normally).
+   *
+   * `canceled` overrides `importOutcome`'s verdict outright: the user asked
+   * for this, so it is never read as a failure.
+   *
+   * `skipComplete` is that one exception: decision 36 routes a cancellation
+   * mid-`transcode` to the same recovery as a crash at that stage, and
+   * decision 37 says only an explicit discard ends a waiting session —
+   * `/complete` is what ends one. Posting it here would free the
+   * one-active-session slot and drop the session out of
+   * `GET /v1/imports/active`, stranding the staged folder (and the time
+   * already spent on it) with no session left to resume it through. The
+   * caller sets this only for a cancelled *media pass*; a cancelled
+   * extract has nothing approved yet, so the spec sends it to restart
+   * regardless and it completes normally, same as a failed pass does (a
+   * broken ffmpeg must not lock the account out of importing — the failed
+   * run still frees the slot).
+   */
+  async function finishImport(args: {
+    sessionId: number | null;
+    form: ImportJobFormValues;
+    threw: boolean;
+    canceled?: boolean;
+    pushReport: PushFinishedReport | null;
+    uploadMs: number | null;
+    skipComplete?: boolean;
+    // The plan the user approved at their last gate — Gate 2's recomputed
+    // summary when there was a media pass, Gate 1's otherwise (Decision 15).
+    // Only `runPush` has one to offer; every other call into this function
+    // ends in `pushReport: null`, which fails the outcome regardless of
+    // `approved`, so leaving it undefined there is a no-op, not a gap.
+    approved?: StagingSummary;
+  }): Promise<void> {
+    const { sessionId, form, threw, canceled, pushReport, uploadMs, skipComplete, approved } = args;
+    const { parseMs, attachmentsMs, prepareMs } = durationsRef.current;
+    const durationMs = performance.now() - importStartedAtRef.current;
+    const outcome: ImportSummaryView["status"] = canceled
+      ? "canceled"
+      : importOutcome({
+          report: pushReport ?? undefined,
+          threw,
+          issues: issuesRef.current,
+          approved,
+        });
+    const finalSummary: ImportSummaryView = {
+      status: outcome,
+      ...countsRef.current,
+      filesTotal: pushReport?.conversations_total ?? countsRef.current.filesParsed,
+      filesSucceeded: pushReport?.conversations_ok,
+      filesFailed: pushReport?.conversations_failed,
+      filesSkipped: pushReport?.conversations_skipped,
+      messagesAttempted: pushReport?.messages_attempted,
+      messagesInserted: pushReport?.messages_inserted,
+      messagesDeduped: pushReport?.messages_deduped,
+      messagesFailed: pushReport?.messages_failed,
+      parseMs,
+      attachmentsMs,
+      prepareMs,
+      uploadMs,
+      durationMs,
+      issues: issuesRef.current,
+    };
+    // Keyed by label, not index: the staging row folds attachments and
+    // prepare into one duration, and a mode with no media step has fewer
+    // rows than one with it — see stepsFor.
+    const finalStagingMs =
+      attachmentsMs != null || prepareMs != null ? (attachmentsMs ?? 0) + (prepareMs ?? 0) : null;
+    const durationByLabel = new Map<string, number | null>([
+      ["Read backup", parseMs],
+      ["Copy to staging", finalStagingMs],
+      ["Upload to vault", uploadMs],
+    ]);
+    setSteps((current) =>
+      current.map((step) => {
+        const duration = durationByLabel.get(step.label);
+        if (duration == null) return step;
+        return { ...step, durationMs: duration };
+      }),
+    );
+    if (sessionId && !skipComplete) {
+      try {
+        await apiClient.post(`/v1/imports/${String(sessionId)}/complete`, {
+          ok: outcome !== "failed" && outcome !== "canceled",
+          status: outcome,
+          message_count: pushReport?.messages_inserted,
+          attachment_count: pushReport?.assets_uploaded,
+          bytes_uploaded: pushReport?.assets_bytes,
+          parse_ms: parseMs,
+          attachments_ms: attachmentsMs,
+          prepare_ms: prepareMs,
+          upload_ms: uploadMs,
+          duration_ms: durationMs,
+          summary: {
+            files_total: finalSummary.filesTotal,
+            files_succeeded: finalSummary.filesSucceeded,
+            files_failed: finalSummary.filesFailed,
+            files_skipped: finalSummary.filesSkipped,
+            messages_parsed: finalSummary.messagesParsed,
+            messages_attempted: finalSummary.messagesAttempted,
+            messages_inserted: finalSummary.messagesInserted,
+            messages_deduped: finalSummary.messagesDeduped,
+            messages_failed: finalSummary.messagesFailed,
+          },
+          issues: finalSummary.issues,
+        });
+      } catch {
+        // Completing the session on the server is optional. The summary still shows local results.
+      }
+    }
+    if (sessionId != null) {
+      saveImportSavedGroup({
+        importSessionId: sessionId,
+        source: form.source,
+        messagesInserted: pushReport?.messages_inserted,
+      });
+    }
+    setSummaryView(finalSummary);
+    setPhase("done");
+    setRunning(false);
+  }
+
+  /**
+   * Upload to the vault and record the outcome — the tail end shared by a
+   * resumed session (jumps straight here), Gate 1's approval when there is
+   * no media step, and Gate 2's approval. Never throws: a push failure is
+   * folded into the finished summary via `finishImport`, exactly like any
+   * other terminal outcome.
+   */
+  async function runPush(
+    form: ImportJobFormValues,
+    sessionId: number,
+    outputDir: string,
+    approvedPlan?: StagingSummary,
+  ): Promise<void> {
     setRunning(true);
     setPhase("progress");
-    setSummaryView(null);
-    setStagingDir(null);
-    setImportSessionId(null);
-    setSteps(initialSteps("active", form.attachmentMedia));
+    activeStepRef.current = "upload";
+    setSteps((current) =>
+      current.map((step, i) =>
+        i === current.length - 1
+          ? { ...step, status: "active", detail: "Uploading to vault…" }
+          : step,
+      ),
+    );
+    await moveStage(sessionId, "pushing", approvedPlan);
 
-    let sessionId: number | null = null;
-    let threw = false;
-    let parseMs: number | null = null;
-    let attachmentsMs: number | null = null;
-    let prepareMs: number | null = null;
-    let uploadMs: number | null = null;
+    const uploadStartedAt = performance.now();
     let pushResult: TauriJobResult | null = null;
-    let outputDir = "";
+    let threw = false;
     try {
       const baseUrl = getBaseUrl();
       if (!token) throw new Error("Not authenticated");
-
-      if (resume) {
-        // The staging folder is already complete, so there is nothing to
-        // resolve, no new session to create (the account already has this
-        // one), and no extract to run.
-        outputDir = resume.stagingDir;
-        setStagingDir(outputDir);
-        sessionId = resume.sessionId;
-        setImportSessionId(sessionId);
-
-        setSteps([
-          { label: "Parse backup", status: "done", detail: "Already staged" },
-          {
-            label: attachmentStepCopy(form.attachmentMedia).label,
-            status: "done",
-            detail: "Already staged",
-          },
-          { label: "Preparing messages", status: "done", detail: "Already staged" },
-          { label: "Upload to vault", status: "active", detail: "Uploading to vault…" },
-        ]);
-      } else {
-        outputDir = await resolveImportStagingDir(form.backupPath, form.source);
-        setStagingDir(outputDir);
-
-        const backupStat = await invokePathStat(form.backupPath).catch(() => null);
-        const importSession = await apiClient.post<{ id: number }>("/v1/imports", {
-          ...importSessionCreateBody(form.source),
-          stage: "parse",
-          staging_dir: outputDir,
-          device_id: getDeviceId(),
-          form: formSnapshot(form),
-          source_fingerprint: backupStat
-            ? buildSourceFingerprint(form.backupPath, backupStat)
-            : null,
-        });
-        sessionId = importSession.id;
-        setImportSessionId(sessionId);
-
-        setSteps((current) =>
-          current.map((step, i) => (i === 0 ? { ...step, detail: "Extracting…" } : step)),
-        );
-
-        timingRef.current.extractStartedAt = performance.now();
-        const extractResult = await runTauriJob(
-          () =>
-            invokeExtract({
-              source: form.source,
-              path: form.backupPath,
-              output_dir: outputDir,
-              ...(isImessageMethod(form.source)
-                ? imessageExtractFields({
-                    source: form.source,
-                    backupPassword: form.backupPassword,
-                    attachmentMedia: form.attachmentMedia,
-                    maxResolution: form.maxResolution,
-                    maxFps: form.maxFps,
-                    minSizeMb: form.minSizeMb,
-                    obfuscate: form.obfuscate,
-                    attachmentRoot: form.attachmentRoot,
-                    appleContacts: form.appleContacts,
-                  })
-                : {}),
-              ...(isWhatsappMethod(form.source)
-                ? whatsappExtractFields({
-                    source: form.source,
-                    attachmentMedia: form.attachmentMedia,
-                    maxResolution: form.maxResolution,
-                    maxFps: form.maxFps,
-                    minSizeMb: form.minSizeMb,
-                    key: form.whatsappKey,
-                    wa: form.whatsappWa,
-                    media: form.whatsappMedia,
-                    db: form.whatsappDb,
-                    business: form.whatsappBusiness,
-                  })
-                : {}),
-              ...(form.isSbr
-                ? sbrExtractFields({
-                    attachmentMedia: form.attachmentMedia,
-                    maxResolution: form.maxResolution,
-                    maxFps: form.maxFps,
-                    minSizeMb: form.minSizeMb,
-                    ownerPhones: form.ownerPhones,
-                    obfuscate: form.obfuscate,
-                  })
-                : {}),
-            }),
-          { onProgress: applyProgress, onIssue: recordIssue },
-        );
-        if (extractResult.extraction) {
-          countsRef.current.filesParsed = extractResult.extraction.files_parsed;
-          countsRef.current.messagesParsed = extractResult.extraction.messages_parsed;
-        }
-
-        const extractFinishedAt = performance.now();
-        timingRef.current.prepareEndedAt = extractFinishedAt;
-        timingRef.current.attachmentsEndedAt ??=
-          timingRef.current.prepareStartedAt ?? extractFinishedAt;
-        ({ parseMs, attachmentsMs, prepareMs } = stageDurations(
-          timingRef.current,
-          extractFinishedAt,
-        ));
-        const attachments = attachmentStepCopy(form.attachmentMedia);
-        const attachmentDoneLine = attachmentDoneDetail(
-          form.attachmentMedia,
-          lastAttachmentProgressRef.current,
-          attachments.doneDetail,
-        );
-
-        setSteps([
-          {
-            label: "Parse backup",
-            status: "done",
-            detail: "Extraction complete",
-            durationMs: parseMs,
-          },
-          {
-            label: attachments.label,
-            status: "done",
-            detail: attachmentDoneLine,
-            durationMs: attachmentsMs,
-          },
-          {
-            label: "Preparing messages",
-            status: "done",
-            detail: "Preparation complete",
-            durationMs: prepareMs,
-          },
-          {
-            label: "Upload to vault",
-            status: "active",
-            detail: "Uploading to vault…",
-          },
-        ]);
-      }
-
-      activeStepRef.current = "upload";
-      if (sessionId != null) {
-        // Best effort: a stale stage costs a slower resume, never a wrong
-        // one — resume correctness is recomputed from the folder.
-        await setImportStage(sessionId, "pushing").catch(() => {});
-      }
-      const uploadStartedAt = performance.now();
       pushResult = await runTauriJob(
         () =>
           invokePush({
@@ -500,25 +747,13 @@ export function useImportJob() {
             force: form.force,
             continue_on_error: true,
             skip_attachments: false,
-            // Extract just wrote these files. Matching size_bytes lets
-            // vault-push skip a second full-file hash. Media remaps clear
-            // digest and size, so a transcoded file is hashed during extract
-            // and then trusted here. Applies to every desktop source, not
-            // only SMS Backup & Restore.
+            // Extract (or the media pass) just wrote these files. Matching
+            // size_bytes lets vault-push skip a second full-file hash.
             trust_export: true,
             contact_name_mode: form.contactNameMode,
-            import_id: sessionId ?? undefined,
+            import_id: sessionId,
           }),
         { onProgress: applyProgress, onIssue: recordIssue },
-      );
-      uploadMs = performance.now() - uploadStartedAt;
-
-      setSteps((current) =>
-        current.map((step, i) =>
-          i === 3
-            ? { ...step, status: "done", detail: "Upload complete", durationMs: uploadMs }
-            : step,
-        ),
       );
     } catch (e: unknown) {
       threw = true;
@@ -530,77 +765,579 @@ export function useImportJob() {
       setSteps((current) =>
         current.map((step) => (step.status === "active" ? { ...step, status: "error" } : step)),
       );
-    } finally {
-      const durationMs = performance.now() - importStartedAt;
-      const pushReport = pushResult?.report;
-      const outcome = importOutcome({ report: pushReport, threw, issues: issuesRef.current });
-      const finalSummary: ImportSummaryView = {
-        status: outcome,
-        ...countsRef.current,
-        filesTotal: pushReport?.conversations_total ?? countsRef.current.filesParsed,
-        filesSucceeded: pushReport?.conversations_ok,
-        filesFailed: pushReport?.conversations_failed,
-        filesSkipped: pushReport?.conversations_skipped,
-        messagesAttempted: pushReport?.messages_attempted,
-        messagesInserted: pushReport?.messages_inserted,
-        messagesDeduped: pushReport?.messages_deduped,
-        messagesFailed: pushReport?.messages_failed,
-        parseMs,
-        attachmentsMs,
-        prepareMs,
-        uploadMs,
-        durationMs,
-        issues: issuesRef.current,
-      };
-      const durations = [parseMs, attachmentsMs, prepareMs, uploadMs];
+    }
+    const uploadMs = performance.now() - uploadStartedAt;
+    if (!threw) {
       setSteps((current) =>
-        current.map((step, index) => {
-          const duration = durations[index];
-          if (duration == null) return step;
-          return { ...step, durationMs: duration };
+        current.map((step, i) =>
+          i === current.length - 1
+            ? { ...step, status: "done", detail: "Upload complete", durationMs: uploadMs }
+            : step,
+        ),
+      );
+    }
+
+    await finishImport({
+      sessionId,
+      form,
+      threw,
+      pushReport: pushResult?.report ?? null,
+      uploadMs,
+      approved: approvedPlan,
+    });
+  }
+
+  /**
+   * Convert or compress the staged files after Gate 1 approves them, then
+   * recompute the summary against the folder as it now stands (Decision 39:
+   * the folder is the truth, not the last estimate) and move on to Gate 2.
+   * A failed pass ends the import the same way a failed push does — never a
+   * silent fall-through to upload.
+   *
+   * `approvedSummary` is undefined on a resume whose stored plan failed to
+   * parse (`parseStoredStagingSummary`) — `moveStage` and `computeGateDelta`
+   * both already tolerate that absence, so the pass still runs rather than
+   * blocking the resume over a plan that can no longer be read.
+   */
+  async function runMediaPass(
+    form: ImportJobFormValues,
+    sessionId: number,
+    outputDir: string,
+    approvedSummary?: StagingSummary,
+  ): Promise<void> {
+    setRunning(true);
+    setPhase("progress");
+    const mediaIndex = stepIndexFor("media", form.attachmentMedia);
+    activeStepRef.current = "media";
+    setSteps((current) =>
+      current.map((step, i) =>
+        i === mediaIndex
+          ? { ...step, status: "active", detail: `${mediaVerb(form.attachmentMedia)}…` }
+          : step,
+      ),
+    );
+
+    // Carries the plan approved at Gate 1 even on this stage — a crash
+    // mid-pass must not leave `summary_json` null with no baseline for a
+    // later resume to diff against.
+    await moveStage(sessionId, "transcode", approvedSummary);
+
+    const mediaStartedAt = performance.now();
+    let transcodeReport: TranscodeFinishedReport | undefined;
+    let threw = false;
+    let canceled = false;
+    try {
+      const result = await runTauriJob(
+        () =>
+          invokeTranscodeStaging({
+            staging_dir: outputDir,
+            ...stagingMediaFields(form),
+          }),
+        { onProgress: applyProgress, onIssue: recordIssue },
+      );
+      transcodeReport = result.transcode;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (isCancellation(msg)) {
+        // The user asked for this — not an error, so no issue row for it.
+        canceled = true;
+      } else {
+        threw = true;
+        issuesRef.current = [
+          ...issuesRef.current,
+          { kind: "error", step: activeStepRef.current, item: "Import", reason: msg },
+        ];
+      }
+    }
+    const mediaMs = performance.now() - mediaStartedAt;
+
+    if (threw || canceled) {
+      setSteps((current) =>
+        current.map((step) => (step.status === "active" ? { ...step, status: "error" } : step)),
+      );
+      // Neither path writes another stage: the session stays at `transcode`,
+      // which is exactly where the run actually got to. A cancellation also
+      // skips `/complete` outright — see finishImport's doc comment — so the
+      // session stays `running` and resumable instead of completing and
+      // freeing the slot out from under a staged folder nobody can reach
+      // anymore. A failed pass still completes normally: the account must
+      // not be locked out of importing by a broken ffmpeg.
+      await finishImport({
+        sessionId,
+        form,
+        threw,
+        canceled,
+        pushReport: null,
+        uploadMs: null,
+        skipComplete: canceled,
+      });
+      return;
+    }
+
+    setSteps((current) =>
+      current.map((step, i) =>
+        i === mediaIndex
+          ? {
+              ...step,
+              status: "done",
+              detail: mediaDoneDetail(form.attachmentMedia),
+              durationMs: mediaMs,
+            }
+          : step,
+      ),
+    );
+
+    setComputingSummary(true);
+    try {
+      const actual = await summarizeStagingWithProgress({
+        staging_dir: outputDir,
+        ...stagingMediaFields(form),
+      });
+      const delta = computeGateDelta(approvedSummary, actual, transcodeReport);
+      setGateSummary(actual);
+      setGateDeltaState(delta);
+      await moveStage(sessionId, "awaiting_gate_2", approvedSummary);
+      setComputingSummary(false);
+      setRunning(false);
+      setPhase("gate_2");
+    } catch (e: unknown) {
+      // The pass itself succeeded; only the recompute after it failed. Still
+      // a failed import, not an unhandled rejection on a frozen gate screen
+      // — and still no later stage written, so the session stays at
+      // `transcode`.
+      const msg = e instanceof Error ? e.message : String(e);
+      issuesRef.current = [
+        ...issuesRef.current,
+        { kind: "error", step: "media", item: "Import", reason: msg },
+      ];
+      setComputingSummary(false);
+      await finishImport({ sessionId, form, threw: true, pushReport: null, uploadMs: null });
+    }
+  }
+
+  async function startImport(form: ImportJobFormValues, resume?: ResumePush): Promise<void> {
+    if (!isTauri()) return;
+    importStartedAtRef.current = performance.now();
+    activeStepRef.current = "parse";
+    issuesRef.current = [];
+    countsRef.current = {};
+    timingRef.current = { ...EMPTY_TIMING };
+    durationsRef.current = { ...EMPTY_DURATIONS };
+    lastAttachmentProgressRef.current = null;
+    attachmentModeRef.current = form.attachmentMedia;
+    extractMediaModeRef.current = extractAttachmentMedia(form.attachmentMedia);
+    formRef.current = form;
+    setRunning(true);
+    setPhase("progress");
+    setSummaryView(null);
+    setStagingDir(null);
+    setImportSessionId(null);
+    setGateSummary(null);
+    setGateDeltaState(null);
+    setMediaToolsMissing(false);
+    setMediaPartiallyRan(false);
+    setResumeError(null);
+    setComputingSummary(false);
+    setSteps(initialSteps("active", form.attachmentMedia));
+
+    let sessionId: number | null = null;
+
+    try {
+      if (!token) throw new Error("Not authenticated");
+
+      if (resume) {
+        // The staging folder is already complete, so there is nothing to
+        // resolve, no new session to create (the account already has this
+        // one), and no extract to run. resume_push is only ever offered
+        // after a Gate 2 (or single-gate) approval, so there IS a plan from
+        // that approval — it rides along as `resume.approved` (parsed from
+        // the session's stored summary) when it parses. Straight to the push.
+        const outputDir = resume.stagingDir;
+        setStagingDir(outputDir);
+        sessionId = resume.sessionId;
+        setImportSessionId(sessionId);
+
+        const resumeTemplate = stepsFor(form.attachmentMedia);
+        const resumeLastIndex = resumeTemplate.length - 1;
+        setSteps(
+          resumeTemplate.map((step, i) =>
+            i === resumeLastIndex
+              ? { ...step, status: "active", detail: "Uploading to vault…" }
+              : { ...step, status: "done", detail: "Already staged" },
+          ),
+        );
+
+        await runPush(form, sessionId, outputDir, resume.approved);
+        return;
+      }
+
+      const outputDir = await resolveImportStagingDir(form.backupPath, form.source);
+      setStagingDir(outputDir);
+
+      const backupStat = await invokePathStat(form.backupPath).catch(() => null);
+      const importSession = await apiClient.post<{ id: number }>("/v1/imports", {
+        ...importSessionCreateBody(form.source),
+        stage: "parse",
+        staging_dir: outputDir,
+        device_id: getDeviceId(),
+        form: formSnapshot(form),
+        source_fingerprint: backupStat ? buildSourceFingerprint(form.backupPath, backupStat) : null,
+      });
+      sessionId = importSession.id;
+      setImportSessionId(sessionId);
+
+      setSteps((current) =>
+        current.map((step, i) => (i === 0 ? { ...step, detail: "Extracting…" } : step)),
+      );
+
+      await moveStage(sessionId, "write");
+
+      timingRef.current.extractStartedAt = performance.now();
+      const extractResult = await runTauriJob(
+        () =>
+          invokeExtract({
+            source: form.source,
+            path: form.backupPath,
+            output_dir: outputDir,
+            ...(isImessageMethod(form.source)
+              ? imessageExtractFields({
+                  source: form.source,
+                  backupPassword: form.backupPassword,
+                  attachmentMedia: extractAttachmentMedia(form.attachmentMedia),
+                  maxResolution: form.maxResolution,
+                  maxFps: form.maxFps,
+                  minSizeMb: form.minSizeMb,
+                  obfuscate: form.obfuscate,
+                  attachmentRoot: form.attachmentRoot,
+                  appleContacts: form.appleContacts,
+                })
+              : {}),
+            ...(isWhatsappMethod(form.source)
+              ? whatsappExtractFields({
+                  source: form.source,
+                  attachmentMedia: extractAttachmentMedia(form.attachmentMedia),
+                  maxResolution: form.maxResolution,
+                  maxFps: form.maxFps,
+                  minSizeMb: form.minSizeMb,
+                  key: form.whatsappKey,
+                  wa: form.whatsappWa,
+                  media: form.whatsappMedia,
+                  db: form.whatsappDb,
+                  business: form.whatsappBusiness,
+                })
+              : {}),
+            ...(form.isSbr
+              ? sbrExtractFields({
+                  attachmentMedia: extractAttachmentMedia(form.attachmentMedia),
+                  maxResolution: form.maxResolution,
+                  maxFps: form.maxFps,
+                  minSizeMb: form.minSizeMb,
+                  ownerPhones: form.ownerPhones,
+                  obfuscate: form.obfuscate,
+                })
+              : {}),
+          }),
+        { onProgress: applyProgress, onIssue: recordIssue },
+      );
+      if (extractResult.extraction) {
+        countsRef.current.filesParsed = extractResult.extraction.files_parsed;
+        countsRef.current.messagesParsed = extractResult.extraction.messages_parsed;
+      }
+
+      const extractFinishedAt = performance.now();
+      timingRef.current.prepareEndedAt = extractFinishedAt;
+      timingRef.current.attachmentsEndedAt ??=
+        timingRef.current.prepareStartedAt ?? extractFinishedAt;
+      const { parseMs, attachmentsMs, prepareMs } = stageDurations(
+        timingRef.current,
+        extractFinishedAt,
+      );
+      durationsRef.current = { parseMs, attachmentsMs, prepareMs };
+      // What extract actually did ("Copied", not "Converted", under
+      // convert/compress too) — see extractMediaModeRef's comment.
+      const attachmentDoneLine = attachmentDoneDetail(
+        extractAttachmentMedia(form.attachmentMedia),
+        lastAttachmentProgressRef.current,
+      );
+      // The staging row folds both the attachment copy and the
+      // conversation-file write ("prepare") into one duration — from the
+      // user's side that is all part of staging, not two separate steps.
+      const stagingMs = attachmentsMs + prepareMs;
+
+      const extractedTemplate = stepsFor(form.attachmentMedia);
+      setSteps(
+        extractedTemplate.map((step, i) => {
+          if (i === 0) {
+            return {
+              ...step,
+              status: "done" as const,
+              detail: "Extraction complete",
+              durationMs: parseMs,
+            };
+          }
+          if (i === 1) {
+            return {
+              ...step,
+              status: "done" as const,
+              detail: attachmentDoneLine,
+              durationMs: stagingMs,
+            };
+          }
+          // Media (Convert/Compress) and Upload rows: not run yet — Gate 1
+          // has to approve staging first.
+          return step;
         }),
       );
-      if (sessionId) {
-        try {
-          await apiClient.post(`/v1/imports/${String(sessionId)}/complete`, {
-            ok: outcome !== "failed",
-            status: outcome,
-            message_count: pushReport?.messages_inserted,
-            attachment_count: pushReport?.assets_uploaded,
-            bytes_uploaded: pushReport?.assets_bytes,
-            parse_ms: parseMs,
-            attachments_ms: attachmentsMs,
-            prepare_ms: prepareMs,
-            upload_ms: uploadMs,
-            duration_ms: durationMs,
-            summary: {
-              files_total: finalSummary.filesTotal,
-              files_succeeded: finalSummary.filesSucceeded,
-              files_failed: finalSummary.filesFailed,
-              files_skipped: finalSummary.filesSkipped,
-              messages_parsed: finalSummary.messagesParsed,
-              messages_attempted: finalSummary.messagesAttempted,
-              messages_inserted: finalSummary.messagesInserted,
-              messages_deduped: finalSummary.messagesDeduped,
-              messages_failed: finalSummary.messagesFailed,
-            },
-            issues: finalSummary.issues,
-          });
-        } catch {
-          // Completing the session on the server is optional. The summary still shows local results.
-        }
-      }
-      if (sessionId != null) {
-        saveImportSavedGroup({
-          importSessionId: sessionId,
-          source: form.source,
-          messagesInserted: pushReport?.messages_inserted,
+
+      setComputingSummary(true);
+      await moveStage(sessionId, "awaiting_gate_1");
+      // The extract itself is done and staged -- an error from here on is a
+      // failed *read* of a folder that already holds the staged work, not a
+      // run that actually failed. Routing it through the outer catch (below)
+      // would post `/complete` and end the session, stranding that work with
+      // no way back to it: decision 37's resume offer only exists because
+      // the session survives. This mirrors `resumeAtGate`'s `landOnGate1`
+      // catch exactly -- return to the form instead, surfacing the failure
+      // on `resumeError` the same way. The stage already written above
+      // (`awaiting_gate_1`) stays as it is: the next visit's resume check
+      // finds the same session and offers this exact recompute again.
+      try {
+        const summary = await summarizeStagingWithProgress({
+          staging_dir: outputDir,
+          ...stagingMediaFields(form),
         });
+
+        let toolsMissing = false;
+        if (mediaJobVerb(form.attachmentMedia) !== null) {
+          try {
+            const probe = await probeFfmpegTools(null);
+            toolsMissing = !probe.ok;
+          } catch {
+            toolsMissing = true;
+          }
+        }
+
+        setGateSummary(summary);
+        setMediaToolsMissing(toolsMissing);
+        setComputingSummary(false);
+        setRunning(false);
+        setPhase("gate_1");
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setResumeError(msg);
+        setComputingSummary(false);
+        setRunning(false);
+        returnToForm();
       }
-      setSummaryView(finalSummary);
-      setPhase("done");
-      setRunning(false);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      issuesRef.current = [
+        ...issuesRef.current,
+        { kind: "error", step: activeStepRef.current, item: "Import", reason: msg },
+      ];
+      setSteps((current) =>
+        current.map((step) => (step.status === "active" ? { ...step, status: "error" } : step)),
+      );
+      setComputingSummary(false);
+      await finishImport({ sessionId, form, threw: true, pushReport: null, uploadMs: null });
     }
+  }
+
+  async function approveGate(): Promise<void> {
+    if (!isTauri()) return;
+    if (gateActionRef.current) return;
+    const form = formRef.current;
+    const sessionId = importSessionId;
+    const outputDir = stagingDir;
+    const approvedSummary = gateSummary;
+    if (!form || sessionId == null || outputDir == null || approvedSummary == null) return;
+
+    gateActionRef.current = true;
+    try {
+      if (phase === "gate_1" && mediaJobVerb(form.attachmentMedia) !== null) {
+        await runMediaPass(form, sessionId, outputDir, approvedSummary);
+      } else {
+        await runPush(form, sessionId, outputDir, approvedSummary);
+      }
+    } finally {
+      gateActionRef.current = false;
+    }
+  }
+
+  /**
+   * Resume a session the vault reports waiting at a gate (`awaiting_gate_1`
+   * / `awaiting_gate_2`) or mid media pass (`transcode`).
+   *
+   * `approveGate` can't do this itself: it depends on in-memory state
+   * (`gateSummary`, `formRef`, `stagingDir`, `importSessionId`) that a
+   * reload has none of, and it branches on `phase` rather than the
+   * session's own stored stage. This rebuilds that state from `session`
+   * instead, then routes exactly the way the normal flow would have
+   * gotten here.
+   *
+   * `resumedForm` is the caller's already-validated `restoreFormFromSnapshot`
+   * result — the caller needs that check anyway (to fall back to
+   * `settings_unreadable`), so this trusts it rather than parsing
+   * `session.form` a second time.
+   *
+   * Decision 39: the folder is the truth. Every landing recomputes the
+   * summary fresh from the staging folder via `invokeSummarizeStaging` —
+   * the session's stored `summary` is read only as the *approved baseline*
+   * for Gate 2's delta and the media pass's own bookkeeping, the same role
+   * it plays in the normal flow, never as something restored and shown
+   * directly.
+   *
+   * A recompute failing here is a transient read of the staging folder,
+   * not a run that actually failed — decision 37 says only an explicit
+   * discard ends a waiting session, so this must not complete it or write
+   * a stage. It returns to the form phase instead (the resume check there
+   * re-runs and finds the same session, so the panel reappears — that is
+   * the retry) and leaves the failure on `resumeError` for the panel to
+   * show.
+   */
+  async function resumeAtGate(
+    session: ActiveImportSession,
+    resumedForm: ImportJobFormValues,
+  ): Promise<void> {
+    if (!isTauri()) return;
+    if (
+      session.stage !== "awaiting_gate_1" &&
+      session.stage !== "awaiting_gate_2" &&
+      session.stage !== "transcode"
+    ) {
+      return;
+    }
+    if (!session.staging_dir) return; // resumeDecisionFor guarantees this; defensive only.
+
+    const sessionId = session.id;
+    const outputDir = session.staging_dir;
+    const approved = parseStoredStagingSummary(session.summary);
+
+    setResumeError(null);
+    importStartedAtRef.current = performance.now();
+    activeStepRef.current = session.stage === "transcode" ? "media" : "parse";
+    issuesRef.current = [];
+    countsRef.current = {};
+    timingRef.current = { ...EMPTY_TIMING };
+    durationsRef.current = { ...EMPTY_DURATIONS };
+    lastAttachmentProgressRef.current = null;
+    attachmentModeRef.current = resumedForm.attachmentMedia;
+    extractMediaModeRef.current = extractAttachmentMedia(resumedForm.attachmentMedia);
+    formRef.current = resumedForm;
+    setSummaryView(null);
+    setStagingDir(outputDir);
+    setImportSessionId(sessionId);
+    setGateSummary(null);
+    setGateDeltaState(null);
+    setMediaToolsMissing(false);
+    setMediaPartiallyRan(false);
+
+    async function toolsMissing(): Promise<boolean> {
+      if (mediaJobVerb(resumedForm.attachmentMedia) === null) return false;
+      try {
+        const probe = await probeFfmpegTools(null);
+        return !probe.ok;
+      } catch {
+        return true;
+      }
+    }
+
+    /**
+     * Recompute the summary fresh from the folder and land on Gate 1.
+     * `partiallyRan` is true only for the transcode-resume fallback below,
+     * where the folder may hold a mix of originals and converted files —
+     * Gate 1's "has not run yet" copy would be wrong there.
+     */
+    async function landOnGate1(partiallyRan: boolean): Promise<void> {
+      setSteps(resumeSteps(resumedForm.attachmentMedia, false));
+      setComputingSummary(true);
+      setPhase("progress");
+      setRunning(true);
+      try {
+        const actual = await summarizeStagingWithProgress({
+          staging_dir: outputDir,
+          ...stagingMediaFields(resumedForm),
+        });
+        const missing = await toolsMissing();
+        setGateSummary(actual);
+        setMediaToolsMissing(missing);
+        setMediaPartiallyRan(partiallyRan);
+        setComputingSummary(false);
+        setRunning(false);
+        setPhase("gate_1");
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setResumeError(msg);
+        setComputingSummary(false);
+        setRunning(false);
+        returnToForm();
+      }
+    }
+
+    if (session.stage === "awaiting_gate_1") {
+      await landOnGate1(false);
+      return;
+    }
+
+    if (session.stage === "awaiting_gate_2") {
+      setSteps(resumeSteps(resumedForm.attachmentMedia, true));
+      setComputingSummary(true);
+      setPhase("progress");
+      setRunning(true);
+      try {
+        const actual = await summarizeStagingWithProgress({
+          staging_dir: outputDir,
+          ...stagingMediaFields(resumedForm),
+        });
+        setGateSummary(actual);
+        // No transcode report to diff against on a resume -- the pass
+        // already ran in an earlier session -- so this falls back to
+        // gateDelta's conservation math (or, when `approved` itself is
+        // undefined, treats everything actual still flags as new).
+        setGateDeltaState(computeGateDelta(approved, actual, undefined));
+        setComputingSummary(false);
+        setRunning(false);
+        setPhase("gate_2");
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setResumeError(msg);
+        setComputingSummary(false);
+        setRunning(false);
+        returnToForm();
+      }
+      return;
+    }
+
+    // transcode: the media pass died mid-run. Re-running it is safe (Task 3
+    // made it resumable), so long as the tools it needs are actually there
+    // -- a resume with ffmpeg missing falls back to Gate 1's recomputed
+    // summary instead of starting a job that can only fail, using the same
+    // `mediaToolsMissing` gate the normal flow shows there.
+    if (await toolsMissing()) {
+      await landOnGate1(true);
+      return;
+    }
+    setSteps(resumeSteps(resumedForm.attachmentMedia, false));
+    await runMediaPass(resumedForm, sessionId, outputDir, approved);
+  }
+
+  async function declineGate(): Promise<void> {
+    if (gateActionRef.current) return;
+    gateActionRef.current = true;
+    try {
+      const sessionId = importSessionId;
+      const outputDir = stagingDir;
+      // Both halves run regardless of the other's outcome: a live session
+      // with no folder blocks the next import, and a folder with no session
+      // is litter nothing will ever clean up.
+      await Promise.allSettled([
+        sessionId != null ? discardImportSession(sessionId) : Promise.resolve(),
+        outputDir != null ? invokeDeleteStaging({ staging_dir: outputDir }) : Promise.resolve(),
+      ]);
+    } finally {
+      gateActionRef.current = false;
+    }
+    returnToForm();
   }
 
   return {
@@ -610,8 +1347,21 @@ export function useImportJob() {
     summaryView,
     stagingDir,
     importSessionId,
+    gateSummary,
+    gateDelta: gateDeltaState,
+    // The mode the gate screens actually approved, not whatever the (hidden,
+    // and in practice unchanged) form fields currently hold — read from the
+    // submitted form so the gates never depend on live form state.
+    gateAttachmentMedia: formRef.current?.attachmentMedia ?? "copy",
+    mediaToolsMissing,
+    mediaPartiallyRan,
+    resumeError,
+    computingSummary,
     completionText: phase === "done" ? completionTextFor(summaryView?.status) : undefined,
     startImport,
+    approveGate,
+    declineGate,
+    resumeAtGate,
     cancel,
     returnToForm,
   };

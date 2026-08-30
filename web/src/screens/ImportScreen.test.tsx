@@ -9,15 +9,29 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ActiveImportSession } from "../lib/importSession";
+import type { StagingSummary } from "../lib/tauri";
+import type { GateDelta } from "./import/gateDelta";
 import type { ResumeDecision } from "./import/resumeDecision";
 
-const hookState = vi.hoisted(() => ({ phase: "form" as "form" | "progress" | "done" }));
+const hookState = vi.hoisted(() => ({
+  phase: "form" as "form" | "progress" | "gate_1" | "gate_2" | "done",
+  gateSummary: null as StagingSummary | null,
+  gateDelta: null as GateDelta | null,
+  mediaToolsMissing: false,
+  mediaPartiallyRan: false,
+  resumeError: null as string | null,
+}));
 const startImportMock = vi.hoisted(() => vi.fn());
+const resumeAtGateMock = vi.hoisted(() => vi.fn());
+const approveGateMock = vi.hoisted(() => vi.fn());
+const declineGateMock = vi.hoisted(() => vi.fn());
 const cancelMock = vi.hoisted(() => vi.fn());
 const returnToFormMock = vi.hoisted(() => vi.fn());
 const getActiveImportSessionMock = vi.hoisted(() => vi.fn());
 const discardImportSessionMock = vi.hoisted(() => vi.fn());
+const invokeDeleteStagingMock = vi.hoisted(() => vi.fn());
 const invokePathStatMock = vi.hoisted(() => vi.fn());
+const apiPostMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./import/useImportJob", async (importOriginal) => {
   // restoreFormFromSnapshot is real: it's pure, already unit-tested on its
@@ -32,8 +46,17 @@ vi.mock("./import/useImportJob", async (importOriginal) => {
       running: false,
       summaryView: null,
       stagingDir: null,
+      gateSummary: hookState.gateSummary,
+      gateDelta: hookState.gateDelta,
+      mediaToolsMissing: hookState.mediaToolsMissing,
+      mediaPartiallyRan: hookState.mediaPartiallyRan,
+      resumeError: hookState.resumeError,
+      computingSummary: false,
       completionText: undefined,
       startImport: startImportMock,
+      resumeAtGate: resumeAtGateMock,
+      approveGate: approveGateMock,
+      declineGate: declineGateMock,
       cancel: cancelMock,
       returnToForm: returnToFormMock,
     }),
@@ -49,10 +72,17 @@ vi.mock("../lib/deviceId", () => ({
   getDeviceId: () => "this-device",
 }));
 
+vi.mock("../lib/api", () => ({
+  apiClient: {
+    post: (...args: unknown[]) => apiPostMock(...args),
+  },
+}));
+
 vi.mock("../lib/tauri", () => ({
   invokeHomeDir: vi.fn().mockResolvedValue({ path: "/home/u", os: "linux" }),
   invokeIosBackupEncrypted: vi.fn().mockResolvedValue(null),
   invokePathStat: (...args: unknown[]) => invokePathStatMock(...args),
+  invokeDeleteStaging: (...args: unknown[]) => invokeDeleteStagingMock(...args),
 }));
 
 vi.mock("../lib/tauri-check", () => ({
@@ -68,9 +98,15 @@ vi.mock("./import/ImportProgressView", () => ({
 }));
 
 vi.mock("./import/ResumeImportPanel", () => ({
-  default: (props: { decision: ResumeDecision; onResume: () => void; onDiscard: () => void }) => (
+  default: (props: {
+    decision: ResumeDecision;
+    error?: string | null;
+    onResume: () => void;
+    onDiscard: () => void;
+  }) => (
     <div data-testid="resume-panel">
       <span data-testid="resume-kind">{props.decision.kind}</span>
+      {props.error ? <span data-testid="resume-error">{props.error}</span> : null}
       <button type="button" onClick={props.onResume}>
         resume-action
       </button>
@@ -81,7 +117,58 @@ vi.mock("./import/ResumeImportPanel", () => ({
   ),
 }));
 
+vi.mock("./import/GateOneScreen", () => ({
+  default: (props: {
+    summary: StagingSummary;
+    unknownContacts: number | null;
+    onApprove: () => void;
+    onDecline: () => void;
+  }) => (
+    <div data-testid="gate-one">
+      <span data-testid="gate-one-unknown-contacts">{String(props.unknownContacts)}</span>
+      <button type="button" onClick={props.onApprove}>
+        gate-one-approve
+      </button>
+      <button type="button" onClick={props.onDecline}>
+        gate-one-decline
+      </button>
+    </div>
+  ),
+}));
+
+vi.mock("./import/GateTwoScreen", () => ({
+  default: (props: { onApprove: () => void; onDecline: () => void }) => (
+    <div data-testid="gate-two">
+      <button type="button" onClick={props.onApprove}>
+        gate-two-approve
+      </button>
+      <button type="button" onClick={props.onDecline}>
+        gate-two-decline
+      </button>
+    </div>
+  ),
+}));
+
 const { default: ImportScreen } = await import("./ImportScreen");
+
+function stagingSummary(overrides: Partial<StagingSummary> = {}): StagingSummary {
+  return {
+    conversations: 1,
+    messages: 1,
+    contactIdentifiers: [],
+    attachments: 0,
+    attachmentBytes: 0,
+    verdictCounts: {
+      fitsAsIs: 0,
+      likelyFits: 0,
+      mayGrow: 0,
+      probablyTooBig: 0,
+      cannotProcess: 0,
+    },
+    forecasts: [],
+    ...overrides,
+  };
+}
 
 function session(overrides: Partial<ActiveImportSession> = {}): ActiveImportSession {
   return {
@@ -95,6 +182,7 @@ function session(overrides: Partial<ActiveImportSession> = {}): ActiveImportSess
     device_id: "this-device",
     form: { source: "imessage-ios" },
     source_fingerprint: null,
+    summary: null,
     ...overrides,
   };
 }
@@ -113,14 +201,27 @@ function deferred<T>() {
 describe("ImportScreen entering Import", () => {
   beforeEach(() => {
     hookState.phase = "form";
+    hookState.gateSummary = null;
+    hookState.gateDelta = null;
+    hookState.mediaToolsMissing = false;
+    hookState.mediaPartiallyRan = false;
+    hookState.resumeError = null;
     startImportMock.mockReset();
+    resumeAtGateMock.mockReset();
+    resumeAtGateMock.mockResolvedValue(undefined);
+    approveGateMock.mockReset();
+    declineGateMock.mockReset();
     cancelMock.mockReset();
     returnToFormMock.mockReset();
     getActiveImportSessionMock.mockReset();
     discardImportSessionMock.mockReset();
     discardImportSessionMock.mockResolvedValue(undefined);
+    invokeDeleteStagingMock.mockReset();
+    invokeDeleteStagingMock.mockResolvedValue(undefined);
     invokePathStatMock.mockReset();
     invokePathStatMock.mockResolvedValue({ exists: true, isFile: false, isDirectory: true });
+    apiPostMock.mockReset();
+    apiPostMock.mockResolvedValue({ unknown: [] });
   });
 
   afterEach(() => {
@@ -181,6 +282,54 @@ describe("ImportScreen entering Import", () => {
     expect(await screen.findByTestId("import-form")).toBeInTheDocument();
   });
 
+  it("also deletes the staging folder when discarding a this-device session", async () => {
+    // W7: declineGate already deletes the staging folder on decline
+    // (decision 16) -- a panel discard is the same operation reached
+    // through a different button, and used to only call
+    // discardImportSession, orphaning a potentially multi-GB folder.
+    const user = userEvent.setup();
+    getActiveImportSessionMock.mockResolvedValue(
+      session({
+        stage: "pushing",
+        device_id: "this-device",
+        staging_dir: "/home/u/message-vault/staging-260830",
+      }),
+    );
+    render(<ImportScreen />);
+
+    await screen.findByTestId("resume-panel");
+    await user.click(screen.getByText("discard-action"));
+
+    expect(discardImportSessionMock).toHaveBeenCalledWith(7);
+    expect(invokeDeleteStagingMock).toHaveBeenCalledWith({
+      staging_dir: "/home/u/message-vault/staging-260830",
+    });
+    expect(await screen.findByTestId("import-form")).toBeInTheDocument();
+  });
+
+  it("never touches disk when discarding another device's session", async () => {
+    // resumeDecisionFor routes an other-device session to "other_device",
+    // whose files are staged on that other install, not here -- deleting a
+    // local path with the same name would be wrong, or a no-op at best.
+    const user = userEvent.setup();
+    getActiveImportSessionMock.mockResolvedValue(
+      session({
+        stage: "pushing",
+        device_id: "another-device",
+        staging_dir: "/home/u/message-vault/staging-260830",
+      }),
+    );
+    render(<ImportScreen />);
+
+    await screen.findByTestId("resume-panel");
+    expect(screen.getByTestId("resume-kind")).toHaveTextContent("other_device");
+    await user.click(screen.getByText("discard-action"));
+
+    expect(discardImportSessionMock).toHaveBeenCalledWith(7);
+    expect(invokeDeleteStagingMock).not.toHaveBeenCalled();
+    expect(await screen.findByTestId("import-form")).toBeInTheDocument();
+  });
+
   it("resumes the push against the existing session without creating a new one", async () => {
     const user = userEvent.setup();
     getActiveImportSessionMock.mockResolvedValue(
@@ -218,6 +367,97 @@ describe("ImportScreen entering Import", () => {
     expect(form).toMatchObject({ source: "imessage-ios", backupPath: "/backups/iphone.tar" });
     expect(resume).toEqual({ sessionId: 7, stagingDir: "/home/u/message-vault/staging-260830" });
     expect(discardImportSessionMock).not.toHaveBeenCalled();
+  });
+
+  const restorableForm = {
+    source: "imessage-ios",
+    backupPath: "/backups/iphone.tar",
+    attachmentMedia: "copy",
+    maxResolution: "720p",
+    maxFps: "30",
+    minSizeMb: "20",
+    contactNameMode: "fill_missing",
+    ownerPhones: [],
+    force: false,
+    obfuscate: false,
+    isSbr: false,
+    attachmentRoot: "",
+    appleContacts: "",
+    whatsappWa: "",
+    whatsappMedia: "",
+    whatsappDb: "",
+    whatsappBusiness: false,
+  };
+
+  it.each([
+    ["awaiting_gate_1", "resume_gate"],
+    ["awaiting_gate_2", "resume_gate"],
+    ["transcode", "resume_media"],
+  ] as const)(
+    "routes a session at %s through resumeAtGate, not startImport or discard",
+    async (stage, kind) => {
+      const user = userEvent.setup();
+      getActiveImportSessionMock.mockResolvedValue(
+        session({
+          stage,
+          staging_dir: "/home/u/message-vault/staging-260830",
+          form: restorableForm,
+        }),
+      );
+      render(<ImportScreen />);
+
+      await screen.findByTestId("resume-panel");
+      expect(screen.getByTestId("resume-kind")).toHaveTextContent(kind);
+      await user.click(screen.getByText("resume-action"));
+
+      expect(resumeAtGateMock).toHaveBeenCalledTimes(1);
+      const [resumedSession, resumedForm] = resumeAtGateMock.mock.calls[0] as [
+        ActiveImportSession,
+        unknown,
+      ];
+      expect(resumedSession.id).toBe(7);
+      expect(resumedSession.stage).toBe(stage);
+      // The screen's own already-validated parse, not a second one inside
+      // the hook.
+      expect(resumedForm).toMatchObject({ source: "imessage-ios", attachmentMedia: "copy" });
+      expect(startImportMock).not.toHaveBeenCalled();
+      expect(discardImportSessionMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("re-fetches and reshows the resume panel with the failure surfaced when a gate resume's recompute fails", async () => {
+    // Decision 37: only an explicit discard ends a waiting session, so a
+    // failed recompute (useImportJob's resumeAtGate) never completes or
+    // discards it -- it returns to the form phase instead. That phase
+    // transition is what re-triggers this screen's own active-session
+    // check, and since nothing was touched server-side, it finds the exact
+    // same session and shows the panel again -- this is the retry.
+    getActiveImportSessionMock.mockResolvedValue(
+      session({ stage: "awaiting_gate_1", form: restorableForm }),
+    );
+    const { rerender } = render(<ImportScreen />);
+
+    await screen.findByTestId("resume-panel");
+    expect(screen.getByTestId("resume-kind")).toHaveTextContent("resume_gate");
+    expect(getActiveImportSessionMock).toHaveBeenCalledTimes(1);
+
+    // Simulate resumeAtGate's failure path from inside the (mocked) hook:
+    // phase moves to "progress" while it recomputes, then back to "form"
+    // with the failure left on `resumeError`.
+    hookState.phase = "progress";
+    await act(async () => {
+      rerender(<ImportScreen />);
+    });
+    hookState.phase = "form";
+    hookState.resumeError = "disk unavailable";
+    await act(async () => {
+      rerender(<ImportScreen />);
+    });
+
+    expect(getActiveImportSessionMock).toHaveBeenCalledTimes(2);
+    expect(await screen.findByTestId("resume-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("resume-kind")).toHaveTextContent("resume_gate");
+    expect(screen.getByTestId("resume-error")).toHaveTextContent("disk unavailable");
   });
 
   it("discards the old session before restarting when the extract never finished", async () => {
@@ -405,5 +645,118 @@ describe("ImportScreen entering Import", () => {
     const [form, resume] = startImportMock.mock.calls[0] as [unknown, unknown];
     expect(form).toMatchObject({ source: "imessage-ios", backupPath: "/backups/iphone.tar" });
     expect(resume).toBeUndefined();
+  });
+});
+
+describe("ImportScreen gates", () => {
+  beforeEach(() => {
+    hookState.phase = "form";
+    hookState.gateSummary = null;
+    hookState.gateDelta = null;
+    hookState.mediaToolsMissing = false;
+    hookState.mediaPartiallyRan = false;
+    hookState.resumeError = null;
+    startImportMock.mockReset();
+    resumeAtGateMock.mockReset();
+    resumeAtGateMock.mockResolvedValue(undefined);
+    approveGateMock.mockReset();
+    declineGateMock.mockReset();
+    cancelMock.mockReset();
+    returnToFormMock.mockReset();
+    getActiveImportSessionMock.mockReset();
+    getActiveImportSessionMock.mockResolvedValue(null);
+    discardImportSessionMock.mockReset();
+    invokePathStatMock.mockReset();
+    apiPostMock.mockReset();
+    apiPostMock.mockResolvedValue({ unknown: [] });
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("renders Gate 1 with the summary and wires approve/decline through to the hook", async () => {
+    hookState.phase = "gate_1";
+    hookState.gateSummary = stagingSummary({ contactIdentifiers: ["+15551234567"] });
+    const user = userEvent.setup();
+    render(<ImportScreen />);
+
+    expect(await screen.findByTestId("gate-one")).toBeInTheDocument();
+    expect(screen.queryByTestId("import-form")).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("gate-one-approve"));
+    expect(approveGateMock).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByText("gate-one-decline"));
+    expect(declineGateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders Gate 2 with the delta and wires approve/decline through to the hook", async () => {
+    hookState.phase = "gate_2";
+    hookState.gateSummary = stagingSummary();
+    hookState.gateDelta = { lostCount: 0, stillFlagged: [], cameOutFine: 0, hasChanges: false };
+    const user = userEvent.setup();
+    render(<ImportScreen />);
+
+    expect(await screen.findByTestId("gate-two")).toBeInTheDocument();
+
+    await user.click(screen.getByText("gate-two-approve"));
+    expect(approveGateMock).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByText("gate-two-decline"));
+    expect(declineGateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("looks up which of Gate 1's contacts are unknown, in one batch under the server cap", async () => {
+    hookState.phase = "gate_1";
+    hookState.gateSummary = stagingSummary({ contactIdentifiers: ["a", "b", "c"] });
+    apiPostMock.mockResolvedValue({ unknown: ["a", "c"] });
+    render(<ImportScreen />);
+
+    await screen.findByTestId("gate-one");
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(apiPostMock).toHaveBeenCalledTimes(1);
+    expect(apiPostMock).toHaveBeenCalledWith("/v1/contacts/match", {
+      identifiers: ["a", "b", "c"],
+    });
+    expect(screen.getByTestId("gate-one-unknown-contacts")).toHaveTextContent("2");
+  });
+
+  it("batches the contact-match lookup at 500 identifiers per request and sums unknown across batches", async () => {
+    hookState.phase = "gate_1";
+    const identifiers = Array.from({ length: 620 }, (_, i) => `+1555000${i}`);
+    hookState.gateSummary = stagingSummary({ contactIdentifiers: identifiers });
+    apiPostMock.mockResolvedValueOnce({ unknown: Array(400).fill("x") });
+    apiPostMock.mockResolvedValueOnce({ unknown: Array(30).fill("y") });
+    render(<ImportScreen />);
+
+    await screen.findByTestId("gate-one");
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(apiPostMock).toHaveBeenCalledTimes(2);
+    const bodies = apiPostMock.mock.calls.map(([, body]) => body as { identifiers: string[] });
+    expect(bodies[0]?.identifiers).toHaveLength(500);
+    expect(bodies[1]?.identifiers).toHaveLength(120);
+    expect(screen.getByTestId("gate-one-unknown-contacts")).toHaveTextContent("430");
+  });
+
+  it("renders Gate 1 without the unknown-contact count when the lookup fails", async () => {
+    hookState.phase = "gate_1";
+    hookState.gateSummary = stagingSummary({ contactIdentifiers: ["a"] });
+    apiPostMock.mockRejectedValue(new Error("network down"));
+    render(<ImportScreen />);
+
+    await screen.findByTestId("gate-one");
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("gate-one-unknown-contacts")).toHaveTextContent("null");
   });
 });

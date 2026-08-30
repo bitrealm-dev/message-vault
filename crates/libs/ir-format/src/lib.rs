@@ -20,11 +20,13 @@ mod read_csv;
 mod read_json;
 mod read_mail;
 mod read_sbr;
+mod staging_summary;
+mod transcode;
 mod util;
 mod write;
 mod write_sbr;
 
-pub use clean::clean_previous_ir_output;
+pub use clean::{EXPORT_SENTINEL, clean_previous_ir_output};
 pub use export_transforms::ExportTransforms;
 pub use format_sink::{FormatSink, FormatSinkResult};
 pub use pipeline::{finish_run, run_pipeline};
@@ -32,8 +34,12 @@ pub use read_csv::read_conversation_csv;
 pub use read_json::{read_conversation_json, read_conversation_jsonl};
 pub use read_mail::{read_conversation_eml_dir, read_conversation_mbox};
 pub use read_sbr::{SbrReadOptions, SbrReadReport, read_sbr_documents};
+pub use staging_summary::{
+    AttachmentForecast, StagingSummary, SummaryProgress, VerdictCounts, summarize_staging,
+};
+pub use transcode::{TranscodeOptions, TranscodeProgress, TranscodeReport, transcode_staged};
 pub use util::UNSAFE_ATTACHMENT_PATH_PREFIX;
-pub use write::{CSV_HEADERS, document_to_mail_messages};
+pub use write::{CSV_HEADERS, document_to_mail_messages, write_conversation_jsonl_to};
 
 #[cfg(test)]
 use normalize::normalize_document_for_compare;

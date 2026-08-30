@@ -1,6 +1,7 @@
 import type { AttachmentMediaMode } from "./types";
 
-function formatBytes(bytes: number): string {
+/** Human-readable byte size (`"512 MB"`), shared by every import screen that reports size. */
+export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];
   let value = bytes;

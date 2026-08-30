@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { apiClient } from "../lib/api";
 import { getDeviceId } from "../lib/deviceId";
 import {
   emptyImessagePathStats,
@@ -19,7 +20,12 @@ import {
   setImporterExtraPath,
   setImporterPath,
 } from "../lib/system-settings";
-import { invokeHomeDir, invokeIosBackupEncrypted, invokePathStat } from "../lib/tauri";
+import {
+  invokeDeleteStaging,
+  invokeHomeDir,
+  invokeIosBackupEncrypted,
+  invokePathStat,
+} from "../lib/tauri";
 import { isTauri } from "../lib/tauri-check";
 import type { AttachmentMediaMode, ContactNameMode } from "../lib/types";
 import { loadAccountProfile } from "../lib/useAccountProfile";
@@ -31,15 +37,25 @@ import {
   WHATSAPP_SOURCE_ID,
   type WhatsappMethodId,
 } from "../lib/whatsappImport";
+import GateOneScreen from "./import/GateOneScreen";
+import GateTwoScreen from "./import/GateTwoScreen";
 import ImportFormFields from "./import/ImportFormFields";
 import ImportProgressView from "./import/ImportProgressView";
 import ResumeImportPanel from "./import/ResumeImportPanel";
 import { type ResumeDecision, resumeDecisionFor } from "./import/resumeDecision";
-import { restoreFormFromSnapshot, useImportJob } from "./import/useImportJob";
+import {
+  parseStoredStagingSummary,
+  restoreFormFromSnapshot,
+  useImportJob,
+} from "./import/useImportJob";
 
 const DEFAULT_SOURCE = IMESSAGE_DEFAULT_METHOD;
 const SBR_SOURCE = "sms-backup-restore";
 const PATH_PROBE_DEBOUNCE_MS = 200;
+/** The server's own cap on one `/v1/contacts/match` request (`MAX_MATCH_IDENTIFIERS`,
+ * `crates/vault/server/src/contacts_api.rs`) — the client batches to it rather than
+ * discovering the limit from a 400. */
+const MAX_MATCH_IDENTIFIERS = 500;
 
 /** Nothing to decide -- the form renders. The one spelling of "no resume". */
 const NO_RESUME: ResumeDecision = { kind: "none", canResume: false, session: null };
@@ -69,11 +85,24 @@ export default function ImportScreen() {
     running,
     summaryView,
     stagingDir,
+    gateSummary,
+    gateDelta,
+    gateAttachmentMedia,
+    mediaToolsMissing,
+    mediaPartiallyRan,
+    resumeError,
+    computingSummary,
     completionText,
     startImport,
+    approveGate,
+    declineGate,
+    resumeAtGate,
     cancel,
     returnToForm,
   } = useImportJob();
+
+  /** Null while the lookup hasn't finished (or failed) for the summary currently shown. */
+  const [unknownContacts, setUnknownContacts] = useState<number | null>(null);
 
   const [source, setSource] = useState(DEFAULT_SOURCE);
   const [backupPath, setBackupPath] = useState(() =>
@@ -155,6 +184,38 @@ export default function ImportScreen() {
     };
   }, [phase]);
 
+  /**
+   * Ask the vault which of Gate 1's contact identifiers this account already
+   * has, once per summary shown at Gate 1 — batched at the server's own cap
+   * so a large import doesn't send an oversized request. A failed batch
+   * leaves the count unknown rather than blocking the gate (decision: the
+   * "new to your vault" clause is a nicety, not a requirement).
+   */
+  useEffect(() => {
+    if (phase !== "gate_1" || !gateSummary) return;
+    let cancelled = false;
+    setUnknownContacts(null);
+    void (async () => {
+      const identifiers = gateSummary.contactIdentifiers;
+      let total = 0;
+      try {
+        for (let i = 0; i < identifiers.length; i += MAX_MATCH_IDENTIFIERS) {
+          const batch = identifiers.slice(i, i + MAX_MATCH_IDENTIFIERS);
+          const res = await apiClient.post<{ unknown: string[] }>("/v1/contacts/match", {
+            identifiers: batch,
+          });
+          total += res.unknown.length;
+        }
+        if (!cancelled) setUnknownContacts(total);
+      } catch {
+        if (!cancelled) setUnknownContacts(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [phase, gateSummary]);
+
   /** Populate the visible form from a resumed or restarted session's settings. */
   function applyRestoredFormState(restored: ReturnType<typeof restoreFormFromSnapshot>): void {
     if (!restored) return;
@@ -186,7 +247,22 @@ export default function ImportScreen() {
     if (!session || discardingRef.current || resumingRef.current) return;
     discardingRef.current = true;
     try {
-      await discardImportSession(session.id);
+      // declineGate already deletes the staging folder on decline (decision
+      // 16); a panel discard is the same operation reached through a
+      // different button, so it must not orphan a multi-GB folder. Both
+      // halves run regardless of the other's outcome, the same
+      // `Promise.allSettled` shape `declineGate` uses. Never touch disk for
+      // another device's session -- its files are staged there, not here --
+      // the same `device_id` check `resumeDecisionFor` uses to route to
+      // `other_device` in the first place. A session with no recorded
+      // device is treated as this install's, matching that check too.
+      const thisDevice = !session.device_id || session.device_id === getDeviceId();
+      await Promise.allSettled([
+        discardImportSession(session.id),
+        thisDevice && session.staging_dir
+          ? invokeDeleteStaging({ staging_dir: session.staging_dir })
+          : Promise.resolve(),
+      ]);
     } catch {
       // Best effort -- the panel drops to the form either way; if the
       // session is still live server-side, the next visit shows it again.
@@ -219,7 +295,23 @@ export default function ImportScreen() {
       if (resume.kind === "resume_push") {
         if (!session.staging_dir) return; // resumeDecisionFor guarantees this; defensive only.
         setResume(NO_RESUME);
-        await startImport(restoredForm, { sessionId: session.id, stagingDir: session.staging_dir });
+        await startImport(restoredForm, {
+          sessionId: session.id,
+          stagingDir: session.staging_dir,
+          // Without this, a resumed push has no plan to diff its expected
+          // omissions against, which demotes an honest `completed` verdict
+          // to `completed_with_issues` for exactly the interrupted-and-
+          // resumed case. Undefined when the stored summary is missing or
+          // unparsable — startImport/runPush already tolerate that.
+          approved: parseStoredStagingSummary(session.summary),
+        });
+        return;
+      }
+
+      if (resume.kind === "resume_gate" || resume.kind === "resume_media") {
+        if (!session.staging_dir) return; // resumeDecisionFor guarantees this; defensive only.
+        setResume(NO_RESUME);
+        await resumeAtGate(session, restoredForm);
         return;
       }
 
@@ -557,6 +649,7 @@ export default function ImportScreen() {
       {phase === "form" && resumeChecked && resume.kind !== "none" && (
         <ResumeImportPanel
           decision={resume}
+          error={resumeError}
           onResume={() => void handleResumeAction()}
           onDiscard={() => void handleDiscardResume()}
         />
@@ -572,6 +665,31 @@ export default function ImportScreen() {
           completionText={completionText}
           onCancel={() => void cancel()}
           onBack={returnToForm}
+          cancelDisabled={computingSummary}
+        />
+      )}
+
+      {phase === "gate_1" && gateSummary && (
+        <GateOneScreen
+          summary={gateSummary}
+          unknownContacts={unknownContacts}
+          mode={gateAttachmentMedia}
+          onApprove={() => void approveGate()}
+          onDecline={() => void declineGate()}
+          busy={running}
+          mediaToolsMissing={mediaToolsMissing}
+          mediaPartiallyRan={mediaPartiallyRan}
+        />
+      )}
+
+      {phase === "gate_2" && gateSummary && gateDelta && (
+        <GateTwoScreen
+          delta={gateDelta}
+          actual={gateSummary}
+          mode={gateAttachmentMedia}
+          onApprove={() => void approveGate()}
+          onDecline={() => void declineGate()}
+          busy={running}
         />
       )}
     </div>

@@ -11,11 +11,20 @@
 
 #![warn(missing_docs)]
 
+mod estimate;
+mod probe;
 mod process;
 mod size;
 mod tools;
 
-pub use process::{MediaReport, process_attachments_dir, process_attachments_dir_with_log};
+pub use estimate::{
+    PROBABLY_FITS_MARGIN, SizeVerdict, classify_probed, estimate_bytes, needs_probe,
+};
+pub use probe::{MediaProbe, probe_media};
+pub use process::{
+    MediaReport, TranscodeOutcome, derivative_name, derivative_name_for_missing,
+    process_attachments_dir, process_attachments_dir_with_log, transcode_file,
+};
 use size::parse_size;
 pub use tools::{FfmpegToolsProbe, ffmpeg_available, probe_ffmpeg_tools, set_tools_dir, tools_dir};
 

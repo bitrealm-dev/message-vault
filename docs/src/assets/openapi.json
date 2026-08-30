@@ -2357,6 +2357,72 @@
         ]
       }
     },
+    "/v1/contacts/match": {
+      "post": {
+        "tags": [
+          "Contacts"
+        ],
+        "summary": "Report which identifiers this account has no vault contact for.",
+        "operationId": "contact_match_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContactMatchBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContactMatchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/conversations/tags": {
       "post": {
         "tags": [
@@ -4240,7 +4306,8 @@
           "status",
           "started_at",
           "form",
-          "source_fingerprint"
+          "source_fingerprint",
+          "summary"
         ],
         "properties": {
           "device_id": {
@@ -4282,6 +4349,9 @@
           },
           "status": {
             "type": "string"
+          },
+          "summary": {
+            "description": "What the user approved at the last gate they passed, or null.\n\nSame column `POST /v1/imports/{id}/stage` writes with its `summary`\nfield — read back here so a reload between an approval and\ncompletion doesn't lose the plan the eventual outcome is diffed\nagainst."
           }
         }
       },
@@ -5069,6 +5139,38 @@
             "format": "int64",
             "description": "Total contacts matching the query.",
             "minimum": 0
+          }
+        }
+      },
+      "ContactMatchBody": {
+        "type": "object",
+        "description": "Body for `POST /v1/contacts/match`.",
+        "required": [
+          "identifiers"
+        ],
+        "properties": {
+          "identifiers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Raw identifiers — phone numbers, emails — as they appear in an export."
+          }
+        }
+      },
+      "ContactMatchResponse": {
+        "type": "object",
+        "description": "Response for `POST /v1/contacts/match`.",
+        "required": [
+          "unknown"
+        ],
+        "properties": {
+          "unknown": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The subset this account has no contact for: trimmed, in first-seen\norder, blanks dropped and duplicates (by normalized form) collapsed\nto their first spelling."
           }
         }
       },
@@ -6806,6 +6908,9 @@
         "properties": {
           "stage": {
             "type": "string"
+          },
+          "summary": {
+            "description": "What the user approved at the gate they just passed, when they passed one.\n\nRecorded here rather than at completion so an approval survives a\nreload: the summary shown at a gate is recomputed from the folder, but\nwhat was approved is a different question and only the session\nremembers it. Absent leaves the stored `summary_json` untouched —\nmost stage changes carry nothing, and treating absent as null would\nthrow away the plan the outcome is later judged against."
           }
         }
       },

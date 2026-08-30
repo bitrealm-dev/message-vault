@@ -2386,6 +2386,7 @@ dependencies = [
  "anyhow",
  "csv",
  "hex",
+ "serde",
  "serde_json",
  "sha2 0.11.0",
 ]
@@ -2488,6 +2489,7 @@ dependencies = [
  "imazing-exporter",
  "imessage-ir-exporter",
  "media",
+ "message-ir-format",
  "message-reexport",
  "message-vault-io-core",
  "open",

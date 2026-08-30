@@ -1,6 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PushFinishedReport } from "./tauri";
-import { parseTauriJobResult } from "./tauri";
+import {
+  invokeDeleteStaging,
+  invokeSummarizeStaging,
+  invokeTranscodeStaging,
+  parseTauriJobResult,
+} from "./tauri";
+
+const invoke = vi.fn();
+const resolveImportStagingParent = vi.fn();
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (...args: unknown[]) => invoke(...args),
+}));
+
+vi.mock("./system-settings", () => ({
+  resolveImportStagingParent: (...args: unknown[]) => resolveImportStagingParent(...args),
+}));
 
 function reportJson(overrides: Partial<PushFinishedReport> = {}): string {
   const report = {
@@ -59,5 +75,120 @@ describe("parseTauriJobResult", () => {
   it("falls back to a plain summary for a non-JSON string", () => {
     const result = parseTauriJobResult("Extracted 10 messages.");
     expect(result).toEqual({ summary: "Extracted 10 messages." });
+  });
+
+  // transcode_staging's payload: TranscodeReport has no serde derive, so
+  // staging.rs hand-builds the finished payload with these fields flat
+  // alongside `summary`, snake_case, not nested under a `report` key. A
+  // client that doesn't recognise this shape falls through to
+  // `{ summary: <the raw JSON string> }`, which would render raw JSON
+  // wherever the finished summary is displayed.
+  it("recognizes the transcode-finished payload and returns typed counts, not raw JSON", () => {
+    const summarySentence =
+      "Converted 12 files; 2 will not be uploaded (still too large after conversion).";
+    const payload = JSON.stringify({
+      summary: summarySentence,
+      converted: 12,
+      skipped: 3,
+      too_large: 2,
+      failed: 1,
+      missing: 0,
+      repointed: 4,
+      bytes_before: 900_000,
+      bytes_after: 100_000,
+    });
+
+    const result = parseTauriJobResult(payload);
+
+    expect(result.summary).toBe(summarySentence);
+    expect(result.summary).not.toContain("{");
+    expect(result.transcode).toEqual({
+      converted: 12,
+      skipped: 3,
+      too_large: 2,
+      failed: 1,
+      missing: 0,
+      repointed: 4,
+      bytes_before: 900_000,
+      bytes_after: 100_000,
+    });
+    expect(result.report).toBeUndefined();
+    expect(result.extraction).toBeUndefined();
+  });
+
+  it("does not mistake a transcode payload missing a count for one it recognizes", () => {
+    const parsed: Record<string, unknown> = JSON.parse(
+      JSON.stringify({
+        summary: "Converted 1 file.",
+        converted: 1,
+        skipped: 0,
+        too_large: 0,
+        failed: 0,
+        missing: 0,
+        repointed: 0,
+        bytes_before: 10,
+        // bytes_after omitted
+      }),
+    );
+    const result = parseTauriJobResult(JSON.stringify(parsed));
+    expect(result.transcode).toBeUndefined();
+  });
+});
+
+describe("staging command wrappers resolve their own staging root", () => {
+  beforeEach(async () => {
+    invoke.mockReset();
+    resolveImportStagingParent.mockReset();
+    invoke.mockResolvedValue(undefined);
+    resolveImportStagingParent.mockResolvedValue("/home/sam/message-vault");
+  });
+
+  it("invokeSummarizeStaging resolves the root itself rather than taking one from the caller", async () => {
+    await invokeSummarizeStaging({ staging_dir: "/home/sam/message-vault/staging-run" });
+
+    expect(resolveImportStagingParent).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith("summarize_staging", {
+      args: expect.objectContaining({
+        stagingDir: "/home/sam/message-vault/staging-run",
+        stagingRoot: "/home/sam/message-vault",
+      }),
+    });
+  });
+
+  it("invokeTranscodeStaging resolves the root itself rather than taking one from the caller", async () => {
+    await invokeTranscodeStaging({
+      staging_dir: "/home/sam/message-vault/staging-run",
+      attachment_media: "convert",
+    });
+
+    expect(resolveImportStagingParent).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith("transcode_staging", {
+      args: expect.objectContaining({
+        stagingDir: "/home/sam/message-vault/staging-run",
+        stagingRoot: "/home/sam/message-vault",
+        attachmentMedia: "convert",
+      }),
+    });
+  });
+
+  it("invokeDeleteStaging resolves the root itself rather than taking one from the caller", async () => {
+    await invokeDeleteStaging({ staging_dir: "/home/sam/message-vault/staging-run" });
+
+    expect(resolveImportStagingParent).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith("delete_staging", {
+      args: {
+        stagingDir: "/home/sam/message-vault/staging-run",
+        stagingRoot: "/home/sam/message-vault",
+      },
+    });
+  });
+
+  it("rejects rather than calling through when the staging root cannot be resolved", async () => {
+    resolveImportStagingParent.mockResolvedValue("");
+
+    await expect(
+      invokeSummarizeStaging({ staging_dir: "/home/sam/message-vault/staging-run" }),
+    ).rejects.toThrow(/import staging directory/i);
+    expect(invoke).not.toHaveBeenCalled();
   });
 });

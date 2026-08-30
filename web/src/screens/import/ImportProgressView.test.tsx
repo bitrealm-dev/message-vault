@@ -21,15 +21,14 @@ describe("ImportProgressView", () => {
     openPathInExplorer.mockResolvedValue(undefined);
   });
 
-  it("shows staging directory and vault-push.log links above Parse backup", () => {
+  it("shows staging directory and vault-push.log links above Read backup", () => {
     const staging = "/home/sam/message-vault/staging-iphone-ios-260824-180509";
     render(
       <ImportProgressView
         phase="progress"
         steps={[
-          { label: "Parse backup", status: "active", detail: "Extracting…" },
-          { label: "Copy attachments", status: "pending" },
-          { label: "Preparing messages", status: "pending" },
+          { label: "Read backup", status: "active", detail: "Reading backup…" },
+          { label: "Copy to staging", status: "pending" },
           { label: "Upload to vault", status: "pending" },
         ]}
         running
@@ -47,10 +46,51 @@ describe("ImportProgressView", () => {
     expect(screen.queryByText("Open import log")).not.toBeInTheDocument();
 
     const stagingLink = screen.getByRole("button", { name: staging });
-    const parseBackup = screen.getByText("Parse backup");
+    const readBackup = screen.getByText("Read backup");
     expect(
-      stagingLink.compareDocumentPosition(parseBackup) & Node.DOCUMENT_POSITION_FOLLOWING,
+      stagingLink.compareDocumentPosition(readBackup) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+
+  it("titles the screen by the active step, not a fixed heading", () => {
+    render(
+      <ImportProgressView
+        phase="progress"
+        steps={[
+          { label: "Read backup", status: "done" },
+          { label: "Copy to staging", status: "active" },
+          { label: "Upload to vault", status: "pending" },
+        ]}
+        running
+        summaryView={null}
+        stagingDir={null}
+        onCancel={() => {}}
+        onBack={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Copying to staging" })).toBeInTheDocument();
+  });
+
+  it("titles the finished screen by its outcome, not a step", () => {
+    render(
+      <ImportProgressView
+        phase="done"
+        steps={[
+          { label: "Read backup", status: "done" },
+          { label: "Copy to staging", status: "done" },
+          { label: "Upload to vault", status: "done" },
+        ]}
+        running={false}
+        summaryView={null}
+        stagingDir={null}
+        completionText="Import complete"
+        onCancel={() => {}}
+        onBack={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Import finished" })).toBeInTheDocument();
   });
 
   it("opens staging folder and log when the links are clicked", async () => {
@@ -59,7 +99,7 @@ describe("ImportProgressView", () => {
     render(
       <ImportProgressView
         phase="progress"
-        steps={[{ label: "Parse backup", status: "active" }]}
+        steps={[{ label: "Read backup", status: "active" }]}
         running
         summaryView={null}
         stagingDir={staging}
@@ -75,14 +115,30 @@ describe("ImportProgressView", () => {
     expect(openPathInExplorer).toHaveBeenCalledWith(`${staging}/vault-push.log`);
   });
 
+  it("disables Cancel, without hiding it, while a not-cancellable step runs", () => {
+    render(
+      <ImportProgressView
+        phase="progress"
+        steps={[{ label: "Copy to staging", status: "done" }]}
+        running
+        summaryView={null}
+        stagingDir={null}
+        onCancel={() => {}}
+        onBack={() => {}}
+        cancelDisabled
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  });
+
   it("keeps Import Errors heading and table when issues exist", () => {
     render(
       <ImportProgressView
         phase="done"
         steps={[
-          { label: "Parse backup", status: "done", durationMs: 1000 },
-          { label: "Copy attachments", status: "done", durationMs: 500 },
-          { label: "Preparing messages", status: "done", durationMs: 50 },
+          { label: "Read backup", status: "done", durationMs: 1000 },
+          { label: "Copy to staging", status: "done", durationMs: 550 },
           { label: "Upload to vault", status: "done", durationMs: 2000 },
         ]}
         running={false}

@@ -82,7 +82,7 @@ pub fn run_attachment_jobs(
     fs::create_dir_all(attachments_dir)
         .map_err(|e| format!("create {}: {e}", attachments_dir.display()))?;
 
-    for i in 0..jobs.len() {
+    for (i, job) in jobs.iter_mut().enumerate() {
         if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
             return Err("canceled".into());
         }
@@ -98,7 +98,7 @@ pub fn run_attachment_jobs(
         let bytes = match loaded {
             Some(bytes) if !bytes.is_empty() => bytes,
             _ => {
-                jobs[i].attachment.missing_reason = Some("file_missing".into());
+                job.attachment.missing_reason = Some("file_missing".into());
                 on_progress(AttachmentProgress {
                     done: i + 1,
                     total,
@@ -109,11 +109,11 @@ pub fn run_attachment_jobs(
             }
         };
 
-        if jobs[i].size_hint.is_none() {
+        if job.size_hint.is_none() {
             bytes_total += bytes.len() as u64;
         }
 
-        persist_clone(&mut jobs[i], attachments_dir, &bytes)?;
+        persist_clone(job, attachments_dir, &bytes)?;
         bytes_done += bytes.len() as u64;
         on_progress(AttachmentProgress {
             done: i + 1,
@@ -213,7 +213,12 @@ fn mark_convert_error(jobs: &mut [AttachmentJob<'_>], err: &str) {
     }
 }
 
-fn mime_for_rel(rel: &str) -> Option<String> {
+/// MIME type inferred from a `attachments/…` relative path's extension.
+///
+/// Covers the formats the media convert/compress step can produce or leave in
+/// place; `None` for anything else. Shared so a second, drifting
+/// extension-to-mime table doesn't grow up beside this one.
+pub fn mime_for_rel(rel: &str) -> Option<String> {
     let ext = Path::new(rel)
         .extension()
         .and_then(|e| e.to_str())

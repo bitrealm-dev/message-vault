@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
-use media::MaxResolution;
+use media::{CompressOptions, MaxResolution, MediaMode};
 use message_vault_io_core::{
     ApplePlatform, AttachmentMedia, Exporter, ExporterConfig, Form, GoSmsProConfig, ImazingConfig,
     LogSink, MediaConfig, ObfuscateConfig, OpenExtractConfig, OutputFormat, SmsBackupPlusConfig,
@@ -316,7 +316,7 @@ struct ExtractOptions {
 /// # Errors
 ///
 /// Returns an error if the string is not copy, convert, compress, or skip.
-fn parse_attachment_media(raw: Option<&str>) -> Result<AttachmentMedia, String> {
+pub(crate) fn parse_attachment_media(raw: Option<&str>) -> Result<AttachmentMedia, String> {
     let Some(raw) = optional_trimmed(raw) else {
         return Ok(AttachmentMedia::default());
     };
@@ -336,13 +336,66 @@ fn parse_attachment_media(raw: Option<&str>) -> Result<AttachmentMedia, String> 
 /// # Errors
 ///
 /// Returns an error if the string is not 720p, 1080p, or 4k.
-fn parse_max_resolution(raw: Option<&str>) -> Result<MaxResolution, String> {
+pub(crate) fn parse_max_resolution(raw: Option<&str>) -> Result<MaxResolution, String> {
     let Some(raw) = optional_trimmed(raw) else {
         return Ok(MaxResolution::default());
     };
     MaxResolution::parse(raw).ok_or_else(|| {
         format!("invalid media_max_resolution '{raw}' (expected 720p, 1080p, or 4k)")
     })
+}
+
+/// Media mode the exporter is asked for.
+///
+/// Convert and Compress become Clone: the desktop stages originals, shows the
+/// first gate, and runs the media pass itself, so the expensive work happens
+/// after the user has approved it rather than before. Copy and Skip have no
+/// media step and reach the exporter unchanged.
+pub(crate) fn exporter_media_mode(chosen: AttachmentMedia) -> MediaMode {
+    exporter_attachment_media(chosen).media_mode()
+}
+
+/// `AttachmentMedia` the exporter's `Form` is asked for.
+///
+/// Same mapping as [`exporter_media_mode`], kept in `AttachmentMedia`'s own
+/// domain because `Form::attachment_media` also drives the iMessage path's
+/// upfront ffmpeg-availability check and Apple `copy_method` — both of which
+/// must not see Convert or Compress either, or the exporter would demand
+/// ffmpeg (and stage a converted file) before the user has approved anything.
+fn exporter_attachment_media(chosen: AttachmentMedia) -> AttachmentMedia {
+    match chosen {
+        AttachmentMedia::Convert | AttachmentMedia::Compress => AttachmentMedia::Clone,
+        other => other,
+    }
+}
+
+/// Build the `CompressOptions` a media pass will use, from the same
+/// max-resolution/fps/min-size fields the Extract form parses.
+///
+/// `CompressOptions` only takes effect under [`MediaMode::Compress`] — this
+/// mirrors `build_exporter_config`'s non-iMessage branch, which built the
+/// real options only when `Compress` was chosen and used
+/// `CompressOptions::default()` otherwise. Shared so the desktop's own media
+/// pass (`commands::staging`) parses these fields the same way Extract does,
+/// rather than re-deriving the parsing.
+///
+/// # Errors
+///
+/// Returns an error if `max_fps` is not a number or `min_size` cannot be
+/// parsed as a byte size.
+pub(crate) fn parse_compress_options(
+    chosen: AttachmentMedia,
+    max_resolution: MaxResolution,
+    max_fps: &str,
+    min_size: &str,
+) -> Result<CompressOptions, String> {
+    if !matches!(chosen, AttachmentMedia::Compress) {
+        return Ok(CompressOptions::default());
+    }
+    let fps = max_fps
+        .parse::<f32>()
+        .map_err(|_| format!("invalid media_max_fps '{max_fps}'"))?;
+    media::compress_options_from_cli(max_resolution, fps, min_size, true).map_err(|e| e.to_string())
 }
 
 /// Build the exporter config the background thread will run.
@@ -385,7 +438,11 @@ fn build_exporter_config(
                 } else {
                     options.apple_contacts.clone()
                 },
-                attachment_media: options.attachment_media,
+                // See `exporter_media_mode`'s docs: the exporter is asked for
+                // Clone whenever the user chose Convert or Compress, so it
+                // stages originals and the desktop runs the media pass
+                // itself, after the gate.
+                attachment_media: exporter_attachment_media(options.attachment_media),
                 media_max_resolution: options.media_max_resolution,
                 media_max_fps: options.media_max_fps.clone(),
                 media_min_size: options.media_min_size.clone(),
@@ -398,6 +455,22 @@ fn build_exporter_config(
                 output_format: OutputFormat::Jsonl,
                 ..Default::default()
             };
+            // `Form`'s own compress validation only fires when
+            // `Form.attachment_media` is `Compress` — and that field now
+            // reads `Clone` for a real Convert/Compress choice (see
+            // `exporter_attachment_media`'s docs), so it would otherwise stay
+            // silent about a malformed `media_max_fps`/`media_min_size`
+            // until the desktop's own media pass parses the same fields
+            // again at the approval gate, hours later. Validate against the
+            // REAL chosen mode here so a bad value still fails immediately;
+            // the parsed value itself is unused here — the exporter's own
+            // media step is a no-op under Clone.
+            parse_compress_options(
+                options.attachment_media,
+                options.media_max_resolution,
+                &options.media_max_fps,
+                &options.media_min_size,
+            )?;
             form.to_config(Exporter::Imessage)
                 .map_err(|errors| errors.join("; "))
         }
@@ -452,21 +525,12 @@ fn build_exporter_config(
             let end_date = nonempty(&options.end_date);
             let date_range = parse_date_range(start_date, end_date)?;
 
-            let compress = if matches!(options.attachment_media, AttachmentMedia::Compress) {
-                let fps = options
-                    .media_max_fps
-                    .parse::<f32>()
-                    .map_err(|_| format!("invalid media_max_fps '{}'", options.media_max_fps))?;
-                media::compress_options_from_cli(
-                    options.media_max_resolution,
-                    fps,
-                    &options.media_min_size,
-                    true,
-                )
-                .map_err(|e| e.to_string())?
-            } else {
-                media::CompressOptions::default()
-            };
+            let compress = parse_compress_options(
+                options.attachment_media,
+                options.media_max_resolution,
+                &options.media_max_fps,
+                &options.media_min_size,
+            )?;
 
             Ok(ExporterConfig {
                 inputs: vec![PathBuf::from(path)],
@@ -479,7 +543,7 @@ fn build_exporter_config(
                     seed: None,
                 },
                 media: MediaConfig {
-                    mode: options.attachment_media.media_mode(),
+                    mode: exporter_media_mode(options.attachment_media),
                     compress,
                 },
                 cancel: None,
@@ -541,6 +605,79 @@ mod tests {
             whatsapp_db: String::new(),
             whatsapp_business: false,
         }
+    }
+
+    #[test]
+    fn convert_and_compress_stage_originals_and_defer_the_media_step() {
+        // The desktop runs conversion as its own pass so a gate can sit in
+        // front of it. Asking the exporter to convert would spend the time
+        // before the user has approved anything. Checked against the
+        // iMessage source, which routes attachment_media through `Form` —
+        // the only path that also exercises `exporter_attachment_media`.
+        for chosen in [AttachmentMedia::Convert, AttachmentMedia::Compress] {
+            let mut options = test_options(vec!["+15550100".into()]);
+            options.attachment_media = chosen;
+            let config =
+                build_exporter_config("imessage-ios", "/backup", "/out", &options).unwrap();
+            assert_eq!(
+                config.media.mode,
+                MediaMode::Clone,
+                "{chosen:?} must stage originals"
+            );
+        }
+    }
+
+    #[test]
+    fn copy_and_skip_reach_the_exporter_unchanged() {
+        for chosen in [AttachmentMedia::Clone, AttachmentMedia::Disabled] {
+            let mut options = test_options(vec!["+15550100".into()]);
+            options.attachment_media = chosen;
+            let config =
+                build_exporter_config("imessage-ios", "/backup", "/out", &options).unwrap();
+            assert_eq!(
+                config.media.mode,
+                chosen.media_mode(),
+                "{chosen:?} must reach the exporter unchanged"
+            );
+        }
+    }
+
+    #[test]
+    fn non_imessage_sources_defer_the_media_step_too() {
+        // `exporter_media_mode` also gates `MediaConfig.mode` on the
+        // non-iMessage branch of `build_exporter_config` (whatsapp-android
+        // here), which does not go through `Form`/`exporter_attachment_media`
+        // at all.
+        for chosen in [AttachmentMedia::Convert, AttachmentMedia::Compress] {
+            let mut options = test_options(Vec::new());
+            options.attachment_media = chosen;
+            let config =
+                build_exporter_config("whatsapp-android", "/tmp/android-dump", "/out", &options)
+                    .unwrap();
+            assert_eq!(
+                config.media.mode,
+                MediaMode::Clone,
+                "{chosen:?} must stage originals"
+            );
+        }
+    }
+
+    #[test]
+    fn imessage_compress_still_validates_media_fields_up_front() {
+        // `Form.attachment_media` reads Clone for a real Compress choice (so
+        // the exporter stages originals instead of converting), which means
+        // `Form`'s own compress validation no longer runs for it. Without the
+        // explicit `parse_compress_options` call in `build_exporter_config`,
+        // a malformed `media_min_size` would sail through here and only
+        // surface hours later, at the approval gate.
+        let mut options = test_options(Vec::new());
+        options.attachment_media = AttachmentMedia::Compress;
+        options.media_min_size = "banana".into();
+        let err = build_exporter_config("imessage-ios", "/backup", "/out", &options).unwrap_err();
+        assert!(
+            err.contains("banana"),
+            "expected the malformed min-size value to be named: {err}"
+        );
     }
 
     #[test]

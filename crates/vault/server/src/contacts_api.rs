@@ -1,5 +1,6 @@
 //! Contact list/detail used by `GET /v1/export/contacts`,
-//! `GET|POST /v1/export/contacts/{id}`, and `POST /v1/export/contacts/summaries`.
+//! `GET|POST /v1/export/contacts/{id}`, `POST /v1/export/contacts/summaries`,
+//! and `POST /v1/contacts/match`.
 
 use std::collections::{HashMap, HashSet};
 
@@ -14,7 +15,7 @@ use sqlx::AnyConnection;
 use crate::db::contacts::{self, contact_id_for_handle};
 use crate::db::dialect::{engine_of, group_concat_unit_separator, like_ci_numbered};
 use crate::db::engine::DbEngine;
-use crate::db::handles::infer_handle_type_from_shape;
+use crate::db::handles::{infer_handle_type_from_shape, normalize_handle};
 use crate::db::sql::in_placeholders;
 use crate::export_api::ExportQueryError;
 use crate::server::{ApiError, AppState, require_full_access, resolve_auth};
@@ -1103,6 +1104,132 @@ type ContactSelectionRow = (
     i64,
 );
 
+/// Most identifiers one request to `POST /v1/contacts/match` may ask about.
+///
+/// A staged folder can reference thousands of participants; the client
+/// batches. The query runs as a single statement with no chunking, so the
+/// cap keeps its bind count bounded (501 identifiers would mean 502 binds);
+/// raising it needs `SQLITE_IN_CHUNK`-style chunking first, not just a
+/// bigger number.
+pub(crate) const MAX_MATCH_IDENTIFIERS: usize = 500;
+
+/// Body for `POST /v1/contacts/match`.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct ContactMatchBody {
+    /// Raw identifiers — phone numbers, emails — as they appear in an export.
+    identifiers: Vec<String>,
+}
+
+/// Response for `POST /v1/contacts/match`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ContactMatchResponse {
+    /// The subset this account has no contact for: trimmed, in first-seen
+    /// order, blanks dropped and duplicates (by normalized form) collapsed
+    /// to their first spelling.
+    unknown: Vec<String>,
+}
+
+/// Which of `identifiers` this account has no (non-trashed) contact for.
+///
+/// Matches on the same normalized form the import pipeline stores in
+/// `handles.normalized` ([`normalize_handle`]), so an export spelling like
+/// `+1 555 0100` is recognized against a vault contact stored as
+/// `+15550100`. Blanks are dropped; duplicates are collapsed by *normalized*
+/// form (two spellings of the same person must not both count as "new"),
+/// keeping the first-seen raw (trimmed) spelling and first-seen order.
+///
+/// # Errors
+///
+/// Returns an error when a database statement fails.
+async fn unknown_contact_identifiers(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    identifiers: &[String],
+) -> AnyResult<Vec<String>> {
+    let mut seen_normalized = HashSet::new();
+    // (first-seen trimmed spelling, normalized form), one entry per distinct
+    // normalized value.
+    let mut unique: Vec<(String, String)> = Vec::new();
+    for raw in identifiers {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Import prefers the handle type the source declared (SMS, email
+        // header, ...); here there is no declared type, so this infers one
+        // from the string's shape instead. The two can diverge: a
+        // source-declared phone number whose digits don't look phone-shaped
+        // (e.g. a short code) would infer as Other here and normalize
+        // differently than the vault's stored (Phone-typed) form, reading as
+        // "new" even though import would have linked it. Acceptable for a
+        // best-effort gate count; not a source of silent data loss.
+        let normalized = normalize_handle(trimmed, infer_handle_type_from_shape(trimmed)).0;
+        if seen_normalized.insert(normalized.clone()) {
+            unique.push((trimmed.to_string(), normalized));
+        }
+    }
+    if unique.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders = in_placeholders(2, unique.len());
+    let sql = format!(
+        "SELECT DISTINCT h.normalized
+         FROM handles h
+         JOIN contact_handles ch ON ch.account_id = h.account_id AND ch.handle_id = h.id
+         JOIN contacts ct ON ct.account_id = ch.account_id AND ct.id = ch.contact_id
+         WHERE h.account_id = $1
+           AND h.normalized IN ({placeholders})
+           AND {not_trashed}",
+        not_trashed = NOT_TRASHED_CONTACT_SQL,
+    );
+    let mut q = sqlx::query_scalar::<_, String>(&sql).bind(account_id);
+    for (_, normalized) in &unique {
+        q = q.bind(normalized);
+    }
+    let known: HashSet<String> = q.fetch_all(&mut *conn).await?.into_iter().collect();
+
+    Ok(unique
+        .into_iter()
+        .filter(|(_, norm)| !known.contains(norm))
+        .map(|(raw, _)| raw)
+        .collect())
+}
+
+/// Report which identifiers this account has no vault contact for.
+#[utoipa::path(
+    post,
+    path = "/v1/contacts/match",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    request_body = ContactMatchBody,
+    responses(
+        (status = 200, body = ContactMatchResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_match_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ContactMatchBody>,
+) -> Result<Json<ContactMatchResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    if body.identifiers.len() > MAX_MATCH_IDENTIFIERS {
+        return Err(ApiError::BadRequest(format!(
+            "at most {MAX_MATCH_IDENTIFIERS} identifiers"
+        )));
+    }
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    let unknown = unknown_contact_identifiers(&mut conn, &auth.account_id, &body.identifiers)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(ContactMatchResponse { unknown }))
+}
+
 fn infer_handle_type(raw: &str, service: Option<&str>) -> HandleType {
     let svc = service
         .map(|s| s.trim().to_ascii_lowercase())
@@ -1509,6 +1636,10 @@ mod tests {
     use super::*;
 
     use crate::db::{account_profile, engine, schema};
+    use crate::test_support::{
+        RegisteredAccount, TestVault, post_json, post_status, register_via_api, test_vault,
+    };
+    use axum::http::StatusCode;
 
     async fn setup() -> (sqlx::AnyPool, tempfile::TempDir, String) {
         let (pool, dir) = engine::test_pool().await;
@@ -1523,6 +1654,161 @@ mod tests {
             .await
             .unwrap();
         (pool, dir, account)
+    }
+
+    /// A vault, a signed-in account, and `handles` linked as contacts (one
+    /// contact per phone, named `Contact 0`, `Contact 1`, ...).
+    async fn contacts_fixture_with_handles(
+        handles: &[&str],
+    ) -> (TestVault, String, RegisteredAccount) {
+        let vault = test_vault().await;
+        let account = register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+        if !handles.is_empty() {
+            let mut conn = vault.state.db.acquire().await.unwrap();
+            for (i, handle) in handles.iter().enumerate() {
+                insert_contact_with_handle(
+                    &mut conn,
+                    &account.account_id,
+                    &format!("Contact {i}"),
+                    handle,
+                )
+                .await;
+            }
+        }
+        let token = account.token.clone();
+        (vault, token, account)
+    }
+
+    /// A vault, a signed-in account, and one contact linked to `handle` that
+    /// is then trashed.
+    async fn contacts_fixture_with_trashed_handle(
+        handle: &str,
+    ) -> (TestVault, String, RegisteredAccount) {
+        let vault = test_vault().await;
+        let account = register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+        let mut conn = vault.state.db.acquire().await.unwrap();
+        let contact_id =
+            insert_contact_with_handle(&mut conn, &account.account_id, "Trashed", handle).await;
+        sqlx::query("INSERT INTO trashed_contacts (account_id, contact_id) VALUES ($1, $2)")
+            .bind(&account.account_id)
+            .bind(contact_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let token = account.token.clone();
+        (vault, token, account)
+    }
+
+    /// A second signed-in account in the same vault, with `handle` linked to
+    /// one of its contacts. Used to prove `/v1/contacts/match` is scoped to
+    /// the calling account rather than the whole vault database.
+    async fn account_with_handle(vault: &TestVault, handle: &str) -> RegisteredAccount {
+        let account = register_via_api(&vault.state, "bob", "hunter2hunter2").await;
+        let mut conn = vault.state.db.acquire().await.unwrap();
+        insert_contact_with_handle(&mut conn, &account.account_id, "Other", handle).await;
+        account
+    }
+
+    #[tokio::test]
+    async fn contact_match_reports_only_the_identifiers_the_vault_does_not_have() {
+        let (vault, token, _account) = contacts_fixture_with_handles(&["+15550100"]).await;
+        let body = serde_json::json!({ "identifiers": ["+15550100", "+15550999"] });
+        let response =
+            post_json::<serde_json::Value>(&vault.state, "/v1/contacts/match", &token, body).await;
+        assert_eq!(response["unknown"], serde_json::json!(["+15550999"]));
+    }
+
+    #[tokio::test]
+    async fn contact_match_ignores_blank_identifiers_and_de_duplicates() {
+        let (vault, token, _account) = contacts_fixture_with_handles(&[]).await;
+        let body = serde_json::json!({ "identifiers": ["+15550999", "  ", "+15550999", ""] });
+        let response =
+            post_json::<serde_json::Value>(&vault.state, "/v1/contacts/match", &token, body).await;
+        assert_eq!(response["unknown"], serde_json::json!(["+15550999"]));
+    }
+
+    #[tokio::test]
+    async fn contact_match_collapses_duplicates_by_normalized_form() {
+        // Two spellings of the same phone number must read as one new
+        // person, not two — otherwise Gate 1's "N new to your vault" count
+        // double-counts a single human written two ways.
+        let (vault, token, _account) = contacts_fixture_with_handles(&[]).await;
+        let body = serde_json::json!({ "identifiers": ["+1 (555) 010-0100", "+15550100100"] });
+        let response =
+            post_json::<serde_json::Value>(&vault.state, "/v1/contacts/match", &token, body).await;
+        assert_eq!(
+            response["unknown"],
+            serde_json::json!(["+1 (555) 010-0100"]),
+            "both spellings normalize to the same value, so only the \
+             first-seen spelling should come back once"
+        );
+    }
+
+    #[tokio::test]
+    async fn contact_match_matches_a_differently_spelled_identifier_against_the_stored_normalized_value()
+     {
+        // Guards against a regression to matching on `h.raw`: the fixture
+        // stores the E.164 form through the normal handle-linking path; the
+        // request asks about a spaced-out spelling of the same number.
+        let (vault, token, _account) = contacts_fixture_with_handles(&["+15550100"]).await;
+        let body = serde_json::json!({ "identifiers": ["+1 555 0100"] });
+        let response =
+            post_json::<serde_json::Value>(&vault.state, "/v1/contacts/match", &token, body).await;
+        assert_eq!(
+            response["unknown"],
+            serde_json::json!([]),
+            "the differently-spelled identifier normalizes to the stored value, so it is known"
+        );
+    }
+
+    #[tokio::test]
+    async fn contact_match_preserves_order_across_multiple_unknowns() {
+        let (vault, token, _account) = contacts_fixture_with_handles(&["+15550100"]).await;
+        let body = serde_json::json!({ "identifiers": ["+15550100", "+15550200", "+15550300"] });
+        let response =
+            post_json::<serde_json::Value>(&vault.state, "/v1/contacts/match", &token, body).await;
+        assert_eq!(
+            response["unknown"],
+            serde_json::json!(["+15550200", "+15550300"])
+        );
+    }
+
+    #[tokio::test]
+    async fn contact_match_does_not_count_a_trashed_contact_as_known() {
+        // A trashed contact is not in the user's vault as far as every other
+        // screen is concerned, and saying "you already have this person" about
+        // someone they deleted would be a lie.
+        let (vault, token, _account) = contacts_fixture_with_trashed_handle("+15550100").await;
+        let body = serde_json::json!({ "identifiers": ["+15550100"] });
+        let response =
+            post_json::<serde_json::Value>(&vault.state, "/v1/contacts/match", &token, body).await;
+        assert_eq!(response["unknown"], serde_json::json!(["+15550100"]));
+    }
+
+    #[tokio::test]
+    async fn contact_match_is_scoped_to_the_calling_account() {
+        let (vault, token, _mine) = contacts_fixture_with_handles(&[]).await;
+        let _other = account_with_handle(&vault, "+15550100").await;
+        let body = serde_json::json!({ "identifiers": ["+15550100"] });
+        let response =
+            post_json::<serde_json::Value>(&vault.state, "/v1/contacts/match", &token, body).await;
+        assert_eq!(response["unknown"], serde_json::json!(["+15550100"]));
+    }
+
+    #[tokio::test]
+    async fn contact_match_rejects_an_oversized_batch() {
+        let (vault, token, _account) = contacts_fixture_with_handles(&[]).await;
+        let identifiers: Vec<String> = (0..MAX_MATCH_IDENTIFIERS + 1)
+            .map(|i| format!("+1555{i:06}"))
+            .collect();
+        let status = post_status(
+            &vault.state,
+            "/v1/contacts/match",
+            &token,
+            serde_json::json!({ "identifiers": identifiers }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

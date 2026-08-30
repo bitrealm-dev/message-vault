@@ -115,11 +115,21 @@ fn write_conversation_json(output_dir: &Path, doc: &ConversationDocument) -> Res
     Ok(path)
 }
 
-/// First JSON Lines line: schema, export, and conversation metadata (no messages).
-fn write_conversation_jsonl(output_dir: &Path, doc: &ConversationDocument) -> Result<PathBuf> {
-    fs::create_dir_all(output_dir).with_context(|| format!("create {}", output_dir.display()))?;
-    let path = output_dir.join(format!("{}.jsonl", doc.filename_stem()));
-    let mut tmp = path.clone();
+/// Write `doc` as JSON Lines to exactly `path`, atomically.
+///
+/// Unlike the export writers this does not derive the file name from the
+/// document: a caller patching a file it already read must write back to the
+/// same path. The write goes through a `.tmp` sibling and a rename, so a
+/// reader never sees a half-written conversation.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be created, serialized, or renamed.
+pub fn write_conversation_jsonl_to(path: &Path, doc: &ConversationDocument) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    let mut tmp = path.to_path_buf();
     tmp.set_extension("jsonl.tmp");
     {
         let file = File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
@@ -134,8 +144,15 @@ fn write_conversation_jsonl(output_dir: &Path, doc: &ConversationDocument) -> Re
         file.flush()
             .with_context(|| format!("flush {}", tmp.display()))?;
     }
-    fs::rename(&tmp, &path)
+    fs::rename(&tmp, path)
         .with_context(|| format!("rename {} → {}", tmp.display(), path.display()))?;
+    Ok(())
+}
+
+/// First JSON Lines line: schema, export, and conversation metadata (no messages).
+fn write_conversation_jsonl(output_dir: &Path, doc: &ConversationDocument) -> Result<PathBuf> {
+    let path = output_dir.join(format!("{}.jsonl", doc.filename_stem()));
+    write_conversation_jsonl_to(&path, doc)?;
     Ok(path)
 }
 
