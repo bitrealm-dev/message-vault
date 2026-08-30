@@ -9,12 +9,14 @@ import { apiClient, getBaseUrl } from "../../lib/api";
 import { formatAttachmentProgress } from "../../lib/attachmentProgressCopy";
 import { attachmentStepCopy } from "../../lib/attachmentStepCopy";
 import { useAuth } from "../../lib/auth";
+import { getDeviceId } from "../../lib/deviceId";
 import { imessageExtractFields } from "../../lib/imessageExtractFields";
 import { isImessageMethod } from "../../lib/imessageImport";
+import { buildSourceFingerprint, setImportStage } from "../../lib/importSession";
 import { saveImportSavedGroup } from "../../lib/savedGroups";
 import { sbrExtractFields } from "../../lib/sbrExtractFields";
 import { resolveImportStagingDir } from "../../lib/system-settings";
-import { invokeExtract, invokePush, type TauriJobResult } from "../../lib/tauri";
+import { invokeExtract, invokePathStat, invokePush, type TauriJobResult } from "../../lib/tauri";
 import { isTauri } from "../../lib/tauri-check";
 import type {
   AttachmentMediaMode,
@@ -146,6 +148,7 @@ export function useImportJob() {
   const [phase, setPhase] = useState<ImportPhase>("form");
   const [summaryView, setSummaryView] = useState<ImportSummaryView | null>(null);
   const [stagingDir, setStagingDir] = useState<string | null>(null);
+  const [importSessionId, setImportSessionId] = useState<number | null>(null);
   const activeStepRef = useRef<ImportIssue["step"]>("parse");
   const issuesRef = useRef<ImportIssue[]>([]);
   const countsRef = useRef<{
@@ -160,6 +163,7 @@ export function useImportJob() {
     setPhase("form");
     setSummaryView(null);
     setStagingDir(null);
+    setImportSessionId(null);
   }
 
   function applyProgress(event: ImportProgressEvent): void {
@@ -225,6 +229,12 @@ export function useImportJob() {
     issuesRef.current = [...issuesRef.current, issue];
   }
 
+  /** Form snapshot for the session record, without the secrets. */
+  function formSnapshot(form: ImportJobFormValues): Record<string, unknown> {
+    const { backupPassword: _backupPassword, whatsappKey: _whatsappKey, ...rest } = form;
+    return rest;
+  }
+
   async function startImport(form: ImportJobFormValues): Promise<void> {
     if (!isTauri()) return;
     const importStartedAt = performance.now();
@@ -238,6 +248,7 @@ export function useImportJob() {
     setPhase("progress");
     setSummaryView(null);
     setStagingDir(null);
+    setImportSessionId(null);
     setSteps(initialSteps("active", form.attachmentMedia));
 
     let importSessionId: number | null = null;
@@ -252,14 +263,21 @@ export function useImportJob() {
       const baseUrl = getBaseUrl();
       if (!token) throw new Error("Not authenticated");
 
-      const importSession = await apiClient.post<{ id: number }>(
-        "/v1/imports",
-        importSessionCreateBody(form.source),
-      );
-      importSessionId = importSession.id;
-
       outputDir = await resolveImportStagingDir(form.backupPath, form.source);
       setStagingDir(outputDir);
+
+      const backupStat = await invokePathStat(form.backupPath).catch(() => null);
+      const importSession = await apiClient.post<{ id: number }>("/v1/imports", {
+        ...importSessionCreateBody(form.source),
+        stage: "parse",
+        staging_dir: outputDir,
+        device_id: getDeviceId(),
+        form: formSnapshot(form),
+        source_fingerprint: backupStat ? buildSourceFingerprint(form.backupPath, backupStat) : null,
+      });
+      importSessionId = importSession.id;
+      setImportSessionId(importSessionId);
+
       setSteps((current) =>
         current.map((step, i) => (i === 0 ? { ...step, detail: "Extracting…" } : step)),
       );
@@ -358,6 +376,11 @@ export function useImportJob() {
       ]);
 
       activeStepRef.current = "upload";
+      if (importSessionId != null) {
+        // Best effort: a stale stage costs a slower resume, never a wrong
+        // one — resume correctness is recomputed from the folder.
+        await setImportStage(importSessionId, "pushing").catch(() => {});
+      }
       const uploadStartedAt = performance.now();
       pushResult = await runTauriJob(
         () =>
@@ -479,6 +502,7 @@ export function useImportJob() {
     running,
     summaryView,
     stagingDir,
+    importSessionId,
     completionText: phase === "done" ? completionTextFor(summaryView?.status) : undefined,
     startImport,
     cancel,

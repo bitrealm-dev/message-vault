@@ -15,6 +15,13 @@ const runMock = vi.fn<() => Promise<TauriJobResult>>();
 const cancelMock = vi.fn();
 const postMock = vi.fn();
 const resolveImportStagingDirMock = vi.fn();
+const invokePathStatMock = vi.fn();
+
+vi.mock("../../lib/tauri", () => ({
+  invokeExtract: vi.fn(),
+  invokePush: vi.fn(),
+  invokePathStat: (...args: unknown[]) => invokePathStatMock(...args),
+}));
 
 vi.mock("../../hooks/useTauriJob", () => ({
   useTauriJob: () => ({
@@ -95,6 +102,8 @@ describe("useImportJob wiring", () => {
     postMock.mockReset();
     resolveImportStagingDirMock.mockReset();
     resolveImportStagingDirMock.mockResolvedValue("/home/sam/message-vault/staging-iphone");
+    invokePathStatMock.mockReset();
+    invokePathStatMock.mockResolvedValue(null);
     postMock.mockImplementation(async (path: string) => {
       if (path === "/v1/imports") return { id: 42 };
       return {};
@@ -128,5 +137,64 @@ describe("useImportJob wiring", () => {
     const [, body] = completeCall as [string, Record<string, unknown>];
     expect(body.status).toBe("failed");
     expect(body.ok).toBe(false);
+  });
+
+  it("records the staging folder and device on the session it creates", async () => {
+    resolveImportStagingDirMock.mockResolvedValue("/home/u/message-vault/staging-260830");
+    invokePathStatMock.mockResolvedValue({
+      exists: true,
+      isFile: false,
+      isDirectory: true,
+      sizeBytes: 4096,
+      modifiedUnixMs: 1_756_512_000_000,
+    });
+    postMock.mockResolvedValue({ id: 42 });
+    runMock.mockResolvedValue({ summary: "ok", report: failedReport() });
+
+    const { result } = renderHook(() => useImportJob());
+    await act(async () => {
+      await result.current.startImport(baseForm);
+    });
+
+    const createCall = postMock.mock.calls.find(([path]) => path === "/v1/imports");
+    expect(createCall).toBeDefined();
+    const body = createCall?.[1] as Record<string, unknown>;
+    expect(body.stage).toBe("parse");
+    expect(body.device_id).toEqual(expect.any(String));
+    expect(body.staging_dir).toBe("/home/u/message-vault/staging-260830");
+    expect(body.form).toMatchObject({ source: "imessage-ios" });
+  });
+
+  it("keeps the backup password out of the stored form snapshot", async () => {
+    resolveImportStagingDirMock.mockResolvedValue("/tmp/staging");
+    invokePathStatMock.mockResolvedValue(null);
+    postMock.mockResolvedValue({ id: 43 });
+    runMock.mockResolvedValue({ summary: "ok", report: failedReport() });
+
+    const { result } = renderHook(() => useImportJob());
+    await act(async () => {
+      await result.current.startImport({ ...baseForm, backupPassword: "hunter2" });
+    });
+
+    const body = postMock.mock.calls.find(([path]) => path === "/v1/imports")?.[1] as Record<
+      string,
+      unknown
+    >;
+    expect(JSON.stringify(body.form)).not.toContain("hunter2");
+  });
+
+  it("moves the session to pushing before the upload starts", async () => {
+    resolveImportStagingDirMock.mockResolvedValue("/tmp/staging");
+    invokePathStatMock.mockResolvedValue(null);
+    postMock.mockResolvedValue({ id: 44 });
+    runMock.mockResolvedValue({ summary: "ok", report: failedReport() });
+
+    const { result } = renderHook(() => useImportJob());
+    await act(async () => {
+      await result.current.startImport(baseForm);
+    });
+
+    const stageCall = postMock.mock.calls.find(([path]) => String(path).endsWith("/stage"));
+    expect(stageCall?.[1]).toEqual({ stage: "pushing" });
   });
 });
