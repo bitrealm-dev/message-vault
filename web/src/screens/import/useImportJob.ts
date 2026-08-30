@@ -948,8 +948,10 @@ export function useImportJob() {
       if (resume) {
         // The staging folder is already complete, so there is nothing to
         // resolve, no new session to create (the account already has this
-        // one), no extract to run, and — because nothing was ever gated —
-        // nothing approved to carry forward. Straight to the push.
+        // one), and no extract to run. resume_push is only ever offered
+        // after a Gate 2 (or single-gate) approval, so there IS a plan from
+        // that approval — it rides along as `resume.approved` (parsed from
+        // the session's stored summary) when it parses. Straight to the push.
         const outputDir = resume.stagingDir;
         setStagingDir(outputDir);
         sessionId = resume.sessionId;

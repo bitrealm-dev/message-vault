@@ -35,7 +35,9 @@ export function verdictCopy(verdict: SizeVerdict, mode: AttachmentMediaMode): Ve
     case "fits_as_is":
       return {
         label: "Fits as-is",
-        hint: "Already under the size limit, so the media step leaves it alone.",
+        hint: verb
+          ? "Already under the size limit, so the media step leaves it alone."
+          : "Already under the size limit, so it uploads as-is.",
       };
     case "likely_fits":
       return {
@@ -51,14 +53,21 @@ export function verdictCopy(verdict: SizeVerdict, mode: AttachmentMediaMode): Ve
       };
     case "probably_too_big":
       return {
-        label: "Probably still too big",
-        hint: "Expected to stay over the limit even after the media step.",
+        // "Probably still" hedges an estimate that only exists when there is
+        // a media step to run first; under copy/skip the size is exact and
+        // already over, so the plain fact reads true without the hedge.
+        label: verb ? "Probably still too big" : "Over the size limit",
+        hint: verb
+          ? "Expected to stay over the limit even after the media step."
+          : "Over the size limit, so it will not be uploaded.",
       };
     case "cannot_process": {
       const doneForm = mode === "convert" ? "converted" : mode === "compress" ? "compressed" : null;
       return {
         label: doneForm ? `Cannot be ${doneForm} — not audio or video` : "Not audio or video",
-        hint: "This file type is not audio or video, so the media step does not touch it.",
+        hint: verb
+          ? "This file type is not audio or video, so the media step does not touch it."
+          : "This file type is not audio or video.",
       };
     }
     default:

@@ -178,7 +178,7 @@ describe("GateOneScreen", () => {
         })}
       />,
     );
-    expect(screen.getByText(/2 files — Probably still too big/)).toBeInTheDocument();
+    expect(screen.getByText(/2 files — Over the size limit/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(/upload limit/i);
     expect(screen.queryByText(/estimate/i)).not.toBeInTheDocument();
   });

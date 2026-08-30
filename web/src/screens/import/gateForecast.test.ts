@@ -36,6 +36,26 @@ describe("verdictCopy", () => {
     );
   });
 
+  it("names no media step for the verdicts copy/skip can actually reach", () => {
+    // copy/skip have no media step at all, so only fits_as_is, probably_too_big,
+    // and cannot_process are reachable (untouched_by is unconditional under
+    // Clone/Disabled) -- their copy must not name a step that never runs, and
+    // an exact, already-over-the-limit size doesn't need probably_too_big's
+    // "Probably still" hedge.
+    expect(verdictCopy("fits_as_is", "copy")).toEqual({
+      label: "Fits as-is",
+      hint: "Already under the size limit, so it uploads as-is.",
+    });
+    expect(verdictCopy("probably_too_big", "copy")).toEqual({
+      label: "Over the size limit",
+      hint: "Over the size limit, so it will not be uploaded.",
+    });
+    expect(verdictCopy("cannot_process", "copy")).toEqual({
+      label: "Not audio or video",
+      hint: "This file type is not audio or video.",
+    });
+  });
+
   it("never says transcode", () => {
     const modes = ["convert", "compress"] as const;
     const verdicts = [
