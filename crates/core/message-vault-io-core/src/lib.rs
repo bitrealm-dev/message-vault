@@ -17,7 +17,7 @@ mod process;
 #[cfg(feature = "testutil")]
 pub mod testutil;
 
-pub use attachment_jobs::{AttachmentJob, AttachmentProgress, run_attachment_jobs};
+pub use attachment_jobs::{AttachmentJob, AttachmentProgress, mime_for_rel, run_attachment_jobs};
 pub use attachments::{attachment_dest_name, copy_if_missing, digest_prefix, write_if_missing};
 #[cfg(feature = "cli")]
 pub use cli::{CommonCli, clap_command, run_cli};
