@@ -470,8 +470,14 @@ export function useImportJob() {
     pushReport: PushFinishedReport | null;
     uploadMs: number | null;
     skipComplete?: boolean;
+    // The plan the user approved at their last gate — Gate 2's recomputed
+    // summary when there was a media pass, Gate 1's otherwise (Decision 15).
+    // Only `runPush` has one to offer; every other call into this function
+    // ends in `pushReport: null`, which fails the outcome regardless of
+    // `approved`, so leaving it undefined there is a no-op, not a gap.
+    approved?: StagingSummary;
   }): Promise<void> {
-    const { sessionId, form, threw, canceled, pushReport, uploadMs, skipComplete } = args;
+    const { sessionId, form, threw, canceled, pushReport, uploadMs, skipComplete, approved } = args;
     const { parseMs, attachmentsMs, prepareMs } = durationsRef.current;
     const durationMs = performance.now() - importStartedAtRef.current;
     const outcome: ImportSummaryView["status"] = canceled
@@ -480,6 +486,7 @@ export function useImportJob() {
           report: pushReport ?? undefined,
           threw,
           issues: issuesRef.current,
+          approved,
         });
     const finalSummary: ImportSummaryView = {
       status: outcome,
@@ -636,6 +643,7 @@ export function useImportJob() {
       threw,
       pushReport: pushResult?.report ?? null,
       uploadMs,
+      approved: approvedPlan,
     });
   }
 

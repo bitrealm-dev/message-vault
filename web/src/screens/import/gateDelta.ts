@@ -16,7 +16,7 @@ import type {
  * a converted file reads as "one file vanished, an unrelated one appeared"
  * instead of the same file under its new name.
  */
-function stableStem(path: string): string {
+export function stableStem(path: string): string {
   const base = path.split("/").pop() ?? path;
   const dot = base.lastIndexOf(".");
   const stem = dot > 0 ? base.slice(0, dot) : base;
