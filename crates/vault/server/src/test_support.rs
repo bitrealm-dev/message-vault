@@ -74,18 +74,17 @@ async fn request(
 
 /// Register an account through the API and return it with a live token.
 ///
-/// Resets the register rate-limit bucket for `username` first. The limiter
-/// is a process-global static (`auth::AUTH_RATE_LIMITS`), and this whole
+/// The auth rate limiter lives on `AppState` (`auth::AuthRateLimits`), so the
+/// hits counted here belong to this vault alone. That matters because the
 /// suite reuses a handful of literal usernames ("alice", "bob", ...) across
-/// many test functions that all run in the same test binary; without this,
-/// enough tests registering the same name inside one 60-second window trips
-/// `AUTH_RATE_MAX` and fails an unrelated test with a 429.
+/// many test functions in one test binary: with a shared limiter, enough tests
+/// registering the same name inside one 60-second window would trip
+/// `AUTH_RATE_MAX` and fail an unrelated test with a 429.
 pub async fn register_via_api(
     state: &AppState,
     username: &str,
     password: &str,
 ) -> RegisteredAccount {
-    crate::auth::reset_auth_rate_limit_bucket_for_test(&format!("register:{username}"));
     let response = request(
         state,
         reqwest::Method::POST,
