@@ -822,7 +822,12 @@ pub(crate) async fn imports_get_handler(
         (status = 200, body = CreateImportResponse),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
+        (status = 403, body = crate::server::ErrorBody),
+        (
+            status = 409,
+            body = crate::server::ErrorBody,
+            description = "The account already has an active import session"
+        )
     )
 )]
 pub(crate) async fn imports_create_handler(
@@ -1083,6 +1088,7 @@ pub(crate) struct SetImportStageResponse {
     path = "/v1/imports/{id}/stage",
     tag = "Import",
     security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Import session id")),
     request_body = SetImportStageBody,
     responses(
         (status = 200, body = SetImportStageResponse),
@@ -1130,6 +1136,7 @@ pub(crate) struct DiscardImportResponse {
     path = "/v1/imports/{id}/discard",
     tag = "Import",
     security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Import session id")),
     responses(
         (status = 200, body = DiscardImportResponse),
         (status = 400, body = crate::server::ErrorBody),
@@ -1183,7 +1190,12 @@ pub(crate) async fn imports_discard_handler(
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody)
+        (status = 404, body = crate::server::ErrorBody),
+        (
+            status = 409,
+            body = crate::server::ErrorBody,
+            description = "The account already has an active import session"
+        )
     )
 )]
 pub(crate) async fn import_handler(

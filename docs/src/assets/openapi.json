@@ -3225,6 +3225,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "The account already has an active import session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3338,6 +3348,16 @@
           },
           "403": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The account already has an active import session",
             "content": {
               "application/json": {
                 "schema": {
@@ -3563,6 +3583,18 @@
         ],
         "summary": "Discard a live import session, freeing the account's single slot.",
         "operationId": "imports_discard_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Import session id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -3629,6 +3661,18 @@
         ],
         "summary": "Move a live import session to another stage.",
         "operationId": "imports_stage_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Import session id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
