@@ -11,15 +11,16 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PushFinishedReport, TauriJobResult } from "../../lib/tauri";
 
-const runMock = vi.fn<() => Promise<TauriJobResult>>();
+const runMock = vi.fn<(fn: () => Promise<unknown>) => Promise<TauriJobResult>>();
 const cancelMock = vi.fn();
 const postMock = vi.fn();
 const resolveImportStagingDirMock = vi.fn();
 const invokePathStatMock = vi.fn();
+const invokePushMock = vi.fn();
 
 vi.mock("../../lib/tauri", () => ({
   invokeExtract: vi.fn(),
-  invokePush: vi.fn(),
+  invokePush: (...args: unknown[]) => invokePushMock(...args),
   invokePathStat: (...args: unknown[]) => invokePathStatMock(...args),
 }));
 
@@ -207,9 +208,36 @@ describe("useImportJob resume path", () => {
     resolveImportStagingDirMock.mockReset();
     invokePathStatMock.mockReset();
     invokePathStatMock.mockResolvedValue(null);
+    invokePushMock.mockReset();
     postMock.mockImplementation(async () => ({}));
     // A resumed run only ever calls run() once, for the push.
     runMock.mockResolvedValue({ summary: "Push finished.", report: failedReport() });
+  });
+
+  it("passes the resumed session id and staging dir through to invokePush", async () => {
+    // Unlike the other resume-path tests, run() here calls through to the
+    // job function it was given, so invokePush actually runs (against the
+    // mocked Tauri command) and its arguments can be inspected.
+    runMock.mockImplementation(async (fn) => {
+      await fn();
+      return { summary: "Push finished.", report: failedReport() };
+    });
+
+    const { result } = renderHook(() => useImportJob());
+    await act(async () => {
+      await result.current.startImport(baseForm, {
+        sessionId: 99,
+        stagingDir: "/home/u/message-vault/staging-260830",
+      });
+    });
+
+    expect(invokePushMock).toHaveBeenCalledTimes(1);
+    expect(invokePushMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        import_id: 99,
+        input_dir: "/home/u/message-vault/staging-260830",
+      }),
+    );
   });
 
   it("skips staging resolve, session create, and extract when resuming a push", async () => {

@@ -130,4 +130,29 @@ describe("ResumeImportPanel", () => {
     expect(onDiscard).toHaveBeenCalledTimes(1);
     expect(onResume).not.toHaveBeenCalled();
   });
+
+  it("offers discard alone when the stored settings can't be read", async () => {
+    const user = userEvent.setup();
+    const onResume = vi.fn();
+    const onDiscard = vi.fn();
+    const decision: ResumeDecision = {
+      kind: "settings_unreadable",
+      canResume: false,
+      session: session(),
+    };
+    render(<ResumeImportPanel decision={decision} onResume={onResume} onDiscard={onDiscard} />);
+
+    expect(screen.getByText("This import's settings could not be read")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "The import is still open here, but the settings it was started with are not readable. Discarding it lets you start a new one.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Upload to vault" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Start over" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Discard this import" }));
+    expect(onDiscard).toHaveBeenCalledTimes(1);
+    expect(onResume).not.toHaveBeenCalled();
+  });
 });

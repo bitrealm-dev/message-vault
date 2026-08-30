@@ -259,7 +259,7 @@ describe("ImportScreen entering Import", () => {
     expect(resume).toBeUndefined();
   });
 
-  it("falls back to discard-only handling when the stored form snapshot is malformed", async () => {
+  it("falls back to a settings-unreadable panel when the stored form snapshot is malformed", async () => {
     const user = userEvent.setup();
     getActiveImportSessionMock.mockResolvedValue(
       session({ stage: "pushing", form: { nonsense: true } }),
@@ -271,6 +271,58 @@ describe("ImportScreen entering Import", () => {
     await user.click(screen.getByText("resume-action"));
 
     expect(startImportMock).not.toHaveBeenCalled();
-    expect(await screen.findByTestId("resume-kind")).toHaveTextContent("folder_missing");
+    expect(await screen.findByTestId("resume-kind")).toHaveTextContent("settings_unreadable");
+  });
+
+  it("still drops to the form when discarding from the panel fails server-side", async () => {
+    const user = userEvent.setup();
+    getActiveImportSessionMock.mockResolvedValue(session({ stage: "pushing" }));
+    discardImportSessionMock.mockRejectedValue(new Error("network down"));
+    render(<ImportScreen />);
+
+    await screen.findByTestId("resume-panel");
+    await user.click(screen.getByText("discard-action"));
+
+    expect(discardImportSessionMock).toHaveBeenCalledWith(7);
+    expect(await screen.findByTestId("import-form")).toBeInTheDocument();
+  });
+
+  it("still restarts when discarding the old session before a restart fails server-side", async () => {
+    const user = userEvent.setup();
+    getActiveImportSessionMock.mockResolvedValue(
+      session({
+        stage: "write",
+        form: {
+          source: "imessage-ios",
+          backupPath: "/backups/iphone.tar",
+          attachmentMedia: "copy",
+          maxResolution: "720p",
+          maxFps: "30",
+          minSizeMb: "20",
+          contactNameMode: "fill_missing",
+          ownerPhones: [],
+          force: false,
+          obfuscate: false,
+          isSbr: false,
+          attachmentRoot: "",
+          appleContacts: "",
+          whatsappWa: "",
+          whatsappMedia: "",
+          whatsappDb: "",
+          whatsappBusiness: false,
+        },
+      }),
+    );
+    discardImportSessionMock.mockRejectedValue(new Error("network down"));
+    render(<ImportScreen />);
+
+    await screen.findByTestId("resume-panel");
+    await user.click(screen.getByText("resume-action"));
+
+    expect(discardImportSessionMock).toHaveBeenCalledWith(7);
+    expect(startImportMock).toHaveBeenCalledTimes(1);
+    const [form, resume] = startImportMock.mock.calls[0] as [unknown, unknown];
+    expect(form).toMatchObject({ source: "imessage-ios", backupPath: "/backups/iphone.tar" });
+    expect(resume).toBeUndefined();
   });
 });

@@ -2,7 +2,17 @@ import type { ActiveImportSession } from "../../lib/importSession";
 
 /** What entering Import should do about a session that already exists. */
 export type ResumeDecision = {
-  kind: "none" | "other_device" | "folder_missing" | "resume_push" | "restart";
+  kind:
+    | "none"
+    | "other_device"
+    | "folder_missing"
+    | "resume_push"
+    | "restart"
+    // resumeDecisionFor never returns this: it has no way to know whether a
+    // session's stored form snapshot is readable. The screen constructs it
+    // itself when restoreFormFromSnapshot rejects the snapshot at the point
+    // of trying to resume or restart.
+    | "settings_unreadable";
   /** Whether staged work can be picked up rather than redone. */
   canResume: boolean;
   session: ActiveImportSession | null;

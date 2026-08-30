@@ -38,6 +38,12 @@ const COPY: Record<ResumableKind, PanelCopy> = {
       "It was started on a different install and its files are staged there. Discarding it lets you start a new import here.",
     primary: { label: "Discard this import", action: "discard" },
   },
+  settings_unreadable: {
+    heading: "This import's settings could not be read",
+    body: () =>
+      "The import is still open here, but the settings it was started with are not readable. Discarding it lets you start a new one.",
+    primary: { label: "Discard this import", action: "discard" },
+  },
 };
 
 /** Renders one resume decision and calls back on the user's choice. */

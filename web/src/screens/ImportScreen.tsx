@@ -41,6 +41,9 @@ const DEFAULT_SOURCE = IMESSAGE_DEFAULT_METHOD;
 const SBR_SOURCE = "sms-backup-restore";
 const PATH_PROBE_DEBOUNCE_MS = 200;
 
+/** Nothing to decide -- the form renders. The one spelling of "no resume". */
+const NO_RESUME: ResumeDecision = { kind: "none", canResume: false, session: null };
+
 function mapPathStat(raw: { exists: boolean; isFile: boolean; isDirectory: boolean }): PathStat {
   return {
     exists: raw.exists,
@@ -107,23 +110,23 @@ export default function ImportScreen() {
   const lastWhatsappMethodRef = useRef<WhatsappMethodId>(WHATSAPP_DEFAULT_METHOD);
   const sourceChangeGenRef = useRef(0);
 
-  const [resume, setResume] = useState<ResumeDecision | null>(null);
+  const [resume, setResume] = useState<ResumeDecision>(NO_RESUME);
   const [resumeChecked, setResumeChecked] = useState(false);
+  const discardingRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const session = await getActiveImportSession();
-        const folderExists = session?.staging_dir
-          ? ((await probePath(session.staging_dir))?.exists ?? false)
-          : false;
+        const stat = session?.staging_dir ? await probePath(session.staging_dir) : null;
+        const folderExists = Boolean(stat?.exists && stat.isDirectory);
         if (!cancelled) {
           setResume(resumeDecisionFor({ session, deviceId: getDeviceId(), folderExists }));
         }
       } catch {
         // A vault that cannot answer is not a reason to block the form.
-        if (!cancelled) setResume(null);
+        if (!cancelled) setResume(NO_RESUME);
       } finally {
         if (!cancelled) setResumeChecked(true);
       }
@@ -151,53 +154,61 @@ export default function ImportScreen() {
     setMaxFps(restored.maxFps);
     setMinSizeMb(restored.minSizeMb);
     setContactNameMode(restored.contactNameMode);
+    // Restoring settings counts as seeding: the SBR profile-phones effect
+    // must not overwrite what was just restored.
+    ownerPhonesSeededRef.current = true;
     setOwnerPhones(restored.ownerPhones);
     setForce(restored.force);
     setObfuscate(restored.obfuscate);
   }
 
   async function handleDiscardResume(): Promise<void> {
-    const session = resume?.session;
-    if (!session) return;
+    const session = resume.session;
+    if (!session || discardingRef.current) return;
+    discardingRef.current = true;
     try {
       await discardImportSession(session.id);
     } catch {
       // Best effort -- the panel drops to the form either way; if the
       // session is still live server-side, the next visit shows it again.
     } finally {
-      setResume({ kind: "none", canResume: false, session: null });
+      discardingRef.current = false;
+      setResume(NO_RESUME);
     }
   }
 
   async function handleResumeAction(): Promise<void> {
-    if (!resume || resume.kind === "none" || !resume.session) return;
+    if (resume.kind === "none" || !resume.session) return;
     const session = resume.session;
     const restoredForm = restoreFormFromSnapshot(session.form);
     if (!restoredForm) {
-      // A stored snapshot the vault can't be trusted to have kept valid --
-      // there is nothing safe to resume or restart with, so fall back to
-      // the same discard-only handling as a missing staging folder.
-      setResume({ kind: "folder_missing", canResume: false, session });
+      // The staging folder is present -- the decision only reached here
+      // because it is -- so folder_missing's copy would be false. This
+      // kind exists solely for this screen to construct.
+      setResume({ kind: "settings_unreadable", canResume: false, session });
       return;
     }
     applyRestoredFormState(restoredForm);
 
-    if (resume.kind === "resume_push" && session.staging_dir) {
-      setResume({ kind: "none", canResume: false, session: null });
+    if (resume.kind === "resume_push") {
+      if (!session.staging_dir) return; // resumeDecisionFor guarantees this; defensive only.
+      setResume(NO_RESUME);
       await startImport(restoredForm, { sessionId: session.id, stagingDir: session.staging_dir });
       return;
     }
 
     // Restart: a fresh extract writes into a new staging folder, and the
     // vault allows only one live session per account, so give up the old
-    // one before starting the new run.
-    setResume({ kind: "none", canResume: false, session: null });
+    // one before starting the new run. setResume stays put until right
+    // before startImport, so the panel (not a blank form) covers the
+    // discard round trip.
     try {
       await discardImportSession(session.id);
     } catch {
       // Best effort -- if the vault is unreachable the create call below
       // surfaces its own error the same as any other failed import start.
     }
+    setResume(NO_RESUME);
     await startImport(restoredForm);
   }
 
@@ -430,7 +441,7 @@ export default function ImportScreen() {
 
   return (
     <div className={`min-w-0 p-6 ${phase === "form" ? "max-w-[640px]" : "max-w-5xl"}`}>
-      {phase === "form" && resumeChecked && (!resume || resume.kind === "none") && (
+      {phase === "form" && resumeChecked && resume.kind === "none" && (
         <ImportFormFields
           source={source}
           onSourceChange={handleSourceChange}
@@ -514,7 +525,7 @@ export default function ImportScreen() {
         />
       )}
 
-      {phase === "form" && resumeChecked && resume && resume.kind !== "none" && (
+      {phase === "form" && resumeChecked && resume.kind !== "none" && (
         <ResumeImportPanel
           decision={resume}
           onResume={() => void handleResumeAction()}
