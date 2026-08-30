@@ -1,21 +1,34 @@
-/** How the auth card is getting on with the vault it resolved. */
-export type VaultConnection = "connecting" | "connected" | "disconnected";
+/**
+ * How the auth card is getting on with the vault it resolved.
+ *
+ * `untested` is the settings screen's own state and never the card's: an
+ * address that has been typed but not tried yet. It is a fourth answer rather
+ * than a shade of the other three, because "we have not asked" is not the same
+ * as reaching a vault, failing to reach one, or being part-way through.
+ */
+export type VaultConnection = "connecting" | "connected" | "disconnected" | "untested";
 
 const WORD: Record<VaultConnection, string> = {
   connecting: "Connecting",
   connected: "Connected",
   disconnected: "Disconnected",
+  untested: "Not tested",
 };
 
 /**
  * The word carries the state on its own — there is no indicator dot. Connecting
  * keeps the slow flash the old light had, moved onto the text as an opacity
  * pulse, because scaling type wobbles the baseline underneath it.
+ *
+ * Untested is grey and still: green and red are answers about a vault, and an
+ * address nobody has tried has not earned either one. It does not pulse, since
+ * nothing is happening for the pulse to stand for.
  */
 const TONE: Record<VaultConnection, string> = {
   connecting: "text-text motion-safe:animate-pulse",
   connected: "text-ok",
   disconnected: "text-danger",
+  untested: "text-muted",
 };
 
 export interface VaultStatusProps {

@@ -50,8 +50,7 @@ export default function LoginScreen() {
   const [hasConnectedOnce, setHasConnectedOnce] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // What Test reported for the address currently typed, or null when it has
-  // not been tested since the last edit. Null falls back to the card's own
-  // connection, so a stale green cannot outlive the address that earned it.
+  // not been tested since the last edit.
   const [tested, setTested] = useState<VaultConnection | null>(null);
 
   // A disconnected card keeps checking the address it already has, so it can
@@ -116,6 +115,18 @@ export default function LoginScreen() {
     setTested(reachable ? "connected" : "disconnected");
   }, [draft]);
 
+  /**
+   * What the settings screen reports under Connection Status.
+   *
+   * Test's answer wins while it lasts. Without one, the card's own connection
+   * may be shown only while the box still holds the address that connection
+   * was made to — edit a character and `state` is describing a different
+   * vault, so repeating it here would tell the person that the address they
+   * are typing works, on the strength of a probe that never touched it. That
+   * is how a failed Test used to turn green again on the next keystroke.
+   */
+  const settingsStatus: VaultConnection = tested ?? (draft.trim() === address ? state : "untested");
+
   const closeSettings = () => {
     testRun.current += 1;
     setTested(null);
@@ -129,7 +140,7 @@ export default function LoginScreen() {
           {settingsOpen ? (
             <VaultSettingsScreen
               draft={draft}
-              status={tested ?? state}
+              status={settingsStatus}
               onDraftChange={(value) => {
                 setDraft(value);
                 setTested(null);

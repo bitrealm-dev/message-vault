@@ -7,8 +7,10 @@ export interface VaultSettingsScreenProps {
   /** Address being typed. */
   draft: string;
   /**
-   * What to report under Connection Status: the card's live connection until
-   * Test is pressed, then whatever Test found for the typed address.
+   * What to report under Connection Status. Whatever it says, it says about
+   * the address in the field and nothing else — the caller is the one that
+   * knows whether its own connection was made to that address or to a
+   * different one it is still holding behind this screen.
    */
   status: VaultConnection;
   onDraftChange: (value: string) => void;

@@ -230,6 +230,33 @@ describe("LoginScreen", () => {
     expect(setServer).not.toHaveBeenCalledWith("http://127.0.0.1:9999");
   });
 
+  it("does not credit an edited address with the connection it never earned", async () => {
+    stubVault();
+    const user = userEvent.setup();
+    renderScreen();
+
+    await screen.findByRole("tab", { name: "Login" });
+    await user.click(screen.getByRole("button", { name: "Change vault settings" }));
+    // Opened on the address the card is connected to, so that connection is
+    // this address's and saying so is true.
+    expect(screen.getByRole("status")).toHaveTextContent("Connected");
+
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    const field = screen.getByRole("textbox", { name: "Address" });
+    await user.type(field, "http://127.0.0.1:9999");
+    // Typed but never tried: the card is still connected behind this screen,
+    // but not to what is in the box.
+    expect(screen.getByRole("status")).toHaveTextContent("Not tested");
+
+    await user.click(screen.getByRole("button", { name: "Test" }));
+    expect(await screen.findByText("Disconnected")).toBeInTheDocument();
+
+    // Editing after a failed test clears that answer without inventing a
+    // better one. A green here would say the typed address works.
+    await user.type(field, "9");
+    expect(screen.getByRole("status")).toHaveTextContent("Not tested");
+  });
+
   it("applies a typed address and reconnects", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
     const user = userEvent.setup();
