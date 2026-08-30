@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::tools::{Probe, probe_video, require_ffmpeg, run_ffmpeg};
 use crate::{CompressOptions, MediaMode};
@@ -230,28 +230,27 @@ fn remove_msgmedia_temps(root: &Path) -> Result<()> {
 
 /// Delete ffmpeg scratch left beside `path` by an earlier interrupted run.
 ///
-/// Scoped to this file's own siblings, and matched on the same
-/// `.msgmedia.tmp.` marker `remove_msgmedia_temps` uses — which is why a
-/// `.in_progress` file survives it (decision 30).
+/// Matched on the exact name a transcode of `path` could have written (see
+/// `temp_sibling`), not a stem prefix, and scoped to `path`'s own kind: a
+/// given kind only ever writes one scratch extension (`jpg` for images,
+/// `mp3` for audio, `mp4` for video). Precision here matters because two
+/// source files can share a stem — an iOS Live Photo's `IMG_0001.HEIC` and
+/// `IMG_0001.MOV`, for instance — and a coarser, stem-only match would delete
+/// one file's in-flight scratch while converting the other.
+///
+/// `path` itself can never be swept: `classify` (and so this function)
+/// treats a `.msgmedia.tmp.` path as having no kind, so a caller that passes
+/// scratch as `path` gets a no-op, not a self-delete.
 fn remove_temps_beside(path: &Path) {
-    let (Some(dir), Some(stem)) = (path.parent(), path.file_stem().and_then(|s| s.to_str())) else {
+    let Some(kind) = classify(path) else {
         return;
     };
-    let prefix = format!("{stem}.");
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
+    let ext = match kind {
+        Kind::Image => "jpg",
+        Kind::Audio => "mp3",
+        Kind::Video => "mp4",
     };
-    for entry in entries.flatten() {
-        let candidate = entry.path();
-        if is_msgmedia_temp(&candidate)
-            && candidate
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with(&prefix))
-        {
-            let _ = fs::remove_file(&candidate);
-        }
-    }
+    let _ = fs::remove_file(temp_sibling(path, ext));
 }
 
 fn temp_sibling(path: &Path, ext: &str) -> PathBuf {
@@ -387,7 +386,13 @@ pub enum TranscodeOutcome {
 /// the file alone.
 ///
 /// Reads the same decision tree as the pass itself, so the name a caller
-/// patches into a conversation file is the name the pass writes.
+/// patches into a conversation file is the name the pass writes when it does
+/// write one. For video this is a forecast, not a promise: `derivative_name`
+/// cannot see `CompressOptions`, so it always answers `mp4` for a video in
+/// either mode, even though `compress_video` may skip a small or
+/// already-efficient file and `try_remux_replace` may fall through on a
+/// remux failure. Callers must treat [`TranscodeOutcome::Skipped`] from
+/// [`transcode_file`] as authoritative over whatever this function predicted.
 #[must_use]
 pub fn derivative_name(src: &Path, mode: MediaMode) -> Option<String> {
     let kind = classify(src)?;
@@ -429,6 +434,9 @@ pub fn derivative_name(src: &Path, mode: MediaMode) -> Option<String> {
             }
             "mp3"
         }
+        // Forecast only: whether a video is actually rewritten depends on
+        // CompressOptions and probed efficiency, neither visible here. See
+        // the function doc.
         (Kind::Video, _) => "mp4",
     };
     Some(format!("{stem}.{target}"))
@@ -522,6 +530,24 @@ fn commit_produced(commit: Commit<'_>, original: &Path, produced: &Path) -> Resu
     match commit {
         Commit::InPlace => replace_original(original, produced),
         Commit::To(dest) => {
+            if dest == original {
+                // The whole point of Commit::To is that the final name never
+                // exists until the caller has patched whatever points at the
+                // original and renamed this derivative into place itself
+                // (decision 28). A destination equal to the original would
+                // overwrite it here, before any of that has happened — for
+                // example `derivative_name` returning the source's own name
+                // (a same-format compress) joined onto the source's directory
+                // without a caller-added suffix like `.in_progress`.
+                bail!(
+                    "transcode destination {} is the original file: write the \
+                     derivative to a distinct temporary name (e.g. suffixed with \
+                     `.in_progress`) and rename it into place only after patching \
+                     whatever points at {}",
+                    dest.display(),
+                    original.display()
+                );
+            }
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent)
                     .with_context(|| format!("create {}", parent.display()))?;
@@ -824,18 +850,24 @@ mod tests {
         fs::write(path, PNG_1X1_RGB).unwrap();
     }
 
-    /// Write a random-noise JPEG through ffmpeg at `-q:v 20`, sized so a
-    /// compress-mode re-encode at `-q:v 5` is not smaller.
+    /// Write a coarsely-quantized JPEG through ffmpeg at `-q:v 20` that grows
+    /// when re-encoded at compress mode's finer `-q:v 5`.
     ///
-    /// Calibrated empirically against this repo's ffmpeg build: random RGB
-    /// noise at `-q:v 20` runs about 0.44 bytes/pixel, and re-encoding it at
-    /// `-q:v 5` (much less quantization) comes out roughly 50% *larger* —
-    /// noise has no redundancy for the finer quantization step to exploit,
-    /// so asking for more detail just spends more bits recording the same
-    /// randomness. That is the opposite of the usual "worse quality = smaller
-    /// file" case a typical photo re-encode hits, which is exactly why it
-    /// exercises the keep-smaller guard.
-    fn write_incompressible_jpeg(path: &Path, target_size: u64) {
+    /// Calibrated empirically against this repo's ffmpeg build: random noise
+    /// written to independent Y/Cb/Cr planes (`nullsrc`'s default `yuv420p`,
+    /// fed by `geq`) runs about 0.44 bytes/pixel at `-q:v 20`, and
+    /// re-encoding it at `-q:v 5` (much less quantization) comes out roughly
+    /// 50% *larger* — noise has no redundancy for the finer quantization
+    /// step to exploit, so asking for more detail just spends more bits
+    /// recording the same randomness. That is the opposite of the usual
+    /// "worse quality = smaller file" case a typical photo re-encode hits,
+    /// which is exactly why it exercises the keep-smaller guard. (An earlier
+    /// version of this helper tried the reverse — a `-q:v 2` source
+    /// re-encoded at `-q:v 5` — expecting noise's incompressibility to make
+    /// it a wash; it consistently shrank by ~25% instead, at every
+    /// resolution tried. Coarser quantization shrinks even incompressible
+    /// content, so don't retry that direction.)
+    fn write_jpeg_that_grows_on_finer_reencode(path: &Path, target_size: u64) {
         let pixels = (target_size as f64 / 0.44).max(4.0);
         let mut width = ((pixels * 4.0 / 3.0).sqrt() as u32).max(2);
         width -= width % 2;
@@ -871,8 +903,14 @@ mod tests {
         // produces a file no smaller than the source. Over 500 KB so the size gate
         // in process_one does not skip it outright.
         let jpeg = attachments.join("already-tight.jpg");
-        write_incompressible_jpeg(&jpeg, 900 * 1024);
+        write_jpeg_that_grows_on_finer_reencode(&jpeg, 900 * 1024);
         let before = fs::read(&jpeg).unwrap();
+        assert!(
+            fs::metadata(&jpeg).unwrap().len() > JPEG_COMPRESS_FLOOR,
+            "fixture must clear the floor gate: otherwise run_one skips at the \
+             floor and every assertion below holds whether or not the \
+             keep-smaller guard exists"
+        );
 
         let (report, remap) =
             process_attachments_dir(dir.path(), MediaMode::Compress, &CompressOptions::default())
@@ -947,7 +985,15 @@ mod tests {
         write_test_png(&src);
         let name = derivative_name(&src, MediaMode::Convert).unwrap();
         let dest = dir.path().join("out").join(&name);
-        transcode_file(&src, &dest, MediaMode::Convert, &CompressOptions::default()).unwrap();
+        let outcome =
+            transcode_file(&src, &dest, MediaMode::Convert, &CompressOptions::default()).unwrap();
+        // dest is built from name, so the file-name equality below would hold
+        // even if transcode_file wrote nothing. Pin down that it actually ran.
+        assert_eq!(outcome, TranscodeOutcome::Produced);
+        assert!(
+            dest.exists(),
+            "derivative_name promised a name nothing wrote"
+        );
         assert_eq!(
             dest.file_name().and_then(|n| n.to_str()),
             Some(name.as_str())
@@ -963,6 +1009,13 @@ mod tests {
         fs::write(&own_scratch, b"leftover").unwrap();
         let other_scratch = dir.path().join("other.msgmedia.tmp.jpg");
         fs::write(&other_scratch, b"in flight").unwrap();
+        // Same stem as `src`, but the scratch extension a video producer
+        // would write (e.g. an iOS Live Photo's IMG_0001.MOV, mid-encode,
+        // sharing photo's stem). A stem-only match would wrongly sweep this;
+        // photo.png is Kind::Image, so only its own "jpg" scratch is a
+        // candidate.
+        let same_stem_video_scratch = dir.path().join("photo.msgmedia.tmp.mp4");
+        fs::write(&same_stem_video_scratch, b"another kind, in flight").unwrap();
         let marker = dir.path().join("photo.jpg.in_progress");
         fs::write(&marker, b"a previous attempt").unwrap();
 
@@ -982,9 +1035,40 @@ mod tests {
              destroys work that is still running"
         );
         assert!(
+            same_stem_video_scratch.exists(),
+            "a same-stem sibling's scratch of a different kind must survive: a \
+             stem-only match would delete an in-flight Live-Photo pair's video \
+             scratch while converting the image half"
+        );
+        assert!(
             marker.exists(),
             "the .in_progress marker is the resume signal and must survive the \
              scratch sweep (decision 30)"
+        );
+    }
+
+    #[test]
+    fn commit_produced_refuses_a_destination_equal_to_the_original() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = dir.path().join("photo.jpg");
+        fs::write(&original, b"jpeg-bytes").unwrap();
+        let produced = dir.path().join("photo.msgmedia.tmp.jpg");
+        fs::write(&produced, b"re-encoded-bytes").unwrap();
+
+        // A caller that joined `derivative_name`'s output onto the source
+        // directory without adding a distinct temp suffix (e.g. forgot
+        // `.in_progress`) would ask to overwrite the original before any
+        // commit has happened. That must be refused, not silently done.
+        let err = commit_produced(Commit::To(&original), &original, &produced).unwrap_err();
+        assert!(
+            err.to_string().contains("original file"),
+            "error should explain why: {err}"
+        );
+        assert!(original.exists(), "original must be untouched");
+        assert_eq!(fs::read(&original).unwrap(), b"jpeg-bytes");
+        assert!(
+            produced.exists(),
+            "the would-be derivative is left for the caller to clean up"
         );
     }
 
