@@ -1333,6 +1333,59 @@ mod tests {
         assert_eq!(session.form["source"], "imessage-ios");
     }
 
+    /// A stored form snapshot never carries credentials, whatever the
+    /// client posts: the row outlives the run, and the secret must not.
+    #[tokio::test]
+    async fn a_stored_form_snapshot_drops_credentials() {
+        let (_tmp, state, token, import_id) = test_state().await;
+        let _ = imports_discard_handler(
+            State(state.clone()),
+            auth_headers(&token),
+            AxumPath(import_id),
+        )
+        .await
+        .unwrap();
+
+        let body = CreateImportBody {
+            source: "imessage".into(),
+            mode: "append".into(),
+            tool: None,
+            account: None,
+            stage: None,
+            staging_dir: None,
+            device_id: None,
+            // A client that has not learned the rule.
+            form: Some(serde_json::json!({
+                "source": "imessage-ios",
+                "backupPassword": "hunter2",
+                "whatsappKey": "0123456789abcdef",
+            })),
+            source_fingerprint: None,
+        };
+        let _ = imports_create_handler(State(state.clone()), auth_headers(&token), Json(body))
+            .await
+            .unwrap();
+
+        let active = imports_active_handler(State(state.clone()), auth_headers(&token))
+            .await
+            .unwrap();
+        let session = active.0.session.expect("a live session is reported");
+        assert_eq!(
+            session.form["source"], "imessage-ios",
+            "the rest of the snapshot is kept"
+        );
+        assert!(
+            session.form.get("backupPassword").is_none(),
+            "backupPassword was stored: {}",
+            session.form
+        );
+        assert!(
+            session.form.get("whatsappKey").is_none(),
+            "whatsappKey was stored: {}",
+            session.form
+        );
+    }
+
     #[tokio::test]
     async fn a_second_session_is_refused_with_conflict() {
         let (_tmp, state, token, _import_id) = test_state().await;

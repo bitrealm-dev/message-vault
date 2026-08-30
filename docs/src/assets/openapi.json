@@ -5604,7 +5604,7 @@
             "description": "Which install is creating the session."
           },
           "form": {
-            "description": "Import form snapshot, stored so the screen can be restored."
+            "description": "Import form snapshot, stored so the screen can be restored.\n\nCredentials are stripped before storage: a `backupPassword` or\n`whatsappKey` posted here is dropped rather than persisted."
           },
           "mode": {
             "type": "string"

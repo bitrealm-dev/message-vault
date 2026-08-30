@@ -600,6 +600,9 @@ pub(crate) struct CreateImportBody {
     #[serde(default)]
     pub(crate) device_id: Option<String>,
     /// Import form snapshot, stored so the screen can be restored.
+    ///
+    /// Credentials are stripped before storage: a `backupPassword` or
+    /// `whatsappKey` posted here is dropped rather than persisted.
     #[serde(default)]
     pub(crate) form: Option<serde_json::Value>,
     /// Source path, size, mtime, and message count.
@@ -679,6 +682,27 @@ fn validate_import_status(status: Option<&str>) -> Result<(), ApiError> {
             "invalid import status '{other}'; expected 'completed', 'completed_with_issues', or 'failed'"
         ))),
     }
+}
+
+/// Keys a stored form snapshot must never carry.
+///
+/// The invariant: `vault_imports.form_json` is a durable record read back to
+/// restore the Import screen, and a secret typed once for one run must not
+/// outlive it there. The desktop client already drops these before posting,
+/// but the client is the wrong place to enforce it -- an older build, a
+/// script, or a client not written yet would break the rule silently. The
+/// snapshot is flat, so removing them at the top level is the whole job.
+const FORM_CREDENTIAL_KEYS: [&str; 2] = ["backupPassword", "whatsappKey"];
+
+/// Remove [`FORM_CREDENTIAL_KEYS`] from a form snapshot before it is stored.
+fn strip_form_credentials(form: &serde_json::Value) -> serde_json::Value {
+    let mut stripped = form.clone();
+    if let Some(fields) = stripped.as_object_mut() {
+        for key in FORM_CREDENTIAL_KEYS {
+            fields.remove(key);
+        }
+    }
+    stripped
 }
 
 /// Serialize an optional JSON body field for storage as TEXT.
@@ -851,7 +875,9 @@ pub(crate) async fn imports_create_handler(
             ))
         })?,
     };
-    let form_json = optional_json_string(body.form.as_ref(), "form")?;
+    // Credentials never reach the row, whoever the client is.
+    let form = body.form.as_ref().map(strip_form_credentials);
+    let form_json = optional_json_string(form.as_ref(), "form")?;
     let fingerprint_json =
         optional_json_string(body.source_fingerprint.as_ref(), "source_fingerprint")?;
 
