@@ -17,6 +17,7 @@ export default function ImportProgressView({
   completionText,
   onCancel,
   onBack,
+  cancelDisabled,
 }: {
   phase: ImportPhase;
   steps: ImportStep[];
@@ -26,6 +27,10 @@ export default function ImportProgressView({
   completionText?: string;
   onCancel: () => void;
   onBack: () => void;
+  /** True while a not-cancellable step (recomputing the staging summary) is
+   * running — Cancel stays visible, since a running job is still shown, but
+   * disabled rather than offered as a control with nothing to stop. */
+  cancelDisabled?: boolean;
 }) {
   const trimmedStaging = stagingDir?.trim() || null;
   const logPath = trimmedStaging ? `${trimmedStaging}/${PUSH_LOG_NAME}` : null;
@@ -63,7 +68,9 @@ export default function ImportProgressView({
       <StepProgress steps={steps} completionText={completionText} />
       <div className="mt-4 flex items-center gap-3">
         {running ? (
-          <Button onClick={onCancel}>Cancel</Button>
+          <Button onClick={onCancel} disabled={cancelDisabled}>
+            Cancel
+          </Button>
         ) : (
           <Button variant="ghost" onClick={onBack} className="!px-3 !py-[0.35rem] !text-[0.875rem]">
             ← Back

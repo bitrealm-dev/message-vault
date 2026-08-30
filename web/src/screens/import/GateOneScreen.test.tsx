@@ -32,20 +32,22 @@ function summary(overrides: Partial<StagingSummary> = {}): StagingSummary {
 function props(
   overrides: {
     summary?: Partial<StagingSummary>;
-    unknownContacts?: number;
+    unknownContacts?: number | null;
     mode?: AttachmentMediaMode;
     onApprove?: () => void;
     onDecline?: () => void;
     busy?: boolean;
+    mediaToolsMissing?: boolean;
   } = {},
 ) {
   return {
     summary: summary(overrides.summary),
-    unknownContacts: overrides.unknownContacts ?? 0,
+    unknownContacts: overrides.unknownContacts === undefined ? 0 : overrides.unknownContacts,
     mode: overrides.mode ?? "convert",
     onApprove: overrides.onApprove ?? vi.fn(),
     onDecline: overrides.onDecline ?? vi.fn(),
     busy: overrides.busy ?? false,
+    mediaToolsMissing: overrides.mediaToolsMissing ?? false,
   };
 }
 
@@ -75,6 +77,11 @@ describe("GateOneScreen", () => {
   it("says how many contacts are new to the vault", () => {
     render(<GateOneScreen {...props({ unknownContacts: 7 })} />);
     expect(screen.getByText(/7 new to your vault/)).toBeInTheDocument();
+  });
+
+  it("omits the new-to-vault clause when the contact lookup failed", () => {
+    render(<GateOneScreen {...props({ unknownContacts: null })} />);
+    expect(screen.queryByText(/new to your vault/)).not.toBeInTheDocument();
   });
 
   it("says the size numbers are estimates", () => {
@@ -113,5 +120,17 @@ describe("GateOneScreen", () => {
   it("offers to cancel the import", () => {
     render(<GateOneScreen {...props()} />);
     expect(screen.getByRole("button", { name: "Cancel this import" })).toBeInTheDocument();
+  });
+
+  it("disables approval and says ffmpeg is needed when the tools are missing under convert", () => {
+    render(<GateOneScreen {...props({ mode: "convert", mediaToolsMissing: true })} />);
+    expect(screen.getByRole("button", { name: "Convert media" })).toBeDisabled();
+    expect(screen.getByText(/ffmpeg/i)).toBeInTheDocument();
+  });
+
+  it("does not gate copy mode on missing ffmpeg tools, which it never needs", () => {
+    render(<GateOneScreen {...props({ mode: "copy", mediaToolsMissing: true })} />);
+    expect(screen.getByRole("button", { name: "Upload to vault" })).not.toBeDisabled();
+    expect(screen.queryByText(/ffmpeg/i)).not.toBeInTheDocument();
   });
 });

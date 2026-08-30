@@ -4,8 +4,8 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { StagingSummary } from "../../lib/tauri";
 import type { AttachmentMediaMode } from "../../lib/types";
-import type { GateDelta } from "./gateDelta";
 import GateTwoScreen from "./GateTwoScreen";
+import type { GateDelta } from "./gateDelta";
 
 afterEach(() => {
   cleanup();

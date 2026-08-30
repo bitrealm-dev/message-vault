@@ -8,7 +8,7 @@ export type ImportStep = {
   durationMs?: number | null;
 };
 
-export type ImportPhase = "form" | "progress" | "done";
+export type ImportPhase = "form" | "progress" | "gate_1" | "gate_2" | "done";
 
 export type AttachmentProgressCounts = {
   done: number;

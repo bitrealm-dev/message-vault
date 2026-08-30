@@ -9,15 +9,25 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ActiveImportSession } from "../lib/importSession";
+import type { StagingSummary } from "../lib/tauri";
+import type { GateDelta } from "./import/gateDelta";
 import type { ResumeDecision } from "./import/resumeDecision";
 
-const hookState = vi.hoisted(() => ({ phase: "form" as "form" | "progress" | "done" }));
+const hookState = vi.hoisted(() => ({
+  phase: "form" as "form" | "progress" | "gate_1" | "gate_2" | "done",
+  gateSummary: null as StagingSummary | null,
+  gateDelta: null as GateDelta | null,
+  mediaToolsMissing: false,
+}));
 const startImportMock = vi.hoisted(() => vi.fn());
+const approveGateMock = vi.hoisted(() => vi.fn());
+const declineGateMock = vi.hoisted(() => vi.fn());
 const cancelMock = vi.hoisted(() => vi.fn());
 const returnToFormMock = vi.hoisted(() => vi.fn());
 const getActiveImportSessionMock = vi.hoisted(() => vi.fn());
 const discardImportSessionMock = vi.hoisted(() => vi.fn());
 const invokePathStatMock = vi.hoisted(() => vi.fn());
+const apiPostMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./import/useImportJob", async (importOriginal) => {
   // restoreFormFromSnapshot is real: it's pure, already unit-tested on its
@@ -32,8 +42,14 @@ vi.mock("./import/useImportJob", async (importOriginal) => {
       running: false,
       summaryView: null,
       stagingDir: null,
+      gateSummary: hookState.gateSummary,
+      gateDelta: hookState.gateDelta,
+      mediaToolsMissing: hookState.mediaToolsMissing,
+      computingSummary: false,
       completionText: undefined,
       startImport: startImportMock,
+      approveGate: approveGateMock,
+      declineGate: declineGateMock,
       cancel: cancelMock,
       returnToForm: returnToFormMock,
     }),
@@ -47,6 +63,12 @@ vi.mock("../lib/importSession", () => ({
 
 vi.mock("../lib/deviceId", () => ({
   getDeviceId: () => "this-device",
+}));
+
+vi.mock("../lib/api", () => ({
+  apiClient: {
+    post: (...args: unknown[]) => apiPostMock(...args),
+  },
 }));
 
 vi.mock("../lib/tauri", () => ({
@@ -81,7 +103,58 @@ vi.mock("./import/ResumeImportPanel", () => ({
   ),
 }));
 
+vi.mock("./import/GateOneScreen", () => ({
+  default: (props: {
+    summary: StagingSummary;
+    unknownContacts: number | null;
+    onApprove: () => void;
+    onDecline: () => void;
+  }) => (
+    <div data-testid="gate-one">
+      <span data-testid="gate-one-unknown-contacts">{String(props.unknownContacts)}</span>
+      <button type="button" onClick={props.onApprove}>
+        gate-one-approve
+      </button>
+      <button type="button" onClick={props.onDecline}>
+        gate-one-decline
+      </button>
+    </div>
+  ),
+}));
+
+vi.mock("./import/GateTwoScreen", () => ({
+  default: (props: { onApprove: () => void; onDecline: () => void }) => (
+    <div data-testid="gate-two">
+      <button type="button" onClick={props.onApprove}>
+        gate-two-approve
+      </button>
+      <button type="button" onClick={props.onDecline}>
+        gate-two-decline
+      </button>
+    </div>
+  ),
+}));
+
 const { default: ImportScreen } = await import("./ImportScreen");
+
+function stagingSummary(overrides: Partial<StagingSummary> = {}): StagingSummary {
+  return {
+    conversations: 1,
+    messages: 1,
+    contactIdentifiers: [],
+    attachments: 0,
+    attachmentBytes: 0,
+    verdictCounts: {
+      fitsAsIs: 0,
+      likelyFits: 0,
+      mayGrow: 0,
+      probablyTooBig: 0,
+      cannotProcess: 0,
+    },
+    forecasts: [],
+    ...overrides,
+  };
+}
 
 function session(overrides: Partial<ActiveImportSession> = {}): ActiveImportSession {
   return {
@@ -114,7 +187,12 @@ function deferred<T>() {
 describe("ImportScreen entering Import", () => {
   beforeEach(() => {
     hookState.phase = "form";
+    hookState.gateSummary = null;
+    hookState.gateDelta = null;
+    hookState.mediaToolsMissing = false;
     startImportMock.mockReset();
+    approveGateMock.mockReset();
+    declineGateMock.mockReset();
     cancelMock.mockReset();
     returnToFormMock.mockReset();
     getActiveImportSessionMock.mockReset();
@@ -122,6 +200,8 @@ describe("ImportScreen entering Import", () => {
     discardImportSessionMock.mockResolvedValue(undefined);
     invokePathStatMock.mockReset();
     invokePathStatMock.mockResolvedValue({ exists: true, isFile: false, isDirectory: true });
+    apiPostMock.mockReset();
+    apiPostMock.mockResolvedValue({ unknown: [] });
   });
 
   afterEach(() => {
@@ -406,5 +486,114 @@ describe("ImportScreen entering Import", () => {
     const [form, resume] = startImportMock.mock.calls[0] as [unknown, unknown];
     expect(form).toMatchObject({ source: "imessage-ios", backupPath: "/backups/iphone.tar" });
     expect(resume).toBeUndefined();
+  });
+});
+
+describe("ImportScreen gates", () => {
+  beforeEach(() => {
+    hookState.phase = "form";
+    hookState.gateSummary = null;
+    hookState.gateDelta = null;
+    hookState.mediaToolsMissing = false;
+    startImportMock.mockReset();
+    approveGateMock.mockReset();
+    declineGateMock.mockReset();
+    cancelMock.mockReset();
+    returnToFormMock.mockReset();
+    getActiveImportSessionMock.mockReset();
+    getActiveImportSessionMock.mockResolvedValue(null);
+    discardImportSessionMock.mockReset();
+    invokePathStatMock.mockReset();
+    apiPostMock.mockReset();
+    apiPostMock.mockResolvedValue({ unknown: [] });
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("renders Gate 1 with the summary and wires approve/decline through to the hook", async () => {
+    hookState.phase = "gate_1";
+    hookState.gateSummary = stagingSummary({ contactIdentifiers: ["+15551234567"] });
+    const user = userEvent.setup();
+    render(<ImportScreen />);
+
+    expect(await screen.findByTestId("gate-one")).toBeInTheDocument();
+    expect(screen.queryByTestId("import-form")).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("gate-one-approve"));
+    expect(approveGateMock).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByText("gate-one-decline"));
+    expect(declineGateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders Gate 2 with the delta and wires approve/decline through to the hook", async () => {
+    hookState.phase = "gate_2";
+    hookState.gateSummary = stagingSummary();
+    hookState.gateDelta = { lostCount: 0, stillFlagged: [], cameOutFine: 0, hasChanges: false };
+    const user = userEvent.setup();
+    render(<ImportScreen />);
+
+    expect(await screen.findByTestId("gate-two")).toBeInTheDocument();
+
+    await user.click(screen.getByText("gate-two-approve"));
+    expect(approveGateMock).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByText("gate-two-decline"));
+    expect(declineGateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("looks up which of Gate 1's contacts are unknown, in one batch under the server cap", async () => {
+    hookState.phase = "gate_1";
+    hookState.gateSummary = stagingSummary({ contactIdentifiers: ["a", "b", "c"] });
+    apiPostMock.mockResolvedValue({ unknown: ["a", "c"] });
+    render(<ImportScreen />);
+
+    await screen.findByTestId("gate-one");
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(apiPostMock).toHaveBeenCalledTimes(1);
+    expect(apiPostMock).toHaveBeenCalledWith("/v1/contacts/match", {
+      identifiers: ["a", "b", "c"],
+    });
+    expect(screen.getByTestId("gate-one-unknown-contacts")).toHaveTextContent("2");
+  });
+
+  it("batches the contact-match lookup at 500 identifiers per request and sums unknown across batches", async () => {
+    hookState.phase = "gate_1";
+    const identifiers = Array.from({ length: 620 }, (_, i) => `+1555000${i}`);
+    hookState.gateSummary = stagingSummary({ contactIdentifiers: identifiers });
+    apiPostMock.mockResolvedValueOnce({ unknown: Array(400).fill("x") });
+    apiPostMock.mockResolvedValueOnce({ unknown: Array(30).fill("y") });
+    render(<ImportScreen />);
+
+    await screen.findByTestId("gate-one");
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(apiPostMock).toHaveBeenCalledTimes(2);
+    const bodies = apiPostMock.mock.calls.map(([, body]) => body as { identifiers: string[] });
+    expect(bodies[0]?.identifiers).toHaveLength(500);
+    expect(bodies[1]?.identifiers).toHaveLength(120);
+    expect(screen.getByTestId("gate-one-unknown-contacts")).toHaveTextContent("430");
+  });
+
+  it("renders Gate 1 without the unknown-contact count when the lookup fails", async () => {
+    hookState.phase = "gate_1";
+    hookState.gateSummary = stagingSummary({ contactIdentifiers: ["a"] });
+    apiPostMock.mockRejectedValue(new Error("network down"));
+    render(<ImportScreen />);
+
+    await screen.findByTestId("gate-one");
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("gate-one-unknown-contacts")).toHaveTextContent("null");
   });
 });

@@ -24,16 +24,24 @@ export default function GateOneScreen({
   onApprove,
   onDecline,
   busy,
+  mediaToolsMissing,
 }: {
   summary: StagingSummary;
-  unknownContacts: number;
+  /** Null while the contact-match lookup is in flight or failed — the "new
+   * to your vault" clause is a nicety, not a blocker, so a failed lookup
+   * just omits it rather than stalling the gate. */
+  unknownContacts: number | null;
   mode: AttachmentMediaMode;
   onApprove: () => void;
   onDecline: () => void;
   busy?: boolean;
+  /** True when convert/compress is selected and ffmpeg was not found —
+   * disables approval rather than letting the media step fail later. */
+  mediaToolsMissing?: boolean;
 }) {
   const verb = mediaJobVerb(mode);
   const groups = verb ? forecastGroups(summary.verdictCounts, mode) : [];
+  const toolsBlocked = verb != null && Boolean(mediaToolsMissing);
 
   return (
     <>
@@ -66,8 +74,10 @@ export default function GateOneScreen({
             <tr className="border-b border-border">
               <td className="px-3 py-2 text-text">Contacts</td>
               <td className="px-3 py-2 text-right tabular-nums text-text">
-                {summary.contactIdentifiers.length.toLocaleString()} ·{" "}
-                {unknownContacts.toLocaleString()} new to your vault
+                {summary.contactIdentifiers.length.toLocaleString()}
+                {unknownContacts != null
+                  ? ` · ${unknownContacts.toLocaleString()} new to your vault`
+                  : ""}
               </td>
             </tr>
             <tr className="border-b border-border">
@@ -105,8 +115,14 @@ export default function GateOneScreen({
         </section>
       ) : null}
 
+      {toolsBlocked ? (
+        <p className="m-0 mt-5 text-[0.813rem] text-muted">
+          This step needs ffmpeg. Set its folder in Settings, then come back to Import.
+        </p>
+      ) : null}
+
       <div className="mt-5 flex items-center gap-3">
-        <Button variant="primary" size="wide" onClick={onApprove} disabled={busy}>
+        <Button variant="primary" size="wide" onClick={onApprove} disabled={busy || toolsBlocked}>
           {PRIMARY_LABEL[mode]}
         </Button>
         <Button variant="ghost" onClick={onDecline} disabled={busy}>

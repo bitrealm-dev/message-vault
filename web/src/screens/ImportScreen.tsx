@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { apiClient } from "../lib/api";
 import { getDeviceId } from "../lib/deviceId";
 import {
   emptyImessagePathStats,
@@ -31,6 +32,8 @@ import {
   WHATSAPP_SOURCE_ID,
   type WhatsappMethodId,
 } from "../lib/whatsappImport";
+import GateOneScreen from "./import/GateOneScreen";
+import GateTwoScreen from "./import/GateTwoScreen";
 import ImportFormFields from "./import/ImportFormFields";
 import ImportProgressView from "./import/ImportProgressView";
 import ResumeImportPanel from "./import/ResumeImportPanel";
@@ -40,6 +43,10 @@ import { restoreFormFromSnapshot, useImportJob } from "./import/useImportJob";
 const DEFAULT_SOURCE = IMESSAGE_DEFAULT_METHOD;
 const SBR_SOURCE = "sms-backup-restore";
 const PATH_PROBE_DEBOUNCE_MS = 200;
+/** The server's own cap on one `/v1/contacts/match` request (`MAX_MATCH_IDENTIFIERS`,
+ * `crates/vault/server/src/contacts_api.rs`) — the client batches to it rather than
+ * discovering the limit from a 400. */
+const MAX_MATCH_IDENTIFIERS = 500;
 
 /** Nothing to decide -- the form renders. The one spelling of "no resume". */
 const NO_RESUME: ResumeDecision = { kind: "none", canResume: false, session: null };
@@ -69,11 +76,20 @@ export default function ImportScreen() {
     running,
     summaryView,
     stagingDir,
+    gateSummary,
+    gateDelta,
+    mediaToolsMissing,
+    computingSummary,
     completionText,
     startImport,
+    approveGate,
+    declineGate,
     cancel,
     returnToForm,
   } = useImportJob();
+
+  /** Null while the lookup hasn't finished (or failed) for the summary currently shown. */
+  const [unknownContacts, setUnknownContacts] = useState<number | null>(null);
 
   const [source, setSource] = useState(DEFAULT_SOURCE);
   const [backupPath, setBackupPath] = useState(() =>
@@ -154,6 +170,38 @@ export default function ImportScreen() {
       cancelled = true;
     };
   }, [phase]);
+
+  /**
+   * Ask the vault which of Gate 1's contact identifiers this account already
+   * has, once per summary shown at Gate 1 — batched at the server's own cap
+   * so a large import doesn't send an oversized request. A failed batch
+   * leaves the count unknown rather than blocking the gate (decision: the
+   * "new to your vault" clause is a nicety, not a requirement).
+   */
+  useEffect(() => {
+    if (phase !== "gate_1" || !gateSummary) return;
+    let cancelled = false;
+    setUnknownContacts(null);
+    void (async () => {
+      const identifiers = gateSummary.contactIdentifiers;
+      let total = 0;
+      try {
+        for (let i = 0; i < identifiers.length; i += MAX_MATCH_IDENTIFIERS) {
+          const batch = identifiers.slice(i, i + MAX_MATCH_IDENTIFIERS);
+          const res = await apiClient.post<{ unknown: string[] }>("/v1/contacts/match", {
+            identifiers: batch,
+          });
+          total += res.unknown.length;
+        }
+        if (!cancelled) setUnknownContacts(total);
+      } catch {
+        if (!cancelled) setUnknownContacts(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [phase, gateSummary]);
 
   /** Populate the visible form from a resumed or restarted session's settings. */
   function applyRestoredFormState(restored: ReturnType<typeof restoreFormFromSnapshot>): void {
@@ -572,6 +620,30 @@ export default function ImportScreen() {
           completionText={completionText}
           onCancel={() => void cancel()}
           onBack={returnToForm}
+          cancelDisabled={computingSummary}
+        />
+      )}
+
+      {phase === "gate_1" && gateSummary && (
+        <GateOneScreen
+          summary={gateSummary}
+          unknownContacts={unknownContacts}
+          mode={attachmentMedia}
+          onApprove={() => void approveGate()}
+          onDecline={() => void declineGate()}
+          busy={running}
+          mediaToolsMissing={mediaToolsMissing}
+        />
+      )}
+
+      {phase === "gate_2" && gateSummary && gateDelta && (
+        <GateTwoScreen
+          delta={gateDelta}
+          actual={gateSummary}
+          mode={attachmentMedia}
+          onApprove={() => void approveGate()}
+          onDecline={() => void declineGate()}
+          busy={running}
         />
       )}
     </div>

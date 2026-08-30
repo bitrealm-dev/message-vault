@@ -104,8 +104,8 @@ export default function GateTwoScreen({
     <>
       <h1 className="m-0 mb-1 text-2xl font-bold">Ready to upload</h1>
       <p className="m-0 mb-5 text-[0.875rem] text-muted">
-        {verb ? `The ${verb} step has finished` : "The media step has finished"}, so this is
-        where the last check's estimate turned out wrong.
+        {verb ? `The ${verb} step has finished` : "The media step has finished"}, so this is where
+        the last check's estimate turned out wrong.
       </p>
 
       <section>
@@ -171,9 +171,9 @@ export default function GateTwoScreen({
       </div>
 
       <p className="m-0 mt-5 text-[0.813rem] text-muted">
-        Messages are always uploaded. A skipped attachment leaves a placeholder in the
-        conversation, and the message text is kept. Imported conversations can later be removed
-        from your vault in the messages area.
+        Messages are always uploaded. A skipped attachment leaves a placeholder in the conversation,
+        and the message text is kept. Imported conversations can later be removed from your vault in
+        the messages area.
       </p>
 
       <div className="mt-5 flex items-center gap-3">

@@ -115,6 +115,23 @@ describe("ImportProgressView", () => {
     expect(openPathInExplorer).toHaveBeenCalledWith(`${staging}/vault-push.log`);
   });
 
+  it("disables Cancel, without hiding it, while a not-cancellable step runs", () => {
+    render(
+      <ImportProgressView
+        phase="progress"
+        steps={[{ label: "Copy to staging", status: "done" }]}
+        running
+        summaryView={null}
+        stagingDir={null}
+        onCancel={() => {}}
+        onBack={() => {}}
+        cancelDisabled
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  });
+
   it("keeps Import Errors heading and table when issues exist", () => {
     render(
       <ImportProgressView
