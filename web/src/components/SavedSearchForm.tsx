@@ -2,13 +2,13 @@ import { useState } from "react";
 import Button from "./Button";
 import ModalShell from "./ModalShell";
 
-interface SavedGroupFormProps {
+interface SavedSearchFormProps {
   onSave: (name: string, query: string) => void;
   onCancel: () => void;
   initial?: { name: string; query: string };
 }
 
-export default function SavedGroupForm({ onSave, onCancel, initial }: SavedGroupFormProps) {
+export default function SavedSearchForm({ onSave, onCancel, initial }: SavedSearchFormProps) {
   const [name, setName] = useState(initial?.name || "");
   const [query, setQuery] = useState(initial?.query || "");
 
@@ -49,7 +49,7 @@ export default function SavedGroupForm({ onSave, onCancel, initial }: SavedGroup
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleSave()}
-          placeholder="e.g. from:bob service:discord"
+          placeholder="e.g. service:whatsapp is:group"
           className="box-border w-full rounded border border-border bg-elevated px-2 py-1.5 text-[0.875rem] text-text"
         />
       </label>

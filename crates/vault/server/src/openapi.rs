@@ -104,6 +104,18 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(crate::thread_tags_api::thread_tags_delete_handler))
         .routes(routes!(crate::thread_tags_api::thread_tags_members_handler))
         .routes(routes!(
+            crate::saved_searches_api::saved_searches_list_handler
+        ))
+        .routes(routes!(
+            crate::saved_searches_api::saved_searches_create_handler
+        ))
+        .routes(routes!(
+            crate::saved_searches_api::saved_searches_update_handler
+        ))
+        .routes(routes!(
+            crate::saved_searches_api::saved_searches_delete_handler
+        ))
+        .routes(routes!(
             crate::thread_tags_api::thread_tags_membership_handler
         ))
         .routes(routes!(
@@ -244,6 +256,8 @@ mod tests {
             "/v1/contacts/groups",
             "/v1/thread-tags",
             "/v1/thread-tags/members",
+            "/v1/saved-searches",
+            "/v1/saved-searches/{id}",
             "/v1/conversations/tags",
             "/v1/export/conversations",
             "/v1/export/conversations/{id}/sources",

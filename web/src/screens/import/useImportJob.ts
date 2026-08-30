@@ -18,7 +18,6 @@ import {
   type ImportStage,
   setImportStage,
 } from "../../lib/importSession";
-import { saveImportSavedGroup } from "../../lib/savedGroups";
 import { mediaExtractFields, sbrExtractFields } from "../../lib/sbrExtractFields";
 import { resolveImportStagingDir } from "../../lib/system-settings";
 import {
@@ -699,13 +698,8 @@ export function useImportJob() {
         // Completing the session on the server is optional. The summary still shows local results.
       }
     }
-    if (sessionId != null) {
-      saveImportSavedGroup({
-        importSessionId: sessionId,
-        source: form.source,
-        messagesInserted: pushReport?.messages_inserted,
-      });
-    }
+    // The vault writes this run's saved search when the session completes,
+    // so a browser closed mid-import still gets one and a CLI import does too.
     setSummaryView(finalSummary);
     setPhase("done");
     setRunning(false);
