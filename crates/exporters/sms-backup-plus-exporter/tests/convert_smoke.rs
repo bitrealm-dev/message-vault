@@ -34,6 +34,7 @@ fn convert(inputs: &[&Path], output_dir: &Path) -> Result<(ExportReport, FormatS
         output_format: OutputFormat::Csv,
         cancel: None,
         log: None,
+        resume: false,
     })
 }
 
@@ -188,4 +189,61 @@ Will do\r\n"
     // source_kind/smssync_id now live inside the source_fields_json cell.
     assert!(csv.contains("flat"));
     assert!(csv.contains("999"));
+}
+
+#[test]
+fn jsonl_drains_the_write_queue_and_a_second_run_resumes_it() {
+    let input = fixtures();
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out");
+    fs::create_dir_all(&out).expect("out dir");
+
+    let run = |resume: bool| {
+        convert_export(ConvertExportArgs {
+            inputs: &[input.as_path()],
+            output_dir: &out,
+            owner_phones: &["+15555550100".into()],
+            owner_emails: &["owner@example.com".into()],
+            contacts: &empty_book(),
+            name_mapping: &empty_mapping(),
+            date_range: &DateRange::default(),
+            verbose: false,
+            transforms: ExportTransforms::none(),
+            output_format: OutputFormat::Jsonl,
+            cancel: None,
+            log: None,
+            resume,
+        })
+    };
+
+    let (report, _) = run(false).expect("convert");
+    assert!(report.conversations >= 1);
+
+    let jsonl_files = |dir: &Path| -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .expect("read output")
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.ends_with(".jsonl"))
+            .collect();
+        names.sort();
+        names
+    };
+    let first = jsonl_files(&out);
+    assert!(!first.is_empty(), "the queue wrote conversation files");
+    let bodies: Vec<String> = first
+        .iter()
+        .map(|n| fs::read_to_string(out.join(n)).expect("read jsonl"))
+        .collect();
+
+    run(true).expect("resume convert");
+
+    assert_eq!(jsonl_files(&out), first, "same file set after a resume");
+    for (name, before) in first.iter().zip(bodies) {
+        assert_eq!(
+            fs::read_to_string(out.join(name)).expect("reread"),
+            before,
+            "a resumed run must not rewrite {name}"
+        );
+    }
 }

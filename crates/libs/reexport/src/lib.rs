@@ -175,6 +175,7 @@ fn load_documents(
                 attachments_dir: Some(&attachments_dir),
                 copy_attachments,
                 keep_attachment_bytes: false,
+                stage_attachments: true,
                 media: if copy_attachments {
                     MediaMode::Clone
                 } else {

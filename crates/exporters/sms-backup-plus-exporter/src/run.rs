@@ -141,6 +141,7 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
         output_format: config.output_format,
         cancel: config.cancel.as_ref(),
         log: config.log.as_ref(),
+        resume: config.resume,
     })?;
     if !sink.media.errors.is_empty() && sink.media.processed == 0 && config.media.mode.needs_tools()
     {

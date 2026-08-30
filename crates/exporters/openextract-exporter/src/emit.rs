@@ -11,7 +11,10 @@ use message_ir::{
     IrConversationType, IrDirection, IrMessage, IrMessageKind, IrParticipant, IrService, IrSource,
     PendingConversation, PendingMessage, SCHEMA_VERSION, owner_sender,
 };
-use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
+use message_ir_format::{
+    AttachmentSource, ConversationUnit, ExportTransforms, FormatSink, FormatSinkResult,
+    WriteQueueOptions,
+};
 use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat, emit_log, prepare_outputs};
 use phone::sanitize_number;
 use serde_json::{Map, json};
@@ -37,6 +40,9 @@ pub(crate) struct ConvertExportArgs<'a> {
     pub transforms: ExportTransforms,
     pub output_format: OutputFormat,
     pub cancel: Option<&'a CancelFlag>,
+    /// Continue an interrupted export: keep previous output and skip the
+    /// conversations already written.
+    pub resume: bool,
 }
 
 /// Convert OpenExtract CSV(s) under `input` using `book` (from VCF/contacts).
@@ -59,13 +65,22 @@ pub(crate) fn convert_export(
         transforms,
         output_format,
         cancel,
+        resume,
     } = args;
     let (inputs, output) = prepare_outputs(&[input.to_path_buf()], output)?;
     let input = &inputs[0];
 
     let log = transforms.log.clone();
-    let (mut sink, _attachments_dir) =
-        FormatSink::open_prepared(&output, output_format, transforms)?;
+    let transforms_media = transforms.media;
+    let compress = transforms.compress.clone();
+    // Captured before `transforms` moves into the sink: the queue path is for
+    // the import, which is JSONL and never obfuscated.
+    let use_queue = output_format == OutputFormat::Jsonl && !transforms.obfuscate;
+    let (mut sink, _attachments_dir) = if resume {
+        FormatSink::open_resume(&output, output_format, transforms)
+    } else {
+        FormatSink::open_prepared(&output, output_format, transforms)
+    }?;
 
     let files = discover_csv_files(input)?;
     let mut report = ExportReport::default();
@@ -186,27 +201,55 @@ pub(crate) fn convert_export(
         documents.push(pending_to_document(&chat_id, &convo, &mut report)?);
     }
 
-    let total_conversations = documents.len() as u64;
-    emit_log(log.as_ref(), "");
-    emit_log(
-        log.as_ref(),
-        format!("Preparing {total_conversations} conversation file(s)..."),
-    );
-    let mut written = 0u64;
-    for doc in documents {
-        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
-        written += 1;
-        sink.write_document(doc)?;
-        report.conversations += 1;
-        #[allow(clippy::manual_is_multiple_of)]
-        if written % 100 == 0 || written == total_conversations {
-            emit_log(
-                log.as_ref(),
-                format!("  preparing {written}/{total_conversations}"),
-            );
+    let sink_result = if use_queue {
+        // OpenExtract carries no attachments; the queue is still worth taking
+        // for its parallel conversation writes and its resume skip.
+        let units: Vec<ConversationUnit> = documents
+            .into_iter()
+            .map(|doc| {
+                ConversationUnit::from_doc(doc, |_, att| {
+                    (AttachmentSource::Missing, att.size_bytes)
+                })
+            })
+            .collect();
+        let options = WriteQueueOptions {
+            media: transforms_media,
+            compress: compress.clone(),
+            resume,
+            writer_count: 0,
+        };
+        let queue_report =
+            message_ir_format::drain_write_queue(&output, units, &options, log.as_ref(), cancel)?;
+        report.conversations +=
+            (queue_report.conversations_written + queue_report.conversations_skipped) as u64;
+        FormatSinkResult {
+            xml_path: None,
+            media: queue_report.media,
+            obfuscated_docs: 0,
         }
-    }
-    let sink_result = sink.finish()?;
+    } else {
+        let total_conversations = documents.len() as u64;
+        emit_log(log.as_ref(), "");
+        emit_log(
+            log.as_ref(),
+            format!("Preparing {total_conversations} conversation file(s)..."),
+        );
+        let mut written = 0u64;
+        for doc in documents {
+            message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+            written += 1;
+            sink.write_document(doc)?;
+            report.conversations += 1;
+            #[allow(clippy::manual_is_multiple_of)]
+            if written % 100 == 0 || written == total_conversations {
+                emit_log(
+                    log.as_ref(),
+                    format!("  preparing {written}/{total_conversations}"),
+                );
+            }
+        }
+        sink.finish()?
+    };
 
     Ok((report, sink_result))
 }
@@ -495,6 +538,7 @@ mod tests {
             transforms: ExportTransforms::none(),
             output_format: OutputFormat::Csv,
             cancel: None,
+            resume: false,
         })
     }
 

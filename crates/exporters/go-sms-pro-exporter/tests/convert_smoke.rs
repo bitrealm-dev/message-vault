@@ -21,6 +21,7 @@ fn convert(
         transforms: ExportTransforms::none(),
         output_format: OutputFormat::Csv,
         cancel: None,
+        resume: false,
     })
 }
 
@@ -60,4 +61,58 @@ fn output_equals_input_bails_before_cleaning() {
     // The backup directory must not have been cleaned by the failed run.
     assert!(input.join("gosms_sys_smoke.xml").is_file());
     assert!(input.join("I_1609459200_recv.pdu").is_file());
+}
+
+#[test]
+fn jsonl_drains_the_write_queue_and_a_second_run_resumes_it() {
+    let input = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample_export");
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let contacts = empty_contacts(&tmp);
+    let out = tmp.path().join("out");
+    std::fs::create_dir_all(&out).expect("out dir");
+
+    let run = |resume: bool| {
+        convert_export(ConvertExportArgs {
+            input_dir: input.as_path(),
+            output_dir: &out,
+            owner_phones: &["+15555550100".into()],
+            contacts: &contacts,
+            date_range: &DateRange::default(),
+            transforms: ExportTransforms::none(),
+            output_format: OutputFormat::Jsonl,
+            cancel: None,
+            resume,
+        })
+    };
+
+    let (report, _) = run(false).expect("convert");
+    assert!(report.conversations >= 1);
+
+    let jsonl_files = |dir: &Path| -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .expect("read output")
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.ends_with(".jsonl"))
+            .collect();
+        names.sort();
+        names
+    };
+    let first = jsonl_files(&out);
+    assert!(!first.is_empty(), "the queue wrote conversation files");
+    let bodies: Vec<String> = first
+        .iter()
+        .map(|n| std::fs::read_to_string(out.join(n)).expect("read jsonl"))
+        .collect();
+
+    run(true).expect("resume convert");
+
+    assert_eq!(jsonl_files(&out), first, "same file set after a resume");
+    for (name, before) in first.iter().zip(bodies) {
+        assert_eq!(
+            std::fs::read_to_string(out.join(name)).expect("reread"),
+            before,
+            "a resumed run must not rewrite {name}"
+        );
+    }
 }

@@ -69,6 +69,10 @@ pub struct SbrReadOptions<'a> {
     pub copy_attachments: bool,
     /// Whether to retain decoded bytes in memory on the records.
     pub keep_attachment_bytes: bool,
+    /// Whether to write the staged attachment files here. `false` leaves
+    /// the bytes on the records for a caller that stages them itself —
+    /// the write queue does, one conversation at a time.
+    pub stage_attachments: bool,
     /// How to write attachment files after parse.
     pub media: MediaMode,
     /// Image/video compress settings used when `media` converts or compresses.
@@ -562,7 +566,9 @@ pub fn read_sbr_documents(
         ));
         report.conversations += 1;
     }
-    stage_read_attachments(&mut documents, &options, &mut report)?;
+    if options.stage_attachments {
+        stage_read_attachments(&mut documents, &options, &mut report)?;
+    }
     Ok((documents, report))
 }
 
@@ -585,6 +591,7 @@ mod tests {
             attachments_dir,
             copy_attachments,
             keep_attachment_bytes,
+            stage_attachments: true,
             media: if copy_attachments {
                 MediaMode::Clone
             } else {
@@ -700,5 +707,31 @@ mod tests {
             "stats from the completed message must survive the XML error"
         );
         assert_eq!(report.errors.len(), 1);
+    }
+
+    #[test]
+    fn stage_attachments_false_leaves_the_bytes_for_the_caller() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("input.xml");
+        fs::write(&input, r#"<smses><mms date="1400773400000" msg_box="2" address="+15555550101"><parts><part seq="0" ct="image/jpeg" name="pic.jpg" data="aGVsbG8="/></parts><addrs><addr address="+15555550100" type="137" charset="106"/><addr address="+15555550101" type="151"/></addrs></mms></smses>"#).unwrap();
+        let stage = dir.path().join("output").join("attachments");
+
+        let range = DateRange::default();
+        let mut options = opts(&[], &range, Some(&stage), true, true);
+        options.stage_attachments = false;
+        let (docs, report) = read_sbr_documents(&input, options).unwrap();
+
+        let att = &docs[0].messages[0].attachments[0];
+        assert_eq!(
+            att.bytes.as_deref(),
+            Some(&b"hello"[..]),
+            "the bytes stay on the record for the caller to stage"
+        );
+        assert!(
+            att.path.is_none(),
+            "nothing was staged, so nothing to point at"
+        );
+        assert!(!stage.exists(), "no attachment files were written");
+        assert_eq!(report.attachments_saved, 0);
     }
 }
