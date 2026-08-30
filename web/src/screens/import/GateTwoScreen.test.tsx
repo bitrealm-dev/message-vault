@@ -1,0 +1,139 @@
+/** @vitest-environment jsdom */
+
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { StagingSummary } from "../../lib/tauri";
+import type { AttachmentMediaMode } from "../../lib/types";
+import type { GateDelta } from "./gateDelta";
+import GateTwoScreen from "./GateTwoScreen";
+
+afterEach(() => {
+  cleanup();
+});
+
+function delta(overrides: Partial<GateDelta> = {}): GateDelta {
+  return {
+    forecastHeld: 0,
+    forecastHeldFiles: [],
+    betterThanForecast: 0,
+    betterThanForecastFiles: [],
+    worseThanForecast: 0,
+    worseThanForecastFiles: [],
+    failed: 0,
+    failedFiles: [],
+    hasChanges: false,
+    ...overrides,
+  };
+}
+
+function actual(overrides: Partial<StagingSummary> = {}): StagingSummary {
+  return {
+    conversations: 1,
+    messages: 1,
+    contactIdentifiers: [],
+    attachments: 0,
+    attachmentBytes: 0,
+    verdictCounts: {
+      fitsAsIs: 0,
+      likelyFits: 0,
+      mayGrow: 0,
+      probablyTooBig: 0,
+      cannotProcess: 0,
+    },
+    forecasts: [],
+    ...overrides,
+  };
+}
+
+function props(
+  overrides: {
+    delta?: Partial<GateDelta>;
+    actual?: Partial<StagingSummary>;
+    mode?: AttachmentMediaMode;
+    onApprove?: () => void;
+    onDecline?: () => void;
+    busy?: boolean;
+  } = {},
+) {
+  return {
+    delta: delta(overrides.delta),
+    actual: actual(overrides.actual),
+    mode: overrides.mode ?? "convert",
+    onApprove: overrides.onApprove ?? vi.fn(),
+    onDecline: overrides.onDecline ?? vi.fn(),
+    busy: overrides.busy ?? false,
+  };
+}
+
+describe("GateTwoScreen", () => {
+  it("names the stage in its heading", () => {
+    render(<GateTwoScreen {...props()} />);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Ready to upload");
+  });
+
+  it("leads with the delta, not a fresh summary", () => {
+    // Decision 14: where was Gate 1 wrong. The final state follows underneath.
+    render(<GateTwoScreen {...props({ delta: { worseThanForecast: 2, hasChanges: true } })} />);
+    const headings = screen.getAllByRole("heading");
+    expect(headings[1]).toHaveTextContent(/what changed/i);
+  });
+
+  it("says so plainly when the forecast held", () => {
+    render(<GateTwoScreen {...props({ delta: { hasChanges: false } })} />);
+    expect(screen.getByText(/came out as expected/i)).toBeInTheDocument();
+  });
+
+  it("carries the standing copy about what an import does", () => {
+    render(<GateTwoScreen {...props()} />);
+    expect(
+      screen.getByText(
+        "Messages are always uploaded. A skipped attachment leaves a placeholder in the conversation, and the message text is kept. Imported conversations can later be removed from your vault in the messages area.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("offers to upload and to cancel", () => {
+    render(<GateTwoScreen {...props()} />);
+    expect(screen.getByRole("button", { name: "Upload to vault" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel this import" })).toBeInTheDocument();
+  });
+
+  it("shows the recomputed counts, not the approved ones", () => {
+    render(
+      <GateTwoScreen
+        {...props({
+          actual: { conversations: 9, messages: 501, attachments: 42, attachmentBytes: 2048 },
+        })}
+      />,
+    );
+    expect(screen.getByText("9")).toBeInTheDocument();
+    expect(screen.getByText("501")).toBeInTheDocument();
+    expect(screen.getByText("42")).toBeInTheDocument();
+  });
+
+  it("says what happened to the files nobody flagged, without naming a cause", () => {
+    // Decision 45: too_large and convert_failed are indistinguishable from
+    // the recomputed summary, so the copy states the effect, not a cause.
+    render(<GateTwoScreen {...props({ delta: { worseThanForecast: 2, hasChanges: true } })} />);
+    expect(screen.getByText(/will not be uploaded/i)).toBeInTheDocument();
+  });
+
+  it("never says transcode", () => {
+    render(<GateTwoScreen {...props()} />);
+    expect(document.body.textContent?.toLowerCase()).not.toContain("transcode");
+  });
+
+  it("does not act twice on a double click", () => {
+    const onApprove = vi.fn();
+    render(<GateTwoScreen {...props({ onApprove, busy: true })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Upload to vault" }));
+    expect(onApprove).not.toHaveBeenCalled();
+  });
+
+  it("does not act twice on a double click of the decline button either", () => {
+    const onDecline = vi.fn();
+    render(<GateTwoScreen {...props({ onDecline, busy: true })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel this import" }));
+    expect(onDecline).not.toHaveBeenCalled();
+  });
+});
