@@ -162,76 +162,76 @@ fn normalize_lexically(path: &Path) -> PathBuf {
     out
 }
 
+/// Trim `raw` and require it to be a non-empty absolute path.
+fn resolve_absolute(
+    raw: &str,
+    empty_message: &str,
+    relative_message: &str,
+) -> Result<PathBuf, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(empty_message.to_string());
+    }
+    let path = PathBuf::from(trimmed);
+    if !path.is_absolute() {
+        return Err(relative_message.to_string());
+    }
+    Ok(path)
+}
+
+/// Resolve the Import Staging Directory: trimmed, absolute, canonicalized
+/// when it exists on disk (else lexically normalized so a not-yet-created
+/// root still resolves), and never the filesystem root.
+///
+/// Shared by [`resolve_openable_path`] and `staging::resolve_staging_child`,
+/// so every command that checks "is this path under the staging root"
+/// resolves the root the identical way — the same fix applies everywhere at
+/// once instead of drifting between callers.
+///
+/// # Errors
+///
+/// Returns an error when the root is empty, relative, cannot be
+/// canonicalized, or is the filesystem root.
+pub(crate) fn resolve_staging_root(staging_root: &str) -> Result<PathBuf, String> {
+    let root = resolve_absolute(
+        staging_root,
+        "Import staging directory is empty",
+        "Import staging directory must be absolute",
+    )?;
+    let root = if root.exists() {
+        root.canonicalize()
+            .map_err(|error| format!("Could not resolve staging root: {error}"))?
+    } else {
+        normalize_lexically(&root)
+    };
+    reject_filesystem_root(&root)?;
+    Ok(root)
+}
+
 /// Resolve `raw` to an absolute path that must stay under `staging_root`.
 ///
 /// When the path already exists, both sides are canonicalized so symlinks cannot
 /// escape the staging tree. When it does not exist yet (for example a staging
 /// folder that extract is about to create), lexical normalization is used.
 pub(crate) fn resolve_openable_path(raw: &str, staging_root: &str) -> Result<PathBuf, String> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err("Path is empty".to_string());
-    }
-
-    let root_trimmed = staging_root.trim();
-    if root_trimmed.is_empty() {
-        return Err("Import staging directory is empty".to_string());
-    }
-
-    let candidate = PathBuf::from(trimmed);
-    if !candidate.is_absolute() {
-        return Err("Path must be absolute".to_string());
-    }
-
-    let staging_root = PathBuf::from(root_trimmed);
-    if !staging_root.is_absolute() {
-        return Err("Import staging directory must be absolute".to_string());
-    }
+    let candidate = resolve_absolute(raw, "Path is empty", "Path must be absolute")?;
+    let root = resolve_staging_root(staging_root)?;
 
     if candidate.exists() {
-        return canonical_within_root(&candidate, &staging_root);
+        let canonical = candidate
+            .canonicalize()
+            .map_err(|error| format!("Could not resolve path: {error}"))?;
+        if !canonical.starts_with(&root) {
+            return Err("Path is outside the import staging folder".to_string());
+        }
+        return Ok(canonical);
     }
 
     let normalized = normalize_lexically(&candidate);
-    let root = normalize_lexically(&staging_root);
-    reject_filesystem_root(&root)?;
     if !normalized.starts_with(&root) {
         return Err("Path is outside the import staging folder".to_string());
     }
     Ok(normalized)
-}
-
-/// Canonicalize `candidate` and confirm it resolves inside `root`.
-///
-/// Both sides are canonicalized when they exist, so a symlink cannot escape
-/// the staging tree; `root` falls back to lexical normalization when it does
-/// not exist yet. `candidate` itself must already exist on disk — this is
-/// the branch [`resolve_openable_path`] takes once it has confirmed that.
-///
-/// Shared with `staging::delete_staging_dir`, so the same containment check
-/// guards both opening and deleting a path under the staging root — one bug
-/// here cannot open a hole for one caller while staying closed for the
-/// other.
-///
-/// # Errors
-///
-/// Returns an error when either path cannot be canonicalized, `root` is the
-/// filesystem root, or `candidate` resolves outside `root`.
-pub(crate) fn canonical_within_root(candidate: &Path, root: &Path) -> Result<PathBuf, String> {
-    let canonical = candidate
-        .canonicalize()
-        .map_err(|error| format!("Could not resolve path: {error}"))?;
-    let root_canonical = if root.exists() {
-        root.canonicalize()
-            .map_err(|error| format!("Could not resolve staging root: {error}"))?
-    } else {
-        normalize_lexically(root)
-    };
-    reject_filesystem_root(&root_canonical)?;
-    if !canonical.starts_with(&root_canonical) {
-        return Err("Path is outside the import staging folder".to_string());
-    }
-    Ok(canonical)
 }
 
 /// `/` (and a Windows drive root) would make `starts_with` true for every absolute path.

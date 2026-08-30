@@ -26,7 +26,7 @@ mod util;
 mod write;
 mod write_sbr;
 
-pub use clean::clean_previous_ir_output;
+pub use clean::{EXPORT_SENTINEL, clean_previous_ir_output};
 pub use export_transforms::ExportTransforms;
 pub use format_sink::{FormatSink, FormatSinkResult};
 pub use pipeline::{finish_run, run_pipeline};

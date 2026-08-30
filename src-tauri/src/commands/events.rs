@@ -9,7 +9,8 @@ use serde::Serialize;
 /// Progress numbers the UI uses to update the progress bar.
 #[derive(Debug, Clone, Serialize)]
 pub struct ExtractProgressEvent {
-    /// Current pipeline stage: `parse`, `attachments`, `prepare`, or `upload`.
+    /// Current pipeline stage: `parse`, `attachments`, `prepare`, `media`, or
+    /// `upload`.
     pub step: String,
     /// Number of items finished so far.
     pub done: usize,

@@ -455,6 +455,22 @@ fn build_exporter_config(
                 output_format: OutputFormat::Jsonl,
                 ..Default::default()
             };
+            // `Form`'s own compress validation only fires when
+            // `Form.attachment_media` is `Compress` — and that field now
+            // reads `Clone` for a real Convert/Compress choice (see
+            // `exporter_attachment_media`'s docs), so it would otherwise stay
+            // silent about a malformed `media_max_fps`/`media_min_size`
+            // until the desktop's own media pass parses the same fields
+            // again at the approval gate, hours later. Validate against the
+            // REAL chosen mode here so a bad value still fails immediately;
+            // the parsed value itself is unused here — the exporter's own
+            // media step is a no-op under Clone.
+            parse_compress_options(
+                options.attachment_media,
+                options.media_max_resolution,
+                &options.media_max_fps,
+                &options.media_min_size,
+            )?;
             form.to_config(Exporter::Imessage)
                 .map_err(|errors| errors.join("; "))
         }
@@ -644,6 +660,24 @@ mod tests {
                 "{chosen:?} must stage originals"
             );
         }
+    }
+
+    #[test]
+    fn imessage_compress_still_validates_media_fields_up_front() {
+        // `Form.attachment_media` reads Clone for a real Compress choice (so
+        // the exporter stages originals instead of converting), which means
+        // `Form`'s own compress validation no longer runs for it. Without the
+        // explicit `parse_compress_options` call in `build_exporter_config`,
+        // a malformed `media_min_size` would sail through here and only
+        // surface hours later, at the approval gate.
+        let mut options = test_options(Vec::new());
+        options.attachment_media = AttachmentMedia::Compress;
+        options.media_min_size = "banana".into();
+        let err = build_exporter_config("imessage-ios", "/backup", "/out", &options).unwrap_err();
+        assert!(
+            err.contains("banana"),
+            "expected the malformed min-size value to be named: {err}"
+        );
     }
 
     #[test]
