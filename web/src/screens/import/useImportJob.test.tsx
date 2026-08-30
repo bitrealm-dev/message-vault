@@ -434,6 +434,59 @@ describe("useImportJob wiring", () => {
     expect(setImportStageMock).not.toHaveBeenCalledWith(1, "pushing", expect.anything());
   });
 
+  it("does not complete the session on a cancelled media pass, so it stays resumable", async () => {
+    // Decision 36 routes a cancellation mid-transcode to the same recovery
+    // as a crash at that stage; decision 37 says only an explicit discard
+    // ends a waiting session. Posting /complete would free the one-active-
+    // session slot and drop the session out of GET /v1/imports/active,
+    // stranding the staged folder with no session left to resume it
+    // through — even though the "canceled" outcome is still shown locally.
+    runMock.mockImplementationOnce(async (fn: () => Promise<unknown>) => {
+      await fn();
+      throw new Error("canceled");
+    });
+    const { result } = renderHook(() => useImportJob());
+    await act(() => result.current.startImport(form({ attachmentMedia: "convert" })));
+    await act(() => result.current.approveGate());
+
+    expect(result.current.summaryView?.status).toBe("canceled");
+    expect(postMock.mock.calls.some(([path]) => path === "/v1/imports/1/complete")).toBe(false);
+  });
+
+  it("still completes the session as failed when the media pass genuinely fails", async () => {
+    // Unlike a cancellation, a broken ffmpeg (or any other real failure)
+    // must not lock the account out of importing — the run still completes
+    // and frees the slot, same as before.
+    runMock.mockRejectedValueOnce(new Error("ffmpeg exited with status 1"));
+    const { result } = renderHook(() => useImportJob());
+    await act(() => result.current.startImport(form({ attachmentMedia: "convert" })));
+    await act(() => result.current.approveGate());
+
+    expect(result.current.summaryView?.status).toBe("failed");
+    const completeCall = postMock.mock.calls.find(([path]) => path === "/v1/imports/1/complete");
+    expect(completeCall).toBeDefined();
+    const [, body] = completeCall as [string, Record<string, unknown>];
+    expect(body.status).toBe("failed");
+  });
+
+  it("still completes the session on a cancelled extract — nothing was approved yet to protect", async () => {
+    // Only a cancellation *after* Gate 1 (mid-transcode, with an approved
+    // plan and a staged folder worth protecting) skips /complete. A
+    // cancelled extract has nothing approved yet, so the spec sends it to
+    // restart regardless, same as before this fix.
+    runMock.mockReset();
+    runMock.mockImplementationOnce(async (fn: () => Promise<unknown>) => {
+      await fn();
+      throw new Error("cancelled");
+    });
+    const { result } = renderHook(() => useImportJob());
+    await act(() => result.current.startImport(form({ attachmentMedia: "convert" })));
+
+    expect(result.current.phase).toBe("done");
+    const completeCall = postMock.mock.calls.find(([path]) => path === "/v1/imports/1/complete");
+    expect(completeCall).toBeDefined();
+  });
+
   it("a failed recompute after a successful media pass is a failed import, not an unhandled rejection", async () => {
     runMock.mockImplementationOnce(
       runResult({ summary: "Transcode finished.", transcode: undefined }),

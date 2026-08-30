@@ -441,15 +441,26 @@ export function useImportJob() {
   }
 
   /**
-   * Build the finished-import summary, record it, and post `/complete` —
-   * the terminal step for every path (a failure before either gate, a failed
-   * or cancelled media pass, or a push that ran to completion or failed).
+   * Build the finished-import summary, record it, and — usually — post
+   * `/complete`, the terminal step for every path except one (a failure
+   * before either gate, a failed media pass, or a push that ran to
+   * completion or failed all complete normally).
    *
    * `canceled` overrides `importOutcome`'s verdict outright: the user asked
-   * for this, so it is never read as a failure. The session's `stage`
-   * column is untouched here — the caller simply doesn't call `moveStage`
-   * again after a cancellation, so it stays wherever the run last recorded
-   * it (e.g. `transcode`), not advanced to a stage the run never reached.
+   * for this, so it is never read as a failure.
+   *
+   * `skipComplete` is that one exception: decision 36 routes a cancellation
+   * mid-`transcode` to the same recovery as a crash at that stage, and
+   * decision 37 says only an explicit discard ends a waiting session —
+   * `/complete` is what ends one. Posting it here would free the
+   * one-active-session slot and drop the session out of
+   * `GET /v1/imports/active`, stranding the staged folder (and the time
+   * already spent on it) with no session left to resume it through. The
+   * caller sets this only for a cancelled *media pass*; a cancelled
+   * extract has nothing approved yet, so the spec sends it to restart
+   * regardless and it completes normally, same as a failed pass does (a
+   * broken ffmpeg must not lock the account out of importing — the failed
+   * run still frees the slot).
    */
   async function finishImport(args: {
     sessionId: number | null;
@@ -458,8 +469,9 @@ export function useImportJob() {
     canceled?: boolean;
     pushReport: PushFinishedReport | null;
     uploadMs: number | null;
+    skipComplete?: boolean;
   }): Promise<void> {
-    const { sessionId, form, threw, canceled, pushReport, uploadMs } = args;
+    const { sessionId, form, threw, canceled, pushReport, uploadMs, skipComplete } = args;
     const { parseMs, attachmentsMs, prepareMs } = durationsRef.current;
     const durationMs = performance.now() - importStartedAtRef.current;
     const outcome: ImportSummaryView["status"] = canceled
@@ -504,7 +516,7 @@ export function useImportJob() {
         return { ...step, durationMs: duration };
       }),
     );
-    if (sessionId) {
+    if (sessionId && !skipComplete) {
       try {
         await apiClient.post(`/v1/imports/${String(sessionId)}/complete`, {
           ok: outcome !== "failed" && outcome !== "canceled",
@@ -691,8 +703,21 @@ export function useImportJob() {
         current.map((step) => (step.status === "active" ? { ...step, status: "error" } : step)),
       );
       // Neither path writes another stage: the session stays at `transcode`,
-      // which is exactly where the run actually got to.
-      await finishImport({ sessionId, form, threw, canceled, pushReport: null, uploadMs: null });
+      // which is exactly where the run actually got to. A cancellation also
+      // skips `/complete` outright — see finishImport's doc comment — so the
+      // session stays `running` and resumable instead of completing and
+      // freeing the slot out from under a staged folder nobody can reach
+      // anymore. A failed pass still completes normally: the account must
+      // not be locked out of importing by a broken ffmpeg.
+      await finishImport({
+        sessionId,
+        form,
+        threw,
+        canceled,
+        pushReport: null,
+        uploadMs: null,
+        skipComplete: canceled,
+      });
       return;
     }
 
