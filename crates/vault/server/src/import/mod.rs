@@ -590,13 +590,28 @@ pub(crate) struct CreateImportBody {
     pub(crate) tool: Option<String>,
     #[serde(default)]
     pub(crate) account: Option<String>,
+    /// Stage the session opens at. Defaults to `parse`.
+    #[serde(default)]
+    pub(crate) stage: Option<String>,
+    /// Absolute staging path on the client that owns this session.
+    #[serde(default)]
+    pub(crate) staging_dir: Option<String>,
+    /// Which install is creating the session.
+    #[serde(default)]
+    pub(crate) device_id: Option<String>,
+    /// Import form snapshot, stored so the screen can be restored.
+    #[serde(default)]
+    pub(crate) form: Option<serde_json::Value>,
+    /// Source path, size, mtime, and message count.
+    #[serde(default)]
+    pub(crate) source_fingerprint: Option<serde_json::Value>,
 }
 
 /// The new import session id.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct CreateImportResponse {
     ok: bool,
-    id: i64,
+    pub(crate) id: i64,
 }
 
 /// Final stats and issues for a finished import session.
@@ -663,6 +678,19 @@ fn validate_import_status(status: Option<&str>) -> Result<(), ApiError> {
         Some(other) => Err(ApiError::BadRequest(format!(
             "invalid import status '{other}'; expected 'completed', 'completed_with_issues', or 'failed'"
         ))),
+    }
+}
+
+/// Serialize an optional JSON body field for storage as TEXT.
+fn optional_json_string(
+    value: Option<&serde_json::Value>,
+    field: &str,
+) -> Result<Option<String>, ApiError> {
+    match value {
+        None => Ok(None),
+        Some(v) => serde_json::to_string(v)
+            .map(Some)
+            .map_err(|e| ApiError::Internal(format!("serialize {field}: {e}"))),
     }
 }
 
@@ -810,30 +838,44 @@ pub(crate) async fn imports_create_handler(
     validate_source_id(&body.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
     ImportMode::parse(&body.mode).map_err(|e| ApiError::BadRequest(e.to_string()))?;
     let account = resolve_import_account(&auth, body.account.as_deref(), &state.db).await?;
+    let stage = match body.stage.as_deref() {
+        None => crate::db::vault_imports::ImportStage::Parse,
+        Some(raw) => crate::db::vault_imports::ImportStage::parse(raw).ok_or_else(|| {
+            ApiError::BadRequest(format!(
+                "invalid import stage '{raw}'; expected one of parse, write, awaiting_gate_1, transcode, awaiting_gate_2, pushing"
+            ))
+        })?,
+    };
+    let form_json = optional_json_string(body.form.as_ref(), "form")?;
+    let fingerprint_json =
+        optional_json_string(body.source_fingerprint.as_ref(), "source_fingerprint")?;
 
     // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     crate::db::account_profile::ensure_account_row(&mut conn, &account)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    // TODO(task 3): map StartImportError::AlreadyActive to a 409 instead of
-    // flattening every failure to ApiError::Internal.
-    let id = crate::db::vault_imports::start_import(
-        &mut conn,
-        &crate::db::vault_imports::StartImportArgs {
-            account_id: &account,
-            source: &body.source,
-            mode: &body.mode,
-            tool: body.tool.as_deref(),
-            stage: crate::db::vault_imports::ImportStage::Parse,
-            staging_dir: None,
-            device_id: None,
-            form_json: None,
-            source_fingerprint: None,
-        },
-    )
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let args = crate::db::vault_imports::StartImportArgs {
+        account_id: &account,
+        source: &body.source,
+        mode: &body.mode,
+        tool: body.tool.as_deref(),
+        stage,
+        staging_dir: body.staging_dir.as_deref(),
+        device_id: body.device_id.as_deref(),
+        form_json: form_json.as_deref(),
+        source_fingerprint: fingerprint_json.as_deref(),
+    };
+    let id = crate::db::vault_imports::start_import(&mut conn, &args)
+        .await
+        .map_err(|e| match e {
+            crate::db::vault_imports::StartImportError::AlreadyActive => {
+                ApiError::Conflict("this account already has an active import session".into())
+            }
+            crate::db::vault_imports::StartImportError::Db(err) => {
+                ApiError::Internal(err.to_string())
+            }
+        })?;
 
     Ok(Json(CreateImportResponse { ok: true, id }))
 }
@@ -955,6 +997,163 @@ fn import_detail_response(detail: crate::db::vault_imports::ImportDetail) -> Imp
         summary: parse_summary_json(row.summary_json),
         issues,
     }
+}
+
+/// One live import session, as the desktop app needs to resume it.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ActiveImportSession {
+    pub(crate) id: i64,
+    pub(crate) source: String,
+    pub(crate) mode: String,
+    pub(crate) status: String,
+    pub(crate) started_at: String,
+    pub(crate) stage: Option<String>,
+    pub(crate) staging_dir: Option<String>,
+    pub(crate) device_id: Option<String>,
+    /// Import form snapshot, or null.
+    pub(crate) form: serde_json::Value,
+    /// Source path, size, mtime, and message count, or null.
+    pub(crate) source_fingerprint: serde_json::Value,
+}
+
+/// The account's live session, or null when there is none.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ActiveImportResponse {
+    ok: bool,
+    pub(crate) session: Option<ActiveImportSession>,
+}
+
+/// The account's active import session, if it has one.
+#[utoipa::path(
+    get,
+    path = "/v1/imports/active",
+    tag = "Import",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = ActiveImportResponse),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn imports_active_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ActiveImportResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_import_access(&auth)?;
+    let account = resolve_import_account(&auth, None, &state.db).await?;
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    let row = crate::db::vault_imports::get_active_import(&mut conn, &account)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(ActiveImportResponse {
+        ok: true,
+        session: row.map(|row| ActiveImportSession {
+            id: row.id,
+            source: row.source,
+            mode: row.mode,
+            status: row.status,
+            started_at: row.started_at,
+            stage: row.stage,
+            staging_dir: row.staging_dir,
+            device_id: row.device_id,
+            form: parse_summary_json(row.form_json),
+            source_fingerprint: parse_summary_json(row.source_fingerprint),
+        }),
+    }))
+}
+
+/// New stage for a live session.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct SetImportStageBody {
+    pub(crate) stage: String,
+}
+
+/// Confirmation that the stage moved.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct SetImportStageResponse {
+    ok: bool,
+    pub(crate) stage: String,
+}
+
+/// Move a live import session to another stage.
+#[utoipa::path(
+    post,
+    path = "/v1/imports/{id}/stage",
+    tag = "Import",
+    security(("bearer" = [])),
+    request_body = SetImportStageBody,
+    responses(
+        (status = 200, body = SetImportStageResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn imports_stage_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(import_id): AxumPath<i64>,
+    Json(body): Json<SetImportStageBody>,
+) -> Result<Json<SetImportStageResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_import_access(&auth)?;
+    let account = resolve_import_account(&auth, None, &state.db).await?;
+    let stage = crate::db::vault_imports::ImportStage::parse(&body.stage).ok_or_else(|| {
+        ApiError::BadRequest(format!(
+            "invalid import stage '{}'; expected one of parse, write, awaiting_gate_1, transcode, awaiting_gate_2, pushing",
+            body.stage
+        ))
+    })?;
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    crate::db::vault_imports::set_import_stage(&mut conn, &account, import_id, stage).await?;
+    Ok(Json(SetImportStageResponse {
+        ok: true,
+        stage: stage.as_str().to_string(),
+    }))
+}
+
+/// Confirmation that a session was discarded.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct DiscardImportResponse {
+    ok: bool,
+    pub(crate) id: i64,
+    pub(crate) status: String,
+}
+
+/// Discard a live import session, freeing the account's single slot.
+#[utoipa::path(
+    post,
+    path = "/v1/imports/{id}/discard",
+    tag = "Import",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = DiscardImportResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn imports_discard_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(import_id): AxumPath<i64>,
+) -> Result<Json<DiscardImportResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_import_access(&auth)?;
+    let account = resolve_import_account(&auth, None, &state.db).await?;
+    // TODO(#148): pool acquire
+    let mut conn = state.db.acquire().await?;
+    crate::db::vault_imports::discard_import(&mut conn, &account, import_id).await?;
+    Ok(Json(DiscardImportResponse {
+        ok: true,
+        id: import_id,
+        status: "cancelled".into(),
+    }))
 }
 
 /// Import one message-ir JSONL body (raw or multipart) into the vault.
@@ -1215,7 +1414,14 @@ async fn run_import_path(
             },
         )
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(|e| match e {
+            crate::db::vault_imports::StartImportError::AlreadyActive => {
+                ApiError::Conflict("this account already has an active import session".into())
+            }
+            crate::db::vault_imports::StartImportError::Db(err) => {
+                ApiError::Internal(err.to_string())
+            }
+        })?;
         (Some(id), true)
     };
 
@@ -1877,6 +2083,65 @@ mod tests {
                 .await
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    /// `run_import_path` (the raw-body/multipart `POST /v1/import` path) opens
+    /// a one-shot session the same way `imports_create_handler` does when the
+    /// caller does not pass `import_id`. It must map the same
+    /// `StartImportError::AlreadyActive` collision to `ApiError::Conflict`,
+    /// not `ApiError::Internal` — otherwise the two endpoints answer the same
+    /// condition with different status codes. This calls `run_import_path`
+    /// directly (it is private to this module) rather than going through
+    /// `import_handler`'s HTTP body/content-type parsing, which is
+    /// orthogonal to the session check under test.
+    #[tokio::test]
+    async fn run_import_path_refuses_a_second_session_with_conflict() {
+        let (pool, tmp) = crate::db::engine::test_pool().await;
+        {
+            let mut conn = pool.acquire().await.unwrap();
+            schema::ensure_vault_schema(&mut conn).await.unwrap();
+            crate::db::account_profile::ensure_account_row(&mut conn, TEST_ACCOUNT)
+                .await
+                .unwrap();
+            crate::db::vault_imports::start_import(
+                &mut conn,
+                &crate::db::vault_imports::StartImportArgs {
+                    account_id: TEST_ACCOUNT,
+                    source: "imessage",
+                    mode: "append",
+                    tool: Some("test"),
+                    stage: crate::db::vault_imports::ImportStage::Parse,
+                    staging_dir: None,
+                    device_id: None,
+                    form_json: None,
+                    source_fingerprint: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let data_dir = tmp.path().join("data");
+        let state = crate::server::test_app_state(pool, &data_dir).await;
+
+        let query = ImportQuery {
+            source: "imessage".into(),
+            account: Some(TEST_ACCOUNT.into()),
+            mode: "append".into(),
+            dedupe: false,
+            import_id: None,
+            contact_name_mode: "fill_missing".into(),
+        };
+        // Never read: the session collision is detected before the jsonl
+        // file is opened.
+        let jsonl_path = tmp.path().join("unused.jsonl");
+
+        let err = run_import_path(state, query, jsonl_path, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ApiError::Conflict(_)),
+            "expected Conflict, got {err:?}"
         );
     }
 

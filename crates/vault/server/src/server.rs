@@ -787,7 +787,9 @@ pub(crate) async fn test_app_state(pool: sqlx::AnyPool, data_dir: &Path) -> AppS
 mod tests {
     use super::*;
     use crate::import::{
-        CompleteImportBody, CompleteImportIssueBody, imports_complete_handler, imports_get_handler,
+        CompleteImportBody, CompleteImportIssueBody, CreateImportBody, SetImportStageBody,
+        imports_active_handler, imports_complete_handler, imports_create_handler,
+        imports_discard_handler, imports_get_handler, imports_stage_handler,
     };
     use axum::extract::{Path as AxumPath, State};
     use tempfile::TempDir;
@@ -1286,6 +1288,128 @@ mod tests {
             }
             other => panic!("expected not found, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn active_session_is_empty_then_reports_the_live_one() {
+        let (_tmp, state, token, import_id) = test_state().await;
+
+        let body = CreateImportBody {
+            source: "imessage".into(),
+            mode: "append".into(),
+            tool: Some("message-vault-io".into()),
+            account: None,
+            stage: Some("write".into()),
+            staging_dir: Some("/home/u/message-vault/staging-260830".into()),
+            device_id: Some("device-a".into()),
+            form: Some(serde_json::json!({ "source": "imessage-ios" })),
+            source_fingerprint: Some(serde_json::json!({ "size_bytes": 42 })),
+        };
+        // `test_state` already opened a session; close it so this one can start.
+        let _ = imports_discard_handler(
+            State(state.clone()),
+            auth_headers(&token),
+            AxumPath(import_id),
+        )
+        .await
+        .unwrap();
+
+        let created =
+            imports_create_handler(State(state.clone()), auth_headers(&token), Json(body))
+                .await
+                .unwrap();
+
+        let active = imports_active_handler(State(state.clone()), auth_headers(&token))
+            .await
+            .unwrap();
+        let session = active.0.session.expect("a live session is reported");
+        assert_eq!(session.id, created.0.id);
+        assert_eq!(session.stage.as_deref(), Some("write"));
+        assert_eq!(
+            session.staging_dir.as_deref(),
+            Some("/home/u/message-vault/staging-260830")
+        );
+        assert_eq!(session.device_id.as_deref(), Some("device-a"));
+        assert_eq!(session.form["source"], "imessage-ios");
+    }
+
+    #[tokio::test]
+    async fn a_second_session_is_refused_with_conflict() {
+        let (_tmp, state, token, _import_id) = test_state().await;
+        let body = CreateImportBody {
+            source: "imessage".into(),
+            mode: "append".into(),
+            tool: None,
+            account: None,
+            stage: None,
+            staging_dir: None,
+            device_id: None,
+            form: None,
+            source_fingerprint: None,
+        };
+        let err = imports_create_handler(State(state.clone()), auth_headers(&token), Json(body))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ApiError::Conflict(_)));
+    }
+
+    #[tokio::test]
+    async fn stage_endpoint_advances_and_rejects_an_unknown_stage() {
+        let (_tmp, state, token, import_id) = test_state().await;
+
+        let _ = imports_stage_handler(
+            State(state.clone()),
+            auth_headers(&token),
+            AxumPath(import_id),
+            Json(SetImportStageBody {
+                stage: "pushing".into(),
+            }),
+        )
+        .await
+        .unwrap();
+        let active = imports_active_handler(State(state.clone()), auth_headers(&token))
+            .await
+            .unwrap();
+        assert_eq!(active.0.session.unwrap().stage.as_deref(), Some("pushing"));
+
+        let err = imports_stage_handler(
+            State(state.clone()),
+            auth_headers(&token),
+            AxumPath(import_id),
+            Json(SetImportStageBody {
+                stage: "halfway".into(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn discard_frees_the_slot() {
+        let (_tmp, state, token, import_id) = test_state().await;
+        let _ = imports_discard_handler(
+            State(state.clone()),
+            auth_headers(&token),
+            AxumPath(import_id),
+        )
+        .await
+        .unwrap();
+        let active = imports_active_handler(State(state.clone()), auth_headers(&token))
+            .await
+            .unwrap();
+        assert!(active.0.session.is_none());
+    }
+
+    /// `/v1/imports/active` is a literal route registered alongside
+    /// `/v1/imports/{id}`; if router registration order ever let the `{id}`
+    /// extractor swallow it, `active` would fail to parse as an `i64` and
+    /// this would come back 400 instead of 200.
+    #[tokio::test]
+    async fn active_route_is_not_captured_by_the_id_route() {
+        let (_tmp, state, token, _import_id) = test_state().await;
+        let status = crate::test_support::get_status(&state, "/v1/imports/active", &token).await;
+        assert_eq!(status, StatusCode::OK);
     }
 
     /// `require_import_access` guards `GET /v1/imports`: with `can_import`
