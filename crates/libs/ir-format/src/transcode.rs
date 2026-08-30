@@ -230,7 +230,9 @@ fn check_cancel_now(cancel: Option<&CancelFlag>) -> Result<()> {
 
 /// `*.jsonl` files directly under `staging_dir`, sorted, non-recursive — the
 /// sink writes them flat (`FormatSink::open_prepared`).
-fn conversation_files(staging_dir: &Path) -> Result<Vec<PathBuf>> {
+///
+/// `pub(crate)`: shared with `staging_summary`, which walks the same list.
+pub(crate) fn conversation_files(staging_dir: &Path) -> Result<Vec<PathBuf>> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(staging_dir)
         .with_context(|| format!("read {}", staging_dir.display()))?
         .flatten()
@@ -351,7 +353,10 @@ fn pending_in(
 
 /// Resolve `rel` (an attachment's recorded relative path) under `staging_dir`,
 /// rejecting anything that could escape it.
-fn safe_attachment_path(staging_dir: &Path, rel: &str) -> Result<PathBuf> {
+///
+/// `pub(crate)`: shared with `staging_summary`, which resolves the same
+/// recorded paths to measure them.
+pub(crate) fn safe_attachment_path(staging_dir: &Path, rel: &str) -> Result<PathBuf> {
     let rel_path = Path::new(rel);
     if rel_path.is_absolute() {
         anyhow::bail!("{UNSAFE_ATTACHMENT_PATH_PREFIX}: {rel}");
