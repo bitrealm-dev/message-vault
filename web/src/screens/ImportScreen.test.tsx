@@ -259,6 +259,87 @@ describe("ImportScreen entering Import", () => {
     expect(resume).toBeUndefined();
   });
 
+  it("re-checks for an open session when the screen returns to the form", async () => {
+    // A swallowed final /complete, or a restart whose discard failed,
+    // leaves a session open server-side that the screen has forgotten. If
+    // Back never re-checks, the user gets a form whose Import button 409s.
+    getActiveImportSessionMock.mockResolvedValue(null);
+    const { rerender } = render(<ImportScreen />);
+
+    expect(await screen.findByTestId("import-form")).toBeInTheDocument();
+    expect(getActiveImportSessionMock).toHaveBeenCalledTimes(1);
+
+    hookState.phase = "progress";
+    await act(async () => {
+      rerender(<ImportScreen />);
+    });
+    expect(getActiveImportSessionMock).toHaveBeenCalledTimes(1);
+
+    hookState.phase = "done";
+    await act(async () => {
+      rerender(<ImportScreen />);
+    });
+    expect(getActiveImportSessionMock).toHaveBeenCalledTimes(1);
+
+    getActiveImportSessionMock.mockResolvedValue(session({ stage: "pushing" }));
+    hookState.phase = "form";
+    await act(async () => {
+      rerender(<ImportScreen />);
+    });
+
+    expect(getActiveImportSessionMock).toHaveBeenCalledTimes(2);
+    expect(await screen.findByTestId("resume-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("resume-kind")).toHaveTextContent("resume_push");
+  });
+
+  it("runs one restart when the resume action is double-clicked", async () => {
+    const user = userEvent.setup();
+    getActiveImportSessionMock.mockResolvedValue(
+      session({
+        stage: "write",
+        form: {
+          source: "imessage-ios",
+          backupPath: "/backups/iphone.tar",
+          attachmentMedia: "copy",
+          maxResolution: "720p",
+          maxFps: "30",
+          minSizeMb: "20",
+          contactNameMode: "fill_missing",
+          ownerPhones: [],
+          force: false,
+          obfuscate: false,
+          isSbr: false,
+          attachmentRoot: "",
+          appleContacts: "",
+          whatsappWa: "",
+          whatsappMedia: "",
+          whatsappDb: "",
+          whatsappBusiness: false,
+        },
+      }),
+    );
+    // The panel stays mounted across this round trip by design, so the
+    // second click lands on a live button.
+    const pendingDiscard = deferred<void>();
+    discardImportSessionMock.mockReturnValue(pendingDiscard.promise);
+    render(<ImportScreen />);
+
+    await screen.findByTestId("resume-panel");
+    await user.click(screen.getByText("resume-action"));
+    await user.click(screen.getByText("resume-action"));
+    await user.click(screen.getByText("discard-action"));
+
+    expect(discardImportSessionMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      pendingDiscard.resolve();
+      await pendingDiscard.promise;
+    });
+
+    expect(discardImportSessionMock).toHaveBeenCalledTimes(1);
+    expect(startImportMock).toHaveBeenCalledTimes(1);
+  });
+
   it("falls back to a settings-unreadable panel when the stored form snapshot is malformed", async () => {
     const user = userEvent.setup();
     getActiveImportSessionMock.mockResolvedValue(

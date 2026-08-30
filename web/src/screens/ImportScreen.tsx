@@ -113,28 +113,47 @@ export default function ImportScreen() {
   const [resume, setResume] = useState<ResumeDecision>(NO_RESUME);
   const [resumeChecked, setResumeChecked] = useState(false);
   const discardingRef = useRef(false);
+  const resumingRef = useRef(false);
 
+  /**
+   * Ask the vault what session is open, on mount and on every return to the
+   * form.
+   *
+   * Re-checking matters because the vault can hold a session the screen has
+   * already forgotten: a swallowed final /complete, or a restart whose
+   * discard failed before the create 409'd. Without it, Back lands on a
+   * blank form whose Import button 409s until the route is remounted.
+   *
+   * `phase` is the only dependency and nothing here writes it, so this
+   * cannot loop; the early return keeps it from running against a session
+   * an import is currently using.
+   */
   useEffect(() => {
+    if (phase !== "form") return;
     let cancelled = false;
     void (async () => {
       try {
         const session = await getActiveImportSession();
         const stat = session?.staging_dir ? await probePath(session.staging_dir) : null;
         const folderExists = Boolean(stat?.exists && stat.isDirectory);
-        if (!cancelled) {
+        // A resume or discard that started while this was in flight owns
+        // the decision -- a stale answer must not put the panel back.
+        if (!cancelled && !resumingRef.current && !discardingRef.current) {
           setResume(resumeDecisionFor({ session, deviceId: getDeviceId(), folderExists }));
         }
       } catch {
         // A vault that cannot answer is not a reason to block the form.
-        if (!cancelled) setResume(NO_RESUME);
+        if (!cancelled && !resumingRef.current && !discardingRef.current) setResume(NO_RESUME);
       } finally {
+        // Only the first check gates what renders; a later one must not
+        // blank the form while it runs.
         if (!cancelled) setResumeChecked(true);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [phase]);
 
   /** Populate the visible form from a resumed or restarted session's settings. */
   function applyRestoredFormState(restored: ReturnType<typeof restoreFormFromSnapshot>): void {
@@ -164,7 +183,7 @@ export default function ImportScreen() {
 
   async function handleDiscardResume(): Promise<void> {
     const session = resume.session;
-    if (!session || discardingRef.current) return;
+    if (!session || discardingRef.current || resumingRef.current) return;
     discardingRef.current = true;
     try {
       await discardImportSession(session.id);
@@ -179,37 +198,47 @@ export default function ImportScreen() {
 
   async function handleResumeAction(): Promise<void> {
     if (resume.kind === "none" || !resume.session) return;
-    const session = resume.session;
-    const restoredForm = restoreFormFromSnapshot(session.form);
-    if (!restoredForm) {
-      // The staging folder is present -- the decision only reached here
-      // because it is -- so folder_missing's copy would be false. This
-      // kind exists solely for this screen to construct.
-      setResume({ kind: "settings_unreadable", canResume: false, session });
-      return;
-    }
-    applyRestoredFormState(restoredForm);
-
-    if (resume.kind === "resume_push") {
-      if (!session.staging_dir) return; // resumeDecisionFor guarantees this; defensive only.
-      setResume(NO_RESUME);
-      await startImport(restoredForm, { sessionId: session.id, stagingDir: session.staging_dir });
-      return;
-    }
-
-    // Restart: a fresh extract writes into a new staging folder, and the
-    // vault allows only one live session per account, so give up the old
-    // one before starting the new run. setResume stays put until right
-    // before startImport, so the panel (not a blank form) covers the
-    // discard round trip.
+    // The panel deliberately stays mounted across the discard round trip
+    // below, so without this a second click would run two discards, two
+    // startImport calls (the second 409s), and two extracts racing one set
+    // of screen state.
+    if (resumingRef.current || discardingRef.current) return;
+    resumingRef.current = true;
     try {
-      await discardImportSession(session.id);
-    } catch {
-      // Best effort -- if the vault is unreachable the create call below
-      // surfaces its own error the same as any other failed import start.
+      const session = resume.session;
+      const restoredForm = restoreFormFromSnapshot(session.form);
+      if (!restoredForm) {
+        // The staging folder is present -- the decision only reached here
+        // because it is -- so folder_missing's copy would be false. This
+        // kind exists solely for this screen to construct.
+        setResume({ kind: "settings_unreadable", canResume: false, session });
+        return;
+      }
+      applyRestoredFormState(restoredForm);
+
+      if (resume.kind === "resume_push") {
+        if (!session.staging_dir) return; // resumeDecisionFor guarantees this; defensive only.
+        setResume(NO_RESUME);
+        await startImport(restoredForm, { sessionId: session.id, stagingDir: session.staging_dir });
+        return;
+      }
+
+      // Restart: a fresh extract writes into a new staging folder, and the
+      // vault allows only one live session per account, so give up the old
+      // one before starting the new run. setResume stays put until right
+      // before startImport, so the panel (not a blank form) covers the
+      // discard round trip.
+      try {
+        await discardImportSession(session.id);
+      } catch {
+        // Best effort -- if the vault is unreachable the create call below
+        // surfaces its own error the same as any other failed import start.
+      }
+      setResume(NO_RESUME);
+      await startImport(restoredForm);
+    } finally {
+      resumingRef.current = false;
     }
-    setResume(NO_RESUME);
-    await startImport(restoredForm);
   }
 
   useEffect(() => {
