@@ -58,7 +58,7 @@ pub fn estimate_bytes(
 ) -> u64 {
     let ext = ext.to_ascii_lowercase();
     let ext = ext.as_str();
-    if skipped_as_efficient(ext, probe, mode, compress) {
+    if untouched_by(ext, mode) || skipped_as_efficient(ext, probe, mode, compress) {
         return size_bytes;
     }
     let factor = format_factor(ext, probe, mode);
@@ -481,6 +481,25 @@ mod tests {
                 LIMIT
             ),
             SizeVerdict::ProbablyTooBig
+        );
+    }
+
+    #[test]
+    fn estimate_bytes_agrees_with_classify_probed_that_convert_leaves_jpeg_alone() {
+        // classify_probed's untouched_by guard already keeps a big Convert-mode
+        // JPEG ProbablyTooBig rather than LikelyFits; estimate_bytes must say
+        // the same size, not silently apply format_factor's 0.7 "already
+        // JPEG" compress-mode shrink to a file Convert never touches.
+        let size = 55 * 1024 * 1024;
+        assert_eq!(
+            estimate_bytes(
+                size,
+                None,
+                "jpg",
+                MediaMode::Convert,
+                &CompressOptions::default()
+            ),
+            size
         );
     }
 

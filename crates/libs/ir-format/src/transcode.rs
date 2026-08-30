@@ -84,7 +84,11 @@ const IN_PROGRESS_SUFFIX: &str = ".in_progress";
 /// (`{local-date}-{digest16}{ext}`), whose stem never ends in `-mv`: `m` and
 /// `v` are not hex digits. That makes this suffix an unambiguous "already
 /// done" marker no staged original can wear by coincidence.
-const COMMITTED_SUFFIX: &str = "-mv";
+///
+/// `pub(crate)`: shared with `staging_summary`, which must judge a committed
+/// derivative on its own size rather than forecast a transcode that
+/// `pending_in` will never queue for it again.
+pub(crate) const COMMITTED_SUFFIX: &str = "-mv";
 
 /// What the media pass should do.
 #[derive(Debug, Clone)]
