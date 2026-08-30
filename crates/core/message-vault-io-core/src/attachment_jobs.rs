@@ -7,7 +7,7 @@ use message_ir::IrAttachment;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// File and byte counts emitted after each attachment job (and once for skip).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,6 +141,20 @@ pub fn run_attachment_jobs(
     Ok(())
 }
 
+/// Monotonic counter distinguishing concurrent temp files.
+///
+/// The final name is content-addressed, so two workers staging identical
+/// bytes produce the same `dest` — that is fine, the second rename is a
+/// no-op overwrite of identical bytes — but they must not share a temp path
+/// mid-write, or one worker's rename pulls the file out from under the
+/// other's still-open write.
+static CLONE_TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn next_clone_temp_name(name: &str) -> String {
+    let seq = CLONE_TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("{name}.{seq}.tmp")
+}
+
 fn persist_clone(
     job: &mut AttachmentJob<'_>,
     attachments_dir: &Path,
@@ -151,7 +165,7 @@ fn persist_clone(
     let secs = job.timestamp_unix_ms.div_euclid(1000);
     let name = attachment_dest_name(secs, &digest_hex, &ext);
     let dest = attachments_dir.join(&name);
-    let tmp = attachments_dir.join(format!("{name}.tmp"));
+    let tmp = attachments_dir.join(next_clone_temp_name(&name));
     fs::write(&tmp, bytes).map_err(|e| format!("write {}: {e}", tmp.display()))?;
     fs::rename(&tmp, &dest).map_err(|e| format!("rename {}: {e}", dest.display()))?;
     job.attachment.path = Some(format!("attachments/{name}"));
@@ -619,5 +633,16 @@ mod tests {
             lines.lock().unwrap().is_empty(),
             "clone mode runs no media pass, so it has nothing to report"
         );
+    }
+    #[test]
+    fn clone_temp_paths_are_unique_per_call() {
+        // Two workers staging identical bytes land on the same
+        // content-addressed dest, which is harmless, but they must not share
+        // the temp path they write through on the way there.
+        let a = next_clone_temp_name("x.jpg");
+        let b = next_clone_temp_name("x.jpg");
+        assert_ne!(a, b);
+        assert!(a.starts_with("x.jpg."));
+        assert!(a.ends_with(".tmp"));
     }
 }
