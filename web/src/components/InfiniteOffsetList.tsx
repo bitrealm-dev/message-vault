@@ -12,16 +12,13 @@ import {
 import { ListBox, ListBoxItem, ListLayout, Virtualizer } from "react-aria-components";
 import { groupByLetter } from "../lib/contactSort";
 import { isTauri } from "../lib/tauri-check";
-import { listRowDividersThin } from "../lib/tw";
-import { formatVisibleRange, listActivitySuffix } from "../lib/usePagedList";
+import { listRowDividersThin, resizeHandleGutter } from "../lib/tw";
+import { formatVisibleRange } from "../lib/usePagedList";
 import ListRangeHeader from "./ListRangeHeader";
+import ListRangePill, { RANGE_PILL_OVERLAY_INSET, RANGE_PILL_SCROLL_PAD } from "./ListRangePill";
 import VirtualList, { type VisibleRange } from "./VirtualList";
 
 const NEAR_END_THRESHOLD = 10;
-/** Room under the last row so the floating range pill does not cover contacts. */
-const RANGE_PILL_SCROLL_PAD = 56;
-/** Viewport pixels covered by the chip (`bottom-3` + pill). Used so range math ignores the overlay. */
-const RANGE_PILL_OVERLAY_INSET = 40;
 
 type InfiniteOffsetListProps<T> = {
   items: T[];
@@ -204,7 +201,7 @@ function RacVirtualList<T extends object>({
         selectionBehavior="replace"
         selectedKeys={selectedId ? new Set([selectedId]) : new Set()}
         onScroll={onScroll}
-        className="min-h-0 flex-1 overflow-auto outline-none"
+        className={`min-h-0 flex-1 overflow-auto outline-none ${resizeHandleGutter}`}
         style={{
           display: "block",
           paddingTop: 0,
@@ -422,7 +419,11 @@ function SectionedLetterList<T>({
   }
 
   return (
-    <div ref={scrollerRef} className="min-h-0 flex-1 overflow-auto" onScroll={onScroll}>
+    <div
+      ref={scrollerRef}
+      className={`min-h-0 flex-1 overflow-auto ${resizeHandleGutter}`}
+      onScroll={onScroll}
+    >
       {groups.map(([letter, groupItems]) => (
         <section key={letter} aria-label={`Names starting with ${letter}`}>
           {letter !== currentLetter ? (
@@ -496,8 +497,6 @@ export default function InfiniteOffsetList<T extends object>({
     loading && items.length === 0
       ? "Loading…"
       : formatVisibleRange(visibleRange.start, visibleRange.end, denom, items.length);
-
-  const activitySuffix = listActivitySuffix(refreshing, filling);
 
   const firstVisibleIndex = visibleRange.start > 0 ? visibleRange.start - 1 : 0;
   const firstVisible = items[firstVisibleIndex];
@@ -574,15 +573,12 @@ export default function InfiniteOffsetList<T extends object>({
         <TanStackVirtualList {...listProps} />
       )}
       {showRangePill ? (
-        <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
-          <span
-            data-testid="contact-list-range-pill"
-            className="rounded-full border border-border bg-elevated px-2.5 py-1 text-[0.688rem] tabular-nums text-text shadow-[0_2px_10px_rgba(0,0,0,0.18)]"
-          >
-            {rangeLabel}
-            {activitySuffix}
-          </span>
-        </div>
+        <ListRangePill
+          rangeLabel={rangeLabel}
+          refreshing={refreshing}
+          filling={filling}
+          testId="contact-list-range-pill"
+        />
       ) : null}
     </div>
   );

@@ -2745,7 +2745,7 @@
         "tags": [
           "Conversations"
         ],
-        "summary": "Page through conversations (newest first) with participants, message\ncounts, and tags.",
+        "summary": "Page through conversations with participants, message counts, and tags.\nOrdered by most recent activity unless `sort` and `order` say otherwise.",
         "operationId": "conversations_list_handler",
         "parameters": [
           {
@@ -2775,6 +2775,24 @@
             "schema": {
               "type": "integer",
               "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Order by `date` (last message, default) or `messages` (message count)",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "description": "`asc` or `desc` (default)",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ],
