@@ -3808,6 +3808,291 @@
         ]
       }
     },
+    "/v1/saved-searches": {
+      "get": {
+        "tags": [
+          "Saved searches"
+        ],
+        "summary": "List the account's saved searches, A–Z.",
+        "operationId": "saved_searches_list_handler",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedSearchesListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Saved searches"
+        ],
+        "summary": "Create a saved search and return it with the updated list.",
+        "operationId": "saved_searches_create_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavedSearchBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedSearchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/saved-searches/{id}": {
+      "delete": {
+        "tags": [
+          "Saved searches"
+        ],
+        "summary": "Delete a saved search and return the updated list.",
+        "description": "Deleting an import-created saved search removes the shortcut only. The\n`vault_imports` row it pointed at is the account's permanent record of that\nrun and is never touched here.",
+        "operationId": "saved_searches_delete_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Saved search id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedSearchDeleteResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "Saved searches"
+        ],
+        "summary": "Replace a saved search's name and query, and return the updated list.",
+        "operationId": "saved_searches_update_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Saved search id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavedSearchBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedSearchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/thread-tags": {
       "get": {
         "tags": [
@@ -6896,6 +7181,104 @@
           "ok": {
             "type": "boolean",
             "description": "Always true when a response is returned."
+          }
+        }
+      },
+      "SavedSearch": {
+        "type": "object",
+        "description": "One row of `saved_searches`.",
+        "required": [
+          "id",
+          "name",
+          "query",
+          "kind"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Saved search id, unique across the vault."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`manual` or `import`."
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name, unique per account."
+          },
+          "query": {
+            "type": "string",
+            "description": "Query string, run against the conversation list."
+          }
+        }
+      },
+      "SavedSearchBody": {
+        "type": "object",
+        "description": "A saved search's name and query.",
+        "required": [
+          "name",
+          "query"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          }
+        }
+      },
+      "SavedSearchDeleteResponse": {
+        "type": "object",
+        "description": "The updated list after deletion.",
+        "required": [
+          "ok",
+          "savedSearches"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "savedSearches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SavedSearch"
+            }
+          }
+        }
+      },
+      "SavedSearchResponse": {
+        "type": "object",
+        "description": "The affected saved search plus the updated list.",
+        "required": [
+          "savedSearch",
+          "savedSearches"
+        ],
+        "properties": {
+          "savedSearch": {
+            "$ref": "#/components/schemas/SavedSearch"
+          },
+          "savedSearches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SavedSearch"
+            }
+          }
+        }
+      },
+      "SavedSearchesListResponse": {
+        "type": "object",
+        "description": "The account's saved searches, A–Z.",
+        "required": [
+          "savedSearches"
+        ],
+        "properties": {
+          "savedSearches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SavedSearch"
+            }
           }
         }
       },

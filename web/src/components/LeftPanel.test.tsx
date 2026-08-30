@@ -10,6 +10,9 @@ const profileState = vi.hoisted(() => ({
   profile: null as object | null,
 }));
 const tauriState = vi.hoisted(() => ({ isTauri: false }));
+const savedSearchState = vi.hoisted(() => ({
+  savedSearches: [] as { id: number; name: string; query: string; kind: string }[],
+}));
 
 vi.mock("../lib/useAccountProfile", () => ({
   useAccountProfile: () => ({ profile: profileState.profile }),
@@ -27,6 +30,13 @@ vi.mock("../lib/tauri-check", () => ({
   isTauri: () => tauriState.isTauri,
 }));
 
+vi.mock("../lib/savedSearches", () => ({
+  useSavedSearches: () => ({ savedSearches: savedSearchState.savedSearches }),
+  createSavedSearch: vi.fn(),
+  updateSavedSearch: vi.fn(),
+  deleteSavedSearch: vi.fn(),
+}));
+
 afterEach(() => {
   cleanup();
 });
@@ -35,6 +45,7 @@ beforeEach(() => {
   localStorage.clear();
   profileState.profile = null;
   tauriState.isTauri = false;
+  savedSearchState.savedSearches = [];
 });
 
 function renderPanel(initialEntries?: string[]) {
@@ -62,10 +73,9 @@ describe("LeftPanel", () => {
   });
 
   it("indents named saved searches like nested group rows", () => {
-    localStorage.setItem(
-      "mv-saved-groups",
-      JSON.stringify([{ id: "g1", name: "From Alice", query: "from:alice" }]),
-    );
+    savedSearchState.savedSearches = [
+      { id: 1, name: "From Alice", query: "from:alice", kind: "manual" },
+    ];
     renderPanel();
     const alice = screen.getByRole("button", { name: "From Alice" });
     expect(alice.className).toContain("pl-[calc(15px+0.5rem)]");
@@ -74,10 +84,9 @@ describe("LeftPanel", () => {
   });
 
   it("closes the saved-search options menu on Escape", async () => {
-    localStorage.setItem(
-      "mv-saved-groups",
-      JSON.stringify([{ id: "g1", name: "From Alice", query: "from:alice" }]),
-    );
+    savedSearchState.savedSearches = [
+      { id: 1, name: "From Alice", query: "from:alice", kind: "manual" },
+    ];
     const user = userEvent.setup();
     renderPanel();
     await user.click(screen.getByRole("button", { name: "Saved search options for From Alice" }));

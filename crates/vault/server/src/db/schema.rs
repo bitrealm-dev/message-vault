@@ -26,6 +26,7 @@ const ACCOUNTS_DDL: &str = include_str!("../../../../../schema/sql/accounts.sql"
 const MESSAGE_TABLES_DDL: &str = include_str!("../../../../../schema/sql/messages.sql");
 const STAGING_TABLES_DDL: &str = include_str!("../../../../../schema/sql/staging.sql");
 const CONTACTS_TABLES_DDL: &str = include_str!("../../../../../schema/sql/contacts.sql");
+const SAVED_SEARCHES_DDL: &str = include_str!("../../../../../schema/sql/saved_searches.sql");
 const FTS_VIRTUAL_DDL: &str = include_str!("../../../../../schema/sql/fts_virtual.sql");
 const DROP_MESSAGES_FTS_TRIGGERS_SQL: &str =
     include_str!("../../../../../schema/sql/fts_triggers_drop.sql");
@@ -45,6 +46,7 @@ const PG_ACCOUNTS_DDL: &str = include_str!("../../../../../schema/sql/pg_account
 const PG_MESSAGE_TABLES_DDL: &str = include_str!("../../../../../schema/sql/pg_messages.sql");
 const PG_STAGING_TABLES_DDL: &str = include_str!("../../../../../schema/sql/pg_staging.sql");
 const PG_CONTACTS_TABLES_DDL: &str = include_str!("../../../../../schema/sql/pg_contacts.sql");
+const PG_SAVED_SEARCHES_DDL: &str = include_str!("../../../../../schema/sql/pg_saved_searches.sql");
 /// Postgres FKs that reference tables created by a later DDL file (applied
 /// last, see `schema/sql/pg_fks.sql`).
 const PG_FKS_DDL: &str = include_str!("../../../../../schema/sql/pg_fks.sql");
@@ -53,7 +55,7 @@ const PG_FKS_DDL: &str = include_str!("../../../../../schema/sql/pg_fks.sql");
 /// `PRAGMA user_version`. Bump this whenever any `schema/sql/*.sql` file
 /// changes; a database at any other version is rebuilt empty (see
 /// [`migrate_vault_schema`]).
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 /// Bring the database to [`SCHEMA_VERSION`].
 ///
@@ -152,6 +154,7 @@ async fn apply_vault_ddl(conn: &mut AnyConnection) -> Result<()> {
     execute_batch(conn, CONTACTS_TABLES_DDL).await?;
     execute_batch(conn, MESSAGE_TABLES_DDL).await?;
     execute_batch(conn, STAGING_TABLES_DDL).await?;
+    execute_batch(conn, SAVED_SEARCHES_DDL).await?;
     ensure_messages_fts(conn).await?;
     Ok(())
 }
@@ -160,12 +163,13 @@ async fn apply_vault_ddl(conn: &mut AnyConnection) -> Result<()> {
 /// vault installs it. The installer, the rebuild's drop list, and the drift
 /// guard all read this one array, so a new DDL file cannot reach one of them
 /// and miss the others.
-const PG_VAULT_TABLE_DDL: [&str; 4] = [
+const PG_VAULT_TABLE_DDL: [&str; 5] = [
     PG_ACCOUNTS_DDL,
     // Contacts before messages: the messages DDL references contact tables.
     PG_CONTACTS_TABLES_DDL,
     PG_MESSAGE_TABLES_DDL,
     PG_STAGING_TABLES_DDL,
+    PG_SAVED_SEARCHES_DDL,
 ];
 
 /// Every table name the embedded Postgres DDL creates, parsed from the DDL

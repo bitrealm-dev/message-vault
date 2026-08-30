@@ -2,13 +2,12 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { canUseImportExportWithProfile } from "../lib/desktopFeatures";
 import {
-  addGroup,
-  listGroups,
-  removeGroup,
-  SAVED_GROUPS_CHANGED_EVENT,
-  type SavedGroup,
-  updateGroup,
-} from "../lib/savedGroups";
+  createSavedSearch,
+  deleteSavedSearch,
+  type SavedSearch,
+  updateSavedSearch,
+  useSavedSearches,
+} from "../lib/savedSearches";
 import { isTauri } from "../lib/tauri-check";
 import { resizeHandleGutter } from "../lib/tw";
 import { useAccountProfile } from "../lib/useAccountProfile";
@@ -36,7 +35,7 @@ import {
   navGlyphRowClass,
 } from "./navSectionLayout";
 import PopupMenu from "./PopupMenu";
-import SavedGroupForm from "./SavedGroupForm";
+import SavedSearchForm from "./SavedSearchForm";
 import ThreadTagsNav from "./ThreadTagsNav";
 import { useColumnResize } from "./useColumnResize";
 
@@ -151,19 +150,13 @@ export default function LeftPanel({
     return location.pathname.startsWith(path);
   }
 
-  const [groups, setGroups] = useState(() => listGroups());
+  const { savedSearches: groups } = useSavedSearches();
   const [showGroupForm, setShowGroupForm] = useState(false);
-  const [editFor, setEditFor] = useState<SavedGroup | null>(null);
-  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [editFor, setEditFor] = useState<SavedSearch | null>(null);
+  const [menuFor, setMenuFor] = useState<number | null>(null);
   const savedSearchMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const { groups: contactGroups } = useContactGroups();
   const { tags: threadTags } = useThreadTags();
-
-  useEffect(() => {
-    const refresh = () => setGroups(listGroups());
-    globalThis.addEventListener(SAVED_GROUPS_CHANGED_EVENT, refresh);
-    return () => globalThis.removeEventListener(SAVED_GROUPS_CHANGED_EVENT, refresh);
-  }, []);
 
   return (
     <div
@@ -242,7 +235,7 @@ export default function LeftPanel({
 
         <GroupsNav groups={contactGroups} />
 
-        {/* Named search queries stored in the browser. Not contact membership. */}
+        {/* Named search queries stored in the vault. Not contact membership. */}
         <NavCollapsibleSection
           id="saved-searches"
           title="Saved Searches"
@@ -318,8 +311,7 @@ export default function LeftPanel({
                       {
                         label: "Delete",
                         onSelect: () => {
-                          removeGroup(g.id);
-                          setGroups(listGroups());
+                          void deleteSavedSearch(g.id);
                         },
                       },
                     ]}
@@ -334,22 +326,20 @@ export default function LeftPanel({
       </div>
 
       {showGroupForm ? (
-        <SavedGroupForm
+        <SavedSearchForm
           onSave={(name, query) => {
-            addGroup(name, query);
-            setGroups(listGroups());
+            void createSavedSearch(name, query);
             setShowGroupForm(false);
           }}
           onCancel={() => setShowGroupForm(false)}
         />
       ) : null}
       {editFor ? (
-        <SavedGroupForm
+        <SavedSearchForm
           key={editFor.id}
           initial={{ name: editFor.name, query: editFor.query }}
           onSave={(name, query) => {
-            updateGroup(editFor.id, name, query);
-            setGroups(listGroups());
+            void updateSavedSearch(editFor.id, name, query);
             setEditFor(null);
           }}
           onCancel={() => setEditFor(null)}

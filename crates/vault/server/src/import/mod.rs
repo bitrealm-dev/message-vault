@@ -981,6 +981,8 @@ pub(crate) async fn imports_complete_handler(
             },
         )?;
 
+    create_import_saved_search(&mut conn, &account, &row).await;
+
     Ok(Json(CompleteImportResponse {
         ok: true,
         id: row.id,
@@ -989,6 +991,53 @@ pub(crate) async fn imports_complete_handler(
         attachment_count: row.attachment_count,
         bytes_uploaded: row.bytes_uploaded,
     }))
+}
+
+/// Add the sidebar shortcut to the messages this run brought in.
+///
+/// Only runs that stored something get one: a saved search matching nothing is
+/// worse than no saved search, and a run that stored nothing is still visible
+/// in Import History either way.
+///
+/// The shortcut is a convenience, not a record, so a failure here is logged and
+/// the import still reports success. The person may delete the saved search
+/// afterwards; the `vault_imports` row it points at is permanent.
+async fn create_import_saved_search(
+    conn: &mut sqlx::AnyConnection,
+    account_id: &str,
+    row: &crate::db::vault_imports::VaultImportRow,
+) {
+    if row.message_count <= 0 {
+        return;
+    }
+    let date_ymd = import_date_ymd(row);
+    if let Err(e) = crate::db::saved_searches::create_for_import(
+        conn,
+        account_id,
+        row.id,
+        &row.source,
+        &date_ymd,
+    )
+    .await
+    {
+        eprintln!(
+            "warning: import {} stored {} messages but its saved search could not be created: {e:?}",
+            row.id, row.message_count
+        );
+    }
+}
+
+/// Calendar date to name an import's saved search after: the day the run
+/// finished, falling back to the day it started, then to today. All three are
+/// UTC, because that is what `vault_imports` stores.
+fn import_date_ymd(row: &crate::db::vault_imports::VaultImportRow) -> String {
+    row.finished_at
+        .as_deref()
+        .or(Some(row.started_at.as_str()))
+        .and_then(|ts| ts.get(..10))
+        .filter(|d| d.len() == 10)
+        .map(str::to_string)
+        .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string())
 }
 
 fn parse_summary_json(summary_json: Option<String>) -> serde_json::Value {
