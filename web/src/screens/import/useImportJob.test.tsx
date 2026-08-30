@@ -22,7 +22,7 @@ import type {
   StagingSummary,
   TauriJobResult,
 } from "../../lib/tauri";
-import type { AttachmentMediaMode } from "../../lib/types";
+import type { AttachmentMediaMode, ImportIssueEvent, ImportProgressEvent } from "../../lib/types";
 import { gateDelta } from "./gateDelta";
 
 const runMock = vi.fn<(fn: () => Promise<unknown>) => Promise<TauriJobResult>>();
@@ -39,6 +39,22 @@ const probeFfmpegToolsMock = vi.fn<(dir: string | null) => Promise<FfmpegToolsPr
 const setImportStageMock = vi.fn();
 const discardImportSessionMock = vi.fn();
 
+/**
+ * `onExtractEvents` stands in for the real Tauri event listener. Its default
+ * implementation just captures the callbacks it was given (so a test can
+ * fire `onProgress` manually to simulate an event arriving mid-call) and
+ * resolves to a no-op unlisten function — every summarize call site now
+ * subscribes and unsubscribes around its `invokeSummarizeStaging`, so this
+ * has to resolve for those call sites to complete at all.
+ */
+let lastExtractEventCallbacks: { onProgress?: (event: ImportProgressEvent) => void } | null = null;
+const onExtractEventsMock = vi.fn(
+  async (callbacks: { onProgress?: (event: ImportProgressEvent) => void }) => {
+    lastExtractEventCallbacks = callbacks;
+    return () => {};
+  },
+);
+
 vi.mock("../../lib/tauri", () => ({
   invokeExtract: (...args: unknown[]) => invokeExtractMock(...args),
   invokePush: (...args: unknown[]) => invokePushMock(...args),
@@ -47,6 +63,8 @@ vi.mock("../../lib/tauri", () => ({
   invokeTranscodeStaging: (...args: unknown[]) => invokeTranscodeStagingMock(...args),
   invokeDeleteStaging: (...args: unknown[]) => invokeDeleteStagingMock(...args),
   probeFfmpegTools: (...args: [string | null]) => probeFfmpegToolsMock(...args),
+  onExtractEvents: (...args: [{ onProgress?: (event: ImportProgressEvent) => void }]) =>
+    onExtractEventsMock(...args),
 }));
 
 vi.mock("../../hooks/useTauriJob", () => ({
@@ -102,6 +120,22 @@ const { useImportJob, restoreFormFromSnapshot, parseStoredStagingSummary } = awa
 function runResult(result: TauriJobResult) {
   return async (fn: () => Promise<unknown>) => {
     await fn();
+    return result;
+  };
+}
+
+/**
+ * Like `runResult`, but also fires `onIssue` — the real `useTauriJob` does
+ * this from the job's own event stream, which the mock above otherwise never
+ * exercises. Needed to simulate a push that reports a skip.
+ */
+function runResultWithIssue(result: TauriJobResult, issue: ImportIssueEvent) {
+  return async (
+    fn: () => Promise<unknown>,
+    options?: { onIssue?: (event: ImportIssueEvent) => void },
+  ) => {
+    await fn();
+    options?.onIssue?.(issue);
     return result;
   };
 }
@@ -270,6 +304,26 @@ describe("useImportJob wiring", () => {
     expect(invokeTranscodeStagingMock).toHaveBeenCalled();
     expect(result.current.phase).toBe("gate_2");
     expect(invokePushMock).not.toHaveBeenCalled();
+  });
+
+  it("routes a progress event arriving during summarize to the staging row", async () => {
+    // W6: `summarize_staging` (Rust) emits `extract:progress` with
+    // `step: "prepare"` while it walks a big folder, but nothing used to
+    // subscribe, so those events had nowhere to go and a huge folder's gate
+    // looked frozen. The mocked `invokeSummarizeStaging` fires one here,
+    // mid-call, through the callbacks `onExtractEvents` was given — exactly
+    // what the real Tauri event stream would do.
+    invokeSummarizeStagingMock.mockReset();
+    invokeSummarizeStagingMock.mockImplementationOnce(async () => {
+      lastExtractEventCallbacks?.onProgress?.({ step: "prepare", done: 50, total: 200 });
+      return stagingSummary();
+    });
+    const { result } = renderHook(() => useImportJob());
+    await act(() => result.current.startImport(form({ attachmentMedia: "copy" })));
+
+    expect(result.current.phase).toBe("gate_1");
+    // "Copy to staging" is row 1 in every mode (attachments/prepare share it).
+    expect(result.current.steps[1]?.detail).toBe("Preparing 50/200");
   });
 
   it("uploads straight from the first gate under copy, because there is no second one", async () => {
@@ -491,10 +545,51 @@ describe("useImportJob wiring", () => {
     expect(completeCall).toBeDefined();
   });
 
+  it("does not strand the folder when the post-extract summarize fails right after a successful extract", async () => {
+    // W8: extract succeeds and stages hours of work, but the summarize call
+    // that follows it (on the way to Gate 1) fails. Routing that through
+    // finishImport would post /complete and end the session, orphaning the
+    // staged folder with no way back to it. This must behave like the
+    // gate-resume recompute failure instead: no /complete, no phase "done",
+    // back to the form with the error on resumeError so the next visit's
+    // resume check re-finds the same session (stage awaiting_gate_1) and
+    // offers it again.
+    invokeSummarizeStagingMock.mockRejectedValueOnce(new Error("disk full"));
+    const { result } = renderHook(() => useImportJob());
+    await act(() => result.current.startImport(form({ attachmentMedia: "convert" })));
+
+    expect(result.current.phase).toBe("form");
+    expect(result.current.resumeError).toBe("disk full");
+    const completeCall = postMock.mock.calls.find(([path]) => path === "/v1/imports/1/complete");
+    expect(completeCall).toBeUndefined();
+    // The stage write that already happened before the failing summarize
+    // call stands -- nothing here regresses or overwrites it.
+    expect(setImportStageMock).toHaveBeenCalledWith(1, "awaiting_gate_1", undefined);
+  });
+
+  it("extract's own failure is unaffected by the summarize fix -- it still completes as failed", async () => {
+    runMock.mockReset();
+    runMock.mockImplementationOnce(async () => {
+      throw new Error("backup file not found");
+    });
+    const { result } = renderHook(() => useImportJob());
+    await act(() => result.current.startImport(form({ attachmentMedia: "convert" })));
+
+    expect(result.current.phase).toBe("done");
+    expect(result.current.summaryView?.status).toBe("failed");
+    const completeCall = postMock.mock.calls.find(([path]) => path === "/v1/imports/1/complete");
+    expect(completeCall).toBeDefined();
+  });
+
   it("a failed recompute after a successful media pass is a failed import, not an unhandled rejection", async () => {
     runMock.mockImplementationOnce(
       runResult({ summary: "Transcode finished.", transcode: undefined }),
     );
+    // The first summarize call is `startImport`'s own, on the way to Gate 1
+    // — that one must succeed so this pins the *media pass's* recompute
+    // failure specifically (W8 gave the Gate-1-bound call its own, milder
+    // failure path: see the "does not strand the folder" test below).
+    invokeSummarizeStagingMock.mockResolvedValueOnce(stagingSummary());
     invokeSummarizeStagingMock.mockRejectedValueOnce(new Error("disk full"));
     const { result } = renderHook(() => useImportJob());
     await act(() => result.current.startImport(form({ attachmentMedia: "convert" })));
@@ -770,6 +865,64 @@ describe("useImportJob resume path", () => {
       expect(step.durationMs).toBeUndefined();
     }
     expect(result.current.steps[2]).toMatchObject({ label: "Upload to vault" });
+  });
+
+  it("resumed push: a skip matching the stored plan's forecast completes clean", async () => {
+    // B3: `resume.approved` — the plan parsed from the session's stored
+    // `summary` — must reach `runPush`/`finishImport` on the resume path, or
+    // an expected omission (already flagged `probably_too_big` at the last
+    // gate) reads as unexplained and demotes an honest "completed" verdict to
+    // "completed_with_issues" for exactly the interrupted-and-resumed case.
+    runMock.mockImplementation(
+      runResultWithIssue(
+        { summary: "Push finished.", report: okReport() },
+        { kind: "skip", step: "upload", item: "attachments/big.mov", reason: "too_large" },
+      ),
+    );
+    const approved = stagingSummary({
+      forecasts: [
+        {
+          path: "attachments/big.mov",
+          name: "big.mov",
+          sizeBytes: 900_000_000,
+          estimateBytes: 900_000_000,
+          verdict: "probably_too_big",
+        },
+      ],
+    });
+    const { result } = renderHook(() => useImportJob());
+
+    await act(async () => {
+      await result.current.startImport(baseForm, {
+        sessionId: 99,
+        stagingDir: "/home/u/message-vault/staging-260830",
+        approved,
+      });
+    });
+
+    expect(result.current.summaryView?.status).toBe("completed");
+  });
+
+  it("resumed push with no stored plan: the same skip reads as unexplained", async () => {
+    // The control case: without `approved`, the identical skip has nothing
+    // to be diffed against and must still demote the verdict — pinning that
+    // the fix is the plan reaching runPush, not a change to importOutcome.
+    runMock.mockImplementation(
+      runResultWithIssue(
+        { summary: "Push finished.", report: okReport() },
+        { kind: "skip", step: "upload", item: "attachments/big.mov", reason: "too_large" },
+      ),
+    );
+    const { result } = renderHook(() => useImportJob());
+
+    await act(async () => {
+      await result.current.startImport(baseForm, {
+        sessionId: 99,
+        stagingDir: "/home/u/message-vault/staging-260830",
+      });
+    });
+
+    expect(result.current.summaryView?.status).toBe("completed_with_issues");
   });
 
   it("still posts /complete against the resumed session id", async () => {

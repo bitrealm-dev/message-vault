@@ -178,4 +178,9 @@ describe("GateTwoScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel this import" }));
     expect(onDecline).not.toHaveBeenCalled();
   });
+
+  it("keeps the singular file count correct in the lost-files line", () => {
+    render(<GateTwoScreen {...props({ delta: { lostCount: 1, hasChanges: true } })} />);
+    expect(screen.getByText("1 file will not be uploaded.")).toBeInTheDocument();
+  });
 });

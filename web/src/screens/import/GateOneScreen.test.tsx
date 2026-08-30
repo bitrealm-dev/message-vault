@@ -157,4 +157,49 @@ describe("GateOneScreen", () => {
     expect(screen.getByRole("button", { name: "Upload to vault" })).not.toBeDisabled();
     expect(screen.queryByText(/ffmpeg/i)).not.toBeInTheDocument();
   });
+
+  it("shows the over-limit breakdown under copy mode too, naming the limit instead of a media step", () => {
+    // Copy/skip has no media step, but decision 11's breakdown was only ever
+    // rendered when a verb existed — the exact verdicts on a copy-mode
+    // import (which files will not fit) were silently dropped.
+    render(
+      <GateOneScreen
+        {...props({
+          mode: "copy",
+          summary: {
+            verdictCounts: {
+              fitsAsIs: 3,
+              likelyFits: 0,
+              mayGrow: 0,
+              probablyTooBig: 2,
+              cannotProcess: 0,
+            },
+          },
+        })}
+      />,
+    );
+    expect(screen.getByText(/2 files — Probably still too big/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(/upload limit/i);
+    expect(screen.queryByText(/estimate/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps the breakdown's singular file count correct", () => {
+    render(
+      <GateOneScreen
+        {...props({
+          mode: "convert",
+          summary: {
+            verdictCounts: {
+              fitsAsIs: 0,
+              likelyFits: 0,
+              mayGrow: 0,
+              probablyTooBig: 1,
+              cannotProcess: 0,
+            },
+          },
+        })}
+      />,
+    );
+    expect(screen.getByText(/^1 file — /)).toBeInTheDocument();
+  });
 });

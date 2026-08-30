@@ -3,7 +3,7 @@ import { formatBytes } from "../../lib/attachmentProgressCopy";
 import type { SizeVerdict, StagingSummary } from "../../lib/tauri";
 import type { AttachmentMediaMode } from "../../lib/types";
 import type { GateDelta } from "./gateDelta";
-import { mediaJobVerb, verdictCopy } from "./gateForecast";
+import { mediaJobVerb, pluralFiles, verdictCopy } from "./gateForecast";
 
 interface DeltaRow {
   key: string;
@@ -26,9 +26,7 @@ function deltaRows(delta: GateDelta): DeltaRow[] {
         // Decision 45: this count cannot say why — crossing the size limit
         // and a conversion failure land here the same way — so the copy
         // states the effect, not a cause the data cannot support.
-        delta.lostCount > 0
-          ? `${delta.lostCount.toLocaleString()} files will not be uploaded.`
-          : "",
+        delta.lostCount > 0 ? `${pluralFiles(delta.lostCount)} will not be uploaded.` : "",
     },
     {
       key: "regressed",
@@ -37,14 +35,14 @@ function deltaRows(delta: GateDelta): DeltaRow[] {
           ? // Decision 45's other half: these were under the limit (or not
             // flagged at all) at the last check, and are now over. They
             // were processed — this is not "could not be processed".
-            `${regressed.length.toLocaleString()} files that were fine at the last check are now over the limit.`
+            `${pluralFiles(regressed.length)} that were fine at the last check are now over the limit.`
           : "",
     },
     {
       key: "cameOutFine",
       text:
         delta.cameOutFine > 0
-          ? `${delta.cameOutFine.toLocaleString()} files written off as too big came in under the limit after all.`
+          ? `${pluralFiles(delta.cameOutFine)} written off as too big came in under the limit after all.`
           : "",
     },
   ].filter((row) => row.text.length > 0);
@@ -68,7 +66,7 @@ function stillPendingRows(delta: GateDelta, mode: AttachmentMediaMode): DeltaRow
     const copy = verdictCopy(verdict, mode);
     return {
       key: `pending-${verdict}`,
-      text: `${count.toLocaleString()} files — ${copy.label}`,
+      text: `${pluralFiles(count)} — ${copy.label}`,
     };
   });
 }

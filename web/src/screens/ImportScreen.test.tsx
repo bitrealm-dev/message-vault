@@ -29,6 +29,7 @@ const cancelMock = vi.hoisted(() => vi.fn());
 const returnToFormMock = vi.hoisted(() => vi.fn());
 const getActiveImportSessionMock = vi.hoisted(() => vi.fn());
 const discardImportSessionMock = vi.hoisted(() => vi.fn());
+const invokeDeleteStagingMock = vi.hoisted(() => vi.fn());
 const invokePathStatMock = vi.hoisted(() => vi.fn());
 const apiPostMock = vi.hoisted(() => vi.fn());
 
@@ -81,6 +82,7 @@ vi.mock("../lib/tauri", () => ({
   invokeHomeDir: vi.fn().mockResolvedValue({ path: "/home/u", os: "linux" }),
   invokeIosBackupEncrypted: vi.fn().mockResolvedValue(null),
   invokePathStat: (...args: unknown[]) => invokePathStatMock(...args),
+  invokeDeleteStaging: (...args: unknown[]) => invokeDeleteStagingMock(...args),
 }));
 
 vi.mock("../lib/tauri-check", () => ({
@@ -214,6 +216,8 @@ describe("ImportScreen entering Import", () => {
     getActiveImportSessionMock.mockReset();
     discardImportSessionMock.mockReset();
     discardImportSessionMock.mockResolvedValue(undefined);
+    invokeDeleteStagingMock.mockReset();
+    invokeDeleteStagingMock.mockResolvedValue(undefined);
     invokePathStatMock.mockReset();
     invokePathStatMock.mockResolvedValue({ exists: true, isFile: false, isDirectory: true });
     apiPostMock.mockReset();
@@ -275,6 +279,54 @@ describe("ImportScreen entering Import", () => {
     await user.click(screen.getByText("discard-action"));
 
     expect(discardImportSessionMock).toHaveBeenCalledWith(7);
+    expect(await screen.findByTestId("import-form")).toBeInTheDocument();
+  });
+
+  it("also deletes the staging folder when discarding a this-device session", async () => {
+    // W7: declineGate already deletes the staging folder on decline
+    // (decision 16) -- a panel discard is the same operation reached
+    // through a different button, and used to only call
+    // discardImportSession, orphaning a potentially multi-GB folder.
+    const user = userEvent.setup();
+    getActiveImportSessionMock.mockResolvedValue(
+      session({
+        stage: "pushing",
+        device_id: "this-device",
+        staging_dir: "/home/u/message-vault/staging-260830",
+      }),
+    );
+    render(<ImportScreen />);
+
+    await screen.findByTestId("resume-panel");
+    await user.click(screen.getByText("discard-action"));
+
+    expect(discardImportSessionMock).toHaveBeenCalledWith(7);
+    expect(invokeDeleteStagingMock).toHaveBeenCalledWith({
+      staging_dir: "/home/u/message-vault/staging-260830",
+    });
+    expect(await screen.findByTestId("import-form")).toBeInTheDocument();
+  });
+
+  it("never touches disk when discarding another device's session", async () => {
+    // resumeDecisionFor routes an other-device session to "other_device",
+    // whose files are staged on that other install, not here -- deleting a
+    // local path with the same name would be wrong, or a no-op at best.
+    const user = userEvent.setup();
+    getActiveImportSessionMock.mockResolvedValue(
+      session({
+        stage: "pushing",
+        device_id: "another-device",
+        staging_dir: "/home/u/message-vault/staging-260830",
+      }),
+    );
+    render(<ImportScreen />);
+
+    await screen.findByTestId("resume-panel");
+    expect(screen.getByTestId("resume-kind")).toHaveTextContent("other_device");
+    await user.click(screen.getByText("discard-action"));
+
+    expect(discardImportSessionMock).toHaveBeenCalledWith(7);
+    expect(invokeDeleteStagingMock).not.toHaveBeenCalled();
     expect(await screen.findByTestId("import-form")).toBeInTheDocument();
   });
 

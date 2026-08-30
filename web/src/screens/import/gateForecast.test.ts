@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { forecastGroups, verdictCopy } from "./gateForecast";
+import { forecastGroups, pluralFiles, verdictCopy } from "./gateForecast";
+
+describe("pluralFiles", () => {
+  it("keeps the noun singular for exactly one file", () => {
+    expect(pluralFiles(1)).toBe("1 file");
+  });
+
+  it("pluralizes for zero and for more than one", () => {
+    expect(pluralFiles(0)).toBe("0 files");
+    expect(pluralFiles(2)).toBe("2 files");
+    expect(pluralFiles(1234)).toBe("1,234 files");
+  });
+});
 
 describe("verdictCopy", () => {
   it("says which job the estimate is about", () => {

@@ -29,6 +29,7 @@ import {
   invokePush,
   invokeSummarizeStaging,
   invokeTranscodeStaging,
+  onExtractEvents,
   type PushFinishedReport,
   probeFfmpegTools,
   type SizeVerdict,
@@ -243,6 +244,13 @@ export type ImportJobFormValues = {
 export type ResumePush = {
   sessionId: number;
   stagingDir: string;
+  /** The plan approved at the last gate this session passed, parsed from
+   * its stored `summary` (`parseStoredStagingSummary`). Undefined when the
+   * session recorded nothing usable — `runPush`/`finishImport` already
+   * tolerate that absence, they just can't diff a resumed push's expected
+   * omissions against it, which demotes an honest `completed` outcome to
+   * `completed_with_issues` for exactly the interrupted-and-resumed case. */
+  approved?: StagingSummary;
 };
 
 const ATTACHMENT_MEDIA_MODES: readonly AttachmentMediaMode[] = [
@@ -523,6 +531,30 @@ export function useImportJob() {
 
   function recordIssue(issue: ImportIssueEvent): void {
     issuesRef.current = [...issuesRef.current, issue];
+  }
+
+  /**
+   * `invokeSummarizeStaging`, with a listener on the same `extract:progress`
+   * channel the extract/media passes use. `summarize_staging` (Rust) emits
+   * progress on the `prepare` step while it walks a big folder — every call
+   * site used to invoke it directly with nothing subscribed, so those events
+   * had nowhere to go and a huge folder's gate looked frozen. `applyProgress`
+   * already knows what to do with a `prepare` step (Task 7's ruling: it
+   * drives the staging row that just finished, not a row of its own), so
+   * this just has to make sure the event reaches it.
+   */
+  async function summarizeStagingWithProgress(config: StagingConfig): Promise<StagingSummary> {
+    const unlisten = await onExtractEvents({
+      onLog: () => {},
+      onProgress: applyProgress,
+      onFinished: () => {},
+      onError: () => {},
+    });
+    try {
+      return await invokeSummarizeStaging(config);
+    } finally {
+      unlisten();
+    }
   }
 
   /** Form snapshot for the session record, without the secrets. */
@@ -857,7 +889,7 @@ export function useImportJob() {
 
     setComputingSummary(true);
     try {
-      const actual = await invokeSummarizeStaging({
+      const actual = await summarizeStagingWithProgress({
         staging_dir: outputDir,
         ...stagingMediaFields(form),
       });
@@ -933,7 +965,7 @@ export function useImportJob() {
           ),
         );
 
-        await runPush(form, sessionId, outputDir);
+        await runPush(form, sessionId, outputDir, resume.approved);
         return;
       }
 
@@ -1057,26 +1089,44 @@ export function useImportJob() {
 
       setComputingSummary(true);
       await moveStage(sessionId, "awaiting_gate_1");
-      const summary = await invokeSummarizeStaging({
-        staging_dir: outputDir,
-        ...stagingMediaFields(form),
-      });
+      // The extract itself is done and staged -- an error from here on is a
+      // failed *read* of a folder that already holds the staged work, not a
+      // run that actually failed. Routing it through the outer catch (below)
+      // would post `/complete` and end the session, stranding that work with
+      // no way back to it: decision 37's resume offer only exists because
+      // the session survives. This mirrors `resumeAtGate`'s `landOnGate1`
+      // catch exactly -- return to the form instead, surfacing the failure
+      // on `resumeError` the same way. The stage already written above
+      // (`awaiting_gate_1`) stays as it is: the next visit's resume check
+      // finds the same session and offers this exact recompute again.
+      try {
+        const summary = await summarizeStagingWithProgress({
+          staging_dir: outputDir,
+          ...stagingMediaFields(form),
+        });
 
-      let toolsMissing = false;
-      if (mediaJobVerb(form.attachmentMedia) !== null) {
-        try {
-          const probe = await probeFfmpegTools(null);
-          toolsMissing = !probe.ok;
-        } catch {
-          toolsMissing = true;
+        let toolsMissing = false;
+        if (mediaJobVerb(form.attachmentMedia) !== null) {
+          try {
+            const probe = await probeFfmpegTools(null);
+            toolsMissing = !probe.ok;
+          } catch {
+            toolsMissing = true;
+          }
         }
-      }
 
-      setGateSummary(summary);
-      setMediaToolsMissing(toolsMissing);
-      setComputingSummary(false);
-      setRunning(false);
-      setPhase("gate_1");
+        setGateSummary(summary);
+        setMediaToolsMissing(toolsMissing);
+        setComputingSummary(false);
+        setRunning(false);
+        setPhase("gate_1");
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setResumeError(msg);
+        setComputingSummary(false);
+        setRunning(false);
+        returnToForm();
+      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       issuesRef.current = [
@@ -1202,7 +1252,7 @@ export function useImportJob() {
       setPhase("progress");
       setRunning(true);
       try {
-        const actual = await invokeSummarizeStaging({
+        const actual = await summarizeStagingWithProgress({
           staging_dir: outputDir,
           ...stagingMediaFields(resumedForm),
         });
@@ -1233,7 +1283,7 @@ export function useImportJob() {
       setPhase("progress");
       setRunning(true);
       try {
-        const actual = await invokeSummarizeStaging({
+        const actual = await summarizeStagingWithProgress({
           staging_dir: outputDir,
           ...stagingMediaFields(resumedForm),
         });

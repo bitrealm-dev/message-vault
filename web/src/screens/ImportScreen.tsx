@@ -20,7 +20,12 @@ import {
   setImporterExtraPath,
   setImporterPath,
 } from "../lib/system-settings";
-import { invokeHomeDir, invokeIosBackupEncrypted, invokePathStat } from "../lib/tauri";
+import {
+  invokeDeleteStaging,
+  invokeHomeDir,
+  invokeIosBackupEncrypted,
+  invokePathStat,
+} from "../lib/tauri";
 import { isTauri } from "../lib/tauri-check";
 import type { AttachmentMediaMode, ContactNameMode } from "../lib/types";
 import { loadAccountProfile } from "../lib/useAccountProfile";
@@ -38,7 +43,11 @@ import ImportFormFields from "./import/ImportFormFields";
 import ImportProgressView from "./import/ImportProgressView";
 import ResumeImportPanel from "./import/ResumeImportPanel";
 import { type ResumeDecision, resumeDecisionFor } from "./import/resumeDecision";
-import { restoreFormFromSnapshot, useImportJob } from "./import/useImportJob";
+import {
+  parseStoredStagingSummary,
+  restoreFormFromSnapshot,
+  useImportJob,
+} from "./import/useImportJob";
 
 const DEFAULT_SOURCE = IMESSAGE_DEFAULT_METHOD;
 const SBR_SOURCE = "sms-backup-restore";
@@ -238,7 +247,22 @@ export default function ImportScreen() {
     if (!session || discardingRef.current || resumingRef.current) return;
     discardingRef.current = true;
     try {
-      await discardImportSession(session.id);
+      // declineGate already deletes the staging folder on decline (decision
+      // 16); a panel discard is the same operation reached through a
+      // different button, so it must not orphan a multi-GB folder. Both
+      // halves run regardless of the other's outcome, the same
+      // `Promise.allSettled` shape `declineGate` uses. Never touch disk for
+      // another device's session -- its files are staged there, not here --
+      // the same `device_id` check `resumeDecisionFor` uses to route to
+      // `other_device` in the first place. A session with no recorded
+      // device is treated as this install's, matching that check too.
+      const thisDevice = !session.device_id || session.device_id === getDeviceId();
+      await Promise.allSettled([
+        discardImportSession(session.id),
+        thisDevice && session.staging_dir
+          ? invokeDeleteStaging({ staging_dir: session.staging_dir })
+          : Promise.resolve(),
+      ]);
     } catch {
       // Best effort -- the panel drops to the form either way; if the
       // session is still live server-side, the next visit shows it again.
@@ -271,7 +295,16 @@ export default function ImportScreen() {
       if (resume.kind === "resume_push") {
         if (!session.staging_dir) return; // resumeDecisionFor guarantees this; defensive only.
         setResume(NO_RESUME);
-        await startImport(restoredForm, { sessionId: session.id, stagingDir: session.staging_dir });
+        await startImport(restoredForm, {
+          sessionId: session.id,
+          stagingDir: session.staging_dir,
+          // Without this, a resumed push has no plan to diff its expected
+          // omissions against, which demotes an honest `completed` verdict
+          // to `completed_with_issues` for exactly the interrupted-and-
+          // resumed case. Undefined when the stored summary is missing or
+          // unparsable — startImport/runPush already tolerate that.
+          approved: parseStoredStagingSummary(session.summary),
+        });
         return;
       }
 

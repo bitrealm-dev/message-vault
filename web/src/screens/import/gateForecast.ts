@@ -12,6 +12,13 @@ function capitalize(word: string): string {
   return word.charAt(0).toUpperCase() + word.slice(1);
 }
 
+/** "1 file" or "12 files" — every caller here folds the count into a
+ * sentence, so this spells out the plural rather than leaving each call
+ * site to remember the `=== 1` check. */
+export function pluralFiles(count: number): string {
+  return `${count.toLocaleString()} file${count === 1 ? "" : "s"}`;
+}
+
 export interface VerdictCopy {
   label: string;
   hint: string;

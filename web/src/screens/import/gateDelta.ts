@@ -60,14 +60,13 @@ export interface GateDelta {
    * When `transcode` is supplied, this is a **pass-wide total** —
    * `too_large + failed + missing` across every attachment the pass
    * touched, not bucketed by which approved verdict a lost file came from.
-   * Today's `convert`/`compress` pipeline only ever touches attachments
-   * that were already flagged (`likely_fits`/`may_grow`/`probably_too_big`),
-   * so every loss the report counts corresponds to a vanished named row and
-   * `cameOutFine`'s subtraction below is exact. If a future media mode ever
-   * processes `fits_as_is`-approved attachments too, a loss from that
-   * bucket would inflate this total with no corresponding named row to
-   * subtract, and `cameOutFine` would undercount genuine successes by the
-   * same amount.
+   * It comes straight from the pass's own report, so it stays exact
+   * regardless of which files the pass touched. `convert` mode transcodes
+   * every non-JPEG image no matter its size or verdict, including files
+   * approved as `fits_as_is` — unflagged, with no forecast row — so a loss
+   * on one of those has no vanished named row to offset it against, and
+   * `cameOutFine`'s subtraction below can undercount the genuine successes
+   * by exactly that amount. See `cameOutFine`'s own doc comment.
    */
   lostCount: number;
   /**

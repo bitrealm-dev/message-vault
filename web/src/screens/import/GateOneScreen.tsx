@@ -2,7 +2,7 @@ import Button from "../../components/Button";
 import { formatBytes } from "../../lib/attachmentProgressCopy";
 import type { StagingSummary } from "../../lib/tauri";
 import type { AttachmentMediaMode } from "../../lib/types";
-import { forecastGroups, mediaJobVerb } from "./gateForecast";
+import { forecastGroups, mediaJobVerb, pluralFiles } from "./gateForecast";
 
 const PRIMARY_LABEL: Record<AttachmentMediaMode, string> = {
   convert: "Convert media",
@@ -46,7 +46,11 @@ export default function GateOneScreen({
   mediaPartiallyRan?: boolean;
 }) {
   const verb = mediaJobVerb(mode);
-  const groups = verb ? forecastGroups(summary.verdictCounts, mode) : [];
+  // Decision 11 renders this breakdown unconditionally: copy/skip has no
+  // media step, but the exact verdicts (over the limit, not audio or
+  // video, …) are still worth surfacing before the user commits to an
+  // upload that will drop some of these files.
+  const groups = forecastGroups(summary.verdictCounts, mode);
   const toolsBlocked = verb != null && Boolean(mediaToolsMissing);
 
   return (
@@ -102,19 +106,23 @@ export default function GateOneScreen({
         </table>
       </div>
 
-      {verb ? (
+      {verb || groups.length > 0 ? (
         <section className="mt-5">
-          <h2 className="m-0 text-base font-semibold">What to expect after {verb}</h2>
+          <h2 className="m-0 text-base font-semibold">
+            {verb ? `What to expect after ${verb}` : "Files against the upload limit"}
+          </h2>
           <p className="m-0 mt-1 text-[0.813rem] text-muted">
-            {mediaPartiallyRan
-              ? "The media step needs its tools to finish. Approving here picks up where it left off, once they're available."
-              : "The media step has not run yet, so these are estimates based on the files as staged."}
+            {verb
+              ? mediaPartiallyRan
+                ? "The media step needs its tools to finish. Approving here picks up where it left off, once they're available."
+                : "The media step has not run yet, so these are estimates based on the files as staged."
+              : "There is no media step in this mode, so these sizes are exact, read straight from the staged files."}
           </p>
           <div className="mt-3 flex flex-col gap-3">
             {groups.map((group) => (
               <div key={group.verdict} className="rounded-lg border border-border p-3">
                 <p className="m-0 text-[0.875rem] font-semibold text-text">
-                  {group.count.toLocaleString()} files — {group.label}
+                  {pluralFiles(group.count)} — {group.label}
                 </p>
                 <p className="m-0 mt-1 text-[0.813rem] text-muted">{group.hint}</p>
               </div>
