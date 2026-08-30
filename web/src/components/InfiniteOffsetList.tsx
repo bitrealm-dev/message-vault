@@ -12,7 +12,7 @@ import {
 import { ListBox, ListBoxItem, ListLayout, Virtualizer } from "react-aria-components";
 import { groupByLetter } from "../lib/contactSort";
 import { isTauri } from "../lib/tauri-check";
-import { listRowDividersThin, listScrollGutter } from "../lib/tw";
+import { listRowDividersThin, resizeHandleGutter } from "../lib/tw";
 import { formatVisibleRange } from "../lib/usePagedList";
 import ListRangeHeader from "./ListRangeHeader";
 import ListRangePill, { RANGE_PILL_OVERLAY_INSET, RANGE_PILL_SCROLL_PAD } from "./ListRangePill";
@@ -201,7 +201,7 @@ function RacVirtualList<T extends object>({
         selectionBehavior="replace"
         selectedKeys={selectedId ? new Set([selectedId]) : new Set()}
         onScroll={onScroll}
-        className={`min-h-0 flex-1 overflow-auto outline-none ${listScrollGutter}`}
+        className={`min-h-0 flex-1 overflow-auto outline-none ${resizeHandleGutter}`}
         style={{
           display: "block",
           paddingTop: 0,
@@ -421,7 +421,7 @@ function SectionedLetterList<T>({
   return (
     <div
       ref={scrollerRef}
-      className={`min-h-0 flex-1 overflow-auto ${listScrollGutter}`}
+      className={`min-h-0 flex-1 overflow-auto ${resizeHandleGutter}`}
       onScroll={onScroll}
     >
       {groups.map(([letter, groupItems]) => (

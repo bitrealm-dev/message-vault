@@ -30,7 +30,8 @@ export default function ColumnResizeHandle({
       aria-valuemax={maxWidth}
       tabIndex={0}
       {...handleProps}
-      // w-2 matches `listScrollGutter`, the inset that keeps the list scrollbar clear of this strip.
+      // w-2 matches `resizeHandleGutter`, the inset each resizable panel puts on its
+      // scrolling child so this strip does not cover the scrollbar.
       className={`absolute top-0 right-0 h-full w-2 touch-none cursor-col-resize bg-transparent ${Z_RESIZE_HANDLE}`}
     >
       <div

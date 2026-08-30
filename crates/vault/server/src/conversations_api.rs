@@ -21,8 +21,7 @@ pub use crate::page_limits::{
 };
 
 /// Column the conversation list is ordered by.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ConversationSort {
     /// Timestamp of the most recent non-duplicate message in the thread.
     #[default]
@@ -31,13 +30,38 @@ pub enum ConversationSort {
     Messages,
 }
 
+impl ConversationSort {
+    /// Read a `sort=` value, falling back to the default.
+    ///
+    /// Deliberately lenient: before this parameter existed an unrecognised
+    /// query parameter was ignored, and a stale bookmark or a third-party
+    /// client sending `sort=` or `sort=oldest` should still get a conversation
+    /// list rather than a 400 for the whole request.
+    fn from_param(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "messages" => Self::Messages,
+            _ => Self::Date,
+        }
+    }
+}
+
 /// Ascending or descending.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SortOrder {
     Asc,
     #[default]
     Desc,
+}
+
+impl SortOrder {
+    /// Read an `order=` value, falling back to the default. Lenient for the
+    /// same reason as [`ConversationSort::from_param`].
+    fn from_param(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "asc" => Self::Asc,
+            _ => Self::Desc,
+        }
+    }
 }
 
 /// How to order a conversation page. Defaults to newest activity first.
@@ -54,10 +78,22 @@ impl ConversationOrder {
     /// of the request reaches the SQL text. Both columns are output aliases of
     /// the page query, which SQLite and Postgres each allow in `ORDER BY`.
     /// `c.id` breaks ties so paging cannot repeat or skip a row.
+    ///
+    /// `last_message_at` is NULL for a thread whose every message is a
+    /// duplicate, and the two engines disagree about where NULLs belong:
+    /// SQLite sorts them lowest, while Postgres defaults to NULLS LAST when
+    /// ascending and NULLS FIRST when descending. Leading with
+    /// `(last_message_at IS NULL)` — false before true on both — pins those
+    /// threads to the end in either direction and keeps the two engines
+    /// agreeing.
     fn order_by_sql(self) -> &'static str {
         match (self.sort, self.order) {
-            (ConversationSort::Date, SortOrder::Desc) => "last_message_at DESC, c.id DESC",
-            (ConversationSort::Date, SortOrder::Asc) => "last_message_at ASC, c.id ASC",
+            (ConversationSort::Date, SortOrder::Desc) => {
+                "(last_message_at IS NULL) ASC, last_message_at DESC, c.id DESC"
+            }
+            (ConversationSort::Date, SortOrder::Asc) => {
+                "(last_message_at IS NULL) ASC, last_message_at ASC, c.id ASC"
+            }
             (ConversationSort::Messages, SortOrder::Desc) => "message_count DESC, c.id DESC",
             (ConversationSort::Messages, SortOrder::Asc) => "message_count ASC, c.id ASC",
         }
@@ -385,7 +421,7 @@ fn parse_conversation_list_query(q: &str) -> ConversationListQuery {
     out
 }
 
-/// List conversations for the account, newest first (paged).
+/// List conversations for the account in a chosen order (paged).
 ///
 /// Supported `q` tokens (combinable except free text with structured filters):
 /// - empty / whitespace: all non-trashed conversations with at least one message
@@ -403,7 +439,6 @@ fn parse_conversation_list_query(q: &str) -> ConversationListQuery {
 ///
 /// Returns a bad-request error for an invalid query, or an internal error when
 /// a database statement fails.
-/// Page the conversation list in a chosen order.
 pub async fn list_conversations_sorted(
     conn: &mut AnyConnection,
     account_id: &str,
@@ -941,10 +976,13 @@ pub(crate) struct ConversationsPageQuery {
     limit: Option<usize>,
     #[serde(default)]
     offset: Option<usize>,
+    /// Raw so an unrecognised value falls back to the default instead of
+    /// failing the request; parsed by [`ConversationSort::from_param`].
     #[serde(default)]
-    sort: Option<ConversationSort>,
+    sort: Option<String>,
+    /// Raw for the same reason as `sort`.
     #[serde(default)]
-    order: Option<SortOrder>,
+    order: Option<String>,
 }
 
 /// Page through conversations with participants, message counts, and tags.
@@ -981,8 +1019,14 @@ pub(crate) async fn conversations_list_handler(
     let limit = query.limit.unwrap_or(DEFAULT_LIST_LIMIT);
     let offset = query.offset.unwrap_or(0);
     let order = ConversationOrder {
-        sort: query.sort.unwrap_or_default(),
-        order: query.order.unwrap_or_default(),
+        sort: query
+            .sort
+            .as_deref()
+            .map_or_else(ConversationSort::default, ConversationSort::from_param),
+        order: query
+            .order
+            .as_deref()
+            .map_or_else(SortOrder::default, SortOrder::from_param),
     };
     let page =
         list_conversations_sorted(&mut conn, &auth.account_id, &q, order, limit, offset).await?;
@@ -2128,6 +2172,150 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(junk.total, all.total);
+    }
+
+    #[test]
+    fn sort_params_fall_back_instead_of_failing() {
+        // Before `sort` existed an unknown query parameter was ignored, so an
+        // unrecognised value must still yield a list rather than a 400.
+        assert_eq!(
+            ConversationSort::from_param("messages"),
+            ConversationSort::Messages
+        );
+        assert_eq!(
+            ConversationSort::from_param("MESSAGES"),
+            ConversationSort::Messages
+        );
+        assert_eq!(ConversationSort::from_param("date"), ConversationSort::Date);
+        assert_eq!(ConversationSort::from_param(""), ConversationSort::Date);
+        assert_eq!(
+            ConversationSort::from_param("oldest"),
+            ConversationSort::Date
+        );
+
+        assert_eq!(SortOrder::from_param("asc"), SortOrder::Asc);
+        assert_eq!(SortOrder::from_param(" Asc "), SortOrder::Asc);
+        assert_eq!(SortOrder::from_param("desc"), SortOrder::Desc);
+        assert_eq!(SortOrder::from_param(""), SortOrder::Desc);
+        assert_eq!(SortOrder::from_param("sideways"), SortOrder::Desc);
+    }
+
+    #[tokio::test]
+    async fn duplicate_only_threads_sort_last_in_either_date_direction() {
+        // `last_message_at` is NULL for a thread whose every message is a
+        // duplicate. Those threads are only listed under an `import:` filter,
+        // which is the one path where NULL ordering is observable — and the two
+        // engines disagree about it unless the query says where NULLs go.
+        let (pool, _dir) = engine::test_pool().await;
+        schema::ensure_vault_schema(&mut pool.acquire().await.unwrap())
+            .await
+            .unwrap();
+        let account = "00000000-0000-4000-8000-0000000000c2".to_string();
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'alice')")
+            .bind(&account)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let import_a = vault_imports::start_import(
+            &mut conn,
+            &account,
+            "imessage-ios",
+            "append",
+            Some("test"),
+        )
+        .await
+        .unwrap();
+
+        for (id, raw) in [(3, "+15555550400"), (4, "+15555550401")] {
+            let peer =
+                account_profile::link_account_handle(&mut conn, &account, raw, HandleType::Phone)
+                    .await
+                    .unwrap();
+            sqlx::query(
+                "INSERT INTO conversations (
+                    id, account_id, chat_handle_id, conversation_type, source_file
+                 ) VALUES ($1, $2, $3, 'individual', 'c.jsonl')",
+            )
+            .bind(id)
+            .bind(&account)
+            .bind(peer)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        }
+
+        // Conversation 4 keeps a real message, and it belongs to the import.
+        sqlx::query(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, timestamp, is_from_me, sort_order, body,
+                import_id
+             ) VALUES (4, $1, 'imessage', '2024-05-01T12:00:00Z', 0, 0, 'canonical', $2)",
+        )
+        .bind(&account)
+        .bind(import_a)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let winner_id: i64 =
+            sqlx::query_scalar("SELECT id FROM messages WHERE conversation_id = 4")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+
+        // Conversation 3's only message is a duplicate, so its last_message_at
+        // is NULL even though its timestamp is the later of the two.
+        sqlx::query(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, timestamp, is_from_me, sort_order, body,
+                import_id, duplicate_of
+             ) VALUES (3, $1, 'imessage', '2024-06-01T12:00:00Z', 0, 0, 'dup', $2, $3)",
+        )
+        .bind(&account)
+        .bind(import_a)
+        .bind(winner_id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        async fn ids_for(
+            pool: &sqlx::AnyPool,
+            account: &str,
+            q: &str,
+            order: SortOrder,
+        ) -> Vec<String> {
+            let mut conn = pool.acquire().await.unwrap();
+            list_conversations_sorted(
+                &mut conn,
+                account,
+                q,
+                ConversationOrder {
+                    sort: ConversationSort::Date,
+                    order,
+                },
+                DEFAULT_LIST_LIMIT,
+                0,
+            )
+            .await
+            .unwrap()
+            .conversations
+            .iter()
+            .map(|c| c.id.clone())
+            .collect()
+        }
+
+        let q = format!("import:{import_a}");
+        assert_eq!(
+            ids_for(&pool, &account, &q, SortOrder::Desc).await,
+            ["4", "3"],
+            "a thread with no surviving message sorts last, not first"
+        );
+        assert_eq!(
+            ids_for(&pool, &account, &q, SortOrder::Asc).await,
+            ["4", "3"],
+            "and stays last when the direction flips"
+        );
     }
 
     #[tokio::test]
