@@ -10,6 +10,14 @@ use super::events::ExtractProgressEvent;
 use super::jobs::{reset_and_clone_cancel, spawn_job};
 use crate::state::AppState;
 
+/// Largest attachment the desktop app will upload.
+///
+/// The vault's own `asset_max_bytes` defaults higher and is not exposed to
+/// clients, so this is the number the app can actually promise. The size
+/// forecast at the first gate predicts against this same constant — a forecast
+/// against a different limit than the upload uses would be worse than none.
+pub const ASSET_MAX_BYTES: u64 = 50 * 1024 * 1024;
+
 /// Convert a report count to the `usize` the progress event uses.
 fn as_usize(value: u64) -> usize {
     usize::try_from(value).unwrap_or(usize::MAX)
@@ -133,7 +141,7 @@ pub async fn push(
             prepare_workers: 4,
             asset_multipart_threshold: 5 * 1024 * 1024,
             // Per-file attachment cap. JSONL import batches use MAX_IMPORT_BODY_BYTES.
-            asset_max_bytes: 50 * 1024 * 1024,
+            asset_max_bytes: ASSET_MAX_BYTES,
             report_path: None,
             log_path: None,
             // Relies on one preflight HEAD per run instead of a persisted journal.

@@ -24,6 +24,7 @@ anyhow = "1.0"
 dirs = "6"
 open = "5"
 message-vault-io-core = { path = "../crates/core/message-vault-io-core" }
+message-ir-format = { path = "../crates/libs/ir-format" }
 media = { path = "../crates/libs/media" }
 sms-backup-restore-exporter = { path = "../crates/exporters/sms-backup-restore-exporter", default-features = false }
 go-sms-pro-exporter = { path = "../crates/exporters/go-sms-pro-exporter", default-features = false }

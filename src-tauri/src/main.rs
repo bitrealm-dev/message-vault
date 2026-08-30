@@ -41,6 +41,9 @@ fn main() {
             commands::paths::open_path,
             commands::push::push,
             commands::pull::pull,
+            commands::staging::summarize_staging,
+            commands::staging::transcode_staging,
+            commands::staging::delete_staging,
         ]);
 
     builder

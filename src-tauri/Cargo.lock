@@ -2489,6 +2489,7 @@ dependencies = [
  "imazing-exporter",
  "imessage-ir-exporter",
  "media",
+ "message-ir-format",
  "message-reexport",
  "message-vault-io-core",
  "open",

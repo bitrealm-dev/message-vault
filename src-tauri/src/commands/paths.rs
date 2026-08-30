@@ -189,21 +189,7 @@ pub(crate) fn resolve_openable_path(raw: &str, staging_root: &str) -> Result<Pat
     }
 
     if candidate.exists() {
-        let canonical = candidate
-            .canonicalize()
-            .map_err(|error| format!("Could not resolve path: {error}"))?;
-        let root = if staging_root.exists() {
-            staging_root
-                .canonicalize()
-                .map_err(|error| format!("Could not resolve staging root: {error}"))?
-        } else {
-            normalize_lexically(&staging_root)
-        };
-        reject_filesystem_root(&root)?;
-        if !canonical.starts_with(&root) {
-            return Err("Path is outside the import staging folder".to_string());
-        }
-        return Ok(canonical);
+        return canonical_within_root(&candidate, &staging_root);
     }
 
     let normalized = normalize_lexically(&candidate);
@@ -213,6 +199,39 @@ pub(crate) fn resolve_openable_path(raw: &str, staging_root: &str) -> Result<Pat
         return Err("Path is outside the import staging folder".to_string());
     }
     Ok(normalized)
+}
+
+/// Canonicalize `candidate` and confirm it resolves inside `root`.
+///
+/// Both sides are canonicalized when they exist, so a symlink cannot escape
+/// the staging tree; `root` falls back to lexical normalization when it does
+/// not exist yet. `candidate` itself must already exist on disk — this is
+/// the branch [`resolve_openable_path`] takes once it has confirmed that.
+///
+/// Shared with `staging::delete_staging_dir`, so the same containment check
+/// guards both opening and deleting a path under the staging root — one bug
+/// here cannot open a hole for one caller while staying closed for the
+/// other.
+///
+/// # Errors
+///
+/// Returns an error when either path cannot be canonicalized, `root` is the
+/// filesystem root, or `candidate` resolves outside `root`.
+pub(crate) fn canonical_within_root(candidate: &Path, root: &Path) -> Result<PathBuf, String> {
+    let canonical = candidate
+        .canonicalize()
+        .map_err(|error| format!("Could not resolve path: {error}"))?;
+    let root_canonical = if root.exists() {
+        root.canonicalize()
+            .map_err(|error| format!("Could not resolve staging root: {error}"))?
+    } else {
+        normalize_lexically(root)
+    };
+    reject_filesystem_root(&root_canonical)?;
+    if !canonical.starts_with(&root_canonical) {
+        return Err("Path is outside the import staging folder".to_string());
+    }
+    Ok(canonical)
 }
 
 /// `/` (and a Windows drive root) would make `starts_with` true for every absolute path.

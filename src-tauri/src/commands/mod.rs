@@ -19,6 +19,7 @@ pub mod paths;
 pub mod progress;
 pub mod pull;
 pub mod push;
+pub mod staging;
 
 /// Treat missing, blank, and whitespace-only strings as absent.
 pub(crate) fn optional_trimmed(value: Option<&str>) -> Option<&str> {
