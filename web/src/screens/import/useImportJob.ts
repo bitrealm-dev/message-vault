@@ -139,6 +139,90 @@ export type ImportJobFormValues = {
   whatsappBusiness: boolean;
 };
 
+/** Pick up a session whose staging folder is already complete. */
+export type ResumePush = {
+  sessionId: number;
+  stagingDir: string;
+};
+
+const ATTACHMENT_MEDIA_MODES: readonly AttachmentMediaMode[] = [
+  "copy",
+  "convert",
+  "compress",
+  "skip",
+];
+const CONTACT_NAME_MODES: readonly ContactNameMode[] = ["fill_missing", "overwrite", "as_is"];
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+/**
+ * Rebuild form values from a session's stored snapshot.
+ *
+ * The snapshot omits `backupPassword` and `whatsappKey`, defaulted to ""
+ * here: the resume path never re-runs extract, and the push only reads
+ * `force`, `contactNameMode`, and `attachmentMedia`, all present in the
+ * snapshot.
+ *
+ * The snapshot came from the database, not from this session's own state,
+ * so its shape is checked field by field rather than trusted. Returns
+ * null for anything that doesn't match, instead of throwing.
+ */
+export function restoreFormFromSnapshot(raw: unknown): ImportJobFormValues | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.source !== "string") return null;
+  if (typeof r.backupPath !== "string") return null;
+  if (
+    typeof r.attachmentMedia !== "string" ||
+    !ATTACHMENT_MEDIA_MODES.includes(r.attachmentMedia as AttachmentMediaMode)
+  ) {
+    return null;
+  }
+  if (typeof r.maxResolution !== "string") return null;
+  if (typeof r.maxFps !== "string") return null;
+  if (typeof r.minSizeMb !== "string") return null;
+  if (
+    typeof r.contactNameMode !== "string" ||
+    !CONTACT_NAME_MODES.includes(r.contactNameMode as ContactNameMode)
+  ) {
+    return null;
+  }
+  if (!isStringArray(r.ownerPhones)) return null;
+  if (typeof r.force !== "boolean") return null;
+  if (typeof r.obfuscate !== "boolean") return null;
+  if (typeof r.isSbr !== "boolean") return null;
+  if (typeof r.attachmentRoot !== "string") return null;
+  if (typeof r.appleContacts !== "string") return null;
+  if (typeof r.whatsappWa !== "string") return null;
+  if (typeof r.whatsappMedia !== "string") return null;
+  if (typeof r.whatsappDb !== "string") return null;
+  if (typeof r.whatsappBusiness !== "boolean") return null;
+
+  return {
+    source: r.source,
+    backupPath: r.backupPath,
+    backupPassword: "",
+    attachmentMedia: r.attachmentMedia as AttachmentMediaMode,
+    maxResolution: r.maxResolution,
+    maxFps: r.maxFps,
+    minSizeMb: r.minSizeMb,
+    contactNameMode: r.contactNameMode as ContactNameMode,
+    ownerPhones: r.ownerPhones,
+    force: r.force,
+    obfuscate: r.obfuscate,
+    isSbr: r.isSbr,
+    attachmentRoot: r.attachmentRoot,
+    appleContacts: r.appleContacts,
+    whatsappKey: "",
+    whatsappWa: r.whatsappWa,
+    whatsappMedia: r.whatsappMedia,
+    whatsappDb: r.whatsappDb,
+    whatsappBusiness: r.whatsappBusiness,
+  };
+}
+
 /** Run extract then upload for one import, and keep step progress for the UI. */
 export function useImportJob() {
   const { token } = useAuth();
@@ -235,7 +319,7 @@ export function useImportJob() {
     return rest;
   }
 
-  async function startImport(form: ImportJobFormValues): Promise<void> {
+  async function startImport(form: ImportJobFormValues, resume?: ResumePush): Promise<void> {
     if (!isTauri()) return;
     const importStartedAt = performance.now();
     activeStepRef.current = "parse";
@@ -263,117 +347,140 @@ export function useImportJob() {
       const baseUrl = getBaseUrl();
       if (!token) throw new Error("Not authenticated");
 
-      outputDir = await resolveImportStagingDir(form.backupPath, form.source);
-      setStagingDir(outputDir);
+      if (resume) {
+        // The staging folder is already complete, so there is nothing to
+        // resolve, no new session to create (the account already has this
+        // one), and no extract to run.
+        outputDir = resume.stagingDir;
+        setStagingDir(outputDir);
+        sessionId = resume.sessionId;
+        setImportSessionId(sessionId);
 
-      const backupStat = await invokePathStat(form.backupPath).catch(() => null);
-      const importSession = await apiClient.post<{ id: number }>("/v1/imports", {
-        ...importSessionCreateBody(form.source),
-        stage: "parse",
-        staging_dir: outputDir,
-        device_id: getDeviceId(),
-        form: formSnapshot(form),
-        source_fingerprint: backupStat ? buildSourceFingerprint(form.backupPath, backupStat) : null,
-      });
-      sessionId = importSession.id;
-      setImportSessionId(sessionId);
+        setSteps([
+          { label: "Parse backup", status: "done", detail: "Already staged" },
+          {
+            label: attachmentStepCopy(form.attachmentMedia).label,
+            status: "done",
+            detail: "Already staged",
+          },
+          { label: "Preparing messages", status: "done", detail: "Already staged" },
+          { label: "Upload to vault", status: "active", detail: "Uploading to vault…" },
+        ]);
+      } else {
+        outputDir = await resolveImportStagingDir(form.backupPath, form.source);
+        setStagingDir(outputDir);
 
-      setSteps((current) =>
-        current.map((step, i) => (i === 0 ? { ...step, detail: "Extracting…" } : step)),
-      );
+        const backupStat = await invokePathStat(form.backupPath).catch(() => null);
+        const importSession = await apiClient.post<{ id: number }>("/v1/imports", {
+          ...importSessionCreateBody(form.source),
+          stage: "parse",
+          staging_dir: outputDir,
+          device_id: getDeviceId(),
+          form: formSnapshot(form),
+          source_fingerprint: backupStat
+            ? buildSourceFingerprint(form.backupPath, backupStat)
+            : null,
+        });
+        sessionId = importSession.id;
+        setImportSessionId(sessionId);
 
-      timingRef.current.extractStartedAt = performance.now();
-      const extractResult = await runTauriJob(
-        () =>
-          invokeExtract({
-            source: form.source,
-            path: form.backupPath,
-            output_dir: outputDir,
-            ...(isImessageMethod(form.source)
-              ? imessageExtractFields({
-                  source: form.source,
-                  backupPassword: form.backupPassword,
-                  attachmentMedia: form.attachmentMedia,
-                  maxResolution: form.maxResolution,
-                  maxFps: form.maxFps,
-                  minSizeMb: form.minSizeMb,
-                  obfuscate: form.obfuscate,
-                  attachmentRoot: form.attachmentRoot,
-                  appleContacts: form.appleContacts,
-                })
-              : {}),
-            ...(isWhatsappMethod(form.source)
-              ? whatsappExtractFields({
-                  source: form.source,
-                  attachmentMedia: form.attachmentMedia,
-                  maxResolution: form.maxResolution,
-                  maxFps: form.maxFps,
-                  minSizeMb: form.minSizeMb,
-                  key: form.whatsappKey,
-                  wa: form.whatsappWa,
-                  media: form.whatsappMedia,
-                  db: form.whatsappDb,
-                  business: form.whatsappBusiness,
-                })
-              : {}),
-            ...(form.isSbr
-              ? sbrExtractFields({
-                  attachmentMedia: form.attachmentMedia,
-                  maxResolution: form.maxResolution,
-                  maxFps: form.maxFps,
-                  minSizeMb: form.minSizeMb,
-                  ownerPhones: form.ownerPhones,
-                  obfuscate: form.obfuscate,
-                })
-              : {}),
-          }),
-        { onProgress: applyProgress, onIssue: recordIssue },
-      );
-      if (extractResult.extraction) {
-        countsRef.current.filesParsed = extractResult.extraction.files_parsed;
-        countsRef.current.messagesParsed = extractResult.extraction.messages_parsed;
+        setSteps((current) =>
+          current.map((step, i) => (i === 0 ? { ...step, detail: "Extracting…" } : step)),
+        );
+
+        timingRef.current.extractStartedAt = performance.now();
+        const extractResult = await runTauriJob(
+          () =>
+            invokeExtract({
+              source: form.source,
+              path: form.backupPath,
+              output_dir: outputDir,
+              ...(isImessageMethod(form.source)
+                ? imessageExtractFields({
+                    source: form.source,
+                    backupPassword: form.backupPassword,
+                    attachmentMedia: form.attachmentMedia,
+                    maxResolution: form.maxResolution,
+                    maxFps: form.maxFps,
+                    minSizeMb: form.minSizeMb,
+                    obfuscate: form.obfuscate,
+                    attachmentRoot: form.attachmentRoot,
+                    appleContacts: form.appleContacts,
+                  })
+                : {}),
+              ...(isWhatsappMethod(form.source)
+                ? whatsappExtractFields({
+                    source: form.source,
+                    attachmentMedia: form.attachmentMedia,
+                    maxResolution: form.maxResolution,
+                    maxFps: form.maxFps,
+                    minSizeMb: form.minSizeMb,
+                    key: form.whatsappKey,
+                    wa: form.whatsappWa,
+                    media: form.whatsappMedia,
+                    db: form.whatsappDb,
+                    business: form.whatsappBusiness,
+                  })
+                : {}),
+              ...(form.isSbr
+                ? sbrExtractFields({
+                    attachmentMedia: form.attachmentMedia,
+                    maxResolution: form.maxResolution,
+                    maxFps: form.maxFps,
+                    minSizeMb: form.minSizeMb,
+                    ownerPhones: form.ownerPhones,
+                    obfuscate: form.obfuscate,
+                  })
+                : {}),
+            }),
+          { onProgress: applyProgress, onIssue: recordIssue },
+        );
+        if (extractResult.extraction) {
+          countsRef.current.filesParsed = extractResult.extraction.files_parsed;
+          countsRef.current.messagesParsed = extractResult.extraction.messages_parsed;
+        }
+
+        const extractFinishedAt = performance.now();
+        timingRef.current.prepareEndedAt = extractFinishedAt;
+        timingRef.current.attachmentsEndedAt ??=
+          timingRef.current.prepareStartedAt ?? extractFinishedAt;
+        ({ parseMs, attachmentsMs, prepareMs } = stageDurations(
+          timingRef.current,
+          extractFinishedAt,
+        ));
+        const attachments = attachmentStepCopy(form.attachmentMedia);
+        const attachmentDoneLine = attachmentDoneDetail(
+          form.attachmentMedia,
+          lastAttachmentProgressRef.current,
+          attachments.doneDetail,
+        );
+
+        setSteps([
+          {
+            label: "Parse backup",
+            status: "done",
+            detail: "Extraction complete",
+            durationMs: parseMs,
+          },
+          {
+            label: attachments.label,
+            status: "done",
+            detail: attachmentDoneLine,
+            durationMs: attachmentsMs,
+          },
+          {
+            label: "Preparing messages",
+            status: "done",
+            detail: "Preparation complete",
+            durationMs: prepareMs,
+          },
+          {
+            label: "Upload to vault",
+            status: "active",
+            detail: "Uploading to vault…",
+          },
+        ]);
       }
-
-      const extractFinishedAt = performance.now();
-      timingRef.current.prepareEndedAt = extractFinishedAt;
-      timingRef.current.attachmentsEndedAt ??=
-        timingRef.current.prepareStartedAt ?? extractFinishedAt;
-      ({ parseMs, attachmentsMs, prepareMs } = stageDurations(
-        timingRef.current,
-        extractFinishedAt,
-      ));
-      const attachments = attachmentStepCopy(form.attachmentMedia);
-      const attachmentDoneLine = attachmentDoneDetail(
-        form.attachmentMedia,
-        lastAttachmentProgressRef.current,
-        attachments.doneDetail,
-      );
-
-      setSteps([
-        {
-          label: "Parse backup",
-          status: "done",
-          detail: "Extraction complete",
-          durationMs: parseMs,
-        },
-        {
-          label: attachments.label,
-          status: "done",
-          detail: attachmentDoneLine,
-          durationMs: attachmentsMs,
-        },
-        {
-          label: "Preparing messages",
-          status: "done",
-          detail: "Preparation complete",
-          durationMs: prepareMs,
-        },
-        {
-          label: "Upload to vault",
-          status: "active",
-          detail: "Uploading to vault…",
-        },
-      ]);
 
       activeStepRef.current = "upload";
       if (sessionId != null) {
@@ -400,7 +507,7 @@ export function useImportJob() {
             // only SMS Backup & Restore.
             trust_export: true,
             contact_name_mode: form.contactNameMode,
-            import_id: importSession.id,
+            import_id: sessionId ?? undefined,
           }),
         { onProgress: applyProgress, onIssue: recordIssue },
       );

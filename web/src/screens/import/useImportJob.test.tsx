@@ -53,7 +53,7 @@ vi.mock("../../lib/tauri-check", () => ({
 }));
 
 // Imported after the mocks above so useImportJob picks up the mocked modules.
-const { useImportJob } = await import("./useImportJob");
+const { useImportJob, restoreFormFromSnapshot } = await import("./useImportJob");
 
 function failedReport(): PushFinishedReport {
   return {
@@ -196,5 +196,116 @@ describe("useImportJob wiring", () => {
 
     const stageCall = postMock.mock.calls.find(([path]) => String(path).endsWith("/stage"));
     expect(stageCall?.[1]).toEqual({ stage: "pushing" });
+  });
+});
+
+describe("useImportJob resume path", () => {
+  beforeEach(() => {
+    runMock.mockReset();
+    cancelMock.mockReset();
+    postMock.mockReset();
+    resolveImportStagingDirMock.mockReset();
+    invokePathStatMock.mockReset();
+    invokePathStatMock.mockResolvedValue(null);
+    postMock.mockImplementation(async () => ({}));
+    // A resumed run only ever calls run() once, for the push.
+    runMock.mockResolvedValue({ summary: "Push finished.", report: failedReport() });
+  });
+
+  it("skips staging resolve, session create, and extract when resuming a push", async () => {
+    const { result } = renderHook(() => useImportJob());
+
+    await act(async () => {
+      await result.current.startImport(baseForm, {
+        sessionId: 99,
+        stagingDir: "/home/u/message-vault/staging-260830",
+      });
+    });
+
+    expect(resolveImportStagingDirMock).not.toHaveBeenCalled();
+    expect(invokePathStatMock).not.toHaveBeenCalled();
+    expect(postMock.mock.calls.some(([path]) => path === "/v1/imports")).toBe(false);
+    expect(runMock).toHaveBeenCalledTimes(1); // push only, no extract
+    expect(result.current.stagingDir).toBe("/home/u/message-vault/staging-260830");
+    expect(result.current.importSessionId).toBe(99);
+  });
+
+  it("marks the first three steps already staged and moves the session to pushing", async () => {
+    const { result } = renderHook(() => useImportJob());
+
+    await act(async () => {
+      await result.current.startImport(baseForm, {
+        sessionId: 99,
+        stagingDir: "/home/u/message-vault/staging-260830",
+      });
+    });
+
+    const stageCall = postMock.mock.calls.find(([path]) => String(path).endsWith("/stage"));
+    expect(stageCall).toEqual(["/v1/imports/99/stage", { stage: "pushing" }]);
+
+    for (const step of result.current.steps.slice(0, 3)) {
+      expect(step.status).toBe("done");
+      expect(step.detail).toBe("Already staged");
+      expect(step.durationMs).toBeUndefined();
+    }
+    expect(result.current.steps[3]).toMatchObject({ label: "Upload to vault" });
+  });
+
+  it("still posts /complete against the resumed session id", async () => {
+    const { result } = renderHook(() => useImportJob());
+
+    await act(async () => {
+      await result.current.startImport(baseForm, {
+        sessionId: 99,
+        stagingDir: "/home/u/message-vault/staging-260830",
+      });
+    });
+
+    expect(result.current.phase).toBe("done");
+    const completeCall = postMock.mock.calls.find(([path]) => path === "/v1/imports/99/complete");
+    expect(completeCall).toBeDefined();
+  });
+});
+
+const validSnapshot = {
+  source: "imessage-ios",
+  backupPath: "/backups/iphone.tar",
+  attachmentMedia: "copy",
+  maxResolution: "720p",
+  maxFps: "30",
+  minSizeMb: "20",
+  contactNameMode: "fill_missing",
+  ownerPhones: ["+15551234567"],
+  force: false,
+  obfuscate: false,
+  isSbr: false,
+  attachmentRoot: "",
+  appleContacts: "",
+  whatsappWa: "",
+  whatsappMedia: "",
+  whatsappDb: "",
+  whatsappBusiness: false,
+};
+
+describe("restoreFormFromSnapshot", () => {
+  it("rebuilds form values from a stored snapshot, defaulting the omitted secrets", () => {
+    expect(restoreFormFromSnapshot(validSnapshot)).toEqual({
+      ...validSnapshot,
+      backupPassword: "",
+      whatsappKey: "",
+    });
+  });
+
+  it.each([
+    ["null", null],
+    ["undefined", undefined],
+    ["a string", "not an object"],
+    ["an empty object", {}],
+    ["a snapshot missing most fields", { source: "imessage-ios" }],
+    ["an invalid attachmentMedia", { ...validSnapshot, attachmentMedia: "not-a-real-mode" }],
+    ["a non-array ownerPhones", { ...validSnapshot, ownerPhones: "+15551234567" }],
+    ["a non-boolean force", { ...validSnapshot, force: "yes" }],
+  ])("returns null for a malformed snapshot (%s)", (_label, raw) => {
+    expect(restoreFormFromSnapshot(raw)).toBeNull();
   });
 });
