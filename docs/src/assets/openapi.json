@@ -4306,7 +4306,8 @@
           "status",
           "started_at",
           "form",
-          "source_fingerprint"
+          "source_fingerprint",
+          "summary"
         ],
         "properties": {
           "device_id": {
@@ -4348,6 +4349,9 @@
           },
           "status": {
             "type": "string"
+          },
+          "summary": {
+            "description": "What the user approved at the last gate they passed, or null.\n\nSame column `POST /v1/imports/{id}/stage` writes with its `summary`\nfield — read back here so a reload between an approval and\ncompletion doesn't lose the plan the eventual outcome is diffed\nagainst."
           }
         }
       },
@@ -5166,7 +5170,7 @@
             "items": {
               "type": "string"
             },
-            "description": "The subset this account has no contact for, in the order given, blanks\ndropped and duplicates collapsed."
+            "description": "The subset this account has no contact for: trimmed, in first-seen\norder, blanks dropped and duplicates (by normalized form) collapsed\nto their first spelling."
           }
         }
       },

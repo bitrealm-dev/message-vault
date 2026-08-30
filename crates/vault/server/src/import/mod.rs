@@ -1047,6 +1047,13 @@ pub(crate) struct ActiveImportSession {
     pub(crate) form: serde_json::Value,
     /// Source path, size, mtime, and message count, or null.
     pub(crate) source_fingerprint: serde_json::Value,
+    /// What the user approved at the last gate they passed, or null.
+    ///
+    /// Same column `POST /v1/imports/{id}/stage` writes with its `summary`
+    /// field — read back here so a reload between an approval and
+    /// completion doesn't lose the plan the eventual outcome is diffed
+    /// against.
+    pub(crate) summary: serde_json::Value,
 }
 
 /// The account's live session, or null when there is none.
@@ -1093,6 +1100,7 @@ pub(crate) async fn imports_active_handler(
             device_id: row.device_id,
             form: parse_summary_json(row.form_json),
             source_fingerprint: parse_summary_json(row.source_fingerprint),
+            summary: parse_summary_json(row.summary_json),
         }),
     }))
 }
@@ -1549,7 +1557,7 @@ mod tests {
     use super::contact_name::trim_nonempty;
     use super::*;
     use crate::assets;
-    use crate::test_support::{TestVault, post_json, register_via_api, test_vault};
+    use crate::test_support::{TestVault, get_json, post_json, register_via_api, test_vault};
     use tempfile::TempDir;
 
     const TEST_ACCOUNT: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -1627,6 +1635,25 @@ mod tests {
         assert_eq!(
             stored_summary(&vault, import_id).await,
             Some(serde_json::json!({"approved": true}))
+        );
+    }
+
+    #[tokio::test]
+    async fn active_session_reports_the_summary_a_stage_change_stored() {
+        // The completion call is allowed to overwrite summary_json with the
+        // outcome once the run finishes — that is the intended history
+        // record. But mid-session, between an approval and completion, a
+        // reload has nowhere else to read the approved plan back from:
+        // GET /v1/imports/active must expose it too.
+        let (vault, token, import_id) =
+            session_with_summary(serde_json::json!({"approved": true})).await;
+
+        let active: serde_json::Value = get_json(&vault.state, "/v1/imports/active", &token).await;
+
+        assert_eq!(active["session"]["id"], serde_json::json!(import_id));
+        assert_eq!(
+            active["session"]["summary"],
+            serde_json::json!({"approved": true})
         );
     }
 

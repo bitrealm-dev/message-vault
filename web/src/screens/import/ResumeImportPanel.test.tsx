@@ -23,6 +23,7 @@ function session(overrides: Partial<ActiveImportSession> = {}): ActiveImportSess
     device_id: "this-device",
     form: { source: "imessage-ios" },
     source_fingerprint: null,
+    summary: null,
     ...overrides,
   };
 }

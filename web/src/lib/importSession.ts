@@ -31,6 +31,9 @@ export type ActiveImportSession = {
   device_id: string | null;
   form: unknown;
   source_fingerprint: SourceFingerprint | null;
+  /** What was approved at the last gate passed, or null. Mirrors what
+   * `setImportStage`'s `approvedPlan` argument last wrote. */
+  summary: unknown;
 };
 
 /** The account's live session, or null when there is none. */
