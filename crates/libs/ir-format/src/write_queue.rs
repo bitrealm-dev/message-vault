@@ -15,9 +15,12 @@
 //! across documents and the other formats merge or embed at finish, so those
 //! keep the `FormatSink` path.
 
-use std::collections::HashMap;
+use std::cell::Cell;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 use media::{CompressOptions, MediaMode};
@@ -144,24 +147,22 @@ pub fn load_attachment_source(source: &mut AttachmentSource) -> Result<Option<Ve
     }
 }
 
-/// Running totals a drain reports after every attachment.
-struct DrainProgress {
+/// What one attachment added to the drain's totals.
+///
+/// Deltas, not running counts: a parallel drain folds them into shared
+/// atomics, and a sequential one adds them to plain locals. Either way the
+/// per-unit body does not need to know the global picture.
+struct UnitProgress {
     done: usize,
-    total: usize,
     bytes_done: u64,
     bytes_total: u64,
 }
 
-/// What one unit did.
+/// What one unit did. Byte and file counts travel through the progress
+/// callback instead, so both drains can fold them their own way.
 struct UnitOutcome {
     written: bool,
     attachments_saved: usize,
-    /// Attachments this unit accounts for, staged or skipped.
-    attachment_count: usize,
-    /// Bytes staged, and the byte total this unit turned out to need beyond
-    /// its hints.
-    bytes_done: u64,
-    bytes_total: u64,
 }
 
 /// Drain `units` with a caller-supplied loader.
@@ -182,22 +183,37 @@ pub fn drain_write_queue_with_loader(
     log: Option<&LogSink>,
     cancel: Option<&std::sync::atomic::AtomicBool>,
 ) -> Result<WriteQueueReport> {
+    check_headroom(output_dir, &units)?;
     let attachments_dir = output_dir.join("attachments");
     let mut report = WriteQueueReport::default();
 
     let total: usize = units.iter().map(|u| u.attachments.len()).sum();
-    let mut progress = DrainProgress {
-        done: 0,
-        total,
-        bytes_done: 0,
-        bytes_total: units
-            .iter()
-            .flat_map(|u| u.attachments.iter())
-            .filter_map(|a| a.size_hint)
-            .sum(),
-    };
+    let bytes_total_base: u64 = units
+        .iter()
+        .flat_map(|u| u.attachments.iter())
+        .filter_map(|a| a.size_hint)
+        .sum();
 
     announce_start(log, units.len());
+
+    let done = Cell::new(0usize);
+    let bytes_done = Cell::new(0u64);
+    let bytes_total = Cell::new(bytes_total_base);
+    let report_progress = |p: UnitProgress| {
+        done.set(done.get() + p.done);
+        bytes_done.set(bytes_done.get() + p.bytes_done);
+        bytes_total.set(bytes_total.get() + p.bytes_total);
+        emit_log(
+            log,
+            format!(
+                "  attachments {}/{} {}/{}",
+                done.get(),
+                total,
+                bytes_done.get(),
+                bytes_total.get()
+            ),
+        );
+    };
 
     for unit in units {
         let outcome = write_one_unit(
@@ -206,25 +222,219 @@ pub fn drain_write_queue_with_loader(
             unit,
             options,
             load,
-            &mut |done, unit_bytes_done, unit_bytes_total, base| {
-                let line = format!(
-                    "  attachments {}/{} {}/{}",
-                    base.done + done,
-                    base.total,
-                    base.bytes_done + unit_bytes_done,
-                    base.bytes_total + unit_bytes_total,
-                );
-                emit_log(log, line);
-            },
-            &progress,
+            &report_progress,
             cancel,
         )?;
-
-        apply_outcome(&mut progress, &mut report, &outcome);
+        report.attachments_saved += outcome.attachments_saved;
+        if outcome.written {
+            report.conversations_written += 1;
+        } else {
+            report.conversations_skipped += 1;
+        }
     }
 
     announce_finish(log, &report, options.resume);
     Ok(report)
+}
+
+/// Writers scale with the machine: writing is IO and hashing, and past a
+/// handful of threads the disk, not the CPU, sets the pace.
+pub fn default_writer_count() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .clamp(1, 8)
+}
+
+/// Drain `units` across a pool of writer threads.
+///
+/// Each worker pops the next conversation, stages its attachments, and writes
+/// its conversation file. The first error stops the pool and is what the
+/// caller sees.
+///
+/// # Errors
+///
+/// Returns the first unit error, or the headroom error when the staging disk
+/// cannot hold what the backup needs. A cancel surfaces as `"canceled"`.
+pub fn drain_write_queue(
+    output_dir: &Path,
+    units: Vec<ConversationUnit>,
+    options: &WriteQueueOptions,
+    log: Option<&LogSink>,
+    cancel: Option<&AtomicBool>,
+) -> Result<WriteQueueReport> {
+    check_headroom(output_dir, &units)?;
+
+    let attachments_dir = output_dir.join("attachments");
+    // Idempotent, but doing it once here keeps every worker's first write
+    // from racing the same create.
+    fs::create_dir_all(&attachments_dir)
+        .with_context(|| format!("create {}", attachments_dir.display()))?;
+
+    let unit_count = units.len();
+    let total: usize = units.iter().map(|u| u.attachments.len()).sum();
+    let bytes_total_base: u64 = units
+        .iter()
+        .flat_map(|u| u.attachments.iter())
+        .filter_map(|a| a.size_hint)
+        .sum();
+
+    announce_start(log, unit_count);
+
+    let done = AtomicUsize::new(0);
+    let bytes_done = AtomicU64::new(0);
+    let bytes_total = AtomicU64::new(bytes_total_base);
+    let attachments_saved = AtomicUsize::new(0);
+    let written = AtomicUsize::new(0);
+    let skipped = AtomicUsize::new(0);
+    let abort = AtomicBool::new(false);
+    let first_error: Mutex<Option<String>> = Mutex::new(None);
+    let queue: Mutex<VecDeque<ConversationUnit>> = Mutex::new(VecDeque::from(units));
+
+    let report_progress = |p: UnitProgress| {
+        let d = done.fetch_add(p.done, Ordering::Relaxed) + p.done;
+        let bd = bytes_done.fetch_add(p.bytes_done, Ordering::Relaxed) + p.bytes_done;
+        let bt = bytes_total.fetch_add(p.bytes_total, Ordering::Relaxed) + p.bytes_total;
+        emit_log(log, format!("  attachments {d}/{total} {bd}/{bt}"));
+    };
+
+    let writer_count = if options.writer_count == 0 {
+        default_writer_count()
+    } else {
+        options.writer_count
+    }
+    .min(unit_count.max(1));
+
+    std::thread::scope(|scope| {
+        for _ in 0..writer_count {
+            scope.spawn(|| {
+                loop {
+                    if abort.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    let Some(unit) = queue.lock().expect("write queue lock").pop_front() else {
+                        return;
+                    };
+                    let mut load = |source: &mut AttachmentSource| {
+                        // Name the file before the failure turns into a chip:
+                        // otherwise a systemic problem (a revoked permission, a
+                        // failing disk) reads as a run's worth of unexplained
+                        // missing attachments.
+                        let named = match source {
+                            AttachmentSource::Path(path) => Some(path.display().to_string()),
+                            _ => None,
+                        };
+                        load_attachment_source(source).map_err(|e| {
+                            if let Some(path) = named {
+                                emit_log(
+                                    log,
+                                    format!("warning: attachment {path} could not be read: {e}"),
+                                );
+                            }
+                            e
+                        })
+                    };
+                    match write_one_unit(
+                        output_dir,
+                        &attachments_dir,
+                        unit,
+                        options,
+                        &mut load,
+                        &report_progress,
+                        cancel,
+                    ) {
+                        Ok(outcome) => {
+                            attachments_saved
+                                .fetch_add(outcome.attachments_saved, Ordering::Relaxed);
+                            if outcome.written {
+                                written.fetch_add(1, Ordering::Relaxed);
+                            } else {
+                                skipped.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                        Err(err) => {
+                            let mut slot = first_error.lock().expect("write queue error slot");
+                            if slot.is_none() {
+                                *slot = Some(format!("{err:#}"));
+                            }
+                            abort.store(true, Ordering::SeqCst);
+                            return;
+                        }
+                    }
+                }
+            });
+        }
+    });
+
+    if let Some(msg) = first_error.into_inner().expect("write queue error slot") {
+        anyhow::bail!(msg);
+    }
+
+    let report = WriteQueueReport {
+        conversations_written: written.load(Ordering::Relaxed),
+        conversations_skipped: skipped.load(Ordering::Relaxed),
+        attachments_saved: attachments_saved.load(Ordering::Relaxed),
+        media: media::MediaReport::default(),
+    };
+    announce_finish(log, &report, options.resume);
+    Ok(report)
+}
+
+/// Slack above the measured need, for the derivative a convert holds in
+/// flight and for whatever else shares the disk.
+const DISK_HEADROOM_SLACK: u64 = 64 * 1024 * 1024;
+
+/// Refuse a drain the staging disk plainly cannot hold.
+///
+/// `needed` counts the originals the units name. Peak usage is those plus one
+/// in-flight derivative, since the media pass commits per file, so the sum
+/// plus a fixed slack is the honest requirement.
+fn check_headroom(output_dir: &Path, units: &[ConversationUnit]) -> Result<()> {
+    // Summed before any resume skip: over-asking on a resumed run is the
+    // conservative direction, and such a run usually has most of those bytes
+    // on disk already.
+    let needed: u64 = units
+        .iter()
+        .flat_map(|u| u.attachments.iter())
+        .filter_map(|a| a.size_hint)
+        .sum();
+    // A filesystem that cannot answer must not block an export.
+    let Ok(available) = fs2::available_space(output_dir) else {
+        return Ok(());
+    };
+    match headroom_shortfall(needed, available) {
+        Some(message) => anyhow::bail!(message),
+        None => Ok(()),
+    }
+}
+
+/// `None` when `available` covers `needed` plus slack; otherwise what to say.
+fn headroom_shortfall(needed: u64, available: u64) -> Option<String> {
+    let required = needed.saturating_add(DISK_HEADROOM_SLACK);
+    if available >= required {
+        return None;
+    }
+    Some(format!(
+        "Not enough space on the staging disk: this backup needs about {}, and {} is free.",
+        human_bytes(required),
+        human_bytes(available)
+    ))
+}
+
+fn human_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+    let n = bytes as f64;
+    if n >= GIB {
+        format!("{:.1} GiB", n / GIB)
+    } else if n >= MIB {
+        format!("{:.1} MiB", n / MIB)
+    } else if n >= KIB {
+        format!("{:.1} KiB", n / KIB)
+    } else {
+        format!("{bytes} B")
+    }
 }
 
 fn announce_start(log: Option<&LogSink>, units: usize) {
@@ -251,22 +461,6 @@ fn announce_finish(log: Option<&LogSink>, report: &WriteQueueReport, resume: boo
     }
 }
 
-fn apply_outcome(
-    progress: &mut DrainProgress,
-    report: &mut WriteQueueReport,
-    outcome: &UnitOutcome,
-) {
-    progress.done += outcome.attachment_count;
-    progress.bytes_done += outcome.bytes_done;
-    progress.bytes_total += outcome.bytes_total;
-    report.attachments_saved += outcome.attachments_saved;
-    if outcome.written {
-        report.conversations_written += 1;
-    } else {
-        report.conversations_skipped += 1;
-    }
-}
-
 /// Stage one conversation's attachments, then write the conversation file.
 ///
 /// The order is the engine's whole contract: the conversation file lands last,
@@ -277,11 +471,9 @@ fn write_one_unit(
     unit: ConversationUnit,
     options: &WriteQueueOptions,
     load: &mut dyn FnMut(&mut AttachmentSource) -> Result<Option<Vec<u8>>, String>,
-    on_progress: &mut dyn FnMut(usize, u64, u64, &DrainProgress),
-    base: &DrainProgress,
-    cancel: Option<&std::sync::atomic::AtomicBool>,
+    on_progress: &dyn Fn(UnitProgress),
+    cancel: Option<&AtomicBool>,
 ) -> Result<UnitOutcome> {
-    use std::sync::atomic::Ordering;
     if cancel.is_some_and(|f| f.load(Ordering::SeqCst)) {
         anyhow::bail!("canceled");
     }
@@ -298,13 +490,14 @@ fn write_one_unit(
         // Already written by an earlier run, attachments and all. Count its
         // attachments as done — progress describes the whole import, not just
         // this run's share of it — and load nothing.
-        on_progress(attachment_count, 0, 0, base);
+        on_progress(UnitProgress {
+            done: attachment_count,
+            bytes_done: 0,
+            bytes_total: 0,
+        });
         return Ok(UnitOutcome {
             written: false,
             attachments_saved: 0,
-            attachment_count,
-            bytes_done: 0,
-            bytes_total: 0,
         });
     }
 
@@ -341,6 +534,7 @@ fn write_one_unit(
 
     let mut unit_bytes_done = 0_u64;
     let mut unit_bytes_extra = 0_u64;
+    let mut reported_done = 0_usize;
     {
         let sources = &mut sources;
         run_attachment_jobs(
@@ -353,9 +547,17 @@ fn write_one_unit(
                 None => Ok(None),
             },
             |p| {
+                // run_attachment_jobs reports this unit's running totals; the
+                // drain wants what each attachment added.
+                let extra = p.bytes_total.saturating_sub(hint_sum);
+                on_progress(UnitProgress {
+                    done: p.done.saturating_sub(reported_done),
+                    bytes_done: p.bytes_done.saturating_sub(unit_bytes_done),
+                    bytes_total: extra.saturating_sub(unit_bytes_extra),
+                });
+                reported_done = p.done;
                 unit_bytes_done = p.bytes_done;
-                unit_bytes_extra = p.bytes_total.saturating_sub(hint_sum);
-                on_progress(p.done, p.bytes_done, unit_bytes_extra, base);
+                unit_bytes_extra = extra;
             },
             None,
             cancel,
@@ -382,9 +584,6 @@ fn write_one_unit(
     Ok(UnitOutcome {
         written: true,
         attachments_saved,
-        attachment_count,
-        bytes_done: unit_bytes_done,
-        bytes_total: unit_bytes_extra,
     })
 }
 
@@ -658,5 +857,117 @@ mod tests {
             !lines.iter().any(|l| l.contains("preparing 1/")),
             "per-conversation count lines would confuse the desktop scraper"
         );
+    }
+    #[test]
+    fn parallel_drain_writes_every_unit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tmp.path().join("out");
+        fs::create_dir_all(&out).unwrap();
+        let units: Vec<_> = (0..12)
+            .map(|i| {
+                unit_from(
+                    doc_with(&format!("+1555000{i:04}"), 1),
+                    vec![AttachmentSource::Bytes(format!("payload-{i}").into_bytes())],
+                )
+            })
+            .collect();
+        let mut options = options(MediaMode::Clone, false);
+        options.writer_count = 4;
+
+        let report = drain_write_queue(&out, units, &options, None, None).unwrap();
+
+        assert_eq!(report.conversations_written, 12);
+        assert_eq!(report.attachments_saved, 12);
+        let written = fs::read_dir(&out)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".jsonl"))
+            .count();
+        assert_eq!(written, 12);
+    }
+
+    #[test]
+    fn parallel_drain_stops_on_the_first_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tmp.path().join("out");
+        fs::create_dir_all(&out).unwrap();
+        // A directory sitting where a conversation file must go: the write
+        // fails for that unit, and the drain reports it rather than
+        // finishing quietly.
+        let blocked = doc_with("+15550000003", 0).filename_stem();
+        fs::create_dir_all(out.join(format!("{blocked}.jsonl"))).unwrap();
+
+        let units: Vec<_> = (1..=4)
+            .map(|i| {
+                unit_from(
+                    doc_with(&format!("+1555000000{i}"), 1),
+                    vec![AttachmentSource::Bytes(b"x".to_vec())],
+                )
+            })
+            .collect();
+        let mut options = options(MediaMode::Clone, false);
+        options.writer_count = 2;
+
+        let err = drain_write_queue(&out, units, &options, None, None).unwrap_err();
+        assert!(
+            format!("{err:#}").contains(&blocked),
+            "the error should name the conversation that failed: {err:#}"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_attachment_is_logged_before_it_becomes_a_chip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tmp.path().join("out");
+        fs::create_dir_all(&out).unwrap();
+        let missing = tmp.path().join("gone.jpg");
+
+        let lines = Arc::new(Mutex::new(Vec::<String>::new()));
+        let sink_lines = Arc::clone(&lines);
+        let sink = LogSink::new(move |l: &str| sink_lines.lock().unwrap().push(l.to_string()));
+
+        let units = vec![unit_from(
+            doc_with("+15550000001", 1),
+            vec![AttachmentSource::Path(missing.clone())],
+        )];
+        let report = drain_write_queue(
+            &out,
+            units,
+            &options(MediaMode::Clone, false),
+            Some(&sink),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(report.conversations_written, 1, "the drain carries on");
+        let lines = lines.lock().unwrap().clone();
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("warning: attachment ") && l.contains("could not be read")),
+            "an unreadable attachment says why before it turns into a chip: {lines:?}"
+        );
+
+        let stem = doc_with("+15550000001", 0).filename_stem();
+        let doc = read_conversation_jsonl(&out.join(format!("{stem}.jsonl"))).unwrap();
+        assert_eq!(
+            doc.messages[0].attachments[0].missing_reason.as_deref(),
+            Some("file_missing")
+        );
+    }
+
+    #[test]
+    fn headroom_shortfall_speaks_when_space_is_short() {
+        assert!(headroom_shortfall(10 * 1024 * 1024 * 1024, 1024).is_some());
+        assert_eq!(headroom_shortfall(1024, 10 * 1024 * 1024 * 1024), None);
+        let msg = headroom_shortfall(2 * 1024 * 1024 * 1024, 1024).unwrap();
+        assert!(msg.contains("free"), "{msg}");
+        assert!(msg.contains("GiB"), "{msg}");
+    }
+
+    #[test]
+    fn default_writer_count_is_bounded() {
+        let n = default_writer_count();
+        assert!((1..=8).contains(&n));
     }
 }

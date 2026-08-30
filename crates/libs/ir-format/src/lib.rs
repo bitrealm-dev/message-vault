@@ -43,7 +43,7 @@ pub use util::UNSAFE_ATTACHMENT_PATH_PREFIX;
 pub use write::{CSV_HEADERS, document_to_mail_messages, write_conversation_jsonl_to};
 pub use write_queue::{
     AttachmentSource, ConversationUnit, UnitAttachment, WriteQueueOptions, WriteQueueReport,
-    drain_write_queue_with_loader, load_attachment_source,
+    default_writer_count, drain_write_queue, drain_write_queue_with_loader, load_attachment_source,
 };
 
 #[cfg(test)]

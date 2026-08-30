@@ -4242,6 +4242,7 @@ dependencies = [
  "anyhow",
  "contacts",
  "csv",
+ "fs2",
  "hex",
  "mail",
  "media",
