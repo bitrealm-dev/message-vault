@@ -393,8 +393,38 @@ pub enum TranscodeOutcome {
 /// already-efficient file and `try_remux_replace` may fall through on a
 /// remux failure. Callers must treat [`TranscodeOutcome::Skipped`] from
 /// [`transcode_file`] as authoritative over whatever this function predicted.
+///
+/// Stats `src` for the two size floors (compress-mode same-format JPEG/MP3).
+/// When `src` may not exist on disk, use [`derivative_name_for_missing`]
+/// instead — a stat failure here silently reads as size 0, which is under
+/// both floors and answers `None`, the wrong answer for "is there a
+/// candidate name to look for", not "is this live file worth touching".
 #[must_use]
 pub fn derivative_name(src: &Path, mode: MediaMode) -> Option<String> {
+    derivative_name_impl(src, mode, |floor| {
+        fs::metadata(src).map(|m| m.len()).unwrap_or(0) <= floor
+    })
+}
+
+/// Same decision tree as [`derivative_name`], but never stats `src` — for a
+/// recorded path already known to be missing from disk.
+///
+/// The two size floors exist to skip a small file that is still there to
+/// measure; a missing file's size is unknowable and irrelevant to the
+/// question this variant answers ("what name would a committed derivative of
+/// this file carry, if one exists"), so both floors are treated as never
+/// crossed and the candidate name is always produced. The caller is
+/// expected to check the filesystem for that name itself.
+#[must_use]
+pub fn derivative_name_for_missing(src: &Path, mode: MediaMode) -> Option<String> {
+    derivative_name_impl(src, mode, |_floor| false)
+}
+
+fn derivative_name_impl(
+    src: &Path,
+    mode: MediaMode,
+    under_floor: impl Fn(u64) -> bool,
+) -> Option<String> {
     let kind = classify(src)?;
     let ext = src
         .extension()
@@ -414,9 +444,7 @@ pub fn derivative_name(src: &Path, mode: MediaMode) -> Option<String> {
             if ext == "gif" {
                 return None;
             }
-            if matches!(ext.as_str(), "jpg" | "jpeg")
-                && fs::metadata(src).map(|m| m.len()).unwrap_or(0) <= JPEG_COMPRESS_FLOOR
-            {
+            if matches!(ext.as_str(), "jpg" | "jpeg") && under_floor(JPEG_COMPRESS_FLOOR) {
                 return None;
             }
             "jpg"
@@ -428,8 +456,7 @@ pub fn derivative_name(src: &Path, mode: MediaMode) -> Option<String> {
             "mp3"
         }
         (Kind::Audio, MediaMode::Compress) => {
-            if ext == "mp3" && fs::metadata(src).map(|m| m.len()).unwrap_or(0) <= MP3_COMPRESS_FLOOR
-            {
+            if ext == "mp3" && under_floor(MP3_COMPRESS_FLOOR) {
                 return None;
             }
             "mp3"

@@ -226,8 +226,8 @@ pub fn transcode_staged(
 }
 
 /// `check_cancel`, spelled the way `run_attachment_jobs` spells it —
-/// `"canceled"`, one L — since the Tauri command layer string-matches on
-/// that convention.
+/// `"canceled"`, one L — since the web hook's `isCancellation` string-matches
+/// on that convention.
 fn check_cancel_now(cancel: Option<&CancelFlag>) -> Result<()> {
     check_cancel(cancel).map_err(|_| anyhow::anyhow!("canceled"))
 }
@@ -338,17 +338,30 @@ fn pending_in(
 
             // Not committed, not on disk: maybe another attachment sharing
             // the same bytes (this document or another) already converted
-            // it and deleted the shared original.
-            if let Some(name) = final_derivative_name(&abs, mode) {
+            // it and deleted the shared original — or the shared original
+            // was dropped for good (too_large deletes both the derivative
+            // and the original; decision 45). The recorded file has no
+            // bytes to measure, so the candidate name is derived stat-free:
+            // the size floors exist to skip a small *live* file, and are
+            // meaningless against a file that is not there. When
+            // `derivative_name` returns `None`, the mode has no media step
+            // for this kind of file at all — its absence has nothing to do
+            // with the media pass, and it is left alone.
+            if let Some(name) = final_derivative_name_for_missing(&abs, mode) {
                 let derivative = staging_dir.join("attachments").join(&name);
                 if derivative.is_file() {
                     out.push(PendingWork::Repoint {
                         recorded_rel: rel.to_string(),
                         derivative,
                     });
+                } else {
+                    // No committed derivative exists either: nothing
+                    // recoverable survived, so the attachment is settled
+                    // rather than left dangling with no `missing_reason`.
+                    out.push(PendingWork::Unrecoverable {
+                        recorded_rel: rel.to_string(),
+                    });
                 }
-                // else: missing for a reason the media pass has no business
-                // with (never staged, dropped earlier).
             }
         }
     }
@@ -409,7 +422,23 @@ fn find_recoverable_original(
 /// name collide with the source, or with an already-committed derivative on
 /// a later resume.
 fn final_derivative_name(src: &Path, mode: MediaMode) -> Option<String> {
-    let forecast = media::derivative_name(src, mode)?;
+    committed_name_from(src, media::derivative_name(src, mode))
+}
+
+/// Same as [`final_derivative_name`], but for a recorded path already known
+/// to be missing from disk: the forecast is derived stat-free via
+/// [`media::derivative_name_for_missing`], since there is no live file left
+/// to check the compress-mode size floors against.
+fn final_derivative_name_for_missing(src: &Path, mode: MediaMode) -> Option<String> {
+    committed_name_from(src, media::derivative_name_for_missing(src, mode))
+}
+
+/// Turn a bare `derivative_name`-shaped `forecast` (`"{stem}.{ext}"`) into the
+/// committed `-mv` name, keyed off `src`'s own stem rather than the
+/// forecast's — see the module docs on why the committed name must never
+/// equal the bare forecast.
+fn committed_name_from(src: &Path, forecast: Option<String>) -> Option<String> {
+    let forecast = forecast?;
     let target_ext = Path::new(&forecast)
         .extension()
         .and_then(|e| e.to_str())
@@ -987,7 +1016,7 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "canceled",
-            "spelled to match run_attachment_jobs; the Tauri layer string-matches it"
+            "spelled to match run_attachment_jobs; the web hook's isCancellation string-matches it"
         );
         let doc = read_conversation_jsonl(&jsonl).unwrap();
         assert_eq!(
@@ -1372,6 +1401,146 @@ mod tests {
             original.exists(),
             "the original is untouched when the patch never committed"
         );
+    }
+
+    /// Write a JPEG through ffmpeg at `-q:v 2` (low compression), sized well
+    /// over the media crate's compress-mode same-format floor (500 KB) and
+    /// reliably smaller when re-encoded at compress mode's finer `-q:v 5` —
+    /// the ordinary "worse quality shrinks" direction, calibrated locally
+    /// against this repo's ffmpeg build (1024x768 random noise: ~856 KB at
+    /// `-q:v 2`, ~646 KB re-encoded at `-q:v 5`). See `media::process`'s
+    /// `write_jpeg_that_grows_on_finer_reencode` for the opposite,
+    /// incompressible-noise calibration this deliberately avoids.
+    fn jpeg_over_compress_floor_bytes() -> Vec<u8> {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("source.jpg");
+        let output = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "nullsrc=size=1024x768,geq=random(1)*255:random(1)*255:random(1)*255",
+                "-frames:v",
+                "1",
+                "-update",
+                "1",
+                "-q:v",
+                "2",
+            ])
+            .arg(&path)
+            .output()
+            .expect("run ffmpeg for jpeg fixture");
+        assert!(
+            output.status.success(),
+            "ffmpeg jpeg fixture generation failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::fs::read(&path).unwrap()
+    }
+
+    #[test]
+    fn two_documents_sharing_one_compressed_original_both_end_pointing_at_the_committed_derivative()
+    {
+        if !ffmpeg_available() {
+            return;
+        }
+        // The compress-mode variant of the convert-mode test above: this is
+        // the exact bug the final review caught. `final_derivative_name`
+        // used to stat the (already-deleted) shared original for the
+        // compress-mode JPEG floor, read size 0, read that as "under the
+        // floor", and answered `None` — so document B's repoint never
+        // queued and it was left pointing at a file that no longer existed,
+        // with no `missing_reason`.
+        let bytes = jpeg_over_compress_floor_bytes();
+        assert!(
+            bytes.len() as u64 > 500 * 1024,
+            "fixture must clear the compress-mode same-format floor"
+        );
+        let (dir, jsonl_a, original) = staged_one("shared.jpg", &bytes);
+
+        let mut doc_b = message_ir::testutil::sample_document("second conversation, same photo");
+        doc_b.conversation.chat_identifier = "+15555550199".into();
+        doc_b.messages[0].guid = "doc-b-guid".into();
+        doc_b.messages[0].attachments = vec![IrAttachment {
+            path: Some("attachments/shared.jpg".into()),
+            original_name: Some("shared.jpg".into()),
+            mime_type: None,
+            digest_sha256: None,
+            is_sticker: false,
+            transcription: None,
+            sticker_effect: None,
+            size_bytes: Some(bytes.len() as u64),
+            missing_reason: None,
+            bytes: None,
+        }];
+        doc_b.finalize_stats();
+        let jsonl_b = dir.path().join(format!("{}.jsonl", doc_b.filename_stem()));
+        write_conversation_jsonl_to(&jsonl_b, &doc_b).unwrap();
+
+        let report = transcode_staged(
+            dir.path(),
+            &options(MediaMode::Compress, u64::MAX),
+            None,
+            &mut |_| {},
+        )
+        .unwrap();
+
+        assert_eq!(report.converted, 1, "one physical file is compressed once");
+        assert_eq!(
+            report.repointed, 1,
+            "the second document is repointed, not left dangling or re-compressed"
+        );
+        assert!(!original.exists());
+
+        let final_doc_a = read_conversation_jsonl(&jsonl_a).unwrap();
+        let final_doc_b = read_conversation_jsonl(&jsonl_b).unwrap();
+        let att_a = &final_doc_a.messages[0].attachments[0];
+        let att_b = &final_doc_b.messages[0].attachments[0];
+        assert_eq!(att_a.path.as_deref(), Some("attachments/shared-mv.jpg"));
+        assert_eq!(att_b.path.as_deref(), Some("attachments/shared-mv.jpg"));
+        assert!(att_a.missing_reason.is_none());
+        assert!(att_b.missing_reason.is_none());
+        assert!(att_a.digest_sha256.is_some());
+        assert_eq!(
+            att_a.digest_sha256, att_b.digest_sha256,
+            "both documents recompute the same digest from the same on-disk derivative"
+        );
+    }
+
+    #[test]
+    fn a_missing_original_with_no_committed_derivative_becomes_file_missing() {
+        if !ffmpeg_available() {
+            return;
+        }
+        // Covers the other half of the same bug: a recorded path that is
+        // gone for good (nothing shares it, and no committed derivative
+        // exists either — the shared-original-deleted-by-too_large case, or
+        // any other reason the file vanished). Before the fix this fell
+        // through the repoint branch's `if let Some(name) = …` silently,
+        // leaving the attachment dangling with no `missing_reason` at all.
+        let (dir, jsonl, original) = staged_one(
+            "ghost.jpg",
+            b"content is irrelevant; deleted before the pass looks",
+        );
+        std::fs::remove_file(&original).unwrap();
+
+        let report = transcode_staged(
+            dir.path(),
+            &options(MediaMode::Compress, u64::MAX),
+            None,
+            &mut |_| {},
+        )
+        .unwrap();
+
+        assert_eq!(report.missing, 1);
+        assert_eq!(report.repointed, 0);
+        assert_eq!(report.converted, 0);
+        let doc = read_conversation_jsonl(&jsonl).unwrap();
+        let att = &doc.messages[0].attachments[0];
+        assert_eq!(att.missing_reason.as_deref(), Some("file_missing"));
+        assert_eq!(att.path, None);
+        assert_eq!(att.digest_sha256, None);
     }
 
     #[test]

@@ -699,6 +699,60 @@ mod tests {
     }
 
     #[test]
+    fn two_attachments_in_one_document_sharing_one_file_count_bytes_and_forecast_once() {
+        // Same aliasing fact as the cross-document test above, but both
+        // references live in ONE document — the dedup loop (`classified_paths`)
+        // walks a single flattened list across every document, so it is
+        // document-agnostic by construction, but the same-document case had
+        // no test pinning it (deferred from Task 4's review as a coverage
+        // gap, closed here at the final review alongside the transcode.rs
+        // aliasing fix, which faces the identical blind spot).
+        let dir = tempfile::tempdir().unwrap();
+        let attachments_dir = dir.path().join("attachments");
+        std::fs::create_dir_all(&attachments_dir).unwrap();
+        std::fs::File::create(attachments_dir.join("shared.png"))
+            .unwrap()
+            .set_len(900 * 1024 * 1024)
+            .unwrap();
+
+        let shared_attachment = || IrAttachment {
+            path: Some("attachments/shared.png".into()),
+            original_name: Some("shared.png".into()),
+            mime_type: None,
+            digest_sha256: None,
+            is_sticker: false,
+            transcription: None,
+            sticker_effect: None,
+            size_bytes: Some(900 * 1024 * 1024),
+            missing_reason: None,
+            bytes: None,
+        };
+
+        let mut doc = message_ir::testutil::sample_document("one conversation, two references");
+        doc.messages[0].attachments = vec![shared_attachment()];
+        let mut second = doc.messages[0].clone();
+        second.guid = "second-message-guid".into();
+        second.timestamp_unix_ms += 1000;
+        second.attachments = vec![shared_attachment()];
+        doc.messages.push(second);
+        doc.finalize_stats();
+        let jsonl = dir.path().join(format!("{}.jsonl", doc.filename_stem()));
+        write_conversation_jsonl_to(&jsonl, &doc).unwrap();
+
+        let summary = summarize_staging(dir.path(), &summary_options(), &mut |_| {}).unwrap();
+        assert_eq!(
+            summary.attachments, 2,
+            "one reference per message, both in the same document"
+        );
+        assert_eq!(
+            summary.attachment_bytes,
+            900 * 1024 * 1024,
+            "the shared file's bytes are counted once, not once per reference"
+        );
+        assert_eq!(summary.forecasts.len(), 1, "one row for the one file");
+    }
+
+    #[test]
     fn a_folder_with_no_conversation_files_is_an_empty_summary_not_an_error() {
         let dir = tempfile::tempdir().unwrap();
         let summary = summarize_staging(dir.path(), &summary_options(), &mut |_| {}).unwrap();
