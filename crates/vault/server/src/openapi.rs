@@ -79,6 +79,7 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(crate::contacts_api::contact_summaries_handler))
         .routes(routes!(crate::contacts_api::contact_detail_handler))
         .routes(routes!(crate::contacts_api::contact_mutate_handler))
+        .routes(routes!(crate::contacts_api::contact_match_handler))
         .routes(routes!(
             crate::contact_groups_api::contact_groups_list_handler
         ))
@@ -237,6 +238,7 @@ mod tests {
             "/v1/export/contacts",
             "/v1/export/contacts/summaries",
             "/v1/export/contacts/{id}",
+            "/v1/contacts/match",
             "/v1/contact-groups",
             "/v1/contact-groups/members",
             "/v1/contacts/groups",

@@ -455,7 +455,13 @@ pub async fn get_active_import(
     }
 }
 
-/// Move a live session to another stage.
+/// Move a live session to another stage, optionally recording what the user
+/// approved at the gate they just passed.
+///
+/// `summary_json` is written to `vault_imports.summary_json` only when
+/// `Some`; `None` leaves whatever is already stored there untouched. Most
+/// stage changes carry no summary, and treating absent as null would erase
+/// the plan decision 15 later diffs the outcome against.
 ///
 /// # Errors
 ///
@@ -466,6 +472,7 @@ pub async fn set_import_stage(
     account_id: &str,
     import_id: i64,
     stage: ImportStage,
+    summary_json: Option<&str>,
 ) -> std::result::Result<(), ImportLookupError> {
     let existing = get_owned_import(&mut *conn, account_id, import_id).await?;
     if existing.status != "running" {
@@ -476,12 +483,28 @@ pub async fn set_import_stage(
             ),
         });
     }
-    sqlx::query("UPDATE vault_imports SET stage = $1 WHERE id = $2 AND account_id = $3")
-        .bind(stage.as_str())
-        .bind(import_id)
-        .bind(account_id)
-        .execute(&mut *conn)
-        .await?;
+    match summary_json {
+        Some(summary) => {
+            sqlx::query(
+                "UPDATE vault_imports SET stage = $1, summary_json = $2
+                 WHERE id = $3 AND account_id = $4",
+            )
+            .bind(stage.as_str())
+            .bind(summary)
+            .bind(import_id)
+            .bind(account_id)
+            .execute(&mut *conn)
+            .await?;
+        }
+        None => {
+            sqlx::query("UPDATE vault_imports SET stage = $1 WHERE id = $2 AND account_id = $3")
+                .bind(stage.as_str())
+                .bind(import_id)
+                .bind(account_id)
+                .execute(&mut *conn)
+                .await?;
+        }
+    }
     Ok(())
 }
 
@@ -1250,7 +1273,7 @@ mod tests {
         };
         let id = start_import(&mut conn, &args).await.unwrap();
 
-        set_import_stage(&mut conn, account, id, ImportStage::Pushing)
+        set_import_stage(&mut conn, account, id, ImportStage::Pushing, None)
             .await
             .unwrap();
         let active = get_active_import(&mut conn, account)

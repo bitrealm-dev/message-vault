@@ -1425,6 +1425,7 @@ mod tests {
             AxumPath(import_id),
             Json(SetImportStageBody {
                 stage: "pushing".into(),
+                summary: None,
             }),
         )
         .await
@@ -1440,6 +1441,7 @@ mod tests {
             AxumPath(import_id),
             Json(SetImportStageBody {
                 stage: "halfway".into(),
+                summary: None,
             }),
         )
         .await

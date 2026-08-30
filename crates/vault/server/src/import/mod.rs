@@ -1101,6 +1101,16 @@ pub(crate) async fn imports_active_handler(
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct SetImportStageBody {
     pub(crate) stage: String,
+    /// What the user approved at the gate they just passed, when they passed one.
+    ///
+    /// Recorded here rather than at completion so an approval survives a
+    /// reload: the summary shown at a gate is recomputed from the folder, but
+    /// what was approved is a different question and only the session
+    /// remembers it. Absent leaves the stored `summary_json` untouched —
+    /// most stage changes carry nothing, and treating absent as null would
+    /// throw away the plan the outcome is later judged against.
+    #[serde(default)]
+    pub(crate) summary: Option<serde_json::Value>,
 }
 
 /// Confirmation that the stage moved.
@@ -1141,9 +1151,17 @@ pub(crate) async fn imports_stage_handler(
             body.stage
         ))
     })?;
+    let summary_json = optional_json_string(body.summary.as_ref(), "summary")?;
     // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
-    crate::db::vault_imports::set_import_stage(&mut conn, &account, import_id, stage).await?;
+    crate::db::vault_imports::set_import_stage(
+        &mut conn,
+        &account,
+        import_id,
+        stage,
+        summary_json.as_deref(),
+    )
+    .await?;
     Ok(Json(SetImportStageResponse {
         ok: true,
         stage: stage.as_str().to_string(),
@@ -1531,6 +1549,7 @@ mod tests {
     use super::contact_name::trim_nonempty;
     use super::*;
     use crate::assets;
+    use crate::test_support::{TestVault, post_json, register_via_api, test_vault};
     use tempfile::TempDir;
 
     const TEST_ACCOUNT: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -1539,6 +1558,97 @@ mod tests {
         let path = dir.join(name);
         fs::write(&path, body).unwrap();
         path
+    }
+
+    /// A vault holding one live import session at `awaiting_gate_1` whose
+    /// `summary_json` already carries `summary` — as if an earlier
+    /// `POST /v1/imports/{id}/stage` recorded a gate approval.
+    async fn session_with_summary(summary: serde_json::Value) -> (TestVault, String, i64) {
+        let vault = test_vault().await;
+        let account = register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+        let created: serde_json::Value = post_json(
+            &vault.state,
+            "/v1/imports",
+            &account.token,
+            serde_json::json!({ "source": "imessage" }),
+        )
+        .await;
+        let import_id = created["id"].as_i64().expect("created session has an id");
+        let mut conn = vault.state.db.acquire().await.unwrap();
+        crate::db::vault_imports::set_import_stage(
+            &mut conn,
+            &account.account_id,
+            import_id,
+            crate::db::vault_imports::ImportStage::AwaitingGate1,
+            Some(&summary.to_string()),
+        )
+        .await
+        .unwrap();
+        (vault, account.token, import_id)
+    }
+
+    /// The session's stored `summary_json`, decoded, or `None` when the
+    /// column is null.
+    async fn stored_summary(vault: &TestVault, import_id: i64) -> Option<serde_json::Value> {
+        let mut conn = vault.state.db.acquire().await.unwrap();
+        let raw: Option<String> =
+            sqlx::query_scalar("SELECT summary_json FROM vault_imports WHERE id = $1")
+                .bind(import_id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        raw.map(|s| serde_json::from_str(&s).expect("stored summary_json is valid JSON"))
+    }
+
+    #[tokio::test]
+    async fn a_stage_change_with_a_summary_stores_it() {
+        // The gate screen posts what the user approved so it survives a
+        // reload — recomputing the summary from the folder is a different
+        // question from what was actually approved.
+        let vault = test_vault().await;
+        let account = register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+        let created: serde_json::Value = post_json(
+            &vault.state,
+            "/v1/imports",
+            &account.token,
+            serde_json::json!({ "source": "imessage" }),
+        )
+        .await;
+        let import_id = created["id"].as_i64().unwrap();
+
+        post_json::<serde_json::Value>(
+            &vault.state,
+            &format!("/v1/imports/{import_id}/stage"),
+            &account.token,
+            serde_json::json!({"stage": "awaiting_gate_1", "summary": {"approved": true}}),
+        )
+        .await;
+
+        assert_eq!(
+            stored_summary(&vault, import_id).await,
+            Some(serde_json::json!({"approved": true}))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stage_change_without_a_summary_does_not_erase_the_stored_one() {
+        // Most stage changes carry nothing. Treating absent as null would
+        // throw away the plan the outcome is judged against.
+        let (vault, token, import_id) =
+            session_with_summary(serde_json::json!({"approved": true})).await;
+
+        post_json::<serde_json::Value>(
+            &vault.state,
+            &format!("/v1/imports/{import_id}/stage"),
+            &token,
+            serde_json::json!({"stage": "pushing"}),
+        )
+        .await;
+
+        assert_eq!(
+            stored_summary(&vault, import_id).await,
+            Some(serde_json::json!({"approved": true}))
+        );
     }
 
     /// Open a verify connection to an on-disk test database.
