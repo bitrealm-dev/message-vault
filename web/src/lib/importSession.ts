@@ -54,6 +54,12 @@ export async function discardImportSession(id: number): Promise<void> {
  *
  * The message count is unknown until parse finishes, so it starts null
  * and is filled in afterwards.
+ *
+ * The size and mtime come from a stat of the path itself, so for a
+ * directory source -- an iOS backup folder, a WhatsApp folder -- they
+ * describe the directory entry rather than its contents, and neither moves
+ * when a file inside it grows. Nothing reads this fingerprint back yet;
+ * whatever does will need its own answer for directories.
  */
 export function buildSourceFingerprint(path: string, stat: PathStat): SourceFingerprint {
   return {

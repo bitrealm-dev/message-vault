@@ -14,6 +14,17 @@ pub struct HomeDirInfo {
 }
 
 /// Whether a path exists on disk and what kind of entry it is.
+///
+/// `size_bytes` and `modified_unix_ms` are file-oriented: they come from a
+/// single `std::fs::metadata` call on the path itself. For a directory
+/// source -- an iOS backup folder, a WhatsApp folder -- that is the
+/// directory entry, not its contents: the size is the entry's own (4096
+/// bytes on most filesystems) and the mtime moves only when a child is
+/// added or removed, never when one is written to. A fingerprint built
+/// from these two values therefore cannot tell that a directory backup
+/// grew between attempts. Anything reading them for that purpose needs a
+/// directory strategy of its own -- child count plus newest descendant
+/// mtime, say -- chosen alongside the code that consumes it.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PathStat {
@@ -23,10 +34,13 @@ pub struct PathStat {
     pub is_file: bool,
     /// `true` when the path is a directory.
     pub is_directory: bool,
-    /// Size in bytes; `0` when the path does not exist.
+    /// Size in bytes; `0` when the path does not exist. For a directory
+    /// this is the directory entry's own size, not the total of its
+    /// contents (see the type's docs).
     pub size_bytes: u64,
     /// Last modification time in milliseconds since the Unix epoch, or
-    /// `None` when the platform does not report one.
+    /// `None` when the platform does not report one. For a directory this
+    /// does not move when a file inside it changes (see the type's docs).
     pub modified_unix_ms: Option<i64>,
 }
 
