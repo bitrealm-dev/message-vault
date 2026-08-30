@@ -30,13 +30,13 @@ bind = "127.0.0.1:8080"
 # Multipart chunk size advertised to clients. Default 64 MiB (keep under ~100 MB for Cloudflare).
 # asset_part_size = 67108864
 
-# CORS allowed origins. Empty = same-origin only (website served from this process).
-# List every UI origin that calls this API on a different host/port:
+# Extra CORS allowed origins. Two kinds of UI need no entry here: the website
+# this process serves (same origin), and the packaged desktop app, whose three
+# origins — tauri://localhost (Linux AppImage / macOS), http://tauri.localhost
+# (Windows) and https://tauri.localhost (Windows HTTPS scheme) — are built in.
+# Add an origin when some other UI calls this API on a different host/port:
 # - Vite / `cargo tauri dev`: http://localhost:5173 and http://127.0.0.1:5173
-# - Packaged desktop: tauri://localhost (Linux AppImage / macOS),
-#   http://tauri.localhost (Windows), https://tauri.localhost (Windows HTTPS scheme)
-# Without those entries the desktop app reports it cannot reach the server even
-# when curl to :8080 works. Use ["*"] only for local debugging.
+# Use ["*"] only for local debugging.
 # Keep this array on one line: scripts/run-vault-dev.sh uncomments only this line.
 # cors_origins = ["http://localhost:5173", "http://127.0.0.1:5173", "https://tauri.localhost", "http://tauri.localhost", "tauri://localhost"]
 

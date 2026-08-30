@@ -50,9 +50,11 @@ pub struct ServerConfig {
     /// remains for config compatibility.
     #[serde(default = "default_asset_hash_threshold_bytes")]
     pub asset_hash_threshold_bytes: u64,
-    /// Allowed Cross-Origin Resource Sharing (CORS) origins. Empty = same-origin
-    /// only (no `Access-Control-Allow-Origin`). CORS is the browser rule that
-    /// decides which other websites may call this API.
+    /// Cross-Origin Resource Sharing (CORS) origins allowed to call this API,
+    /// on top of the packaged desktop app's own origins, which are always
+    /// allowed. CORS is the browser rule that decides which other websites may
+    /// call this API. Empty is the right setting for a vault serving its own
+    /// website, since that UI is same-origin and needs no header at all.
     /// Use `["*"]` only for local debugging. Example: `["https://app.example.com"]`.
     #[serde(default)]
     pub cors_origins: Vec<String>,
