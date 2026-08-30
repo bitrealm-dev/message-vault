@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use axum::Json;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::HeaderMap;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::AnyConnection;
 use sqlx::Row;
 
@@ -19,6 +19,50 @@ use crate::server::{ApiError, AppState, require_full_access, resolve_auth};
 pub use crate::page_limits::{
     DEFAULT_LIST_LIMIT, MAX_CONVERSATION_LIST_LIMIT as MAX_LIST_LIMIT, MAX_LIST_OFFSET,
 };
+
+/// Column the conversation list is ordered by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConversationSort {
+    /// Timestamp of the most recent non-duplicate message in the thread.
+    #[default]
+    Date,
+    /// Number of non-duplicate messages in the thread.
+    Messages,
+}
+
+/// Ascending or descending.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SortOrder {
+    Asc,
+    #[default]
+    Desc,
+}
+
+/// How to order a conversation page. Defaults to newest activity first.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ConversationOrder {
+    pub sort: ConversationSort,
+    pub order: SortOrder,
+}
+
+impl ConversationOrder {
+    /// The `ORDER BY` body for this ordering.
+    ///
+    /// Every arm is a fixed literal chosen by matching on an enum, so no part
+    /// of the request reaches the SQL text. Both columns are output aliases of
+    /// the page query, which SQLite and Postgres each allow in `ORDER BY`.
+    /// `c.id` breaks ties so paging cannot repeat or skip a row.
+    fn order_by_sql(self) -> &'static str {
+        match (self.sort, self.order) {
+            (ConversationSort::Date, SortOrder::Desc) => "last_message_at DESC, c.id DESC",
+            (ConversationSort::Date, SortOrder::Asc) => "last_message_at ASC, c.id ASC",
+            (ConversationSort::Messages, SortOrder::Desc) => "message_count DESC, c.id DESC",
+            (ConversationSort::Messages, SortOrder::Asc) => "message_count ASC, c.id ASC",
+        }
+    }
+}
 
 /// One bound value in the dynamic list query. sqlx Any has no
 /// user-constructible dynamic value, so binds ride this enum and are chained
@@ -359,10 +403,12 @@ fn parse_conversation_list_query(q: &str) -> ConversationListQuery {
 ///
 /// Returns a bad-request error for an invalid query, or an internal error when
 /// a database statement fails.
-pub async fn list_conversations(
+/// Page the conversation list in a chosen order.
+pub async fn list_conversations_sorted(
     conn: &mut AnyConnection,
     account_id: &str,
     q: &str,
+    order: ConversationOrder,
     limit: usize,
     offset: usize,
 ) -> Result<ConversationListPage, ExportQueryError> {
@@ -578,8 +624,9 @@ pub async fn list_conversations(
          FROM conversations c
          JOIN handles hc ON hc.id = c.chat_handle_id
          WHERE {where_sql}
-         ORDER BY last_message_at DESC, c.id DESC
+         ORDER BY {order_by}
          LIMIT ${page_n} OFFSET ${page_n_plus}",
+        order_by = order.order_by_sql(),
         page_n = page_n,
         page_n_plus = page_n + 1
     );
@@ -882,8 +929,26 @@ pub async fn list_conversation_source_stats(
     Ok(Some(ConversationSourcesPage { sources }))
 }
 
-/// Page through conversations (newest first) with participants, message
-/// counts, and tags.
+/// Query string for the conversation list.
+///
+/// Its own type rather than [`crate::server::ListPageQuery`] because `sort` and
+/// `order` are meaningful here and nowhere else.
+#[derive(Debug, Deserialize)]
+pub(crate) struct ConversationsPageQuery {
+    #[serde(default)]
+    q: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    offset: Option<usize>,
+    #[serde(default)]
+    sort: Option<ConversationSort>,
+    #[serde(default)]
+    order: Option<SortOrder>,
+}
+
+/// Page through conversations with participants, message counts, and tags.
+/// Ordered by most recent activity unless `sort` and `order` say otherwise.
 #[utoipa::path(
     get,
     path = "/v1/export/conversations",
@@ -892,7 +957,9 @@ pub async fn list_conversation_source_stats(
     params(
         ("q" = Option<String>, Query, description = "Conversation search; empty lists all non-trashed"),
         ("limit" = Option<usize>, Query, description = "Page size"),
-        ("offset" = Option<usize>, Query, description = "Page offset")
+        ("offset" = Option<usize>, Query, description = "Page offset"),
+        ("sort" = Option<String>, Query, description = "Order by `date` (last message, default) or `messages` (message count)"),
+        ("order" = Option<String>, Query, description = "`asc` or `desc` (default)")
     ),
     responses(
         (status = 200, body = crate::conversations_api::ConversationListPage),
@@ -904,7 +971,7 @@ pub async fn list_conversation_source_stats(
 pub(crate) async fn conversations_list_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(query): Query<crate::server::ListPageQuery>,
+    Query(query): Query<ConversationsPageQuery>,
 ) -> Result<Json<ConversationListPage>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
@@ -913,7 +980,12 @@ pub(crate) async fn conversations_list_handler(
     let q = query.q.unwrap_or_default();
     let limit = query.limit.unwrap_or(DEFAULT_LIST_LIMIT);
     let offset = query.offset.unwrap_or(0);
-    let page = list_conversations(&mut conn, &auth.account_id, &q, limit, offset).await?;
+    let order = ConversationOrder {
+        sort: query.sort.unwrap_or_default(),
+        order: query.order.unwrap_or_default(),
+    };
+    let page =
+        list_conversations_sorted(&mut conn, &auth.account_id, &q, order, limit, offset).await?;
     Ok(Json(page))
 }
 
@@ -952,6 +1024,26 @@ mod tests {
 
     use crate::db::{account_profile, engine, schema, vault_imports};
     use crate::search_query::CountComparator;
+
+    /// A newest-first page — the default ordering, which is what most of these
+    /// tests care about. Ordering itself is covered by its own tests below.
+    async fn list_conversations(
+        conn: &mut AnyConnection,
+        account_id: &str,
+        q: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<ConversationListPage, ExportQueryError> {
+        list_conversations_sorted(
+            conn,
+            account_id,
+            q,
+            ConversationOrder::default(),
+            limit,
+            offset,
+        )
+        .await
+    }
 
     async fn setup() -> (sqlx::AnyPool, tempfile::TempDir, String) {
         let (pool, dir) = engine::test_pool().await;
@@ -1168,6 +1260,101 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(lone_service.total, all.total);
+    }
+
+    #[tokio::test]
+    async fn list_conversations_sorts_by_date_or_message_count() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        // Conversation 1 (from setup) gets two more *older* messages, so it is
+        // the busiest thread but not the most recent one. Conversation 2 gets a
+        // single *newer* message. Date order and count order then disagree,
+        // which is what makes this test able to tell them apart.
+        sqlx::query(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
+             ) VALUES
+                (1, $1, 'imessage', '2024-05-01T12:00:00Z', 0, 1, 'older'),
+                (1, $1, 'imessage', '2024-05-02T12:00:00Z', 0, 2, 'older still')",
+        )
+        .bind(&account)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        let peer2 = account_profile::link_account_handle(
+            &mut conn,
+            &account,
+            "+15555550300",
+            HandleType::Phone,
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO conversations (
+                id, account_id, chat_handle_id, conversation_type, source_file
+             ) VALUES (2, $1, $2, 'individual', 'c2.jsonl')",
+        )
+        .bind(&account)
+        .bind(peer2)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
+             ) VALUES (2, $1, 'imessage', '2024-07-01T12:00:00Z', 0, 0, 'newest')",
+        )
+        .bind(&account)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        async fn ids_for(
+            pool: &sqlx::AnyPool,
+            account: &str,
+            sort: ConversationSort,
+            order: SortOrder,
+        ) -> Vec<String> {
+            let mut conn = pool.acquire().await.unwrap();
+            list_conversations_sorted(
+                &mut conn,
+                account,
+                "",
+                ConversationOrder { sort, order },
+                DEFAULT_LIST_LIMIT,
+                0,
+            )
+            .await
+            .unwrap()
+            .conversations
+            .iter()
+            .map(|c| c.id.clone())
+            .collect()
+        }
+
+        // 3 messages ending 2024-06-01 (id 1) vs 1 message on 2024-07-01 (id 2).
+        assert_eq!(
+            ids_for(&pool, &account, ConversationSort::Date, SortOrder::Desc).await,
+            ["2", "1"],
+            "newest activity first"
+        );
+        assert_eq!(
+            ids_for(&pool, &account, ConversationSort::Date, SortOrder::Asc).await,
+            ["1", "2"],
+            "oldest activity first"
+        );
+        assert_eq!(
+            ids_for(&pool, &account, ConversationSort::Messages, SortOrder::Desc).await,
+            ["1", "2"],
+            "busiest thread first"
+        );
+        assert_eq!(
+            ids_for(&pool, &account, ConversationSort::Messages, SortOrder::Asc).await,
+            ["2", "1"],
+            "quietest thread first"
+        );
     }
 
     #[tokio::test]

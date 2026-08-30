@@ -1,21 +1,25 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useId } from "react";
 import { formatDateSpan } from "../lib/formatDate";
 import { personDisplayLabel } from "../lib/nameAliases";
-import { listRowDividers } from "../lib/tw";
+import { listRowDivider } from "../lib/tw";
 import type { Conversation } from "../lib/types";
 import { useNameAliases } from "../lib/useNameAliases";
 import Checkbox from "./Checkbox";
 import { useColumnResizing } from "./columnResizeState";
 
-/** Short service label (imessage / sms/mms). */
+/**
+ * Short service label for a row.
+ *
+ * iMessage and SMS/MMS are the same thing to someone reading their vault — a
+ * text message — and which transport carried it is not what the row is for.
+ * Anything else (WhatsApp, say) keeps its own name.
+ */
 function formatServiceLabel(service: string): string | null {
   const s = service.trim();
   if (!s || s.toLowerCase() === "unknown") return null;
   const lower = s.toLowerCase();
-  if (lower === "imessage" || lower === "ios") return "imessage";
-  if (lower === "sms/mms" || lower === "sms" || lower === "mms" || lower.includes("sms")) {
-    return "sms/mms";
-  }
+  const texting = ["imessage", "ios", "sms/mms", "sms", "mms"];
+  if (texting.includes(lower) || lower.includes("sms")) return "Text Message";
   return s;
 }
 
@@ -130,6 +134,7 @@ export default function ConversationRow({
   checked?: boolean;
   onCheckChange?: (id: string) => void;
 }) {
+  const checkboxId = useId();
   const columnResizing = useColumnResizing();
   const useAliases = useNameAliases();
   const isGroup = conversation.is_group;
@@ -160,7 +165,7 @@ export default function ConversationRow({
     </div>
   );
 
-  const rowClass = `box-border flex w-full items-start gap-2 border-none px-[0.85rem] py-[0.7rem] text-left ${listRowDividers} ${
+  const rowClass = `box-border flex w-full items-center gap-2 border-none px-[0.85rem] py-[0.7rem] text-left ${listRowDivider} ${
     isSelected ? "bg-hover" : "bg-transparent"
   }`;
 
@@ -177,12 +182,24 @@ export default function ConversationRow({
   // reach the checkbox by keyboard.
   return (
     <div className={rowClass}>
-      <Checkbox
-        checked={checked || false}
-        aria-label={`Select ${conversationTitleText(conversation, useAliases)}`}
-        onChange={() => onCheckChange(conversation.id)}
-        className="mt-0.5 shrink-0"
-      />
+      {/*
+        The hit area is the whole left gutter, not the 16px box: negative
+        margins pull it out to the row's top, bottom, and left edges, and the
+        padding puts it back so the box itself does not move. Anywhere left of
+        the title toggles the row.
+      */}
+      <label
+        htmlFor={checkboxId}
+        className="-my-[0.7rem] -mr-2 -ml-[0.85rem] flex shrink-0 cursor-pointer items-center self-stretch pr-2 pl-[0.85rem]"
+      >
+        <Checkbox
+          id={checkboxId}
+          checked={checked || false}
+          aria-label={`Select ${conversationTitleText(conversation, useAliases)}`}
+          onChange={() => onCheckChange(conversation.id)}
+          className="shrink-0"
+        />
+      </label>
       <button
         type="button"
         onClick={onClick}
