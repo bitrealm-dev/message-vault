@@ -257,10 +257,17 @@ pub async fn import_export(args: &ImportExportArgs<'_>) -> Result<ImportStats> {
 
     let import_id = vault_imports::start_import(
         &mut conn,
-        args.account_id,
-        args.source,
-        args.mode.as_str(),
-        Some("message-vault-server"),
+        &vault_imports::StartImportArgs {
+            account_id: args.account_id,
+            source: args.source,
+            mode: args.mode.as_str(),
+            tool: Some("message-vault-server"),
+            stage: vault_imports::ImportStage::Parse,
+            staging_dir: None,
+            device_id: None,
+            form_json: None,
+            source_fingerprint: None,
+        },
     )
     .await?;
 
@@ -809,12 +816,21 @@ pub(crate) async fn imports_create_handler(
     crate::db::account_profile::ensure_account_row(&mut conn, &account)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
+    // TODO(task 3): map StartImportError::AlreadyActive to a 409 instead of
+    // flattening every failure to ApiError::Internal.
     let id = crate::db::vault_imports::start_import(
         &mut conn,
-        &account,
-        &body.source,
-        &body.mode,
-        body.tool.as_deref(),
+        &crate::db::vault_imports::StartImportArgs {
+            account_id: &account,
+            source: &body.source,
+            mode: &body.mode,
+            tool: body.tool.as_deref(),
+            stage: crate::db::vault_imports::ImportStage::Parse,
+            staging_dir: None,
+            device_id: None,
+            form_json: None,
+            source_fingerprint: None,
+        },
     )
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1186,10 +1202,17 @@ async fn run_import_path(
             .map_err(|e| ApiError::Internal(e.to_string()))?;
         let id = crate::db::vault_imports::start_import(
             &mut conn,
-            &account,
-            &source_id,
-            mode.as_str(),
-            Some("http"),
+            &crate::db::vault_imports::StartImportArgs {
+                account_id: &account,
+                source: &source_id,
+                mode: mode.as_str(),
+                tool: Some("http"),
+                stage: crate::db::vault_imports::ImportStage::Parse,
+                staging_dir: None,
+                device_id: None,
+                form_json: None,
+                source_fingerprint: None,
+            },
         )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1776,10 +1799,17 @@ mod tests {
             .unwrap();
         let import_id = crate::db::vault_imports::start_import(
             &mut conn,
-            TEST_ACCOUNT,
-            "imessage",
-            "append",
-            Some("test"),
+            &crate::db::vault_imports::StartImportArgs {
+                account_id: TEST_ACCOUNT,
+                source: "imessage",
+                mode: "append",
+                tool: Some("test"),
+                stage: crate::db::vault_imports::ImportStage::Parse,
+                staging_dir: None,
+                device_id: None,
+                form_json: None,
+                source_fingerprint: None,
+            },
         )
         .await
         .unwrap();

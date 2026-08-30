@@ -142,10 +142,17 @@ pub async fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats
 
     let import_id = vault_imports::start_import(
         &mut conn,
-        &account_id,
-        &session_source,
-        opts.mode.as_str(),
-        Some("message-vault-server"),
+        &vault_imports::StartImportArgs {
+            account_id: &account_id,
+            source: &session_source,
+            mode: opts.mode.as_str(),
+            tool: Some("message-vault-server"),
+            stage: vault_imports::ImportStage::Parse,
+            staging_dir: None,
+            device_id: None,
+            form_json: None,
+            source_fingerprint: None,
+        },
     )
     .await?;
 
