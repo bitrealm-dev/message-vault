@@ -36,6 +36,12 @@ Download the new installer from [GitHub Releases](https://github.com/bitrealm-io
 
 If Import is in use, the `.vault-import-state.jsonl` journal in the work directory is forward-compatible.
 
+## When the database schema changes
+
+Some releases change the shape of the vault's own database rather than the JSONL it imports. When that happens, the server rebuilds its tables empty the first time it starts on the new version, on SQLite and Postgres alike, and the release notes will say so. Your messages live in the vault, so a rebuild means you import again from the backups you already have. Nothing is unrecoverable, because those backups are what the vault was built from in the first place.
+
+This release changes the vault schema, so upgrading to it starts your vault empty and you re-import your conversations afterward. Keep the source backups you imported from, the `chat.db`, XML exports, or whatever they were, somewhere you can get back to, and you're covered.
+
 ## Compatibility
 
 The vault and the desktop app share JSONL schema version 3. New versions may add fields but will not remove or rename existing ones.
