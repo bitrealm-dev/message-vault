@@ -21,7 +21,6 @@ use crate::db::dialect;
 /// gates and the media pass are not built yet — only `Parse`, `Write`, and
 /// `Pushing` are reachable today.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // gate/transcode variants are reachable once Task 3 wires the stage API
 pub enum ImportStage {
     /// Reading the backup. Nothing durable exists yet.
     Parse,
@@ -51,7 +50,6 @@ impl ImportStage {
     }
 
     /// Parse a stored spelling, or `None` when it is not one of the six.
-    #[allow(dead_code)] // consumed once Task 3 restores a session from its row
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "parse" => Some(Self::Parse),
@@ -439,7 +437,6 @@ pub async fn get_owned_import(
 /// # Errors
 ///
 /// Returns an error when the query fails.
-#[allow(dead_code)] // wired into the API surface by Task 3
 pub async fn get_active_import(
     conn: &mut AnyConnection,
     account_id: &str,
@@ -464,7 +461,6 @@ pub async fn get_active_import(
 ///
 /// [`ImportLookupError::NotFound`] when the account owns no such import,
 /// [`ImportLookupError::InvalidSession`] when it is no longer running.
-#[allow(dead_code)] // wired into the API surface by Task 3
 pub async fn set_import_stage(
     conn: &mut AnyConnection,
     account_id: &str,
@@ -499,7 +495,6 @@ pub async fn set_import_stage(
 ///
 /// [`ImportLookupError::NotFound`] when the account owns no such import,
 /// [`ImportLookupError::InvalidSession`] when it is no longer running.
-#[allow(dead_code)] // wired into the API surface by Task 3
 pub async fn discard_import(
     conn: &mut AnyConnection,
     account_id: &str,
