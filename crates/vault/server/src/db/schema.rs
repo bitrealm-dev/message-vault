@@ -156,6 +156,18 @@ async fn apply_vault_ddl(conn: &mut AnyConnection) -> Result<()> {
     Ok(())
 }
 
+/// The Postgres DDL that creates the vault's own tables, in the order the
+/// vault installs it. The installer, the rebuild's drop list, and the drift
+/// guard all read this one array, so a new DDL file cannot reach one of them
+/// and miss the others.
+const PG_VAULT_TABLE_DDL: [&str; 4] = [
+    PG_ACCOUNTS_DDL,
+    // Contacts before messages: the messages DDL references contact tables.
+    PG_CONTACTS_TABLES_DDL,
+    PG_MESSAGE_TABLES_DDL,
+    PG_STAGING_TABLES_DDL,
+];
+
 /// Every table name the embedded Postgres DDL creates, parsed from the DDL
 /// itself so the rebuild's drop list cannot drift from what the vault
 /// installs.
@@ -166,12 +178,7 @@ async fn apply_vault_ddl(conn: &mut AnyConnection) -> Result<()> {
 fn pg_vault_table_names() -> Vec<&'static str> {
     const CREATE_TABLE: &str = "CREATE TABLE IF NOT EXISTS ";
     let mut names: Vec<&'static str> = Vec::new();
-    for ddl in [
-        PG_ACCOUNTS_DDL,
-        PG_CONTACTS_TABLES_DDL,
-        PG_MESSAGE_TABLES_DDL,
-        PG_STAGING_TABLES_DDL,
-    ] {
+    for ddl in PG_VAULT_TABLE_DDL {
         for line in ddl.lines() {
             let Some(rest) = line.trim_start().strip_prefix(CREATE_TABLE) else {
                 continue;
@@ -241,11 +248,10 @@ async fn apply_postgres_vault_ddl(conn: &mut AnyConnection) -> Result<()> {
             );
             drop_pg_user_tables(&mut tx).await?;
         }
-        execute_batch(&mut tx, PG_ACCOUNTS_DDL).await?;
         // Same ordering as the SQLite variant: contacts before messages.
-        execute_batch(&mut tx, PG_CONTACTS_TABLES_DDL).await?;
-        execute_batch(&mut tx, PG_MESSAGE_TABLES_DDL).await?;
-        execute_batch(&mut tx, PG_STAGING_TABLES_DDL).await?;
+        for ddl in PG_VAULT_TABLE_DDL {
+            execute_batch(&mut tx, ddl).await?;
+        }
         // Post-hoc FKs last: they reference tables from both the accounts
         // and contacts DDL sets.
         execute_batch(&mut tx, PG_FKS_DDL).await?;
@@ -1688,16 +1694,11 @@ mod tests {
                 "{expected} missing from {names:?}"
             );
         }
-        let declared = [
-            PG_ACCOUNTS_DDL,
-            PG_CONTACTS_TABLES_DDL,
-            PG_MESSAGE_TABLES_DDL,
-            PG_STAGING_TABLES_DDL,
-        ]
-        .iter()
-        .flat_map(|ddl| ddl.lines())
-        .filter(|line| line.trim_start().starts_with("CREATE TABLE"))
-        .count();
+        let declared = PG_VAULT_TABLE_DDL
+            .iter()
+            .flat_map(|ddl| ddl.lines())
+            .filter(|line| line.trim_start().starts_with("CREATE TABLE"))
+            .count();
         assert_eq!(
             names.len(),
             declared,
