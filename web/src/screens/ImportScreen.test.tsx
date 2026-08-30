@@ -464,7 +464,7 @@ describe("ImportScreen entering Import", () => {
     const user = userEvent.setup();
     getActiveImportSessionMock.mockResolvedValue(
       session({
-        stage: "write",
+        stage: "parse",
         form: {
           source: "imessage-ios",
           backupPath: "/backups/iphone.tar",
@@ -493,10 +493,103 @@ describe("ImportScreen entering Import", () => {
     await user.click(screen.getByText("resume-action"));
 
     expect(discardImportSessionMock).toHaveBeenCalledWith(7);
+    // The old folder goes with the session: a restart writes into a new one,
+    // and nothing will ever reach this one again.
+    expect(invokeDeleteStagingMock).toHaveBeenCalledWith({
+      staging_dir: "/home/u/message-vault/staging-260830",
+    });
     expect(startImportMock).toHaveBeenCalledTimes(1);
     const [form, resume] = startImportMock.mock.calls[0] as [unknown, unknown];
     expect(form).toMatchObject({ source: "imessage-ios", backupPath: "/backups/iphone.tar" });
     expect(resume).toBeUndefined();
+  });
+
+  it("picks up an interrupted copy in the folder it was already writing into", async () => {
+    const user = userEvent.setup();
+    getActiveImportSessionMock.mockResolvedValue(
+      session({
+        stage: "write",
+        source_fingerprint: {
+          path: "/backups/iphone.tar",
+          size_bytes: 1000,
+          modified_unix_ms: 1_700_000_000_000,
+          message_count: null,
+        },
+        form: {
+          source: "imessage-ios",
+          backupPath: "/backups/iphone.tar",
+          attachmentMedia: "copy",
+          maxResolution: "720p",
+          maxFps: "30",
+          minSizeMb: "20",
+          contactNameMode: "fill_missing",
+          ownerPhones: [],
+          force: false,
+          obfuscate: false,
+          isSbr: false,
+          attachmentRoot: "",
+          appleContacts: "",
+          whatsappWa: "",
+          whatsappMedia: "",
+          whatsappDb: "",
+          whatsappBusiness: false,
+        },
+      }),
+    );
+    // The staged folder first, then the backup: same size and mtime, so the
+    // fingerprint matches and the copy is safe to continue.
+    invokePathStatMock
+      .mockResolvedValueOnce({ exists: true, isFile: false, isDirectory: true })
+      .mockResolvedValueOnce({
+        exists: true,
+        isFile: true,
+        isDirectory: false,
+        sizeBytes: 1000,
+        modifiedUnixMs: 1_700_000_000_000,
+      });
+    render(<ImportScreen />);
+
+    expect(await screen.findByTestId("resume-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("resume-kind")).toHaveTextContent("resume_write");
+
+    await user.click(screen.getByText("resume-action"));
+
+    expect(discardImportSessionMock).not.toHaveBeenCalled();
+    expect(invokeDeleteStagingMock).not.toHaveBeenCalled();
+    expect(startImportMock).toHaveBeenCalledTimes(1);
+    const [, resume, resumeWrite] = startImportMock.mock.calls[0] as [unknown, unknown, unknown];
+    expect(resume).toBeUndefined();
+    expect(resumeWrite).toEqual({
+      sessionId: 7,
+      stagingDir: "/home/u/message-vault/staging-260830",
+    });
+  });
+
+  it("says the backup changed when its size no longer matches what was recorded", async () => {
+    getActiveImportSessionMock.mockResolvedValue(
+      session({
+        stage: "write",
+        source_fingerprint: {
+          path: "/backups/iphone.tar",
+          size_bytes: 1000,
+          modified_unix_ms: 1_700_000_000_000,
+          message_count: null,
+        },
+      }),
+    );
+    invokePathStatMock
+      .mockResolvedValueOnce({ exists: true, isFile: false, isDirectory: true })
+      .mockResolvedValueOnce({
+        exists: true,
+        isFile: true,
+        isDirectory: false,
+        sizeBytes: 999_999,
+        modifiedUnixMs: 1_700_000_000_000,
+      });
+    render(<ImportScreen />);
+
+    expect(await screen.findByTestId("resume-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("resume-kind")).toHaveTextContent("source_changed");
   });
 
   it("re-checks for an open session when the screen returns to the form", async () => {
@@ -536,7 +629,7 @@ describe("ImportScreen entering Import", () => {
     const user = userEvent.setup();
     getActiveImportSessionMock.mockResolvedValue(
       session({
-        stage: "write",
+        stage: "parse",
         form: {
           source: "imessage-ios",
           backupPath: "/backups/iphone.tar",
@@ -612,7 +705,7 @@ describe("ImportScreen entering Import", () => {
     const user = userEvent.setup();
     getActiveImportSessionMock.mockResolvedValue(
       session({
-        stage: "write",
+        stage: "parse",
         form: {
           source: "imessage-ios",
           backupPath: "/backups/iphone.tar",

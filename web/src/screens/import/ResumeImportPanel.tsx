@@ -40,6 +40,22 @@ const COPY: Record<ResumableKind, PanelCopy> = {
     primary: { label: "Carry on", action: "resume" },
     secondary: { label: "Discard this import", action: "discard" },
   },
+  resume_write: {
+    heading: () => "Finish copying your backup",
+    body: () =>
+      "The copy did not finish. Picking up where you left off reads the backup again and skips the conversations already copied.",
+    primary: { label: "Pick up", action: "resume" },
+    secondary: { label: "Discard this import", action: "discard" },
+  },
+  source_changed: {
+    heading: () => "The backup has changed",
+    body: (session) =>
+      session.source_fingerprint?.path
+        ? `This import was reading ${session.source_fingerprint.path}, and that backup is different now. Starting over reads it fresh with the same settings.`
+        : "The backup this import was reading is different now. Starting over reads it fresh with the same settings.",
+    primary: { label: "Start over", action: "resume" },
+    secondary: { label: "Discard this import", action: "discard" },
+  },
   // resumeDecisionFor routes here both when the staged folder has gone
   // missing and when the session never recorded one — every session created
   // outside the desktop app stores a null staging_dir — so the copy names

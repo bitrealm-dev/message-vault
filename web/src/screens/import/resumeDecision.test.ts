@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ActiveImportSession } from "../../lib/importSession";
-import { resumeDecisionFor } from "./resumeDecision";
+import { checkSourceFingerprint, resumeDecisionFor } from "./resumeDecision";
 
 function session(overrides: Partial<ActiveImportSession> = {}): ActiveImportSession {
   return {
@@ -21,7 +21,12 @@ function session(overrides: Partial<ActiveImportSession> = {}): ActiveImportSess
 describe("resumeDecisionFor", () => {
   it("has nothing to decide without a session", () => {
     expect(
-      resumeDecisionFor({ session: null, deviceId: "this-device", folderExists: false }).kind,
+      resumeDecisionFor({
+        session: null,
+        deviceId: "this-device",
+        folderExists: false,
+        fingerprint: "unknown",
+      }).kind,
     ).toBe("none");
   });
 
@@ -30,6 +35,7 @@ describe("resumeDecisionFor", () => {
       session: session({ device_id: "other-device" }),
       deviceId: "this-device",
       folderExists: true,
+      fingerprint: "unknown",
     });
     expect(decision.kind).toBe("other_device");
     expect(decision.canResume).toBe(false);
@@ -40,6 +46,7 @@ describe("resumeDecisionFor", () => {
       session: session(),
       deviceId: "this-device",
       folderExists: false,
+      fingerprint: "unknown",
     });
     expect(decision.kind).toBe("folder_missing");
     expect(decision.canResume).toBe(false);
@@ -50,21 +57,23 @@ describe("resumeDecisionFor", () => {
       session: session({ stage: "pushing" }),
       deviceId: "this-device",
       folderExists: true,
+      fingerprint: "unknown",
     });
     expect(decision.kind).toBe("resume_push");
     expect(decision.canResume).toBe(true);
   });
 
-  it("restarts when the run died before the folder was finished", () => {
-    for (const stage of ["parse", "write"] as const) {
-      expect(
-        resumeDecisionFor({
-          session: session({ stage }),
-          deviceId: "this-device",
-          folderExists: true,
-        }).kind,
-      ).toBe("restart");
-    }
+  it("restarts when the run died before it had written anything", () => {
+    // `write` used to land here too; it resumes now, since the conversations
+    // already copied are work worth keeping.
+    expect(
+      resumeDecisionFor({
+        session: session({ stage: "parse" }),
+        deviceId: "this-device",
+        folderExists: true,
+        fingerprint: "match",
+      }).kind,
+    ).toBe("restart");
   });
 
   it("sends a session waiting at a gate back to its gate", () => {
@@ -73,6 +82,7 @@ describe("resumeDecisionFor", () => {
         session: session({ stage }),
         deviceId: "this-device",
         folderExists: true,
+        fingerprint: "unknown",
       });
       expect(decision.kind).toBe("resume_gate");
       expect(decision.canResume).toBe(true);
@@ -84,6 +94,7 @@ describe("resumeDecisionFor", () => {
       session: session({ stage: "transcode" }),
       deviceId: "this-device",
       folderExists: true,
+      fingerprint: "unknown",
     });
     expect(decision.kind).toBe("resume_media");
     expect(decision.canResume).toBe(true);
@@ -98,6 +109,7 @@ describe("resumeDecisionFor", () => {
           session: session({ stage }),
           deviceId: "this-device",
           folderExists: false,
+          fingerprint: "unknown",
         }).kind,
       ).toBe("folder_missing");
     }
@@ -109,7 +121,144 @@ describe("resumeDecisionFor", () => {
         session: session({ device_id: null }),
         deviceId: "this-device",
         folderExists: true,
+        fingerprint: "unknown",
       }).kind,
     ).toBe("resume_push");
+  });
+  it("offers to pick up a copy that was interrupted", () => {
+    const decision = resumeDecisionFor({
+      session: session({ stage: "write" }),
+      deviceId: "this-device",
+      folderExists: true,
+      fingerprint: "match",
+    });
+    expect(decision.kind).toBe("resume_write");
+    expect(decision.canResume).toBe(true);
+  });
+
+  it("still offers to pick up when the backup cannot be checked", () => {
+    expect(
+      resumeDecisionFor({
+        session: session({ stage: "write" }),
+        deviceId: "this-device",
+        folderExists: true,
+        fingerprint: "unknown",
+      }).kind,
+    ).toBe("resume_write");
+  });
+
+  it("says the backup changed rather than copying against a different source", () => {
+    for (const fingerprint of ["mismatch", "source_missing"] as const) {
+      const decision = resumeDecisionFor({
+        session: session({ stage: "write" }),
+        deviceId: "this-device",
+        folderExists: true,
+        fingerprint,
+      });
+      expect(decision.kind).toBe("source_changed");
+      expect(decision.canResume).toBe(false);
+    }
+  });
+
+  it("restarts a session that died in parse, whatever the backup looks like", () => {
+    expect(
+      resumeDecisionFor({
+        session: session({ stage: "parse" }),
+        deviceId: "this-device",
+        folderExists: true,
+        fingerprint: "mismatch",
+      }).kind,
+    ).toBe("restart");
+  });
+
+  it("ignores the fingerprint once the copy is done", () => {
+    // Decision 36: a changed source is irrelevant at either gate and during
+    // the push — the staged folder is what those stages work from.
+    expect(
+      resumeDecisionFor({
+        session: session({ stage: "pushing" }),
+        deviceId: "this-device",
+        folderExists: true,
+        fingerprint: "mismatch",
+      }).kind,
+    ).toBe("resume_push");
+  });
+
+  it("puts a missing folder ahead of any fingerprint answer", () => {
+    expect(
+      resumeDecisionFor({
+        session: session({ stage: "write" }),
+        deviceId: "this-device",
+        folderExists: false,
+        fingerprint: "match",
+      }).kind,
+    ).toBe("folder_missing");
+  });
+});
+
+describe("checkSourceFingerprint", () => {
+  const stored = {
+    path: "/backups/chat.db",
+    size_bytes: 1000,
+    modified_unix_ms: 1_700_000_000_000,
+    message_count: null,
+  };
+
+  it("cannot judge a session that stored no fingerprint", () => {
+    expect(
+      checkSourceFingerprint(null, {
+        exists: true,
+        isFile: true,
+        isDirectory: false,
+        sizeBytes: 1000,
+        modifiedUnixMs: 1_700_000_000_000,
+      }),
+    ).toBe("unknown");
+  });
+
+  it("reports a source it could not find", () => {
+    expect(checkSourceFingerprint(stored, null)).toBe("source_missing");
+    expect(
+      checkSourceFingerprint(stored, {
+        exists: false,
+        isFile: false,
+        isDirectory: false,
+        sizeBytes: 0,
+        modifiedUnixMs: null,
+      }),
+    ).toBe("source_missing");
+  });
+
+  it("matches when size and modified time both agree", () => {
+    expect(
+      checkSourceFingerprint(stored, {
+        exists: true,
+        isFile: true,
+        isDirectory: false,
+        sizeBytes: 1000,
+        modifiedUnixMs: 1_700_000_000_000,
+      }),
+    ).toBe("match");
+  });
+
+  it("notices a different size or a different modified time", () => {
+    expect(
+      checkSourceFingerprint(stored, {
+        exists: true,
+        isFile: true,
+        isDirectory: false,
+        sizeBytes: 2000,
+        modifiedUnixMs: 1_700_000_000_000,
+      }),
+    ).toBe("mismatch");
+    expect(
+      checkSourceFingerprint(stored, {
+        exists: true,
+        isFile: true,
+        isDirectory: false,
+        sizeBytes: 1000,
+        modifiedUnixMs: 1_700_000_000_001,
+      }),
+    ).toBe("mismatch");
   });
 });

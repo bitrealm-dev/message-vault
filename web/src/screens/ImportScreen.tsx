@@ -42,7 +42,11 @@ import GateTwoScreen from "./import/GateTwoScreen";
 import ImportFormFields from "./import/ImportFormFields";
 import ImportProgressView from "./import/ImportProgressView";
 import ResumeImportPanel from "./import/ResumeImportPanel";
-import { type ResumeDecision, resumeDecisionFor } from "./import/resumeDecision";
+import {
+  checkSourceFingerprint,
+  type ResumeDecision,
+  resumeDecisionFor,
+} from "./import/resumeDecision";
 import {
   parseStoredStagingSummary,
   restoreFormFromSnapshot,
@@ -165,10 +169,24 @@ export default function ImportScreen() {
         const session = await getActiveImportSession();
         const stat = session?.staging_dir ? await probePath(session.staging_dir) : null;
         const folderExists = Boolean(stat?.exists && stat.isDirectory);
+        // Only a resume of the copy consults this; every later stage works
+        // from the staged folder rather than the backup.
+        // The full stat, not `probePath`'s narrowed one: the comparison
+        // needs the size and modified time.
+        const sourceStat = session?.source_fingerprint?.path
+          ? await invokePathStat(session.source_fingerprint.path).catch(() => null)
+          : null;
         // A resume or discard that started while this was in flight owns
         // the decision -- a stale answer must not put the panel back.
         if (!cancelled && !resumingRef.current && !discardingRef.current) {
-          setResume(resumeDecisionFor({ session, deviceId: getDeviceId(), folderExists }));
+          setResume(
+            resumeDecisionFor({
+              session,
+              deviceId: getDeviceId(),
+              folderExists,
+              fingerprint: checkSourceFingerprint(session?.source_fingerprint ?? null, sourceStat),
+            }),
+          );
         }
       } catch {
         // A vault that cannot answer is not a reason to block the form.
@@ -315,13 +333,30 @@ export default function ImportScreen() {
         return;
       }
 
+      if (resume.kind === "resume_write") {
+        if (!session.staging_dir) return; // resumeDecisionFor guarantees this; defensive only.
+        setResume(NO_RESUME);
+        await startImport(restoredForm, undefined, {
+          sessionId: session.id,
+          stagingDir: session.staging_dir,
+        });
+        return;
+      }
+
       // Restart: a fresh extract writes into a new staging folder, and the
       // vault allows only one live session per account, so give up the old
       // one before starting the new run. setResume stays put until right
       // before startImport, so the panel (not a blank form) covers the
-      // discard round trip.
+      // discard round trip. The old folder goes with the session: nothing
+      // will ever reach it again, and it can be multiple gigabytes.
+      const thisDevice = !session.device_id || session.device_id === getDeviceId();
       try {
-        await discardImportSession(session.id);
+        await Promise.allSettled([
+          discardImportSession(session.id),
+          thisDevice && session.staging_dir
+            ? invokeDeleteStaging({ staging_dir: session.staging_dir })
+            : Promise.resolve(),
+        ]);
       } catch {
         // Best effort -- if the vault is unreachable the create call below
         // surfaces its own error the same as any other failed import start.
