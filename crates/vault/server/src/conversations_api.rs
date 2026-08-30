@@ -2244,10 +2244,17 @@ mod tests {
 
         let import_a = vault_imports::start_import(
             &mut conn,
-            &account,
-            "imessage-ios",
-            "append",
-            Some("test"),
+            &vault_imports::StartImportArgs {
+                account_id: &account,
+                source: "imessage-ios",
+                mode: "append",
+                tool: Some("test"),
+                stage: vault_imports::ImportStage::Parse,
+                staging_dir: None,
+                device_id: None,
+                form_json: None,
+                source_fingerprint: None,
+            },
         )
         .await
         .unwrap();
