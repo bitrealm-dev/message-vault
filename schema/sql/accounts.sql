@@ -159,7 +159,11 @@ CREATE TABLE IF NOT EXISTS vault_imports (
     form_json TEXT,
     -- Source path, size, mtime, and message count. A backup that grew
     -- between attempts has different conversation boundaries.
-    source_fingerprint TEXT
+    source_fingerprint TEXT,
+    -- Addresses the backup's device sent from (JSON array), read by the
+    -- client before parsing. Lets a resumed Gate 1 show the identity list
+    -- without re-reading the backup.
+    source_identities TEXT
 );
 
 CREATE INDEX IF NOT EXISTS ix_vault_imports_account_started

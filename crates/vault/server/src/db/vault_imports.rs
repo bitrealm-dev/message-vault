@@ -111,6 +111,8 @@ pub struct VaultImportRow {
     pub form_json: Option<String>,
     /// Source path, size, mtime, and message count.
     pub source_fingerprint: Option<String>,
+    /// Addresses the backup's device sent from (JSON array).
+    pub source_identities: Option<String>,
 }
 
 /// Outcome fields written when a session completes.
@@ -285,6 +287,8 @@ pub struct StartImportArgs<'a> {
     pub form_json: Option<&'a str>,
     /// Source fingerprint as JSON.
     pub source_fingerprint: Option<&'a str>,
+    /// Backup device identity list as JSON.
+    pub source_identities: Option<&'a str>,
 }
 
 /// Why a session could not be started.
@@ -337,8 +341,9 @@ pub async fn start_import(
         INSERT INTO vault_imports (
             account_id, source, tool, mode, status, started_at,
             message_count, attachment_count, bytes_uploaded,
-            stage, staging_dir, device_id, form_json, source_fingerprint
-        ) VALUES ($1, $2, $3, $4, 'running', $5, 0, 0, 0, $6, $7, $8, $9, $10)
+            stage, staging_dir, device_id, form_json, source_fingerprint,
+            source_identities
+        ) VALUES ($1, $2, $3, $4, 'running', $5, 0, 0, 0, $6, $7, $8, $9, $10, $11)
         RETURNING id
         "#,
     )
@@ -352,6 +357,7 @@ pub async fn start_import(
     .bind(args.device_id)
     .bind(args.form_json)
     .bind(args.source_fingerprint)
+    .bind(args.source_identities)
     .fetch_one(&mut *conn)
     .await;
 
@@ -379,7 +385,7 @@ fn is_unique_violation(err: &sqlx::Error) -> bool {
 const VAULT_IMPORT_COLUMNS: &str = "id, account_id, source, tool, mode, status, started_at, \
      finished_at, message_count, attachment_count, bytes_uploaded, duration_ms, parse_ms, \
      attachments_ms, prepare_ms, upload_ms, summary_json, stage, staging_dir, device_id, \
-     form_json, source_fingerprint";
+     form_json, source_fingerprint, source_identities";
 
 fn vault_import_from_row(row: &AnyRow) -> Result<VaultImportRow, sqlx::Error> {
     Ok(VaultImportRow {
@@ -405,6 +411,7 @@ fn vault_import_from_row(row: &AnyRow) -> Result<VaultImportRow, sqlx::Error> {
         device_id: row.try_get(19)?,
         form_json: row.try_get(20)?,
         source_fingerprint: row.try_get(21)?,
+        source_identities: row.try_get(22)?,
     })
 }
 
@@ -962,6 +969,7 @@ mod tests {
             device_id: None,
             form_json: None,
             source_fingerprint: None,
+            source_identities: None,
         }
     }
 
@@ -1227,6 +1235,7 @@ mod tests {
             device_id: Some("device-a"),
             form_json: Some(r#"{"source":"imessage-ios"}"#),
             source_fingerprint: Some(r#"{"path":"/b","size_bytes":10}"#),
+            source_identities: None,
         };
         let id = start_import(&mut conn, &args).await.unwrap();
 
@@ -1270,6 +1279,7 @@ mod tests {
             device_id: None,
             form_json: None,
             source_fingerprint: None,
+            source_identities: None,
         };
         let id = start_import(&mut conn, &args).await.unwrap();
 
@@ -1315,6 +1325,7 @@ mod tests {
             device_id: None,
             form_json: None,
             source_fingerprint: None,
+            source_identities: None,
         };
         let id = start_import(&mut conn, &args).await.unwrap();
         complete_import(
