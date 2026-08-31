@@ -2435,7 +2435,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "clap",
  "media",
  "message-csv",
  "message-ir",
@@ -5037,7 +5036,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "clap",
  "hex",
  "journal",
  "message-ir",
@@ -5054,7 +5052,6 @@ name = "vault-push"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clap",
  "hex",
  "journal",
  "message-ir",

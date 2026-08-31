@@ -26,7 +26,7 @@ Give every module a `//!` intro that states its responsibility or invariants. Ke
 Include a concrete example or quantified rationale whenever a field, constant, or parser behaves non-obviously. Name the exact values involved.
 
 - `src-tauri/src/commands/extract.rs:490` — "True for backup-setup lines like `[1/5] Deriving backup keys...`. Those counts are setup steps, not message progress, so they must not move the progress bar." — Good: a concrete example plus the reason the fiddly parser exists.
-- `crates/cli/vault-push/src/run.rs:63` — "Kept far under Cloudflare's ~100 MiB upload cap so a large group chat is split into several requests instead of one giant one that gets rejected." — Good: names the external constraint behind the chosen value.
+- `crates/libs/vault-push/src/run.rs:63` — "Kept far under Cloudflare's ~100 MiB upload cap so a large group chat is split into several requests instead of one giant one that gets rejected." — Good: names the external constraint behind the chosen value.
 - `crates/libs/media/src/lib.rs:132` — "Build compress options from CLI-style fields (min_size like `20M`)." — Bad: waves at four parameters as "CLI-style fields" without naming them or documenting the error case.
 
 ## No filler, invented terms, or jargon
@@ -34,9 +34,9 @@ Include a concrete example or quantified rationale whenever a field, constant, o
 Never write self-contradictory filler, invented terms, or unexplained jargon in doc comments or `--help` text.
 
 - `crates/libs/ir/src/lib.rs:296` — "Why bytes were not imported (`too_large`, `file_missing`). Absent when present." — Bad: "Absent when present" is self-contradictory and explains nothing about when the field is `None`.
-- `crates/cli/vault-push/src/cli.rs:34` — "Import mode: append: add to existing data (safe to re-run); replace: delete existing messages for this source, then import" — Good: replaces the invented term "resume-safe" with a plain statement of what each mode does.
-- `crates/exporters/go-sms-pro-exporter/src/cli.rs:11` — "about = `Convert GO SMS Pro XML+PDU backups via common message to JSON/CSV/EML/MBOX/JSONL/XML`" — Bad: "via common message" is internal jargon that `--help` users cannot decode.
-- `crates/cli/vault-pull/src/http.rs:143` — "Fastmail-style search query. Sent even when empty." — Bad: "Fastmail-style" is unexplained jargon; readers must already know Fastmail's syntax to know what queries are valid.
+- `crates/libs/vault-push/src/lib.rs` — "Import mode: append adds to existing data and is safe to re-run; replace deletes existing messages for this source, then imports" — Good: replaces the invented term "resume-safe" with a plain statement of what each mode does.
+- `crates/libs/ir/src/lib.rs:220` — "Platform identity stored on `handles.service` (not per-message SMS/iMessage/RCS)." — Good: names the distinction a reader would otherwise get wrong, instead of leaving "service" to mean two things.
+- `crates/libs/vault-pull/src/http.rs:143` — "Fastmail-style search query. Sent even when empty." — Bad: "Fastmail-style" is unexplained jargon; readers must already know Fastmail's syntax to know what queries are valid.
 
 ## Handler docs describe the operation, not the route
 
@@ -59,8 +59,7 @@ Document every public item — type, variant, field, const, function. Add `#![wa
 
 - `crates/libs/sbr/src/read.rs:35` — "pub fn_attr: String," — Bad: no doc, and the name misreads as "function attribute" instead of the XML `fn` attribute it holds.
 - `crates/libs/media/src/tools.rs:63` — "pub struct FfmpegToolsProbe {" — Bad: a re-exported public type with no doc comment at all, despite being the GUI's probe result type.
-- `crates/cli/dump-cli-docs/src/lib.rs:3` — "pub struct PageSpec {" — Bad: public struct with no doc, no module intro, and no missing_docs lint to catch it.
-- `crates/cli/vault-pull/src/run.rs:22` — "pub const DEFAULT_PAGE_LIMIT: usize = 100;" — Bad: no doc while the very next const has one; forgotten rather than deliberate.
+- `crates/libs/vault-pull/src/run.rs:22` — "pub const DEFAULT_PAGE_LIMIT: usize = 100;" — Bad: no doc while the very next const has one; forgotten rather than deliberate.
 - `crates/core/message-vault-io-core/src/exporters.rs:373` — "Packaging format projected from the common message (`json` default)." — Good: the lone documented field of ~32 in the GUI-facing `Form` struct; the violation at scale.
 
 ## Say when a `Result` never errors
@@ -76,7 +75,7 @@ Document the reason behind non-obvious choices — ordering, omitted files, perf
 
 - `crates/vault/demo-seed/src/assets.rs:66` — "One path, `attachments/missing-file.heic`, is left out on purpose so import can show a missing-file warning." — Good: a deliberate-looking omission stated explicitly.
 - `crates/vault/server/src/assets.rs:59` — "Used only when streaming an authenticated download. … Hashing the whole file first would read every download twice." — Good: the performance tradeoff is explained instead of just describing the lookup.
-- `crates/cli/vault-push/src/run.rs:16` — "Attachments first, then messages. Messages point at attachments by a content fingerprint (sha256). The vault must already have that file, or the import would fail." — Good: explains the invariant that drove the upload ordering.
+- `crates/libs/vault-push/src/run.rs:16` — "Attachments first, then messages. Messages point at attachments by a content fingerprint (sha256). The vault must already have that file, or the import would fail." — Good: explains the invariant that drove the upload ordering.
 
 ## Link to real documentation
 

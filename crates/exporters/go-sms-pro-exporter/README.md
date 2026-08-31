@@ -2,20 +2,19 @@
 
 Rescue messages from a GO SMS Pro XML (and PDU) export into JSON Lines, JSON, CSV, EML, MBOX, or XML. This is a limited rescue import.
 
-The desktop app Import screen uses this crate as a library. The `go-sms-pro-exporter` command is the same converter from a terminal.
+The desktop app Import screen uses this crate as a library.
 
 ## Build and test
 
 ```bash
 cargo test -p go-sms-pro-exporter
-cargo run -p go-sms-pro-exporter -- --help
 ```
 
 Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
 
 ## Docs
 
-Command-line options: https://bitrealm.io/vault/developer/reference/cli/go-sms-pro-exporter/
+How this crate fits the export pipeline: https://bitrealm.io/vault/developer/message-transfer/
 
 Import mapping: https://bitrealm.io/vault/developer/formats/go-sms-pro/mapping/
 

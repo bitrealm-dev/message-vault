@@ -22,9 +22,8 @@ members = [
     "crates/exporters/imessage-ir-exporter",
     "crates/exporters/whatsapp-exporter",
     "crates/core/message-vault-io-core",
-    "crates/cli/vault-push",
-    "crates/cli/vault-pull",
-    "crates/cli/dump-cli-docs",
+    "crates/libs/vault-push",
+    "crates/libs/vault-pull",
     "crates/vault/demo-seed",
     "crates/vault/server",
 ]

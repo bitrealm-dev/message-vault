@@ -5,7 +5,7 @@ description: "CSV columns and limitations in iMazing Messages and WhatsApp expor
 
 This reference describes the iMazing Messages, WhatsApp, and Contacts CSV files consumed by `imazing-exporter`. It records facts observed in iMazing 3.5.5, validated against a full **All messages** device export on 2026-07-19. It is not a complete specification for every iMazing version.
 
-Conversion behavior and parser decisions are documented in [design](/vault/developer/formats/imazing/design/). Command-line usage is documented on the [iMazing CLI page](/vault/developer/reference/cli/imazing-exporter/).
+Conversion behavior and parser decisions are documented in [design](/vault/developer/formats/imazing/design/).
 
 ## Export tree
 

@@ -24,8 +24,3 @@ pub use error::ENCRYPTED_BACKUP_PASSWORD_REQUIRED;
 pub use identity::{backup_identities, ios_backup_phone_number};
 pub use message_vault_io_core::RunResult;
 pub use run::run;
-
-#[cfg(feature = "cli")]
-pub mod cli;
-#[cfg(feature = "cli")]
-pub use cli::clap_command;

@@ -9,7 +9,7 @@ The vault imports JSONL (JSON Lines) exports at schema version 3. This page desc
 
 **Phone backup → JSONL export → vault CLI `import` or `POST /v1/import` → SQLite**
 
-The JSONL files are plain text — one JSON object per line. The format is the same whether you import through the desktop app, the `vault-push` CLI, or the import API directly.
+The JSONL files are plain text — one JSON object per line. The format is the same whether you import through the desktop app or post to the import API directly.
 
 ## File shape
 
@@ -25,7 +25,7 @@ Attachment records may include `digest_sha256` so clients can upload by hash (`P
 ## Clients
 
 - **Same machine**: CLI `import` against a local export folder
-- **Remote**: The desktop app **Import** screen or `vault-push` CLI posts JSONL to the import API. Batched requests may concatenate multiple conversations (header + messages, repeated) in one body.
+- **Remote**: The desktop app **Import** screen posts JSONL to the import API. Batched requests may concatenate multiple conversations (header + messages, repeated) in one body.
 
 ## Schema compatibility
 
@@ -35,4 +35,3 @@ Schema version 3 only. New versions may add fields but will not remove or rename
 
 - [CSV columns reference](/vault/developer/reference/csv-columns/)
 - [Import API reference](/vault/developer/reference/api/)
-- [`vault-push` CLI reference](/vault/developer/reference/cli/vault-push/)

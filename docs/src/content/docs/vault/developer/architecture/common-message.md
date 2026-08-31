@@ -11,7 +11,7 @@ Three crates:
 |---------|------|------|
 | **`message-ir`** | [`crates/libs/ir/`](https://github.com/bitrealm-io/message-vault/tree/main/crates/libs/ir) | Schema types only (`ConversationDocument`, `Ir*` bags, helpers) |
 | **`message-ir-format`** | [`crates/libs/ir-format/`](https://github.com/bitrealm-io/message-vault/tree/main/crates/libs/ir-format) | `FormatSink`, readers/writers, transforms, `CSV_HEADERS` |
-| **`message-reexport`** | [`crates/libs/reexport/`](https://github.com/bitrealm-io/message-vault/tree/main/crates/libs/reexport) | Directory convert + `message-reexporter` binary |
+| **`message-reexport`** | [`crates/libs/reexport/`](https://github.com/bitrealm-io/message-vault/tree/main/crates/libs/reexport) | Directory convert |
 
 On-disk forms:
 
@@ -24,7 +24,7 @@ Pipeline: `backup → common message → FormatSink → user-picked format`.
 
 ## Status
 
-- **Common-message path** (`ConversationDocument` → `message_ir_format::FormatSink`, `--format json|jsonl|csv|eml|mbox|xml`): all exporters, including iMessage (`imessage-ir-exporter`). Per-chat formats also accept `write_format`; XML uses a single `smses.xml` via the sink.
+- **Common-message path** (`ConversationDocument` → `message_ir_format::FormatSink`, one of json/jsonl/csv/eml/mbox/xml): all exporters, including iMessage (`imessage-ir-exporter`). Per-chat formats also accept `write_format`; XML uses a single `smses.xml` via the sink.
 - **Media + obfuscate** run inside `FormatSink::finish` for every format (`ExportTransforms`: none / copy / convert / compress, plus optional obfuscate). When obfuscate is on, exporters skip staging real attachment bytes and convert/compress is not run — only placeholder files are written. Exporters pass transforms from `ExporterConfig.media` / `.obfuscate`; there is no CSV-only post-step. EML / MBOX / XML embed media and drop the staged `attachments/` directory afterward.
 - **Schema version 3 only** (breaking). Typed enums/bags, filled outgoing identity, conversation stats, stable null/`[]` keys. Older common-message JSON is not read — regenerate exports after schema changes.
 
@@ -126,7 +126,7 @@ Line 1 is the header (includes `conversation.stats`; no `messages` array). Each 
 | EML / MBOX | common message → `MailMessage` → [`message-mail`](https://github.com/bitrealm-io/message-vault/tree/main/crates/libs/mail) | `read_conversation_eml_dir` / `read_conversation_mbox` |
 | XML | single `smses.xml` via [`FormatSink`](https://github.com/bitrealm-io/message-vault/tree/main/crates/libs/ir-format) + [`message-sbr`](https://github.com/bitrealm-io/message-vault/tree/main/crates/libs/sbr) | `message_ir_format::read_sbr_documents` (owner inferred when omitted) |
 
-**Directory convert:** [`message-reexport`](https://github.com/bitrealm-io/message-vault/tree/main/crates/libs/reexport) powers the `message-reexporter` command. It auto-detects one format in an export folder and writes another via `FormatSink` (GUI **Format** tab / CLI).
+**Directory convert:** [`message-reexport`](https://github.com/bitrealm-io/message-vault/tree/main/crates/libs/reexport) auto-detects one format in an export folder and writes another via `FormatSink`. Export calls it for any format other than JSON Lines.
 
 **XML packaging differs:** one SyncTech backup for the whole export (not per conversation). iMessage-only fields are dropped. See [SMS Backup & Restore XML output](/vault/developer/formats/sms-backup-restore-xml/).
 
@@ -136,7 +136,7 @@ Library APIs support content-preserving cycles:
 
 `ConversationDocument` → CSV \| EML \| MBOX \| JSON \| JSONL → `ConversationDocument`
 
-Use the [`message-reexporter` command](/vault/developer/formats/convert/) to convert a whole export directory between formats.
+[`message-reexport`](/vault/developer/formats/convert/) converts a whole export directory between formats.
 
 XML is **lossy** for non-Android common messages (Apple bags omitted). SBR-origin `source.fields` can restore many SyncTech attrs on write-back.
 

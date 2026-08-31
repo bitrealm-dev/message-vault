@@ -65,7 +65,7 @@ Stop the other process. From a clone, `./scripts/run-vault-dev.sh` and a Compose
 
 ## Command-line import errors
 
-Schema version, `vault-push`, and HTTP status codes: [HTTP API](/vault/developer/reference/api/) and [`vault-push`](/vault/developer/reference/cli/vault-push/).
+Schema version, import requests, and HTTP status codes: [HTTP API](/vault/developer/reference/api/).
 
 ## Getting help
 

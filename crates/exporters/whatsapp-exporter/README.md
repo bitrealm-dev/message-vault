@@ -2,20 +2,19 @@
 
 Extract WhatsApp backups with `wtsexporter`, then convert the result into JSON Lines, JSON, CSV, EML, MBOX, or XML.
 
-The desktop app Import screen uses this crate as a library. The `whatsapp-exporter` command is the same converter from a terminal.
+The desktop app Import screen uses this crate as a library.
 
 ## Build and test
 
 ```bash
 cargo test -p whatsapp-exporter
-cargo run -p whatsapp-exporter -- --help
 ```
 
 Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
 
 ## Docs
 
-Command-line options: https://bitrealm.io/vault/developer/reference/cli/whatsapp-exporter/
+How this crate fits the export pipeline: https://bitrealm.io/vault/developer/message-transfer/
 
 ## License
 

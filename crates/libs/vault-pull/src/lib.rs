@@ -5,8 +5,6 @@
 //! The `vault-pull` command and the desktop app Vault Export screen both call
 //! this crate.
 
-#[cfg(feature = "cli")]
-pub mod cli;
 mod http;
 pub mod journal;
 mod project;
@@ -19,6 +17,3 @@ pub use run::{
     VaultPullConfig, compose_query, run,
 };
 pub use vault_http::{AuthError, AuthInfo, auth_check as authenticate};
-
-#[cfg(feature = "cli")]
-pub use cli::clap_command;

@@ -82,4 +82,4 @@ Turn force reprocessing on when a previous run left messages without attachments
 
 Use the on-screen log for successes, failures, and the end summary. Then open **Conversations** — [Browse your messages](/vault/user/browse-your-messages/).
 
-API tokens under **Settings → Account** are for command-line tools, not for this screen. Desktop Import uses the signed-in session. See [Command-line tools](/vault/developer/reference/cli/) if you need `vault-push`.
+API tokens under **Settings → Account** are for programs that call the vault's [HTTP API](/vault/developer/reference/api/), not for this screen. Desktop Import uses the signed-in session.

@@ -9,9 +9,9 @@ A phone backup is a copy of chats sitting on a computer. The vault is a separate
 
 ## How chats get into the vault
 
-1. A converter reads the backup. In the desktop app this is **Extract**. On the command line it is a converter program such as `whatsapp-exporter`.
+1. A converter reads the backup. In the desktop app this runs as the first step of **Import**.
 2. The converter writes a folder of chat files, plus photos and other attachments in an `attachments/` folder.
-3. Import loads that folder into a vault that is already running. In the desktop app this is the **Import** screen. On the command line this is the `vault-push` program.
+3. Import loads that folder into a vault that is already running. In the desktop app this is the **Import** screen, which uses the `vault-push` library.
 
 ```mermaid
 flowchart LR
@@ -23,7 +23,7 @@ flowchart LR
 
 ## How chats come back out
 
-Export copies chats from a running vault into a new folder of the same chat files. In the desktop app this is **Export**. On the command line this is the `vault-pull` program.
+Export copies chats from a running vault into a new folder of the same chat files. In the desktop app this is the **Export** screen, which uses the `vault-pull` library.
 
 ```mermaid
 flowchart LR
@@ -45,7 +45,7 @@ Pictures and other media sit next to those files in `attachments/`.
 {"guid":"msg-1","timestamp_unix_ms":1400773261000,"direction":"outgoing","service":"sms","text":"Hello"}
 ```
 
-The vault only reads this current layout (schema version 3). The full field list is on [Export structure](/vault/developer/reference/export-structure/). Options for `vault-push` (batch size, attachments, resume) are on the [`vault-push` command page](/vault/developer/reference/cli/vault-push/).
+The vault only reads this current layout (schema version 3). The full field list is on [Export structure](/vault/developer/reference/export-structure/).
 
 ## Converters for full backups
 
@@ -53,9 +53,9 @@ Use these when a complete backup can still be made.
 
 | Source | Command | More detail |
 |--------|---------|-------------|
-| iMessage or an iPhone backup | [`imessage-ir-exporter`](/vault/developer/reference/cli/imessage-ir-exporter/) | [Command page](/vault/developer/reference/cli/imessage-ir-exporter/) |
-| SMS Backup & Restore | [`sms-backup-restore-exporter`](/vault/developer/reference/cli/sms-backup-restore-exporter/) | [Input files](/vault/developer/formats/sms-backup-restore/input/) · [Field mapping](/vault/developer/formats/sms-backup-restore/mapping/) |
-| WhatsApp | [`whatsapp-exporter`](/vault/developer/reference/cli/whatsapp-exporter/) | [Command page](/vault/developer/reference/cli/whatsapp-exporter/) |
+| iMessage or an iPhone backup | `imessage-ir-exporter` | [Converter capabilities](/vault/developer/formats/) |
+| SMS Backup & Restore | `sms-backup-restore-exporter` | [Input files](/vault/developer/formats/sms-backup-restore/input/) · [Field mapping](/vault/developer/formats/sms-backup-restore/mapping/) |
+| WhatsApp | `whatsapp-exporter` | [Converter capabilities](/vault/developer/formats/) |
 
 ## Limited converters
 
@@ -63,17 +63,17 @@ Some files come from tools that were not built for this project, or that drop me
 
 | Source | Command | More detail |
 |--------|---------|-------------|
-| GO SMS Pro | [`go-sms-pro-exporter`](/vault/developer/reference/cli/go-sms-pro-exporter/) | [Field mapping](/vault/developer/formats/go-sms-pro/mapping/) |
-| iMazing | [`imazing-exporter`](/vault/developer/reference/cli/imazing-exporter/) | [Input files](/vault/developer/formats/imazing/input/) · [Design notes](/vault/developer/formats/imazing/design/) |
-| OpenExtract | [`openextract-exporter`](/vault/developer/reference/cli/openextract-exporter/) | [Command page](/vault/developer/reference/cli/openextract-exporter/) |
-| SMS Backup+ | [`sms-backup-plus-exporter`](/vault/developer/reference/cli/sms-backup-plus-exporter/) | [File layout](/vault/developer/formats/sms-backup-plus/format/) · [Field mapping](/vault/developer/formats/sms-backup-plus/mapping/) |
+| GO SMS Pro | `go-sms-pro-exporter` | [Field mapping](/vault/developer/formats/go-sms-pro/mapping/) |
+| iMazing | `imazing-exporter` | [Input files](/vault/developer/formats/imazing/input/) · [Design notes](/vault/developer/formats/imazing/design/) |
+| OpenExtract | `openextract-exporter` | [Converter capabilities](/vault/developer/formats/) |
+| SMS Backup+ | `sms-backup-plus-exporter` | [File layout](/vault/developer/formats/sms-backup-plus/format/) · [Field mapping](/vault/developer/formats/sms-backup-plus/mapping/) |
 
-## Commands that talk to a running vault
+## Libraries that talk to a running vault
 
-These programs do not read a phone backup. They load or save the chat-file folder, or change a folder that is already in Message Vault's format.
+These do not read a phone backup. They load or save the chat-file folder, or change a folder that is already in Message Vault's format. The desktop app links them directly; none is a command a person runs.
 
-| Command | What it does |
+| Library | What it does |
 |---------|----------------|
-| [`vault-push`](/vault/developer/reference/cli/vault-push/) | Loads a chat-file folder into a running vault |
-| [`vault-pull`](/vault/developer/reference/cli/vault-pull/) | Writes a chat-file folder from a running vault |
-| [`message-reexporter`](/vault/developer/reference/cli/message-reexporter/) | Turns an existing Message Vault export folder into another format, such as CSV or mail. See [Convert formats](/vault/developer/formats/convert/). |
+| `vault-push` | Loads a chat-file folder into a running vault. Used by **Import**. |
+| `vault-pull` | Writes a chat-file folder from a running vault. Used by **Export**. |
+| `message-reexport` | Turns an existing Message Vault export folder into another format, such as CSV or mail. Used by **Export** for any format other than JSON Lines. See [Convert an existing export](/vault/developer/formats/convert/). |

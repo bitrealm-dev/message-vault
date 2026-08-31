@@ -8,14 +8,13 @@ The desktop app **Export** screen uses this crate as a library. The `vault-pull`
 
 ```bash
 cargo test -p vault-pull
-cargo run -p vault-pull -- --help
 ```
 
 Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
 
 ## Docs
 
-Command-line options: https://bitrealm.io/vault/developer/reference/cli/vault-pull/
+How this crate fits the export pipeline: https://bitrealm.io/vault/developer/message-transfer/
 
 ## License
 

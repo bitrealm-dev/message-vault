@@ -41,7 +41,3 @@ Folder layout: [Export structure](/vault/developer/reference/export-structure/).
 Choosing any format other than JSON Lines takes two steps: the vault is written as JSON Lines first, then converted into the format you asked for. The intermediate copy goes in your staging directory — the same folder Import uses, `~/message-vault` by default, changeable in [Settings → System](/vault/user/how-to/settings/). It is deleted when the export finishes, including when the conversion fails.
 
 Make sure that folder has room for a second copy of your vault while an export runs.
-
-## From the terminal
-
-[`vault-pull`](/vault/developer/reference/cli/vault-pull/) downloads a vault into a JSON Lines folder from a terminal, using the vault base URL and an API token from [Settings → Account](/vault/user/how-to/settings/). It writes JSON Lines only — the format choice above is specific to the desktop app.
