@@ -106,7 +106,7 @@ pub(crate) fn convert_export(
     // Captured before `transforms` moves into the sink: the queue path is for
     // the import, which is JSONL and never obfuscated.
     let use_queue = output_format == OutputFormat::Jsonl && !transforms.obfuscate;
-    let (mut sink, attachments_dir) = if resume {
+    let (sink, attachments_dir) = if resume {
         FormatSink::open_resume(&output, output_format, transforms)
     } else {
         FormatSink::open_prepared(&output, output_format, transforms)
@@ -358,19 +358,15 @@ pub(crate) fn convert_export(
             resume,
             writer_count: 0,
         };
-        let queue_report =
-            message_ir_format::drain_write_queue(&output, units, &options, log.as_ref(), cancel)?;
-        report.conversations +=
-            (queue_report.conversations_written + queue_report.conversations_skipped) as u64;
-        report.attachments_saved += queue_report.attachments_saved as u64;
-        return Ok((
-            report,
-            FormatSinkResult {
-                xml_path: None,
-                media: queue_report.media,
-                obfuscated_docs: 0,
-            },
-        ));
+        let sink_result = message_ir_format::drain_units(
+            &output,
+            units,
+            &options,
+            log.as_ref(),
+            cancel,
+            &mut report,
+        )?;
+        return Ok((report, sink_result));
     }
 
     stage_conversation_attachments(
@@ -384,27 +380,13 @@ pub(crate) fn convert_export(
         &mut report,
     )?;
 
-    let total_conversations = documents.len() as u64;
-    emit_log(log.as_ref(), "");
-    emit_log(
+    let sink_result = message_ir_format::write_documents_through_sink(
+        documents,
+        sink,
         log.as_ref(),
-        format!("Preparing {total_conversations} conversation file(s)..."),
-    );
-    let mut written = 0u64;
-    for doc in documents {
-        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
-        written += 1;
-        sink.write_document(doc)?;
-        report.conversations += 1;
-        #[allow(clippy::manual_is_multiple_of)]
-        if written % 100 == 0 || written == total_conversations {
-            emit_log(
-                log.as_ref(),
-                format!("  preparing {written}/{total_conversations}"),
-            );
-        }
-    }
-    let sink_result = sink.finish()?;
+        cancel,
+        &mut report,
+    )?;
 
     Ok((report, sink_result))
 }
