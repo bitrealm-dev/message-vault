@@ -607,11 +607,22 @@ impl Form {
     }
 
     /// Build a WhatsApp config, pushing path and key problems onto `errors`.
+    ///
+    /// `input` is optional here: when set it becomes the backup search root
+    /// (and an allowed media root) for the wtsexporter bridge, which falls
+    /// back to its working directory when no input is given.
     fn to_whatsapp_config(
         &self,
         obfuscate: ObfuscateConfig,
         errors: &mut Vec<String>,
     ) -> ExporterConfig {
+        let inputs = if self.input.trim().is_empty() {
+            Vec::new()
+        } else {
+            require_single_existing_path(&self.input, "Input", errors)
+                .into_iter()
+                .collect()
+        };
         required_text(&self.output, "Output", errors);
         if self.whatsapp_platform == WhatsappPlatform::Ios && self.whatsapp_backup.trim().is_empty()
         {
@@ -624,7 +635,7 @@ impl Form {
             errors,
         );
         ExporterConfig {
-            inputs: Vec::new(),
+            inputs,
             output: PathBuf::from(self.output.trim()),
             date_range,
             timezone: None,
@@ -1305,6 +1316,26 @@ mod tests {
             err.iter()
                 .any(|e| e.contains("Backup path is required for iOS"))
         );
+    }
+
+    #[test]
+    fn whatsapp_forwards_existing_input_as_search_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let form = Form {
+            input: dir.path().display().to_string(),
+            output: "out".into(),
+            ..Form::default()
+        };
+        let config = form.to_config(Exporter::Whatsapp).unwrap();
+        assert_eq!(config.inputs, vec![dir.path().to_path_buf()]);
+
+        let missing = Form {
+            input: "/does/not/exist-whatsapp-input".into(),
+            output: "out".into(),
+            ..Form::default()
+        };
+        let err = missing.to_config(Exporter::Whatsapp).unwrap_err();
+        assert!(err.iter().any(|e| e.contains("does not exist")), "{err:?}");
     }
 
     #[test]

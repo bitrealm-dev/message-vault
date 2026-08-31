@@ -29,22 +29,18 @@ pub enum Commands {
     Convert {
         /// Path to a .eml file or directory tree of EMLs (Archive/, Sent/, …).
         /// Repeat for multiple roots; trees are merged and path-deduped.
-        /// Default: source_dirs from config/owner.toml when set.
-        #[arg(long = "input")]
+        #[arg(long = "input", required = true)]
         input: Vec<PathBuf>,
 
         /// Owner phone (E.164 or digits). Repeat for multiple owner numbers.
-        /// Default: `phones` in config/owner.toml
-        #[arg(long = "owner-phone")]
+        #[arg(long = "owner-phone", required = true)]
         owner_phones: Vec<String>,
 
         /// Owner email addresses used to detect sent messages when X-smssync-type is missing.
-        /// Default: `emails` in config/owner.toml
-        #[arg(long = "owner-email", value_name = "EMAIL")]
+        #[arg(long = "owner-email", value_name = "EMAIL", required = true)]
         owner_emails: Vec<String>,
 
         /// Name mapping CSV (`Phone,Incorrect Name`) for EML export aliases.
-        /// Default: config/name-mapping.csv when that file exists.
         #[arg(long = "name-mapping")]
         name_mapping: Option<PathBuf>,
 

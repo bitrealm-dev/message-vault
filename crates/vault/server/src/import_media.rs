@@ -5,10 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 
-use crate::media_tools::{
-    self, JPEG_MIN_BYTES, MP3_MIN_BYTES, MP4_MIN_BYTES, MediaKind, ext_of, kind_of, path_str,
-    probe_video_efficient,
-};
+use crate::media_tools::{self, MediaKind, ext_of, kind_of, path_str};
 
 /// How attachment files are handled during import.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -110,8 +107,7 @@ fn transform_image(
 ) -> Result<Option<ResolvedMedia>> {
     let ext = ext_of(source_path);
     let size = fs::metadata(source_path)?.len();
-    let is_jpeg = ext == ".jpg" || ext == ".jpeg";
-    if is_jpeg && (!compress || size <= JPEG_MIN_BYTES) {
+    if media_tools::skip_image_conversion(&ext, size, compress) {
         return Ok(Some(ResolvedMedia {
             path: source_path.to_path_buf(),
             mime_type: Some("image/jpeg".into()),
@@ -126,17 +122,7 @@ fn transform_image(
     ensure_ffmpeg()?;
     let out = work_dir.join(format!("img-{}.jpg", stem_token(source_path)));
     media_tools::run_ffmpeg(
-        &[
-            "-i",
-            path_str(source_path)?,
-            "-frames:v",
-            "1",
-            "-update",
-            "1",
-            "-q:v",
-            "2",
-            path_str(&out)?,
-        ],
+        &media_tools::image_to_jpeg_args(path_str(source_path)?, path_str(&out)?),
         None,
     )?;
     Ok(Some(ResolvedMedia {
@@ -152,7 +138,7 @@ fn transform_video(
 ) -> Result<Option<ResolvedMedia>> {
     let ext = ext_of(source_path);
     let size = fs::metadata(source_path)?.len();
-    if ext == ".mp4" && (!compress || size <= MP4_MIN_BYTES || probe_video_efficient(source_path)) {
+    if media_tools::skip_video_conversion(source_path, &ext, size, compress) {
         return Ok(Some(ResolvedMedia {
             path: source_path.to_path_buf(),
             mime_type: Some("video/mp4".into()),
@@ -161,25 +147,7 @@ fn transform_video(
     ensure_ffmpeg()?;
     let out = work_dir.join(format!("vid-{}.mp4", stem_token(source_path)));
     media_tools::run_ffmpeg(
-        &[
-            "-i",
-            path_str(source_path)?,
-            "-vf",
-            "scale='if(gt(iw,ih),-2,min(720,iw))':'if(gt(iw,ih),min(720,ih),-2)',fps=30",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "medium",
-            "-crf",
-            if compress { "28" } else { "23" },
-            "-c:a",
-            "aac",
-            "-b:a",
-            "96k",
-            "-movflags",
-            "+faststart",
-            path_str(&out)?,
-        ],
+        &media_tools::video_to_mp4_args(path_str(source_path)?, path_str(&out)?, compress),
         None,
     )?;
     Ok(Some(ResolvedMedia {
@@ -195,7 +163,7 @@ fn transform_audio(
 ) -> Result<Option<ResolvedMedia>> {
     let ext = ext_of(source_path);
     let size = fs::metadata(source_path)?.len();
-    if ext == ".mp3" && (!compress || size <= MP3_MIN_BYTES) {
+    if media_tools::skip_audio_conversion(&ext, size, compress) {
         return Ok(Some(ResolvedMedia {
             path: source_path.to_path_buf(),
             mime_type: Some("audio/mpeg".into()),
@@ -204,18 +172,7 @@ fn transform_audio(
     ensure_ffmpeg()?;
     let out = work_dir.join(format!("aud-{}.mp3", stem_token(source_path)));
     media_tools::run_ffmpeg(
-        &[
-            "-i",
-            path_str(source_path)?,
-            "-vn",
-            "-ac",
-            "1",
-            "-c:a",
-            "libmp3lame",
-            "-q:a",
-            "6",
-            path_str(&out)?,
-        ],
+        &media_tools::audio_to_mp3_args(path_str(source_path)?, path_str(&out)?),
         None,
     )?;
     Ok(Some(ResolvedMedia {

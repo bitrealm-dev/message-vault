@@ -2968,11 +2968,9 @@ dependencies = [
  "phone",
  "rayon",
  "regex",
- "serde",
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
- "toml",
 ]
 
 [[package]]
@@ -3785,6 +3783,7 @@ dependencies = [
  "httpmock",
  "journal",
  "message-ir",
+ "message-ir-format",
  "message-vault-io-core",
  "reqwest",
  "serde",

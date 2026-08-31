@@ -3982,10 +3982,8 @@ dependencies = [
  "phone",
  "rayon",
  "regex",
- "serde",
  "serde_json",
  "sha2 0.11.0",
- "toml 1.1.4+spec-1.1.0",
 ]
 
 [[package]]
@@ -5043,6 +5041,7 @@ dependencies = [
  "hex",
  "journal",
  "message-ir",
+ "message-ir-format",
  "message-vault-io-core",
  "reqwest 0.12.28",
  "serde",

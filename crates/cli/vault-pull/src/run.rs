@@ -4,8 +4,7 @@
 //! that stores imported messages.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fs::{self, File};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -36,8 +35,6 @@ pub struct VaultPullConfig {
     pub source: Option<String>,
     pub skip_attachments: bool,
     pub page_limit: usize,
-    /// When set (typically from a prior Query), progress logs include "of N".
-    pub expected_messages: Option<u64>,
     pub cancel: Option<CancelFlag>,
     /// Number of parallel asset download workers (default 8).
     pub asset_download_workers: usize,
@@ -201,20 +198,6 @@ pub fn run(
                 total_so_far: total_messages,
             },
         );
-        let page_log = match cfg.expected_messages {
-            Some(n) => format!(
-                "Fetched {} message(s) ({} of {})",
-                page.messages.len(),
-                total_messages,
-                n
-            ),
-            None => format!(
-                "Fetched {} message(s) ({} total)",
-                page.messages.len(),
-                total_messages
-            ),
-        };
-        emit(&mut on_progress, ProgressEvent::Log(page_log));
 
         for msg in page.messages {
             if !cfg.skip_attachments {
@@ -315,7 +298,12 @@ pub fn run(
     let mut conversations = 0u64;
     for (_key, (seed, messages)) in by_conv {
         let source = seed.source.clone();
-        let doc = build_document(&source, &seed, messages);
+        let mut doc = build_document(&source, &seed, messages);
+        // Disambiguate same chat across sources.
+        if !doc.export.source.trim().is_empty() {
+            doc.packaging_stem_suffix =
+                Some(format!("__{}", sanitize_source_suffix(&doc.export.source)));
+        }
         write_conversation_jsonl(&cfg.out_dir, &doc)?;
         conversations += 1;
     }
@@ -517,34 +505,17 @@ fn format_bytes_human(bytes: u64) -> String {
 
 /// Write one conversation as a JSON Lines file (header, then one message per line).
 ///
+/// The stem comes from [`ConversationDocument::filename_stem`], which appends
+/// [`ConversationDocument::packaging_stem_suffix`] (the sanitized source, set
+/// by the caller). The write is atomic: ir-format writes a `.tmp` sibling and
+/// renames it, so a crash never leaves a truncated conversation file.
+///
 /// # Errors
 ///
-/// Returns an error when the file cannot be created or a row cannot be serialized.
+/// Returns an error when the file cannot be created, serialized, or renamed.
 fn write_conversation_jsonl(out_dir: &Path, doc: &ConversationDocument) -> Result<()> {
-    let stem = doc.filename_stem();
-    // Disambiguate same chat across sources.
-    let stem = if doc.export.source.trim().is_empty() {
-        stem
-    } else {
-        format!("{stem}__{}", sanitize_source_suffix(&doc.export.source))
-    };
-    let path = out_dir.join(format!("{stem}.jsonl"));
-    let mut file = File::create(&path).with_context(|| format!("create {}", path.display()))?;
-
-    let header = message_ir::ConversationHeader::from_document(doc);
-    writeln!(
-        file,
-        "{}",
-        serde_json::to_string(&header).context("serialize conversation header")?
-    )?;
-    for msg in &doc.messages {
-        writeln!(
-            file,
-            "{}",
-            serde_json::to_string(msg).context("serialize message")?
-        )?;
-    }
-    Ok(())
+    let path = out_dir.join(format!("{}.jsonl", doc.filename_stem()));
+    message_ir_format::write_conversation_jsonl_to(&path, doc)
 }
 
 /// Keep letters, digits, `-`, and `_`; replace every other character with `_`.

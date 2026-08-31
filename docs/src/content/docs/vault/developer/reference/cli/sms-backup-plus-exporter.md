@@ -36,14 +36,14 @@ Convert SMS Backup+ EML exports via common message to JSON/CSV/EML/MBOX/JSONL/XM
 
 Convert EML tree via common message to the chosen packaging format
 
-**Usage:** `sms-backup-plus-exporter convert [OPTIONS] --output <OUTPUT>`
+**Usage:** `sms-backup-plus-exporter convert [OPTIONS] --input <INPUT> --owner-phone <OWNER_PHONES> --owner-email <EMAIL> --output <OUTPUT>`
 
 ###### **Options:**
 
-* `--input <INPUT>` — Path to a .eml file or directory tree of EMLs (Archive/, Sent/, …). Repeat for multiple roots; trees are merged and path-deduped. Default: source_dirs from config/owner.toml when set
-* `--owner-phone <OWNER_PHONES>` — Owner phone (E.164 or digits). Repeat for multiple owner numbers. Default: `phones` in config/owner.toml
-* `--owner-email <EMAIL>` — Owner email addresses used to detect sent messages when X-smssync-type is missing. Default: `emails` in config/owner.toml
-* `--name-mapping <NAME_MAPPING>` — Name mapping CSV (`Phone,Incorrect Name`) for EML export aliases. Default: config/name-mapping.csv when that file exists
+* `--input <INPUT>` — Path to a .eml file or directory tree of EMLs (Archive/, Sent/, …). Repeat for multiple roots; trees are merged and path-deduped
+* `--owner-phone <OWNER_PHONES>` — Owner phone (E.164 or digits). Repeat for multiple owner numbers
+* `--owner-email <EMAIL>` — Owner email addresses used to detect sent messages when X-smssync-type is missing
+* `--name-mapping <NAME_MAPPING>` — Name mapping CSV (`Phone,Incorrect Name`) for EML export aliases
 * `--output <OUTPUT>` — Output directory for packaging + `attachments/`
 * `--format <FORMAT>` — Output format: `json` (default), `jsonl`, `csv`, `eml`, `mbox`, or `xml`
 

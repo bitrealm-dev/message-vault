@@ -140,6 +140,58 @@ fn rejects_owner_phone_without_digits() {
 }
 
 #[test]
+fn cancel_during_the_write_phase_stops_the_export() {
+    use message_vault_io_core::{CancelFlag, LogSink};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.xml");
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let contacts = empty_contacts(&tmp);
+    let out = tmp.path().join("out");
+    fs::create_dir_all(&out).unwrap();
+
+    // The read phase passes its own cancel checks while the flag is still
+    // clear; the "Preparing ..." line is the first thing the write phase
+    // logs, so tripping the flag on that line means a cancel error can only
+    // come from the per-document check inside the write loop.
+    let cancel: CancelFlag = Arc::new(AtomicBool::new(false));
+    let trip = Arc::clone(&cancel);
+    let mut transforms = ExportTransforms::none();
+    transforms.log = Some(LogSink::new(move |line| {
+        if line.starts_with("Preparing ") {
+            trip.store(true, Ordering::Relaxed);
+        }
+    }));
+
+    let err = convert_export(ConvertExportArgs {
+        input: &fixture,
+        output_dir: &out,
+        owner_phones: &["+15555550100".into()],
+        contacts: &contacts,
+        date_range: &DateRange::default(),
+        transforms,
+        output_format: OutputFormat::Csv,
+        cancel: Some(&cancel),
+        resume: false,
+    })
+    .expect_err("cancel must be honored during the write phase");
+    assert!(
+        err.to_string().contains("cancelled"),
+        "unexpected error: {err:#}"
+    );
+
+    let csv_written = fs::read_dir(&out)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("csv"));
+    assert!(
+        !csv_written,
+        "no conversation file may be written after cancel"
+    );
+}
+
+#[test]
 fn convert_export_eml_writes_conversation_folder() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.xml");
     assert!(fixture.is_file(), "missing fixture: {}", fixture.display());

@@ -61,6 +61,89 @@ pub fn kind_of(path: &Path, mime: Option<&str>) -> MediaKind {
     MediaKind::Other
 }
 
+/// True when a JPEG source should be kept as-is instead of re-encoded.
+///
+/// Without `compress`, every JPEG is kept; with it, only JPEGs at or below
+/// [`JPEG_MIN_BYTES`] are kept. `ext` is the [`ext_of`] form (`.jpg`).
+pub fn skip_image_conversion(ext: &str, size: u64, compress: bool) -> bool {
+    let is_jpeg = ext == ".jpg" || ext == ".jpeg";
+    is_jpeg && (!compress || size <= JPEG_MIN_BYTES)
+}
+
+/// True when an MP4 source should be kept as-is instead of re-encoded.
+///
+/// Without `compress`, every MP4 is kept; with it, MP4s at or below
+/// [`MP4_MIN_BYTES`] are kept, as are larger ones that
+/// [`probe_video_efficient`] says are already efficient (the probe only runs
+/// when the size check alone does not decide).
+pub fn skip_video_conversion(source_path: &Path, ext: &str, size: u64, compress: bool) -> bool {
+    ext == ".mp4" && (!compress || size <= MP4_MIN_BYTES || probe_video_efficient(source_path))
+}
+
+/// True when an MP3 source should be kept as-is instead of re-encoded.
+///
+/// Without `compress`, every MP3 is kept; with it, only MP3s at or below
+/// [`MP3_MIN_BYTES`] are kept.
+pub fn skip_audio_conversion(ext: &str, size: u64, compress: bool) -> bool {
+    ext == ".mp3" && (!compress || size <= MP3_MIN_BYTES)
+}
+
+/// ffmpeg args for a high-quality single-frame JPEG (`-q:v 2` ≈ quality ~85
+/// intent); autorotate is ffmpeg's default.
+pub fn image_to_jpeg_args<'a>(source: &'a str, dest: &'a str) -> Vec<&'a str> {
+    vec![
+        "-i",
+        source,
+        "-frames:v",
+        "1",
+        "-update",
+        "1",
+        "-q:v",
+        "2",
+        dest,
+    ]
+}
+
+/// ffmpeg args for a browser-friendly MP4: ≤720p short side, 30 fps, h264 +
+/// AAC, faststart. `compress` picks CRF 28 (smaller) over CRF 23.
+pub fn video_to_mp4_args<'a>(source: &'a str, dest: &'a str, compress: bool) -> Vec<&'a str> {
+    vec![
+        "-i",
+        source,
+        "-vf",
+        "scale='if(gt(iw,ih),-2,min(720,iw))':'if(gt(iw,ih),min(720,ih),-2)',fps=30",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-crf",
+        if compress { "28" } else { "23" },
+        "-c:a",
+        "aac",
+        "-b:a",
+        "96k",
+        "-movflags",
+        "+faststart",
+        dest,
+    ]
+}
+
+/// ffmpeg args for a mono MP3 (`-q:a 6` VBR).
+pub fn audio_to_mp3_args<'a>(source: &'a str, dest: &'a str) -> Vec<&'a str> {
+    vec![
+        "-i",
+        source,
+        "-vn",
+        "-ac",
+        "1",
+        "-c:a",
+        "libmp3lame",
+        "-q:a",
+        "6",
+        dest,
+    ]
+}
+
 /// The path as `&str`, or an error when it is not valid UTF-8.
 pub fn path_str(path: &Path) -> Result<&str> {
     path.to_str()
@@ -152,4 +235,112 @@ pub fn probe_video_efficient(source_path: &Path) -> bool {
     let den: f64 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(1.0);
     let fps = if den == 0.0 { 0.0 } else { num / den };
     fps > 0.0 && fps <= 30.01
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn image_skip_keeps_all_jpegs_without_compress_and_small_ones_with_it() {
+        assert!(skip_image_conversion(".jpg", JPEG_MIN_BYTES + 1, false));
+        assert!(skip_image_conversion(".jpeg", JPEG_MIN_BYTES + 1, false));
+        assert!(skip_image_conversion(".jpg", JPEG_MIN_BYTES, true));
+        assert!(!skip_image_conversion(".jpg", JPEG_MIN_BYTES + 1, true));
+        assert!(!skip_image_conversion(".png", 1, false));
+    }
+
+    #[test]
+    fn audio_skip_keeps_all_mp3s_without_compress_and_small_ones_with_it() {
+        assert!(skip_audio_conversion(".mp3", MP3_MIN_BYTES + 1, false));
+        assert!(skip_audio_conversion(".mp3", MP3_MIN_BYTES, true));
+        assert!(!skip_audio_conversion(".mp3", MP3_MIN_BYTES + 1, true));
+        assert!(!skip_audio_conversion(".m4a", 1, false));
+    }
+
+    #[test]
+    fn video_skip_decides_on_extension_and_size_before_probing() {
+        // These cases decide without running ffprobe (the path does not exist).
+        let missing = Path::new("no-such-file.mp4");
+        assert!(skip_video_conversion(
+            missing,
+            ".mp4",
+            MP4_MIN_BYTES + 1,
+            false
+        ));
+        assert!(skip_video_conversion(missing, ".mp4", MP4_MIN_BYTES, true));
+        assert!(!skip_video_conversion(missing, ".mov", 1, false));
+        // Large mp4 under compress: the probe runs, fails on a missing file,
+        // and the video is converted.
+        assert!(!skip_video_conversion(
+            missing,
+            ".mp4",
+            MP4_MIN_BYTES + 1,
+            true
+        ));
+    }
+
+    #[test]
+    fn image_args_build_single_frame_jpeg() {
+        assert_eq!(
+            image_to_jpeg_args("in.png", "out.jpg"),
+            vec![
+                "-i",
+                "in.png",
+                "-frames:v",
+                "1",
+                "-update",
+                "1",
+                "-q:v",
+                "2",
+                "out.jpg"
+            ],
+        );
+    }
+
+    #[test]
+    fn video_args_pick_crf_by_compress_flag() {
+        let base = |crf: &'static str| {
+            vec![
+                "-i",
+                "in.mov",
+                "-vf",
+                "scale='if(gt(iw,ih),-2,min(720,iw))':'if(gt(iw,ih),min(720,ih),-2)',fps=30",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "medium",
+                "-crf",
+                crf,
+                "-c:a",
+                "aac",
+                "-b:a",
+                "96k",
+                "-movflags",
+                "+faststart",
+                "out.mp4",
+            ]
+        };
+        assert_eq!(video_to_mp4_args("in.mov", "out.mp4", true), base("28"));
+        assert_eq!(video_to_mp4_args("in.mov", "out.mp4", false), base("23"));
+    }
+
+    #[test]
+    fn audio_args_build_mono_mp3() {
+        assert_eq!(
+            audio_to_mp3_args("in.m4a", "out.mp3"),
+            vec![
+                "-i",
+                "in.m4a",
+                "-vn",
+                "-ac",
+                "1",
+                "-c:a",
+                "libmp3lame",
+                "-q:a",
+                "6",
+                "out.mp3"
+            ],
+        );
+    }
 }
