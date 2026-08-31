@@ -12,15 +12,14 @@
 
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
-use media::{CompressOptions, MaxResolution, MediaMode};
+use media::{CompressOptions, MaxResolution};
 use message_vault_io_core::{
-    ApplePlatform, AttachmentMedia, Exporter, ExporterConfig, Form, GoSmsProConfig, ImazingConfig,
-    LogSink, MediaConfig, ObfuscateConfig, OpenExtractConfig, OutputFormat, SmsBackupPlusConfig,
-    SmsBackupRestoreConfig, SourceConfig, WhatsappConfig, WhatsappPlatform, parse_date_range,
+    ApplePlatform, AttachmentMedia, Exporter, ExporterConfig, Form, LogSink, OutputFormat,
+    SourceConfig, WhatsappPlatform,
 };
 use tauri::Emitter;
 
@@ -203,31 +202,15 @@ pub async fn extract(
         start_date: args.start_date.unwrap_or_default(),
         end_date: args.end_date.unwrap_or_default(),
         obfuscate: args.obfuscate.unwrap_or(false),
-        owner_phones: args
-            .owner_phones
-            .unwrap_or_default()
-            .into_iter()
-            .map(|p| p.trim().to_string())
-            .filter(|p| !p.is_empty())
-            .collect(),
-        attachment_root: optional_trimmed(args.attachment_root.as_deref())
-            .map(str::to_string)
-            .unwrap_or_default(),
-        apple_contacts: optional_trimmed(args.apple_contacts.as_deref())
-            .map(str::to_string)
-            .unwrap_or_default(),
-        whatsapp_key: optional_trimmed(args.whatsapp_key.as_deref())
-            .map(str::to_string)
-            .unwrap_or_default(),
-        whatsapp_wa: optional_trimmed(args.whatsapp_wa.as_deref())
-            .map(str::to_string)
-            .unwrap_or_default(),
-        whatsapp_media: optional_trimmed(args.whatsapp_media.as_deref())
-            .map(str::to_string)
-            .unwrap_or_default(),
-        whatsapp_db: optional_trimmed(args.whatsapp_db.as_deref())
-            .map(str::to_string)
-            .unwrap_or_default(),
+        // `Form` trims and drops empty values itself, so the raw strings can
+        // pass through unchanged.
+        owner_phones: args.owner_phones.unwrap_or_default(),
+        attachment_root: args.attachment_root.unwrap_or_default(),
+        apple_contacts: args.apple_contacts.unwrap_or_default(),
+        whatsapp_key: args.whatsapp_key.unwrap_or_default(),
+        whatsapp_wa: args.whatsapp_wa.unwrap_or_default(),
+        whatsapp_media: args.whatsapp_media.unwrap_or_default(),
+        whatsapp_db: args.whatsapp_db.unwrap_or_default(),
         whatsapp_business: args.whatsapp_business.unwrap_or(false),
     };
 
@@ -349,22 +332,15 @@ pub(crate) fn parse_max_resolution(raw: Option<&str>) -> Result<MaxResolution, S
     })
 }
 
-/// Media mode the exporter is asked for.
+/// `AttachmentMedia` the exporter's `Form` is asked for.
 ///
 /// Convert and Compress become Clone: the desktop stages originals, shows the
 /// first gate, and runs the media pass itself, so the expensive work happens
 /// after the user has approved it rather than before. Copy and Skip have no
-/// media step and reach the exporter unchanged.
-pub(crate) fn exporter_media_mode(chosen: AttachmentMedia) -> MediaMode {
-    exporter_attachment_media(chosen).media_mode()
-}
-
-/// `AttachmentMedia` the exporter's `Form` is asked for.
-///
-/// Same mapping as [`exporter_media_mode`], kept in `AttachmentMedia`'s own
-/// domain because `Form::attachment_media` also drives the iMessage path's
-/// upfront ffmpeg-availability check and Apple `copy_method` — both of which
-/// must not see Convert or Compress either, or the exporter would demand
+/// media step and reach the exporter unchanged. Kept in `AttachmentMedia`'s
+/// own domain because `Form::attachment_media` drives the exporter's media
+/// mode, the upfront ffmpeg-availability check, and Apple `copy_method` —
+/// none of which must see Convert or Compress, or the exporter would demand
 /// ffmpeg (and stage a converted file) before the user has approved anything.
 fn exporter_attachment_media(chosen: AttachmentMedia) -> AttachmentMedia {
     match chosen {
@@ -376,12 +352,11 @@ fn exporter_attachment_media(chosen: AttachmentMedia) -> AttachmentMedia {
 /// Build the `CompressOptions` a media pass will use, from the same
 /// max-resolution/fps/min-size fields the Extract form parses.
 ///
-/// `CompressOptions` only takes effect under [`MediaMode::Compress`] — this
-/// mirrors `build_exporter_config`'s non-iMessage branch, which built the
-/// real options only when `Compress` was chosen and used
-/// `CompressOptions::default()` otherwise. Shared so the desktop's own media
-/// pass (`commands::staging`) parses these fields the same way Extract does,
-/// rather than re-deriving the parsing.
+/// `CompressOptions` only takes effect under [`media::MediaMode::Compress`],
+/// so the real options are built only when `Compress` was chosen and
+/// `CompressOptions::default()` is returned otherwise. Shared so the
+/// desktop's own media pass (`commands::staging`) parses these fields the
+/// same way Extract does, rather than re-deriving the parsing.
 ///
 /// # Errors
 ///
@@ -404,165 +379,117 @@ pub(crate) fn parse_compress_options(
 
 /// Build the exporter config the background thread will run.
 ///
-/// iMessage uses the shared form helper. Other sources fill `ExporterConfig`
-/// directly. Every path writes JSON Lines (one JSON object per line).
+/// Every source maps its UI key to an [`Exporter`] variant, fills the shared
+/// [`Form`], and goes through `Form::to_config` — so the Form builders in
+/// io-core are the single source of truth for field mapping and validation.
+/// Every path writes JSON Lines (one JSON object per line).
 ///
 /// # Errors
 ///
-/// Returns an error if the source is unknown, a date cannot be parsed, or
-/// compress options are invalid.
+/// Returns an error if the source is unknown, compress options are invalid,
+/// or `Form::to_config` rejects the form (missing input path, missing owner
+/// phones, bad date, …). Multiple validation problems are joined with `; `.
 fn build_exporter_config(
     source: &str,
     path: &str,
     output_dir: &str,
     options: &ExtractOptions,
 ) -> Result<ExporterConfig, String> {
-    match source {
-        "imessage-ios" | "imessage-macos" | "imessage-jailbreak" => {
-            let form = Form {
-                db_path: path.to_string(),
-                output: output_dir.to_string(),
-                apple_platform: if source == "imessage-ios" {
-                    ApplePlatform::Ios
-                } else {
-                    ApplePlatform::MacOs
-                },
-                backup_password: if source == "imessage-ios" {
-                    options.backup_password.clone()
-                } else {
-                    String::new()
-                },
-                attachment_root: if source == "imessage-ios" {
-                    String::new()
-                } else {
-                    options.attachment_root.clone()
-                },
-                apple_contacts: if source == "imessage-ios" {
-                    String::new()
-                } else {
-                    options.apple_contacts.clone()
-                },
-                // See `exporter_media_mode`'s docs: the exporter is asked for
-                // Clone whenever the user chose Convert or Compress, so it
-                // stages originals and the desktop runs the media pass
-                // itself, after the gate.
-                attachment_media: exporter_attachment_media(options.attachment_media),
-                media_max_resolution: options.media_max_resolution,
-                media_max_fps: options.media_max_fps.clone(),
-                media_min_size: options.media_min_size.clone(),
-                conversation_filter: options.conversation_filter.clone(),
-                start_date: options.start_date.clone(),
-                end_date: options.end_date.clone(),
-                obfuscate: source == "imessage-ios" && options.obfuscate,
-                // Import and Push read conversation files as JSON Lines (one JSON
-                // object per line).
-                output_format: OutputFormat::Jsonl,
-                ..Default::default()
-            };
-            // `Form`'s own compress validation only fires when
-            // `Form.attachment_media` is `Compress` — and that field now
-            // reads `Clone` for a real Convert/Compress choice (see
-            // `exporter_attachment_media`'s docs), so it would otherwise stay
-            // silent about a malformed `media_max_fps`/`media_min_size`
-            // until the desktop's own media pass parses the same fields
-            // again at the approval gate, hours later. Validate against the
-            // REAL chosen mode here so a bad value still fails immediately;
-            // the parsed value itself is unused here — the exporter's own
-            // media step is a no-op under Clone.
-            parse_compress_options(
-                options.attachment_media,
-                options.media_max_resolution,
-                &options.media_max_fps,
-                &options.media_min_size,
-            )?;
-            form.to_config(Exporter::Imessage)
-                .map_err(|errors| errors.join("; "))
+    // `Form`'s own compress validation only fires when `Form.attachment_media`
+    // is `Compress` — and that field reads `Clone` for a real Convert/Compress
+    // choice (see `exporter_attachment_media`'s docs), so it would otherwise
+    // stay silent about a malformed `media_max_fps`/`media_min_size` until the
+    // desktop's own media pass parses the same fields again at the approval
+    // gate, hours later. Validate against the REAL chosen mode here so a bad
+    // value still fails immediately; the parsed value itself is unused here —
+    // the exporter's own media step is a no-op under Clone.
+    parse_compress_options(
+        options.attachment_media,
+        options.media_max_resolution,
+        &options.media_max_fps,
+        &options.media_min_size,
+    )?;
+
+    let mut form = Form {
+        output: output_dir.to_string(),
+        // See `exporter_attachment_media`'s docs: the exporter is asked for
+        // Clone whenever the user chose Convert or Compress, so it stages
+        // originals and the desktop runs the media pass itself, after the
+        // gate.
+        attachment_media: exporter_attachment_media(options.attachment_media),
+        media_max_resolution: options.media_max_resolution,
+        media_max_fps: options.media_max_fps.clone(),
+        media_min_size: options.media_min_size.clone(),
+        conversation_filter: options.conversation_filter.clone(),
+        start_date: options.start_date.clone(),
+        end_date: options.end_date.clone(),
+        obfuscate: options.obfuscate,
+        // Import and Push read conversation files as JSON Lines (one JSON
+        // object per line).
+        output_format: OutputFormat::Jsonl,
+        ..Default::default()
+    };
+
+    let exporter = match source {
+        "imessage-ios" => {
+            form.db_path = path.to_string();
+            form.apple_platform = ApplePlatform::Ios;
+            form.backup_password = options.backup_password.clone();
+            Exporter::Imessage
         }
-        other => {
-            let source_config = match other {
-                "sms-backup-restore" => {
-                    if options.owner_phones.is_empty() {
-                        return Err(
-                            "SMS Backup & Restore requires at least one backup device phone number"
-                                .into(),
-                        );
-                    }
-                    SourceConfig::SmsBackupRestore(SmsBackupRestoreConfig {
-                        owner_phones: options.owner_phones.clone(),
-                    })
-                }
-                "go-sms-pro" => SourceConfig::GoSmsPro(GoSmsProConfig {
-                    owner_phones: options.owner_phones.clone(),
-                }),
-                "sms-backup-plus" => SourceConfig::SmsBackupPlus(SmsBackupPlusConfig {
-                    owner_phones: options.owner_phones.clone(),
-                    owner_emails: Vec::new(),
-                    name_mapping: None,
-                    verbose: false,
-                    include_summary: false,
-                }),
-                "openextract" => SourceConfig::OpenExtract(OpenExtractConfig {}),
-                "imazing" => SourceConfig::Imazing(ImazingConfig {}),
-                "whatsapp-android" => SourceConfig::Whatsapp(WhatsappConfig {
-                    platform: Some(WhatsappPlatform::Android),
-                    key: nonempty(&options.whatsapp_key).map(str::to_string),
-                    backup: None,
-                    wa: nonempty(&options.whatsapp_wa).map(PathBuf::from),
-                    media: nonempty(&options.whatsapp_media).map(PathBuf::from),
-                    db: nonempty(&options.whatsapp_db).map(PathBuf::from),
-                    business: false,
-                    ..Default::default()
-                }),
-                "whatsapp-ios" => SourceConfig::Whatsapp(WhatsappConfig {
-                    platform: Some(WhatsappPlatform::Ios),
-                    backup: Some(PathBuf::from(path)),
-                    wa: nonempty(&options.whatsapp_wa).map(PathBuf::from),
-                    media: None,
-                    db: None,
-                    business: options.whatsapp_business,
-                    ..Default::default()
-                }),
-                _ => return Err(format!("unsupported source '{source}'")),
-            };
-
-            let start_date = nonempty(&options.start_date);
-            let end_date = nonempty(&options.end_date);
-            let date_range = parse_date_range(start_date, end_date)?;
-
-            let compress = parse_compress_options(
-                options.attachment_media,
-                options.media_max_resolution,
-                &options.media_max_fps,
-                &options.media_min_size,
-            )?;
-
-            Ok(ExporterConfig {
-                inputs: vec![PathBuf::from(path)],
-                output: PathBuf::from(output_dir),
-                date_range,
-                timezone: None,
-                contacts: None,
-                obfuscate: ObfuscateConfig {
-                    enabled: options.obfuscate,
-                    seed: None,
-                },
-                media: MediaConfig {
-                    mode: exporter_media_mode(options.attachment_media),
-                    compress,
-                },
-                cancel: None,
-                log: None,
-                output_format: OutputFormat::Jsonl,
-                resume: false,
-                source: source_config,
-            })
+        "imessage-macos" | "imessage-jailbreak" => {
+            form.db_path = path.to_string();
+            form.apple_platform = ApplePlatform::MacOs;
+            form.attachment_root = options.attachment_root.clone();
+            form.apple_contacts = options.apple_contacts.clone();
+            // The Extract screen only offers obfuscation for iOS backups.
+            form.obfuscate = false;
+            Exporter::Imessage
         }
-    }
-}
+        "sms-backup-restore" => {
+            form.input = path.to_string();
+            form.owner_phones = options.owner_phones.join("\n");
+            Exporter::SmsBackupRestore
+        }
+        "go-sms-pro" => {
+            form.input = path.to_string();
+            form.owner_phones = options.owner_phones.join("\n");
+            Exporter::GoSmsPro
+        }
+        "sms-backup-plus" => {
+            form.input = path.to_string();
+            form.owner_phones = options.owner_phones.join("\n");
+            Exporter::SmsBackupPlus
+        }
+        "openextract" => {
+            form.input = path.to_string();
+            Exporter::OpenExtract
+        }
+        "imazing" => {
+            form.input = path.to_string();
+            Exporter::Imazing
+        }
+        "whatsapp-android" => {
+            form.input = path.to_string();
+            form.whatsapp_platform = WhatsappPlatform::Android;
+            form.whatsapp_key = options.whatsapp_key.clone();
+            form.whatsapp_wa = options.whatsapp_wa.clone();
+            form.whatsapp_media = options.whatsapp_media.clone();
+            form.whatsapp_db = options.whatsapp_db.clone();
+            Exporter::Whatsapp
+        }
+        "whatsapp-ios" => {
+            form.input = path.to_string();
+            form.whatsapp_platform = WhatsappPlatform::Ios;
+            form.whatsapp_backup = path.to_string();
+            form.whatsapp_wa = options.whatsapp_wa.clone();
+            form.whatsapp_business = options.whatsapp_business;
+            Exporter::Whatsapp
+        }
+        _ => return Err(format!("unsupported source '{source}'")),
+    };
 
-/// Return `s` trimmed, or `None` when it is empty.
-fn nonempty(s: &str) -> Option<&str> {
-    optional_trimmed(Some(s))
+    form.to_config(exporter).map_err(|errors| errors.join("; "))
 }
 
 /// Call the exporter that matches `config.source`.
@@ -587,6 +514,7 @@ fn run_exporter(config: &ExporterConfig) -> anyhow::Result<message_vault_io_core
 #[cfg(test)]
 mod tests {
     use super::*;
+    use media::MediaMode;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -649,16 +577,20 @@ mod tests {
 
     #[test]
     fn non_imessage_sources_defer_the_media_step_too() {
-        // `exporter_media_mode` also gates `MediaConfig.mode` on the
-        // non-iMessage branch of `build_exporter_config` (whatsapp-android
-        // here), which does not go through `Form`/`exporter_attachment_media`
-        // at all.
+        // `exporter_attachment_media` gates `Form.attachment_media` for every
+        // source, so a non-iMessage source (whatsapp-android here) must also
+        // reach the exporter with Clone when Convert or Compress was chosen.
+        let dump = tempfile::tempdir().unwrap();
         for chosen in [AttachmentMedia::Convert, AttachmentMedia::Compress] {
             let mut options = test_options(Vec::new());
             options.attachment_media = chosen;
-            let config =
-                build_exporter_config("whatsapp-android", "/tmp/android-dump", "/out", &options)
-                    .unwrap();
+            let config = build_exporter_config(
+                "whatsapp-android",
+                dump.path().to_str().unwrap(),
+                "/out",
+                &options,
+            )
+            .unwrap();
             assert_eq!(
                 config.media.mode,
                 MediaMode::Clone,
@@ -803,9 +735,10 @@ mod tests {
 
     #[test]
     fn sms_backup_restore_passes_owner_phones() {
+        let backup = tempfile::tempdir().unwrap();
         let config = build_exporter_config(
             "sms-backup-restore",
-            "/tmp/backup",
+            backup.path().to_str().unwrap(),
             "/tmp/out",
             &test_options(vec!["+15551111".into(), "+15552222".into()]),
         )
@@ -819,6 +752,40 @@ mod tests {
     }
 
     #[test]
+    fn every_source_requires_an_existing_input_path() {
+        let err = build_exporter_config(
+            "sms-backup-restore",
+            "/does/not/exist-sms-backup",
+            "/tmp/out",
+            &test_options(vec!["+15551111".into()]),
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("does not exist"),
+            "expected input-exists error, got {err}"
+        );
+    }
+
+    #[test]
+    fn sms_backup_plus_requires_owner_emails() {
+        // The Extract screen has no owner-email field, so SMS Backup+ always
+        // fails Form validation. That is the Form builders' rule and the
+        // desktop surfaces it instead of silently passing an empty list.
+        let backup = tempfile::tempdir().unwrap();
+        let err = build_exporter_config(
+            "sms-backup-plus",
+            backup.path().to_str().unwrap(),
+            "/tmp/out",
+            &test_options(vec!["+15551111".into()]),
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("email"),
+            "expected email requirement error, got {err}"
+        );
+    }
+
+    #[test]
     fn whatsapp_android_forwards_key_and_optional_paths() {
         let mut options = test_options(Vec::new());
         options.whatsapp_key = "deadbeef".into();
@@ -826,13 +793,15 @@ mod tests {
         options.whatsapp_media = "/tmp/WhatsApp".into();
         options.whatsapp_db = "/tmp/msgstore.db".into();
         options.whatsapp_business = true;
+        let dump = tempfile::tempdir().unwrap();
         let config = build_exporter_config(
             "whatsapp-android",
-            "/tmp/android-dump",
+            dump.path().to_str().unwrap(),
             "/tmp/out",
             &options,
         )
         .unwrap();
+        assert_eq!(config.inputs, vec![dump.path().to_path_buf()]);
         match config.source {
             SourceConfig::Whatsapp(wa) => {
                 assert_eq!(wa.platform, Some(WhatsappPlatform::Android));
@@ -859,8 +828,14 @@ mod tests {
         options.whatsapp_media = "/tmp/WhatsApp".into();
         options.whatsapp_db = "/tmp/msgstore.db".into();
         options.whatsapp_wa = "/tmp/ContactsV2.sqlite".into();
-        let config =
-            build_exporter_config("whatsapp-ios", "/tmp/ios-backup", "/tmp/out", &options).unwrap();
+        let backup = tempfile::tempdir().unwrap();
+        let config = build_exporter_config(
+            "whatsapp-ios",
+            backup.path().to_str().unwrap(),
+            "/tmp/out",
+            &options,
+        )
+        .unwrap();
         match config.source {
             SourceConfig::Whatsapp(wa) => {
                 assert!(wa.media.is_none());
@@ -878,15 +853,18 @@ mod tests {
     fn whatsapp_ios_sets_backup_from_folder_and_business() {
         let mut options = test_options(Vec::new());
         options.whatsapp_business = true;
-        let config =
-            build_exporter_config("whatsapp-ios", "/tmp/ios-backup", "/tmp/out", &options).unwrap();
+        let backup = tempfile::tempdir().unwrap();
+        let config = build_exporter_config(
+            "whatsapp-ios",
+            backup.path().to_str().unwrap(),
+            "/tmp/out",
+            &options,
+        )
+        .unwrap();
         match config.source {
             SourceConfig::Whatsapp(wa) => {
                 assert_eq!(wa.platform, Some(WhatsappPlatform::Ios));
-                assert_eq!(
-                    wa.backup.as_deref(),
-                    Some(std::path::Path::new("/tmp/ios-backup"))
-                );
+                assert_eq!(wa.backup.as_deref(), Some(backup.path()));
                 assert!(wa.business);
                 assert!(wa.key.is_none());
             }

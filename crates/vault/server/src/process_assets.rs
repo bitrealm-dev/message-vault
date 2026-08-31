@@ -14,10 +14,11 @@ use tempfile::TempDir;
 
 use crate::config::Config;
 use crate::db::{engine, schema};
-use crate::media_tools::{
-    self, JPEG_MIN_BYTES, MP3_MIN_BYTES, MP4_MIN_BYTES, MediaKind, ext_of, path_str,
-    probe_video_efficient,
-};
+use crate::media_tools::{self, MediaKind, ext_of, path_str};
+
+/// Post-import derivation always uses the compressing recipe variant (CRF 28,
+/// keep-as-is size thresholds apply); there is no non-compressing mode here.
+const COMPRESS: bool = true;
 
 /// Options for one derived-media processing pass.
 #[derive(Debug, Clone, Default)]
@@ -612,8 +613,7 @@ fn nonempty_mime(mime: Option<&str>) -> Option<&str> {
 fn derive_image(source_path: &Path) -> Result<Option<Vec<u8>>> {
     let ext = ext_of(source_path);
     let size = fs::metadata(source_path)?.len();
-    let is_jpeg = ext == ".jpg" || ext == ".jpeg";
-    if is_jpeg && size <= JPEG_MIN_BYTES {
+    if media_tools::skip_image_conversion(&ext, size, COMPRESS) {
         return Ok(None);
     }
     if !media_tools::tool_on_path("ffmpeg") {
@@ -624,19 +624,8 @@ fn derive_image(source_path: &Path) -> Result<Option<Vec<u8>>> {
         .tempfile()
         .context("temp jpeg")?;
     let tmp_path = tmp.path().to_path_buf();
-    // High-quality still (`-q:v 2` ≈ quality ~85 intent); autorotate is ffmpeg default.
     media_tools::run_ffmpeg(
-        &[
-            "-i",
-            path_str(source_path)?,
-            "-frames:v",
-            "1",
-            "-update",
-            "1",
-            "-q:v",
-            "2",
-            path_str(&tmp_path)?,
-        ],
+        &media_tools::image_to_jpeg_args(path_str(source_path)?, path_str(&tmp_path)?),
         Some(&tmp_path),
     )?;
     let mut buf = Vec::new();
@@ -647,13 +636,8 @@ fn derive_image(source_path: &Path) -> Result<Option<Vec<u8>>> {
 fn derive_video(source_path: &Path, work_dir: &Path) -> Result<Option<PathBuf>> {
     let ext = ext_of(source_path);
     let size = fs::metadata(source_path)?.len();
-    if ext == ".mp4" {
-        if size <= MP4_MIN_BYTES {
-            return Ok(None);
-        }
-        if probe_video_efficient(source_path) {
-            return Ok(None);
-        }
+    if media_tools::skip_video_conversion(source_path, &ext, size, COMPRESS) {
+        return Ok(None);
     }
     if !media_tools::tool_on_path("ffmpeg") {
         bail!("ffmpeg required for video derived media");
@@ -663,25 +647,7 @@ fn derive_video(source_path: &Path, work_dir: &Path) -> Result<Option<PathBuf>> 
         hash_file_prefix(source_path).unwrap_or_else(|| "vid".into())
     ));
     media_tools::run_ffmpeg(
-        &[
-            "-i",
-            path_str(source_path)?,
-            "-vf",
-            "scale='if(gt(iw,ih),-2,min(720,iw))':'if(gt(iw,ih),min(720,ih),-2)',fps=30",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "medium",
-            "-crf",
-            "28",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "96k",
-            "-movflags",
-            "+faststart",
-            path_str(&out)?,
-        ],
+        &media_tools::video_to_mp4_args(path_str(source_path)?, path_str(&out)?, COMPRESS),
         Some(&out),
     )?;
     Ok(Some(out))
@@ -690,7 +656,7 @@ fn derive_video(source_path: &Path, work_dir: &Path) -> Result<Option<PathBuf>> 
 fn derive_audio(source_path: &Path, work_dir: &Path) -> Result<Option<PathBuf>> {
     let ext = ext_of(source_path);
     let size = fs::metadata(source_path)?.len();
-    if ext == ".mp3" && size <= MP3_MIN_BYTES {
+    if media_tools::skip_audio_conversion(&ext, size, COMPRESS) {
         return Ok(None);
     }
     if !media_tools::tool_on_path("ffmpeg") {
@@ -704,18 +670,7 @@ fn derive_audio(source_path: &Path, work_dir: &Path) -> Result<Option<PathBuf>> 
             .unwrap_or("audio")
     ));
     media_tools::run_ffmpeg(
-        &[
-            "-i",
-            path_str(source_path)?,
-            "-vn",
-            "-ac",
-            "1",
-            "-c:a",
-            "libmp3lame",
-            "-q:a",
-            "6",
-            path_str(&out)?,
-        ],
+        &media_tools::audio_to_mp3_args(path_str(source_path)?, path_str(&out)?),
         Some(&out),
     )?;
     Ok(Some(out))

@@ -56,7 +56,6 @@ pub async fn pull(
             source: None,
             skip_attachments: args.skip_attachments,
             page_limit: 100,
-            expected_messages: None,
             cancel: Some(cancel),
             asset_download_workers: 8,
             force: false,
@@ -74,7 +73,7 @@ pub async fn pull(
             } => {
                 let _ = app_handle.emit(
                     "extract:log",
-                    format!("{messages} messages (total: {total_so_far})"),
+                    format!("Fetched {messages} message(s) ({total_so_far} total)"),
                 );
             }
             ProgressEvent::Done(_) => {}

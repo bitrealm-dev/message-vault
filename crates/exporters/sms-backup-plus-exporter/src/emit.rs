@@ -537,7 +537,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
     // Captured before `transforms` moves into the sink: the queue path is for
     // the import, which is JSONL and never obfuscated.
     let use_queue = output_format == OutputFormat::Jsonl && !transforms.obfuscate;
-    let (mut sink, attachments_dir) = if resume {
+    let (sink, attachments_dir) = if resume {
         FormatSink::open_resume(&output_dir, output_format, transforms)
     } else {
         FormatSink::open_prepared(&output_dir, output_format, transforms)
@@ -721,30 +721,16 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
         )
         .map_err(anyhow::Error::msg)?;
 
-        let convo_total = documents.len() as u64;
-        emit_log(log, "");
-        emit_log(
-            log,
-            format!("Preparing {convo_total} conversation file(s)..."),
-        );
         vlog(
             verbose,
             log,
             format!(
-                "writing {convo_total} conversation files (duplicates dropped so far: {})",
+                "writing {} conversation files (duplicates dropped so far: {})",
+                documents.len(),
                 report.duplicates_dropped
             ),
         );
-        let mut written = 0u64;
-        for doc in documents {
-            message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
-            sink.write_document(doc)?;
-            report.conversations += 1;
-            written += 1;
-            emit_log(log, format!("  preparing {written}/{convo_total}"));
-            report_progress(verbose, log, "wrote", written, convo_total);
-        }
-        sink.finish()?
+        message_ir_format::write_documents_through_sink(documents, sink, log, cancel, &mut report)?
     };
 
     vlog(

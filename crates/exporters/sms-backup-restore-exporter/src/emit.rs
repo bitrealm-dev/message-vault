@@ -10,7 +10,7 @@ use message_ir_format::{
     AttachmentSource, ConversationUnit, ExportTransforms, FormatSink, FormatSinkResult,
     SbrReadOptions, SbrReadReport, WriteQueueOptions, read_sbr_documents,
 };
-use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat, emit_log};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
 use std::path::Path;
 
 /// Map the ir-format read report onto the shared [`ExportReport`] shape,
@@ -108,7 +108,7 @@ pub(crate) fn convert_export(
     // Captured before `transforms` moves into the sink: the queue path is for
     // the import, which is JSONL and never obfuscated.
     let use_queue = args.output_format == OutputFormat::Jsonl && !args.transforms.obfuscate;
-    let (mut sink, attachments_dir) = if args.resume {
+    let (sink, attachments_dir) = if args.resume {
         FormatSink::open_resume(args.output_dir, args.output_format, args.transforms)
     } else {
         FormatSink::open_prepared(args.output_dir, args.output_format, args.transforms)
@@ -173,23 +173,16 @@ pub(crate) fn convert_export(
         ));
     }
 
-    let total_conversations = documents.len() as u64;
-    emit_log(log.as_ref(), "");
-    emit_log(
+    // The reader already counted conversations; zero the counter so the shared
+    // write tail counts only the documents it actually writes.
+    let mut core = to_core_report(report);
+    core.conversations = 0;
+    let sink_result = message_ir_format::write_documents_through_sink(
+        documents,
+        sink,
         log.as_ref(),
-        format!("Preparing {total_conversations} conversation file(s)..."),
-    );
-    let mut written = 0u64;
-    for document in documents {
-        written += 1;
-        sink.write_document(document)?;
-        #[allow(clippy::manual_is_multiple_of)]
-        if written % 100 == 0 || written == total_conversations {
-            emit_log(
-                log.as_ref(),
-                format!("  preparing {written}/{total_conversations}"),
-            );
-        }
-    }
-    Ok((to_core_report(report), sink.finish()?))
+        args.cancel,
+        &mut core,
+    )?;
+    Ok((core, sink_result))
 }

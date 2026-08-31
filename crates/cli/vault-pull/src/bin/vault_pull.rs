@@ -54,17 +54,19 @@ fn real_main() -> Result<ExitCode> {
         source: cli.source,
         skip_attachments: cli.skip_attachments,
         page_limit: cli.page_limit,
-        expected_messages: None,
         cancel: None,
         asset_download_workers: DEFAULT_ASSET_DOWNLOAD_WORKERS,
         force: false,
         journal_path: None,
     };
 
-    let mut on_progress = |event: ProgressEvent| {
-        if let ProgressEvent::Log(line) = event {
-            println!("{line}");
-        }
+    let mut on_progress = |event: ProgressEvent| match event {
+        ProgressEvent::Log(line) => println!("{line}"),
+        ProgressEvent::Page {
+            messages,
+            total_so_far,
+        } => println!("Fetched {messages} message(s) ({total_so_far} total)"),
+        ProgressEvent::Auth { .. } | ProgressEvent::Done(_) => {}
     };
     let report = run(&cfg, Some(&mut on_progress))?;
     println!(
