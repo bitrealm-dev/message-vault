@@ -267,6 +267,7 @@ pub async fn import_export(args: &ImportExportArgs<'_>) -> Result<ImportStats> {
             device_id: None,
             form_json: None,
             source_fingerprint: None,
+            source_identities: None,
         },
     )
     .await?;
@@ -608,6 +609,9 @@ pub(crate) struct CreateImportBody {
     /// Source path, size, mtime, and message count.
     #[serde(default)]
     pub(crate) source_fingerprint: Option<serde_json::Value>,
+    /// Addresses the backup's device sent from, when the client read them.
+    #[serde(default)]
+    pub(crate) source_identities: Option<serde_json::Value>,
 }
 
 /// The new import session id.
@@ -880,6 +884,8 @@ pub(crate) async fn imports_create_handler(
     let form_json = optional_json_string(form.as_ref(), "form")?;
     let fingerprint_json =
         optional_json_string(body.source_fingerprint.as_ref(), "source_fingerprint")?;
+    let identities_json =
+        optional_json_string(body.source_identities.as_ref(), "source_identities")?;
 
     // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
@@ -896,6 +902,7 @@ pub(crate) async fn imports_create_handler(
         device_id: body.device_id.as_deref(),
         form_json: form_json.as_deref(),
         source_fingerprint: fingerprint_json.as_deref(),
+        source_identities: identities_json.as_deref(),
     };
     let id = crate::db::vault_imports::start_import(&mut conn, &args)
         .await
@@ -1096,6 +1103,8 @@ pub(crate) struct ActiveImportSession {
     pub(crate) form: serde_json::Value,
     /// Source path, size, mtime, and message count, or null.
     pub(crate) source_fingerprint: serde_json::Value,
+    /// Addresses the backup's device sent from (JSON array), or null.
+    pub(crate) source_identities: serde_json::Value,
     /// What the user approved at the last gate they passed, or null.
     ///
     /// Same column `POST /v1/imports/{id}/stage` writes with its `summary`
@@ -1149,6 +1158,7 @@ pub(crate) async fn imports_active_handler(
             device_id: row.device_id,
             form: parse_summary_json(row.form_json),
             source_fingerprint: parse_summary_json(row.source_fingerprint),
+            source_identities: parse_summary_json(row.source_identities),
             summary: parse_summary_json(row.summary_json),
         }),
     }))
@@ -1526,6 +1536,7 @@ async fn run_import_path(
                 device_id: None,
                 form_json: None,
                 source_fingerprint: None,
+                source_identities: None,
             },
         )
         .await
@@ -2243,6 +2254,7 @@ mod tests {
                 device_id: None,
                 form_json: None,
                 source_fingerprint: None,
+                source_identities: None,
             },
         )
         .await
@@ -2344,6 +2356,7 @@ mod tests {
                     device_id: None,
                     form_json: None,
                     source_fingerprint: None,
+                    source_identities: None,
                 },
             )
             .await

@@ -8,6 +8,7 @@ import { useTauriJob } from "../../hooks/useTauriJob";
 import { apiClient, getBaseUrl } from "../../lib/api";
 import { formatAttachmentProgress } from "../../lib/attachmentProgressCopy";
 import { useAuth } from "../../lib/auth";
+import { needsIdentityStop, parseSourceIdentities } from "../../lib/backupIdentity";
 import { getDeviceId } from "../../lib/deviceId";
 import { imessageExtractFields } from "../../lib/imessageExtractFields";
 import { isImessageMethod } from "../../lib/imessageImport";
@@ -24,6 +25,7 @@ import {
   type AttachmentForecast,
   invokeDeleteStaging,
   invokeExtract,
+  invokeImessageBackupIdentities,
   invokePathStat,
   invokePush,
   invokeSummarizeStaging,
@@ -44,6 +46,7 @@ import type {
   ImportIssueEvent,
   ImportProgressEvent,
 } from "../../lib/types";
+import { loadAccountProfile } from "../../lib/useAccountProfile";
 import { importSessionCreateBody } from "../../lib/vaultSource";
 import { whatsappExtractFields } from "../../lib/whatsappExtractFields";
 import { isWhatsappMethod } from "../../lib/whatsappImport";
@@ -244,6 +247,11 @@ export type ImportJobFormValues = {
 export type ResumeWrite = {
   sessionId: number;
   stagingDir: string;
+  /** The list recorded on the session at creation (`session.source_identities`,
+   * parsed by the caller). A resumed write lands back on Gate 1 without
+   * re-probing the backup, so this is the only way that gate's identity
+   * section gets a list to show. */
+  identities?: string[] | null;
 };
 
 export type ResumePush = {
@@ -437,6 +445,9 @@ export function useImportJob() {
   // progress view stays up with its Cancel disabled, since there is nothing
   // for it to stop).
   const [computingSummary, setComputingSummary] = useState(false);
+  const [sourceIdentities, setSourceIdentities] = useState<string[] | null>(null);
+  /** The submitted form, parked while the identity stop is showing. */
+  const pendingIdentityFormRef = useRef<ImportJobFormValues | null>(null);
   const activeStepRef = useRef<ImportIssue["step"]>("parse");
   const issuesRef = useRef<ImportIssue[]>([]);
   const countsRef = useRef<{
@@ -460,6 +471,11 @@ export function useImportJob() {
   // twice — the same in-flight-ref pattern ImportScreen.tsx uses for its
   // resume actions.
   const gateActionRef = useRef(false);
+  // Guards startImport the same way: the identity probe below awaits two
+  // network calls before runImport ever sets `running`, so a double-click
+  // on Import while that probe is in flight would otherwise start two runs
+  // (the second session create 409s).
+  const startImportRef = useRef(false);
 
   function returnToForm(): void {
     setPhase("form");
@@ -915,8 +931,9 @@ export function useImportJob() {
     }
   }
 
-  async function startImport(
+  async function runImport(
     form: ImportJobFormValues,
+    identities: string[] | null,
     resume?: ResumePush,
     resumeWrite?: ResumeWrite,
   ): Promise<void> {
@@ -1004,6 +1021,7 @@ export function useImportJob() {
           source_fingerprint: backupStat
             ? buildSourceFingerprint(form.backupPath, backupStat)
             : null,
+          source_identities: identities,
         });
         sessionId = importSession.id;
         setImportSessionId(sessionId);
@@ -1183,6 +1201,72 @@ export function useImportJob() {
     }
   }
 
+  /**
+   * Start an import. For a fresh iMessage start this first reads which
+   * addresses the backup's device sent from and compares them to the
+   * profile; when nothing matches, it parks the form and stops at
+   * `identity_stop` — before any session exists, so Cancel has nothing to
+   * clean up. The probe fails open: a source it cannot read will fail in
+   * the extractor moments later with the proper error.
+   */
+  async function startImport(
+    form: ImportJobFormValues,
+    resume?: ResumePush,
+    resumeWrite?: ResumeWrite,
+  ): Promise<void> {
+    if (!isTauri()) return;
+    // A second call while one is already probing or running is a no-op —
+    // without this, a double-click during the probe below (which runs
+    // before `running` is ever true) would start two sessions.
+    if (startImportRef.current) return;
+    startImportRef.current = true;
+    try {
+      let identities: string[] | null = null;
+      if (!resume && !resumeWrite && isImessageMethod(form.source)) {
+        // The probe reads the backup (and, for an encrypted one, decrypts
+        // it) before any session exists, which can take seconds — mark the
+        // run busy for that stretch so the Import button reflects it, the
+        // same way it does once runImport takes over.
+        setRunning(true);
+        try {
+          identities = await invokeImessageBackupIdentities({
+            path: form.backupPath,
+            ios: form.source === "imessage-ios",
+            backupPassword: form.backupPassword,
+          }).catch(() => []);
+          setSourceIdentities(identities);
+          const profile = await loadAccountProfile();
+          if (needsIdentityStop(identities, profile)) {
+            pendingIdentityFormRef.current = form;
+            setPhase("identity_stop");
+            return;
+          }
+        } finally {
+          setRunning(false);
+        }
+      } else {
+        setSourceIdentities(resumeWrite ? (resumeWrite.identities ?? null) : null);
+      }
+      await runImport(form, identities, resume, resumeWrite);
+    } finally {
+      startImportRef.current = false;
+    }
+  }
+
+  /** Continue past the identity stop with the parked form. */
+  async function continueAfterIdentityStop(): Promise<void> {
+    const form = pendingIdentityFormRef.current;
+    if (!form) return;
+    pendingIdentityFormRef.current = null;
+    await runImport(form, sourceIdentities);
+  }
+
+  /** Leave the identity stop; nothing was created, so only the phase moves. */
+  function cancelIdentityStop(): void {
+    pendingIdentityFormRef.current = null;
+    returnToForm();
+  }
+
   async function approveGate(): Promise<void> {
     if (!isTauri()) return;
     if (gateActionRef.current) return;
@@ -1271,6 +1355,7 @@ export function useImportJob() {
     setGateDeltaState(null);
     setMediaToolsMissing(false);
     setMediaPartiallyRan(false);
+    setSourceIdentities(parseSourceIdentities(session.source_identities));
 
     async function toolsMissing(): Promise<boolean> {
       if (mediaJobVerb(resumedForm.attachmentMedia) === null) return false;
@@ -1398,7 +1483,10 @@ export function useImportJob() {
     resumeError,
     computingSummary,
     completionText: phase === "done" ? completionTextFor(summaryView?.status) : undefined,
+    sourceIdentities,
     startImport,
+    continueAfterIdentityStop,
+    cancelIdentityStop,
     approveGate,
     declineGate,
     resumeAtGate,

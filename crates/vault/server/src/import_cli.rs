@@ -152,6 +152,7 @@ pub async fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats
             device_id: None,
             form_json: None,
             source_fingerprint: None,
+            source_identities: None,
         },
     )
     .await?;

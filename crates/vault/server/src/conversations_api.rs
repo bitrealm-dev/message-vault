@@ -2045,6 +2045,7 @@ mod tests {
                 device_id: None,
                 form_json: None,
                 source_fingerprint: None,
+                source_identities: None,
             },
         )
         .await
@@ -2071,6 +2072,7 @@ mod tests {
                 device_id: None,
                 form_json: None,
                 source_fingerprint: None,
+                source_identities: None,
             },
         )
         .await
@@ -2254,6 +2256,7 @@ mod tests {
                 device_id: None,
                 form_json: None,
                 source_fingerprint: None,
+                source_identities: None,
             },
         )
         .await
@@ -2377,6 +2380,7 @@ mod tests {
                 device_id: None,
                 form_json: None,
                 source_fingerprint: None,
+                source_identities: None,
             },
         )
         .await

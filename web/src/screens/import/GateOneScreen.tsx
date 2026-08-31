@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import Button from "../../components/Button";
 import { formatBytes } from "../../lib/attachmentProgressCopy";
 import type { StagingSummary } from "../../lib/tauri";
@@ -26,6 +27,7 @@ export default function GateOneScreen({
   busy,
   mediaToolsMissing,
   mediaPartiallyRan,
+  identityPanel,
 }: {
   summary: StagingSummary;
   /** Null while the contact-match lookup is in flight or failed — the "new
@@ -44,6 +46,8 @@ export default function GateOneScreen({
    * hold a mix of originals and converted files, so the estimates line
    * below would be wrong — it claims the media step hasn't run yet. */
   mediaPartiallyRan?: boolean;
+  /** The backup's identity list, composed by the caller (null-safe: omit to hide). */
+  identityPanel?: ReactNode;
 }) {
   const verb = mediaJobVerb(mode);
   // Decision 11 renders this breakdown unconditionally: copy/skip has no
@@ -105,6 +109,13 @@ export default function GateOneScreen({
           </tbody>
         </table>
       </div>
+
+      {identityPanel ? (
+        <section className="mt-5">
+          <h2 className="m-0 text-base font-semibold">Addresses this backup sent from</h2>
+          <div className="mt-3">{identityPanel}</div>
+        </section>
+      ) : null}
 
       {verb || groups.length > 0 ? (
         <section className="mt-5">
