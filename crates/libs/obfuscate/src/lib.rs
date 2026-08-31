@@ -475,6 +475,11 @@ fn looks_like_email(s: &str) -> bool {
 }
 
 /// Classify attachment by MIME and/or file extension.
+///
+/// Extension recognition delegates to [`media::classify`] so both crates
+/// agree on what counts as an image or a video. Audio maps to
+/// [`MediaClass::Other`]: obfuscation has no audio placeholder, so audio
+/// files get the generic `placeholder.bin` (as they always have).
 pub fn classify_attachment(mime: Option<&str>, path: Option<&str>) -> MediaClass {
     if let Some(m) = mime {
         let m = m.to_ascii_lowercase();
@@ -486,17 +491,10 @@ pub fn classify_attachment(mime: Option<&str>, path: Option<&str>) -> MediaClass
         }
     }
     if let Some(p) = path {
-        let ext = Path::new(p)
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        match ext.as_str() {
-            "jpg" | "jpeg" | "png" | "gif" | "webp" | "heic" | "bmp" | "tif" | "tiff" => {
-                return MediaClass::Image;
-            }
-            "mp4" | "mov" | "m4v" | "webm" | "mkv" | "avi" | "3gp" => return MediaClass::Video,
-            _ => {}
+        match media::classify(Path::new(p)) {
+            Some(media::Kind::Image) => return MediaClass::Image,
+            Some(media::Kind::Video) => return MediaClass::Video,
+            Some(media::Kind::Audio) | None => {}
         }
     }
     MediaClass::Other

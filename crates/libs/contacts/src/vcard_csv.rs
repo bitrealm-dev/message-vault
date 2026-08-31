@@ -31,7 +31,7 @@ pub struct ContactCsvRow {
 }
 
 /// Normalize a Contacts CSV header the same way book/validate loaders do.
-fn normalize_vcard_csv_header(h: &str) -> String {
+pub(crate) fn normalize_vcard_csv_header(h: &str) -> String {
     h.trim()
         .trim_start_matches('\u{feff}')
         .to_ascii_lowercase()

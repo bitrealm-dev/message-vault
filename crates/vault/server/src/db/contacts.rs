@@ -69,13 +69,7 @@ struct ContactDraft {
 }
 
 fn contacts_file_format(path: &Path) -> Result<ContactsFormat> {
-    detect_contacts_format(path).map_err(|e| {
-        if e.details.is_empty() {
-            anyhow::anyhow!("{}", e.message)
-        } else {
-            anyhow::anyhow!("{} ({})", e.message, e.details.join("; "))
-        }
-    })
+    Ok(detect_contacts_format(path)?)
 }
 
 /// iMessage-style: any handle containing `@` is treated as email.

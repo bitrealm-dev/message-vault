@@ -4,9 +4,11 @@ use crate::util::load_attachment_bytes_strict;
 use anyhow::{Context, Result, bail};
 use message_ir::{
     ConversationDocument, IrAttachment, IrConversationType, IrDirection, IrMessage, IrMessageKind,
+    nonempty,
 };
 use sbr::{
-    SbrBackupWriter, SbrMessage, default_backup_path, encode_part_data, ensure_attr, set_attr,
+    SbrBackupWriter, SbrMessage, SourceFields, default_backup_path, encode_part_data, ensure_attr,
+    set_attr,
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
@@ -58,12 +60,11 @@ pub(crate) fn document_to_sbr_messages(
         .export
         .owner_handle
         .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or("");
+        .and_then(nonempty)
+        .unwrap_or_default();
     let mut out = Vec::with_capacity(doc.messages.len());
     for msg in &doc.messages {
-        out.push(ir_message_to_sbr(doc, msg, owner, output_dir)?);
+        out.push(ir_message_to_sbr(doc, msg, &owner, output_dir)?);
     }
     Ok(out)
 }
@@ -74,28 +75,34 @@ fn ir_message_to_sbr(
     owner: &str,
     output_dir: &Path,
 ) -> Result<SbrMessage> {
+    // The raw source bag is [`SourceFields`] serialized into the IR's
+    // `source.fields`; deserializing it back recovers the typed bag without
+    // any manual JSON walking. Anything that does not parse as a complete
+    // SMS/MMS bag (a different `kind`, or a truncated bag) falls back to
+    // synthesis, as before.
     if let Some(fields) = msg.source.as_ref().map(|s| &s.fields)
-        && let Some(kind) = fields.get("kind").and_then(|v| v.as_str())
+        && fields.contains_key("kind")
     {
-        match kind {
-            "sms" => {
-                if let Some(restored) = restore_sms(fields, msg) {
+        match serde_json::from_value::<SourceFields>(Value::Object(fields.clone())) {
+            Ok(SourceFields::Sms { attrs }) => return Ok(restore_sms(attrs, msg)),
+            Ok(SourceFields::Mms {
+                attrs,
+                parts,
+                addrs,
+            }) => {
+                if let Some(restored) =
+                    restore_mms(attrs, parts, addrs, doc, msg, owner, output_dir)?
+                {
                     return Ok(restored);
                 }
             }
-            "mms" => {
-                if let Some(restored) = restore_mms(fields, doc, msg, owner, output_dir)? {
-                    return Ok(restored);
-                }
-            }
-            _ => {}
+            Err(_) => {}
         }
     }
     synthesize_sbr(doc, msg, owner, output_dir)
 }
 
-fn restore_sms(fields: &serde_json::Map<String, Value>, msg: &IrMessage) -> Option<SbrMessage> {
-    let mut attrs = json_object_to_btree(Some(fields.get("attrs")?))?;
+fn restore_sms(mut attrs: BTreeMap<String, String>, msg: &IrMessage) -> SbrMessage {
     set_attr(&mut attrs, "date", msg.timestamp_unix_ms.to_string());
     set_attr(
         &mut attrs,
@@ -111,22 +118,23 @@ fn restore_sms(fields: &serde_json::Map<String, Value>, msg: &IrMessage) -> Opti
     }
     ensure_attr(&mut attrs, "protocol", "0");
     ensure_attr(&mut attrs, "read", "1");
-    Some(SbrMessage::sms(attrs))
+    SbrMessage::sms(attrs)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn restore_mms(
-    fields: &serde_json::Map<String, Value>,
+    mut attrs: BTreeMap<String, String>,
+    mut parts: Vec<BTreeMap<String, String>>,
+    mut addrs: Vec<BTreeMap<String, String>>,
     doc: &ConversationDocument,
     msg: &IrMessage,
     owner: &str,
     output_dir: &Path,
 ) -> Result<Option<SbrMessage>> {
-    let Some(mut attrs) = fields
-        .get("attrs")
-        .and_then(|v| json_object_to_btree(Some(v)))
-    else {
+    if parts.is_empty() && addrs.is_empty() {
+        // Incomplete bag — fall back to synthesis.
         return Ok(None);
-    };
+    }
     set_attr(&mut attrs, "date", msg.timestamp_unix_ms.to_string());
     set_attr(
         &mut attrs,
@@ -136,13 +144,6 @@ fn restore_mms(
             IrDirection::Outgoing => "2",
         },
     );
-
-    let mut parts = json_array_of_objects(fields.get("parts")).unwrap_or_default();
-    let mut addrs = json_array_of_objects(fields.get("addrs")).unwrap_or_default();
-    if parts.is_empty() && addrs.is_empty() {
-        // Incomplete bag — fall back to synthesis.
-        return Ok(None);
-    }
     inject_attachment_data(&mut parts, &msg.attachments, output_dir)?;
     if addrs.is_empty() {
         addrs = synthesize_addrs(doc, msg, owner);
@@ -438,31 +439,6 @@ fn inject_attachment_data(
         }
     }
     Ok(())
-}
-
-fn json_object_to_btree(v: Option<&Value>) -> Option<BTreeMap<String, String>> {
-    let obj = v?.as_object()?;
-    let mut out = BTreeMap::new();
-    for (k, val) in obj {
-        let s = match val {
-            Value::String(s) => s.clone(),
-            Value::Number(n) => n.to_string(),
-            Value::Bool(b) => b.to_string(),
-            Value::Null => continue,
-            other => other.to_string(),
-        };
-        out.insert(k.clone(), s);
-    }
-    Some(out)
-}
-
-fn json_array_of_objects(v: Option<&Value>) -> Option<Vec<BTreeMap<String, String>>> {
-    let arr = v?.as_array()?;
-    let mut out = Vec::with_capacity(arr.len());
-    for item in arr {
-        out.push(json_object_to_btree(Some(item))?);
-    }
-    Some(out)
 }
 
 /// `write_format` must not stream multi-chat XML; use [`crate::FormatSink`].

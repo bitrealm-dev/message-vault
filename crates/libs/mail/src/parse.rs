@@ -1,5 +1,6 @@
 //! Parse `.eml` / mboxrd back into [`MailMessage`].
 
+use crate::headers as hn;
 use crate::{MailAttachment, MailMessage, Participant};
 use anyhow::{Context, Result};
 use mailparse::{MailHeader, MailHeaderMap, ParsedMail};
@@ -29,39 +30,39 @@ pub fn mail_message_from_eml_bytes(bytes: &[u8]) -> Result<MailMessage> {
     let mail = mailparse::parse_mail(bytes).context("parse eml bytes")?;
     let headers = &mail.headers;
 
-    let chat_identifier = required_header(headers, "X-ME-Chat-Identifier")?;
-    let conversation_type = header_or(headers, "X-ME-Conversation-Type", "individual");
-    let group_title = optional_header(headers, "X-ME-Group-Title");
+    let chat_identifier = required_header(headers, hn::CHAT_IDENTIFIER)?;
+    let conversation_type = header_or(headers, hn::CONVERSATION_TYPE, "individual");
+    let group_title = optional_header(headers, hn::GROUP_TITLE);
     let participants = parse_participants(headers);
-    let guid = required_header(headers, "X-ME-Guid")?;
-    let timestamp_unix_ms = required_header(headers, "X-ME-Timestamp-Unix-Ms")?
+    let guid = required_header(headers, hn::GUID)?;
+    let timestamp_unix_ms = required_header(headers, hn::TIMESTAMP_UNIX_MS)?
         .parse::<i64>()
         .context("parse X-ME-Timestamp-Unix-Ms")?;
-    let direction = match header_or(headers, "X-ME-Direction", "incoming")
+    let direction = match header_or(headers, hn::DIRECTION, "incoming")
         .to_ascii_lowercase()
         .as_str()
     {
         "outgoing" => IrDirection::Outgoing,
         _ => IrDirection::Incoming,
     };
-    let service = IrService::parse(&header_or(headers, "X-ME-Service", "sms"));
-    let message_kind = IrMessageKind::parse(&header_or(headers, "X-ME-Message-Kind", "sms"));
-    let sender_handle = optional_header(headers, "X-ME-Sender-Handle");
-    let sender_display_name = optional_header(headers, "X-ME-Sender-Display-Name");
-    let owner_handle = optional_header(headers, "X-ME-Owner-Handle").unwrap_or_default();
-    let owner_display_name = optional_header(headers, "X-ME-Owner-Display-Name");
-    let subject = optional_header(headers, "X-ME-Subject");
-    let export_source = header_or(headers, "X-ME-Export-Source", "");
-    let export_tool = header_or(headers, "X-ME-Export-Tool", "");
-    let export_tool_version = header_or(headers, "X-ME-Export-Tool-Version", "");
+    let service = IrService::parse(&header_or(headers, hn::SERVICE, "sms"));
+    let message_kind = IrMessageKind::parse(&header_or(headers, hn::MESSAGE_KIND, "sms"));
+    let sender_handle = optional_header(headers, hn::SENDER_HANDLE);
+    let sender_display_name = optional_header(headers, hn::SENDER_DISPLAY_NAME);
+    let owner_handle = optional_header(headers, hn::OWNER_HANDLE).unwrap_or_default();
+    let owner_display_name = optional_header(headers, hn::OWNER_DISPLAY_NAME);
+    let subject = optional_header(headers, hn::SUBJECT);
+    let export_source = header_or(headers, hn::EXPORT_SOURCE, "");
+    let export_tool = header_or(headers, hn::EXPORT_TOOL, "");
+    let export_tool_version = header_or(headers, hn::EXPORT_TOOL_VERSION, "");
 
     let text = extract_text_body(&mail).unwrap_or_default();
     let attachments = merge_attachments(&mail, headers)?;
 
     let source = {
-        let android_type = optional_header(headers, "X-ME-Android-Type")
-            .and_then(|s| s.trim().parse::<i32>().ok());
-        let fields = optional_header(headers, "X-ME-Source-Fields")
+        let android_type =
+            optional_header(headers, hn::ANDROID_TYPE).and_then(|s| s.trim().parse::<i32>().ok());
+        let fields = optional_header(headers, hn::SOURCE_FIELDS)
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
         let src = IrSource {
@@ -77,26 +78,26 @@ pub fn mail_message_from_eml_bytes(bytes: &[u8]) -> Result<MailMessage> {
 
     let imessage = {
         let bag = IrImessage {
-            is_reply: header_bool(headers, "X-ME-Is-Reply"),
-            in_reply_to_guid: optional_header(headers, "X-ME-Thread-Originator-Guid"),
-            thread_originator_part: header_u32(headers, "X-ME-Thread-Originator-Part"),
-            num_replies: header_u32(headers, "X-ME-Num-Replies"),
-            is_deleted: header_bool(headers, "X-ME-Is-Deleted"),
-            send_effect: optional_header(headers, "X-ME-Send-Effect"),
-            shared_location: optional_header(headers, "X-ME-Shared-Location"),
-            announcement: optional_header(headers, "X-ME-Announcement"),
-            read_receipt_rfc3339: optional_header(headers, "X-ME-Read-Receipt"),
-            parts: header_json(headers, "X-ME-Parts"),
-            edits: header_json(headers, "X-ME-Edits"),
-            tapbacks: header_json(headers, "X-ME-Tapbacks"),
-            app: header_json(headers, "X-ME-App"),
-            balloon_bundle_id: optional_header(headers, "X-ME-Balloon-Bundle-Id"),
-            balloon_kind: optional_header(headers, "X-ME-Balloon-Kind"),
-            associated_guid: optional_header(headers, "X-ME-Associated-Guid"),
-            associated_part: header_u32(headers, "X-ME-Associated-Part"),
-            tapback_kind: optional_header(headers, "X-ME-Tapback-Kind"),
-            tapback_emoji: optional_header(headers, "X-ME-Tapback-Emoji"),
-            tapback_action: optional_header(headers, "X-ME-Tapback-Action"),
+            is_reply: header_bool(headers, hn::IS_REPLY),
+            in_reply_to_guid: optional_header(headers, hn::THREAD_ORIGINATOR_GUID),
+            thread_originator_part: header_u32(headers, hn::THREAD_ORIGINATOR_PART),
+            num_replies: header_u32(headers, hn::NUM_REPLIES),
+            is_deleted: header_bool(headers, hn::IS_DELETED),
+            send_effect: optional_header(headers, hn::SEND_EFFECT),
+            shared_location: optional_header(headers, hn::SHARED_LOCATION),
+            announcement: optional_header(headers, hn::ANNOUNCEMENT),
+            read_receipt_rfc3339: optional_header(headers, hn::READ_RECEIPT),
+            parts: header_json(headers, hn::PARTS),
+            edits: header_json(headers, hn::EDITS),
+            tapbacks: header_json(headers, hn::TAPBACKS),
+            app: header_json(headers, hn::APP),
+            balloon_bundle_id: optional_header(headers, hn::BALLOON_BUNDLE_ID),
+            balloon_kind: optional_header(headers, hn::BALLOON_KIND),
+            associated_guid: optional_header(headers, hn::ASSOCIATED_GUID),
+            associated_part: header_u32(headers, hn::ASSOCIATED_PART),
+            tapback_kind: optional_header(headers, hn::TAPBACK_KIND),
+            tapback_emoji: optional_header(headers, hn::TAPBACK_EMOJI),
+            tapback_action: optional_header(headers, hn::TAPBACK_ACTION),
         };
         if bag.is_empty() { None } else { Some(bag) }
     };
@@ -232,7 +233,7 @@ fn header_u32(headers: &[MailHeader<'_>], name: &str) -> Option<u32> {
 }
 
 fn parse_participants(headers: &[MailHeader<'_>]) -> Vec<Participant> {
-    let Some(raw) = optional_header(headers, "X-ME-Participants") else {
+    let Some(raw) = optional_header(headers, hn::PARTICIPANTS) else {
         return Vec::new();
     };
     serde_json::from_str(&raw).unwrap_or_default()
@@ -270,7 +271,7 @@ fn merge_attachments(
     mail: &ParsedMail<'_>,
     headers: &[MailHeader<'_>],
 ) -> Result<Vec<MailAttachment>> {
-    let meta: Vec<AttachmentMetaCell> = optional_header(headers, "X-ME-Attachment-Meta")
+    let meta: Vec<AttachmentMetaCell> = optional_header(headers, hn::ATTACHMENT_META)
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_default();
 
@@ -395,6 +396,126 @@ mod tests {
             parsed.message.source.as_ref().and_then(|s| s.android_type),
             Some(2)
         );
+    }
+
+    /// Every optional `X-ME-*` header pair the first roundtrip test leaves
+    /// unexercised: group/roster headers, subject, source fields, the full
+    /// iMessage extension bag, and attachment metadata.
+    #[test]
+    fn roundtrip_group_imessage_full_extension_bag() {
+        let imessage = message_ir::IrImessage {
+            is_reply: true,
+            in_reply_to_guid: Some("parent-guid-1111".into()),
+            thread_originator_part: Some(1),
+            num_replies: Some(3),
+            is_deleted: true,
+            send_effect: Some("Sent with Balloons".into()),
+            shared_location: Some("Cupertino".into()),
+            announcement: Some("named the conversation".into()),
+            read_receipt_rfc3339: Some("2014-05-22T15:41:01Z".into()),
+            parts: serde_json::from_str(r#"[{"index":0,"kind":"run","text":"hi"}]"#).ok(),
+            edits: serde_json::from_str(r#"[{"part":0,"texts":["hi","hi!"]}]"#).ok(),
+            tapbacks: serde_json::from_str(r#"[{"part_index":0,"kind":"loved"}]"#).ok(),
+            app: serde_json::from_str(r#"{"name":"Games"}"#).ok(),
+            balloon_bundle_id: Some("com.apple.messages.URLBalloonProvider".into()),
+            balloon_kind: Some("url".into()),
+            associated_guid: Some("assoc-guid-2222".into()),
+            associated_part: Some(0),
+            tapback_kind: Some("loved".into()),
+            tapback_emoji: Some("\u{2764}".into()),
+            tapback_action: Some("add".into()),
+        };
+        let msg = MailMessage {
+            chat_identifier: "chat-group1".into(),
+            conversation_type: "group".into(),
+            group_title: Some("Family".into()),
+            participants: vec![
+                Participant {
+                    handle: "+15555550101".into(),
+                    display_name: Some("Sam".into()),
+                },
+                Participant {
+                    handle: "+15555550102".into(),
+                    display_name: None,
+                },
+            ],
+            owner_handle: "+15555550100".into(),
+            owner_display_name: Some("Me".into()),
+            export_source: "imessage".into(),
+            export_tool: "imessage-exporter".into(),
+            export_tool_version: "3.1.0".into(),
+            filename_suffix: None,
+            message: IrMessage {
+                guid: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE".into(),
+                timestamp_unix_ms: 1_400_773_261_000,
+                direction: IrDirection::Incoming,
+                service: IrService::IMessage,
+                message_kind: IrMessageKind::IMessage,
+                sender_handle: Some("+15555550101".into()),
+                sender_display_name: Some("Sam".into()),
+                subject: Some("MMS subject".into()),
+                text: "full bag".into(),
+                attachments: Vec::new(),
+                imessage: Some(imessage.clone()),
+                source: Some(IrSource {
+                    android_type: Some(1),
+                    fields: serde_json::from_str(r#"{"address":"+15555550101"}"#).unwrap(),
+                }),
+            },
+            attachments: vec![MailAttachment {
+                bytes: b"\xff\xd8\xfffakejpeg".to_vec(),
+                meta: message_ir::AttachmentMeta {
+                    path: None,
+                    original_name: Some("photo.jpg".into()),
+                    mime_type: Some("image/jpeg".into()),
+                    digest_sha256: Some("deadbeef".into()),
+                },
+                is_sticker: true,
+                transcription: Some("a beach".into()),
+                sticker_effect: Some("stroke".into()),
+            }],
+        };
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = write_message_file(&tmp.path().join("chat"), 1, &msg).unwrap();
+        let bytes = fs::read(&path).unwrap();
+        let parsed = mail_message_from_eml_bytes(&bytes).unwrap();
+
+        assert_eq!(parsed.chat_identifier, "chat-group1");
+        assert_eq!(parsed.conversation_type, "group");
+        assert_eq!(parsed.group_title.as_deref(), Some("Family"));
+        assert_eq!(parsed.participants.len(), 2);
+        assert_eq!(parsed.participants[0].handle, "+15555550101");
+        assert_eq!(parsed.participants[0].display_name.as_deref(), Some("Sam"));
+        assert_eq!(parsed.participants[1].display_name, None);
+        assert_eq!(parsed.message.sender_display_name.as_deref(), Some("Sam"));
+        assert_eq!(parsed.message.subject.as_deref(), Some("MMS subject"));
+        assert_eq!(parsed.export_source, "imessage");
+        assert_eq!(parsed.export_tool, "imessage-exporter");
+        assert_eq!(parsed.export_tool_version, "3.1.0");
+        let source = parsed.message.source.as_ref().expect("source bag");
+        assert_eq!(source.android_type, Some(1));
+        assert_eq!(
+            serde_json::to_value(&source.fields).unwrap(),
+            serde_json::json!({"address": "+15555550101"})
+        );
+
+        // The whole extension bag must survive field for field.
+        let parsed_bag = parsed.message.imessage.as_ref().expect("imessage bag");
+        assert_eq!(
+            serde_json::to_value(parsed_bag).unwrap(),
+            serde_json::to_value(&imessage).unwrap()
+        );
+
+        assert_eq!(parsed.attachments.len(), 1);
+        let att = &parsed.attachments[0];
+        assert_eq!(att.meta.original_name.as_deref(), Some("photo.jpg"));
+        assert_eq!(att.meta.mime_type.as_deref(), Some("image/jpeg"));
+        assert_eq!(att.meta.digest_sha256.as_deref(), Some("deadbeef"));
+        assert!(att.is_sticker);
+        assert_eq!(att.transcription.as_deref(), Some("a beach"));
+        assert_eq!(att.sticker_effect.as_deref(), Some("stroke"));
+        assert_eq!(att.bytes, b"\xff\xd8\xfffakejpeg".to_vec());
     }
 
     #[test]

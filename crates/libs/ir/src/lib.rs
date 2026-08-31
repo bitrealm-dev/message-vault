@@ -548,14 +548,13 @@ impl ConversationDocument {
             .iter()
             .map(|p| p.handle.clone())
             .collect();
-        let csv = conversation_filename(
+        conversation_stem(
             self.conversation.conversation_type.as_str(),
             &self.conversation.chat_identifier,
             self.conversation.group_title.as_deref(),
             &handles,
             self.packaging_stem_suffix.as_deref(),
-        );
-        csv.strip_suffix(".csv").unwrap_or(csv.as_str()).to_string()
+        )
     }
 
     /// Recompute [`ConversationMeta::stats`] from `messages`.
@@ -594,19 +593,20 @@ fn is_phone_handle(value: &str) -> bool {
 
 fn with_suffix(stem: &str, suffix: Option<&str>) -> String {
     match suffix {
-        Some(s) if !s.is_empty() => format!("{stem}{s}.csv"),
-        _ => format!("{stem}.csv"),
+        Some(s) if !s.is_empty() => format!("{stem}{s}"),
+        _ => stem.to_string(),
     }
 }
 
-/// Standard per-conversation CSV filename.
+/// Standard per-conversation filename stem (no extension — callers append
+/// `.csv`, `.jsonl`, …).
 ///
 /// - Individual → `safe_filename(chat_id)` (+ optional suffix)
 /// - Group with a real `group_title` → sanitized title
 /// - Untitled group → `group_+A_+B_…` (sorted unique E.164, max 10);
 ///   if more than 10 peers, append `_<16 hex>` of SHA-256 over the full roster
 /// - Untitled group with empty roster → `group_unknown` (or hash of `chat_id`)
-pub fn conversation_filename(
+pub fn conversation_stem(
     conversation_type: &str,
     chat_id: &str,
     group_title: Option<&str>,
@@ -724,20 +724,50 @@ pub fn stable_guid(
     hex::encode(hasher.finalize())
 }
 
+/// Stream a file through SHA-256 in 64 KB chunks (no full read into memory).
+///
+/// Returns 64 lowercase hex digits — the same fingerprint format
+/// `digest_sha256` fields carry.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be opened or read; the error message
+/// names the file.
+pub fn file_sha256(path: &std::path::Path) -> std::io::Result<String> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)
+        .map_err(|e| std::io::Error::new(e.kind(), format!("open {}: {e}", path.display())))?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| std::io::Error::new(e.kind(), format!("read {}: {e}", path.display())))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Trimmed owned copy of `s`, or `None` when blank.
+pub fn nonempty(s: &str) -> Option<String> {
+    let t = s.trim();
+    if t.is_empty() {
+        None
+    } else {
+        Some(t.to_string())
+    }
+}
+
 /// Owner identity for outgoing rows: handle + display (`"Me"` if handle set but name missing).
 pub fn owner_sender(export: &ExportMeta) -> (Option<String>, Option<String>) {
-    let handle = export
-        .owner_handle
-        .as_ref()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .map(str::to_string);
+    let handle = export.owner_handle.as_deref().and_then(nonempty);
     let display = export
         .owner_display_name
-        .as_ref()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
+        .as_deref()
+        .and_then(nonempty)
         .or_else(|| handle.as_ref().map(|_| "Me".into()));
     (handle, display)
 }
@@ -892,6 +922,70 @@ impl PendingConversation {
             .map(|m| m.extra_str("contact_name").trim())
             .find(|n| !n.is_empty())
             .map(str::to_string)
+    }
+}
+
+#[cfg(test)]
+mod conversation_stem_tests {
+    use super::conversation_stem;
+
+    #[test]
+    fn individual_uses_chat_id() {
+        assert_eq!(
+            conversation_stem("individual", "+15551212", None, &[], None),
+            "+15551212"
+        );
+    }
+
+    #[test]
+    fn group_with_title_uses_title() {
+        assert_eq!(
+            conversation_stem("group", "chat-x", Some("Family Chat"), &[], None),
+            "Family_Chat"
+        );
+    }
+
+    #[test]
+    fn untitled_group_lists_sorted_phones() {
+        let peers = vec!["+18285532527".into(), "+14073109632".into()];
+        assert_eq!(
+            conversation_stem("group", "chat-group-x", None, &peers, None),
+            "group_+14073109632_+18285532527"
+        );
+    }
+
+    #[test]
+    fn untitled_group_over_ten_appends_hash() {
+        let peers: Vec<String> = (1..=13).map(|i| format!("+1555555{:04}", i)).collect();
+        let stem = conversation_stem("group", "chat-x", None, &peers, None);
+        assert!(stem.starts_with("group_+15555550001_"));
+        assert!(stem.contains("+15555550010_"));
+        assert!(!stem.contains("+15555550011"));
+        let hash = stem.rsplit('_').next().unwrap();
+        assert_eq!(hash.len(), 16);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(
+            stem,
+            conversation_stem("group", "other-id", None, &peers, None)
+        );
+    }
+
+    #[test]
+    fn whatsapp_suffix() {
+        let peers = vec!["+15555550100".into()];
+        assert_eq!(
+            conversation_stem("group", "x", None, &peers, Some("__whatsapp")),
+            "group_+15555550100__whatsapp"
+        );
+    }
+
+    #[test]
+    fn none_title_uses_phones_not_synthetic() {
+        let peers = vec!["+15555550100".into()];
+        assert_eq!(
+            conversation_stem("group", "chat-group-x", None, &peers, None),
+            "group_+15555550100"
+        );
     }
 }
 

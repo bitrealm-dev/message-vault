@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail};
 use mail::{MailMessage, mail_message_from_eml_bytes, mail_messages_from_mbox};
 use message_ir::{
     ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, IrAttachment,
-    IrConversationType, IrMessage, IrParticipant, SCHEMA_VERSION,
+    IrConversationType, IrMessage, IrParticipant, SCHEMA_VERSION, nonempty,
 };
 use message_vault_io_core::discover_files;
 use std::fs;
@@ -91,13 +91,8 @@ fn document_from_mail_messages(
         source: first.export_source.clone(),
         tool: first.export_tool.clone(),
         tool_version: first.export_tool_version.clone(),
-        owner_handle: nonempty_owned(&first.owner_handle),
-        owner_display_name: first
-            .owner_display_name
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(str::to_string),
+        owner_handle: nonempty(&first.owner_handle),
+        owner_display_name: first.owner_display_name.as_deref().and_then(nonempty),
     };
 
     let participants: Vec<IrParticipant> = first
@@ -114,12 +109,7 @@ fn document_from_mail_messages(
         conversation: ConversationMeta {
             chat_identifier: first.chat_identifier.clone(),
             conversation_type: IrConversationType::parse(&first.conversation_type),
-            group_title: first
-                .group_title
-                .as_ref()
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .map(str::to_string),
+            group_title: first.group_title.as_deref().and_then(nonempty),
             participants,
             stats: ConversationStats::default(),
         },
@@ -137,12 +127,7 @@ fn document_from_mail_messages(
 fn participant_from_mail(p: &mail::Participant) -> IrParticipant {
     IrParticipant {
         handle: p.handle.clone(),
-        display_name: p
-            .display_name
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(str::to_string),
+        display_name: p.display_name.as_deref().and_then(nonempty),
         handle_type: Some(crate::util::infer_handle_type(&p.handle)),
     }
 }
@@ -166,14 +151,4 @@ fn attachment_from_mail(a: &mail::MailAttachment) -> IrAttachment {
         Some(a.bytes.clone())
     };
     att
-}
-
-/// Trimmed owned string, or `None` when blank.
-fn nonempty_owned(s: &str) -> Option<String> {
-    let t = s.trim();
-    if t.is_empty() {
-        None
-    } else {
-        Some(t.to_string())
-    }
 }

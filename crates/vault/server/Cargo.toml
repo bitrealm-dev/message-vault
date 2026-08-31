@@ -15,6 +15,7 @@ demo-seed = { path = "../demo-seed" }
 fs2 = "0.4.3"
 futures-util = { version = "0.3.31", default-features = false }
 libc = "0.2"
+media = { path = "../../libs/media" }
 message-ir = { workspace = true }
 message-ir-format = { path = "../../libs/ir-format" }
 phone = { workspace = true }

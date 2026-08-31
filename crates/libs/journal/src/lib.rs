@@ -102,28 +102,11 @@ where
     let _guard = JOURNAL_WRITE_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let events = read_unlocked::<E>(label, path)?;
+    // Corrupt lines are skipped silently, matching both CLI crates'
+    // compaction behavior.
+    let events = load_events::<E>(label, path, &mut |_, _| {})?;
     let events = rebuild(events);
     write_unlocked(path, &events)
-}
-
-/// Read events without the lock (callers either do not write, or hold it).
-fn read_unlocked<E: DeserializeOwned>(label: &str, path: &Path) -> Result<Vec<E>> {
-    let mut events = Vec::new();
-    if !path.is_file() {
-        return Ok(events);
-    }
-    let file = File::open(path).with_context(|| format!("open {label} {}", path.display()))?;
-    for (i, line) in BufReader::new(file).lines().enumerate() {
-        let line = line.with_context(|| format!("read {label} line {}", i + 1))?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        if let Ok(event) = serde_json::from_str(&line) {
-            events.push(event);
-        }
-    }
-    Ok(events)
 }
 
 /// Write `events` to a temp file and rename over the journal (lock held).

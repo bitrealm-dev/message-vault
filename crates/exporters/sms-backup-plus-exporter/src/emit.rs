@@ -5,7 +5,7 @@ use crate::attachments_emit::{merge_attachments, pending_attachment_to_ir, queue
 use crate::identity::{chat_id_for, cover_identity, timestamp_ms};
 use crate::parse_emit::{ParsedEmlKind, collect_eml_paths, parse_one_eml};
 use crate::types::ParsedMessage;
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use contacts::{ContactsBook, NameMapping};
 use message_csv::DateRange;
 use message_ir::{
@@ -169,7 +169,7 @@ fn add_message(
 fn peer_handles_from_digits(participant_digits: &[(String, Option<String>)]) -> Vec<String> {
     participant_digits
         .iter()
-        .map(|(d, _)| phone::normalize_guarded(d, phone::PhoneRegion::for_raw(d)).normalized)
+        .map(|(d, _)| phone::normalize_lenient(d))
         .filter(|d| !d.is_empty())
         .collect()
 }
@@ -197,7 +197,7 @@ impl ProjectionHooks for SbpProjection<'_> {
     }
 
     fn normalize_handle(&self, raw: &str) -> String {
-        phone::normalize_guarded(raw, phone::PhoneRegion::for_raw(raw)).normalized
+        phone::normalize_lenient(raw)
     }
 
     fn attachment_to_ir(&self, att: &PendingAttachment, _msg: &PendingMessage) -> IrAttachment {
@@ -294,11 +294,9 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
         resume,
     } = args;
     let owners = OwnerHandleSet::from_phones(owner_phones)?;
-    let primary = owners
-        .primary_phone_digit()
-        .context("owner phone has no usable digits")?;
-    let guarded = phone::normalize_guarded(primary, phone::PhoneRegion::Usa);
-    let owner_handle = guarded.normalized;
+    let owner_handle = owners
+        .primary_owner_handle()
+        .expect("from_phones guarantees a phone owner handle");
     let owner_emails_lc: Vec<String> = owner_emails
         .iter()
         .map(|e| e.trim().to_ascii_lowercase())

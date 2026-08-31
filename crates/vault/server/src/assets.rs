@@ -553,42 +553,16 @@ fn resolve_mime(export_mime: Option<&str>, source: &Path) -> Option<String> {
     guess_mime(ext)
 }
 
-/// Map a file extension to a MIME type.
+/// Map a file extension to a MIME type via the shared table in [`media`].
 ///
 /// Stored files are named only from their SHA-256 fingerprint, so they have no
 /// extension. This mapping is the only chance to record what a file is: the
 /// result is stored next to the file, returned to download callers, and written
 /// to `attachments.mime_type`, which is what derived-media processing classifies
 /// on. Extensions common in phone backups (voice notes, camera video, scans)
-/// therefore need to be listed here.
+/// therefore need to be in the shared table.
 fn guess_mime(ext: Option<&str>) -> Option<String> {
-    let ext = ext?.to_ascii_lowercase();
-    let mime = match ext.as_str() {
-        "jpg" | "jpeg" => "image/jpeg",
-        "png" => "image/png",
-        "gif" => "image/gif",
-        "heic" | "heif" => "image/heic",
-        "webp" => "image/webp",
-        "bmp" => "image/bmp",
-        "tif" | "tiff" => "image/tiff",
-        "mp4" | "m4v" => "video/mp4",
-        "mov" => "video/quicktime",
-        "3gp" | "3gpp" | "3g2" => "video/3gpp",
-        "webm" => "video/webm",
-        "mkv" => "video/x-matroska",
-        "mpeg" | "mpg" => "video/mpeg",
-        "avi" => "video/x-msvideo",
-        "mp3" => "audio/mpeg",
-        "m4a" | "aac" => "audio/mp4",
-        "caf" => "audio/x-caf",
-        "amr" => "audio/amr",
-        "wav" => "audio/wav",
-        "ogg" | "oga" => "audio/ogg",
-        "pdf" => "application/pdf",
-        "vcf" => "text/vcard",
-        _ => return None,
-    };
-    Some(mime.to_string())
+    media::mime_for_ext(ext?).map(str::to_string)
 }
 
 fn is_regular_file(path: &Path) -> bool {

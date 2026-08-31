@@ -24,17 +24,8 @@ fn valid_filename(name: Option<&str>) -> Option<String> {
 
 fn extension_for(ctype: &str, filename: Option<&str>) -> String {
     let ct = ctype.to_ascii_lowercase();
-    match ct.as_str() {
-        "image/jpeg" | "image/jpg" => return ".jpg".into(),
-        "image/png" => return ".png".into(),
-        "image/gif" => return ".gif".into(),
-        "image/webp" => return ".webp".into(),
-        "video/mp4" => return ".mp4".into(),
-        "video/3gpp" | "video/3gp" => return ".3gp".into(),
-        "audio/amr" => return ".amr".into(),
-        "audio/mpeg" => return ".mp3".into(),
-        "audio/mp4" => return ".m4a".into(),
-        _ => {}
+    if let Some(ext) = media::ext_for_mime(&ct) {
+        return ext.into();
     }
     if let Some(valid) = valid_filename(filename)
         && let Some(ext) = Path::new(&valid).extension().and_then(|e| e.to_str())
@@ -150,12 +141,6 @@ pub(crate) fn extract_attachments(
             filename: out_name,
             original_name: original,
             mime_type: media::mime_for_ext(&ext)
-                .or(match ext.as_str() {
-                    ".webp" => Some("image/webp"),
-                    ".mp3" => Some("audio/mpeg"),
-                    ".m4a" => Some("audio/mp4"),
-                    _ => None,
-                })
                 .map(|s| s.to_string())
                 .or(if ctype.is_empty() { None } else { Some(ctype) }),
             digest_hex,

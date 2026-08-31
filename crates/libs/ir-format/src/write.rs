@@ -4,13 +4,10 @@ use crate::util;
 use crate::write_sbr;
 use anyhow::{Context, Result, bail};
 use mail::{MailAttachment, MailMessage, MailPackage, Participant, write_mail_package};
-use message_csv::{AttachmentCell, conversation_filename, format_local_ts, json_cell};
-use message_ir::{ConversationDocument, ConversationHeader, HandleType, IrMessageKind};
+use message_csv::{AttachmentCell, ParticipantCell, format_local_ts, json_cell};
+use message_ir::{ConversationDocument, ConversationHeader, IrMessageKind};
 use message_vault_io_core::OutputFormat;
-use serde::Serialize;
 use serde_json::Value;
-use std::fs::{self, File};
-use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 /// Unified CSV columns for every exporter (IR v3 projection).
@@ -94,19 +91,13 @@ pub(crate) fn write_format(
 
 /// Per-conversation JSON artifact (`<stem>.json`).
 fn write_conversation_json(output_dir: &Path, doc: &ConversationDocument) -> Result<PathBuf> {
-    fs::create_dir_all(output_dir).with_context(|| format!("create {}", output_dir.display()))?;
     let path = output_dir.join(format!("{}.json", doc.filename_stem()));
-    let mut tmp = path.clone();
-    tmp.set_extension("json.tmp");
     let json = serde_json::to_vec_pretty(doc).context("serialize ConversationDocument")?;
-    {
-        let mut file = File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
-        file.write_all(&json)
-            .with_context(|| format!("write {}", tmp.display()))?;
-        file.write_all(b"\n")?;
-    }
-    fs::rename(&tmp, &path)
-        .with_context(|| format!("rename {} → {}", tmp.display(), path.display()))?;
+    util::write_atomic(&path, |out| {
+        out.write_all(&json)?;
+        out.write_all(b"\n")?;
+        Ok(())
+    })?;
     Ok(path)
 }
 
@@ -121,27 +112,16 @@ fn write_conversation_json(output_dir: &Path, doc: &ConversationDocument) -> Res
 ///
 /// Returns an error when the file cannot be created, serialized, or renamed.
 pub fn write_conversation_jsonl_to(path: &Path, doc: &ConversationDocument) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
-    let mut tmp = path.to_path_buf();
-    tmp.set_extension("jsonl.tmp");
-    {
-        let file = File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
-        let mut file = BufWriter::new(file);
+    util::write_atomic(path, |out| {
         let header = ConversationHeader::from_document(doc);
-        serde_json::to_writer(&mut file, &header).context("serialize JSONL header")?;
-        file.write_all(b"\n")?;
+        serde_json::to_writer(&mut *out, &header).context("serialize JSONL header")?;
+        out.write_all(b"\n")?;
         for msg in &doc.messages {
-            serde_json::to_writer(&mut file, msg).context("serialize JSONL message")?;
-            file.write_all(b"\n")?;
+            serde_json::to_writer(&mut *out, msg).context("serialize JSONL message")?;
+            out.write_all(b"\n")?;
         }
-        file.flush()
-            .with_context(|| format!("flush {}", tmp.display()))?;
-    }
-    fs::rename(&tmp, path)
-        .with_context(|| format!("rename {} → {}", tmp.display(), path.display()))?;
-    Ok(())
+        Ok(())
+    })
 }
 
 /// First JSON Lines line: schema, export, and conversation metadata (no messages).
@@ -149,10 +129,6 @@ fn write_conversation_jsonl(output_dir: &Path, doc: &ConversationDocument) -> Re
     let path = output_dir.join(format!("{}.jsonl", doc.filename_stem()));
     write_conversation_jsonl_to(&path, doc)?;
     Ok(path)
-}
-
-fn stem_suffix(doc: &ConversationDocument) -> Option<&str> {
-    doc.packaging_stem_suffix.as_deref()
 }
 
 /// Compact JSON for nested bags; empty string when absent (never the literal `null`).
@@ -196,13 +172,6 @@ pub(crate) fn parts_are_trivial_text_duplicate(message_text: &str, parts: Option
     )
 }
 
-#[derive(Serialize)]
-struct ParticipantCell {
-    handle: String,
-    display_name: String,
-    handle_type: Option<HandleType>,
-}
-
 /// CSV `handle_type` cell: the sender's handle type, inferred from the sender
 /// handle with the same rules the EML/mbox reader uses on re-import. Empty
 /// when the message has no sender handle.
@@ -218,29 +187,7 @@ pub(crate) fn write_conversation_csv(
     output_dir: &Path,
     doc: &ConversationDocument,
 ) -> Result<PathBuf> {
-    fs::create_dir_all(output_dir).with_context(|| format!("create {}", output_dir.display()))?;
-    let filename = conversation_filename(
-        doc.conversation.conversation_type.as_str(),
-        &doc.conversation.chat_identifier,
-        doc.conversation.group_title.as_deref(),
-        &doc.conversation
-            .participants
-            .iter()
-            .map(|p| p.handle.clone())
-            .collect::<Vec<_>>(),
-        stem_suffix(doc),
-    );
-    let path = output_dir.join(filename);
-    let mut tmp_name = path
-        .file_name()
-        .map(|n| n.to_os_string())
-        .unwrap_or_else(|| "chat.csv".into());
-    tmp_name.push(".tmp");
-    let tmp_path = path.with_file_name(tmp_name);
-    let file = File::create(&tmp_path).with_context(|| format!("create {}", tmp_path.display()))?;
-    let mut wtr = csv::Writer::from_writer(file);
-    wtr.write_record(CSV_HEADERS)
-        .with_context(|| format!("write header {}", path.display()))?;
+    let path = output_dir.join(format!("{}.csv", doc.filename_stem()));
 
     let participants_json = json_cell(
         &doc.conversation
@@ -254,127 +201,133 @@ pub(crate) fn write_conversation_csv(
             .collect::<Vec<_>>(),
     );
 
-    for msg in &doc.messages {
-        let secs = msg.timestamp_unix_ms.div_euclid(1000);
-        let (ts_local, ts_utc, ts_display) = format_local_ts(secs).ok_or_else(|| {
-            anyhow::anyhow!("invalid timestamp_unix_ms {}", msg.timestamp_unix_ms)
-        })?;
-        let attachment_cells: Vec<AttachmentCell> = msg
-            .attachments
-            .iter()
-            .map(|a| AttachmentCell {
-                meta: a.into(),
-                is_sticker: a.is_sticker,
-                transcription: a.transcription.clone(),
-                sticker_effect: a.sticker_effect.clone(),
-            })
-            .collect();
-        let attachments_json = json_cell(&attachment_cells);
-        let timestamp_unix_ms = msg.timestamp_unix_ms.to_string();
-        let android_type = msg
-            .source
-            .as_ref()
-            .and_then(|s| s.android_type)
-            .map(|n| n.to_string())
-            .unwrap_or_default();
-        let source_fields_json = msg
-            .source
-            .as_ref()
-            .filter(|s| !s.fields.is_empty())
-            .map(|s| serde_json::to_string(&s.fields).unwrap_or_default())
-            .unwrap_or_default();
+    util::write_atomic(&path, |out| {
+        let mut wtr = csv::Writer::from_writer(out);
+        wtr.write_record(CSV_HEADERS)
+            .with_context(|| format!("write header {}", path.display()))?;
 
-        let im = msg.imessage.as_ref();
-        let read_receipt = im
-            .and_then(|i| i.read_receipt_rfc3339.as_deref())
-            .unwrap_or("");
-        let is_deleted = im.map(|i| i.is_deleted).unwrap_or(false);
-        let send_effect = im.and_then(|i| i.send_effect.as_deref()).unwrap_or("");
-        let shared_location = im.and_then(|i| i.shared_location.as_deref()).unwrap_or("");
-        let is_announcement = msg.message_kind == IrMessageKind::Announcement;
-        let announcement = im.and_then(|i| i.announcement.as_deref()).unwrap_or("");
-        let is_reply = im.map(|i| i.is_reply).unwrap_or(false);
-        let thread_originator_guid = im.and_then(|i| i.in_reply_to_guid.as_deref()).unwrap_or("");
-        let thread_originator_part = im
-            .and_then(|i| i.thread_originator_part)
-            .map(|n| n.to_string())
-            .unwrap_or_default();
-        let num_replies = im
-            .and_then(|i| i.num_replies)
-            .map(|n| n.to_string())
-            .unwrap_or_default();
-        let parts_json = parts_cell_for_csv(msg.text.as_str(), im.and_then(|i| i.parts.as_ref()));
-        let edits_json = value_cell(im.and_then(|i| i.edits.as_ref()));
-        let tapbacks_json = value_cell(im.and_then(|i| i.tapbacks.as_ref()));
-        let app_json = value_cell(im.and_then(|i| i.app.as_ref()));
-        let balloon_bundle_id = im
-            .and_then(|i| i.balloon_bundle_id.as_deref())
-            .unwrap_or("");
-        let balloon_kind = im.and_then(|i| i.balloon_kind.as_deref()).unwrap_or("");
-        let associated_guid = im.and_then(|i| i.associated_guid.as_deref()).unwrap_or("");
-        let associated_part = im
-            .and_then(|i| i.associated_part)
-            .map(|n| n.to_string())
-            .unwrap_or_default();
-        let tapback_kind = im.and_then(|i| i.tapback_kind.as_deref()).unwrap_or("");
-        let tapback_emoji = im.and_then(|i| i.tapback_emoji.as_deref()).unwrap_or("");
-        let tapback_action = im.and_then(|i| i.tapback_action.as_deref()).unwrap_or("");
+        for msg in &doc.messages {
+            let secs = msg.timestamp_unix_ms.div_euclid(1000);
+            let (ts_local, ts_utc, ts_display) = format_local_ts(secs).ok_or_else(|| {
+                anyhow::anyhow!("invalid timestamp_unix_ms {}", msg.timestamp_unix_ms)
+            })?;
+            let attachment_cells: Vec<AttachmentCell> = msg
+                .attachments
+                .iter()
+                .map(|a| AttachmentCell {
+                    meta: a.into(),
+                    is_sticker: a.is_sticker,
+                    transcription: a.transcription.clone(),
+                    sticker_effect: a.sticker_effect.clone(),
+                })
+                .collect();
+            let attachments_json = json_cell(&attachment_cells);
+            let timestamp_unix_ms = msg.timestamp_unix_ms.to_string();
+            let android_type = msg
+                .source
+                .as_ref()
+                .and_then(|s| s.android_type)
+                .map(|n| n.to_string())
+                .unwrap_or_default();
+            let source_fields_json = msg
+                .source
+                .as_ref()
+                .filter(|s| !s.fields.is_empty())
+                .map(|s| serde_json::to_string(&s.fields).unwrap_or_default())
+                .unwrap_or_default();
 
-        wtr.write_record([
-            doc.conversation.chat_identifier.as_str(),
-            doc.conversation.conversation_type.as_str(),
-            doc.conversation.group_title.as_deref().unwrap_or(""),
-            participants_json.as_str(),
-            msg.guid.as_str(),
-            ts_local.as_str(),
-            ts_utc.as_str(),
-            ts_display.as_str(),
-            timestamp_unix_ms.as_str(),
-            msg.direction.as_str(),
-            msg.service.as_str(),
-            msg.sender_handle.as_deref().unwrap_or(""),
-            msg.sender_display_name.as_deref().unwrap_or(""),
-            sender_handle_type_cell(msg.sender_handle.as_deref()),
-            msg.subject.as_deref().unwrap_or(""),
-            msg.text.as_str(),
-            attachments_json.as_str(),
-            msg.message_kind.as_str(),
-            doc.export.source.as_str(),
-            doc.export.tool.as_str(),
-            doc.export.tool_version.as_str(),
-            doc.export.owner_handle.as_deref().unwrap_or(""),
-            doc.export.owner_display_name.as_deref().unwrap_or(""),
-            android_type.as_str(),
-            source_fields_json.as_str(),
-            read_receipt,
-            if is_deleted { "true" } else { "false" },
-            send_effect,
-            shared_location,
-            if is_announcement { "true" } else { "false" },
-            announcement,
-            if is_reply { "true" } else { "false" },
-            thread_originator_guid,
-            thread_originator_part.as_str(),
-            num_replies.as_str(),
-            parts_json.as_str(),
-            edits_json.as_str(),
-            tapbacks_json.as_str(),
-            app_json.as_str(),
-            balloon_bundle_id,
-            balloon_kind,
-            associated_guid,
-            associated_part.as_str(),
-            tapback_kind,
-            tapback_emoji,
-            tapback_action,
-        ])
-        .with_context(|| format!("write row {}", path.display()))?;
-    }
+            let im = msg.imessage.as_ref();
+            let read_receipt = im
+                .and_then(|i| i.read_receipt_rfc3339.as_deref())
+                .unwrap_or("");
+            let is_deleted = im.map(|i| i.is_deleted).unwrap_or(false);
+            let send_effect = im.and_then(|i| i.send_effect.as_deref()).unwrap_or("");
+            let shared_location = im.and_then(|i| i.shared_location.as_deref()).unwrap_or("");
+            let is_announcement = msg.message_kind == IrMessageKind::Announcement;
+            let announcement = im.and_then(|i| i.announcement.as_deref()).unwrap_or("");
+            let is_reply = im.map(|i| i.is_reply).unwrap_or(false);
+            let thread_originator_guid =
+                im.and_then(|i| i.in_reply_to_guid.as_deref()).unwrap_or("");
+            let thread_originator_part = im
+                .and_then(|i| i.thread_originator_part)
+                .map(|n| n.to_string())
+                .unwrap_or_default();
+            let num_replies = im
+                .and_then(|i| i.num_replies)
+                .map(|n| n.to_string())
+                .unwrap_or_default();
+            let parts_json =
+                parts_cell_for_csv(msg.text.as_str(), im.and_then(|i| i.parts.as_ref()));
+            let edits_json = value_cell(im.and_then(|i| i.edits.as_ref()));
+            let tapbacks_json = value_cell(im.and_then(|i| i.tapbacks.as_ref()));
+            let app_json = value_cell(im.and_then(|i| i.app.as_ref()));
+            let balloon_bundle_id = im
+                .and_then(|i| i.balloon_bundle_id.as_deref())
+                .unwrap_or("");
+            let balloon_kind = im.and_then(|i| i.balloon_kind.as_deref()).unwrap_or("");
+            let associated_guid = im.and_then(|i| i.associated_guid.as_deref()).unwrap_or("");
+            let associated_part = im
+                .and_then(|i| i.associated_part)
+                .map(|n| n.to_string())
+                .unwrap_or_default();
+            let tapback_kind = im.and_then(|i| i.tapback_kind.as_deref()).unwrap_or("");
+            let tapback_emoji = im.and_then(|i| i.tapback_emoji.as_deref()).unwrap_or("");
+            let tapback_action = im.and_then(|i| i.tapback_action.as_deref()).unwrap_or("");
 
-    wtr.flush()?;
-    drop(wtr);
-    fs::rename(&tmp_path, &path)
-        .with_context(|| format!("rename {} → {}", tmp_path.display(), path.display()))?;
+            wtr.write_record([
+                doc.conversation.chat_identifier.as_str(),
+                doc.conversation.conversation_type.as_str(),
+                doc.conversation.group_title.as_deref().unwrap_or(""),
+                participants_json.as_str(),
+                msg.guid.as_str(),
+                ts_local.as_str(),
+                ts_utc.as_str(),
+                ts_display.as_str(),
+                timestamp_unix_ms.as_str(),
+                msg.direction.as_str(),
+                msg.service.as_str(),
+                msg.sender_handle.as_deref().unwrap_or(""),
+                msg.sender_display_name.as_deref().unwrap_or(""),
+                sender_handle_type_cell(msg.sender_handle.as_deref()),
+                msg.subject.as_deref().unwrap_or(""),
+                msg.text.as_str(),
+                attachments_json.as_str(),
+                msg.message_kind.as_str(),
+                doc.export.source.as_str(),
+                doc.export.tool.as_str(),
+                doc.export.tool_version.as_str(),
+                doc.export.owner_handle.as_deref().unwrap_or(""),
+                doc.export.owner_display_name.as_deref().unwrap_or(""),
+                android_type.as_str(),
+                source_fields_json.as_str(),
+                read_receipt,
+                if is_deleted { "true" } else { "false" },
+                send_effect,
+                shared_location,
+                if is_announcement { "true" } else { "false" },
+                announcement,
+                if is_reply { "true" } else { "false" },
+                thread_originator_guid,
+                thread_originator_part.as_str(),
+                num_replies.as_str(),
+                parts_json.as_str(),
+                edits_json.as_str(),
+                tapbacks_json.as_str(),
+                app_json.as_str(),
+                balloon_bundle_id,
+                balloon_kind,
+                associated_guid,
+                associated_part.as_str(),
+                tapback_kind,
+                tapback_emoji,
+                tapback_action,
+            ])
+            .with_context(|| format!("write row {}", path.display()))?;
+        }
+
+        wtr.flush()?;
+        Ok(())
+    })?;
 
     Ok(path)
 }

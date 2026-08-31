@@ -12,22 +12,22 @@
 #![warn(missing_docs)]
 
 mod estimate;
+mod mime;
 mod probe;
 mod process;
 mod size;
 mod tools;
 
 pub use estimate::{SizeVerdict, classify_probed, estimate_bytes, needs_probe};
+pub use mime::{Kind, ext_for_mime, kind_for_ext, mime_for_ext};
 pub use probe::{MediaProbe, probe_media};
 pub use process::{
-    MediaReport, TranscodeOutcome, collect_media_files, derivative_name,
+    MediaReport, TranscodeOutcome, classify, collect_media_files, derivative_name,
     derivative_name_for_missing, process_attachment_files, transcode_file,
 };
 use size::parse_size;
 pub use tools::{FfmpegToolsProbe, ffmpeg_available, probe_ffmpeg_tools, set_tools_dir, tools_dir};
 
-use anyhow::Context;
-use sha2::Digest;
 use std::fmt;
 use std::str::FromStr;
 
@@ -197,42 +197,15 @@ impl Default for CompressOptions {
 
 /// Stream a file through SHA-256 in 64 KB chunks (no full read into memory).
 ///
-/// Returns 64 lowercase hex digits.
+/// Returns 64 lowercase hex digits. Thin wrapper over
+/// [`message_ir::file_sha256`], kept so media callers do not need their own
+/// `message-ir` dependency edge.
 ///
 /// # Errors
 ///
 /// Returns an error when the file cannot be opened or read.
 pub fn file_sha256(path: &std::path::Path) -> anyhow::Result<String> {
-    let mut file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
-    let mut hasher = sha2::Sha256::new();
-    let mut buf = [0u8; 64 * 1024];
-    loop {
-        use std::io::Read;
-        let n = file
-            .read(&mut buf)
-            .with_context(|| format!("read {}", path.display()))?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Ok(hex::encode(hasher.finalize()))
-}
-
-/// MIME type for a common media file extension, if known.
-///
-/// Exporters that recognize extra extensions chain their own match after
-/// this table (e.g. go-sms-pro's `.wav`, sms-backup-plus's `.webp`).
-pub fn mime_for_ext(ext: &str) -> Option<&'static str> {
-    match ext {
-        ".jpg" | ".jpeg" => Some("image/jpeg"),
-        ".png" => Some("image/png"),
-        ".gif" => Some("image/gif"),
-        ".mp4" => Some("video/mp4"),
-        ".3gp" => Some("video/3gpp"),
-        ".amr" => Some("audio/amr"),
-        _ => None,
-    }
+    Ok(message_ir::file_sha256(path)?)
 }
 
 #[cfg(test)]

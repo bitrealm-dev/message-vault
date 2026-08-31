@@ -32,9 +32,8 @@ use anyhow::Result;
 use media::{MediaMode, SizeVerdict, classify_probed, estimate_bytes, needs_probe, probe_media};
 
 use crate::read_json::read_conversation_jsonl;
-use crate::transcode::{
-    COMMITTED_SUFFIX, TranscodeOptions, conversation_files, safe_attachment_path,
-};
+use crate::transcode::{COMMITTED_SUFFIX, TranscodeOptions, conversation_files};
+use crate::util::safe_attachment_path;
 
 /// How often [`summarize_staging`] reports progress, over attachments.
 ///

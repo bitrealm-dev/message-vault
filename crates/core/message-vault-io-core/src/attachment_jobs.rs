@@ -319,29 +319,12 @@ fn mark_convert_error(jobs: &mut [AttachmentJob<'_>], err: &str) {
 
 /// MIME type inferred from a `attachments/…` relative path's extension.
 ///
-/// Covers the formats the media convert/compress step can produce or leave in
-/// place; `None` for anything else. Shared so a second, drifting
-/// extension-to-mime table doesn't grow up beside this one.
+/// Thin wrapper over [`media::mime_for_ext`] — the one shared
+/// extension-to-mime table — kept because many pipeline callers hand paths
+/// rather than extensions. `None` for unrecognized extensions.
 pub fn mime_for_rel(rel: &str) -> Option<String> {
-    let ext = Path::new(rel)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    Some(
-        match ext.as_str() {
-            "jpg" | "jpeg" => "image/jpeg",
-            "png" => "image/png",
-            "gif" => "image/gif",
-            "webp" => "image/webp",
-            "mp4" | "m4v" => "video/mp4",
-            "mov" => "video/quicktime",
-            "mp3" => "audio/mpeg",
-            "m4a" => "audio/mp4",
-            _ => return None,
-        }
-        .into(),
-    )
+    let ext = Path::new(rel).extension().and_then(|e| e.to_str())?;
+    media::mime_for_ext(ext).map(str::to_string)
 }
 
 fn refresh_digest_and_size(attachment: &mut IrAttachment, output_dir: &Path) -> Result<(), String> {

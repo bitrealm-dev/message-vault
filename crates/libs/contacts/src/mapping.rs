@@ -6,7 +6,6 @@ use message_ir::HandleType;
 use phone::sanitize_number;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 /// Incorrect EML export name → (normalized handle, handle type).
@@ -33,11 +32,16 @@ impl NameMapping {
     pub fn load(path: &Path) -> Result<Self> {
         let file =
             File::open(path).with_context(|| format!("open name mapping {}", path.display()))?;
-        let reader = BufReader::new(file);
-        let mut lines = reader.lines();
-        let header = lines.next().transpose()?.unwrap_or_default();
-        let header_parts = crate::book::split_csv_line(&header);
-        let header_l: Vec<String> = header_parts.iter().map(|h| csv_header_key(h)).collect();
+        let mut rdr = csv::ReaderBuilder::new()
+            .flexible(true)
+            .has_headers(true)
+            .from_reader(file);
+        let header_l: Vec<String> = rdr
+            .headers()
+            .with_context(|| format!("read name mapping header in {}", path.display()))?
+            .iter()
+            .map(csv_header_key)
+            .collect();
 
         let handle_idx = header_l.iter().position(|h| h == "handle" || h == "phone");
         let type_idx = header_l
@@ -55,15 +59,10 @@ impl NameMapping {
         };
 
         let mut mapping = Self::empty();
-        for (idx, line) in lines.enumerate() {
-            let line = line.with_context(|| format!("read name mapping line {}", idx + 2))?;
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            let parts = crate::book::split_csv_line(line);
-            let handle_raw = parts.get(handle_idx).map(|s| s.trim()).unwrap_or("");
-            let incorrect = parts
+        for (idx, rec) in rdr.records().enumerate() {
+            let rec = rec.with_context(|| format!("read name mapping line {}", idx + 2))?;
+            let handle_raw = rec.get(handle_idx).map(str::trim).unwrap_or("");
+            let incorrect = rec
                 .get(incorrect_idx)
                 .map(|s| collapse_inner_whitespace(s.trim()))
                 .unwrap_or_default();
@@ -73,7 +72,7 @@ impl NameMapping {
 
             // Infer handle type from column or default to Phone
             let handle_type = type_idx
-                .and_then(|i| parts.get(i))
+                .and_then(|i| rec.get(i))
                 .map(|s| HandleType::parse(s.trim()))
                 .unwrap_or(HandleType::Phone);
 

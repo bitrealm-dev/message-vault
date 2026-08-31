@@ -35,13 +35,7 @@ impl ContactsBook {
     /// be read or parsed.
     pub fn load_contacts_file(path: &Path) -> Result<Self> {
         use crate::validate::{ContactsFormat, detect_contacts_format};
-        let format = detect_contacts_format(path).map_err(|e| {
-            if e.details.is_empty() {
-                anyhow::anyhow!("{}", e.message)
-            } else {
-                anyhow::anyhow!("{} ({})", e.message, e.details.join("; "))
-            }
-        })?;
+        let format = detect_contacts_format(path)?;
         match format {
             ContactsFormat::Vcf => Self::load_vcf(path),
             ContactsFormat::VcardCsv => Self::load_vcard_csv(path),
@@ -137,14 +131,13 @@ impl ContactsBook {
         // All entries from VCF/vCard CSV are phone type
         let handle_type = HandleType::Phone;
         for phone in phones {
-            let Some(digits) = sanitize_number(phone) else {
-                continue;
-            };
             // Keep digits as-is when the value is ambiguous for the US-centric
             // book. A trunk-zero `020 7946 0000` must never become the invalid
             // `+02079460000`. The vault server records a review note on the
             // handles table for those cases.
-            let normalized = phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized;
+            let Some(normalized) = phone::normalize_digits_us(phone) else {
+                continue;
+            };
             if !key.is_empty() {
                 self.by_name
                     .entry(key.clone())
@@ -242,31 +235,6 @@ pub fn resolve_contacts_cli(
             Ok((ContactsBook::empty(), None))
         }
     }
-}
-
-pub(crate) fn split_csv_line(line: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    let mut in_quotes = false;
-    let mut chars = line.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '"' => {
-                if in_quotes && chars.peek() == Some(&'"') {
-                    cur.push('"');
-                    chars.next();
-                } else {
-                    in_quotes = !in_quotes;
-                }
-            }
-            ',' if !in_quotes => {
-                out.push(std::mem::take(&mut cur));
-            }
-            _ => cur.push(c),
-        }
-    }
-    out.push(cur);
-    out
 }
 
 /// Collect sanitized digit strings from semicolon-separated fields and `+E.164` tokens in free text.

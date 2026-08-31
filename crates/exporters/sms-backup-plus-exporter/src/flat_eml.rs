@@ -184,7 +184,7 @@ pub(crate) fn is_flat_sms_eml(headers: &MailHeaders) -> bool {
 fn join_usa_phones(digits: &[String]) -> String {
     digits
         .iter()
-        .map(|d| phone::normalize_guarded(d, phone::PhoneRegion::Usa).normalized)
+        .map(|d| phone::normalize_digits_us(d).unwrap_or_default())
         .collect::<Vec<_>>()
         .join(", ")
 }

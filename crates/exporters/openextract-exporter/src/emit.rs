@@ -228,7 +228,7 @@ fn resolve_chat(book: &ContactsBook, peer: &str) -> (String, String, bool) {
     }
     if sanitize_number(peer).is_some() {
         // Format as E.164 when unambiguous. Otherwise keep digits as-is. Never invent `+0…`.
-        let handle = phone::normalize_guarded(peer, phone::PhoneRegion::for_raw(peer)).normalized;
+        let handle = phone::normalize_lenient(peer);
         // The contacts book keys entries by the same guarded policy.
         let name = book
             .lookup_name_by_handle(&handle, HandleType::Phone)
@@ -275,14 +275,12 @@ fn resolve_sender(
         if chat_id.starts_with('+') {
             // Only unambiguous +-prefixed values pass through. A fabricated
             // `+0…` stays digits-as-is so the vault can flag it.
-            phone::normalize_guarded(chat_id, phone::PhoneRegion::for_raw(chat_id)).normalized
+            phone::normalize_lenient(chat_id)
         } else {
-            sanitize_number(chat_id)
-                .map(|d| phone::normalize_guarded(&d, phone::PhoneRegion::Usa).normalized)
-                .unwrap_or_default()
+            phone::normalize_digits_us(chat_id).unwrap_or_default()
         }
-    } else if let Some(digits) = sanitize_number(&row.sender) {
-        phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized
+    } else if let Some(handle) = phone::normalize_digits_us(&row.sender) {
+        handle
     } else {
         String::new()
     };

@@ -8,6 +8,7 @@
 
 #![warn(missing_docs)]
 
+mod headers;
 mod parse;
 
 use anyhow::{Context, Result, bail};
@@ -16,7 +17,6 @@ use mail_builder::MessageBuilder;
 use mail_builder::headers::address::Address;
 use mail_builder::headers::date::Date;
 use mail_builder::headers::text::Text;
-use message_csv::conversation_filename;
 use message_ir::{IrDirection, IrMessage};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
@@ -193,21 +193,17 @@ struct AttachmentMetaCell<'a> {
     digest_sha256: Option<&'a str>,
 }
 
-/// Conversation directory stem (CSV filename without `.csv`).
+/// Conversation directory stem (shared per-conversation filename stem).
 fn conversation_stem(msg: &MailMessage) -> String {
     let participant_handles: Vec<String> =
         msg.participants.iter().map(|p| p.handle.clone()).collect();
-    let csv_name = conversation_filename(
+    message_ir::conversation_stem(
         &msg.conversation_type,
         &msg.chat_identifier,
         msg.group_title.as_deref(),
         &participant_handles,
         msg.filename_suffix.as_deref(),
-    );
-    csv_name
-        .strip_suffix(".csv")
-        .unwrap_or(csv_name.as_str())
-        .to_string()
+    )
 }
 
 /// Write a single `.eml` into an existing conversation directory.
@@ -556,6 +552,18 @@ fn value_as_string(v: Option<&serde_json::Value>) -> Option<String> {
     Some(serde_json::to_string(v).unwrap_or_default()).filter(|s| !s.is_empty())
 }
 
+/// Add `name: value` when the value is present and non-empty.
+fn opt_header<'m>(
+    builder: MessageBuilder<'m>,
+    name: &'static str,
+    value: Option<&str>,
+) -> MessageBuilder<'m> {
+    match value.filter(|s| !s.is_empty()) {
+        Some(v) => builder.header(name, Text::new(v.to_string())),
+        None => builder,
+    }
+}
+
 fn build_eml(msg: &MailMessage) -> Result<Vec<u8>> {
     let is_group = msg.conversation_type.eq_ignore_ascii_case("group");
     let (from, to) = if is_group {
@@ -605,89 +613,91 @@ fn build_eml(msg: &MailMessage) -> Result<Vec<u8>> {
         .date(Date::new(date_secs))
         .message_id(message_id)
         .header(
-            "X-ME-Chat-Identifier",
+            headers::CHAT_IDENTIFIER,
             Text::new(msg.chat_identifier.clone()),
         )
         .header(
-            "X-ME-Conversation-Type",
+            headers::CONVERSATION_TYPE,
             Text::new(msg.conversation_type.clone()),
         )
-        .header("X-ME-Direction", Text::new(msg.message.direction.as_str()))
         .header(
-            "X-ME-Service",
+            headers::DIRECTION,
+            Text::new(msg.message.direction.as_str()),
+        )
+        .header(
+            headers::SERVICE,
             Text::new(msg.message.service.as_str().to_string()),
         )
         .header(
-            "X-ME-Message-Kind",
+            headers::MESSAGE_KIND,
             Text::new(msg.message.message_kind.as_str().to_string()),
         )
         .header(
-            "X-ME-Timestamp-Unix-Ms",
+            headers::TIMESTAMP_UNIX_MS,
             Text::new(msg.message.timestamp_unix_ms.to_string()),
         )
-        .header("X-ME-Guid", Text::new(msg.message.guid.clone()))
-        .header("X-ME-Export-Source", Text::new(msg.export_source.clone()))
-        .header("X-ME-Export-Tool", Text::new(msg.export_tool.clone()))
+        .header(headers::GUID, Text::new(msg.message.guid.clone()))
+        .header(headers::EXPORT_SOURCE, Text::new(msg.export_source.clone()))
+        .header(headers::EXPORT_TOOL, Text::new(msg.export_tool.clone()))
         .header(
-            "X-ME-Export-Tool-Version",
+            headers::EXPORT_TOOL_VERSION,
             Text::new(msg.export_tool_version.clone()),
         );
 
-    if let Some(title) = msg.group_title.as_deref().filter(|t| !t.is_empty()) {
-        builder = builder.header("X-ME-Group-Title", Text::new(title.to_string()));
-    }
+    builder = opt_header(builder, headers::GROUP_TITLE, msg.group_title.as_deref());
 
     if msg.conversation_type.eq_ignore_ascii_case("group") || !msg.participants.is_empty() {
         let participants_json =
             serde_json::to_string(&msg.participants).unwrap_or_else(|_| "[]".into());
-        builder = builder.header("X-ME-Participants", Text::new(participants_json));
+        builder = builder.header(headers::PARTICIPANTS, Text::new(participants_json));
     }
 
-    if let Some(h) = msg
-        .message
-        .sender_handle
-        .as_deref()
-        .filter(|s| !s.is_empty())
-    {
-        builder = builder.header("X-ME-Sender-Handle", Text::new(h.to_string()));
-    }
-    if let Some(n) = msg
-        .message
-        .sender_display_name
-        .as_deref()
-        .filter(|s| !s.is_empty())
-    {
-        builder = builder.header("X-ME-Sender-Display-Name", Text::new(n.to_string()));
-    }
-    if !msg.owner_handle.trim().is_empty() {
-        builder = builder.header(
-            "X-ME-Owner-Handle",
-            Text::new(msg.owner_handle.trim().to_string()),
-        );
-    }
-    if let Some(n) = msg.owner_display_name.as_deref().filter(|s| !s.is_empty()) {
-        builder = builder.header("X-ME-Owner-Display-Name", Text::new(n.to_string()));
-    }
+    builder = opt_header(
+        builder,
+        headers::SENDER_HANDLE,
+        msg.message.sender_handle.as_deref(),
+    );
+    builder = opt_header(
+        builder,
+        headers::SENDER_DISPLAY_NAME,
+        msg.message.sender_display_name.as_deref(),
+    );
+    builder = opt_header(
+        builder,
+        headers::OWNER_HANDLE,
+        Some(msg.owner_handle.trim()),
+    );
+    builder = opt_header(
+        builder,
+        headers::OWNER_DISPLAY_NAME,
+        msg.owner_display_name.as_deref(),
+    );
+    builder = opt_header(builder, headers::SUBJECT, msg.message.subject.as_deref());
 
-    if let Some(subj) = msg.message.subject.as_deref().filter(|s| !s.is_empty()) {
-        builder = builder.header("X-ME-Subject", Text::new(subj.to_string()));
-    }
     let source = msg.message.source.as_ref();
-    if let Some(android) = source.and_then(|src| src.android_type) {
-        builder = builder.header("X-ME-Android-Type", Text::new(android.to_string()));
-    }
-    if let Some(fields) = source
-        .filter(|src| !src.fields.is_empty())
-        .map(|src| serde_json::to_string(&src.fields).unwrap_or_default())
-        .filter(|s| !s.is_empty())
-    {
-        builder = builder.header("X-ME-Source-Fields", Text::new(fields));
-    }
+    builder = opt_header(
+        builder,
+        headers::ANDROID_TYPE,
+        source
+            .and_then(|src| src.android_type)
+            .map(|t| t.to_string())
+            .as_deref(),
+    );
+    builder = opt_header(
+        builder,
+        headers::SOURCE_FIELDS,
+        source
+            .filter(|src| !src.fields.is_empty())
+            .map(|src| serde_json::to_string(&src.fields).unwrap_or_default())
+            .as_deref(),
+    );
 
     let im = msg.im();
-    if im.is_some_and(|i| i.is_reply) {
-        builder = builder.header("X-ME-Is-Reply", Text::new("true"));
-    }
+    builder = opt_header(
+        builder,
+        headers::IS_REPLY,
+        im.is_some_and(|i| i.is_reply).then_some("true"),
+    );
     if let Some(guid) = im
         .and_then(|i| i.in_reply_to_guid.as_deref())
         .filter(|s| !s.is_empty())
@@ -696,92 +706,104 @@ fn build_eml(msg: &MailMessage) -> Result<Vec<u8>> {
         builder = builder
             .in_reply_to(mid.clone())
             .references(mid)
-            .header("X-ME-Thread-Originator-Guid", Text::new(guid.to_string()));
+            .header(headers::THREAD_ORIGINATOR_GUID, Text::new(guid.to_string()));
     }
-    if let Some(part) = im.and_then(|i| i.thread_originator_part) {
-        builder = builder.header("X-ME-Thread-Originator-Part", Text::new(part.to_string()));
-    }
-    if let Some(n) = im.and_then(|i| i.num_replies) {
-        builder = builder.header("X-ME-Num-Replies", Text::new(n.to_string()));
-    }
-    if im.is_some_and(|i| i.is_deleted) {
-        builder = builder.header("X-ME-Is-Deleted", Text::new("true"));
-    }
-    if let Some(effect) = im
-        .and_then(|i| i.send_effect.as_deref())
-        .filter(|s| !s.is_empty())
-    {
-        builder = builder.header("X-ME-Send-Effect", Text::new(effect.to_string()));
-    }
-    if let Some(loc) = im
-        .and_then(|i| i.shared_location.as_deref())
-        .filter(|s| !s.is_empty())
-    {
-        builder = builder.header("X-ME-Shared-Location", Text::new(loc.to_string()));
-    }
-    if let Some(ann) = im
-        .and_then(|i| i.announcement.as_deref())
-        .filter(|s| !s.is_empty())
-    {
-        builder = builder.header("X-ME-Announcement", Text::new(ann.to_string()));
-    }
-    if let Some(rr) = im
-        .and_then(|i| i.read_receipt_rfc3339.as_deref())
-        .filter(|s| !s.is_empty())
-    {
-        builder = builder.header("X-ME-Read-Receipt", Text::new(rr.to_string()));
-    }
-    if let Some(parts) = value_as_string(im.and_then(|i| i.parts.as_ref())) {
-        builder = builder.header("X-ME-Parts", Text::new(parts));
-    }
-    if let Some(edits) = value_as_string(im.and_then(|i| i.edits.as_ref())) {
-        builder = builder.header("X-ME-Edits", Text::new(edits));
-    }
-    if let Some(app) = value_as_string(im.and_then(|i| i.app.as_ref())) {
-        builder = builder.header("X-ME-App", Text::new(app));
-    }
-    if let Some(bid) = im
-        .and_then(|i| i.balloon_bundle_id.as_deref())
-        .filter(|s| !s.is_empty())
-    {
-        builder = builder.header("X-ME-Balloon-Bundle-Id", Text::new(bid.to_string()));
-    }
-    if let Some(kind) = im
-        .and_then(|i| i.balloon_kind.as_deref())
-        .filter(|s| !s.is_empty())
-    {
-        builder = builder.header("X-ME-Balloon-Kind", Text::new(kind.to_string()));
-    }
-    if let Some(tapbacks) = value_as_string(im.and_then(|i| i.tapbacks.as_ref())) {
-        builder = builder.header("X-ME-Tapbacks", Text::new(tapbacks));
-    }
-    if let Some(guid) = im
-        .and_then(|i| i.associated_guid.as_deref())
-        .filter(|s| !s.is_empty())
-    {
-        builder = builder.header("X-ME-Associated-Guid", Text::new(guid.to_string()));
-    }
-    if let Some(part) = im.and_then(|i| i.associated_part) {
-        builder = builder.header("X-ME-Associated-Part", Text::new(part.to_string()));
-    }
-    if let Some(kind) = im
-        .and_then(|i| i.tapback_kind.as_deref())
-        .filter(|s| !s.is_empty())
-    {
-        builder = builder.header("X-ME-Tapback-Kind", Text::new(kind.to_string()));
-    }
-    if let Some(emoji) = im
-        .and_then(|i| i.tapback_emoji.as_deref())
-        .filter(|s| !s.is_empty())
-    {
-        builder = builder.header("X-ME-Tapback-Emoji", Text::new(emoji.to_string()));
-    }
-    if let Some(action) = im
-        .and_then(|i| i.tapback_action.as_deref())
-        .filter(|s| !s.is_empty())
-    {
-        builder = builder.header("X-ME-Tapback-Action", Text::new(action.to_string()));
-    }
+    builder = opt_header(
+        builder,
+        headers::THREAD_ORIGINATOR_PART,
+        im.and_then(|i| i.thread_originator_part)
+            .map(|p| p.to_string())
+            .as_deref(),
+    );
+    builder = opt_header(
+        builder,
+        headers::NUM_REPLIES,
+        im.and_then(|i| i.num_replies)
+            .map(|n| n.to_string())
+            .as_deref(),
+    );
+    builder = opt_header(
+        builder,
+        headers::IS_DELETED,
+        im.is_some_and(|i| i.is_deleted).then_some("true"),
+    );
+    builder = opt_header(
+        builder,
+        headers::SEND_EFFECT,
+        im.and_then(|i| i.send_effect.as_deref()),
+    );
+    builder = opt_header(
+        builder,
+        headers::SHARED_LOCATION,
+        im.and_then(|i| i.shared_location.as_deref()),
+    );
+    builder = opt_header(
+        builder,
+        headers::ANNOUNCEMENT,
+        im.and_then(|i| i.announcement.as_deref()),
+    );
+    builder = opt_header(
+        builder,
+        headers::READ_RECEIPT,
+        im.and_then(|i| i.read_receipt_rfc3339.as_deref()),
+    );
+    builder = opt_header(
+        builder,
+        headers::PARTS,
+        value_as_string(im.and_then(|i| i.parts.as_ref())).as_deref(),
+    );
+    builder = opt_header(
+        builder,
+        headers::EDITS,
+        value_as_string(im.and_then(|i| i.edits.as_ref())).as_deref(),
+    );
+    builder = opt_header(
+        builder,
+        headers::APP,
+        value_as_string(im.and_then(|i| i.app.as_ref())).as_deref(),
+    );
+    builder = opt_header(
+        builder,
+        headers::BALLOON_BUNDLE_ID,
+        im.and_then(|i| i.balloon_bundle_id.as_deref()),
+    );
+    builder = opt_header(
+        builder,
+        headers::BALLOON_KIND,
+        im.and_then(|i| i.balloon_kind.as_deref()),
+    );
+    builder = opt_header(
+        builder,
+        headers::TAPBACKS,
+        value_as_string(im.and_then(|i| i.tapbacks.as_ref())).as_deref(),
+    );
+    builder = opt_header(
+        builder,
+        headers::ASSOCIATED_GUID,
+        im.and_then(|i| i.associated_guid.as_deref()),
+    );
+    builder = opt_header(
+        builder,
+        headers::ASSOCIATED_PART,
+        im.and_then(|i| i.associated_part)
+            .map(|p| p.to_string())
+            .as_deref(),
+    );
+    builder = opt_header(
+        builder,
+        headers::TAPBACK_KIND,
+        im.and_then(|i| i.tapback_kind.as_deref()),
+    );
+    builder = opt_header(
+        builder,
+        headers::TAPBACK_EMOJI,
+        im.and_then(|i| i.tapback_emoji.as_deref()),
+    );
+    builder = opt_header(
+        builder,
+        headers::TAPBACK_ACTION,
+        im.and_then(|i| i.tapback_action.as_deref()),
+    );
 
     if !msg.attachments.is_empty() {
         let meta: Vec<AttachmentMetaCell<'_>> = msg
@@ -798,7 +820,7 @@ fn build_eml(msg: &MailMessage) -> Result<Vec<u8>> {
             })
             .collect();
         let meta_json = serde_json::to_string(&meta).unwrap_or_else(|_| "[]".into());
-        builder = builder.header("X-ME-Attachment-Meta", Text::new(meta_json));
+        builder = builder.header(headers::ATTACHMENT_META, Text::new(meta_json));
     }
 
     builder = builder.text_body(msg.message.text.clone());

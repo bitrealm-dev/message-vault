@@ -8,44 +8,54 @@ use anyhow::{Context, Result};
 use image::{ImageBuffer, Rgb};
 use sha2::{Digest, Sha256};
 
-/// Demo JPEG photos (path relative to export dir, display name).
+/// Demo JPEG photos (path relative to export dir, display name, base color).
 pub struct JpgPhoto {
     pub path: &'static str,
     pub original_name: &'static str,
+    /// Base RGB the generated gradient starts from.
+    pub color: [u8; 3],
 }
 
 pub const JPG_PHOTOS: &[JpgPhoto] = &[
     JpgPhoto {
         path: "attachments/sunset.jpg",
         original_name: "IMG_2847.jpg",
+        color: [255, 140, 60],
     },
     JpgPhoto {
         path: "attachments/park.jpg",
         original_name: "IMG_3102.jpg",
+        color: [72, 160, 95],
     },
     JpgPhoto {
         path: "attachments/dinner.jpg",
         original_name: "IMG_4521.jpg",
+        color: [180, 85, 70],
     },
     JpgPhoto {
         path: "attachments/puppy.jpg",
         original_name: "IMG_5098.jpg",
+        color: [210, 175, 130],
     },
     JpgPhoto {
         path: "attachments/receipt.jpg",
         original_name: "Scan_2024-03-15.jpg",
+        color: [245, 245, 240],
     },
     JpgPhoto {
         path: "attachments/selfie.jpg",
         original_name: "IMG_6110.jpg",
+        color: [90, 130, 200],
     },
     JpgPhoto {
         path: "attachments/beach.jpg",
         original_name: "IMG_7203.jpg",
+        color: [60, 175, 220],
     },
     JpgPhoto {
         path: "attachments/flowers.jpg",
         original_name: "IMG_8011.jpg",
+        color: [220, 100, 150],
     },
 ];
 
@@ -70,22 +80,16 @@ pub const OTHER_ATTACHMENTS: &[(&str, &str, bool)] = &[
 ///
 /// Returns an error if a JPEG cannot be written or a file cannot be read back.
 pub fn write_attachment_blobs(dir: &Path) -> Result<HashMap<String, (String, u64)>> {
-    let specs: &[(&str, [u8; 3])] = &[
-        ("sunset.jpg", [255, 140, 60]),
-        ("park.jpg", [72, 160, 95]),
-        ("dinner.jpg", [180, 85, 70]),
-        ("puppy.jpg", [210, 175, 130]),
-        ("receipt.jpg", [245, 245, 240]),
-        ("selfie.jpg", [90, 130, 200]),
-        ("beach.jpg", [60, 175, 220]),
-        ("flowers.jpg", [220, 100, 150]),
-    ];
     let mut digests = HashMap::new();
-    for (name, rgb) in specs {
+    for photo in JPG_PHOTOS {
+        let name = photo
+            .path
+            .strip_prefix("attachments/")
+            .unwrap_or(photo.path);
         let path = dir.join(name);
-        write_color_jpeg(&path, *rgb, 320, 240)?;
+        write_color_jpeg(&path, photo.color, 320, 240)?;
         let bytes = std::fs::read(&path)?;
-        record_blob(&mut digests, &format!("attachments/{name}"), &bytes);
+        record_blob(&mut digests, photo.path, &bytes);
     }
 
     fs::write(dir.join("landscape.png"), MINI_PNG)?;

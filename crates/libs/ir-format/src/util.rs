@@ -2,8 +2,9 @@
 
 use anyhow::{Context, Result};
 use message_ir::{HandleType, IrAttachment};
-use std::fs;
-use std::path::Path;
+use std::fs::{self, File};
+use std::io::{BufWriter, Write};
+use std::path::{Path, PathBuf};
 
 /// Guess the handle type of a raw handle string when no type is known.
 ///
@@ -62,14 +63,31 @@ pub(crate) fn load_attachment_bytes_strict(
 /// const, and the server's import tests match it — keep the exact text stable.
 pub const UNSAFE_ATTACHMENT_PATH_PREFIX: &str = "unsafe attachment path";
 
+/// Resolve `rel` (an attachment's recorded relative path) under `base_dir`,
+/// rejecting anything that could escape it (absolute paths, `..`).
+///
+/// This defends against malicious CSV/JSON input crafted to read arbitrary
+/// files during EML/MBOX/XML embedding, and against a staged conversation file
+/// pointing the transcode pass outside its staging folder.
+pub(crate) fn safe_attachment_path(base_dir: &Path, rel: &str) -> Result<PathBuf> {
+    let rel_path = Path::new(rel);
+    if rel_path.is_absolute() {
+        anyhow::bail!("{UNSAFE_ATTACHMENT_PATH_PREFIX}: {rel}");
+    }
+    for comp in rel_path.components() {
+        if matches!(comp, std::path::Component::ParentDir) {
+            anyhow::bail!("{UNSAFE_ATTACHMENT_PATH_PREFIX} (contains ..): {rel}");
+        }
+    }
+    Ok(base_dir.join(rel_path))
+}
+
 /// Read attachment bytes from disk when the relative path exists.
 ///
 /// Missing paths yield `Ok(None)`. IO failures return an error (strict) — callers
 /// that want lenient behavior map with `.ok().flatten()`.
 ///
-/// The relative path is validated to prevent directory traversal (no `..` or
-/// absolute paths). This defends against malicious CSV/JSON input crafted to
-/// read arbitrary files during EML/MBOX/XML embedding.
+/// The relative path is validated via [`safe_attachment_path`].
 pub(crate) fn read_attachment_file(
     att: &IrAttachment,
     output_dir: &Path,
@@ -77,22 +95,45 @@ pub(crate) fn read_attachment_file(
     let Some(rel) = att.path.as_deref() else {
         return Ok(None);
     };
-    // Reject paths that could escape the export folder.
-    let rel_path = Path::new(rel);
-    if rel_path.is_absolute() {
-        anyhow::bail!("attachment path must be relative: {rel}");
-    }
-    for comp in rel_path.components() {
-        if matches!(comp, std::path::Component::ParentDir) {
-            anyhow::bail!("{UNSAFE_ATTACHMENT_PATH_PREFIX} (contains ..): {rel}");
-        }
-    }
-    let path = output_dir.join(rel);
+    let path = safe_attachment_path(output_dir, rel)?;
     if !path.is_file() {
         return Ok(None);
     }
     let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
     Ok(Some(bytes))
+}
+
+/// Write a file atomically: create the parent directory, write everything to
+/// a `.tmp` sibling (`<file name>.tmp`), and rename it over `path`, so a
+/// reader never sees a half-written file.
+///
+/// # Errors
+///
+/// Returns an error when the parent cannot be created, the temp file cannot
+/// be created or written, or the rename fails.
+pub(crate) fn write_atomic(
+    path: &Path,
+    write: impl FnOnce(&mut dyn Write) -> Result<()>,
+) -> Result<()> {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    let mut tmp_name = path
+        .file_name()
+        .map(|n| n.to_os_string())
+        .with_context(|| format!("{} has no file name", path.display()))?;
+    tmp_name.push(".tmp");
+    let tmp = path.with_file_name(tmp_name);
+    {
+        let file = File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
+        let mut out = BufWriter::new(file);
+        write(&mut out)?;
+        out.flush()
+            .with_context(|| format!("flush {}", tmp.display()))?;
+    }
+    fs::rename(&tmp, path)
+        .with_context(|| format!("rename {} → {}", tmp.display(), path.display()))?;
+    Ok(())
 }
 
 #[cfg(test)]

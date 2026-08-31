@@ -24,8 +24,7 @@ pub(crate) fn chat_id_for(msg: &ParsedMessage) -> String {
     } else {
         // Format as E.164 only when unambiguous, so a trunk-zero value stays
         // digits-as-is instead of becoming `+02079460000`.
-        phone::normalize_guarded(&msg.chat_key, phone::PhoneRegion::for_raw(&msg.chat_key))
-            .normalized
+        phone::normalize_lenient(&msg.chat_key)
     }
 }
 

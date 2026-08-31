@@ -176,30 +176,10 @@ fn lock_session(session: &Path) -> Result<ManifestLock> {
     Ok(ManifestLock { _file: file })
 }
 
+/// Canonical extension for an uploaded blob's MIME type, from the shared
+/// table in [`media`]; empty for missing or unrecognized MIME types.
 fn ext_for_mime(mime: Option<&str>) -> String {
-    let Some(mime) = mime.map(str::trim).filter(|s| !s.is_empty()) else {
-        return String::new();
-    };
-    let base = mime
-        .split(';')
-        .next()
-        .unwrap_or(mime)
-        .trim()
-        .to_ascii_lowercase();
-    match base.as_str() {
-        "image/jpeg" => ".jpg".into(),
-        "image/png" => ".png".into(),
-        "image/gif" => ".gif".into(),
-        "image/webp" => ".webp".into(),
-        "image/heic" | "image/heif" => ".heic".into(),
-        "video/mp4" => ".mp4".into(),
-        "video/quicktime" => ".mov".into(),
-        "video/webm" => ".webm".into(),
-        "audio/mpeg" | "audio/mp3" => ".mp3".into(),
-        "audio/mp4" | "audio/aac" => ".m4a".into(),
-        "audio/wav" | "audio/x-wav" => ".wav".into(),
-        _ => String::new(),
-    }
+    mime.and_then(media::ext_for_mime).unwrap_or("").to_string()
 }
 
 /// Start a chunked upload session. Returns `already_present` asset when the blob exists.
