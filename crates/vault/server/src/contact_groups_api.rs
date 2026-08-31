@@ -1,112 +1,17 @@
 //! Contact groups stored in `contact_groups` / `contact_group_members`.
+//!
+//! CRUD and membership live in [`crate::named_membership`] behind
+//! [`group_spec`]; this module owns the HTTP surface (routes, DTOs, OpenAPI).
 
-use anyhow::Result as AnyResult;
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
-use sqlx::AnyConnection;
 
-use crate::db::dialect::engine_of;
-use crate::db::engine::DbEngine;
-use crate::named_membership::{self, MembershipError, group_spec};
+use crate::named_membership::{self, group_spec};
 use crate::server::{
     ApiError, AppState, MembershipChangedResponse, require_full_access, resolve_auth,
 };
-
-/// Create / rename / delete / membership failures.
-pub type GroupError = MembershipError;
-
-/// Group names for this account, A–Z, excluding reserved leftovers.
-pub async fn list_groups(
-    conn: &mut AnyConnection,
-    account_id: &str,
-) -> Result<Vec<String>, GroupError> {
-    named_membership::list_names(group_spec(), conn, account_id).await
-}
-
-/// Create a group. Fails when the name is taken (ignoring case).
-pub async fn create_group(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    name: &str,
-) -> Result<String, GroupError> {
-    named_membership::create_name(group_spec(), conn, account_id, name).await
-}
-
-/// Rename a group. Allows a case-only change of the same name.
-pub async fn rename_group(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    from: &str,
-    to: &str,
-) -> Result<String, GroupError> {
-    named_membership::rename_name(group_spec(), conn, account_id, from, to).await
-}
-
-/// Delete a group and its memberships.
-pub async fn delete_group(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    name: &str,
-) -> Result<(), GroupError> {
-    named_membership::delete_name(group_spec(), conn, account_id, name).await
-}
-
-/// Contact ids that currently belong to a named group (case-insensitive).
-pub async fn list_group_member_ids(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    name: &str,
-) -> Result<Vec<i64>, GroupError> {
-    named_membership::list_member_ids(group_spec(), conn, account_id, name).await
-}
-
-/// Add or remove one group for many contacts. Creates the group when enabling.
-pub async fn set_contacts_group_membership(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    contact_ids: &[i64],
-    name: &str,
-    enable: bool,
-) -> Result<u64, GroupError> {
-    named_membership::set_membership(group_spec(), conn, account_id, contact_ids, name, enable)
-        .await
-}
-
-/// Groups attached to one contact, A–Z.
-pub async fn groups_for_contact(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    contact_id: i64,
-) -> AnyResult<Vec<String>> {
-    let order = match engine_of(conn) {
-        DbEngine::Sqlite => "ORDER BY cl.name COLLATE NOCASE",
-        DbEngine::Postgres => "ORDER BY lower(cl.name)",
-    };
-    let sql = format!(
-        "SELECT cl.name
-         FROM contact_groups cl
-         JOIN contact_group_members m ON m.group_id = cl.id
-         WHERE cl.account_id = $1 AND m.contact_id = $2
-         {order}"
-    );
-    let rows = sqlx::query_scalar::<_, String>(&sql)
-        .bind(account_id)
-        .bind(contact_id)
-        .fetch_all(&mut *conn)
-        .await?;
-    Ok(rows)
-}
-
-fn map_group_error(err: GroupError) -> ApiError {
-    match err {
-        GroupError::BadRequest(m) => ApiError::BadRequest(m),
-        GroupError::NotFound(m) => ApiError::NotFound(m),
-        GroupError::Conflict(m) => ApiError::Conflict(m),
-        GroupError::Internal(m) => ApiError::Internal(m),
-    }
-}
 
 /// A group name.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -182,9 +87,7 @@ pub(crate) async fn contact_groups_list_handler(
     require_full_access(&auth)?;
     // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
-    let groups = list_groups(&mut conn, &auth.account_id)
-        .await
-        .map_err(map_group_error)?;
+    let groups = named_membership::list_names(group_spec(), &mut conn, &auth.account_id).await?;
     Ok(Json(ContactGroupsListResponse { groups }))
 }
 
@@ -213,12 +116,9 @@ pub(crate) async fn contact_groups_create_handler(
     // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     let name = body.name;
-    let created = create_group(&mut conn, &auth.account_id, &name)
-        .await
-        .map_err(map_group_error)?;
-    let groups = list_groups(&mut conn, &auth.account_id)
-        .await
-        .map_err(map_group_error)?;
+    let created =
+        named_membership::create_name(group_spec(), &mut conn, &auth.account_id, &name).await?;
+    let groups = named_membership::list_names(group_spec(), &mut conn, &auth.account_id).await?;
     Ok(Json(ContactGroupNamedListResponse {
         name: created,
         groups,
@@ -250,12 +150,15 @@ pub(crate) async fn contact_groups_rename_handler(
     require_full_access(&auth)?;
     // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
-    let name = rename_group(&mut conn, &auth.account_id, &body.from, &body.to)
-        .await
-        .map_err(map_group_error)?;
-    let groups = list_groups(&mut conn, &auth.account_id)
-        .await
-        .map_err(map_group_error)?;
+    let name = named_membership::rename_name(
+        group_spec(),
+        &mut conn,
+        &auth.account_id,
+        &body.from,
+        &body.to,
+    )
+    .await?;
+    let groups = named_membership::list_names(group_spec(), &mut conn, &auth.account_id).await?;
     Ok(Json(ContactGroupNamedListResponse { name, groups }))
 }
 
@@ -283,12 +186,8 @@ pub(crate) async fn contact_groups_delete_handler(
     require_full_access(&auth)?;
     // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
-    delete_group(&mut conn, &auth.account_id, &body.name)
-        .await
-        .map_err(map_group_error)?;
-    let groups = list_groups(&mut conn, &auth.account_id)
-        .await
-        .map_err(map_group_error)?;
+    named_membership::delete_name(group_spec(), &mut conn, &auth.account_id, &body.name).await?;
+    let groups = named_membership::list_names(group_spec(), &mut conn, &auth.account_id).await?;
     Ok(Json(ContactGroupDeleteResponse { ok: true, groups }))
 }
 
@@ -315,9 +214,9 @@ pub(crate) async fn contact_groups_members_handler(
     require_full_access(&auth)?;
     // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
-    let member_contact_ids = list_group_member_ids(&mut conn, &auth.account_id, &query.name)
-        .await
-        .map_err(map_group_error)?;
+    let member_contact_ids =
+        named_membership::list_member_ids(group_spec(), &mut conn, &auth.account_id, &query.name)
+            .await?;
     Ok(Json(ContactGroupMembersResponse {
         name: query.name,
         member_contact_ids,
@@ -348,24 +247,28 @@ pub(crate) async fn contact_groups_membership_handler(
     require_full_access(&auth)?;
     // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
-    let changed = set_contacts_group_membership(
+    let changed = named_membership::set_membership(
+        group_spec(),
         &mut conn,
         &auth.account_id,
         &body.ids,
         &body.name,
         body.enable,
     )
-    .await
-    .map_err(map_group_error)?;
+    .await?;
     Ok(Json(MembershipChangedResponse { changed }))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use sqlx::AnyConnection;
 
     use crate::db::engine;
     use crate::db::schema;
+    use crate::named_membership::{
+        self, MembershipError, create_name, delete_name, group_spec, list_member_ids, list_names,
+        rename_name, set_membership,
+    };
 
     async fn setup() -> (sqlx::AnyPool, tempfile::TempDir, String) {
         let (pool, dir) = engine::test_pool().await;
@@ -398,37 +301,46 @@ mod tests {
         let (pool, _dir, account) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
         assert_eq!(
-            create_group(&mut conn, &account, " Family ").await.unwrap(),
+            create_name(group_spec(), &mut conn, &account, " Family ")
+                .await
+                .unwrap(),
             "Family"
         );
         assert_eq!(
-            list_groups(&mut conn, &account).await.unwrap(),
+            list_names(group_spec(), &mut conn, &account).await.unwrap(),
             vec!["Family"]
         );
 
-        let err = create_group(&mut conn, &account, "family")
+        let err = create_name(group_spec(), &mut conn, &account, "family")
             .await
             .unwrap_err();
-        assert!(matches!(err, GroupError::Conflict(_)));
+        assert!(matches!(err, MembershipError::Conflict(_)));
 
-        let err = create_group(&mut conn, &account, "Trash")
+        let err = create_name(group_spec(), &mut conn, &account, "Trash")
             .await
             .unwrap_err();
-        assert!(matches!(err, GroupError::BadRequest(_)));
+        assert!(matches!(err, MembershipError::BadRequest(_)));
 
         assert_eq!(
-            rename_group(&mut conn, &account, "family", "Work")
+            rename_name(group_spec(), &mut conn, &account, "family", "Work")
                 .await
                 .unwrap(),
             "Work"
         );
         assert_eq!(
-            list_groups(&mut conn, &account).await.unwrap(),
+            list_names(group_spec(), &mut conn, &account).await.unwrap(),
             vec!["Work"]
         );
 
-        delete_group(&mut conn, &account, "work").await.unwrap();
-        assert!(list_groups(&mut conn, &account).await.unwrap().is_empty());
+        delete_name(group_spec(), &mut conn, &account, "work")
+            .await
+            .unwrap();
+        assert!(
+            list_names(group_spec(), &mut conn, &account)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -438,29 +350,31 @@ mod tests {
         let a = insert_contact(&mut conn, &account, "Ada").await;
         let b = insert_contact(&mut conn, &account, "Ben").await;
         assert_eq!(
-            set_contacts_group_membership(&mut conn, &account, &[a, b], "Family", true)
+            set_membership(group_spec(), &mut conn, &account, &[a, b], "Family", true)
                 .await
                 .unwrap(),
             2
         );
         assert_eq!(
-            list_group_member_ids(&mut conn, &account, "family")
+            list_member_ids(group_spec(), &mut conn, &account, "family")
                 .await
                 .unwrap(),
             vec![a, b]
         );
         assert_eq!(
-            groups_for_contact(&mut conn, &account, a).await.unwrap(),
+            named_membership::names_for_item(group_spec(), &mut conn, &account, a)
+                .await
+                .unwrap(),
             vec!["Family"]
         );
         assert_eq!(
-            set_contacts_group_membership(&mut conn, &account, &[a], "Family", false)
+            set_membership(group_spec(), &mut conn, &account, &[a], "Family", false)
                 .await
                 .unwrap(),
             1
         );
         assert_eq!(
-            list_group_member_ids(&mut conn, &account, "Family")
+            list_member_ids(group_spec(), &mut conn, &account, "Family")
                 .await
                 .unwrap(),
             vec![b]

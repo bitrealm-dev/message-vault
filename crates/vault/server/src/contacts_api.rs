@@ -960,8 +960,13 @@ pub async fn get_contact_detail(
     .fetch_one(&mut *conn)
     .await?;
 
-    let contact_groups =
-        crate::contact_groups_api::groups_for_contact(conn, account_id, contact_id).await?;
+    let contact_groups = crate::named_membership::names_for_item(
+        crate::named_membership::group_spec(),
+        conn,
+        account_id,
+        contact_id,
+    )
+    .await?;
 
     Ok(Some(ContactDetail {
         id: contact_id,
@@ -2942,7 +2947,8 @@ mod tests {
         let mut conn = pool.acquire().await.unwrap();
         let family = insert_contact_with_handle(&mut conn, &account, "Ada", "+15555550100").await;
         insert_contact_with_handle(&mut conn, &account, "Ben", "+15555550200").await;
-        crate::contact_groups_api::set_contacts_group_membership(
+        crate::named_membership::set_membership(
+            crate::named_membership::group_spec(),
             &mut conn,
             &account,
             &[family],

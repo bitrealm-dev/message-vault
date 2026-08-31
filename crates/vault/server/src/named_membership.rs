@@ -32,6 +32,17 @@ impl From<sqlx::Error> for MembershipError {
     }
 }
 
+impl From<MembershipError> for crate::server::ApiError {
+    fn from(e: MembershipError) -> Self {
+        match e {
+            MembershipError::BadRequest(m) => Self::BadRequest(m),
+            MembershipError::NotFound(m) => Self::NotFound(m),
+            MembershipError::Conflict(m) => Self::Conflict(m),
+            MembershipError::Internal(m) => Self::Internal(m),
+        }
+    }
+}
+
 /// Case-insensitive name equality for one engine (`COLLATE NOCASE` is
 /// invalid Postgres SQL; Postgres uses `lower()`).
 fn name_eq_sql(engine: DbEngine, placeholder: usize) -> String {
@@ -543,6 +554,75 @@ pub async fn set_membership(
         }
     }
     Ok(changed)
+}
+
+/// Names attached to one member, A–Z.
+pub async fn names_for_item(
+    spec: &MembershipSpec,
+    conn: &mut AnyConnection,
+    account_id: &str,
+    item_id: i64,
+) -> AnyResult<Vec<String>> {
+    let order = match engine_of(conn) {
+        DbEngine::Sqlite => "ORDER BY n.name COLLATE NOCASE",
+        DbEngine::Postgres => "ORDER BY lower(n.name)",
+    };
+    let sql = format!(
+        "SELECT n.name
+         FROM {table} n
+         JOIN {members} m ON m.{name_col} = n.id
+         WHERE n.account_id = $1 AND m.{member_col} = $2
+         {order}",
+        table = spec.table,
+        members = spec.members_table,
+        name_col = spec.name_column,
+        member_col = spec.member_column,
+    );
+    let rows = sqlx::query_scalar::<_, String>(&sql)
+        .bind(account_id)
+        .bind(item_id)
+        .fetch_all(&mut *conn)
+        .await?;
+    Ok(rows)
+}
+
+/// Names attached to each member id, A–Z within each list.
+pub async fn names_for_items(
+    spec: &'static MembershipSpec,
+    conn: &mut AnyConnection,
+    account_id: &str,
+    item_ids: &[i64],
+) -> AnyResult<std::collections::HashMap<i64, Vec<String>>> {
+    use crate::db::sql::{fold_in_id_chunks, in_placeholders};
+    let account_id = account_id.to_string();
+    fold_in_id_chunks(conn, item_ids, |conn, chunk| {
+        let account_id = account_id.clone();
+        Box::pin(async move {
+            let placeholders = in_placeholders(2, chunk.len());
+            let order = match engine_of(conn) {
+                DbEngine::Sqlite => "ORDER BY n.name COLLATE NOCASE",
+                DbEngine::Postgres => "ORDER BY lower(n.name)",
+            };
+            let sql = format!(
+                "SELECT m.{member_col}, n.name
+                 FROM {members} m
+                 JOIN {table} n ON n.id = m.{name_col}
+                 WHERE n.account_id = $1 AND m.{member_col} IN ({placeholders})
+                 {order}",
+                table = spec.table,
+                members = spec.members_table,
+                name_col = spec.name_column,
+                member_col = spec.member_column,
+            );
+            let mut q = sqlx::query_as::<_, (i64, String)>(&sql).bind(&account_id);
+            for id in chunk {
+                q = q.bind(*id);
+            }
+            let rows = q.fetch_all(&mut *conn).await?;
+            Ok(rows)
+        })
+    })
+    .await
 }
 
 #[cfg(test)]
