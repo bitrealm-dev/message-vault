@@ -90,6 +90,29 @@ pub fn ios_backup_encrypted(path: String) -> Result<Option<bool>, String> {
     )))
 }
 
+/// Addresses an iMessage backup's device sent from, for the Import
+/// identity check.
+///
+/// Runs on a blocking-pool thread: for an encrypted backup, answering this
+/// decrypts `chat.db` to a temp file.
+#[tauri::command]
+pub async fn imessage_backup_identities(
+    path: String,
+    ios: bool,
+    backup_password: Option<String>,
+) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let password = backup_password
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty());
+        imessage_ir_exporter::backup_identities(Path::new(path.trim()), ios, password)
+            .map_err(|e| format!("{e:#}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Ask this process for the current user's home directory.
 ///
 /// The WebView cannot see the real home folder on its own. Settings uses the

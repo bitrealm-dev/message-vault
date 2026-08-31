@@ -38,6 +38,7 @@ fn main() {
             commands::paths::home_dir,
             commands::paths::path_stat,
             commands::paths::ios_backup_encrypted,
+            commands::paths::imessage_backup_identities,
             commands::paths::open_path,
             commands::push::push,
             commands::pull::pull,
