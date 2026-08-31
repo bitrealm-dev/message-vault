@@ -29,7 +29,7 @@ mod write_sbr;
 
 pub use clean::{EXPORT_SENTINEL, clean_previous_ir_output};
 pub use export_transforms::ExportTransforms;
-pub use format_sink::{FormatSink, FormatSinkResult};
+pub use format_sink::{FormatSink, FormatSinkResult, write_documents_through_sink};
 pub use pipeline::{finish_run, run_pipeline};
 pub use read_csv::read_conversation_csv;
 pub use read_json::{read_conversation_json, read_conversation_jsonl};
@@ -43,7 +43,8 @@ pub use util::UNSAFE_ATTACHMENT_PATH_PREFIX;
 pub use write::{CSV_HEADERS, document_to_mail_messages, write_conversation_jsonl_to};
 pub use write_queue::{
     AttachmentSource, ConversationUnit, UnitAttachment, WriteQueueOptions, WriteQueueReport,
-    default_writer_count, drain_write_queue, drain_write_queue_with_loader, load_attachment_source,
+    default_writer_count, drain_units, drain_write_queue, drain_write_queue_with_loader,
+    load_attachment_source,
 };
 
 #[cfg(test)]

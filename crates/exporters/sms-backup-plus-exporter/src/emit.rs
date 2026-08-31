@@ -708,16 +708,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
             resume,
             writer_count: 0,
         };
-        let queue_report =
-            message_ir_format::drain_write_queue(&output_dir, units, &options, log, cancel)?;
-        report.conversations +=
-            (queue_report.conversations_written + queue_report.conversations_skipped) as u64;
-        report.attachments_saved += queue_report.attachments_saved as u64;
-        FormatSinkResult {
-            xml_path: None,
-            media: queue_report.media,
-            obfuscated_docs: 0,
-        }
+        message_ir_format::drain_units(&output_dir, units, &options, log, cancel, &mut report)?
     } else {
         stage_conversation_attachments(
             &mut documents,

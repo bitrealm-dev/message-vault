@@ -250,6 +250,28 @@ pub fn default_writer_count() -> usize {
         .clamp(1, 8)
 }
 
+/// Drain `units` through the write queue, fold the written/skipped counts
+/// into `report`, and return the `FormatSinkResult` the sink path would
+/// have produced. The shared tail of every exporter's queue arm.
+pub fn drain_units(
+    output_dir: &Path,
+    units: Vec<ConversationUnit>,
+    options: &WriteQueueOptions,
+    log: Option<&LogSink>,
+    cancel: Option<&CancelFlag>,
+    report: &mut message_vault_io_core::ExportReport,
+) -> Result<crate::FormatSinkResult> {
+    let queue_report = drain_write_queue(output_dir, units, options, log, cancel)?;
+    report.conversations +=
+        (queue_report.conversations_written + queue_report.conversations_skipped) as u64;
+    report.attachments_saved += queue_report.attachments_saved as u64;
+    Ok(crate::FormatSinkResult {
+        xml_path: None,
+        media: queue_report.media,
+        obfuscated_docs: 0,
+    })
+}
+
 /// Drain `units` across a pool of writer threads.
 ///
 /// Each worker pops the next conversation, stages its attachments, and writes
