@@ -1,14 +1,13 @@
 //! Read SMS Backup & Restore XML into the shared conversation structure, then
-//! write the chosen output format via [`FormatSink`].
+//! write the chosen output format via [`ExportWriter`].
 
 use anyhow::Result;
 use contacts::ContactsBook;
-use media::MediaMode;
 use message_csv::DateRange;
 use message_ir::{ConversationDocument, HandleType};
 use message_ir_format::{
-    AttachmentSource, ConversationUnit, ExportTransforms, FormatSink, FormatSinkResult,
-    SbrReadOptions, SbrReadReport, WriteQueueOptions, read_sbr_documents,
+    AttachmentSource, ExportTransforms, ExportWriter, FormatSinkResult, SbrReadOptions,
+    SbrReadReport, read_sbr_documents,
 };
 use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
 use std::path::Path;
@@ -97,90 +96,50 @@ pub(crate) struct ConvertExportArgs<'a> {
 pub(crate) fn convert_export(
     args: ConvertExportArgs<'_>,
 ) -> Result<(ExportReport, FormatSinkResult)> {
-    let copy_attachments = args.transforms.copies_attachments();
-    let media = if copy_attachments {
-        args.transforms.media
-    } else {
-        MediaMode::Disabled
-    };
+    // The read options still need the compress settings after `transforms`
+    // moves into the writer.
     let compress = args.transforms.compress.clone();
-    let log = args.transforms.log.clone();
-    // Captured before `transforms` moves into the sink: the queue path is for
-    // the import, which is JSONL and never obfuscated.
-    let use_queue = args.output_format == OutputFormat::Jsonl && !args.transforms.obfuscate;
-    let (sink, attachments_dir) = if args.resume {
-        FormatSink::open_resume(args.output_dir, args.output_format, args.transforms)
-    } else {
-        FormatSink::open_prepared(args.output_dir, args.output_format, args.transforms)
-    }?;
+    let writer = ExportWriter::open(
+        args.output_dir,
+        args.output_format,
+        args.transforms,
+        args.resume,
+    )?;
     let (mut documents, report) = read_sbr_documents(
         args.input,
         SbrReadOptions {
             owner_phones: args.owner_phones,
             date_range: args.date_range,
-            attachments_dir: Some(&attachments_dir),
-            copy_attachments,
-            // On the queue path the bytes ride into the engine, which stages
-            // them a conversation at a time; otherwise FormatSink reloads
-            // staged bytes after media transforms.
-            keep_attachment_bytes: use_queue,
-            stage_attachments: !use_queue,
-            media,
-            compress: compress.clone(),
-            log: log.as_ref(),
+            attachments_dir: Some(writer.attachments_dir()),
+            copy_attachments: writer.copies_attachments(),
+            // The bytes ride into the shared write tail, which stages them
+            // itself (a conversation at a time on the queue arm).
+            keep_attachment_bytes: false,
+            stage_attachments: false,
+            media: writer.media_mode(),
+            compress,
+            log: writer.log(),
             cancel: args.cancel,
         },
     )?;
     enrich_contacts(args.contacts, &mut documents);
 
-    if use_queue {
-        let units: Vec<ConversationUnit> = documents
-            .into_iter()
-            .map(|doc| {
-                ConversationUnit::from_doc(doc, |_, att| {
-                    let hint = att
-                        .size_bytes
-                        .or_else(|| att.bytes.as_ref().map(|b| b.len() as u64));
-                    match att.bytes.take() {
-                        Some(bytes) => (AttachmentSource::Bytes(bytes), hint),
-                        None => (AttachmentSource::Missing, hint),
-                    }
-                })
-            })
-            .collect();
-        let options = WriteQueueOptions {
-            media,
-            compress,
-            resume: args.resume,
-            writer_count: 0,
-        };
-        let queue_report = message_ir_format::drain_write_queue(
-            args.output_dir,
-            units,
-            &options,
-            log.as_ref(),
-            args.cancel,
-        )?;
-        let mut core = to_core_report(report);
-        core.attachments_saved = queue_report.attachments_saved as u64;
-        return Ok((
-            core,
-            FormatSinkResult {
-                xml_path: None,
-                media: queue_report.media,
-                obfuscated_docs: 0,
-            },
-        ));
-    }
-
-    // The reader already counted conversations; zero the counter so the shared
-    // write tail counts only the documents it actually writes.
+    // The reader already counted conversations (and staged nothing, so its
+    // attachments_saved is zero); zero the conversation counter so the shared
+    // write tail's fold counts only the documents it actually writes.
     let mut core = to_core_report(report);
     core.conversations = 0;
-    let sink_result = message_ir_format::write_documents_through_sink(
+    let sink_result = writer.finish(
         documents,
-        sink,
-        log.as_ref(),
+        &mut |att| {
+            let hint = att
+                .size_bytes
+                .or_else(|| att.bytes.as_ref().map(|b| b.len() as u64));
+            match att.bytes.take() {
+                Some(bytes) => (AttachmentSource::Bytes(bytes), hint),
+                None => (AttachmentSource::Missing, hint),
+            }
+        },
         args.cancel,
         &mut core,
     )?;

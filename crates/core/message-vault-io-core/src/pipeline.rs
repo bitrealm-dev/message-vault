@@ -127,6 +127,11 @@ impl ExportReport {
     pub fn bump(&mut self, key: &str, by: u64) {
         *self.extra.entry(key.to_string()).or_insert(0) += by;
     }
+
+    /// Read a per-exporter extension counter from the `extra` map (0 when unset).
+    pub fn extra(&self, key: &str) -> u64 {
+        self.extra.get(key).copied().unwrap_or(0)
+    }
 }
 
 /// Print `RunResult` lines with the standard stdout/stderr split:
@@ -242,19 +247,20 @@ pub fn prune_and_finish_conversation(
     !convo.messages.is_empty()
 }
 
-/// Standard export metadata from a pending conversation's provenance.
+/// Standard export metadata: source / tool / version plus the owner identity.
 pub fn export_meta(
     source: &str,
     tool: &str,
     tool_version: &str,
-    owner: &message_ir::ExportMeta,
+    owner_handle: Option<String>,
+    owner_display_name: Option<String>,
 ) -> message_ir::ExportMeta {
     message_ir::ExportMeta {
         source: source.to_string(),
         tool: tool.to_string(),
         tool_version: tool_version.to_string(),
-        owner_handle: owner.owner_handle.clone(),
-        owner_display_name: owner.owner_display_name.clone(),
+        owner_handle,
+        owner_display_name,
     }
 }
 

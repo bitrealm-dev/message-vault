@@ -2,14 +2,10 @@
 
 use anyhow::Result;
 use go_sms_mms::ParsedPdu;
-use media::{CompressOptions, MediaMode};
 use message_ir::{IrAttachment, PendingAttachment};
-use message_vault_io_core::{
-    AttachmentJob, CancelFlag, ExportReport, LogSink, digest_prefix, emit_log, run_attachment_jobs,
-};
+use message_vault_io_core::digest_prefix;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::path::Path;
 
 /// Queue PDU attachment parts as metadata. Bytes stay in `blob_bytes` until
 /// the shared runner writes them.
@@ -70,73 +66,4 @@ pub(super) fn pending_attachment_to_ir(
         missing_reason: None,
         bytes,
     }
-}
-
-/// Write queued attachment bytes after parse and before conversation files.
-pub(super) fn stage_conversation_attachments(
-    documents: &mut [message_ir::ConversationDocument],
-    attachments_dir: &Path,
-    mode: MediaMode,
-    compress: &CompressOptions,
-    log: Option<&LogSink>,
-    cancel: Option<&CancelFlag>,
-    report: &mut ExportReport,
-) -> Result<(), String> {
-    let payloads: Vec<Option<Vec<u8>>> = documents
-        .iter()
-        .flat_map(|doc| {
-            doc.messages
-                .iter()
-                .flat_map(|msg| msg.attachments.iter().map(|att| att.bytes.clone()))
-        })
-        .collect();
-
-    let mut jobs = Vec::new();
-    for doc in documents.iter_mut() {
-        for msg in &mut doc.messages {
-            let ts = msg.timestamp_unix_ms;
-            for att in &mut msg.attachments {
-                let hint = att
-                    .size_bytes
-                    .or_else(|| att.bytes.as_ref().map(|b| b.len() as u64));
-                jobs.push(AttachmentJob {
-                    attachment: att,
-                    timestamp_unix_ms: ts,
-                    size_hint: hint,
-                });
-            }
-        }
-    }
-    run_attachment_jobs(
-        &mut jobs,
-        attachments_dir,
-        mode,
-        compress,
-        |i| Ok(payloads.get(i).cloned().flatten()),
-        |progress| {
-            emit_log(
-                log,
-                format!(
-                    "  attachments {}/{} {}/{}",
-                    progress.done, progress.total, progress.bytes_done, progress.bytes_total
-                ),
-            );
-        },
-        log,
-        cancel.map(|flag| flag.as_ref()),
-    )?;
-
-    for job in &jobs {
-        if job.attachment.path.is_some() && job.attachment.digest_sha256.is_some() {
-            report.attachments_saved += 1;
-        }
-    }
-    for doc in documents.iter_mut() {
-        for msg in &mut doc.messages {
-            for att in &mut msg.attachments {
-                att.bytes = None;
-            }
-        }
-    }
-    Ok(())
 }

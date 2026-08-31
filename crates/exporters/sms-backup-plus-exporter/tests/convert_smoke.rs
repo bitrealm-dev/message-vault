@@ -68,8 +68,8 @@ fn convert_smoke_writes_csv_not_json() {
     let (report, _) = convert(&[input.as_path()], tmp.path()).unwrap();
 
     assert!(report.conversations >= 1);
-    let flat = report.extra.get("flat_eml").copied().unwrap_or(0);
-    let archive = report.extra.get("archive_eml").copied().unwrap_or(0);
+    let flat = report.extra("flat_eml");
+    let archive = report.extra("archive_eml");
     assert!(flat >= 1 || archive >= 1);
 
     assert_csv_header(
@@ -110,15 +110,8 @@ fn end_dedupe_collapses_duplicate_flats() {
     let out = tmp.path().join("out");
     let (report, _) = convert(&[input_dir.as_path()], &out).unwrap();
 
-    assert_eq!(report.extra.get("flat_eml").copied().unwrap_or(0), 2);
-    assert_eq!(
-        report
-            .extra
-            .get("messages_before_dedupe")
-            .copied()
-            .unwrap_or(0),
-        2
-    );
+    assert_eq!(report.extra("flat_eml"), 2);
+    assert_eq!(report.extra("messages_before_dedupe"), 2);
     assert_eq!(report.messages, 1);
     assert_eq!(report.duplicates_dropped, 1);
     assert_eq!(report.conversations, 1);
@@ -173,14 +166,7 @@ Will do\r\n"
     let out = tmp.path().join("out");
     let (report, _) = convert(&[input_dir.as_path()], &out).unwrap();
 
-    assert_eq!(
-        report
-            .extra
-            .get("messages_before_dedupe")
-            .copied()
-            .unwrap_or(0),
-        2
-    );
+    assert_eq!(report.extra("messages_before_dedupe"), 2);
     assert_eq!(report.messages, 1);
     assert_eq!(report.duplicates_dropped, 1);
 

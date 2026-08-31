@@ -1,5 +1,5 @@
 //! Convert iMazing Messages / WhatsApp rows into the shared conversation
-//! structure, then write the chosen output format via [`FormatSink`].
+//! structure, then write the chosen output format via [`ExportWriter`].
 
 use crate::attachments::{AttachmentIndex, ResolveAttachmentArgs, resolve_attachment_cell};
 use crate::attachments_emit::{attachment_guid_materials, pending_attachment_to_ir};
@@ -9,21 +9,14 @@ use crate::parse_emit::{
 };
 use anyhow::Result;
 use contacts::ContactsBook;
-use media::{CompressOptions, MediaMode};
-use message_csv::{DateRange, format_local_ts, stable_guid};
+use message_csv::DateRange;
 use message_ir::{
-    ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, HandleType,
-    IrAttachment, IrConversationType, IrDirection, IrMessage, IrMessageKind, IrParticipant,
-    IrService, IrSource, PendingAttachment, PendingConversation, PendingMessage, SCHEMA_VERSION,
-    owner_sender,
+    ExportMeta, HandleType, IrAttachment, IrParticipant, IrService, IrSource, PendingAttachment,
+    PendingConversation, PendingMessage, ProjectedRole, ProjectionHooks, pending_to_document,
+    prepare_conversation,
 };
-use message_ir_format::{
-    AttachmentSource, ConversationUnit, ExportTransforms, FormatSink, FormatSinkResult,
-    WriteQueueOptions,
-};
-use message_vault_io_core::{
-    CancelFlag, ExportReport, LogSink, OutputFormat, emit_log, prepare_outputs,
-};
+use message_ir_format::{AttachmentSource, ExportTransforms, ExportWriter, FormatSinkResult};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat, prepare_outputs};
 use serde_json::Map;
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
@@ -31,12 +24,6 @@ use std::path::Path;
 const EXPORT_SOURCE: &str = "imazing";
 const EXPORT_TOOL: &str = "iMazing";
 const EXPORT_TOOL_VERSION: &str = "3.5.5";
-
-/// Read a per-exporter counter from the report's `extra` map (test assertions).
-#[cfg(test)]
-fn count(report: &ExportReport, key: &str) -> u64 {
-    report.extra.get(key).copied().unwrap_or(0)
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TransportFamily {
@@ -95,22 +82,8 @@ pub(crate) fn convert_export(
     let tz = resolve_tz(timezone)?;
     let (inputs, output) = prepare_outputs(&[input.to_path_buf()], output)?;
     let input = &inputs[0];
-    let copy_attachments = transforms.copies_attachments();
-    let media_mode = if copy_attachments {
-        transforms.media
-    } else {
-        MediaMode::Disabled
-    };
-    let compress = transforms.compress.clone();
-    let log = transforms.log.clone();
-    // Captured before `transforms` moves into the sink: the queue path is for
-    // the import, which is JSONL and never obfuscated.
-    let use_queue = output_format == OutputFormat::Jsonl && !transforms.obfuscate;
-    let (sink, attachments_dir) = if resume {
-        FormatSink::open_resume(&output, output_format, transforms)
-    } else {
-        FormatSink::open_prepared(&output, output_format, transforms)
-    }?;
+    let writer = ExportWriter::open(&output, output_format, transforms, resume)?;
+    let copy_attachments = writer.copies_attachments();
     // Walk the input tree once; per-attachment lookups hit this index.
     let attachment_index = copy_attachments.then(|| AttachmentIndex::build(input));
 
@@ -160,26 +133,18 @@ pub(crate) fn convert_export(
             );
 
             let convo_key = format!("{}|{}", family.key_prefix(), peer.chat_id);
-            let convo =
-                conversations
-                    .entry(convo_key.clone())
-                    .or_insert_with(|| PendingConversation {
-                        chat_id: peer.chat_id.clone(),
-                        display_name: if peer.group {
-                            Some(session.clone())
-                        } else {
-                            None
-                        },
-                        participant_e164s: Vec::new(),
-                        messages: Vec::new(),
-                        is_group: peer.group,
-                        has_attachments: false,
-                        extra: {
-                            let mut e = BTreeMap::new();
-                            e.insert("source_kind".into(), discovered.kind.as_str().to_string());
-                            e
-                        },
-                    });
+            let convo = conversations.entry(convo_key.clone()).or_insert_with(|| {
+                let mut convo = PendingConversation::new(
+                    peer.chat_id.clone(),
+                    peer.group,
+                    peer.group.then(|| session.clone()),
+                    Vec::new(),
+                );
+                convo
+                    .extra
+                    .insert("source_kind".into(), discovered.kind.as_str().to_string());
+                convo
+            });
 
             for row in session_rows {
                 let Some((secs, date_ms)) = parse_message_date(&row.message_date, &tz) else {
@@ -314,76 +279,50 @@ pub(crate) fn convert_export(
         }
     }
 
+    let hooks = ImazingProjection {
+        export: message_vault_io_core::export_meta(
+            EXPORT_SOURCE,
+            EXPORT_TOOL,
+            EXPORT_TOOL_VERSION,
+            None,
+            None,
+        ),
+    };
     let mut documents = Vec::new();
     let mut sources = Vec::new();
-    let mut units: Vec<ConversationUnit> = Vec::new();
-    for (key, mut convo) in conversations {
-        let chat_id = key
-            .split_once('|')
-            .map(|(_, id)| id.to_string())
-            .unwrap_or_else(|| key.clone());
-        if !prepare_conversation(&mut convo, &mut report) {
-            continue;
-        }
-        if use_queue {
-            // Same positional collection as the flat path, kept per
-            // conversation so each unit carries its own sources.
-            let mut convo_sources = Vec::new();
-            collect_attachment_sources(&convo, &mut convo_sources);
-            let doc = pending_to_document(&chat_id, &convo, &mut report)?;
-            let mut source_iter = convo_sources.into_iter();
-            units.push(ConversationUnit::from_doc(doc, |_, att| {
-                match source_iter.next().flatten() {
-                    Some(path) => {
-                        // iMazing's rows carry no size; stat the source so the
-                        // byte counters and the headroom check see it.
-                        let hint = att
-                            .size_bytes
-                            .or_else(|| std::fs::metadata(&path).ok().map(|m| m.len()));
-                        (AttachmentSource::Path(path), hint)
-                    }
-                    None => (AttachmentSource::Missing, att.size_bytes),
-                }
-            }));
+    for (_key, mut convo) in conversations {
+        let chat_id = convo.chat_id.clone();
+        let (keep, skipped) =
+            prepare_conversation(&mut convo, |a, b| a.sort_key.cmp(&b.sort_key), |k| k);
+        report.skipped_invalid_date += skipped;
+        if !keep {
             continue;
         }
         collect_attachment_sources(&convo, &mut sources);
-        documents.push(pending_to_document(&chat_id, &convo, &mut report)?);
+        let (doc, tally) = pending_to_document(&chat_id, &convo, &hooks);
+        report.messages += tally.messages;
+        report.sent += tally.sent;
+        report.received += tally.received;
+        if tally.notifications > 0 {
+            report.bump("notifications", tally.notifications);
+        }
+        documents.push(doc);
     }
 
-    if use_queue {
-        let options = WriteQueueOptions {
-            media: media_mode,
-            compress: compress.clone(),
-            resume,
-            writer_count: 0,
-        };
-        let sink_result = message_ir_format::drain_units(
-            &output,
-            units,
-            &options,
-            log.as_ref(),
-            cancel,
-            &mut report,
-        )?;
-        return Ok((report, sink_result));
-    }
-
-    stage_conversation_attachments(
-        &mut documents,
-        &sources,
-        &attachments_dir,
-        media_mode,
-        &compress,
-        log.as_ref(),
-        cancel,
-        &mut report,
-    )?;
-
-    let sink_result = message_ir_format::write_documents_through_sink(
+    let mut source_iter = sources.into_iter();
+    let sink_result = writer.finish(
         documents,
-        sink,
-        log.as_ref(),
+        &mut |att| match source_iter.next().flatten() {
+            Some(path) => {
+                // iMazing's rows carry no size; stat the source so the byte
+                // counters and the headroom check see it.
+                let hint = att
+                    .size_bytes
+                    .or_else(|| std::fs::metadata(&path).ok().map(|m| m.len()));
+                (AttachmentSource::Path(path), hint)
+            }
+            None => (AttachmentSource::Missing, att.size_bytes),
+        },
         cancel,
         &mut report,
     )?;
@@ -404,69 +343,6 @@ fn collect_attachment_sources(
             out.push((!source.is_empty()).then(|| std::path::PathBuf::from(&source)));
         }
     }
-}
-
-fn stage_conversation_attachments(
-    documents: &mut [ConversationDocument],
-    sources: &[Option<std::path::PathBuf>],
-    attachments_dir: &Path,
-    mode: MediaMode,
-    compress: &CompressOptions,
-    log: Option<&LogSink>,
-    cancel: Option<&CancelFlag>,
-    report: &mut ExportReport,
-) -> Result<()> {
-    let mut jobs = Vec::new();
-    for doc in documents.iter_mut() {
-        for msg in &mut doc.messages {
-            let ts = msg.timestamp_unix_ms;
-            for att in &mut msg.attachments {
-                jobs.push(message_vault_io_core::AttachmentJob {
-                    attachment: att,
-                    timestamp_unix_ms: ts,
-                    size_hint: None,
-                });
-            }
-        }
-    }
-    message_vault_io_core::run_attachment_jobs(
-        &mut jobs,
-        attachments_dir,
-        mode,
-        compress,
-        |i| {
-            let Some(path) = sources.get(i).and_then(|p| p.as_ref()) else {
-                return Ok(None);
-            };
-            std::fs::read(path).map(Some).or(Ok(None))
-        },
-        |progress| {
-            emit_log(
-                log,
-                format!(
-                    "  attachments {}/{} {}/{}",
-                    progress.done, progress.total, progress.bytes_done, progress.bytes_total
-                ),
-            );
-        },
-        log,
-        cancel.map(|flag| flag.as_ref()),
-    )
-    .map_err(anyhow::Error::msg)?;
-    for job in &jobs {
-        if job.attachment.path.is_some() && job.attachment.digest_sha256.is_some() {
-            report.attachments_saved += 1;
-        }
-    }
-    Ok(())
-}
-
-fn prepare_conversation(convo: &mut PendingConversation, report: &mut ExportReport) -> bool {
-    if convo.messages.is_empty() {
-        return false;
-    }
-    convo.messages.sort_by_key(|m| m.sort_key);
-    message_vault_io_core::prune_and_finish_conversation(convo, report, |k| k)
 }
 
 /// iMazing identifiers are E.164 phones, emails, or (rarely) name stems;
@@ -499,91 +375,72 @@ fn imazing_packaging_stem_suffix(source_kind: &str) -> Option<String> {
     }
 }
 
-/// First non-empty `contact_name` extra on a message in this conversation.
-fn first_contact_name(convo: &PendingConversation) -> Option<String> {
-    convo
-        .messages
-        .iter()
-        .map(|m| m.extra_str("contact_name").trim())
-        .find(|n| !n.is_empty())
-        .map(str::to_string)
+/// iMazing deltas of the shared [`pending_to_document`] projection.
+struct ImazingProjection {
+    export: ExportMeta,
 }
 
-/// Build a [`ConversationDocument`] from one pending conversation.
-///
-/// Currently always returns `Ok`. The `Result` matches the other exporters.
-fn pending_to_document(
-    chat_id: &str,
-    convo: &PendingConversation,
-    report: &mut ExportReport,
-) -> Result<ConversationDocument> {
-    let peers = imazing_peers(convo.is_group, chat_id);
-    let mut participants: Vec<IrParticipant> = peers
-        .iter()
-        .map(|h| IrParticipant {
-            handle: h.clone(),
-            display_name: None,
-            handle_type: Some(handle_type_for(h)),
-        })
-        .collect();
-    if participants.is_empty() && !convo.is_group && !chat_id.is_empty() {
-        participants.push(IrParticipant {
-            handle: chat_id.to_string(),
-            display_name: first_contact_name(convo),
-            handle_type: Some(handle_type_for(chat_id)),
-        });
+impl ProjectionHooks for ImazingProjection {
+    fn export(&self) -> ExportMeta {
+        self.export.clone()
     }
-    let packaging_stem_suffix = imazing_packaging_stem_suffix(convo.extra_str("source_kind"));
-    // Match previous CSV/mail stem: conversation_filename gets None for title
-    // (session string is not a real group title).
-    let session_title = convo.display_name.as_deref().unwrap_or("");
 
-    let owner_meta = ExportMeta {
-        source: String::new(),
-        tool: String::new(),
-        tool_version: String::new(),
-        owner_handle: None,
-        owner_display_name: None,
-    };
-    let export = message_vault_io_core::export_meta(
-        EXPORT_SOURCE,
-        EXPORT_TOOL,
-        EXPORT_TOOL_VERSION,
-        &owner_meta,
-    );
-    let (owner_handle, owner_display) = owner_sender(&export);
+    fn service(&self, msg: &PendingMessage) -> IrService {
+        IrService::parse(msg.extra_str("service"))
+    }
 
-    let mut messages = Vec::with_capacity(convo.messages.len());
-    for msg in &convo.messages {
-        let is_notification = msg.extra_flag("is_notification");
-        if is_notification {
-            report.bump("notifications", 1);
+    fn role(&self, msg: &PendingMessage) -> ProjectedRole {
+        if msg.extra_flag("is_notification") {
+            ProjectedRole::Notification
         } else if msg.is_from_me {
-            report.sent += 1;
+            ProjectedRole::Outgoing
         } else {
-            report.received += 1;
+            ProjectedRole::Incoming
         }
-        report.messages += 1;
+    }
 
-        let (ts_local, _, _) = format_local_ts(msg.sort_key).expect("timestamp validated above");
-        let digests = attachment_guid_materials(&msg.attachments);
-        let guid = stable_guid(chat_id, &ts_local, msg.is_from_me, &msg.text, &digests);
-        let timestamp_unix_ms = msg
-            .extra_str("date_ms")
-            .parse::<i64>()
-            .unwrap_or_else(|_| msg.sort_key.saturating_mul(1000));
-        let attachments: Vec<IrAttachment> = msg
-            .attachments
+    fn subject(&self, msg: &PendingMessage) -> Option<String> {
+        msg.extra_opt("subject")
+    }
+
+    fn guid_materials(&self, msg: &PendingMessage) -> Vec<String> {
+        attachment_guid_materials(&msg.attachments)
+    }
+
+    fn attachment_to_ir(&self, att: &PendingAttachment, msg: &PendingMessage) -> IrAttachment {
+        pending_attachment_to_ir(att, msg)
+    }
+
+    fn participants(&self, chat_id: &str, convo: &PendingConversation) -> Vec<IrParticipant> {
+        let peers = imazing_peers(convo.is_group, chat_id);
+        let mut participants: Vec<IrParticipant> = peers
             .iter()
-            .map(|a| pending_attachment_to_ir(a, msg))
+            .map(|h| IrParticipant {
+                handle: h.clone(),
+                display_name: None,
+                handle_type: Some(handle_type_for(h)),
+            })
             .collect();
-        let message_kind = if msg.attachments.is_empty() {
-            IrMessageKind::Sms
-        } else {
-            IrMessageKind::Mms
-        };
+        if participants.is_empty() && !convo.is_group && !chat_id.is_empty() {
+            participants.push(IrParticipant {
+                handle: chat_id.to_string(),
+                display_name: convo.first_contact_name(),
+                handle_type: Some(handle_type_for(chat_id)),
+            });
+        }
+        participants
+    }
 
+    fn packaging_stem_suffix(&self, convo: &PendingConversation) -> Option<String> {
+        imazing_packaging_stem_suffix(convo.extra_str("source_kind"))
+    }
+
+    fn source(&self, convo: &PendingConversation, msg: &PendingMessage) -> IrSource {
         let mut fields = Map::new();
+        // Session string is not a real group title: stored as data only
+        // (the document's `group_title` stays `None`, matching the previous
+        // CSV/mail stem).
+        let session_title = convo.display_name.as_deref().unwrap_or("");
         if !session_title.is_empty() {
             fields.insert(
                 "group_title".into(),
@@ -608,64 +465,11 @@ fn pending_to_document(
                 fields.insert(key.into(), serde_json::Value::String(val.to_string()));
             }
         }
-        let source = IrSource {
+        IrSource {
             android_type: None,
             fields,
         }
-        .into_option();
-
-        let is_outgoing = msg.is_from_me && !is_notification;
-        let (sender_handle, sender_display_name) = if is_outgoing {
-            (owner_handle.clone(), owner_display.clone())
-        } else {
-            (
-                if msg.sender_handle.is_empty() {
-                    None
-                } else {
-                    Some(msg.sender_handle.clone())
-                },
-                msg.sender_display_name.clone(),
-            )
-        };
-
-        messages.push(IrMessage {
-            guid,
-            timestamp_unix_ms,
-            direction: if is_outgoing {
-                IrDirection::Outgoing
-            } else {
-                IrDirection::Incoming
-            },
-            service: IrService::parse(msg.extra_str("service")),
-            message_kind,
-            sender_handle,
-            sender_display_name,
-            subject: msg.extra_opt("subject"),
-            text: msg.text.clone(),
-            attachments,
-            imessage: None,
-            source,
-        });
     }
-
-    Ok(ConversationDocument {
-        schema_version: SCHEMA_VERSION,
-        export,
-        conversation: ConversationMeta {
-            chat_identifier: chat_id.to_string(),
-            conversation_type: if convo.is_group {
-                IrConversationType::Group
-            } else {
-                IrConversationType::Individual
-            },
-            // None matches previous CSV/mail stem (session string is not a real group title).
-            group_title: None,
-            participants,
-            stats: ConversationStats::default(),
-        },
-        messages,
-        packaging_stem_suffix,
-    })
 }
 
 #[cfg(test)]
@@ -762,7 +566,7 @@ Bob,,McRoy,+13212462167,\n",
         let out = dir.path().join("out");
         let (report, _) = convert(dir.path(), &out, &book).unwrap();
         assert_eq!(report.conversations, 1);
-        assert_eq!(count(&report, "unresolved_chat_phone"), 0);
+        assert_eq!(report.extra("unresolved_chat_phone"), 0);
         assert_eq!(report.messages, 2);
         let csv_path = out.join("+13212462167.csv");
         let body = fs::read_to_string(&csv_path).unwrap();
@@ -791,7 +595,7 @@ Other,,Person,+15555550999,\n",
         let book = ContactsBook::load_vcard_csv(&contacts).unwrap();
         let out = dir.path().join("out");
         let (report, _) = convert(dir.path(), &out, &book).unwrap();
-        assert!(count(&report, "unresolved_chat_phone") >= 1);
+        assert!(report.extra("unresolved_chat_phone") >= 1);
         assert_eq!(report.conversations, 1);
         assert!(out.join("Mystery_Person.csv").is_file());
     }
@@ -864,7 +668,7 @@ Carol,,Silent,+15555550133,\n",
         let out = dir.path().join("out");
         let (report, _) = convert(dir.path(), &out, &book).unwrap();
         assert_eq!(report.conversations, 1);
-        assert_eq!(count(&report, "unresolved_group_participants"), 0);
+        assert_eq!(report.extra("unresolved_group_participants"), 0);
         let body = fs::read_to_string(out.join("group_+15555550111_+15555550122_+15555550133.csv"))
             .unwrap();
         assert!(body.contains("+15555550133") || body.contains("15555550133"));
@@ -892,7 +696,7 @@ Bob,,Example,+15555550122,\n",
         let out = dir.path().join("out");
         let (report, _) = convert(dir.path(), &out, &book).unwrap();
         assert_eq!(report.conversations, 1);
-        assert_eq!(count(&report, "unresolved_group_participants"), 1);
+        assert_eq!(report.extra("unresolved_group_participants"), 1);
     }
 
     #[test]
@@ -920,8 +724,8 @@ Bob,,,+15555550100,\n",
         let out = dir.path().join("out");
         let (report, _) = convert(dir.path(), &out, &book).unwrap();
         assert_eq!(report.conversations, 2);
-        assert_eq!(count(&report, "messages_files"), 1);
-        assert_eq!(count(&report, "whatsapp_files"), 1);
+        assert_eq!(report.extra("messages_files"), 1);
+        assert_eq!(report.extra("whatsapp_files"), 1);
         assert!(out.join("+15555550100.csv").is_file());
         assert!(out.join("+15555550100__whatsapp.csv").is_file());
         let wa = fs::read_to_string(out.join("+15555550100__whatsapp.csv")).unwrap();

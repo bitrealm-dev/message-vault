@@ -8,6 +8,10 @@ use message_vault_io_core::{ExporterConfig, RunResult, SourceConfig};
 
 /// Check the required inputs, resolve contacts and name mapping, then convert.
 ///
+/// The shared `run_pipeline` cannot host this exporter's `--no-summary` flag
+/// (it appends the summary lines unconditionally), so the SMS Backup+ specifics
+/// stay here and only the shared `finish_run` tail is reused.
+///
 /// # Errors
 ///
 /// Returns an error when the source is not SMS Backup+, an input, owner phone,
@@ -18,7 +22,6 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
         bail!("sms-backup-plus-exporter requires SourceConfig::SmsBackupPlus");
     };
     message_vault_io_core::check_cancel(config.cancel.as_ref()).map_err(anyhow::Error::msg)?;
-    let mut messages = Vec::new();
 
     if source.owner_phones.is_empty() {
         bail!("owner phone required: pass --owner-phone");
@@ -60,14 +63,21 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
         log: config.log.as_ref(),
         resume: config.resume,
     })?;
+    if source.include_summary {
+        return message_ir_format::finish_run(
+            config,
+            &report,
+            &sink,
+            config.media.mode.needs_tools(),
+        );
+    }
+    // --no-summary: the shared tail appends the summary unconditionally, so
+    // repeat its media-failure bail and keep only the sink log lines.
     if !sink.media.errors.is_empty() && sink.media.processed == 0 && config.media.mode.needs_tools()
     {
         anyhow::bail!("media processing failed for all candidate files");
     }
-    messages.extend(sink.log_lines());
-
-    if source.include_summary {
-        report.summary_lines(&config.output, &mut messages);
-    }
-    Ok(RunResult { messages })
+    Ok(RunResult {
+        messages: sink.log_lines(),
+    })
 }

@@ -1,9 +1,10 @@
 //! Copy, convert, or skip attachment files after parse.
 
 use crate::attachments::attachment_dest_name;
-use crate::process::{LogSink, emit_log};
+use crate::pipeline::ExportReport;
+use crate::process::{CancelFlag, LogSink, emit_log};
 use media::{CompressOptions, MediaMode};
-use message_ir::IrAttachment;
+use message_ir::{ConversationDocument, IrAttachment};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
@@ -138,6 +139,89 @@ pub fn run_attachment_jobs(
         });
     }
 
+    Ok(())
+}
+
+/// Write queued attachment bytes after parse and before conversation files.
+///
+/// The shared non-queue staging step every exporter used to copy: assemble
+/// one [`AttachmentJob`] per attachment across `documents` (in document
+/// order), run [`run_attachment_jobs`] with the standard progress log line,
+/// count staged files into `report.attachments_saved`, and clear any
+/// in-memory `bytes` left on the attachments.
+///
+/// `load(i)` is the per-exporter payload hook: `i` is the flat attachment
+/// index in document order. `Ok(None)` (or a non-cancel `Err`) marks that
+/// attachment `file_missing` and the run continues.
+///
+/// Size hints for the progress totals come from each attachment's
+/// `size_bytes` (falling back to in-memory `bytes` length when present);
+/// path-backed exporters whose attachments carry no size get unhinted totals
+/// that grow as files load.
+///
+/// # Errors
+///
+/// Returns `"canceled"` when the user cancels, or an I/O / convert error
+/// string when the staging directory cannot be used.
+#[allow(clippy::too_many_arguments)]
+pub fn stage_conversation_attachments(
+    documents: &mut [ConversationDocument],
+    attachments_dir: &Path,
+    mode: MediaMode,
+    compress: &CompressOptions,
+    load: impl FnMut(usize) -> Result<Option<Vec<u8>>, String>,
+    log: Option<&LogSink>,
+    cancel: Option<&CancelFlag>,
+    report: &mut ExportReport,
+) -> Result<(), String> {
+    let mut jobs = Vec::new();
+    for doc in documents.iter_mut() {
+        for msg in &mut doc.messages {
+            let ts = msg.timestamp_unix_ms;
+            for att in &mut msg.attachments {
+                let hint = att
+                    .size_bytes
+                    .or_else(|| att.bytes.as_ref().map(|b| b.len() as u64));
+                jobs.push(AttachmentJob {
+                    attachment: att,
+                    timestamp_unix_ms: ts,
+                    size_hint: hint,
+                });
+            }
+        }
+    }
+    run_attachment_jobs(
+        &mut jobs,
+        attachments_dir,
+        mode,
+        compress,
+        load,
+        |progress| {
+            emit_log(
+                log,
+                format!(
+                    "  attachments {}/{} {}/{}",
+                    progress.done, progress.total, progress.bytes_done, progress.bytes_total
+                ),
+            );
+        },
+        log,
+        cancel.map(|flag| flag.as_ref()),
+    )?;
+
+    for job in &jobs {
+        if job.attachment.path.is_some() && job.attachment.digest_sha256.is_some() {
+            report.attachments_saved += 1;
+        }
+    }
+    drop(jobs);
+    for doc in documents.iter_mut() {
+        for msg in &mut doc.messages {
+            for att in &mut msg.attachments {
+                att.bytes = None;
+            }
+        }
+    }
     Ok(())
 }
 

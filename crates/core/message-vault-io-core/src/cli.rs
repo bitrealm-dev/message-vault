@@ -10,8 +10,8 @@ use message_csv::DateRange;
 
 use crate::pipeline::{RunResult, print_result};
 use crate::{
-    ContactsConfig, ContactsKind, ExporterConfig, ObfuscateConfig, OutputFormat,
-    contacts_kind_from_path,
+    ContactsConfig, ContactsKind, ExporterConfig, MediaConfig, ObfuscateConfig, OutputFormat,
+    SourceConfig, contacts_kind_from_path,
 };
 
 /// CLI arguments common to (nearly) every exporter.
@@ -105,6 +105,43 @@ impl CommonCli {
         ObfuscateConfig {
             enabled: self.obfuscate,
             seed: self.obfuscate_seed.clone(),
+        }
+    }
+
+    /// Build the `ExporterConfig` an exporter binary hands to its run
+    /// function: the shared fields come from these common flags
+    /// (`timezone: None`, `cancel: None`, `log: None`, `resume: false` —
+    /// the CLI has no flags for those), the caller supplies what differs
+    /// per exporter.
+    ///
+    /// `date_range`, `output_format`, and `compress` are the values
+    /// [`run_cli`] parsed from the flags. A binary that deviates on a
+    /// shared field (iMazing's `--timezone`) overrides it on the returned
+    /// value.
+    pub fn exporter_config(
+        &self,
+        date_range: DateRange,
+        output_format: OutputFormat,
+        compress: CompressOptions,
+        inputs: Vec<PathBuf>,
+        source: SourceConfig,
+    ) -> ExporterConfig {
+        ExporterConfig {
+            inputs,
+            output: self.output.clone(),
+            date_range,
+            timezone: None,
+            contacts: self.contacts_config(),
+            obfuscate: self.obfuscate_config(),
+            media: MediaConfig {
+                mode: self.media_mode,
+                compress,
+            },
+            cancel: None,
+            log: None,
+            output_format,
+            resume: false,
+            source,
         }
     }
 }

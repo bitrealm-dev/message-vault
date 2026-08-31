@@ -16,8 +16,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
+mod projection;
 #[cfg(feature = "testutil")]
 pub mod testutil;
+
+pub use projection::{
+    ProjectedRole, ProjectionHooks, ProjectionTally, SortKeyUnit, default_participants,
+    display_names_for_handles, ensure_conversation, pending_to_document, prepare_conversation,
+};
 
 /// Schema version written into every [`ConversationDocument`] (currently 3).
 pub const SCHEMA_VERSION: u32 = 3;
@@ -676,6 +682,48 @@ fn compute_stats(messages: &[IrMessage]) -> ConversationStats {
     }
 }
 
+/// Format a Unix second as local / UTC / display strings.
+///
+/// Returns `None` when the timestamp cannot be represented in local or UTC.
+pub fn format_local_ts(secs: i64) -> Option<(String, String, String)> {
+    use chrono::{Local, TimeZone, Utc};
+    let local = Local.timestamp_opt(secs, 0).single().or_else(|| {
+        Utc.timestamp_opt(secs, 0)
+            .single()
+            .map(|utc| Local.from_utc_datetime(&utc.naive_utc()))
+    })?;
+    let utc = local.with_timezone(&Utc);
+    let display = local.format("%b %e, %Y %I:%M:%S %p").to_string();
+    Some((
+        local.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        utc.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        display,
+    ))
+}
+
+/// Deterministic message GUID from chat + timestamp + direction + body + attachment digests.
+pub fn stable_guid(
+    chat_id: &str,
+    timestamp: &str,
+    is_from_me: bool,
+    text: &str,
+    att_digests: &[String],
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(chat_id.as_bytes());
+    hasher.update(b"|");
+    hasher.update(timestamp.as_bytes());
+    hasher.update(b"|");
+    hasher.update(if is_from_me { b"1" } else { b"0" });
+    hasher.update(b"|");
+    hasher.update(text.as_bytes());
+    for d in att_digests {
+        hasher.update(b"|");
+        hasher.update(d.as_bytes());
+    }
+    hex::encode(hasher.finalize())
+}
+
 /// Owner identity for outgoing rows: handle + display (`"Me"` if handle set but name missing).
 pub fn owner_sender(export: &ExportMeta) -> (Option<String>, Option<String>) {
     let handle = export
@@ -814,9 +862,36 @@ pub struct PendingConversation {
 }
 
 impl PendingConversation {
+    /// Fresh conversation with no messages and an empty `extra` map.
+    pub fn new(
+        chat_id: impl Into<String>,
+        is_group: bool,
+        display_name: Option<String>,
+        participant_e164s: Vec<String>,
+    ) -> Self {
+        Self {
+            chat_id: chat_id.into(),
+            display_name,
+            participant_e164s,
+            messages: Vec::new(),
+            is_group,
+            has_attachments: false,
+            extra: std::collections::BTreeMap::new(),
+        }
+    }
+
     /// Read an exporter-specific string field from [`Self::extra`].
     pub fn extra_str(&self, key: &str) -> &str {
         self.extra.get(key).map(String::as_str).unwrap_or("")
+    }
+
+    /// First non-empty `contact_name` extra on a message in this conversation.
+    pub fn first_contact_name(&self) -> Option<String> {
+        self.messages
+            .iter()
+            .map(|m| m.extra_str("contact_name").trim())
+            .find(|n| !n.is_empty())
+            .map(str::to_string)
     }
 }
 

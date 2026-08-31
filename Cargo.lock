@@ -1833,6 +1833,7 @@ dependencies = [
 name = "message-ir"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "hex",
  "serde",
  "serde_json",
