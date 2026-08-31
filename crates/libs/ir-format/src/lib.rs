@@ -28,7 +28,7 @@ mod write;
 mod write_queue;
 mod write_sbr;
 
-pub use clean::{EXPORT_SENTINEL, clean_previous_ir_output};
+pub use clean::{EXPORT_SENTINEL, clean_previous_ir_output, write_export_sentinel};
 pub use export_transforms::ExportTransforms;
 pub use export_writer::{ExportWriter, ExportWriterParts};
 pub use format_sink::{FormatSink, FormatSinkResult, write_documents_through_sink};

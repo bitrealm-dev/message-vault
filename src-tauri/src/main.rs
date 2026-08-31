@@ -34,6 +34,7 @@ fn main() {
             commands::extract::cancel,
             commands::ffmpeg::probe_ffmpeg_tools,
             commands::ffmpeg::set_ffmpeg_tools_dir,
+            commands::format::format,
             commands::paths::home_dir,
             commands::paths::path_stat,
             commands::paths::ios_backup_encrypted,

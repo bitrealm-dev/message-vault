@@ -4,13 +4,13 @@ import { CheckIcon, XIcon } from "../../components/icons";
 import PathPicker from "../../components/PathPicker";
 import { FFMPEG_TOOLS_STORAGE_KEY } from "../../lib/ffmpeg-tools";
 import {
-  defaultImportStagingDir,
+  defaultStagingDir,
   getHomeDir,
-  getImportStagingDir,
   getRememberImporterPaths,
-  isUsableImportStagingParent,
-  setImportStagingDir,
+  getStagingDir,
+  isUsableStagingParent,
   setRememberImporterPaths,
+  setStagingDir,
 } from "../../lib/system-settings";
 import { type FfmpegToolsProbe, probeFfmpegTools, setFfmpegToolsDir } from "../../lib/tauri";
 import { isTauri } from "../../lib/tauri-check";
@@ -26,7 +26,7 @@ const settingsHelp = "col-start-2 pl-2 text-[0.75rem] text-muted";
 
 const FFMPEG_DEBOUNCE_MS = 300;
 
-/** Example path shown under the Import staging directory field. */
+/** Example path shown under the Staging directory field. */
 function stagingHelpExample(stagingDir: string, defaultDir: string): string {
   const trimmed = stagingDir.trim().replace(/[/\\]+$/, "");
   const defaultTrimmed = defaultDir.trim().replace(/[/\\]+$/, "");
@@ -74,8 +74,8 @@ export function SystemSection() {
   const stagingId = useId();
   const ffmpegId = useId();
   const [ffmpegPath, setFfmpegPath] = useState("");
-  const [stagingDir, setStagingDir] = useState("");
-  const [defaultStagingDir, setDefaultStagingDir] = useState("");
+  const [stagingPath, setStagingPath] = useState("");
+  const [defaultStagingPath, setDefaultStagingPath] = useState("");
   const [rememberPaths, setRememberPaths] = useState(false);
   const [probe, setProbe] = useState<FfmpegToolsProbe | null>(null);
   const ffmpegDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -122,10 +122,10 @@ export function SystemSection() {
 
     void (async () => {
       const home = await getHomeDir();
-      const defaultDir = defaultImportStagingDir(home);
-      setDefaultStagingDir(defaultDir);
-      const storedStaging = getImportStagingDir();
-      setStagingDir(storedStaging || defaultDir);
+      const defaultDir = defaultStagingDir(home);
+      setDefaultStagingPath(defaultDir);
+      const storedStaging = getStagingDir();
+      setStagingPath(storedStaging || defaultDir);
       await runFfmpegApply(storedFfmpeg);
     })();
 
@@ -135,19 +135,19 @@ export function SystemSection() {
   }, [runFfmpegApply]);
 
   const onStagingPathChange = (next: string) => {
-    setStagingDir(next);
-    const defaultDir = defaultStagingDir;
+    setStagingPath(next);
+    const defaultDir = defaultStagingPath;
     const trimmed = next.trim();
     // Empty or equal to the default → no override (import uses the default parent).
     if (!trimmed || (defaultDir && trimmed === defaultDir)) {
-      setImportStagingDir("");
+      setStagingDir("");
       return;
     }
     // Relative / filesystem root while typing: keep the field, do not persist yet.
-    if (!isUsableImportStagingParent(trimmed)) {
+    if (!isUsableStagingParent(trimmed)) {
       return;
     }
-    setImportStagingDir(trimmed);
+    setStagingDir(trimmed);
   };
 
   const onFfmpegPathChange = (next: string) => {
@@ -161,32 +161,32 @@ export function SystemSection() {
   if (!isTauri()) {
     return (
       <p className="m-0 text-[0.875rem] text-muted">
-        System settings (import staging directory, ffmpeg tools, and remembered importer paths) are
+        System settings (staging directory, ffmpeg tools, and remembered importer paths) are
         available in the desktop app.
       </p>
     );
   }
 
-  const helpExample = stagingHelpExample(stagingDir, defaultStagingDir);
+  const helpExample = stagingHelpExample(stagingPath, defaultStagingPath);
 
   return (
     <div>
       <h3 className={sectionHeading}>Vault</h3>
       <div className={settingsGrid}>
         <label htmlFor={stagingId} className={settingsLabel}>
-          Import staging directory
+          Staging directory
         </label>
         <div>
           <PathPicker
             id={stagingId}
-            value={stagingDir}
+            value={stagingPath}
             onChange={onStagingPathChange}
             directory
-            placeholder={defaultStagingDir || "~/message-vault"}
+            placeholder={defaultStagingPath || "~/message-vault"}
           />
         </div>
         <p className={settingsHelp}>
-          Temporary import files are written here. For example {helpExample}
+          Temporary files for Import and Export are written here. For example {helpExample}
         </p>
       </div>
 

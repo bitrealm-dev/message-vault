@@ -16,7 +16,7 @@
 //! ## The staging-child guard
 //!
 //! All three commands take both a `staging_dir` to act on and a
-//! `staging_root` naming the Import Staging Directory it must live under —
+//! `staging_root` naming the Staging Directory it must live under —
 //! both strings come from the same caller, so containment alone only proves
 //! the two are consistent with each other, not that `staging_dir` was ever
 //! a folder this app wrote. [`resolve_staging_child`] is the one guard all
@@ -50,7 +50,7 @@ use crate::state::AppState;
 pub struct StagingArgs {
     /// Staging folder written by an earlier `extract` run.
     pub staging_dir: String,
-    /// Import Staging Directory root every staging folder must live under —
+    /// Staging Directory root every staging folder must live under —
     /// the same root `open_path` guards.
     pub staging_root: String,
     /// Attachment handling choice: `copy`, `convert`, `compress`, or `skip`.
@@ -94,12 +94,10 @@ fn resolve_staging_child(
     let root = resolve_staging_root(staging_root)?;
 
     if resolved == root {
-        return Err("Staging path must not be the Import Staging Directory itself".to_string());
+        return Err("Staging path must not be the Staging Directory itself".to_string());
     }
     if resolved.parent() != Some(root.as_path()) {
-        return Err(
-            "Staging path must be a direct child of the Import Staging Directory".to_string(),
-        );
+        return Err("Staging path must be a direct child of the Staging Directory".to_string());
     }
     if require_sentinel && !resolved.join(EXPORT_SENTINEL).is_file() {
         return Err(format!(
@@ -325,7 +323,7 @@ pub async fn transcode_staging(
 pub struct DeleteStagingArgs {
     /// Staging folder to remove.
     pub staging_dir: String,
-    /// Import Staging Directory root every staging folder must live under —
+    /// Staging Directory root every staging folder must live under —
     /// the same root `open_path` guards.
     pub staging_root: String,
 }

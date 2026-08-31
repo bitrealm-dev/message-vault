@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { resolveImportStagingParent } from "./system-settings";
+import { resolveStagingParent } from "./system-settings";
 import type {
   AttachmentMediaMode,
   ExtractConfig,
@@ -49,7 +49,7 @@ export async function invokeCancel(): Promise<void> {
  * folder instead of a fresh backup.
  *
  * There is no `staging_root` field: the wrappers below resolve it themselves
- * via `resolveImportStagingParent`, the same source `openPathInExplorer`
+ * via `resolveStagingParent`, the same source `openPathInExplorer`
  * uses, so no caller can pass a root that disagrees with the Rust-side
  * containment guard.
  */
@@ -62,14 +62,14 @@ export interface StagingConfig {
 }
 
 /**
- * Resolve the Import Staging Directory root every staging command must
+ * Resolve the Staging Directory root every staging command must
  * check `staging_dir` against, throwing when it cannot be determined —
  * mirrors `openPathInExplorer`'s own resolution and error.
  */
 async function resolveStagingRoot(): Promise<string> {
-  const root = await resolveImportStagingParent();
+  const root = await resolveStagingParent();
   if (!root) {
-    throw new Error("Could not determine the import staging directory");
+    throw new Error("Could not determine the staging directory");
   }
   return root;
 }
@@ -263,6 +263,41 @@ export async function invokePull(config: PullConfig): Promise<void> {
       query: config.query,
       skipAttachments: config.skip_attachments,
     },
+  });
+}
+
+/**
+ * File formats `message-reexport` can write, in the order the Export screen
+ * offers them. The ids are the strings the `format` command parses
+ * (`src-tauri/src/commands/format.rs`); anything else is rejected there.
+ */
+export const EXPORT_FORMATS = [
+  { id: "jsonl", label: "JSON Lines (.jsonl)" },
+  { id: "json", label: "JSON (.json)" },
+  { id: "csv", label: "CSV (.csv)" },
+  { id: "eml", label: "EML (one file per message)" },
+  { id: "mbox", label: "MBOX (.mbox)" },
+  { id: "xml", label: "Android XML (smses.xml)" },
+] as const;
+
+/** Id of a format the Export screen can write. */
+export type ExportFormat = (typeof EXPORT_FORMATS)[number]["id"];
+
+/**
+ * Rewrite an export folder into another format.
+ *
+ * `input_dir` and `output_dir` must differ: `message-reexport` canonicalizes
+ * both and refuses to write into its own input.
+ */
+export async function invokeFormat(config: {
+  input_dir: string;
+  output_dir: string;
+  output_format: ExportFormat;
+}): Promise<void> {
+  return invoke("format", {
+    inputDir: config.input_dir,
+    outputDir: config.output_dir,
+    outputFormat: config.output_format,
   });
 }
 

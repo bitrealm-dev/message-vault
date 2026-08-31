@@ -3,8 +3,8 @@
 import { invokeHomeDir } from "./tauri";
 import { isTauri } from "./tauri-check";
 
-/** localStorage key for the import staging parent (legacy name kept for saved paths). */
-const VAULT_WORKING_DIR_KEY = "mv-vault-working-dir";
+/** localStorage key for the staging parent folder. */
+const STAGING_DIR_KEY = "mv-staging-dir";
 const REMEMBER_IMPORTER_PATHS_KEY = "mv-remember-importer-paths";
 const IMPORTER_PATHS_KEY = "mv-importer-paths";
 const IMPORTER_EXTRA_PATHS_KEY = "mv-importer-extra-paths";
@@ -12,8 +12,8 @@ const IMPORTER_EXTRA_PATHS_KEY = "mv-importer-extra-paths";
 let cachedHomeDir: string | null = null;
 let homeDirPromise: Promise<string> | null = null;
 
-/** Default folder name under the user home directory for import staging. */
-const IMPORT_STAGING_PARENT = "message-vault";
+/** Default folder name under the user home directory for staging. */
+const STAGING_PARENT_NAME = "message-vault";
 
 /**
  * Strip trailing `/` or `\\` without turning a Unix root into an empty string.
@@ -29,7 +29,7 @@ export function stripTrailingPathSeparators(path: string): string {
  * True for an absolute folder that is not the filesystem root.
  * Relative paths and `/` would write or open next to the process cwd, or anywhere on disk.
  */
-export function isUsableImportStagingParent(path: string): boolean {
+export function isUsableStagingParent(path: string): boolean {
   const parent = stripTrailingPathSeparators(path);
   if (!parent || parent === "/") return false;
   if (/^[A-Za-z]:$/.test(parent)) return false;
@@ -40,48 +40,48 @@ export function isUsableImportStagingParent(path: string): boolean {
 }
 
 /**
- * Default import staging parent: `{home}/message-vault`.
+ * Default staging parent: `{home}/message-vault`.
  * When home is empty, returns the relative folder name `message-vault`.
  */
-export function defaultImportStagingDir(homeDir: string): string {
+export function defaultStagingDir(homeDir: string): string {
   const home = stripTrailingPathSeparators(homeDir);
-  if (!home) return IMPORT_STAGING_PARENT;
-  if (home === "/") return `/${IMPORT_STAGING_PARENT}`;
-  return `${home}/${IMPORT_STAGING_PARENT}`;
+  if (!home) return STAGING_PARENT_NAME;
+  if (home === "/") return `/${STAGING_PARENT_NAME}`;
+  return `${home}/${STAGING_PARENT_NAME}`;
 }
 
-/** Folder chosen in Settings as the import staging parent. Empty when unset. */
-export function getImportStagingDir(): string {
+/** Folder chosen in Settings as the staging parent. Empty when unset. */
+export function getStagingDir(): string {
   try {
-    return localStorage.getItem(VAULT_WORKING_DIR_KEY)?.trim() || "";
+    return localStorage.getItem(STAGING_DIR_KEY)?.trim() || "";
   } catch {
     return "";
   }
 }
 
-export function setImportStagingDir(dir: string): void {
+export function setStagingDir(dir: string): void {
   try {
     const trimmed = dir.trim();
-    if (trimmed) localStorage.setItem(VAULT_WORKING_DIR_KEY, trimmed);
-    else localStorage.removeItem(VAULT_WORKING_DIR_KEY);
+    if (trimmed) localStorage.setItem(STAGING_DIR_KEY, trimmed);
+    else localStorage.removeItem(STAGING_DIR_KEY);
   } catch {
     // Private browsing and full storage can throw. Keep the in-memory value.
   }
 }
 
 /**
- * Resolved parent folder for import staging (saved override or default).
+ * Resolved parent folder for staging (saved override or default).
  * Empty when neither a saved path nor a home directory is available.
  */
-export async function resolveImportStagingParent(): Promise<string> {
-  const saved = getImportStagingDir();
-  if (isUsableImportStagingParent(saved)) {
+export async function resolveStagingParent(): Promise<string> {
+  const saved = getStagingDir();
+  if (isUsableStagingParent(saved)) {
     return stripTrailingPathSeparators(saved);
   }
   const home = (await getHomeDir()).trim();
   if (!home) return "";
-  const fallback = defaultImportStagingDir(home);
-  return isUsableImportStagingParent(fallback) ? stripTrailingPathSeparators(fallback) : "";
+  const fallback = defaultStagingDir(home);
+  return isUsableStagingParent(fallback) ? stripTrailingPathSeparators(fallback) : "";
 }
 
 /** User home folder from the desktop app. Empty in the browser or when lookup fails. */
@@ -313,9 +313,12 @@ export function setImporterExtraPath(
   writeImporterExtraPaths(next);
 }
 
+/** Label used in the staging folder name for an export. */
+const EXPORT_STAGING_LABEL = "export";
+
 /**
  * Short name used in staging folder names.
- * Matches the desktop GUI in `crates/message-vault-io-gui/src/staging.rs`.
+ * Import passes a source id; Export passes `EXPORT_STAGING_LABEL`.
  */
 function importerSlugForSource(sourceId: string): string {
   if (sourceId === "imessage-ios") return "iphone-ios";
@@ -336,7 +339,7 @@ function formatStagingTimestamp(now: Date = new Date()): string {
   return `${yy}${mm}${dd}-${hh}${mi}${ss}`;
 }
 
-/** Staging folder name: `staging-<importer>-YYMMDD-HHMMSS`. */
+/** Staging folder name: `staging-<label>-YYMMDD-HHMMSS`. */
 function stagingDirName(sourceId: string, now: Date = new Date()): string {
   return `staging-${importerSlugForSource(sourceId)}-${formatStagingTimestamp(now)}`;
 }
@@ -345,7 +348,7 @@ function stagingDirName(sourceId: string, now: Date = new Date()): string {
  * Join a staging parent folder with `staging-<importer>-YYMMDD-HHMMSS`.
  * When the parent is empty, the path is only the staging folder name.
  */
-export function joinImportStagingPath(
+export function joinStagingPath(
   parentDir: string,
   sourceId: string,
   now: Date = new Date(),
@@ -355,6 +358,25 @@ export function joinImportStagingPath(
   if (!parent) return name;
   if (parent === "/") return `/${name}`;
   return `${parent}/${name}`;
+}
+
+/**
+ * Full path for a new export staging folder under the Settings parent.
+ *
+ * Export stages here only when the chosen format is not JSONL: `vault-pull`
+ * writes JSONL, and `message-reexport` refuses to convert a folder into
+ * itself, so the two steps need separate folders. The folder is deleted once
+ * the conversion finishes.
+ *
+ * @throws If neither a saved staging parent nor the user home directory is
+ * available, for the same reason as the import staging folder below.
+ */
+export async function resolveExportStagingDir(now: Date = new Date()): Promise<string> {
+  const parent = await resolveStagingParent();
+  if (!parent) {
+    throw new Error("Could not determine the user home directory. Staging needs ~/message-vault/.");
+  }
+  return joinStagingPath(parent, EXPORT_STAGING_LABEL, now);
 }
 
 /**
@@ -369,11 +391,9 @@ export async function resolveImportStagingDir(
   _backupPath: string,
   sourceId: string,
 ): Promise<string> {
-  const parent = await resolveImportStagingParent();
+  const parent = await resolveStagingParent();
   if (!parent) {
-    throw new Error(
-      "Could not determine the user home directory. Import staging needs ~/message-vault/.",
-    );
+    throw new Error("Could not determine the user home directory. Staging needs ~/message-vault/.");
   }
-  return joinImportStagingPath(parent, sourceId);
+  return joinStagingPath(parent, sourceId);
 }

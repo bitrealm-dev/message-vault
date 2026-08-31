@@ -50,3 +50,27 @@ _Avoid_: Import Job, Push
 One installation's store of accounts and their messages. A vault holds
 many accounts, and each account's data is isolated from the others.
 _Avoid_: Database, Instance, Server
+
+### Moving messages in and out
+
+**Export**:
+Moving messages out of the vault into files on disk, in a format the
+person chooses. It reads the vault, never a phone backup.
+_Avoid_: Extract, Pull, Download
+
+**Convert**:
+Rewriting a folder of already-exported files into a different format,
+reading neither the original backup nor the vault. Export uses it for any
+format other than JSON Lines; as an operation a person starts on a folder
+of their own, it is wanted but has no screen yet.
+_Avoid_: Reexport, Transcode, Reformat
+
+**Staging Directory**:
+The folder where Message Vault writes intermediate files that neither the
+person nor the vault keeps — a backup being prepared for import, or JSON
+Lines waiting to be converted into the format an export asked for. Its
+contents are deleted when the job finishes.
+_Avoid_: Import Staging Directory, Temp Folder, Working Directory
+
+Extract is not a word for something a person does. It survives only as the
+internal name of the desktop command that reads a backup during Import.

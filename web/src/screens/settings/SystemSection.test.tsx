@@ -64,14 +64,14 @@ describe("SystemSection", () => {
   it("has no Save button and labels the path fields", async () => {
     render(<SystemSection />);
     await waitFor(() => {
-      expect(screen.getByLabelText("Import staging directory")).toBeTruthy();
+      expect(screen.getByLabelText("Staging directory")).toBeTruthy();
     });
     expect(screen.getByLabelText("ffmpeg directory")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Saving…" })).toBeNull();
   });
 
-  it("persists import staging directory on change", async () => {
+  it("persists the staging directory on change", async () => {
     const user = userEvent.setup();
     render(<SystemSection />);
     await waitFor(() => {
@@ -82,7 +82,7 @@ describe("SystemSection", () => {
     await user.clear(stagingInput);
     await user.type(stagingInput, "/tmp/my-staging");
 
-    expect(localStorage.getItem("mv-vault-working-dir")).toBe("/tmp/my-staging");
+    expect(localStorage.getItem("mv-staging-dir")).toBe("/tmp/my-staging");
   });
 
   it("shows Found lines when both tools are present", async () => {
