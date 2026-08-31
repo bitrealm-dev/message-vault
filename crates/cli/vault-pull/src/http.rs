@@ -24,20 +24,6 @@ pub struct ExportMessagesResponse {
     pub next_cursor: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-/// Totals from `GET /v1/export/messages/count`.
-pub struct ExportCountResponse {
-    pub ok: bool,
-    #[serde(default)]
-    pub error: Option<String>,
-    #[serde(default)]
-    pub messages: u64,
-    #[serde(default)]
-    pub attachments: u64,
-    #[serde(default)]
-    pub total_bytes: u64,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 /// One message row from the vault export API.
 pub struct ExportMessage {
@@ -258,67 +244,6 @@ impl HttpSession {
             );
         }
         Ok(parsed)
-    }
-
-    /// `GET /v1/export/messages/count`. Returns `Ok(None)` when the vault does not
-    /// support the route (HTTP 404), so callers can fall back to paging.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the request fails (other than 404) or the body is
-    /// not valid JSON.
-    pub fn export_message_count(
-        &self,
-        base_url: &str,
-        key: &str,
-        q: &str,
-        account: &str,
-        source: Option<&str>,
-    ) -> Result<Option<ExportCountResponse>> {
-        let url = export_url(ExportUrl {
-            base_url,
-            path: "/v1/export/messages/count",
-            q,
-            limit: None,
-            cursor: None,
-            account,
-            source,
-        })?;
-
-        let response = self
-            .client
-            .get(url)
-            .timeout(Duration::from_secs(120))
-            .header("Authorization", format!("Bearer {}", key.trim()))
-            .send()
-            .context("GET /v1/export/messages/count")?;
-
-        let status = response.status();
-        let body = response.text().unwrap_or_default();
-        if status.as_u16() == 404 {
-            return Ok(None);
-        }
-        if !status.is_success() {
-            // Prefer the vault's own error text; fall back to the raw body.
-            if let Ok(parsed) = serde_json::from_str::<ExportCountResponse>(&body)
-                && let Some(message) = parsed.error
-            {
-                bail!("export message count failed ({status}): {message}");
-            }
-            bail!(
-                "export message count failed ({status}): {}",
-                truncate(&body, 300)
-            );
-        }
-        let parsed: ExportCountResponse =
-            serde_json::from_str(&body).context("parse export message count response")?;
-        if !parsed.ok {
-            bail!(
-                "export message count rejected: {}",
-                parsed.error.unwrap_or_else(|| "unknown error".into())
-            );
-        }
-        Ok(Some(parsed))
     }
 
     /// Download one attachment by SHA-256 fingerprint to `dest`.

@@ -16,7 +16,7 @@ pub use http::ExportMessage;
 pub use journal::{PULL_JOURNAL_NAME, PullJournalEvent, PullJournalState, journal_path};
 pub use run::{
     DEFAULT_ASSET_DOWNLOAD_WORKERS, DEFAULT_PAGE_LIMIT, ProgressEvent, ProgressFn, PullReport,
-    QueryStats, VaultPullConfig, compose_query, query_stats, run,
+    VaultPullConfig, compose_query, run,
 };
 pub use vault_http::{AuthError, AuthInfo};
 pub use vault_push::authenticate;
