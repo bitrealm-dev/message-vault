@@ -44,9 +44,9 @@ use staging::StagingInserts;
 use crate::dedupe;
 use crate::import::{self};
 use crate::server::{
-    ApiError, AppState, content_type_base, is_jsonl_content_type, is_multipart_content_type,
-    require_import_access, resolve_auth, resolve_import_account, safe_rel_path,
-    stream_body_to_file, stream_field_to_file,
+    ApiError, AppState, ImportAccess, content_type_base, is_jsonl_content_type,
+    is_multipart_content_type, resolve_import_account, safe_rel_path, stream_body_to_file,
+    stream_field_to_file,
 };
 
 /// What happens to a source's messages that were imported before.
@@ -791,18 +791,13 @@ pub(crate) struct ImportDetailResponse {
 )]
 pub(crate) async fn imports_list_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ImportAccess(auth): ImportAccess,
     Query(query): Query<ListImportsQuery>,
 ) -> Result<Json<ImportsListResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_import_access(&auth)?;
     let account = resolve_import_account(&auth, query.account.as_deref(), &state.db).await?;
 
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
-    let imports = crate::db::vault_imports::list_imports(&mut conn, &account)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let imports = crate::db::vault_imports::list_imports(&mut conn, &account).await?;
 
     Ok(Json(ImportsListResponse { imports }))
 }
@@ -823,12 +818,9 @@ pub(crate) async fn imports_list_handler(
 )]
 pub(crate) async fn imports_get_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ImportAccess(auth): ImportAccess,
     AxumPath(import_id): AxumPath<i64>,
 ) -> Result<Json<ImportDetailResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_import_access(&auth)?;
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     let detail =
         crate::db::vault_imports::get_import_detail(&mut conn, &auth.account_id, import_id)
@@ -860,11 +852,9 @@ pub(crate) async fn imports_get_handler(
 )]
 pub(crate) async fn imports_create_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ImportAccess(auth): ImportAccess,
     Json(body): Json<CreateImportBody>,
 ) -> Result<Json<CreateImportResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_import_access(&auth)?;
     if body.source.trim().is_empty() {
         return Err(ApiError::BadRequest("body field source is required".into()));
     }
@@ -887,11 +877,8 @@ pub(crate) async fn imports_create_handler(
     let identities_json =
         optional_json_string(body.source_identities.as_ref(), "source_identities")?;
 
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
-    crate::db::account_profile::ensure_account_row(&mut conn, &account)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    crate::db::account_profile::ensure_account_row(&mut conn, &account).await?;
     let args = crate::db::vault_imports::StartImportArgs {
         account_id: &account,
         source: &body.source,
@@ -904,18 +891,7 @@ pub(crate) async fn imports_create_handler(
         source_fingerprint: fingerprint_json.as_deref(),
         source_identities: identities_json.as_deref(),
     };
-    let id = crate::db::vault_imports::start_import(&mut conn, &args)
-        .await
-        .map_err(|e| match e {
-            err @ crate::db::vault_imports::StartImportError::AlreadyActive => {
-                // One wording for the 409, shared with the CLI paths that
-                // surface the same error through anyhow.
-                ApiError::Conflict(err.to_string())
-            }
-            crate::db::vault_imports::StartImportError::Db(err) => {
-                ApiError::Internal(err.to_string())
-            }
-        })?;
+    let id = crate::db::vault_imports::start_import(&mut conn, &args).await?;
 
     Ok(Json(CreateImportResponse { ok: true, id }))
 }
@@ -938,12 +914,10 @@ pub(crate) async fn imports_create_handler(
 )]
 pub(crate) async fn imports_complete_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ImportAccess(auth): ImportAccess,
     AxumPath(import_id): AxumPath<i64>,
     Json(body): Json<CompleteImportBody>,
 ) -> Result<Json<CompleteImportResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_import_access(&auth)?;
     let account = resolve_import_account(&auth, None, &state.db).await?;
     validate_complete_import_issues(&body.issues)?;
     validate_import_status(body.status.as_deref())?;
@@ -977,7 +951,6 @@ pub(crate) async fn imports_complete_handler(
             })
             .collect(),
     };
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     let row = crate::db::vault_imports::complete_import(&mut conn, &account, import_id, &args)
         .await
@@ -1135,16 +1108,11 @@ pub(crate) struct ActiveImportResponse {
 )]
 pub(crate) async fn imports_active_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ImportAccess(auth): ImportAccess,
 ) -> Result<Json<ActiveImportResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_import_access(&auth)?;
     let account = resolve_import_account(&auth, None, &state.db).await?;
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
-    let row = crate::db::vault_imports::get_active_import(&mut conn, &account)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let row = crate::db::vault_imports::get_active_import(&mut conn, &account).await?;
     Ok(Json(ActiveImportResponse {
         ok: true,
         session: row.map(|row| ActiveImportSession {
@@ -1205,12 +1173,10 @@ pub(crate) struct SetImportStageResponse {
 )]
 pub(crate) async fn imports_stage_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ImportAccess(auth): ImportAccess,
     AxumPath(import_id): AxumPath<i64>,
     Json(body): Json<SetImportStageBody>,
 ) -> Result<Json<SetImportStageResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_import_access(&auth)?;
     let account = resolve_import_account(&auth, None, &state.db).await?;
     let stage = crate::db::vault_imports::ImportStage::parse(&body.stage).ok_or_else(|| {
         ApiError::BadRequest(format!(
@@ -1219,7 +1185,6 @@ pub(crate) async fn imports_stage_handler(
         ))
     })?;
     let summary_json = optional_json_string(body.summary.as_ref(), "summary")?;
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     crate::db::vault_imports::set_import_stage(
         &mut conn,
@@ -1260,13 +1225,10 @@ pub(crate) struct DiscardImportResponse {
 )]
 pub(crate) async fn imports_discard_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ImportAccess(auth): ImportAccess,
     AxumPath(import_id): AxumPath<i64>,
 ) -> Result<Json<DiscardImportResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_import_access(&auth)?;
     let account = resolve_import_account(&auth, None, &state.db).await?;
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     crate::db::vault_imports::discard_import(&mut conn, &account, import_id).await?;
     Ok(Json(DiscardImportResponse {
@@ -1313,13 +1275,11 @@ pub(crate) async fn imports_discard_handler(
 )]
 pub(crate) async fn import_handler(
     State(state): State<AppState>,
+    ImportAccess(auth): ImportAccess,
     headers: HeaderMap,
     Query(mut query): Query<ImportQuery>,
     request: Request,
 ) -> Result<Json<ImportResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_import_access(&auth)?;
-
     let Some(ct) = content_type_base(&headers) else {
         return Err(ApiError::BadRequest(
             "Content-Type required (application/x-ndjson, application/jsonl, or multipart/form-data)"
@@ -1487,7 +1447,6 @@ async fn run_import_path(
 
     // Validate client-owned sessions before staging work so bad ids return 400.
     if let Some(id) = query_import_id {
-        // TODO(#148): pool acquire
         let mut conn = state.db.acquire().await?;
         crate::db::vault_imports::require_reusable_import(
             &mut conn,
@@ -1496,17 +1455,7 @@ async fn run_import_path(
             &source_id,
             mode.as_str(),
         )
-        .await
-        .map_err(|e| {
-            let msg = e.to_string();
-            if msg.contains("not found") {
-                ApiError::NotFound(msg)
-            } else if msg.contains("not running") || msg.contains("mismatch") {
-                ApiError::BadRequest(msg)
-            } else {
-                ApiError::Internal(msg)
-            }
-        })?;
+        .await?;
     }
 
     let assets_dir = cfg.paths.assets_dir_for_account(&account, &source_id);
@@ -1519,11 +1468,8 @@ async fn run_import_path(
     let (import_id, owns_session) = if let Some(id) = query_import_id {
         (Some(id), false)
     } else {
-        // TODO(#148): pool acquire
         let mut conn = state.db.acquire().await?;
-        crate::db::account_profile::ensure_account_row(&mut conn, &account)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        crate::db::account_profile::ensure_account_row(&mut conn, &account).await?;
         let id = crate::db::vault_imports::start_import(
             &mut conn,
             &crate::db::vault_imports::StartImportArgs {
@@ -1539,17 +1485,7 @@ async fn run_import_path(
                 source_identities: None,
             },
         )
-        .await
-        .map_err(|e| match e {
-            err @ crate::db::vault_imports::StartImportError::AlreadyActive => {
-                // One wording for the 409, shared with the CLI paths that
-                // surface the same error through anyhow.
-                ApiError::Conflict(err.to_string())
-            }
-            crate::db::vault_imports::StartImportError::Db(err) => {
-                ApiError::Internal(err.to_string())
-            }
-        })?;
+        .await?;
         (Some(id), true)
     };
 
@@ -1587,13 +1523,9 @@ async fn run_import_path(
         crate::db::vault_imports::complete_import_or_warn(&mut conn, &account, id, &complete_args)
             .await;
     }
-    let stats = import_result.map_err(|e| ApiError::Internal(e.to_string()))?;
+    let stats = import_result?;
     let dedupe_stats = if do_dedupe {
-        Some(
-            dedupe::dedupe_cross_source(&mut conn, &account, None, 2)
-                .await
-                .map_err(|e| ApiError::Internal(e.to_string()))?,
-        )
+        Some(dedupe::dedupe_cross_source(&mut conn, &account, None, 2).await?)
     } else {
         None
     };

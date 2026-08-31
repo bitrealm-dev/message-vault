@@ -1,16 +1,15 @@
 //! Account profile read + update handlers.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use axum::Json;
 use axum::extract::State;
-use axum::http::HeaderMap;
 use message_ir::HandleType;
 use serde::{Deserialize, Serialize};
 use sqlx::AnyConnection;
 use sqlx::Connection;
 
 use crate::db::account_profile;
-use crate::server::{ApiError, AppState, require_delete_access, require_full_access, resolve_auth};
+use crate::server::{ApiError, AppState, DeleteAccess, FullAccess};
 
 /// The signed-in account's profile.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -79,17 +78,12 @@ async fn load_response(
 )]
 pub async fn account_profile_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
 ) -> Result<Json<AccountProfileResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
     let account_id = auth.account_id;
 
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
-    let result = load_response(&mut conn, &account_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let result = load_response(&mut conn, &account_id).await?;
 
     Ok(Json(result))
 }
@@ -117,6 +111,56 @@ pub struct AccountProfileUpdateRequest {
     pub remove_handles: Vec<ProfileHandleInput>,
 }
 
+/// Why a profile update was refused.
+#[derive(Debug)]
+enum ProfileUpdateError {
+    /// The client named a handle service the profile does not support.
+    UnsupportedService(String),
+    /// Database failure.
+    Db(anyhow::Error),
+}
+
+impl std::fmt::Display for ProfileUpdateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsupportedService(service) => {
+                write!(f, "unsupported handle service: {service}")
+            }
+            Self::Db(e) => e.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for ProfileUpdateError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::UnsupportedService(_) => None,
+            Self::Db(err) => err.source(),
+        }
+    }
+}
+
+impl From<sqlx::Error> for ProfileUpdateError {
+    fn from(value: sqlx::Error) -> Self {
+        Self::Db(value.into())
+    }
+}
+
+impl From<anyhow::Error> for ProfileUpdateError {
+    fn from(value: anyhow::Error) -> Self {
+        Self::Db(value)
+    }
+}
+
+impl From<ProfileUpdateError> for ApiError {
+    fn from(e: ProfileUpdateError) -> Self {
+        match e {
+            err @ ProfileUpdateError::UnsupportedService(_) => Self::BadRequest(err.to_string()),
+            ProfileUpdateError::Db(err) => Self::Internal(err.to_string()),
+        }
+    }
+}
+
 /// Apply name and handle changes on an open connection.
 async fn apply_profile_update(
     conn: &mut AnyConnection,
@@ -124,7 +168,7 @@ async fn apply_profile_update(
     preferred_name: Option<&str>,
     handles: &[ProfileHandleInput],
     remove_handles: &[ProfileHandleInput],
-) -> Result<()> {
+) -> std::result::Result<(), ProfileUpdateError> {
     if let Some(name) = preferred_name {
         let name = name.trim();
         let stored_name = if name.is_empty() {
@@ -198,7 +242,7 @@ async fn update_profile_on_conn(
     conn: &mut AnyConnection,
     account_id: &str,
     req: &AccountProfileUpdateRequest,
-) -> Result<AccountProfileResponse> {
+) -> std::result::Result<AccountProfileResponse, ProfileUpdateError> {
     let mut tx = conn.begin().await?;
     apply_profile_update(
         &mut tx,
@@ -209,7 +253,7 @@ async fn update_profile_on_conn(
     )
     .await?;
     tx.commit().await?;
-    load_response(conn, account_id).await
+    Ok(load_response(conn, account_id).await?)
 }
 
 enum ProfileHandleKind {
@@ -219,12 +263,14 @@ enum ProfileHandleKind {
 }
 
 /// Map a client `service` string to a handle kind.
-fn parse_profile_service(service: &str) -> Result<ProfileHandleKind> {
+fn parse_profile_service(
+    service: &str,
+) -> std::result::Result<ProfileHandleKind, ProfileUpdateError> {
     match service.trim().to_ascii_lowercase().as_str() {
         "phone" => Ok(ProfileHandleKind::Phone),
         "email" => Ok(ProfileHandleKind::Email),
         "whatsapp" => Ok(ProfileHandleKind::Whatsapp),
-        other => bail!("unsupported handle service: {other}"),
+        other => Err(ProfileUpdateError::UnsupportedService(other.to_string())),
     }
 }
 
@@ -245,25 +291,13 @@ fn parse_profile_service(service: &str) -> Result<ProfileHandleKind> {
 )]
 pub async fn account_profile_update_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     Json(req): Json<AccountProfileUpdateRequest>,
 ) -> Result<Json<AccountProfileResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
     let account_id = auth.account_id;
 
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
-    let result = update_profile_on_conn(&mut conn, &account_id, &req)
-        .await
-        .map_err(|e| {
-            let msg = e.to_string();
-            if msg.starts_with("unsupported handle service:") {
-                ApiError::BadRequest(msg)
-            } else {
-                ApiError::Internal(msg)
-            }
-        })?;
+    let result = update_profile_on_conn(&mut conn, &account_id, &req).await?;
 
     Ok(Json(result))
 }
@@ -333,7 +367,7 @@ pub(crate) fn remove_account_asset_trees(
 )]
 pub async fn delete_messages_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    DeleteAccess(auth): DeleteAccess,
     Json(req): Json<DeleteMessagesRequest>,
 ) -> Result<Json<DeleteMessagesResponse>, ApiError> {
     if !req.confirm {
@@ -341,20 +375,14 @@ pub async fn delete_messages_handler(
             "confirmation flag must be true".into(),
         ));
     }
-    let auth = resolve_auth(&headers, &state).await?;
-    require_delete_access(&auth)?;
     let account_id = auth.account_id;
     let data_dir = state.cfg.paths.data_dir.clone();
     let assets_name = state.cfg.paths.assets_dir.clone();
     let converted_name = state.cfg.paths.assets_converted_dir.clone();
 
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
-    let stats = account_profile::delete_all_messages_for_account(&mut conn, &account_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    remove_account_asset_trees(&data_dir, &account_id, &assets_name, &converted_name)
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let stats = account_profile::delete_all_messages_for_account(&mut conn, &account_id).await?;
+    remove_account_asset_trees(&data_dir, &account_id, &assets_name, &converted_name)?;
 
     Ok(Json(DeleteMessagesResponse {
         ok: true,
@@ -386,24 +414,16 @@ pub(crate) struct AccountStorageResponse {
 )]
 pub(crate) async fn account_storage_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
 ) -> Result<Json<AccountStorageResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
     let account_id = auth.account_id;
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
-    let total_bytes = crate::db::vault_imports::account_attachment_bytes(&mut conn, &account_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let total_bytes =
+        crate::db::vault_imports::account_attachment_bytes(&mut conn, &account_id).await?;
     let attachment_count =
-        crate::db::vault_imports::account_attachment_count(&mut conn, &account_id)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        crate::db::vault_imports::account_attachment_count(&mut conn, &account_id).await?;
     let top_attachments =
-        crate::db::vault_imports::top_attachments_by_size(&mut conn, &account_id, 100)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        crate::db::vault_imports::top_attachments_by_size(&mut conn, &account_id, 100).await?;
     let result = AccountStorageResponse {
         total_bytes,
         attachment_count,
@@ -596,7 +616,7 @@ mod tests {
         )
         .await
         .unwrap()
-        .5;
+        .token;
 
         let deleted = post_status(
             &state,

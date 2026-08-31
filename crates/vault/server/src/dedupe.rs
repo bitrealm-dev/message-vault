@@ -547,82 +547,16 @@ fn pick_winner(cands: &[Cand], prio: &HashMap<&str, usize>) -> i64 {
         .unwrap_or(cands[0].id)
 }
 
-/// Parse RFC3339 (second precision) into Unix UTC seconds, honoring Z / ±HH:MM offsets.
+/// Parse an RFC3339 timestamp into Unix UTC seconds, honoring Z / ±HH:MM offsets.
+///
+/// Strict RFC3339 is sufficient: `messages.timestamp` and `messages.timestamp_utc`
+/// are only ever written by `models::format_timestamps` (chrono's
+/// `to_rfc3339_opts(SecondsFormat::Secs, true)`), so no lenient spellings reach
+/// this path. Unparseable input yields `None`.
 fn parse_rfc3339_utc_secs(ts: &str) -> Option<i64> {
-    let s = ts.trim();
-    if s.len() < 19 {
-        return None;
-    }
-    let date = &s[..10];
-    let tsep = s.as_bytes().get(10).copied()?;
-    if tsep != b'T' && tsep != b't' {
-        return None;
-    }
-    let time = &s[11..19];
-    let (y, mo, d) = (
-        date.get(0..4)?.parse::<i64>().ok()?,
-        date.get(5..7)?.parse::<i64>().ok()?,
-        date.get(8..10)?.parse::<i64>().ok()?,
-    );
-    let (h, mi, se) = (
-        time.get(0..2)?.parse::<i64>().ok()?,
-        time.get(3..5)?.parse::<i64>().ok()?,
-        time.get(6..8)?.parse::<i64>().ok()?,
-    );
-
-    let mut rest = &s[19..];
-    if rest.starts_with('.') {
-        rest = rest[1..].trim_start_matches(|c: char| c.is_ascii_digit());
-    }
-    let offset_secs = parse_offset_secs(rest)?;
-    let local_as_utc = civil_to_unix_secs(y, mo, d, h, mi, se)?;
-    Some(local_as_utc - offset_secs)
-}
-
-fn parse_offset_secs(rest: &str) -> Option<i64> {
-    let rest = rest.trim();
-    if rest.is_empty() || rest == "Z" || rest == "z" {
-        return Some(0);
-    }
-    let sign = match rest.chars().next()? {
-        '+' => 1i64,
-        '-' => -1i64,
-        _ => return None,
-    };
-    let body = &rest[1..];
-    // HH:MM or HHMM
-    let (oh, om) = if body.len() >= 5 && body.as_bytes().get(2) == Some(&b':') {
-        (
-            body.get(0..2)?.parse::<i64>().ok()?,
-            body.get(3..5)?.parse::<i64>().ok()?,
-        )
-    } else if body.len() >= 4 {
-        (
-            body.get(0..2)?.parse::<i64>().ok()?,
-            body.get(2..4)?.parse::<i64>().ok()?,
-        )
-    } else {
-        return None;
-    };
-    Some(sign * (oh * 3600 + om * 60))
-}
-
-fn civil_to_unix_secs(y: i64, mo: i64, d: i64, h: i64, mi: i64, se: i64) -> Option<i64> {
-    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) {
-        return None;
-    }
-    if h > 23 || mi > 59 || se > 60 {
-        return None;
-    }
-    // Days from civil date (Howard Hinnant) → Unix seconds.
-    let y = if mo <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y.rem_euclid(400);
-    let mp = if mo > 2 { mo - 3 } else { mo + 9 };
-    let doy = (153 * mp + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146097 + doe - 719468;
-    Some(days * 86400 + h * 3600 + mi * 60 + se)
+    chrono::DateTime::parse_from_rfc3339(ts.trim())
+        .ok()
+        .map(|dt| dt.timestamp())
 }
 
 #[derive(Clone)]
@@ -987,6 +921,15 @@ mod tests {
             parse_rfc3339_utc_secs("2015-03-12T14:04:22-04:00"),
             Some(1426183462)
         );
+    }
+
+    #[test]
+    fn parse_rfc3339_rejects_unparseable_input() {
+        assert_eq!(parse_rfc3339_utc_secs(""), None);
+        assert_eq!(parse_rfc3339_utc_secs("not a timestamp"), None);
+        // Missing offset is not RFC3339; compute_content_key then falls back
+        // to hashing the raw string.
+        assert_eq!(parse_rfc3339_utc_secs("2015-03-12T18:04:22"), None);
     }
 
     const TEST_ACCOUNT_ID: &str = "00000000-0000-0000-0000-000000000001";

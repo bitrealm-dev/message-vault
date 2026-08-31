@@ -4,7 +4,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
 use axum::Json;
 use axum::extract::{Query, State};
@@ -16,7 +16,7 @@ use sqlx::{AnyConnection, AnyPool};
 
 use crate::db::{account_profile, api_tokens, schema, session_tokens};
 use crate::dedupe;
-use crate::server::{ApiError, AppState, nonempty_query_account, resolve_auth};
+use crate::server::{ApiError, AppState, AuthIdentity, FullAccess, nonempty_query_account};
 
 /// Max password bytes accepted before hashing (registration / login / change).
 const MAX_PASSWORD_BYTES: usize = 1024;
@@ -258,10 +258,9 @@ pub(crate) struct AuthCheckResponse {
 )]
 pub(crate) async fn auth_check(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    auth: AuthIdentity,
     Query(query): Query<AuthCheckQuery>,
 ) -> Result<Json<AuthCheckResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
     let account_id = auth.account_id;
     let username = load_username(&state.db, &account_id).await?;
 
@@ -292,13 +291,8 @@ pub(crate) async fn auth_check(
 async fn list_account_sources(pool: &AnyPool, account_id: &str) -> Result<Vec<String>, ApiError> {
     let account_id = account_id.to_string();
     // Read-only: do not run ensure_vault_schema (avoids write locks on auth).
-    let mut conn = pool
-        .acquire()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    dedupe::source_priority_from_db(&mut conn, &account_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))
+    let mut conn = pool.acquire().await?;
+    Ok(dedupe::source_priority_from_db(&mut conn, &account_id).await?)
 }
 
 async fn lookup_or_resolve_query(
@@ -306,24 +300,14 @@ async fn lookup_or_resolve_query(
     account_ref: &str,
 ) -> Result<Option<String>, ApiError> {
     let account_ref = account_ref.to_string();
-    let mut conn = pool
-        .acquire()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    account_profile::lookup_account_ref(&mut conn, &account_ref)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))
+    let mut conn = pool.acquire().await?;
+    Ok(account_profile::lookup_account_ref(&mut conn, &account_ref).await?)
 }
 
 async fn load_username(pool: &AnyPool, account_id: &str) -> Result<Option<String>, ApiError> {
     let account_id = account_id.to_string();
-    let mut conn = pool
-        .acquire()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    account_profile::username_for_account(&mut conn, &account_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))
+    let mut conn = pool.acquire().await?;
+    Ok(account_profile::username_for_account(&mut conn, &account_id).await?)
 }
 
 // ---------------------------------------------------------------------------
@@ -361,7 +345,7 @@ pub async fn register_handler(
     let password_hash: Option<String> = if password_plain.is_empty() {
         None
     } else {
-        Some(hash_password(&password_plain).map_err(|e| ApiError::Internal(e.to_string()))?)
+        Some(hash_password(&password_plain)?)
     };
 
     let preferred_name = nonempty_trimmed(req.preferred_name.as_deref());
@@ -369,15 +353,8 @@ pub async fn register_handler(
 
     let account_id = uuid::Uuid::new_v4().to_string();
 
-    let mut conn = state
-        .db
-        .acquire()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let mut tx = conn
-        .begin()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let mut conn = state.db.acquire().await?;
+    let mut tx = conn.begin().await?;
 
     if account_profile::lookup_account_ref(&mut tx, &username)
         .await
@@ -389,9 +366,7 @@ pub async fn register_handler(
         )));
     }
 
-    let first_account = account_profile::vault_has_no_real_accounts(&mut tx)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let first_account = account_profile::vault_has_no_real_accounts(&mut tx).await?;
 
     if first_account && password_plain.is_empty() {
         return Err(ApiError::BadRequest(
@@ -410,9 +385,7 @@ pub async fn register_handler(
     .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
     if first_account {
-        account_profile::set_admin(&mut tx, &account_id, true)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        account_profile::set_admin(&mut tx, &account_id, true).await?;
     }
 
     if let Some(ref phone) = phone {
@@ -463,24 +436,15 @@ pub async fn login_handler(
 
     let password = req.password.clone();
 
-    let mut conn = state
-        .db
-        .acquire()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let Some(account_id) = account_profile::lookup_account_ref(&mut conn, &username)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-    else {
+    let mut conn = state.db.acquire().await?;
+    let Some(account_id) = account_profile::lookup_account_ref(&mut conn, &username).await? else {
         let _ = verify_password(dummy_password_hash(), &password);
         return Err(ApiError::Unauthorized(
             "invalid username or password".into(),
         ));
     };
 
-    let password_hash = account_profile::load_password_hash(&mut conn, &account_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let password_hash = account_profile::load_password_hash(&mut conn, &account_id).await?;
     if !verify_login_password(password_hash.as_deref(), &password) {
         return Err(ApiError::Unauthorized(
             "invalid username or password".into(),
@@ -488,16 +452,13 @@ pub async fn login_handler(
     }
 
     let auth = account_profile::load_account_auth(&mut conn, &account_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .await?
         .ok_or_else(|| ApiError::BadRequest("invalid username or password".into()))?;
     if auth.disabled {
         return Err(ApiError::Forbidden("this account is disabled".into()));
     }
 
-    let response = AuthTokenResponse::for_existing_account(&mut conn, account_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let response = AuthTokenResponse::for_existing_account(&mut conn, account_id).await?;
 
     Ok(Json(response))
 }
@@ -548,23 +509,72 @@ pub struct LogoutResponse {
     pub ok: bool,
 }
 
+/// Why a password change was refused.
+#[derive(Debug)]
+enum ChangePasswordError {
+    /// The presented current password does not match the stored hash.
+    IncorrectPassword,
+    /// Database failure.
+    Db(anyhow::Error),
+}
+
+impl std::fmt::Display for ChangePasswordError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IncorrectPassword => f.write_str("current password is incorrect"),
+            Self::Db(e) => e.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for ChangePasswordError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::IncorrectPassword => None,
+            Self::Db(err) => err.source(),
+        }
+    }
+}
+
+impl From<sqlx::Error> for ChangePasswordError {
+    fn from(value: sqlx::Error) -> Self {
+        Self::Db(value.into())
+    }
+}
+
+impl From<anyhow::Error> for ChangePasswordError {
+    fn from(value: anyhow::Error) -> Self {
+        Self::Db(value)
+    }
+}
+
+impl From<ChangePasswordError> for ApiError {
+    fn from(e: ChangePasswordError) -> Self {
+        match e {
+            err @ ChangePasswordError::IncorrectPassword => Self::BadRequest(err.to_string()),
+            ChangePasswordError::Db(err) => Self::Internal(err.to_string()),
+        }
+    }
+}
+
 /// Check the current password, store `new_hash`, drop named API tokens, and
 /// issue a fresh session token. All of that happens in one database transaction
 /// so a failure leaves the old credentials in place.
 ///
 /// # Errors
 ///
-/// Returns an error when the current password is wrong or a database write fails.
+/// [`ChangePasswordError::IncorrectPassword`] when the current password is
+/// wrong; [`ChangePasswordError::Db`] when a database read or write fails.
 async fn change_password_on_conn(
     conn: &mut AnyConnection,
     account_id: &str,
     current_password: &str,
     new_hash: &str,
-) -> Result<String> {
+) -> std::result::Result<String, ChangePasswordError> {
     let mut tx = conn.begin().await?;
     let current_hash = account_profile::load_password_hash(&mut tx, account_id).await?;
     if !passwords_match(current_hash.as_deref(), current_password) {
-        bail!("current password is incorrect");
+        return Err(ChangePasswordError::IncorrectPassword);
     }
     account_profile::update_password_hash(&mut tx, account_id, new_hash).await?;
     api_tokens::delete_all_api_tokens(&mut tx, account_id).await?;
@@ -599,17 +609,9 @@ pub async fn logout_handler(
     headers: HeaderMap,
 ) -> Result<Json<LogoutResponse>, ApiError> {
     let token = crate::server::bearer_token(&headers)?;
-    let mut conn = state
-        .db
-        .acquire()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    schema::ensure_accounts_schema(&mut conn)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    logout_on_conn(&mut conn, &token)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let mut conn = state.db.acquire().await?;
+    schema::ensure_accounts_schema(&mut conn).await?;
+    logout_on_conn(&mut conn, &token).await?;
     Ok(Json(LogoutResponse { ok: true }))
 }
 
@@ -630,7 +632,7 @@ pub async fn logout_handler(
 )]
 pub async fn change_password_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     Json(req): Json<ChangePasswordRequest>,
 ) -> Result<Json<ChangePasswordResponse>, ApiError> {
     let new_password = req.new_password.trim();
@@ -638,26 +640,13 @@ pub async fn change_password_handler(
     if req.current_password.len() > MAX_PASSWORD_BYTES {
         return Err(ApiError::BadRequest("password is too long".into()));
     }
-    let auth = crate::server::resolve_auth(&headers, &state).await?;
-    crate::server::require_full_access(&auth)?;
     let account_id = auth.account_id;
     let current_password = req.current_password.clone();
-    let new_hash = hash_password(new_password).map_err(|e| ApiError::Internal(e.to_string()))?;
+    let new_hash = hash_password(new_password)?;
 
-    let mut conn = state
-        .db
-        .acquire()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let token = change_password_on_conn(&mut conn, &account_id, &current_password, &new_hash)
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("current password is incorrect") {
-                ApiError::BadRequest(e.to_string())
-            } else {
-                ApiError::Internal(e.to_string())
-            }
-        })?;
+    let mut conn = state.db.acquire().await?;
+    let token =
+        change_password_on_conn(&mut conn, &account_id, &current_password, &new_hash).await?;
 
     Ok(Json(ChangePasswordResponse { ok: true, token }))
 }
@@ -678,7 +667,7 @@ pub async fn change_password_handler(
 )]
 pub async fn delete_account_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     Json(req): Json<DeleteAccountRequest>,
 ) -> Result<Json<DeleteAccountResponse>, ApiError> {
     if !req.confirm {
@@ -686,8 +675,6 @@ pub async fn delete_account_handler(
             "confirmation flag must be true".into(),
         ));
     }
-    let auth = crate::server::resolve_auth(&headers, &state).await?;
-    crate::server::require_full_access(&auth)?;
     let account_id = auth.account_id;
     if account_profile::is_demo_account(&account_id) {
         return Err(ApiError::BadRequest(
@@ -697,25 +684,15 @@ pub async fn delete_account_handler(
     let current_password = req.current_password.clone();
     let account_root = state.cfg.paths.data_dir.join(&account_id);
 
-    let mut conn = state
-        .db
-        .acquire()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    if account_profile::is_last_admin(&mut conn, &account_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        && account_profile::other_real_account_exists(&mut conn, &account_id)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
+    let mut conn = state.db.acquire().await?;
+    if account_profile::is_last_admin(&mut conn, &account_id).await?
+        && account_profile::other_real_account_exists(&mut conn, &account_id).await?
     {
         return Err(ApiError::BadRequest(
             "you are the only administrator; promote another account before deleting yours".into(),
         ));
     }
-    let password_hash = account_profile::load_password_hash(&mut conn, &account_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let password_hash = account_profile::load_password_hash(&mut conn, &account_id).await?;
     let has_local_password = matches!(password_hash.as_deref(), Some(hash) if !hash.is_empty());
     if has_local_password {
         let Some(pw) = current_password.as_deref() else {
@@ -727,9 +704,7 @@ pub async fn delete_account_handler(
             return Err(ApiError::BadRequest("current password is incorrect".into()));
         }
     }
-    account_profile::delete_account(&mut conn, &account_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    account_profile::delete_account(&mut conn, &account_id).await?;
     if account_root.exists() {
         let root = account_root.clone();
         tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&root))
@@ -848,7 +823,7 @@ mod tests {
         let old_session = session_tokens::insert_account_session_token(&mut conn, TEST_ACCOUNT)
             .await
             .unwrap();
-        let (_, _, _, _, _, first_api_token) = api_tokens::create_api_token(
+        let first_api_token = api_tokens::create_api_token(
             &mut conn,
             TEST_ACCOUNT,
             "backup client",
@@ -856,8 +831,9 @@ mod tests {
             None,
         )
         .await
-        .unwrap();
-        let (_, _, _, _, _, second_api_token) = api_tokens::create_api_token(
+        .unwrap()
+        .token;
+        let second_api_token = api_tokens::create_api_token(
             &mut conn,
             TEST_ACCOUNT,
             "export client",
@@ -869,8 +845,9 @@ mod tests {
             None,
         )
         .await
-        .unwrap();
-        let (_, _, _, _, _, other_account_token) = api_tokens::create_api_token(
+        .unwrap()
+        .token;
+        let other_account_token = api_tokens::create_api_token(
             &mut conn,
             OTHER_ACCOUNT,
             "other account client",
@@ -878,7 +855,8 @@ mod tests {
             None,
         )
         .await
-        .unwrap();
+        .unwrap()
+        .token;
         (
             dir,
             conn,

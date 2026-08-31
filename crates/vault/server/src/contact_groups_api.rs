@@ -5,13 +5,10 @@
 
 use axum::Json;
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
 
 use crate::named_membership::{self, group_spec};
-use crate::server::{
-    ApiError, AppState, MembershipChangedResponse, require_full_access, resolve_auth,
-};
+use crate::server::{ApiError, AppState, FullAccess, MembershipChangedResponse};
 
 /// A group name.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -81,11 +78,8 @@ pub(crate) struct ContactGroupMembersResponse {
 )]
 pub(crate) async fn contact_groups_list_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
 ) -> Result<Json<ContactGroupsListResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     let groups = named_membership::list_names(group_spec(), &mut conn, &auth.account_id).await?;
     Ok(Json(ContactGroupsListResponse { groups }))
@@ -108,12 +102,9 @@ pub(crate) async fn contact_groups_list_handler(
 )]
 pub(crate) async fn contact_groups_create_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     Json(body): Json<ContactGroupNameBody>,
 ) -> Result<Json<ContactGroupNamedListResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     let name = body.name;
     let created =
@@ -143,12 +134,9 @@ pub(crate) async fn contact_groups_create_handler(
 )]
 pub(crate) async fn contact_groups_rename_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     Json(body): Json<ContactGroupRenameBody>,
 ) -> Result<Json<ContactGroupNamedListResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     let name = named_membership::rename_name(
         group_spec(),
@@ -179,12 +167,9 @@ pub(crate) async fn contact_groups_rename_handler(
 )]
 pub(crate) async fn contact_groups_delete_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     Json(body): Json<ContactGroupNameBody>,
 ) -> Result<Json<ContactGroupDeleteResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     named_membership::delete_name(group_spec(), &mut conn, &auth.account_id, &body.name).await?;
     let groups = named_membership::list_names(group_spec(), &mut conn, &auth.account_id).await?;
@@ -207,12 +192,9 @@ pub(crate) async fn contact_groups_delete_handler(
 )]
 pub(crate) async fn contact_groups_members_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     Query(query): Query<ContactGroupMembersQuery>,
 ) -> Result<Json<ContactGroupMembersResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     let member_contact_ids =
         named_membership::list_member_ids(group_spec(), &mut conn, &auth.account_id, &query.name)
@@ -240,12 +222,9 @@ pub(crate) async fn contact_groups_members_handler(
 )]
 pub(crate) async fn contact_groups_membership_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     Json(body): Json<ContactGroupMembershipBody>,
 ) -> Result<Json<MembershipChangedResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     let changed = named_membership::set_membership(
         group_spec(),

@@ -3,22 +3,19 @@
 
 use axum::Json;
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
 use sqlx::AnyConnection;
-use sqlx::{Arguments, Executor, Row};
+use sqlx::{Executor, Row};
 
-use crate::db::dialect::{engine_of, like_ci};
+use crate::db::dialect::{engine_of, like_ci, name_eq_ci};
 use crate::db::engine::DbEngine;
-use crate::db::sql::group_rows_by_id;
+use crate::db::sql::{SqlParam, bind_all, group_rows_by_id, renumber_placeholders};
 // Required so the moved handlers' unqualified `export_api::…` paths resolve.
 use crate::export_api::{self};
 #[cfg(test)]
 use crate::search_query::MAX_SEARCH_QUERY_BYTES;
 use crate::search_query::{FtsNode, ParsedSearchQuery, SearchMode, validate_search_query};
-use crate::server::{
-    ApiError, AppState, require_export_access, resolve_auth, resolve_import_account,
-};
+use crate::server::{ApiError, AppState, ExportAccess, resolve_import_account};
 
 pub use crate::page_limits::{DEFAULT_EXPORT_LIMIT, MAX_EXPORT_LIMIT, MAX_EXPORT_OFFSET};
 
@@ -241,67 +238,6 @@ impl ExportQueryError {
     pub fn bad(msg: impl Into<String>) -> Self {
         Self::BadRequest(msg.into())
     }
-}
-
-/// One bound parameter in a dynamic export query. sqlx's Any driver exposes
-/// no user-constructible dynamic value, so heterogeneous binds ride this enum.
-///
-/// `Bool`/`Null` are part of the swap plan's verbatim enum contract and bound
-/// by [`bind_all`]; no current filter binds them, so silence the dead-code
-/// warning rather than drop plan-mandated variants.
-#[derive(Debug, PartialEq)]
-#[allow(dead_code)]
-pub(crate) enum SqlParam {
-    Text(String),
-    Int(i64),
-    Bool(bool),
-    Null,
-}
-
-/// Build a query from `sql` with all params bound, in order. Placeholders in
-/// the SQL must match this order after `renumber_placeholders`.
-///
-/// sqlx 0.8.6 does not re-export `Query` at the crate root (the root
-/// `sqlx::Query` re-export is 0.9-only), so the plan's literal signature is
-/// unnameable; this builds the arguments through the public `Arguments` API
-/// instead. `String`/`i64`/`bool`/`None` cannot fail to encode on the Any
-/// driver; an encode failure is unreachable and panics like sqlx's own
-/// `Query::bind`.
-pub(crate) fn bind_all<'q>(
-    sql: &'q str,
-    params: &[SqlParam],
-) -> impl sqlx::Execute<'q, sqlx::Any> + 'q {
-    let mut args = sqlx::any::AnyArguments::default();
-    for p in params {
-        match p {
-            SqlParam::Text(v) => args.add(v.clone()),
-            SqlParam::Int(v) => args.add(*v),
-            SqlParam::Bool(v) => args.add(*v),
-            SqlParam::Null => args.add(Option::<String>::None),
-        }
-        .expect("error encoding argument");
-    }
-    sqlx::query_with(sql, args)
-}
-
-/// Rewrite `?` placeholders to `$1..$N` in order. The Any driver performs no
-/// placeholder rewriting and `?` is invalid on Postgres; SQLite accepts `$N`.
-/// Valid because no SQL fragment in this crate contains `?` inside a string
-/// literal — keep it that way, and unit-test this against the committed
-/// fragment set.
-pub(crate) fn renumber_placeholders(sql: &str) -> String {
-    let mut out = String::with_capacity(sql.len());
-    let mut n = 0usize;
-    for ch in sql.chars() {
-        if ch == '?' {
-            n += 1;
-            out.push('$');
-            out.push_str(&n.to_string());
-        } else {
-            out.push(ch);
-        }
-    }
-    out
 }
 
 #[derive(Debug, Clone)]
@@ -1018,27 +954,10 @@ fn pg_prefix_tsquery(term: &str) -> Option<String> {
     Some(format!("'{}':*", term))
 }
 
-/// Case-insensitive equality fragment on the aliased `name` column (`?`
-/// placeholder form; the renumber pass rewrites it). SQLite uses COLLATE
-/// NOCASE; Postgres lower()s both sides with the alias INSIDE `lower()` —
-/// `ct.lower(...)` would parse as a schema-qualified function call.
-fn name_eq_ci(engine: DbEngine, alias: &str) -> String {
-    match engine {
-        DbEngine::Sqlite => format!("{alias}.name = ? COLLATE NOCASE"),
-        DbEngine::Postgres => format!("lower({alias}.name) = lower(?)"),
-    }
-}
-
-/// Case-insensitive equality on the aliased `name` column with a hand-numbered
-/// placeholder.
-fn name_eq_sql(engine: DbEngine, alias: &str, placeholder: usize) -> String {
-    match engine {
-        DbEngine::Sqlite => format!("{alias}.name = ${placeholder} COLLATE NOCASE"),
-        DbEngine::Postgres => format!("lower({alias}.name) = lower(${placeholder})"),
-    }
-}
-
-fn has_message_tag_sql(engine: DbEngine, exclude: bool) -> String {
+/// Conversation `c` has (or, with `exclude`, does not have) a message tag
+/// with the bound name (`?` placeholder form; the renumber pass rewrites it).
+/// Shared by the export query and the conversation list.
+pub(crate) fn has_message_tag_sql(engine: DbEngine, exclude: bool) -> String {
     let exists = if exclude { "NOT EXISTS" } else { "EXISTS" };
     format!(
         "{exists} (
@@ -1048,7 +967,7 @@ fn has_message_tag_sql(engine: DbEngine, exclude: bool) -> String {
              AND ct.account_id = c.account_id
              AND {name_eq}
          )",
-        name_eq = name_eq_ci(engine, "ct"),
+        name_eq = name_eq_ci(engine, "ct.name", "?"),
     )
 }
 
@@ -1095,7 +1014,7 @@ async fn list_group_member_contact_ids(
              JOIN contact_groups cg ON cg.id = cgm.group_id
              WHERE {name_eq} AND cg.account_id = $2
              ORDER BY cgm.contact_id",
-        name_eq = name_eq_sql(engine, "cg", 1),
+        name_eq = name_eq_ci(engine, "cg.name", "$1"),
     );
     let rows = sqlx::query(&sql)
         .bind(trimmed)
@@ -1313,16 +1232,13 @@ pub(crate) struct ExportMessagesCountQuery {
 )]
 pub(crate) async fn export_messages_count_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ExportAccess(auth): ExportAccess,
     Query(query): Query<ExportMessagesCountQuery>,
 ) -> Result<Json<export_api::ExportCountResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_export_access(&auth)?;
     let account = resolve_import_account(&auth, query.account.as_deref(), &state.db).await?;
     let q = query.q.clone();
     let source = query.source.clone();
 
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     let body = export_api::export_message_count(
         &mut conn,
@@ -1359,11 +1275,9 @@ pub(crate) async fn export_messages_count_handler(
 )]
 pub(crate) async fn export_messages_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ExportAccess(auth): ExportAccess,
     Query(query): Query<ExportMessagesQuery>,
 ) -> Result<Json<export_api::ExportMessagesResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_export_access(&auth)?;
     let account = resolve_import_account(&auth, query.account.as_deref(), &state.db).await?;
     let limit = query.limit.unwrap_or(DEFAULT_EXPORT_LIMIT);
     let offset = query.offset;
@@ -1371,7 +1285,6 @@ pub(crate) async fn export_messages_handler(
     let cursor = query.cursor.clone();
     let source = query.source.clone();
 
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     let body = export_api::export_messages(
         &mut conn,
@@ -1962,16 +1875,6 @@ mod tests {
         assert!(second.next_cursor.is_none());
     }
 
-    #[test]
-    fn renumber_placeholders_numbers_in_order() {
-        let sql = "a = ? AND b = ? AND c IN (?, ?) AND d LIKE ?";
-        assert_eq!(
-            renumber_placeholders(sql),
-            "a = $1 AND b = $2 AND c IN ($3, $4) AND d LIKE $5"
-        );
-        assert_eq!(renumber_placeholders("no placeholders"), "no placeholders");
-    }
-
     /// The compiled metadata search for a mixed Term/Phrase/And/Or/Not query
     /// must place exactly one `?` per pushed bind, in push order: each leaf
     /// pushes 8 LIKE patterns (`%term%`) then its full-text bind.
@@ -2061,7 +1964,7 @@ mod tests {
         assert!(tag_sql.contains("lower(ct.name) = lower(?)"), "{tag_sql}");
         assert!(!tag_sql.contains("ct.lower("), "{tag_sql}");
 
-        let group_eq = name_eq_sql(DbEngine::Postgres, "cg", 1);
+        let group_eq = name_eq_ci(DbEngine::Postgres, "cg.name", "$1");
         assert_eq!(group_eq, "lower(cg.name) = lower($1)");
         assert!(!group_eq.contains("cg.lower("));
 
@@ -2072,7 +1975,7 @@ mod tests {
             "{tag_sqlite}"
         );
         assert_eq!(
-            name_eq_sql(DbEngine::Sqlite, "cg", 1),
+            name_eq_ci(DbEngine::Sqlite, "cg.name", "$1"),
             "cg.name = $1 COLLATE NOCASE"
         );
     }

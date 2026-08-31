@@ -13,8 +13,7 @@ use serde::Serialize;
 use sqlx::any::AnyRow;
 use sqlx::{AnyConnection, Row};
 
-use crate::db::dialect::engine_of;
-use crate::db::engine::DbEngine;
+use crate::db::dialect::{engine_of, name_eq_ci, order_by_name_ci};
 use crate::named_membership::MAX_NAME_LEN;
 
 /// How a saved search was created.
@@ -64,24 +63,18 @@ impl From<sqlx::Error> for SavedSearchError {
     }
 }
 
+impl From<SavedSearchError> for crate::server::ApiError {
+    fn from(e: SavedSearchError) -> Self {
+        match e {
+            SavedSearchError::BadRequest(m) => Self::BadRequest(m),
+            SavedSearchError::NotFound(m) => Self::NotFound(m),
+            SavedSearchError::Conflict(m) => Self::Conflict(m),
+            SavedSearchError::Internal(m) => Self::Internal(m),
+        }
+    }
+}
+
 type Result<T> = std::result::Result<T, SavedSearchError>;
-
-/// Case-insensitive name equality for one engine (`COLLATE NOCASE` is invalid
-/// Postgres SQL; Postgres uses `lower()`).
-fn name_eq_sql(engine: DbEngine, placeholder: usize) -> String {
-    match engine {
-        DbEngine::Sqlite => format!("name = ${placeholder} COLLATE NOCASE"),
-        DbEngine::Postgres => format!("lower(name) = lower(${placeholder})"),
-    }
-}
-
-/// A–Z ordering clause, matching contact groups and message tags.
-fn order_by_name_sql(engine: DbEngine) -> &'static str {
-    match engine {
-        DbEngine::Sqlite => "ORDER BY name COLLATE NOCASE",
-        DbEngine::Postgres => "ORDER BY lower(name)",
-    }
-}
 
 fn row_to_saved_search(row: &AnyRow) -> Result<SavedSearch> {
     Ok(SavedSearch {
@@ -133,7 +126,7 @@ async fn find_id_by_name(
 ) -> Result<Option<i64>> {
     let sql = format!(
         "SELECT id FROM saved_searches WHERE account_id = $1 AND {}",
-        name_eq_sql(engine_of(conn), 2)
+        name_eq_ci(engine_of(conn), "name", "$2")
     );
     let id = sqlx::query_scalar::<_, i64>(&sql)
         .bind(account_id)
@@ -147,7 +140,7 @@ async fn find_id_by_name(
 pub async fn list(conn: &mut AnyConnection, account_id: &str) -> Result<Vec<SavedSearch>> {
     let sql = format!(
         "SELECT id, name, query, kind FROM saved_searches WHERE account_id = $1 {}",
-        order_by_name_sql(engine_of(conn))
+        order_by_name_ci(engine_of(conn), "name")
     );
     let rows = sqlx::query(&sql)
         .bind(account_id)

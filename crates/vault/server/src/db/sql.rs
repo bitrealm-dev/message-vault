@@ -5,9 +5,74 @@ use std::future::Future;
 use std::pin::Pin;
 
 use sqlx::AnyConnection;
-use sqlx::any::AnyRow;
+use sqlx::Arguments;
+use sqlx::any::{AnyArguments, AnyRow};
 
 use super::engine::DbEngine;
+
+/// One bound parameter in a dynamic query. sqlx's Any driver exposes no
+/// user-constructible dynamic value, so heterogeneous binds ride this enum.
+///
+/// `Bool`/`Null` are part of the enum contract shared by every dynamic query
+/// builder; no current filter binds them, so silence the dead-code warning
+/// rather than drop the variants.
+#[derive(Debug, PartialEq)]
+#[allow(dead_code)]
+pub enum SqlParam {
+    Text(String),
+    Int(i64),
+    Bool(bool),
+    Null,
+}
+
+/// Encode `params` into Any-driver arguments, in order.
+///
+/// `String`/`i64`/`bool`/`None` cannot fail to encode on the Any driver; an
+/// encode failure is unreachable and panics like sqlx's own `Query::bind`.
+pub fn bind_args<'q>(params: &[SqlParam]) -> AnyArguments<'q> {
+    let mut args = AnyArguments::default();
+    for p in params {
+        match p {
+            SqlParam::Text(v) => args.add(v.clone()),
+            SqlParam::Int(v) => args.add(*v),
+            SqlParam::Bool(v) => args.add(*v),
+            SqlParam::Null => args.add(Option::<String>::None),
+        }
+        .expect("error encoding argument");
+    }
+    args
+}
+
+/// Build a query from `sql` with all params bound, in order. Placeholders in
+/// the SQL must match this order after [`renumber_placeholders`].
+///
+/// sqlx 0.8.6 does not re-export `Query` at the crate root (the root
+/// `sqlx::Query` re-export is 0.9-only), so the concrete query type is
+/// unnameable; this builds the arguments through the public `Arguments` API
+/// instead.
+pub fn bind_all<'q>(sql: &'q str, params: &[SqlParam]) -> impl sqlx::Execute<'q, sqlx::Any> + 'q {
+    sqlx::query_with(sql, bind_args(params))
+}
+
+/// Rewrite `?` placeholders to `$1..$N` in order. The Any driver performs no
+/// placeholder rewriting and `?` is invalid on Postgres; SQLite accepts `$N`.
+/// Valid because no SQL fragment in this crate contains `?` inside a string
+/// literal — keep it that way, and unit-test this against the committed
+/// fragment set.
+pub fn renumber_placeholders(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    let mut n = 0usize;
+    for ch in sql.chars() {
+        if ch == '?' {
+            n += 1;
+            out.push('$');
+            out.push_str(&n.to_string());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
 
 /// Max ids per `IN (...)` bind list (SQLite's default variable limit is 999).
 pub const SQLITE_IN_CHUNK: usize = 400;
@@ -154,6 +219,30 @@ mod tests {
         // 70 columns: 65_535 / 70 = 936, so the bind cap wins over 1000.
         assert_eq!(max_rows_for_bind_limit(DbEngine::Postgres, 70), 936);
         assert!(1000 * 18 < POSTGRES_MAX_VARIABLES);
+    }
+
+    #[test]
+    fn renumber_placeholders_numbers_in_order() {
+        let sql = "a = ? AND b = ? AND c IN (?, ?) AND d LIKE ?";
+        assert_eq!(
+            renumber_placeholders(sql),
+            "a = $1 AND b = $2 AND c IN ($3, $4) AND d LIKE $5"
+        );
+        assert_eq!(renumber_placeholders("no placeholders"), "no placeholders");
+    }
+
+    #[test]
+    fn bind_args_encodes_every_variant_in_order() {
+        // All four variants must encode without panicking, in order; the
+        // argument count is the only thing the Any driver lets us observe.
+        let params = vec![
+            SqlParam::Text("t".into()),
+            SqlParam::Int(7),
+            SqlParam::Bool(true),
+            SqlParam::Null,
+        ];
+        let args = bind_args(&params);
+        assert_eq!(args.len(), params.len());
     }
 
     #[test]
