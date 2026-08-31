@@ -10,6 +10,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ActiveImportSession } from "../lib/importSession";
 import type { StagingSummary } from "../lib/tauri";
+import { clearAccountProfile } from "../lib/useAccountProfile";
 import type { GateDelta } from "./import/gateDelta";
 import type { ResumeDecision } from "./import/resumeDecision";
 
@@ -209,6 +210,9 @@ function deferred<T>() {
 
 describe("ImportScreen entering Import", () => {
   beforeEach(() => {
+    // useAccountProfile caches at module scope; without this, only the
+    // first test in this file ever reaches the profile GET mock below.
+    clearAccountProfile();
     hookState.phase = "form";
     hookState.gateSummary = null;
     hookState.gateDelta = null;
@@ -582,6 +586,7 @@ describe("ImportScreen entering Import", () => {
     expect(resumeWrite).toEqual({
       sessionId: 7,
       stagingDir: "/home/u/message-vault/staging-260830",
+      identities: null,
     });
   });
 
@@ -763,6 +768,9 @@ describe("ImportScreen entering Import", () => {
 
 describe("ImportScreen gates", () => {
   beforeEach(() => {
+    // useAccountProfile caches at module scope; without this, only the
+    // first test in this file ever reaches the profile GET mock below.
+    clearAccountProfile();
     hookState.phase = "form";
     hookState.gateSummary = null;
     hookState.gateDelta = null;
@@ -890,9 +898,19 @@ describe("ImportScreen gates", () => {
     render(<ImportScreen />);
 
     expect(
-      await screen.findByText(
-        "None of the addresses this backup sent from are on your profile.",
-      ),
+      await screen.findByText("None of the addresses this backup sent from are on your profile."),
     ).toBeInTheDocument();
+  });
+
+  it("shows a factual line when adding an identity to the profile fails", async () => {
+    hookState.phase = "identity_stop";
+    hookState.sourceIdentities = ["+15550001111"];
+    apiPostMock.mockRejectedValue(new Error("network down"));
+    const user = userEvent.setup();
+    render(<ImportScreen />);
+
+    await user.click(await screen.findByText("Add to profile"));
+
+    expect(await screen.findByText("The vault didn't add that address.")).toBeInTheDocument();
   });
 });

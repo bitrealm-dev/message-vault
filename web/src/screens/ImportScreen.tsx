@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { AccountProfile } from "../lib/account";
 import { apiClient } from "../lib/api";
-import type { IdentityService } from "../lib/backupIdentity";
+import {
+  type IdentityService,
+  identityOnProfile,
+  parseSourceIdentities,
+} from "../lib/backupIdentity";
 import { getDeviceId } from "../lib/deviceId";
 import {
   emptyImessagePathStats,
@@ -117,20 +121,30 @@ export default function ImportScreen() {
 
   const { profile, setProfile } = useAccountProfile();
   const identityProfile = profile ? { phones: profile.phones, emails: profile.emails } : null;
+  const [identityAddBusy, setIdentityAddBusy] = useState(false);
+  const [identityAddError, setIdentityAddError] = useState<string | null>(null);
 
   /** Link one backup address onto the profile; the marks re-derive from the
    * updated profile, so a claimed address resolves a mismatch in place.
-   * Never rejects: a failed add is swallowed here rather than surfacing an
-   * unhandled rejection through the fire-and-forget `void onAdd(...)` call
-   * in BackupIdentityList/BackupIdentityStopScreen. */
+   * Never rejects: a failed add (or a 200 that didn't actually add it) is
+   * caught here and turned into `identityAddError` rather than an unhandled
+   * rejection through the fire-and-forget `void onAdd(...)` call in
+   * BackupIdentityList/BackupIdentityStopScreen. */
   const addIdentityToProfile = async (value: string, service: IdentityService): Promise<void> => {
+    setIdentityAddError(null);
+    setIdentityAddBusy(true);
     try {
       const updated = await apiClient.post<AccountProfile>("/v1/account/profile", {
         handles: [{ handle: value, service }],
       });
       setProfile(updated);
+      if (!identityOnProfile(value, updated)) {
+        throw new Error("no-op add");
+      }
     } catch {
-      // Best effort -- the row simply stays marked as not on the profile.
+      setIdentityAddError("The vault didn't add that address.");
+    } finally {
+      setIdentityAddBusy(false);
     }
   };
 
@@ -365,6 +379,10 @@ export default function ImportScreen() {
         await startImport(restoredForm, undefined, {
           sessionId: session.id,
           stagingDir: session.staging_dir,
+          // The write is resumed rather than re-probed, so Gate 1's identity
+          // section has to come from what was recorded on the session at
+          // creation rather than a fresh read of the backup.
+          identities: parseSourceIdentities(session.source_identities),
         });
         return;
       }
@@ -737,7 +755,8 @@ export default function ImportScreen() {
           onAdd={addIdentityToProfile}
           onContinue={() => void continueAfterIdentityStop()}
           onCancel={cancelIdentityStop}
-          busy={running}
+          busy={running || identityAddBusy}
+          error={identityAddError}
         />
       )}
 
@@ -757,7 +776,8 @@ export default function ImportScreen() {
                 identities={sourceIdentities}
                 profile={identityProfile}
                 onAdd={addIdentityToProfile}
-                busy={running}
+                busy={running || identityAddBusy}
+                error={identityAddError}
               />
             ) : undefined
           }

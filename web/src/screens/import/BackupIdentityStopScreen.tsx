@@ -19,6 +19,7 @@ export default function BackupIdentityStopScreen({
   onContinue,
   onCancel,
   busy,
+  error,
 }: {
   identities: string[];
   profile: { phones: string[]; emails: string[] } | null;
@@ -26,6 +27,10 @@ export default function BackupIdentityStopScreen({
   onContinue: () => void;
   onCancel: () => void;
   busy?: boolean;
+  /** Set after an "Add to profile" call fails or silently didn't add the
+   * address — forwarded straight to the list, which renders it under the
+   * rows it belongs next to. */
+  error?: string | null;
 }) {
   const matched =
     profile != null && identities.some((identity) => identityOnProfile(identity, profile));
@@ -41,7 +46,13 @@ export default function BackupIdentityStopScreen({
         These are the addresses the backup's device sent messages from.
       </p>
 
-      <BackupIdentityList identities={identities} profile={profile} onAdd={onAdd} busy={busy} />
+      <BackupIdentityList
+        identities={identities}
+        profile={profile}
+        onAdd={onAdd}
+        busy={busy}
+        error={error}
+      />
 
       <div className="mt-5 flex items-center gap-3">
         <Button variant="primary" size="wide" onClick={onContinue} disabled={busy}>

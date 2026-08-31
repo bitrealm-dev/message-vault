@@ -899,6 +899,32 @@ describe("useImportJob wiring", () => {
       });
       expect(invokeImessageBackupIdentitiesMock).not.toHaveBeenCalled();
     });
+
+    it("resume_write reaches Gate 1 with the session's stored identities, without re-probing", async () => {
+      const { result } = renderHook(() => useImportJob());
+      await act(async () => {
+        await result.current.startImport(imessageForm(), undefined, {
+          sessionId: 42,
+          stagingDir: "/home/u/message-vault/staging-260830",
+          identities: ["+15550001111"],
+        });
+      });
+      expect(invokeImessageBackupIdentitiesMock).not.toHaveBeenCalled();
+      expect(result.current.phase).toBe("gate_1");
+      expect(result.current.sourceIdentities).toEqual(["+15550001111"]);
+    });
+
+    it("guards a double-click during the probe: probes once and creates at most one session", async () => {
+      const { result } = renderHook(() => useImportJob());
+      await act(async () => {
+        await Promise.all([
+          result.current.startImport(imessageForm()),
+          result.current.startImport(imessageForm()),
+        ]);
+      });
+      expect(invokeImessageBackupIdentitiesMock).toHaveBeenCalledTimes(1);
+      expect(postMock.mock.calls.filter(([path]) => path === "/v1/imports")).toHaveLength(1);
+    });
   });
 });
 

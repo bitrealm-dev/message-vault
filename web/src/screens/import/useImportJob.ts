@@ -247,6 +247,11 @@ export type ImportJobFormValues = {
 export type ResumeWrite = {
   sessionId: number;
   stagingDir: string;
+  /** The list recorded on the session at creation (`session.source_identities`,
+   * parsed by the caller). A resumed write lands back on Gate 1 without
+   * re-probing the backup, so this is the only way that gate's identity
+   * section gets a list to show. */
+  identities?: string[] | null;
 };
 
 export type ResumePush = {
@@ -466,6 +471,11 @@ export function useImportJob() {
   // twice — the same in-flight-ref pattern ImportScreen.tsx uses for its
   // resume actions.
   const gateActionRef = useRef(false);
+  // Guards startImport the same way: the identity probe below awaits two
+  // network calls before runImport ever sets `running`, so a double-click
+  // on Import while that probe is in flight would otherwise start two runs
+  // (the second session create 409s).
+  const startImportRef = useRef(false);
 
   function returnToForm(): void {
     setPhase("form");
@@ -1205,24 +1215,42 @@ export function useImportJob() {
     resumeWrite?: ResumeWrite,
   ): Promise<void> {
     if (!isTauri()) return;
-    let identities: string[] | null = null;
-    if (!resume && !resumeWrite && isImessageMethod(form.source)) {
-      identities = await invokeImessageBackupIdentities({
-        path: form.backupPath,
-        ios: form.source === "imessage-ios",
-        backupPassword: form.backupPassword,
-      }).catch(() => []);
-      setSourceIdentities(identities);
-      const profile = await loadAccountProfile();
-      if (needsIdentityStop(identities, profile)) {
-        pendingIdentityFormRef.current = form;
-        setPhase("identity_stop");
-        return;
+    // A second call while one is already probing or running is a no-op —
+    // without this, a double-click during the probe below (which runs
+    // before `running` is ever true) would start two sessions.
+    if (startImportRef.current) return;
+    startImportRef.current = true;
+    try {
+      let identities: string[] | null = null;
+      if (!resume && !resumeWrite && isImessageMethod(form.source)) {
+        // The probe reads the backup (and, for an encrypted one, decrypts
+        // it) before any session exists, which can take seconds — mark the
+        // run busy for that stretch so the Import button reflects it, the
+        // same way it does once runImport takes over.
+        setRunning(true);
+        try {
+          identities = await invokeImessageBackupIdentities({
+            path: form.backupPath,
+            ios: form.source === "imessage-ios",
+            backupPassword: form.backupPassword,
+          }).catch(() => []);
+          setSourceIdentities(identities);
+          const profile = await loadAccountProfile();
+          if (needsIdentityStop(identities, profile)) {
+            pendingIdentityFormRef.current = form;
+            setPhase("identity_stop");
+            return;
+          }
+        } finally {
+          setRunning(false);
+        }
+      } else {
+        setSourceIdentities(resumeWrite ? (resumeWrite.identities ?? null) : null);
       }
-    } else {
-      setSourceIdentities(null);
+      await runImport(form, identities, resume, resumeWrite);
+    } finally {
+      startImportRef.current = false;
     }
-    await runImport(form, identities, resume, resumeWrite);
   }
 
   /** Continue past the identity stop with the parked form. */

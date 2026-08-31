@@ -204,7 +204,8 @@ mod tests {
         .unwrap();
         drop(db);
 
-        let identities = backup_identities(&db_path, false, None).unwrap();
+        let mut identities = backup_identities(&db_path, false, None).unwrap();
+        identities.sort();
         assert_eq!(
             identities,
             vec!["+15550001111".to_string(), "Owner@Example.com".to_string()]
