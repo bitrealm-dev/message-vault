@@ -21,7 +21,7 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
     let SourceConfig::SmsBackupPlus(source) = &config.source else {
         bail!("sms-backup-plus-exporter requires SourceConfig::SmsBackupPlus");
     };
-    message_vault_io_core::check_cancel(config.cancel.as_ref()).map_err(anyhow::Error::msg)?;
+    message_vault_io_core::check_cancel(config.cancel.as_ref())?;
 
     if source.owner_phones.is_empty() {
         bail!("owner phone required: pass --owner-phone");

@@ -56,8 +56,6 @@ fn real_main() -> Result<ExitCode> {
         page_limit: cli.page_limit,
         cancel: None,
         asset_download_workers: DEFAULT_ASSET_DOWNLOAD_WORKERS,
-        force: false,
-        journal_path: None,
     };
 
     let mut on_progress = |event: ProgressEvent| match event {

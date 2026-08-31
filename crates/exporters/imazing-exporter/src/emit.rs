@@ -95,7 +95,7 @@ pub(crate) fn convert_export(
     let mut seen_keys: BTreeMap<String, HashSet<String>> = BTreeMap::new();
 
     for discovered in &files {
-        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        message_vault_io_core::check_cancel(cancel)?;
         match discovered.kind {
             SourceKind::Messages => report.bump("messages_files", 1),
             SourceKind::WhatsApp => report.bump("whatsapp_files", 1),

@@ -139,6 +139,9 @@ pub async fn push(
             prepare_ahead: 8,
             // Above the CLI default (2): more of the prepare-ahead queue runs at once.
             prepare_workers: 4,
+            // Below the CLI default (vault_push::MAX_PROXY_BODY_BYTES, 90 MiB):
+            // desktop uploads switch to multipart sooner so a large attachment
+            // moves in small parts instead of one long PUT.
             asset_multipart_threshold: 5 * 1024 * 1024,
             // Per-file attachment cap. JSONL import batches use MAX_IMPORT_BODY_BYTES.
             asset_max_bytes: ASSET_MAX_BYTES,

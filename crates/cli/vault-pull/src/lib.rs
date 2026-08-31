@@ -18,8 +18,7 @@ pub use run::{
     DEFAULT_ASSET_DOWNLOAD_WORKERS, DEFAULT_PAGE_LIMIT, ProgressEvent, ProgressFn, PullReport,
     VaultPullConfig, compose_query, run,
 };
-pub use vault_http::{AuthError, AuthInfo};
-pub use vault_push::authenticate;
+pub use vault_http::{AuthError, AuthInfo, auth_check as authenticate};
 
 #[cfg(feature = "cli")]
 pub use cli::clap_command;

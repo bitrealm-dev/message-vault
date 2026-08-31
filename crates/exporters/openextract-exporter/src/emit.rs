@@ -71,7 +71,7 @@ pub(crate) fn convert_export(
 
     // For per-chat files, infer peer once from all rows in that file.
     for path in &files {
-        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        message_vault_io_core::check_cancel(cancel)?;
         let rows = match parse_csv_file(path) {
             Ok(r) => r,
             Err(e) => {
@@ -161,7 +161,7 @@ pub(crate) fn convert_export(
         }
     }
 
-    message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+    message_vault_io_core::check_cancel(cancel)?;
 
     let hooks = OpenExtractProjection {
         export: message_vault_io_core::export_meta(

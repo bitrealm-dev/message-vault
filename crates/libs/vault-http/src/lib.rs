@@ -1,8 +1,9 @@
 //! Blocking HTTP client helpers and retry classification for the vault CLI
 //! crates.
 //!
-//! `vault-push` and `vault-pull` both build their session client through
-//! [`build_client`], share [`truncate`] for error snippets, and classify
+//! `vault-push` and `vault-pull` both talk to the vault through one
+//! [`HttpSession`] (built on [`build_client`]), log in through
+//! [`auth_check`], share [`truncate`] for error snippets, and classify
 //! retryable failures through `classify_retry` / `with_retries`.
 //! [`AuthError`] and [`AuthInfo`] live here so both crates — and the desktop
 //! app through their re-exports — share one auth surface.
@@ -11,9 +12,11 @@
 
 mod auth_error;
 mod retry;
+mod session;
 
 pub use auth_error::AuthError;
 pub use retry::{RetryKind, VaultHttpError, classify_retry, with_retries};
+pub use session::{HttpSession, auth_check, bearer_header, looks_like_html, trim_base_url};
 
 use anyhow::{Context, Result};
 

@@ -1,8 +1,9 @@
-//! Cooperative cancel flags and a log-line sink shared by exporter runs.
+//! Cooperative cancel flags, a log-line sink, and a scoped worker pool shared
+//! by exporter runs.
 
 use std::fmt;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 /// Shared cancel flag for cooperative in-process jobs.
 pub type CancelFlag = Arc<AtomicBool>;
@@ -48,22 +49,126 @@ pub fn is_cancelled(cancel: Option<&CancelFlag>) -> bool {
         .unwrap_or(false)
 }
 
-/// Return `Err("cancelled")` if cancel was requested.
+/// Error returned by [`check_cancel`] when cancel was requested.
+///
+/// Displays as `cancelled`, so callers at a `String` edge can use
+/// `.map_err(|e| e.to_string())` and `anyhow` callers can use `?`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cancelled;
+
+impl fmt::Display for Cancelled {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("cancelled")
+    }
+}
+
+impl std::error::Error for Cancelled {}
+
+/// Return `Err(Cancelled)` if cancel was requested.
 ///
 /// # Errors
 ///
-/// Returns `"cancelled"` when the flag is set.
-pub fn check_cancel(cancel: Option<&CancelFlag>) -> Result<(), &'static str> {
+/// Returns [`Cancelled`] when the flag is set.
+pub fn check_cancel(cancel: Option<&CancelFlag>) -> Result<(), Cancelled> {
     if is_cancelled(cancel) {
-        Err("cancelled")
+        Err(Cancelled)
     } else {
         Ok(())
     }
 }
+
+/// Run `f` over `jobs` on up to `workers` scoped threads and return one result
+/// per job, in job order.
+///
+/// Workers pull the next job index from a shared counter (work stealing).
+/// Cancel is checked before each job; once cancel is requested, every job not
+/// yet started records `Err("cancelled")` instead of running `f`.
+pub fn parallel_for_each<J, T, F>(
+    jobs: &[J],
+    workers: usize,
+    cancel: Option<&CancelFlag>,
+    f: F,
+) -> Vec<Result<T, String>>
+where
+    J: Sync,
+    T: Send,
+    F: Fn(&J) -> Result<T, String> + Sync,
+{
+    if jobs.is_empty() {
+        return Vec::new();
+    }
+    let worker_count = workers.max(1).min(jobs.len());
+    let next_job = AtomicUsize::new(0);
+    let results = Mutex::new(
+        std::iter::repeat_with(|| None)
+            .take(jobs.len())
+            .collect::<Vec<Option<Result<T, String>>>>(),
+    );
+    std::thread::scope(|scope| {
+        for _ in 0..worker_count {
+            scope.spawn(|| {
+                loop {
+                    let index = next_job.fetch_add(1, Ordering::Relaxed);
+                    if index >= jobs.len() {
+                        break;
+                    }
+                    let result = match check_cancel(cancel) {
+                        Ok(()) => f(&jobs[index]),
+                        Err(cancelled) => Err(cancelled.to_string()),
+                    };
+                    results.lock().expect("parallel job mutex poisoned")[index] = Some(result);
+                }
+            });
+        }
+    });
+    results
+        .into_inner()
+        .expect("parallel job mutex poisoned")
+        .into_iter()
+        .map(|result| result.expect("every job has a result"))
+        .collect()
+}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+
+    #[test]
+    fn cancelled_displays_as_cancelled() {
+        let flag: CancelFlag = Arc::new(AtomicBool::new(true));
+        let err = check_cancel(Some(&flag)).unwrap_err();
+        assert_eq!(err.to_string(), "cancelled");
+    }
+
+    #[test]
+    fn parallel_for_each_keeps_job_order() {
+        let jobs: Vec<usize> = (0..20).collect();
+        let results = parallel_for_each(&jobs, 4, None, |job| {
+            if job % 7 == 3 {
+                Err(format!("bad {job}"))
+            } else {
+                Ok(job * 2)
+            }
+        });
+        assert_eq!(results.len(), jobs.len());
+        for (job, result) in jobs.iter().zip(&results) {
+            match result {
+                Ok(doubled) => assert_eq!(*doubled, job * 2),
+                Err(message) => assert_eq!(message, &format!("bad {job}")),
+            }
+        }
+    }
+
+    #[test]
+    fn parallel_for_each_reports_cancel_without_running_jobs() {
+        let flag: CancelFlag = Arc::new(AtomicBool::new(true));
+        let jobs = [1u8, 2, 3];
+        let results = parallel_for_each(&jobs, 2, Some(&flag), |_| Ok::<_, String>(()));
+        assert!(
+            results
+                .iter()
+                .all(|r| r.as_ref().err().map(String::as_str) == Some("cancelled"))
+        );
+    }
 
     #[test]
     fn emit_log_uses_sink_when_set() {

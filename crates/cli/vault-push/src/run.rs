@@ -37,7 +37,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -46,7 +46,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 use message_ir::ConversationHeader;
 use message_ir_format::read_conversation_jsonl;
-use message_vault_io_core::{CancelFlag, check_cancel};
+use message_vault_io_core::{CancelFlag, check_cancel, parallel_for_each};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -783,7 +783,7 @@ pub fn authenticate(
     key: &str,
     username: &str,
 ) -> std::result::Result<AuthInfo, crate::AuthError> {
-    http::auth_check(base_url, key, username)
+    vault_http::auth_check(base_url, key, username)
 }
 
 /// Read the first conversation file's header and return its `export.source` string.
@@ -874,7 +874,7 @@ fn prepare_run_setup(
     let username = cfg.username.trim().to_string();
     let http = HttpSession::new()?;
 
-    check_cancel(cfg.cancel.as_ref()).map_err(|_| anyhow::anyhow!("cancelled"))?;
+    check_cancel(cfg.cancel.as_ref())?;
     let auth = http.auth_check(&url, &cfg.key, &username)?;
     // The API key decides which account this run uses. Prefer the username the server
     // returns; fall back to the account id string if username is empty.
@@ -937,7 +937,8 @@ fn prepare_run_setup(
         }
         Some(import_id)
     } else {
-        match http.start_import(
+        match http::start_import(
+            &http,
             &url,
             &cfg.key,
             &username,
@@ -1089,16 +1090,19 @@ fn finish_run(
     if cfg.import_id.is_none()
         && let Some(import_id) = import_id
     {
-        match http.complete_import(CompleteImportArgs {
-            base_url: &url,
-            key: &cfg.key,
-            import_id,
-            ok: report.ok,
-            status: outcome_status(&report, aborted),
-            message_count: report.messages,
-            attachment_count: attachments,
-            bytes_uploaded: assets_bytes,
-        }) {
+        match http::complete_import(
+            http,
+            CompleteImportArgs {
+                base_url: &url,
+                key: &cfg.key,
+                import_id,
+                ok: report.ok,
+                status: outcome_status(&report, aborted),
+                message_count: report.messages,
+                attachment_count: attachments,
+                bytes_uploaded: assets_bytes,
+            },
+        ) {
             Ok(()) => log.line(&format!("vault import session {import_id} completed")),
             Err(error) => log.line(&format!(
                 "warning: could not complete vault import session {import_id}: {error}"
@@ -1929,7 +1933,7 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
     let mut chunk_messages: Vec<JournalMessage> = Vec::new();
 
     for (i, msg) in messages.iter().enumerate() {
-        check_cancel(cfg.cancel.as_ref()).map_err(|_| anyhow::anyhow!("cancelled"))?;
+        check_cancel(cfg.cancel.as_ref())?;
         let (line, guid) = if cfg.skip_attachments {
             project::message_line_without_attachments(msg, i)?
         } else {
@@ -2097,7 +2101,7 @@ fn preflight_existing_assets(
         return Ok(());
     };
     let present = vault_http::with_retries(max_retries, || {
-        http.head_asset(url, key, username, source, &job.digest)
+        http::head_asset(http, url, key, username, source, &job.digest)
     })?;
     if present.is_some() {
         probe_existing.store(true, Ordering::Relaxed);
@@ -2141,7 +2145,7 @@ fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
     };
     // Build the work list: skip digests already in the journal / claimed by another worker.
     for (digest, (rel, mime)) in unique {
-        check_cancel(cfg.cancel.as_ref()).map_err(|_| anyhow::anyhow!("cancelled"))?;
+        check_cancel(cfg.cancel.as_ref())?;
         if !claim_asset_upload(journal, digest, cfg.force) {
             stats.skipped += 1;
             continue;
@@ -2192,68 +2196,46 @@ fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
     )?;
 
     // Work-stealing style: workers pull the next job index from a shared counter.
-    let worker_count = cfg.asset_upload_workers.max(1).min(jobs.len());
-    let next_job = AtomicUsize::new(0);
-    let results = Mutex::new(
-        std::iter::repeat_with(|| None)
-            .take(jobs.len())
-            .collect::<Vec<Option<Result<AssetUploadResult, String>>>>(),
-    );
-    std::thread::scope(|scope| {
-        for _ in 0..worker_count {
-            scope.spawn(|| {
-                loop {
-                    let index = next_job.fetch_add(1, Ordering::Relaxed);
-                    if index >= jobs.len() {
-                        break;
-                    }
-                    let job = &jobs[index];
-                    let result = check_cancel(cfg.cancel.as_ref())
-                        .map_err(|_| "cancelled".to_string())
-                        .and_then(|_| {
-                            vault_http::with_retries(cfg.max_retries, || {
-                                if probe_existing.load(Ordering::Relaxed) {
-                                    if let Some(existing) = http.head_asset(
-                                        url,
-                                        &cfg.key,
-                                        username,
-                                        source,
-                                        &job.digest,
-                                    )? {
-                                        return Ok(existing);
-                                    }
-                                }
-                                let response = http.put_asset(AssetPutRequest {
-                                    base_url: url,
-                                    key: &cfg.key,
-                                    username,
-                                    source,
-                                    sha256: &job.digest,
-                                    file: &job.path,
-                                    mime: job.mime.as_deref(),
-                                    multipart_threshold: cfg.asset_multipart_threshold,
-                                })?;
-                                if response.already_present {
-                                    probe_existing.store(true, Ordering::Relaxed);
-                                }
-                                Ok(response)
-                            })
-                            .map(|response| AssetUploadResult {
-                                digest: job.digest.clone(),
-                                response,
-                            })
-                            .map_err(|error| error.to_string())
-                        });
-                    results.lock().expect("asset result mutex poisoned")[index] = Some(result);
+    let results = parallel_for_each(
+        &jobs,
+        cfg.asset_upload_workers,
+        cfg.cancel.as_ref(),
+        |job| {
+            vault_http::with_retries(cfg.max_retries, || {
+                if probe_existing.load(Ordering::Relaxed)
+                    && let Some(existing) =
+                        http::head_asset(http, url, &cfg.key, username, source, &job.digest)?
+                {
+                    return Ok(existing);
                 }
-            });
-        }
-    });
+                let response = http::put_asset(
+                    http,
+                    AssetPutRequest {
+                        base_url: url,
+                        key: &cfg.key,
+                        username,
+                        source,
+                        sha256: &job.digest,
+                        file: &job.path,
+                        mime: job.mime.as_deref(),
+                        multipart_threshold: cfg.asset_multipart_threshold,
+                    },
+                )?;
+                if response.already_present {
+                    probe_existing.store(true, Ordering::Relaxed);
+                }
+                Ok(response)
+            })
+            .map(|response| AssetUploadResult {
+                digest: job.digest.clone(),
+                response,
+            })
+            .map_err(|error| error.to_string())
+        },
+    );
 
     // Apply journal updates in a stable order after all workers finish.
-    let mut results = results.into_inner().expect("asset result mutex poisoned");
-    for result in results.drain(..) {
-        let result = result.expect("every asset job has a result");
+    for result in results {
         match result {
             Ok(uploaded) => {
                 finish_asset_upload(
@@ -2659,16 +2641,19 @@ fn spawn_import_http(args: SpawnImportHttp) -> InFlightImport {
         let body_bytes = batch.body.len();
         let message_count = batch.messages.len();
         let response = vault_http::with_retries(max_retries, || {
-            http.post_import(PostImportArgs {
-                base_url: &url,
-                key: &key,
-                username: &username,
-                source: &batch.source,
-                mode: &mode,
-                import_id,
-                contact_name_mode: &contact_name_mode,
-                ndjson: batch.body.clone(),
-            })
+            http::post_import(
+                &http,
+                PostImportArgs {
+                    base_url: &url,
+                    key: &key,
+                    username: &username,
+                    source: &batch.source,
+                    mode: &mode,
+                    import_id,
+                    contact_name_mode: &contact_name_mode,
+                    ndjson: batch.body.clone(),
+                },
+            )
         })
         .map_err(|error| error.to_string());
         let request_ms = elapsed_ms(request_started);

@@ -1,32 +1,20 @@
-//! HTTP helpers for login, attachment upload, and JSON Lines message import.
+//! HTTP helpers for attachment upload and JSON Lines message import.
 //!
 //! JSON Lines means one JSON object per line. Calls are blocking so they can
-//! run on worker threads without an async runtime.
+//! run on worker threads without an async runtime. Login lives in
+//! [`vault_http::auth_check`]; the session type here is
+//! [`vault_http::HttpSession`].
 
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
-use reqwest::blocking::Client;
+use anyhow::{Context, Result, anyhow};
+use reqwest::Method;
 use serde::Deserialize;
-use vault_http::{VaultHttpError, truncate};
+use serde::de::DeserializeOwned;
+use vault_http::{VaultHttpError, looks_like_html, trim_base_url};
 
-use crate::{AuthError, AuthInfo};
-
-#[derive(Debug, Deserialize)]
-struct AuthCheckResponse {
-    ok: bool,
-    #[serde(default)]
-    account_id: Option<String>,
-    #[serde(default)]
-    username: Option<String>,
-    /// Present on some vault versions; accepted for wire compat, unused here.
-    #[serde(default)]
-    #[allow(dead_code)]
-    account_ok: Option<bool>,
-    #[serde(default)]
-    error: Option<String>,
-}
+pub use vault_http::HttpSession;
 
 #[derive(Debug, Deserialize)]
 /// Vault reply after HEAD or PUT of one attachment.
@@ -64,12 +52,6 @@ pub struct ImportResponse {
     pub assets_missing: u64,
 }
 
-#[derive(Clone)]
-/// Blocking HTTP client used for login, attachment upload, and import.
-pub struct HttpSession {
-    client: Client,
-}
-
 /// Arguments for uploading one attachment file.
 pub struct AssetPutRequest<'a> {
     pub base_url: &'a str,
@@ -83,7 +65,7 @@ pub struct AssetPutRequest<'a> {
     pub multipart_threshold: usize,
 }
 
-/// Arguments for [`HttpSession::post_import`].
+/// Arguments for [`post_import`].
 pub(crate) struct PostImportArgs<'a> {
     pub base_url: &'a str,
     pub key: &'a str,
@@ -95,7 +77,7 @@ pub(crate) struct PostImportArgs<'a> {
     pub ndjson: Vec<u8>,
 }
 
-/// Arguments for [`HttpSession::complete_import`].
+/// Arguments for [`complete_import`].
 pub(crate) struct CompleteImportArgs<'a> {
     pub base_url: &'a str,
     pub key: &'a str,
@@ -121,23 +103,57 @@ struct UploadStartResponse {
     error: Option<String>,
 }
 
-impl HttpSession {
-    /// Blocking HTTP client with a connection pool for worker threads.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the reqwest client cannot be built.
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            client: vault_http::build_client()?,
-        })
+/// A response body with the vault's usual `ok` / `error` fields, for [`ok_json`].
+trait OkEnvelope: DeserializeOwned {
+    fn is_ok(&self) -> bool;
+    fn error_message(self) -> Option<String>;
+}
+
+impl OkEnvelope for AssetPutResponse {
+    fn is_ok(&self) -> bool {
+        self.ok
+    }
+    fn error_message(self) -> Option<String> {
+        self.error
     }
 }
 
-/// True when the body looks like an HTML error page instead of JSON.
-fn looks_like_html(body: &str) -> bool {
-    let t = body.trim_start();
-    t.starts_with("<!DOCTYPE") || t.starts_with("<html") || t.starts_with("<HTML")
+impl OkEnvelope for ImportResponse {
+    fn is_ok(&self) -> bool {
+        self.ok
+    }
+    fn error_message(self) -> Option<String> {
+        self.error
+    }
+}
+
+impl OkEnvelope for UploadStartResponse {
+    fn is_ok(&self) -> bool {
+        self.ok
+    }
+    fn error_message(self) -> Option<String> {
+        self.error
+    }
+}
+
+/// Parse a vault JSON response body, or bail with the server's error text.
+///
+/// Returns the parsed body only when the HTTP status is a success and the body
+/// says `ok: true`. Otherwise the error is a [`VaultHttpError`] carrying, in
+/// order of preference: the body's `error` field, `HTTP {status}: {body}`, or
+/// the raw body when it is not valid JSON.
+fn ok_json<T: OkEnvelope>(status: reqwest::StatusCode, text: &str) -> Result<T> {
+    match serde_json::from_str::<T>(text) {
+        Ok(parsed) if status.is_success() && parsed.is_ok() => Ok(parsed),
+        Ok(parsed) => Err(VaultHttpError::new(
+            status.as_u16(),
+            parsed
+                .error_message()
+                .unwrap_or_else(|| format!("HTTP {status}: {text}")),
+        )
+        .into()),
+        Err(_) => Err(VaultHttpError::new(status.as_u16(), text.to_string()).into()),
+    }
 }
 
 /// True for HTTP 413 or a proxy HTML page that says the body was too large.
@@ -155,657 +171,431 @@ fn payload_too_large_message(kind: &str, bytes: Option<usize>) -> String {
         .unwrap_or_default();
     format!(
         "{kind} rejected: HTTP 413 Payload Too Large{size}. \
-         Cloudflare Free/Pro caps proxied uploads at ~100 MB. \
-         vault-push chunks message imports under 64 MiB and large assets via multipart; \
-         if this still fails, raise nginx client_max_body_size for /v1 (need ≥100m for 64 MiB parts) \
+         Cloudflare Free/Pro caps proxied uploads at ~100 MB. \
+         vault-push chunks message imports under 64 MiB and large assets via multipart; \
+         if this still fails, raise nginx client_max_body_size for /v1 (need ≥100m for 64 MiB parts) \
          or tunnel to vault :8080."
     )
 }
 
-/// Percent-encode a query value so it is safe inside a vault URL.
-fn encode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char);
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
+/// Build `{base}/v1/assets/...` with extra path segments (percent-encoded) and
+/// the `source=` / `account=` query pair every asset route takes.
+fn asset_url(
+    base_url: &str,
+    segments: &[&str],
+    source: &str,
+    account: &str,
+) -> Result<reqwest::Url> {
+    let base = trim_base_url(base_url);
+    let mut url = reqwest::Url::parse(base).with_context(|| format!("invalid vault URL {base}"))?;
+    url.path_segments_mut()
+        .map_err(|()| anyhow!("invalid vault URL {base}"))?
+        .pop_if_empty()
+        .extend(["v1", "assets"].into_iter().chain(segments.iter().copied()));
+    url.query_pairs_mut()
+        .append_pair("source", source)
+        .append_pair("account", account);
+    Ok(url)
 }
 
-impl HttpSession {
-    /// Call `GET /v1/auth/check` and return the account id on success.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AuthError`] when the URL is invalid, the host is unreachable,
-    /// or the key is rejected.
-    pub fn auth_check(
-        &self,
-        base_url: &str,
-        key: &str,
-        username: &str,
-    ) -> std::result::Result<AuthInfo, AuthError> {
-        // Validate the token first (no account=). A wrong User ID used to return
-        // HTTP 403 "username does not match vault key", which looked like a bad token.
-        let base = base_url.trim().trim_end_matches('/');
-        let parsed_base = match reqwest::Url::parse(base) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                return Err(AuthError::InvalidUrl {
-                    url: base.to_string(),
-                    detail: error.to_string(),
-                });
-            }
-        };
-        let url = format!("{base}/v1/auth/check");
-        let response = self
-            .client
-            .get(&url)
-            .timeout(Duration::from_secs(15))
-            .header("Authorization", format!("Bearer {}", key.trim()))
-            .send()
-            .map_err(|error| classify_auth_transport_error(&url, error))?;
-        let status = response.status();
-        let status_code = status.as_u16();
-        // After redirects, reqwest reports the final URL. http→https drops Authorization.
-        let final_url = response.url().clone();
-        let text = response.text().map_err(|error| AuthError::ReadResponse {
-            detail: error.to_string(),
-        })?;
-        if looks_like_html(&text) {
-            return Err(AuthError::WrongHostHtml {
-                url,
-                status: status_code,
-            });
-        }
-        if status_code == 401 {
-            return Err(classify_unauthorized(base, &parsed_base, &final_url));
-        }
-        if !status.is_success() {
-            return Err(classify_auth_http_status(status_code, text));
-        }
-        let parsed: AuthCheckResponse =
-            serde_json::from_str(&text).map_err(|_| AuthError::BadJson {
-                url: url.clone(),
-                status: status_code,
-                snippet: truncate(&text, 200),
-            })?;
-        if !parsed.ok {
-            return Err(AuthError::Rejected {
-                message: parsed.error.unwrap_or(text),
-            });
-        }
-        let account_id = parsed
-            .account_id
-            .filter(|s| !s.is_empty())
-            .ok_or(AuthError::MissingAccountId)?;
-        // Token is authoritative. Ignore a wrong Username field — callers should
-        // prefer `AuthInfo.username` for later account= query params.
-        let _ = username;
-        Ok(AuthInfo {
-            account_id,
-            username: parsed.username,
-        })
-    }
-
-    /// Probe whether the vault already has this SHA-256 fingerprint.
-    ///
-    /// Returns `Some` when present, `None` when missing (HTTP 404). Does not
-    /// transfer the file body. SHA-256 here is a short hex fingerprint of the
-    /// file bytes.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error on auth failure or any non-404 HTTP error.
-    pub fn head_asset(
-        &self,
-        base_url: &str,
-        key: &str,
-        username: &str,
-        source: &str,
-        sha256: &str,
-    ) -> Result<Option<AssetPutResponse>> {
-        let base = base_url.trim_end_matches('/');
-        let url = format!(
-            "{base}/v1/assets/{}?source={}&account={}",
-            encode(sha256),
-            encode(source),
-            encode(username)
-        );
-        let response = self
-            .client
-            .head(&url)
-            .timeout(Duration::from_secs(15))
-            .header("Authorization", format!("Bearer {}", key.trim()))
-            .send()
-            .with_context(|| format!("HEAD {url}"))?;
-        let status = response.status();
-        match status.as_u16() {
-            404 => return Ok(None),
-            401 => return Err(VaultHttpError::new(401, "invalid vault key").into()),
-            403 => {
-                return Err(VaultHttpError::new(403, "username does not match vault key").into());
-            }
-            _ => {}
-        }
-        if !status.is_success() {
-            let text = response.text().unwrap_or_default();
-            return Err(VaultHttpError::new(
-                status.as_u16(),
-                format!("asset HEAD failed (HTTP {status}): {text}"),
-            )
-            .into());
-        }
-        // A 2xx without a usable JSON body means the asset is there: plain HEAD
-        // responders and proxies often send no body at all.
-        let assumed_present = AssetPutResponse {
-            ok: true,
-            already_present: true,
-            error: None,
-        };
-        let text = response.text().unwrap_or_default();
-        if text.trim().is_empty() {
-            return Ok(Some(assumed_present));
-        }
-        let Ok(parsed) = serde_json::from_str::<AssetPutResponse>(&text) else {
-            return Ok(Some(assumed_present));
-        };
-        // With a JSON body, only treat the asset as present when the server says so.
-        if !parsed.ok || !parsed.already_present {
-            return Ok(None);
-        }
-        Ok(Some(parsed))
-    }
-
-    /// Upload one attachment with PUT, or multipart when the file is large.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the file cannot be read, the vault rejects the
-    /// upload, or the response cannot be parsed.
-    pub fn put_asset(&self, request: AssetPutRequest<'_>) -> Result<AssetPutResponse> {
-        let file_len = std::fs::metadata(request.file)
-            .with_context(|| format!("stat {}", request.file.display()))?
-            .len();
-        if file_len > request.multipart_threshold as u64 {
-            return self.put_asset_multipart(request, file_len);
-        }
-
-        let base = request.base_url.trim_end_matches('/');
-        let url = format!(
-            "{base}/v1/assets/{}?source={}&account={}",
-            encode(request.sha256),
-            encode(request.source),
-            encode(request.username)
-        );
-        let bytes = std::fs::read(request.file)
-            .with_context(|| format!("read {}", request.file.display()))?;
-        let content_type = request
-            .mime
-            .filter(|mime| !mime.is_empty())
-            .unwrap_or("application/octet-stream");
-        let response = self
-            .client
-            .put(&url)
-            .timeout(Duration::from_secs(600))
-            .header("Authorization", format!("Bearer {}", request.key.trim()))
-            .header("Content-Type", content_type)
-            .body(bytes)
-            .send()
-            .with_context(|| format!("PUT {url}"))?;
-        let status = response.status();
-        let text = response.text().context("read asset response")?;
-        if looks_like_payload_too_large(status, &text) {
-            return Err(VaultHttpError::new(
-                413,
-                payload_too_large_message("asset upload", Some(file_len as usize)),
-            )
-            .into());
-        }
-        let parsed: AssetPutResponse = serde_json::from_str(&text).unwrap_or(AssetPutResponse {
-            ok: false,
-            already_present: false,
-            error: Some(text.clone()),
-        });
-        if !status.is_success() || !parsed.ok {
-            return Err(VaultHttpError::new(
-                status.as_u16(),
-                parsed
-                    .error
-                    .unwrap_or_else(|| format!("HTTP {status}: {text}")),
-            )
-            .into());
-        }
-        Ok(parsed)
-    }
-
-    /// Upload a large file as several parts, then complete the upload.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when start, part PUT, or complete fails, or the file
-    /// cannot be read.
-    fn put_asset_multipart(
-        &self,
-        request: AssetPutRequest<'_>,
-        file_len: u64,
-    ) -> Result<AssetPutResponse> {
-        let base = request.base_url.trim_end_matches('/');
-        let qs = format!(
-            "source={}&account={}",
-            encode(request.source),
-            encode(request.username)
-        );
-        let start_url = format!("{base}/v1/assets/{}/uploads?{qs}", encode(request.sha256));
-        let mut start_body = serde_json::json!({ "bytes": file_len });
-        if let Some(mime) = request.mime.filter(|m| !m.is_empty()) {
-            start_body["mime"] = serde_json::Value::String(mime.to_string());
-        }
-        let start_resp = self
-            .client
-            .post(&start_url)
-            .timeout(Duration::from_secs(30))
-            .header("Authorization", format!("Bearer {}", request.key.trim()))
-            .header("Content-Type", "application/json")
-            .json(&start_body)
-            .send()
-            .with_context(|| format!("POST {start_url}"))?;
-        let start_status = start_resp.status();
-        let start_text = start_resp.text().context("read upload start response")?;
-        if looks_like_payload_too_large(start_status, &start_text) {
-            return Err(VaultHttpError::new(
-                413,
-                payload_too_large_message("asset upload start", None),
-            )
-            .into());
-        }
-        let started: UploadStartResponse =
-            serde_json::from_str(&start_text).with_context(|| {
-                format!(
-                    "parse upload start JSON (HTTP {start_status}): {}",
-                    truncate(&start_text, 200)
-                )
-            })?;
-        if !start_status.is_success() || !started.ok {
-            return Err(VaultHttpError::new(
-                start_status.as_u16(),
-                started
-                    .error
-                    .unwrap_or_else(|| format!("HTTP {start_status}: {start_text}")),
-            )
-            .into());
-        }
-        if started.already_present {
-            return Ok(AssetPutResponse {
-                ok: true,
-                already_present: true,
-                error: None,
-            });
-        }
-        let upload_id = started
-            .upload_id
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("upload start missing upload_id"))?;
-        let part_size = started
-            .part_size
-            .filter(|&n| n > 0)
-            .ok_or_else(|| anyhow::anyhow!("upload start missing part_size"))?;
-
-        let abort = |session: &HttpSession, upload_id: &str| {
-            let abort_url = format!(
-                "{base}/v1/assets/{}/uploads/{}?{qs}",
-                encode(request.sha256),
-                encode(upload_id)
-            );
-            let _ = session
-                .client
-                .delete(&abort_url)
-                .timeout(Duration::from_secs(30))
-                .header("Authorization", format!("Bearer {}", request.key.trim()))
-                .send();
-        };
-
-        let mut file = std::fs::File::open(request.file)
-            .with_context(|| format!("open {}", request.file.display()))?;
-        let mut part: u32 = 1;
-        let mut remaining = file_len;
-        while remaining > 0 {
-            let this_len = remaining.min(part_size as u64) as usize;
-            let mut buf = vec![0u8; this_len];
-            use std::io::Read;
-            file.read_exact(&mut buf)
-                .with_context(|| format!("read part {part} from {}", request.file.display()))?;
-            let part_url = format!(
-                "{base}/v1/assets/{}/uploads/{}/parts/{part}?{qs}",
-                encode(request.sha256),
-                encode(&upload_id)
-            );
-            let response = self
-                .client
-                .put(&part_url)
-                .timeout(Duration::from_secs(600))
-                .header("Authorization", format!("Bearer {}", request.key.trim()))
-                .header("Content-Type", "application/octet-stream")
-                .body(buf)
-                .send()
-                .with_context(|| format!("PUT {part_url}"))?;
-            let status = response.status();
-            let text = response.text().unwrap_or_default();
-            if looks_like_payload_too_large(status, &text) {
-                abort(self, &upload_id);
-                return Err(VaultHttpError::new(
-                    413,
-                    payload_too_large_message("asset upload part", Some(this_len)),
-                )
-                .into());
-            }
-            if !status.is_success() {
-                abort(self, &upload_id);
-                return Err(VaultHttpError::new(
-                    status.as_u16(),
-                    format!("asset part {part} failed (HTTP {status}): {text}"),
-                )
-                .into());
-            }
-            remaining -= this_len as u64;
-            part += 1;
-        }
-
-        let complete_url = format!(
-            "{base}/v1/assets/{}/uploads/{}/complete?{qs}",
-            encode(request.sha256),
-            encode(&upload_id)
-        );
-        let response = self
-            .client
-            .post(&complete_url)
-            .timeout(Duration::from_secs(600))
-            .header("Authorization", format!("Bearer {}", request.key.trim()))
-            .send()
-            .with_context(|| format!("POST {complete_url}"))?;
-        let status = response.status();
-        let text = response.text().context("read upload complete response")?;
-        let parsed: AssetPutResponse = serde_json::from_str(&text).unwrap_or(AssetPutResponse {
-            ok: false,
-            already_present: false,
-            error: Some(text.clone()),
-        });
-        if !status.is_success() || !parsed.ok {
-            abort(self, &upload_id);
-            return Err(VaultHttpError::new(
-                status.as_u16(),
-                parsed
-                    .error
-                    .unwrap_or_else(|| format!("HTTP {status}: {text}")),
-            )
-            .into());
-        }
-        Ok(parsed)
-    }
-
-    /// POST one JSON Lines batch (`ndjson`) to `/v1/import`.
-    ///
-    /// JSON Lines means one JSON object per line.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the body is too large, the vault rejects the batch,
-    /// or the response cannot be parsed.
-    pub fn post_import(&self, args: PostImportArgs<'_>) -> Result<ImportResponse> {
-        let PostImportArgs {
-            base_url,
-            key,
-            username,
-            source,
-            mode,
-            import_id,
-            contact_name_mode,
-            ndjson,
-        } = args;
-        let body_len = ndjson.len();
-        if body_len > crate::run::MAX_PROXY_BODY_BYTES {
-            return Err(VaultHttpError::new(
-                413,
-                payload_too_large_message("import", Some(body_len)),
-            )
-            .into());
-        }
-        let base = base_url.trim_end_matches('/');
-        let mut url = format!(
-            "{base}/v1/import?source={}&account={}&mode={}&contact_name_mode={}",
-            encode(source),
-            encode(username),
-            encode(mode),
-            encode(contact_name_mode)
-        );
-        if let Some(id) = import_id {
-            url.push_str(&format!("&import_id={id}"));
-        }
-        let response = self
-            .client
-            .post(&url)
-            .timeout(Duration::from_secs(600))
-            .header("Authorization", format!("Bearer {}", key.trim()))
-            .header("Content-Type", "application/jsonl")
-            .body(ndjson)
-            .send()
-            .with_context(|| format!("POST {url}"))?;
-        let status = response.status();
-        let text = response.text().context("read import response")?;
-        if looks_like_payload_too_large(status, &text) {
-            return Err(VaultHttpError::new(
-                413,
-                payload_too_large_message("import", Some(body_len)),
-            )
-            .into());
-        }
-        let parsed: ImportResponse = serde_json::from_str(&text).unwrap_or(ImportResponse {
-            ok: false,
-            error: Some(text.clone()),
-            messages: 0,
-            messages_appended: 0,
-            messages_deduped: 0,
-            conversations: 0,
-            attachments: 0,
-            assets_copied: 0,
-            assets_missing: 0,
-        });
-        if !status.is_success() || !parsed.ok {
-            return Err(VaultHttpError::new(
-                status.as_u16(),
-                parsed
-                    .error
-                    .unwrap_or_else(|| format!("HTTP {status}: {text}")),
-            )
-            .into());
-        }
-        Ok(parsed)
-    }
-
-    /// Start a vault import session. Returns `None` when the vault is older and
-    /// does not expose `/v1/imports` (push continues without message linking).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the vault rejects the request (other than 404).
-    pub fn start_import(
-        &self,
-        base_url: &str,
-        key: &str,
-        username: &str,
-        source: &str,
-        mode: &str,
-        tool: Option<&str>,
-    ) -> Result<Option<i64>> {
-        #[derive(Deserialize)]
-        struct Resp {
-            ok: bool,
-            #[serde(default)]
-            id: Option<i64>,
-            #[serde(default)]
-            error: Option<String>,
-        }
-        let base = base_url.trim_end_matches('/');
-        let url = format!("{base}/v1/imports");
-        let mut body = serde_json::json!({
-            "source": source,
-            "mode": mode,
-            "account": username,
-        });
-        if let Some(tool) = tool {
-            body["tool"] = serde_json::Value::String(tool.to_string());
-        }
-        let response = self
-            .client
-            .post(&url)
-            .timeout(Duration::from_secs(60))
-            .header("Authorization", format!("Bearer {}", key.trim()))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .with_context(|| format!("POST {url}"))?;
-        let status = response.status();
-        if status.as_u16() == 404 {
-            return Ok(None);
-        }
-        let text = response.text().context("read start-import response")?;
-        let parsed: Resp = serde_json::from_str(&text).unwrap_or(Resp {
-            ok: false,
-            id: None,
-            error: Some(text.clone()),
-        });
-        if !status.is_success() || !parsed.ok {
-            bail!(
-                "{}",
-                parsed
-                    .error
-                    .unwrap_or_else(|| format!("HTTP {status}: {text}"))
-            );
-        }
-        Ok(parsed.id)
-    }
-
-    /// Complete a vault import session. Soft-fails with `Ok(())` on 404.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the vault rejects the request (other than 404).
-    pub fn complete_import(&self, args: CompleteImportArgs<'_>) -> Result<()> {
-        let CompleteImportArgs {
-            base_url,
-            key,
-            import_id,
-            ok,
-            status,
-            message_count,
-            attachment_count,
-            bytes_uploaded,
-        } = args;
-        #[derive(Deserialize)]
-        struct Resp {
-            ok: bool,
-            #[serde(default)]
-            error: Option<String>,
-        }
-        let base = base_url.trim_end_matches('/');
-        let url = format!("{base}/v1/imports/{import_id}/complete");
-        let body = serde_json::json!({
-            "ok": ok,
-            "status": status,
-            "message_count": message_count,
-            "attachment_count": attachment_count,
-            "bytes_uploaded": bytes_uploaded,
-        });
-        let response = self
-            .client
-            .post(&url)
-            .timeout(Duration::from_secs(60))
-            .header("Authorization", format!("Bearer {}", key.trim()))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .with_context(|| format!("POST {url}"))?;
-        let status = response.status();
-        if status.as_u16() == 404 {
-            return Ok(());
-        }
-        let text = response.text().context("read complete-import response")?;
-        let parsed: Resp = serde_json::from_str(&text).unwrap_or(Resp {
-            ok: false,
-            error: Some(text.clone()),
-        });
-        if !status.is_success() || !parsed.ok {
-            bail!(
-                "{}",
-                parsed
-                    .error
-                    .unwrap_or_else(|| format!("HTTP {status}: {text}"))
-            );
-        }
-        Ok(())
-    }
-}
-
-/// Map HTTP 401. When `http://` was redirected to `https://`, the API key was
-/// dropped with the Authorization header — tell the user to use https.
-fn classify_unauthorized(
-    requested_base: &str,
-    requested_url: &reqwest::Url,
-    final_url: &reqwest::Url,
-) -> AuthError {
-    if requested_url.scheme() == "http" && final_url.scheme() == "https" {
-        AuthError::HttpsRequired {
-            url: requested_base.to_string(),
-        }
-    } else {
-        AuthError::InvalidKey
-    }
-}
-
-/// Map a reqwest transport failure (timeout, connect, TLS) onto [`AuthError`].
-fn classify_auth_transport_error(url: &str, error: reqwest::Error) -> AuthError {
-    let url = url.to_string();
-    let detail = error.to_string();
-    if error.is_timeout() {
-        AuthError::Timeout { url, detail }
-    } else if error.is_builder() {
-        AuthError::InvalidUrl { url, detail }
-    } else {
-        // Connection refused, DNS failure, and anything else unrecognized all
-        // mean "could not reach the vault".
-        AuthError::Network { url, detail }
-    }
-}
-
-/// Map a non-success HTTP status from `/v1/auth/check` onto [`AuthError`].
-fn classify_auth_http_status(status: u16, body: String) -> AuthError {
-    match status {
-        403 => AuthError::Forbidden { status, body },
-        404 => AuthError::ApiNotFound { status, body },
-        429 => AuthError::RateLimited { status, body },
-        500..=599 => AuthError::ServerError { status, body },
-        _ => AuthError::HttpStatus { status, body },
-    }
-}
-
-/// Build a session and call [`HttpSession::auth_check`].
+/// Probe whether the vault already has this SHA-256 fingerprint.
+///
+/// Returns `Some` when present, `None` when missing (HTTP 404). Does not
+/// transfer the file body. SHA-256 here is a short hex fingerprint of the
+/// file bytes.
 ///
 /// # Errors
 ///
-/// Returns [`AuthError`] when the client cannot be built or login fails.
-pub fn auth_check(
+/// Returns an error on auth failure or any non-404 HTTP error.
+pub fn head_asset(
+    http: &HttpSession,
     base_url: &str,
     key: &str,
     username: &str,
-) -> std::result::Result<AuthInfo, AuthError> {
-    let session = HttpSession::new().map_err(|error| AuthError::Client {
-        detail: format!("{error:#}"),
-    })?;
-    session.auth_check(base_url, key, username)
+    source: &str,
+    sha256: &str,
+) -> Result<Option<AssetPutResponse>> {
+    let url = asset_url(base_url, &[sha256], source, username)?;
+    let response = http
+        .request_url(Method::HEAD, url.clone(), key)
+        .timeout(Duration::from_secs(15))
+        .send()
+        .with_context(|| format!("HEAD {url}"))?;
+    let status = response.status();
+    match status.as_u16() {
+        404 => return Ok(None),
+        401 => return Err(VaultHttpError::new(401, "invalid vault key").into()),
+        403 => {
+            return Err(VaultHttpError::new(403, "username does not match vault key").into());
+        }
+        _ => {}
+    }
+    if !status.is_success() {
+        let text = response.text().unwrap_or_default();
+        return Err(VaultHttpError::new(
+            status.as_u16(),
+            format!("asset HEAD failed (HTTP {status}): {text}"),
+        )
+        .into());
+    }
+    // A 2xx without a usable JSON body means the asset is there: plain HEAD
+    // responders and proxies often send no body at all.
+    let assumed_present = AssetPutResponse {
+        ok: true,
+        already_present: true,
+        error: None,
+    };
+    let text = response.text().unwrap_or_default();
+    if text.trim().is_empty() {
+        return Ok(Some(assumed_present));
+    }
+    let Ok(parsed) = serde_json::from_str::<AssetPutResponse>(&text) else {
+        return Ok(Some(assumed_present));
+    };
+    // With a JSON body, only treat the asset as present when the server says so.
+    if !parsed.ok || !parsed.already_present {
+        return Ok(None);
+    }
+    Ok(Some(parsed))
+}
+
+/// Upload one attachment with PUT, or multipart when the file is large.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read, the vault rejects the
+/// upload, or the response cannot be parsed.
+pub fn put_asset(http: &HttpSession, request: AssetPutRequest<'_>) -> Result<AssetPutResponse> {
+    let file_len = std::fs::metadata(request.file)
+        .with_context(|| format!("stat {}", request.file.display()))?
+        .len();
+    if file_len > request.multipart_threshold as u64 {
+        return put_asset_multipart(http, request, file_len);
+    }
+
+    let url = asset_url(
+        request.base_url,
+        &[request.sha256],
+        request.source,
+        request.username,
+    )?;
+    let bytes =
+        std::fs::read(request.file).with_context(|| format!("read {}", request.file.display()))?;
+    let content_type = request
+        .mime
+        .filter(|mime| !mime.is_empty())
+        .unwrap_or("application/octet-stream");
+    let response = http
+        .request_url(Method::PUT, url.clone(), request.key)
+        .timeout(Duration::from_secs(600))
+        .header("Content-Type", content_type)
+        .body(bytes)
+        .send()
+        .with_context(|| format!("PUT {url}"))?;
+    let status = response.status();
+    let text = response.text().context("read asset response")?;
+    if looks_like_payload_too_large(status, &text) {
+        return Err(VaultHttpError::new(
+            413,
+            payload_too_large_message("asset upload", Some(file_len as usize)),
+        )
+        .into());
+    }
+    ok_json::<AssetPutResponse>(status, &text)
+}
+
+/// Upload a large file as several parts, then complete the upload.
+///
+/// # Errors
+///
+/// Returns an error when start, part PUT, or complete fails, or the file
+/// cannot be read.
+fn put_asset_multipart(
+    http: &HttpSession,
+    request: AssetPutRequest<'_>,
+    file_len: u64,
+) -> Result<AssetPutResponse> {
+    let start_url = asset_url(
+        request.base_url,
+        &[request.sha256, "uploads"],
+        request.source,
+        request.username,
+    )?;
+    let mut start_body = serde_json::json!({ "bytes": file_len });
+    if let Some(mime) = request.mime.filter(|m| !m.is_empty()) {
+        start_body["mime"] = serde_json::Value::String(mime.to_string());
+    }
+    let start_resp = http
+        .request_url(Method::POST, start_url.clone(), request.key)
+        .timeout(Duration::from_secs(30))
+        .header("Content-Type", "application/json")
+        .json(&start_body)
+        .send()
+        .with_context(|| format!("POST {start_url}"))?;
+    let start_status = start_resp.status();
+    let start_text = start_resp.text().context("read upload start response")?;
+    if looks_like_payload_too_large(start_status, &start_text) {
+        return Err(VaultHttpError::new(
+            413,
+            payload_too_large_message("asset upload start", None),
+        )
+        .into());
+    }
+    let started: UploadStartResponse = ok_json(start_status, &start_text)?;
+    if started.already_present {
+        return Ok(AssetPutResponse {
+            ok: true,
+            already_present: true,
+            error: None,
+        });
+    }
+    let upload_id = started
+        .upload_id
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow!("upload start missing upload_id"))?;
+    let part_size = started
+        .part_size
+        .filter(|&n| n > 0)
+        .ok_or_else(|| anyhow!("upload start missing part_size"))?;
+
+    let abort = |upload_id: &str| {
+        let Ok(abort_url) = asset_url(
+            request.base_url,
+            &[request.sha256, "uploads", upload_id],
+            request.source,
+            request.username,
+        ) else {
+            return;
+        };
+        let _ = http
+            .request_url(Method::DELETE, abort_url, request.key)
+            .timeout(Duration::from_secs(30))
+            .send();
+    };
+
+    let mut file = std::fs::File::open(request.file)
+        .with_context(|| format!("open {}", request.file.display()))?;
+    let mut part: u32 = 1;
+    let mut remaining = file_len;
+    while remaining > 0 {
+        let this_len = remaining.min(part_size as u64) as usize;
+        let mut buf = vec![0u8; this_len];
+        use std::io::Read;
+        file.read_exact(&mut buf)
+            .with_context(|| format!("read part {part} from {}", request.file.display()))?;
+        let part_url = asset_url(
+            request.base_url,
+            &[
+                request.sha256,
+                "uploads",
+                &upload_id,
+                "parts",
+                &part.to_string(),
+            ],
+            request.source,
+            request.username,
+        )?;
+        let response = http
+            .request_url(Method::PUT, part_url.clone(), request.key)
+            .timeout(Duration::from_secs(600))
+            .header("Content-Type", "application/octet-stream")
+            .body(buf)
+            .send()
+            .with_context(|| format!("PUT {part_url}"))?;
+        let status = response.status();
+        let text = response.text().unwrap_or_default();
+        if looks_like_payload_too_large(status, &text) {
+            abort(&upload_id);
+            return Err(VaultHttpError::new(
+                413,
+                payload_too_large_message("asset upload part", Some(this_len)),
+            )
+            .into());
+        }
+        if !status.is_success() {
+            abort(&upload_id);
+            return Err(VaultHttpError::new(
+                status.as_u16(),
+                format!("asset part {part} failed (HTTP {status}): {text}"),
+            )
+            .into());
+        }
+        remaining -= this_len as u64;
+        part += 1;
+    }
+
+    let complete_url = asset_url(
+        request.base_url,
+        &[request.sha256, "uploads", &upload_id, "complete"],
+        request.source,
+        request.username,
+    )?;
+    let response = http
+        .request_url(Method::POST, complete_url.clone(), request.key)
+        .timeout(Duration::from_secs(600))
+        .send()
+        .with_context(|| format!("POST {complete_url}"))?;
+    let status = response.status();
+    let text = response.text().context("read upload complete response")?;
+    let completed = ok_json::<AssetPutResponse>(status, &text);
+    if completed.is_err() {
+        abort(&upload_id);
+    }
+    completed
+}
+
+/// POST one JSON Lines batch (`ndjson`) to `/v1/import`.
+///
+/// JSON Lines means one JSON object per line.
+///
+/// # Errors
+///
+/// Returns an error when the body is too large, the vault rejects the batch,
+/// or the response cannot be parsed.
+pub fn post_import(http: &HttpSession, args: PostImportArgs<'_>) -> Result<ImportResponse> {
+    let PostImportArgs {
+        base_url,
+        key,
+        username,
+        source,
+        mode,
+        import_id,
+        contact_name_mode,
+        ndjson,
+    } = args;
+    let body_len = ndjson.len();
+    if body_len > crate::run::MAX_PROXY_BODY_BYTES {
+        return Err(
+            VaultHttpError::new(413, payload_too_large_message("import", Some(body_len))).into(),
+        );
+    }
+    let mut query: Vec<(&str, String)> = vec![
+        ("source", source.to_string()),
+        ("account", username.to_string()),
+        ("mode", mode.to_string()),
+        ("contact_name_mode", contact_name_mode.to_string()),
+    ];
+    if let Some(id) = import_id {
+        query.push(("import_id", id.to_string()));
+    }
+    let response = http
+        .vault_request(Method::POST, base_url, "/v1/import", key)
+        .query(&query)
+        .timeout(Duration::from_secs(600))
+        .header("Content-Type", "application/jsonl")
+        .body(ndjson)
+        .send()
+        .context("POST /v1/import")?;
+    let status = response.status();
+    let text = response.text().context("read import response")?;
+    if looks_like_payload_too_large(status, &text) {
+        return Err(
+            VaultHttpError::new(413, payload_too_large_message("import", Some(body_len))).into(),
+        );
+    }
+    ok_json::<ImportResponse>(status, &text)
+}
+
+#[derive(Debug, Deserialize)]
+/// Body of the `/v1/imports` and `/v1/imports/{id}/complete` replies.
+struct ImportSessionResponse {
+    ok: bool,
+    #[serde(default)]
+    id: Option<i64>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+impl OkEnvelope for ImportSessionResponse {
+    fn is_ok(&self) -> bool {
+        self.ok
+    }
+    fn error_message(self) -> Option<String> {
+        self.error
+    }
+}
+
+/// Start a vault import session. Returns `None` when the vault is older and
+/// does not expose `/v1/imports` (push continues without message linking).
+///
+/// # Errors
+///
+/// Returns an error when the vault rejects the request (other than 404).
+pub fn start_import(
+    http: &HttpSession,
+    base_url: &str,
+    key: &str,
+    username: &str,
+    source: &str,
+    mode: &str,
+    tool: Option<&str>,
+) -> Result<Option<i64>> {
+    let mut body = serde_json::json!({
+        "source": source,
+        "mode": mode,
+        "account": username,
+    });
+    if let Some(tool) = tool {
+        body["tool"] = serde_json::Value::String(tool.to_string());
+    }
+    let response = http
+        .vault_request(Method::POST, base_url, "/v1/imports", key)
+        .timeout(Duration::from_secs(60))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .context("POST /v1/imports")?;
+    let status = response.status();
+    if status.as_u16() == 404 {
+        return Ok(None);
+    }
+    let text = response.text().context("read start-import response")?;
+    let parsed: ImportSessionResponse = ok_json(status, &text)?;
+    Ok(parsed.id)
+}
+
+/// Complete a vault import session. Soft-fails with `Ok(())` on 404.
+///
+/// # Errors
+///
+/// Returns an error when the vault rejects the request (other than 404).
+pub fn complete_import(http: &HttpSession, args: CompleteImportArgs<'_>) -> Result<()> {
+    let CompleteImportArgs {
+        base_url,
+        key,
+        import_id,
+        ok,
+        status,
+        message_count,
+        attachment_count,
+        bytes_uploaded,
+    } = args;
+    let body = serde_json::json!({
+        "ok": ok,
+        "status": status,
+        "message_count": message_count,
+        "attachment_count": attachment_count,
+        "bytes_uploaded": bytes_uploaded,
+    });
+    let response = http
+        .vault_request(
+            Method::POST,
+            base_url,
+            &format!("/v1/imports/{import_id}/complete"),
+            key,
+        )
+        .timeout(Duration::from_secs(60))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .with_context(|| format!("POST /v1/imports/{import_id}/complete"))?;
+    let status = response.status();
+    if status.as_u16() == 404 {
+        return Ok(());
+    }
+    let text = response.text().context("read complete-import response")?;
+    let _: ImportSessionResponse = ok_json(status, &text)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -813,37 +603,64 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unauthorized_http_to_https_redirect_asks_for_https() {
-        let requested = reqwest::Url::parse("http://app.bitrealm.io").unwrap();
-        let final_url = reqwest::Url::parse("https://app.bitrealm.io/v1/auth/check").unwrap();
-        let err = classify_unauthorized("http://app.bitrealm.io", &requested, &final_url);
-        assert_eq!(err.kind(), "https_required");
-        assert!(err.user_message().contains("https://"));
-        assert!(err.detail().contains("Authorization"));
-    }
-
-    #[test]
-    fn unauthorized_same_scheme_is_invalid_key() {
-        let requested = reqwest::Url::parse("https://app.bitrealm.io").unwrap();
-        let final_url = reqwest::Url::parse("https://app.bitrealm.io/v1/auth/check").unwrap();
-        let err = classify_unauthorized("https://app.bitrealm.io", &requested, &final_url);
-        assert_eq!(err.kind(), "invalid_key");
-    }
-
-    #[test]
-    fn unauthorized_local_http_is_invalid_key() {
-        let requested = reqwest::Url::parse("http://127.0.0.1:8080").unwrap();
-        let final_url = reqwest::Url::parse("http://127.0.0.1:8080/v1/auth/check").unwrap();
-        let err = classify_unauthorized("http://127.0.0.1:8080", &requested, &final_url);
-        assert_eq!(err.kind(), "invalid_key");
-    }
-
-    #[test]
     fn payload_too_large_mentions_64_mib_import_chunks() {
         let msg = payload_too_large_message("import", Some(10));
         assert!(
-            msg.contains("imports under 64 MiB"),
+            msg.contains("imports under 64 MiB"),
             "413 help must name the import chunk size, got {msg}"
+        );
+    }
+
+    #[test]
+    fn asset_url_encodes_segments_and_query() {
+        let url = asset_url(
+            "http://127.0.0.1:8080/",
+            &["abc123", "uploads", "up 1"],
+            "sms backup",
+            "alice",
+        )
+        .unwrap();
+        assert_eq!(
+            url.as_str(),
+            "http://127.0.0.1:8080/v1/assets/abc123/uploads/up%201?source=sms+backup&account=alice"
+        );
+    }
+
+    #[test]
+    fn ok_json_prefers_the_body_error_field() {
+        let err = ok_json::<AssetPutResponse>(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"ok":false,"error":"sha mismatch"}"#,
+        )
+        .unwrap_err();
+        assert_eq!(err.to_string(), "sha mismatch");
+    }
+
+    #[test]
+    fn ok_json_falls_back_to_status_then_raw_body() {
+        // Valid JSON with ok:false but no error field → HTTP status + body.
+        let err = ok_json::<AssetPutResponse>(reqwest::StatusCode::BAD_GATEWAY, r#"{"ok":false}"#)
+            .unwrap_err();
+        assert!(err.to_string().starts_with("HTTP 502"));
+        // Not JSON at all → the raw body.
+        let err = ok_json::<AssetPutResponse>(reqwest::StatusCode::OK, "gateway text").unwrap_err();
+        assert_eq!(err.to_string(), "gateway text");
+    }
+
+    #[test]
+    fn ok_json_requires_both_http_success_and_ok_true() {
+        let parsed = ok_json::<AssetPutResponse>(
+            reqwest::StatusCode::OK,
+            r#"{"ok":true,"already_present":true}"#,
+        )
+        .unwrap();
+        assert!(parsed.already_present);
+        assert!(
+            ok_json::<AssetPutResponse>(
+                reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+                r#"{"ok":true}"#
+            )
+            .is_err()
         );
     }
 }

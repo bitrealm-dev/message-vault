@@ -5028,6 +5028,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "reqwest 0.12.28",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -5046,7 +5048,6 @@ dependencies = [
  "serde",
  "serde_json",
  "vault-http",
- "vault-push",
 ]
 
 [[package]]
