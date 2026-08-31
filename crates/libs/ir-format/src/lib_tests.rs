@@ -152,28 +152,47 @@ fn imessage_bag_restores_mail_extension_headers() {
     let mail_messages = document_to_mail_messages(&doc, tmp.path()).unwrap();
 
     let reply = &mail_messages[0];
-    assert!(reply.is_reply);
-    assert_eq!(reply.in_reply_to_guid.as_deref(), Some("parent-guid-1111"));
-    assert_eq!(reply.thread_originator_part, Some(0));
-    assert_eq!(reply.num_replies, Some(2));
-    assert_eq!(reply.send_effect.as_deref(), Some("Sent with Balloons"));
-    assert!(reply.tapbacks_json.as_deref().unwrap().contains("loved"));
+    let reply_im = reply.message.imessage.as_ref().unwrap();
+    assert!(reply_im.is_reply);
+    assert_eq!(
+        reply_im.in_reply_to_guid.as_deref(),
+        Some("parent-guid-1111")
+    );
+    assert_eq!(reply_im.thread_originator_part, Some(0));
+    assert_eq!(reply_im.num_replies, Some(2));
+    assert_eq!(reply_im.send_effect.as_deref(), Some("Sent with Balloons"));
     assert!(
-        reply
-            .parts_json
-            .as_deref()
+        reply_im
+            .tapbacks
+            .as_ref()
             .unwrap()
+            .to_string()
+            .contains("loved")
+    );
+    assert!(
+        reply_im
+            .parts
+            .as_ref()
+            .unwrap()
+            .to_string()
             .contains("hello imessage")
     );
     assert_eq!(reply.owner_display_name.as_deref(), Some("Me"));
 
     let tapback = &mail_messages[1];
-    assert_eq!(tapback.associated_guid.as_deref(), Some("parent-guid-1111"));
-    assert_eq!(tapback.associated_part, Some(0));
-    assert_eq!(tapback.tapback_kind.as_deref(), Some("loved"));
-    assert_eq!(tapback.tapback_action.as_deref(), Some("add"));
+    let tapback_im = tapback.message.imessage.as_ref().unwrap();
+    assert_eq!(
+        tapback_im.associated_guid.as_deref(),
+        Some("parent-guid-1111")
+    );
+    assert_eq!(tapback_im.associated_part, Some(0));
+    assert_eq!(tapback_im.tapback_kind.as_deref(), Some("loved"));
+    assert_eq!(tapback_im.tapback_action.as_deref(), Some("add"));
     assert_eq!(tapback.owner_display_name.as_deref(), Some("Me"));
-    assert_eq!(tapback.sender_handle.as_deref(), Some("+15555550100"));
+    assert_eq!(
+        tapback.message.sender_handle.as_deref(),
+        Some("+15555550100")
+    );
 }
 
 #[test]

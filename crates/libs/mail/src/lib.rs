@@ -17,6 +17,7 @@ use mail_builder::headers::address::Address;
 use mail_builder::headers::date::Date;
 use mail_builder::headers::text::Text;
 use message_csv::conversation_filename;
+use message_ir::{IrDirection, IrMessage};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
@@ -30,25 +31,6 @@ const SMS_ADDRESS_DOMAIN: &str = "sms.local";
 const HANDLE_ADDRESS_DOMAIN: &str = "handle.local";
 const CHAT_ADDRESS_DOMAIN: &str = "chat.local";
 const OWNER_DISPLAY_NAME: &str = "Me";
-
-/// Message direction for From/To mapping and `X-ME-Direction`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Direction {
-    /// Incoming message (sender is the peer).
-    Incoming,
-    /// Outgoing message (sender is the owner).
-    Outgoing,
-}
-
-impl Direction {
-    /// Lowercase storage id (`incoming` or `outgoing`).
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Incoming => "incoming",
-            Self::Outgoing => "outgoing",
-        }
-    }
-}
 
 /// One participant in a conversation roster.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,190 +84,46 @@ pub enum MailPackage {
     Mbox,
 }
 
-/// Core SMS/MMS fields for [`MailMessage::sms`] (iMessage extensions left unset).
-#[derive(Debug, Clone)]
-pub struct SmsMailFields {
-    /// Conversation id; drives the folder/mbox stem and `X-ME-Chat-Identifier`.
-    pub chat_identifier: String,
-    /// `individual` or `group`.
-    pub conversation_type: String,
-    /// Group chat title (folder name / subject label).
-    pub group_title: Option<String>,
-    /// Roster for `X-ME-Participants`.
-    pub participants: Vec<Participant>,
-    /// Message guid used in Message-ID and the `.eml` filename.
-    pub guid: String,
-    /// Message time in ms; feeds the Date header, filenames, and sort order.
-    pub timestamp_unix_ms: i64,
-    /// From/To mapping.
-    pub direction: Direction,
-    /// SMS/iMessage/…; selects the Message-ID domain.
-    pub service: String,
-    /// `sms` / `mms` / `imessage` / `tapback` / `balloon` / ….
-    pub message_kind: String,
-    /// Sender's handle (From for incoming).
-    pub sender_handle: Option<String>,
-    /// Sender display name for From/To.
-    pub sender_display_name: Option<String>,
-    /// Owner E.164/handle for From/To mapping.
-    pub owner_handle: String,
-    /// Goes to `X-ME-Subject`, not the mail Subject.
-    pub subject: Option<String>,
-    /// Message body.
-    pub text: String,
-    /// Android message type code → `X-ME-Android-Type`.
-    pub android_type: Option<String>,
-    /// Opaque source fields → `X-ME-Source-Fields`.
-    pub source_fields_json: Option<String>,
-    /// Provenance string → `X-ME-Export-Source`.
-    pub export_source: String,
-    /// Tool name → `X-ME-Export-Tool`.
-    pub export_tool: String,
-    /// Version → `X-ME-Export-Tool-Version`.
-    pub export_tool_version: String,
-    /// MIME parts to attach.
-    pub attachments: Vec<MailAttachment>,
-    /// Optional stem suffix (e.g. `"__whatsapp"`) for conversation folder / mbox names.
-    pub filename_suffix: Option<String>,
-}
-
-/// One message ready to serialize as a single `.eml`.
+/// One message ready to serialize as a single `.eml`: the conversation
+/// context the headers need, plus the IR message itself.
+///
+/// The message-level fields (guid, timestamp, direction, text, the iMessage
+/// extension bag, the Android source bag) live in [`message_ir::IrMessage`];
+/// the writer reads them straight from the IR instead of a flattened copy.
 #[derive(Debug, Clone)]
 pub struct MailMessage {
     /// Conversation id → `X-ME-Chat-Identifier`, folder stem, group chat address local part.
     pub chat_identifier: String,
-    /// `individual` or `group`
+    /// `individual` or `group`.
     pub conversation_type: String,
     /// Group title → `X-ME-Group-Title`, To display name, subject label.
     pub group_title: Option<String>,
     /// Roster → `X-ME-Participants` JSON.
     pub participants: Vec<Participant>,
-    /// Message id for Message-ID and the `.eml` filename.
-    pub guid: String,
-    /// Unix ms timestamp → Date header, filenames, mbox asctime, sort order.
-    pub timestamp_unix_ms: i64,
-    /// From/To mapping → `X-ME-Direction`.
-    pub direction: Direction,
-    /// Selects the Message-ID domain (`imessage.local` vs default) → `X-ME-Service`.
-    pub service: String,
-    /// `sms` / `mms` / `imessage` / `tapback` / `balloon` / …
-    pub message_kind: String,
-    /// → `X-ME-Sender-Handle`; From for incoming.
-    pub sender_handle: Option<String>,
-    /// → `X-ME-Sender-Display-Name`.
-    pub sender_display_name: Option<String>,
     /// Owner E.164 (or handle) used for From/To mapping.
     pub owner_handle: String,
     /// Outgoing From display name; defaults to `"Me"` when absent.
     pub owner_display_name: Option<String>,
-    /// → `X-ME-Subject` (the mail Subject is always `"Message with …"`).
-    pub subject: Option<String>,
-    /// Text body.
-    pub text: String,
-    /// → `X-ME-Android-Type`.
-    pub android_type: Option<String>,
-    /// → `X-ME-Source-Fields`.
-    pub source_fields_json: Option<String>,
     /// → `X-ME-Export-Source`.
     pub export_source: String,
     /// → `X-ME-Export-Tool`.
     pub export_tool: String,
     /// → `X-ME-Export-Tool-Version`.
     pub export_tool_version: String,
-    /// MIME parts plus the `X-ME-Attachment-Meta` JSON.
-    pub attachments: Vec<MailAttachment>,
     /// Optional stem suffix (e.g. `"__whatsapp"`) for conversation folder / mbox names.
     pub filename_suffix: Option<String>,
-    // --- iMessage extensions (SMS leaves these unset) ---
-    /// iMessage; → `X-ME-Is-Reply`.
-    pub is_reply: bool,
-    /// Sets In-Reply-To/References and `X-ME-Thread-Originator-Guid`.
-    pub in_reply_to_guid: Option<String>,
-    /// → `X-ME-Thread-Originator-Part`.
-    pub thread_originator_part: Option<u32>,
-    /// → `X-ME-Num-Replies`.
-    pub num_replies: Option<u32>,
-    /// → `X-ME-Is-Deleted`.
-    pub is_deleted: bool,
-    /// → `X-ME-Send-Effect`.
-    pub send_effect: Option<String>,
-    /// → `X-ME-Shared-Location`.
-    pub shared_location: Option<String>,
-    /// → `X-ME-Announcement`.
-    pub announcement: Option<String>,
-    /// → `X-ME-Read-Receipt`.
-    pub read_receipt_rfc3339: Option<String>,
-    /// → `X-ME-Parts`.
-    pub parts_json: Option<String>,
-    /// → `X-ME-Edits`.
-    pub edits_json: Option<String>,
-    /// → `X-ME-App`.
-    pub app_json: Option<String>,
-    /// → `X-ME-Balloon-Bundle-Id`.
-    pub balloon_bundle_id: Option<String>,
-    /// → `X-ME-Balloon-Kind`.
-    pub balloon_kind: Option<String>,
-    /// → `X-ME-Tapbacks`.
-    pub tapbacks_json: Option<String>,
-    /// Tapback target message → `X-ME-Associated-Guid`.
-    pub associated_guid: Option<String>,
-    /// Tapback target part index → `X-ME-Associated-Part`.
-    pub associated_part: Option<u32>,
-    /// → `X-ME-Tapback-Kind`.
-    pub tapback_kind: Option<String>,
-    /// → `X-ME-Tapback-Emoji`.
-    pub tapback_emoji: Option<String>,
-    /// → `X-ME-Tapback-Action`.
-    pub tapback_action: Option<String>,
+    /// The message itself (headers read guid, timestamp, direction, service,
+    /// kind, sender, subject, text, and the iMessage / source bags from here;
+    /// its `attachments` list is ignored in favour of `attachments` below).
+    pub message: IrMessage,
+    /// MIME parts plus the `X-ME-Attachment-Meta` JSON (bytes loaded).
+    pub attachments: Vec<MailAttachment>,
 }
 
 impl MailMessage {
-    /// SMS/MMS-shaped message with all iMessage extension fields cleared.
-    pub fn sms(fields: SmsMailFields) -> Self {
-        Self {
-            chat_identifier: fields.chat_identifier,
-            conversation_type: fields.conversation_type,
-            group_title: fields.group_title,
-            participants: fields.participants,
-            guid: fields.guid,
-            timestamp_unix_ms: fields.timestamp_unix_ms,
-            direction: fields.direction,
-            service: fields.service,
-            message_kind: fields.message_kind,
-            sender_handle: fields.sender_handle,
-            sender_display_name: fields.sender_display_name,
-            owner_handle: fields.owner_handle,
-            owner_display_name: None,
-            subject: fields.subject,
-            text: fields.text,
-            android_type: fields.android_type,
-            source_fields_json: fields.source_fields_json,
-            export_source: fields.export_source,
-            export_tool: fields.export_tool,
-            export_tool_version: fields.export_tool_version,
-            attachments: fields.attachments,
-            filename_suffix: fields.filename_suffix,
-            is_reply: false,
-            in_reply_to_guid: None,
-            thread_originator_part: None,
-            num_replies: None,
-            is_deleted: false,
-            send_effect: None,
-            shared_location: None,
-            announcement: None,
-            read_receipt_rfc3339: None,
-            parts_json: None,
-            edits_json: None,
-            app_json: None,
-            balloon_bundle_id: None,
-            balloon_kind: None,
-            tapbacks_json: None,
-            associated_guid: None,
-            associated_part: None,
-            tapback_kind: None,
-            tapback_emoji: None,
-            tapback_action: None,
-        }
+    /// The iMessage extension bag, when present.
+    fn im(&self) -> Option<&message_ir::IrImessage> {
+        self.message.imessage.as_ref()
     }
 }
 
@@ -381,10 +219,14 @@ fn write_message_file(conv_dir: &Path, sequence: u32, msg: &MailMessage) -> Resu
     }
     fs::create_dir_all(conv_dir)
         .with_context(|| format!("create conversation dir {}", conv_dir.display()))?;
-    let secs = msg.timestamp_unix_ms.div_euclid(1000);
-    let (date_part, time_part) = local_date_time_parts(secs)
-        .with_context(|| format!("invalid timestamp_unix_ms {}", msg.timestamp_unix_ms))?;
-    let guid8 = guid_prefix8(&msg.guid);
+    let secs = msg.message.timestamp_unix_ms.div_euclid(1000);
+    let (date_part, time_part) = local_date_time_parts(secs).with_context(|| {
+        format!(
+            "invalid timestamp_unix_ms {}",
+            msg.message.timestamp_unix_ms
+        )
+    })?;
+    let guid8 = guid_prefix8(&msg.message.guid);
     let filename = format!("{sequence:06}_{date_part}_{time_part}_{guid8}.eml");
     let path = conv_dir.join(&filename);
     let bytes = build_eml(msg)?;
@@ -408,9 +250,10 @@ fn write_conversation(output_root: &Path, messages: &[MailMessage]) -> Result<Pa
 
     let mut ordered: Vec<&MailMessage> = messages.iter().collect();
     ordered.sort_by(|a, b| {
-        a.timestamp_unix_ms
-            .cmp(&b.timestamp_unix_ms)
-            .then_with(|| a.guid.cmp(&b.guid))
+        a.message
+            .timestamp_unix_ms
+            .cmp(&b.message.timestamp_unix_ms)
+            .then_with(|| a.message.guid.cmp(&b.message.guid))
     });
 
     for (idx, msg) in ordered.iter().enumerate() {
@@ -463,9 +306,10 @@ fn write_conversation_mbox(output_root: &Path, messages: &[MailMessage]) -> Resu
 
     let mut ordered: Vec<&MailMessage> = messages.iter().collect();
     ordered.sort_by(|a, b| {
-        a.timestamp_unix_ms
-            .cmp(&b.timestamp_unix_ms)
-            .then_with(|| a.guid.cmp(&b.guid))
+        a.message
+            .timestamp_unix_ms
+            .cmp(&b.message.timestamp_unix_ms)
+            .then_with(|| a.message.guid.cmp(&b.message.guid))
     });
 
     for msg in ordered {
@@ -492,7 +336,7 @@ fn escape_mboxrd_line(line: &str) -> String {
 fn write_mboxrd_record(writer: &mut impl Write, msg: &MailMessage) -> Result<()> {
     let eml = build_eml(msg)?;
     let envelope = envelope_sender(msg);
-    let asctime = mbox_asctime_utc(msg.timestamp_unix_ms.div_euclid(1000))?;
+    let asctime = mbox_asctime_utc(msg.message.timestamp_unix_ms.div_euclid(1000))?;
     writeln!(writer, "From {envelope} {asctime}").context("write mbox From_ line")?;
 
     let text = String::from_utf8_lossy(&eml);
@@ -509,15 +353,16 @@ fn write_mboxrd_record(writer: &mut impl Write, msg: &MailMessage) -> Result<()>
 }
 
 fn envelope_sender(msg: &MailMessage) -> String {
-    let handle = match msg.direction {
-        Direction::Incoming => msg
+    let handle = match msg.message.direction {
+        IrDirection::Incoming => msg
+            .message
             .sender_handle
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .or_else(|| peer_handle(msg).map(str::trim).filter(|s| !s.is_empty()))
             .unwrap_or("unknown"),
-        Direction::Outgoing => {
+        IrDirection::Outgoing => {
             let owner = msg.owner_handle.trim();
             if owner.is_empty() { "me" } else { owner }
         }
@@ -652,17 +497,31 @@ fn peer_display_name<'a>(msg: &'a MailMessage, peer: &str) -> Option<&'a str> {
         .map(str::trim)
         .filter(|n| !n.is_empty())
         .or_else(|| {
-            msg.sender_display_name
+            msg.message
+                .sender_display_name
                 .as_deref()
                 .map(str::trim)
                 .filter(|n| !n.is_empty())
-                .filter(|_| msg.sender_handle.as_deref().is_some_and(|h| h == peer))
+                .filter(|_| {
+                    msg.message
+                        .sender_handle
+                        .as_deref()
+                        .is_some_and(|h| h == peer)
+                })
         })
 }
 
 fn message_id_domain(msg: &MailMessage) -> &'static str {
-    if msg.service.eq_ignore_ascii_case("imessage")
-        || msg.message_kind.eq_ignore_ascii_case("imessage")
+    if msg
+        .message
+        .service
+        .as_str()
+        .eq_ignore_ascii_case("imessage")
+        || msg
+            .message
+            .message_kind
+            .as_str()
+            .eq_ignore_ascii_case("imessage")
     {
         MESSAGE_ID_DOMAIN_IMESSAGE
     } else {
@@ -688,20 +547,30 @@ fn peer_handle(msg: &MailMessage) -> Option<&str> {
         })
 }
 
+/// JSON text for a header cell; `None` for null/absent values.
+fn value_as_string(v: Option<&serde_json::Value>) -> Option<String> {
+    let v = v?;
+    if v.is_null() {
+        return None;
+    }
+    Some(serde_json::to_string(v).unwrap_or_default()).filter(|s| !s.is_empty())
+}
+
 fn build_eml(msg: &MailMessage) -> Result<Vec<u8>> {
     let is_group = msg.conversation_type.eq_ignore_ascii_case("group");
     let (from, to) = if is_group {
-        let from = match msg.direction {
-            Direction::Incoming => {
+        let from = match msg.message.direction {
+            IrDirection::Incoming => {
                 let sender = msg
+                    .message
                     .sender_handle
                     .as_deref()
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                     .unwrap_or("unknown");
-                synthetic_address(sender, msg.sender_display_name.as_deref())
+                synthetic_address(sender, msg.message.sender_display_name.as_deref())
             }
-            Direction::Outgoing => owner_address(msg),
+            IrDirection::Outgoing => owner_address(msg),
         };
         (from, conversation_address(msg))
     } else {
@@ -713,18 +582,21 @@ fn build_eml(msg: &MailMessage) -> Result<Vec<u8>> {
                 if id.is_empty() { "unknown" } else { id }
             });
         let peer_name = peer_display_name(msg, peer);
-        match msg.direction {
-            Direction::Incoming => (
-                synthetic_address(peer, peer_name.or(msg.sender_display_name.as_deref())),
+        match msg.message.direction {
+            IrDirection::Incoming => (
+                synthetic_address(
+                    peer,
+                    peer_name.or(msg.message.sender_display_name.as_deref()),
+                ),
                 owner_address(msg),
             ),
-            Direction::Outgoing => (owner_address(msg), synthetic_address(peer, peer_name)),
+            IrDirection::Outgoing => (owner_address(msg), synthetic_address(peer, peer_name)),
         }
     };
 
     let subject = mail_subject(msg);
-    let date_secs = msg.timestamp_unix_ms.div_euclid(1000);
-    let message_id = format!("{}@{}", msg.guid, message_id_domain(msg));
+    let date_secs = msg.message.timestamp_unix_ms.div_euclid(1000);
+    let message_id = format!("{}@{}", msg.message.guid, message_id_domain(msg));
 
     let mut builder = MessageBuilder::new()
         .from(from)
@@ -740,14 +612,20 @@ fn build_eml(msg: &MailMessage) -> Result<Vec<u8>> {
             "X-ME-Conversation-Type",
             Text::new(msg.conversation_type.clone()),
         )
-        .header("X-ME-Direction", Text::new(msg.direction.as_str()))
-        .header("X-ME-Service", Text::new(msg.service.clone()))
-        .header("X-ME-Message-Kind", Text::new(msg.message_kind.clone()))
+        .header("X-ME-Direction", Text::new(msg.message.direction.as_str()))
+        .header(
+            "X-ME-Service",
+            Text::new(msg.message.service.as_str().to_string()),
+        )
+        .header(
+            "X-ME-Message-Kind",
+            Text::new(msg.message.message_kind.as_str().to_string()),
+        )
         .header(
             "X-ME-Timestamp-Unix-Ms",
-            Text::new(msg.timestamp_unix_ms.to_string()),
+            Text::new(msg.message.timestamp_unix_ms.to_string()),
         )
-        .header("X-ME-Guid", Text::new(msg.guid.clone()))
+        .header("X-ME-Guid", Text::new(msg.message.guid.clone()))
         .header("X-ME-Export-Source", Text::new(msg.export_source.clone()))
         .header("X-ME-Export-Tool", Text::new(msg.export_tool.clone()))
         .header(
@@ -765,10 +643,20 @@ fn build_eml(msg: &MailMessage) -> Result<Vec<u8>> {
         builder = builder.header("X-ME-Participants", Text::new(participants_json));
     }
 
-    if let Some(h) = msg.sender_handle.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(h) = msg
+        .message
+        .sender_handle
+        .as_deref()
+        .filter(|s| !s.is_empty())
+    {
         builder = builder.header("X-ME-Sender-Handle", Text::new(h.to_string()));
     }
-    if let Some(n) = msg.sender_display_name.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(n) = msg
+        .message
+        .sender_display_name
+        .as_deref()
+        .filter(|s| !s.is_empty())
+    {
         builder = builder.header("X-ME-Sender-Display-Name", Text::new(n.to_string()));
     }
     if !msg.owner_handle.trim().is_empty() {
@@ -781,82 +669,117 @@ fn build_eml(msg: &MailMessage) -> Result<Vec<u8>> {
         builder = builder.header("X-ME-Owner-Display-Name", Text::new(n.to_string()));
     }
 
-    if let Some(subj) = msg.subject.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(subj) = msg.message.subject.as_deref().filter(|s| !s.is_empty()) {
         builder = builder.header("X-ME-Subject", Text::new(subj.to_string()));
     }
-    if let Some(android) = msg.android_type.as_deref().filter(|s| !s.is_empty()) {
+    let source = msg.message.source.as_ref();
+    if let Some(android) = source.and_then(|src| src.android_type) {
         builder = builder.header("X-ME-Android-Type", Text::new(android.to_string()));
     }
-    if let Some(fields) = msg.source_fields_json.as_deref().filter(|s| !s.is_empty()) {
-        builder = builder.header("X-ME-Source-Fields", Text::new(fields.to_string()));
+    if let Some(fields) = source
+        .filter(|src| !src.fields.is_empty())
+        .map(|src| serde_json::to_string(&src.fields).unwrap_or_default())
+        .filter(|s| !s.is_empty())
+    {
+        builder = builder.header("X-ME-Source-Fields", Text::new(fields));
     }
 
-    if msg.is_reply {
+    let im = msg.im();
+    if im.is_some_and(|i| i.is_reply) {
         builder = builder.header("X-ME-Is-Reply", Text::new("true"));
     }
-    if let Some(guid) = msg.in_reply_to_guid.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(guid) = im
+        .and_then(|i| i.in_reply_to_guid.as_deref())
+        .filter(|s| !s.is_empty())
+    {
         let mid = format!("{guid}@{}", message_id_domain(msg));
         builder = builder
             .in_reply_to(mid.clone())
             .references(mid)
             .header("X-ME-Thread-Originator-Guid", Text::new(guid.to_string()));
     }
-    if let Some(part) = msg.thread_originator_part {
+    if let Some(part) = im.and_then(|i| i.thread_originator_part) {
         builder = builder.header("X-ME-Thread-Originator-Part", Text::new(part.to_string()));
     }
-    if let Some(n) = msg.num_replies {
+    if let Some(n) = im.and_then(|i| i.num_replies) {
         builder = builder.header("X-ME-Num-Replies", Text::new(n.to_string()));
     }
-    if msg.is_deleted {
+    if im.is_some_and(|i| i.is_deleted) {
         builder = builder.header("X-ME-Is-Deleted", Text::new("true"));
     }
-    if let Some(effect) = msg.send_effect.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(effect) = im
+        .and_then(|i| i.send_effect.as_deref())
+        .filter(|s| !s.is_empty())
+    {
         builder = builder.header("X-ME-Send-Effect", Text::new(effect.to_string()));
     }
-    if let Some(loc) = msg.shared_location.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(loc) = im
+        .and_then(|i| i.shared_location.as_deref())
+        .filter(|s| !s.is_empty())
+    {
         builder = builder.header("X-ME-Shared-Location", Text::new(loc.to_string()));
     }
-    if let Some(ann) = msg.announcement.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(ann) = im
+        .and_then(|i| i.announcement.as_deref())
+        .filter(|s| !s.is_empty())
+    {
         builder = builder.header("X-ME-Announcement", Text::new(ann.to_string()));
     }
-    if let Some(rr) = msg
-        .read_receipt_rfc3339
-        .as_deref()
+    if let Some(rr) = im
+        .and_then(|i| i.read_receipt_rfc3339.as_deref())
         .filter(|s| !s.is_empty())
     {
         builder = builder.header("X-ME-Read-Receipt", Text::new(rr.to_string()));
     }
-    if let Some(parts) = msg.parts_json.as_deref().filter(|s| !s.is_empty()) {
-        builder = builder.header("X-ME-Parts", Text::new(parts.to_string()));
+    if let Some(parts) = value_as_string(im.and_then(|i| i.parts.as_ref())) {
+        builder = builder.header("X-ME-Parts", Text::new(parts));
     }
-    if let Some(edits) = msg.edits_json.as_deref().filter(|s| !s.is_empty()) {
-        builder = builder.header("X-ME-Edits", Text::new(edits.to_string()));
+    if let Some(edits) = value_as_string(im.and_then(|i| i.edits.as_ref())) {
+        builder = builder.header("X-ME-Edits", Text::new(edits));
     }
-    if let Some(app) = msg.app_json.as_deref().filter(|s| !s.is_empty()) {
-        builder = builder.header("X-ME-App", Text::new(app.to_string()));
+    if let Some(app) = value_as_string(im.and_then(|i| i.app.as_ref())) {
+        builder = builder.header("X-ME-App", Text::new(app));
     }
-    if let Some(bid) = msg.balloon_bundle_id.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(bid) = im
+        .and_then(|i| i.balloon_bundle_id.as_deref())
+        .filter(|s| !s.is_empty())
+    {
         builder = builder.header("X-ME-Balloon-Bundle-Id", Text::new(bid.to_string()));
     }
-    if let Some(kind) = msg.balloon_kind.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(kind) = im
+        .and_then(|i| i.balloon_kind.as_deref())
+        .filter(|s| !s.is_empty())
+    {
         builder = builder.header("X-ME-Balloon-Kind", Text::new(kind.to_string()));
     }
-    if let Some(tapbacks) = msg.tapbacks_json.as_deref().filter(|s| !s.is_empty()) {
-        builder = builder.header("X-ME-Tapbacks", Text::new(tapbacks.to_string()));
+    if let Some(tapbacks) = value_as_string(im.and_then(|i| i.tapbacks.as_ref())) {
+        builder = builder.header("X-ME-Tapbacks", Text::new(tapbacks));
     }
-    if let Some(guid) = msg.associated_guid.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(guid) = im
+        .and_then(|i| i.associated_guid.as_deref())
+        .filter(|s| !s.is_empty())
+    {
         builder = builder.header("X-ME-Associated-Guid", Text::new(guid.to_string()));
     }
-    if let Some(part) = msg.associated_part {
+    if let Some(part) = im.and_then(|i| i.associated_part) {
         builder = builder.header("X-ME-Associated-Part", Text::new(part.to_string()));
     }
-    if let Some(kind) = msg.tapback_kind.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(kind) = im
+        .and_then(|i| i.tapback_kind.as_deref())
+        .filter(|s| !s.is_empty())
+    {
         builder = builder.header("X-ME-Tapback-Kind", Text::new(kind.to_string()));
     }
-    if let Some(emoji) = msg.tapback_emoji.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(emoji) = im
+        .and_then(|i| i.tapback_emoji.as_deref())
+        .filter(|s| !s.is_empty())
+    {
         builder = builder.header("X-ME-Tapback-Emoji", Text::new(emoji.to_string()));
     }
-    if let Some(action) = msg.tapback_action.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(action) = im
+        .and_then(|i| i.tapback_action.as_deref())
+        .filter(|s| !s.is_empty())
+    {
         builder = builder.header("X-ME-Tapback-Action", Text::new(action.to_string()));
     }
 
@@ -878,7 +801,7 @@ fn build_eml(msg: &MailMessage) -> Result<Vec<u8>> {
         builder = builder.header("X-ME-Attachment-Meta", Text::new(meta_json));
     }
 
-    builder = builder.text_body(msg.text.clone());
+    builder = builder.text_body(msg.message.text.clone());
 
     for (i, att) in msg.attachments.iter().enumerate() {
         let mime = att
@@ -955,45 +878,36 @@ mod tests {
                 handle: "+15555550101".into(),
                 display_name: Some("Sam".into()),
             }],
-            guid: "aabbccddeeff00112233445566778899".into(),
-            timestamp_unix_ms: 1_400_773_261_000,
-            direction: Direction::Incoming,
-            service: "SMS".into(),
-            message_kind: "sms".into(),
-            sender_handle: Some("+15555550101".into()),
-            sender_display_name: Some("Sam".into()),
             owner_handle: "+15555550100".into(),
             owner_display_name: None,
-            subject: None,
-            text: "hello from sms".into(),
-            android_type: Some("1".into()),
-            source_fields_json: Some(r#"{"address":"+15555550101"}"#.into()),
             export_source: "sms-backup-restore".into(),
             export_tool: "SMS Backup & Restore".into(),
             export_tool_version: "10.26.003".into(),
-            attachments: vec![],
             filename_suffix: None,
-            is_reply: false,
-            in_reply_to_guid: None,
-            thread_originator_part: None,
-            num_replies: None,
-            is_deleted: false,
-            send_effect: None,
-            shared_location: None,
-            announcement: None,
-            read_receipt_rfc3339: None,
-            parts_json: None,
-            edits_json: None,
-            app_json: None,
-            balloon_bundle_id: None,
-            balloon_kind: None,
-            tapbacks_json: None,
-            associated_guid: None,
-            associated_part: None,
-            tapback_kind: None,
-            tapback_emoji: None,
-            tapback_action: None,
+            message: IrMessage {
+                guid: "aabbccddeeff00112233445566778899".into(),
+                timestamp_unix_ms: 1_400_773_261_000,
+                direction: IrDirection::Incoming,
+                service: message_ir::IrService::Sms,
+                message_kind: message_ir::IrMessageKind::Sms,
+                sender_handle: Some("+15555550101".into()),
+                sender_display_name: Some("Sam".into()),
+                subject: None,
+                text: "hello from sms".into(),
+                attachments: Vec::new(),
+                imessage: None,
+                source: Some(message_ir::IrSource {
+                    android_type: Some(1),
+                    fields: serde_json::from_str(r#"{"address":"+15555550101"}"#).unwrap(),
+                }),
+            },
+            attachments: vec![],
         }
+    }
+
+    /// The extension bag, creating it when the base message has none.
+    fn im_mut(msg: &mut MailMessage) -> &mut message_ir::IrImessage {
+        msg.message.imessage.get_or_insert_with(Default::default)
     }
 
     #[test]
@@ -1066,7 +980,7 @@ mod tests {
         msg.chat_identifier = "chat-group1".into();
         msg.conversation_type = "group".into();
         msg.group_title = Some("Family".into());
-        msg.message_kind = "mms".into();
+        msg.message.message_kind = message_ir::IrMessageKind::Mms;
         msg.participants = vec![
             Participant {
                 handle: "+15555550101".into(),
@@ -1146,11 +1060,11 @@ mod tests {
             handle: "friend@icloud.com".into(),
             display_name: Some("Friend".into()),
         }];
-        msg.sender_handle = Some("friend@icloud.com".into());
+        msg.message.sender_handle = Some("friend@icloud.com".into());
         msg.owner_handle = "me@icloud.com".into();
-        msg.service = "iMessage".into();
-        msg.message_kind = "imessage".into();
-        msg.guid = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE".into();
+        msg.message.service = message_ir::IrService::IMessage;
+        msg.message.message_kind = message_ir::IrMessageKind::IMessage;
+        msg.message.guid = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE".into();
         msg.export_source = "imessage".into();
 
         let tmp = tempfile::tempdir().unwrap();
@@ -1175,10 +1089,10 @@ mod tests {
     #[test]
     fn outgoing_uses_me_and_stable_subject() {
         let mut msg = base_sms();
-        msg.direction = Direction::Outgoing;
-        msg.sender_handle = Some("+15555550100".into());
-        msg.sender_display_name = Some("Me".into());
-        msg.text = "body must not become subject".into();
+        msg.message.direction = IrDirection::Outgoing;
+        msg.message.sender_handle = Some("+15555550100".into());
+        msg.message.sender_display_name = Some("Me".into());
+        msg.message.text = "body must not become subject".into();
 
         let tmp = tempfile::tempdir().unwrap();
         let path = write_message_file(&tmp.path().join("chat"), 1, &msg).unwrap();
@@ -1218,21 +1132,23 @@ mod tests {
     #[test]
     fn caller_id_owner_display_and_imessage_extension_headers() {
         let mut msg = base_sms();
-        msg.direction = Direction::Outgoing;
-        msg.sender_handle = Some("+15555550100".into());
-        msg.sender_display_name = Some("+15555550100".into());
+        msg.message.direction = IrDirection::Outgoing;
+        msg.message.sender_handle = Some("+15555550100".into());
+        msg.message.sender_display_name = Some("+15555550100".into());
         msg.owner_display_name = Some("+15555550100".into());
         msg.export_source = "imessage".into();
-        msg.message_kind = "imessage".into();
-        msg.is_reply = true;
-        msg.in_reply_to_guid = Some("parent-guid-1111".into());
-        msg.thread_originator_part = Some(0);
-        msg.num_replies = Some(2);
-        msg.send_effect = Some("Sent with Balloons".into());
-        msg.text = "hello\n\nSent with Balloons".into();
-        msg.tapbacks_json = Some(r#"[{"part_index":0,"kind":"loved"}]"#.into());
-        msg.parts_json = Some(r#"[{"index":0,"kind":"run","text":"hello"}]"#.into());
-        msg.announcement = None;
+        msg.message.message_kind = message_ir::IrMessageKind::IMessage;
+        im_mut(&mut msg).is_reply = true;
+        im_mut(&mut msg).in_reply_to_guid = Some("parent-guid-1111".into());
+        im_mut(&mut msg).thread_originator_part = Some(0);
+        im_mut(&mut msg).num_replies = Some(2);
+        im_mut(&mut msg).send_effect = Some("Sent with Balloons".into());
+        msg.message.text = "hello\n\nSent with Balloons".into();
+        im_mut(&mut msg).tapbacks =
+            serde_json::from_str(r#"[{"part_index":0,"kind":"loved"}]"#).ok();
+        im_mut(&mut msg).parts =
+            serde_json::from_str(r#"[{"index":0,"kind":"run","text":"hello"}]"#).ok();
+        im_mut(&mut msg).announcement = None;
 
         let tmp = tempfile::tempdir().unwrap();
         let path = write_message_file(&tmp.path().join("chat"), 1, &msg).unwrap();
@@ -1279,13 +1195,13 @@ mod tests {
     fn tapback_and_handwriting_svg_headers() {
         let mut msg = base_sms();
         msg.export_source = "imessage".into();
-        msg.message_kind = "tapback".into();
-        msg.associated_guid = Some("parent-guid".into());
-        msg.associated_part = Some(0);
-        msg.tapback_kind = Some("loved".into());
-        msg.tapback_action = Some("add".into());
-        msg.in_reply_to_guid = Some("parent-guid".into());
-        msg.text = "Loved a message".into();
+        msg.message.message_kind = message_ir::IrMessageKind::Tapback;
+        im_mut(&mut msg).associated_guid = Some("parent-guid".into());
+        im_mut(&mut msg).associated_part = Some(0);
+        im_mut(&mut msg).tapback_kind = Some("loved".into());
+        im_mut(&mut msg).tapback_action = Some("add".into());
+        im_mut(&mut msg).in_reply_to_guid = Some("parent-guid".into());
+        msg.message.text = "Loved a message".into();
         msg.attachments = vec![MailAttachment {
             bytes: b"<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>".to_vec(),
             meta: message_ir::AttachmentMeta {
@@ -1336,12 +1252,12 @@ mod tests {
     #[test]
     fn writes_conversation_mboxrd() {
         let mut a = base_sms();
-        a.text = "first\nFrom spoofed\nlast".into();
-        a.timestamp_unix_ms = 1_400_773_261_000;
+        a.message.text = "first\nFrom spoofed\nlast".into();
+        a.message.timestamp_unix_ms = 1_400_773_261_000;
         let mut b = base_sms();
-        b.guid = "bbccddeeff00112233445566778899aa".into();
-        b.text = "second".into();
-        b.timestamp_unix_ms = 1_400_773_361_000;
+        b.message.guid = "bbccddeeff00112233445566778899aa".into();
+        b.message.text = "second".into();
+        b.message.timestamp_unix_ms = 1_400_773_361_000;
 
         let tmp = tempfile::tempdir().unwrap();
         let path = write_conversation_mbox(tmp.path(), &[b.clone(), a.clone()]).unwrap();

@@ -3,14 +3,9 @@
 use crate::util;
 use crate::write_sbr;
 use anyhow::{Context, Result, bail};
-use mail::{
-    Direction as MailDirection, MailAttachment, MailMessage, MailPackage, Participant,
-    SmsMailFields, write_mail_package,
-};
+use mail::{MailAttachment, MailMessage, MailPackage, Participant, write_mail_package};
 use message_csv::{AttachmentCell, conversation_filename, format_local_ts, json_cell};
-use message_ir::{
-    ConversationDocument, ConversationHeader, HandleType, IrDirection, IrImessage, IrMessageKind,
-};
+use message_ir::{ConversationDocument, ConversationHeader, HandleType, IrMessageKind};
 use message_vault_io_core::OutputFormat;
 use serde::Serialize;
 use serde_json::Value;
@@ -199,14 +194,6 @@ pub(crate) fn parts_are_trivial_text_duplicate(message_text: &str, parts: Option
         obj.get("kind").and_then(|v| v.as_str()),
         None | Some("run") | Some("text")
     )
-}
-
-fn value_as_string(v: Option<&Value>) -> Option<String> {
-    let v = v?;
-    if v.is_null() {
-        return None;
-    }
-    Some(serde_json::to_string(v).unwrap_or_default()).filter(|s| !s.is_empty())
 }
 
 #[derive(Serialize)]
@@ -413,7 +400,6 @@ pub fn document_to_mail_messages(
     doc: &ConversationDocument,
     output_dir: &Path,
 ) -> Result<Vec<MailMessage>> {
-    let owner = doc.export.owner_handle.clone().unwrap_or_default();
     let participants: Vec<Participant> = doc
         .conversation
         .participants
@@ -438,76 +424,20 @@ pub fn document_to_mail_messages(
             });
         }
 
-        let android_type = msg
-            .source
-            .as_ref()
-            .and_then(|s| s.android_type)
-            .map(|n| n.to_string());
-        let source_fields_json = msg.source.as_ref().and_then(|s| {
-            if s.fields.is_empty() {
-                None
-            } else {
-                Some(serde_json::to_string(&s.fields).unwrap_or_default())
-            }
-        });
-
-        let mut mail = MailMessage::sms(SmsMailFields {
+        out.push(MailMessage {
             chat_identifier: doc.conversation.chat_identifier.clone(),
             conversation_type: doc.conversation.conversation_type.as_str().to_string(),
             group_title: doc.conversation.group_title.clone(),
             participants: participants.clone(),
-            guid: msg.guid.clone(),
-            timestamp_unix_ms: msg.timestamp_unix_ms,
-            direction: match msg.direction {
-                IrDirection::Incoming => MailDirection::Incoming,
-                IrDirection::Outgoing => MailDirection::Outgoing,
-            },
-            service: msg.service.as_str().to_string(),
-            message_kind: msg.message_kind.as_str().to_string(),
-            sender_handle: msg.sender_handle.clone(),
-            sender_display_name: msg.sender_display_name.clone(),
-            owner_handle: owner.clone(),
-            subject: msg.subject.clone(),
-            text: msg.text.clone(),
-            android_type,
-            source_fields_json,
+            owner_handle: doc.export.owner_handle.clone().unwrap_or_default(),
+            owner_display_name: doc.export.owner_display_name.clone(),
             export_source: doc.export.source.clone(),
             export_tool: doc.export.tool.clone(),
             export_tool_version: doc.export.tool_version.clone(),
-            attachments,
             filename_suffix: doc.packaging_stem_suffix.clone(),
+            message: msg.clone(),
+            attachments,
         });
-        if let Some(imessage) = &msg.imessage {
-            apply_imessage_fields(&mut mail, imessage);
-        }
-        if mail.owner_display_name.is_none() {
-            mail.owner_display_name = doc.export.owner_display_name.clone();
-        }
-        out.push(mail);
     }
     Ok(out)
-}
-
-/// Restore iMessage extension fields from [`IrImessage`] onto a [`MailMessage`].
-fn apply_imessage_fields(mail: &mut MailMessage, imessage: &IrImessage) {
-    mail.is_reply = imessage.is_reply;
-    mail.in_reply_to_guid = imessage.in_reply_to_guid.clone();
-    mail.thread_originator_part = imessage.thread_originator_part;
-    mail.num_replies = imessage.num_replies;
-    mail.is_deleted = imessage.is_deleted;
-    mail.send_effect = imessage.send_effect.clone();
-    mail.shared_location = imessage.shared_location.clone();
-    mail.announcement = imessage.announcement.clone();
-    mail.read_receipt_rfc3339 = imessage.read_receipt_rfc3339.clone();
-    mail.parts_json = value_as_string(imessage.parts.as_ref());
-    mail.edits_json = value_as_string(imessage.edits.as_ref());
-    mail.app_json = value_as_string(imessage.app.as_ref());
-    mail.balloon_bundle_id = imessage.balloon_bundle_id.clone();
-    mail.balloon_kind = imessage.balloon_kind.clone();
-    mail.tapbacks_json = value_as_string(imessage.tapbacks.as_ref());
-    mail.associated_guid = imessage.associated_guid.clone();
-    mail.associated_part = imessage.associated_part;
-    mail.tapback_kind = imessage.tapback_kind.clone();
-    mail.tapback_emoji = imessage.tapback_emoji.clone();
-    mail.tapback_action = imessage.tapback_action.clone();
 }
