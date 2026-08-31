@@ -183,6 +183,11 @@ describe("GateOneScreen", () => {
     expect(screen.queryByText(/estimate/i)).not.toBeInTheDocument();
   });
 
+  it("renders the identity panel it is given", () => {
+    render(<GateOneScreen {...props()} identityPanel={<div data-testid="identity-panel" />} />);
+    expect(screen.getByTestId("identity-panel")).toBeInTheDocument();
+  });
+
   it("keeps the breakdown's singular file count correct", () => {
     render(
       <GateOneScreen

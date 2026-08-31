@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import type { AccountProfile } from "../lib/account";
 import { apiClient } from "../lib/api";
+import type { IdentityService } from "../lib/backupIdentity";
 import { getDeviceId } from "../lib/deviceId";
 import {
   emptyImessagePathStats,
@@ -28,7 +30,7 @@ import {
 } from "../lib/tauri";
 import { isTauri } from "../lib/tauri-check";
 import type { AttachmentMediaMode, ContactNameMode } from "../lib/types";
-import { loadAccountProfile } from "../lib/useAccountProfile";
+import { loadAccountProfile, useAccountProfile } from "../lib/useAccountProfile";
 import {
   emptyWhatsappPathStats,
   isWhatsappMethod,
@@ -37,6 +39,8 @@ import {
   WHATSAPP_SOURCE_ID,
   type WhatsappMethodId,
 } from "../lib/whatsappImport";
+import BackupIdentityList from "./import/BackupIdentityList";
+import BackupIdentityStopScreen from "./import/BackupIdentityStopScreen";
 import GateOneScreen from "./import/GateOneScreen";
 import GateTwoScreen from "./import/GateTwoScreen";
 import ImportFormFields from "./import/ImportFormFields";
@@ -95,6 +99,7 @@ export default function ImportScreen() {
     mediaToolsMissing,
     mediaPartiallyRan,
     resumeError,
+    sourceIdentities,
     computingSummary,
     completionText,
     startImport,
@@ -103,10 +108,31 @@ export default function ImportScreen() {
     resumeAtGate,
     cancel,
     returnToForm,
+    continueAfterIdentityStop,
+    cancelIdentityStop,
   } = useImportJob();
 
   /** Null while the lookup hasn't finished (or failed) for the summary currently shown. */
   const [unknownContacts, setUnknownContacts] = useState<number | null>(null);
+
+  const { profile, setProfile } = useAccountProfile();
+  const identityProfile = profile ? { phones: profile.phones, emails: profile.emails } : null;
+
+  /** Link one backup address onto the profile; the marks re-derive from the
+   * updated profile, so a claimed address resolves a mismatch in place.
+   * Never rejects: a failed add is swallowed here rather than surfacing an
+   * unhandled rejection through the fire-and-forget `void onAdd(...)` call
+   * in BackupIdentityList/BackupIdentityStopScreen. */
+  const addIdentityToProfile = async (value: string, service: IdentityService): Promise<void> => {
+    try {
+      const updated = await apiClient.post<AccountProfile>("/v1/account/profile", {
+        handles: [{ handle: value, service }],
+      });
+      setProfile(updated);
+    } catch {
+      // Best effort -- the row simply stays marked as not on the profile.
+    }
+  };
 
   const [source, setSource] = useState(DEFAULT_SOURCE);
   const [backupPath, setBackupPath] = useState(() =>
@@ -704,6 +730,17 @@ export default function ImportScreen() {
         />
       )}
 
+      {phase === "identity_stop" && sourceIdentities && (
+        <BackupIdentityStopScreen
+          identities={sourceIdentities}
+          profile={identityProfile}
+          onAdd={addIdentityToProfile}
+          onContinue={() => void continueAfterIdentityStop()}
+          onCancel={cancelIdentityStop}
+          busy={running}
+        />
+      )}
+
       {phase === "gate_1" && gateSummary && (
         <GateOneScreen
           summary={gateSummary}
@@ -714,6 +751,16 @@ export default function ImportScreen() {
           busy={running}
           mediaToolsMissing={mediaToolsMissing}
           mediaPartiallyRan={mediaPartiallyRan}
+          identityPanel={
+            sourceIdentities != null ? (
+              <BackupIdentityList
+                identities={sourceIdentities}
+                profile={identityProfile}
+                onAdd={addIdentityToProfile}
+                busy={running}
+              />
+            ) : undefined
+          }
         />
       )}
 

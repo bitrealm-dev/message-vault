@@ -14,12 +14,13 @@ import type { GateDelta } from "./import/gateDelta";
 import type { ResumeDecision } from "./import/resumeDecision";
 
 const hookState = vi.hoisted(() => ({
-  phase: "form" as "form" | "progress" | "gate_1" | "gate_2" | "done",
+  phase: "form" as "form" | "progress" | "gate_1" | "gate_2" | "done" | "identity_stop",
   gateSummary: null as StagingSummary | null,
   gateDelta: null as GateDelta | null,
   mediaToolsMissing: false,
   mediaPartiallyRan: false,
   resumeError: null as string | null,
+  sourceIdentities: null as string[] | null,
 }));
 const startImportMock = vi.hoisted(() => vi.fn());
 const resumeAtGateMock = vi.hoisted(() => vi.fn());
@@ -27,11 +28,14 @@ const approveGateMock = vi.hoisted(() => vi.fn());
 const declineGateMock = vi.hoisted(() => vi.fn());
 const cancelMock = vi.hoisted(() => vi.fn());
 const returnToFormMock = vi.hoisted(() => vi.fn());
+const continueAfterIdentityStopMock = vi.hoisted(() => vi.fn());
+const cancelIdentityStopMock = vi.hoisted(() => vi.fn());
 const getActiveImportSessionMock = vi.hoisted(() => vi.fn());
 const discardImportSessionMock = vi.hoisted(() => vi.fn());
 const invokeDeleteStagingMock = vi.hoisted(() => vi.fn());
 const invokePathStatMock = vi.hoisted(() => vi.fn());
 const apiPostMock = vi.hoisted(() => vi.fn());
+const apiGetMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./import/useImportJob", async (importOriginal) => {
   // restoreFormFromSnapshot is real: it's pure, already unit-tested on its
@@ -51,6 +55,7 @@ vi.mock("./import/useImportJob", async (importOriginal) => {
       mediaToolsMissing: hookState.mediaToolsMissing,
       mediaPartiallyRan: hookState.mediaPartiallyRan,
       resumeError: hookState.resumeError,
+      sourceIdentities: hookState.sourceIdentities,
       computingSummary: false,
       completionText: undefined,
       startImport: startImportMock,
@@ -59,6 +64,8 @@ vi.mock("./import/useImportJob", async (importOriginal) => {
       declineGate: declineGateMock,
       cancel: cancelMock,
       returnToForm: returnToFormMock,
+      continueAfterIdentityStop: continueAfterIdentityStopMock,
+      cancelIdentityStop: cancelIdentityStopMock,
     }),
   };
 });
@@ -75,6 +82,7 @@ vi.mock("../lib/deviceId", () => ({
 vi.mock("../lib/api", () => ({
   apiClient: {
     post: (...args: unknown[]) => apiPostMock(...args),
+    get: (...args: unknown[]) => apiGetMock(...args),
   },
 }));
 
@@ -207,6 +215,7 @@ describe("ImportScreen entering Import", () => {
     hookState.mediaToolsMissing = false;
     hookState.mediaPartiallyRan = false;
     hookState.resumeError = null;
+    hookState.sourceIdentities = null;
     startImportMock.mockReset();
     resumeAtGateMock.mockReset();
     resumeAtGateMock.mockResolvedValue(undefined);
@@ -214,6 +223,8 @@ describe("ImportScreen entering Import", () => {
     declineGateMock.mockReset();
     cancelMock.mockReset();
     returnToFormMock.mockReset();
+    continueAfterIdentityStopMock.mockReset();
+    cancelIdentityStopMock.mockReset();
     getActiveImportSessionMock.mockReset();
     discardImportSessionMock.mockReset();
     discardImportSessionMock.mockResolvedValue(undefined);
@@ -223,6 +234,14 @@ describe("ImportScreen entering Import", () => {
     invokePathStatMock.mockResolvedValue({ exists: true, isFile: false, isDirectory: true });
     apiPostMock.mockReset();
     apiPostMock.mockResolvedValue({ unknown: [] });
+    apiGetMock.mockReset();
+    apiGetMock.mockResolvedValue({
+      account_id: "acct-1",
+      username: "demo",
+      preferred_name: null,
+      phones: [],
+      emails: [],
+    });
   });
 
   afterEach(() => {
@@ -750,6 +769,7 @@ describe("ImportScreen gates", () => {
     hookState.mediaToolsMissing = false;
     hookState.mediaPartiallyRan = false;
     hookState.resumeError = null;
+    hookState.sourceIdentities = null;
     startImportMock.mockReset();
     resumeAtGateMock.mockReset();
     resumeAtGateMock.mockResolvedValue(undefined);
@@ -757,12 +777,22 @@ describe("ImportScreen gates", () => {
     declineGateMock.mockReset();
     cancelMock.mockReset();
     returnToFormMock.mockReset();
+    continueAfterIdentityStopMock.mockReset();
+    cancelIdentityStopMock.mockReset();
     getActiveImportSessionMock.mockReset();
     getActiveImportSessionMock.mockResolvedValue(null);
     discardImportSessionMock.mockReset();
     invokePathStatMock.mockReset();
     apiPostMock.mockReset();
     apiPostMock.mockResolvedValue({ unknown: [] });
+    apiGetMock.mockReset();
+    apiGetMock.mockResolvedValue({
+      account_id: "acct-1",
+      username: "demo",
+      preferred_name: null,
+      phones: [],
+      emails: [],
+    });
   });
 
   afterEach(() => {
@@ -852,5 +882,17 @@ describe("ImportScreen gates", () => {
     });
 
     expect(screen.getByTestId("gate-one-unknown-contacts")).toHaveTextContent("null");
+  });
+
+  it("shows the identity stop screen for the identity_stop phase", async () => {
+    hookState.phase = "identity_stop";
+    hookState.sourceIdentities = ["+15550001111"];
+    render(<ImportScreen />);
+
+    expect(
+      await screen.findByText(
+        "None of the addresses this backup sent from are on your profile.",
+      ),
+    ).toBeInTheDocument();
   });
 });
