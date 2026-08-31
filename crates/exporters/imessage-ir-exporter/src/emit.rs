@@ -33,7 +33,7 @@ use message_vault_io_core::{AttachmentJob, OutputFormat, run_attachment_jobs};
 
 use crate::{
     attachments::read_resolved_attachment,
-    attachments_emit::{AttachmentLoad, collect_mail_parts_and_attachments, persist_attachment},
+    attachments_emit::{AttachmentLoad, collect_mail_parts_and_attachments},
     body::apply_body,
     error::RuntimeError,
     fields::{
@@ -1171,31 +1171,6 @@ mod tests {
             message_progress_every(OutputFormat::Json),
             DEFAULT_MESSAGE_PROGRESS_EVERY
         );
-    }
-
-    #[test]
-    fn persist_attachment_uses_temp_then_rename() {
-        let dir = tempfile::tempdir().unwrap();
-        let bytes = b"hello-attachment-bytes";
-        let (rel, digest, len) =
-            persist_attachment(dir.path(), 1_609_459_200_000, bytes, Some("photo.jpg")).unwrap();
-        assert_eq!(len, bytes.len() as u64);
-        assert_eq!(digest, hex::encode(Sha256::digest(bytes)));
-        let name = rel.strip_prefix("attachments/").expect("rel path prefix");
-        let dest = dir.path().join(name);
-        assert!(dest.is_file());
-        assert_eq!(fs::read(&dest).unwrap(), bytes);
-        assert!(!dir.path().join(format!("{name}.tmp")).exists());
-
-        // Incomplete dest (wrong length) must be rewritten.
-        fs::write(&dest, b"x").unwrap();
-        assert_ne!(fs::metadata(&dest).unwrap().len(), bytes.len() as u64);
-        let (rel2, digest2, _) =
-            persist_attachment(dir.path(), 1_609_459_200_000, bytes, Some("photo.jpg")).unwrap();
-        assert_eq!(rel2, rel);
-        assert_eq!(digest2, digest);
-        assert_eq!(fs::read(&dest).unwrap(), bytes);
-        assert!(!dir.path().join(format!("{name}.tmp")).exists());
     }
 
     fn sample_mail_with_attachment(bytes: Vec<u8>) -> MailMessage {

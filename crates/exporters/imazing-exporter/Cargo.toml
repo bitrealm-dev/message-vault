@@ -20,7 +20,6 @@ anyhow = "1.0.103"
 chrono = "0.4.44"
 clap = { version = "4.6.1", features = ["derive"], optional = true }
 csv = "1.4.0"
-obfuscate = { path = "../../libs/obfuscate" }
 contacts = { path = "../../libs/contacts" }
 message-csv = { path = "../../libs/csv" }
 message-vault-io-core = { path = "../../core/message-vault-io-core", features = ["cli"] }
