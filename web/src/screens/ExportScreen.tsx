@@ -43,6 +43,14 @@ export default function ExportScreen() {
   const [format, setFormat] = useState<ExportFormat>("jsonl");
   const [error, setError] = useState("");
   const [log, setLog] = useState<string[]>([]);
+  // `running` only turns true once a job starts, which leaves two windows
+  // where the Export button would be live mid-export: while the staging path
+  // resolves (a `home_dir` round trip on the first export), and between the
+  // pull and the conversion. A second job started in either window would
+  // break `jobs.rs`'s "one job runs at a time" assumption, and two exports
+  // begun in the same second would share a staging folder, so the first
+  // cleanup would delete the second's files. This covers the whole run.
+  const [busy, setBusy] = useState(false);
   const { running, finished, run, cancel } = useTauriJob();
 
   const appendLog = useCallback((line: string) => {
@@ -50,10 +58,12 @@ export default function ExportScreen() {
   }, []);
 
   const startExport = () => {
+    if (busy) return;
     if (!token) {
       setError("Not authenticated");
       return;
     }
+    setBusy(true);
     setError("");
     setLog([]);
 
@@ -106,6 +116,8 @@ export default function ExportScreen() {
         const message = err instanceof Error ? err.message : String(err);
         appendLog(`Error: ${message}`);
         setError(message);
+      } finally {
+        setBusy(false);
       }
     })();
   };
@@ -116,9 +128,9 @@ export default function ExportScreen() {
       requireTauri
       startLabel="Export"
       runningLabel="Exporting…"
-      running={running}
+      running={running || busy}
       log={log}
-      startDisabled={!savePath}
+      startDisabled={!savePath || busy}
       onStart={startExport}
       onCancel={cancel}
       error={error}
@@ -151,7 +163,7 @@ export default function ExportScreen() {
             if (next) setFormat(next);
           }}
           aria-label="Format"
-          isDisabled={running}
+          isDisabled={running || busy}
         >
           {EXPORT_FORMATS.map((option) => (
             <ListBoxItem key={option.id} id={option.id} className={selectItemClassName}>

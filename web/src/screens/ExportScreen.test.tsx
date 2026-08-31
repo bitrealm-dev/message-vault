@@ -136,6 +136,36 @@ describe("ExportScreen", () => {
     expect(await screen.findByText("unsupported output format")).toBeTruthy();
   });
 
+  it("ignores a second Export while one is already under way", async () => {
+    // The desktop backend runs one job at a time (src-tauri/src/commands/jobs.rs).
+    // Two exports started in the same second would also resolve to the same
+    // staging folder, so the first cleanup would delete the second's files.
+    let releasePull: () => void = () => {};
+    const pullStarted = new Promise<void>((resolve) => {
+      releasePull = resolve;
+    });
+    resolveExportStagingDir.mockImplementation(async () => {
+      await pullStarted;
+      return "/home/demo/message-vault/staging-export-260831-120000";
+    });
+
+    const user = userEvent.setup();
+    render(<ExportScreen />);
+    await user.type(screen.getByPlaceholderText("Choose folder…"), "/home/demo/out");
+    await user.click(screen.getByRole("button", { name: /Format/ }));
+    await user.click(await screen.findByRole("option", { name: "CSV (.csv)" }));
+
+    const exportButton = screen.getByRole("button", { name: "Export" });
+    await user.click(exportButton);
+    // Still resolving the staging path: the button must already be inert.
+    await user.click(exportButton).catch(() => {});
+    releasePull();
+
+    await waitFor(() => expect(invokeFormat).toHaveBeenCalledTimes(1));
+    expect(invokePull).toHaveBeenCalledTimes(1);
+    expect(resolveExportStagingDir).toHaveBeenCalledTimes(1);
+  });
+
   it("reports the failure rather than claiming the export finished", async () => {
     awaitTauriJob.mockImplementation(async () => {
       throw new Error("vault key is required");

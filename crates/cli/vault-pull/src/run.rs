@@ -94,16 +94,6 @@ pub fn compose_query(base: &str, after: Option<&str>, before: Option<&str>) -> S
     parts.join(" ")
 }
 
-/// Download matching messages into `cfg.out_dir` as JSON Lines plus attachments.
-///
-/// JSON Lines means one JSON object per line. A local journal
-/// (`.vault-pull-state.jsonl`) records which files were already downloaded so a
-/// later run can skip them.
-///
-/// # Errors
-///
-/// Returns an error when the key or output folder is missing, login fails, a
-/// page or download fails, or a conversation file cannot be written.
 /// Create the output folder and its `attachments/` child, and mark the folder
 /// as a Message Vault export.
 ///
@@ -129,6 +119,16 @@ fn prepare_out_dir(out_dir: &Path, skip_attachments: bool) -> Result<()> {
         .with_context(|| format!("mark {} as an export folder", out_dir.display()))
 }
 
+/// Download matching messages into `cfg.out_dir` as JSON Lines plus attachments.
+///
+/// JSON Lines means one JSON object per line. A local journal
+/// (`.vault-pull-state.jsonl`) records which files were already downloaded so a
+/// later run can skip them.
+///
+/// # Errors
+///
+/// Returns an error when the key or output folder is missing, login fails, a
+/// page or download fails, or a conversation file cannot be written.
 pub fn run(
     cfg: &VaultPullConfig,
     mut on_progress: Option<&mut ProgressFn<'_>>,
