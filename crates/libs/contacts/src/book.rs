@@ -27,14 +27,14 @@ impl ContactsBook {
         }
     }
 
-    /// Load a contacts file using the same format rules as contacts-validate.
+    /// Load a contacts file, choosing the loader from its detected format.
     ///
     /// # Errors
     ///
     /// Returns an error when the format cannot be detected or the file cannot
     /// be read or parsed.
     pub fn load_contacts_file(path: &Path) -> Result<Self> {
-        use crate::validate::{ContactsFormat, detect_contacts_format};
+        use crate::format::{ContactsFormat, detect_contacts_format};
         let format = detect_contacts_format(path)?;
         match format {
             ContactsFormat::Vcf => Self::load_vcf(path),
@@ -198,7 +198,7 @@ fn normalize_handle(raw: &str, handle_type: HandleType) -> String {
 
 /// Load contacts from at most one of `--contacts` or `--vcf`.
 ///
-/// `--contacts` accepts the same files as contacts-validate (VCF or vCard
+/// `--contacts` accepts either shape (VCF or vCard
 /// CSV). `--vcf` is a VCF-only alias.
 ///
 /// When neither is passed, returns an empty book and writes a warning via `log`

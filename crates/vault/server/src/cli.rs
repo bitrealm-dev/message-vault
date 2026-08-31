@@ -152,6 +152,14 @@ pub enum Commands {
         output: Option<PathBuf>,
     },
 
+    /// Write this CLI's docs-site reference page (Markdown) to stdout or
+    /// --output. Does not open the database.
+    DumpCliDocs {
+        /// Destination file. Omit to print stdout.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+
     /// Convert media under assets/ into browser previews under assets_converted/
     ProcessAssets {
         /// Path to config.toml
@@ -457,6 +465,10 @@ pub async fn run(cli: Cli) -> Result<()> {
 
         Commands::DumpOpenapi { output } => {
             crate::openapi::write_openapi(output.as_deref())?;
+        }
+
+        Commands::DumpCliDocs { output } => {
+            crate::cli_docs::write_cli_docs(output.as_deref())?;
         }
 
         Commands::ProcessAssets {

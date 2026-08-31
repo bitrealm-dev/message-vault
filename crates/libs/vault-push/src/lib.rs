@@ -3,8 +3,6 @@
 //! Each conversation is a JSON Lines file (one JSON object per line). The
 //! `vault-push` command and the desktop app Vault tab both call this crate.
 
-#[cfg(feature = "cli")]
-pub mod cli;
 mod http;
 mod journal;
 mod project;
@@ -20,6 +18,3 @@ pub use run::{
 };
 pub use vault_http::AuthError;
 pub use vault_http::AuthInfo;
-
-#[cfg(feature = "cli")]
-pub use cli::clap_command;

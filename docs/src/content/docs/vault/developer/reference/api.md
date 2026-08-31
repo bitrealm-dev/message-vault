@@ -5,13 +5,13 @@ description: Tokens, import sessions, search syntax, and JSONL upload for people
 
 Route schemas, status codes, and JSON fields live in the generated [HTTP API reference](/vault/developer/rustdoc/http/). Crate types and functions live in [Rust crate docs](/vault/developer/rustdoc/). This page is the prose those tools need that is not a JSON schema.
 
-`message-vault-server serve` reads `[server]` in `config/config.toml` (`bind`). Day-to-day import still uses the desktop [Import](/vault/user/import-from-a-backup/) screen or **`vault-push`**. Download uses [Export](/vault/user/how-to/export-from-the-vault/) or **`vault-pull`**. Those tools call the HTTP API with [JSONL](/vault/developer/reference/export-structure/) and attachment bytes keyed by SHA-256.
+`message-vault-server serve` reads `[server]` in `config/config.toml` (`bind`). Day-to-day import uses the desktop [Import](/vault/user/import-from-a-backup/) screen and download uses [Export](/vault/user/how-to/export-from-the-vault/). Both call this API with [JSONL](/vault/developer/reference/export-structure/) and attachment bytes keyed by SHA-256, through the `vault-push` and `vault-pull` libraries.
 
 ## Tokens
 
 Auth is per-account. There is no host-wide admin token.
 
-Create a named **API token** under **Settings → Account** (shown once). Copy that value into `vault-push` / `vault-pull`. A website login uses a **session** Bearer that rotates on each login. Do not paste a session token into CLI tools.
+Create a named **API token** under **Settings → Account** (shown once) for a program of your own that calls this API. A website login uses a **session** Bearer that rotates on each login, and the desktop app uses that session rather than a token. Do not paste a session token into a program expecting a long-lived token.
 
 Send either token as:
 
@@ -25,7 +25,7 @@ Turn on a local explorer with `[server] openapi_ui = true`, then open `/docs` on
 
 ## Import session
 
-`vault-push` starts a session with `POST /v1/imports`, passes `import_id` on each `POST /v1/import`, then `POST /v1/imports/{id}/complete` so Settings → Storage can list history. Messages promoted in that session store `messages.import_id`.
+Import starts a session with `POST /v1/imports`, passes `import_id` on each `POST /v1/import`, then `POST /v1/imports/{id}/complete` so Settings → Storage can list history. Messages promoted in that session store `messages.import_id`.
 
 If `import_id` is omitted on `POST /v1/import`, the server starts and finishes a one-shot session so Storage still records the import.
 

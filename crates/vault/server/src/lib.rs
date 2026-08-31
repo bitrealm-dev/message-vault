@@ -2,6 +2,7 @@
 #![warn(missing_docs)]
 
 pub mod cli;
+pub mod cli_docs;
 pub mod config;
 
 pub(crate) mod admin_api;

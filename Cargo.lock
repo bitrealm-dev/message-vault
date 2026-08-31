@@ -757,26 +757,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
-name = "dump-cli-docs"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "clap-markdown",
- "go-sms-pro-exporter",
- "imazing-exporter",
- "imessage-ir-exporter",
- "message-reexport",
- "message-vault-server",
- "openextract-exporter",
- "sms-backup-plus-exporter",
- "sms-backup-restore-exporter",
- "vault-pull",
- "vault-push",
- "whatsapp-exporter",
-]
-
-[[package]]
 name = "either"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1075,7 +1055,6 @@ name = "go-sms-pro-exporter"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clap",
  "contacts",
  "csv",
  "go-sms-mms",
@@ -1537,7 +1516,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "clap",
  "contacts",
  "csv",
  "media",
@@ -1573,7 +1551,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "clap",
  "crabapple",
  "hex",
  "imessage-database",
@@ -1881,7 +1858,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "clap",
  "contacts",
  "media",
  "message-csv",
@@ -1899,6 +1875,7 @@ dependencies = [
  "axum",
  "chrono",
  "clap",
+ "clap-markdown",
  "contacts",
  "demo-seed",
  "fs2",
@@ -2076,7 +2053,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "clap",
  "contacts",
  "csv",
  "media",
@@ -2955,7 +2931,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "clap",
  "contacts",
  "csv",
  "hex",
@@ -2978,7 +2953,6 @@ name = "sms-backup-restore-exporter"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clap",
  "contacts",
  "media",
  "message-csv",
@@ -3780,7 +3754,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "clap",
  "hex",
  "httpmock",
  "journal",
@@ -3799,7 +3772,6 @@ name = "vault-push"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clap",
  "hex",
  "httpmock",
  "journal",
@@ -3955,7 +3927,6 @@ name = "whatsapp-exporter"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clap",
  "hex",
  "media",
  "message-csv",

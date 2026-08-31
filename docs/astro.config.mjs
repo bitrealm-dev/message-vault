@@ -40,8 +40,6 @@ const userGuideItems = [
       'vault/user/how-to/saved-searches',
       'vault/user/how-to/trash',
       'vault/user/how-to/settings',
-      'vault/user/how-to/convert-formats',
-      'vault/user/how-to/extract-to-files',
       'vault/user/how-to/export-from-the-vault',
       'vault/user/how-to/media-and-privacy',
       { slug: 'vault/user/how-to/rescue-imports', badge: limitedBadge },
@@ -66,49 +64,6 @@ const developerItems = [
     ],
   },
   'vault/developer/docker',
-  {
-    label: 'CLI tools',
-    items: [
-      'vault/developer/reference/cli',
-      {
-        label: 'Supported',
-        items: [
-          'vault/developer/reference/cli/imessage-ir-exporter',
-          'vault/developer/reference/cli/sms-backup-restore-exporter',
-          'vault/developer/reference/cli/whatsapp-exporter',
-        ],
-      },
-      {
-        label: 'Rescue / experimental',
-        items: [
-          {
-            slug: 'vault/developer/reference/cli/go-sms-pro-exporter',
-            badge: limitedBadge,
-          },
-          {
-            slug: 'vault/developer/reference/cli/imazing-exporter',
-            badge: limitedBadge,
-          },
-          {
-            slug: 'vault/developer/reference/cli/openextract-exporter',
-            badge: limitedBadge,
-          },
-          {
-            slug: 'vault/developer/reference/cli/sms-backup-plus-exporter',
-            badge: limitedBadge,
-          },
-        ],
-      },
-      {
-        label: 'Vault JSONL',
-        items: [
-          'vault/developer/reference/cli/message-reexporter',
-          'vault/developer/reference/cli/vault-push',
-          'vault/developer/reference/cli/vault-pull',
-        ],
-      },
-    ],
-  },
   'vault/developer/reference/api',
   {
     label: 'HTTP API reference',
@@ -161,6 +116,7 @@ const developerItems = [
       'vault/developer/reference/config-and-accounts',
       'vault/developer/reference/database',
       'vault/developer/reference/export-structure',
+      'vault/developer/reference/export-formats',
       'vault/developer/reference/csv-columns',
       'vault/developer/reference/server-cli',
     ],
@@ -171,6 +127,10 @@ export default defineConfig({
   site: 'https://bitrealm.io',
   redirects: {
     '/vault/developer/docker-compose/': '/vault/developer/docker/',
+    // Same content, new path. The command-line reference pages that were
+    // removed alongside this one get no redirect: those commands no longer
+    // exist, so a 404 is the honest answer. See docs/adr/0001.
+    '/vault/user/how-to/convert-formats/': '/vault/developer/reference/export-formats/',
   },
   integrations: [
     mermaid({

@@ -9,7 +9,6 @@ These pages are for people who compile the vault, run Compose, or call the HTTP 
 - [Release](/vault/developer/release/) — how product versions ship
 - **Architecture** — [Vault Design](/vault/developer/vault-design/), [Message Transfer](/vault/developer/message-transfer/), [Common message](/vault/developer/architecture/common-message/)
 - [Docker](/vault/developer/docker/) — build the vault image from a checkout, and how that relates to the Docker Hub image
-- [Command-line tools](/vault/developer/reference/cli/) — exporter binaries, `vault-push`, `vault-pull`
 - [HTTP API](/vault/developer/reference/api/) — tokens and import flow; [route reference](/vault/developer/rustdoc/http/)
 - [Rust crate docs](/vault/developer/rustdoc/) — `cargo doc` HTML for workspace crates (not the HTTP route list)
 - [Formats](/vault/developer/formats/) — converter capabilities and mapping tables

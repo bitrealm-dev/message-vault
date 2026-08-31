@@ -15,10 +15,10 @@ These are the folders in the repository. [Contributing](/vault/developer/contrib
 message-vault
 ├── config/                 # copy example → config.toml to run the vault locally
 ├── crates/                 # Rust crates Cargo builds together (src-tauri is not in this set)
-│   ├── cli/                # vault-push / vault-pull: load messages into a vault or write them out
-│   ├── core/               # shared import/export job settings used by CLI and the desktop app
+│   ├── core/               # shared import/export job settings used by the desktop app
 │   ├── exporters/          # parse iMessage, WhatsApp, SMS, and other backups into JSONL
-│   ├── libs/               # shared code those exporters and the vault use (format, contacts, media)
+│   ├── libs/               # shared code the exporters and the vault use (format, contacts,
+│   │                       #   media, vault-push, vault-pull)
 │   └── vault/              # message-vault-server (API + SQLite) and demo-seed (sample inbox)
 ├── docker/                 # image and Compose file that look like a published vault
 ├── docs/                   # bitrealm.io (User Guide, Developer docs, landing page)
@@ -34,13 +34,17 @@ message-vault
 
 `cargo build --workspace` produces these commands. `src-tauri/` is the desktop window. It is not a workspace member. The same exporter libraries run inside that app.
 
-| Binary | Comes from | Job |
+Two binaries are built: `message-vault-server` from `crates/vault/server/`, and
+`demo-seed` from `crates/vault/demo-seed/`. Everything else is a library the
+desktop app links directly — the exporters have no command line. Why:
+[ADR 0001](https://github.com/bitrealm-io/message-vault/blob/main/docs/adr/0001-no-command-line-except-the-vault-server.md).
+
+| Library | Comes from | Job |
 |--------|------------|-----|
-| `message-vault-server` | `crates/vault/server/` | Vault process |
 | `imessage-ir-exporter`, `sms-backup-restore-exporter`, `whatsapp-exporter` | `crates/exporters/` | Supported extract → JSONL |
 | `go-sms-pro-exporter`, `imazing-exporter`, `openextract-exporter`, `sms-backup-plus-exporter` | `crates/exporters/` | Rescue / experimental extract |
-| `message-reexporter` | `crates/libs/reexport/` | Convert an existing export folder |
-| `vault-push` / `vault-pull` | `crates/cli/` | JSONL → running vault / vault → JSONL |
+| `message-reexport` | `crates/libs/reexport/` | Convert an existing export folder |
+| `vault-push` / `vault-pull` | `crates/libs/` | JSONL → running vault / vault → JSONL |
 
 C4 PlantUML sources and SVG exports live in [`docs/src/assets/architecture/`](https://github.com/bitrealm-io/message-vault/tree/main/docs/src/assets/architecture). Edit the `.puml` file, export SVG into the same folder, and commit both in one change.
 
@@ -132,7 +136,7 @@ sequenceDiagram
   - Vite is serving webview on `:5173`.
 - User is signed in.
 
-Messages and attachments are uploaded to the vault using `vault-push`.
+Messages and attachments are uploaded to the vault using the `vault-push` library.
 
 ```mermaid
 sequenceDiagram
@@ -166,7 +170,7 @@ sequenceDiagram
   - Vite is serving webview on `:5173`.
 - User is signed in.
 
-Messages and attachments are downloaded from the vault using `vault-pull`.
+Messages and attachments are downloaded from the vault using the `vault-pull` library.
 
 ```mermaid
 sequenceDiagram

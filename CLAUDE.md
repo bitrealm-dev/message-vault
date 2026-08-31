@@ -18,12 +18,13 @@ Message Vault pulls conversations out of chat apps (iMessage, WhatsApp, SMS back
 vendor backup (chat.db, SMS XML, WhatsApp crypt15, …)
   → exporter crate (crates/exporters/*) parses it into message-ir types
   → ConversationDocument (schema_version 3) written as JSONL
-  → vault-push CLI / Tauri push command → POST /v1/... → SQLite
+  → Tauri push command (vault-push library) → POST /v1/... → SQLite
   → web/ SPA reads threads back through the /v1/ API
 ```
 
 - **`crates/libs/ir`** (`message-ir`) is the shared conversation model every exporter writes: `ConversationDocument` holds export metadata, participants, and messages. `schema_version` is `3` and independent of the product version.
-- **`crates/libs/ir-format`** reads/writes on-disk formats (JSON, CSV, EML, SBR XML) to/from IR; **`crates/libs/reexport`** converts between existing export formats.
+- **`crates/libs/ir-format`** reads/writes on-disk formats (JSON, CSV, EML, SBR XML) to/from IR; **`crates/libs/reexport`** converts between existing export formats, which is how Export writes anything other than JSONL.
+- **No command line except the vault server.** Every exporter, `message-reexport`, `vault-push`, and `vault-pull` are library crates with no binary; the desktop app calls them in process. Only `message-vault-server` and `demo-seed` build binaries. Why: `docs/adr/0001-no-command-line-except-the-vault-server.md`.
 - **`crates/core/message-vault-io-core`** — shared export pipeline, jobs, form model. Avoids `anyhow` so the desktop app stays lightweight; callers map `String` errors at the edge.
 - **`crates/vault/server`** — each `*_api.rs` file is one Axum route group; `db/` modules mirror the table sources in `schema/sql/*.sql`, which the server embeds at compile time (`db/schema.rs`) — change tables there, not in a live db file. Import path: `jsonl.rs` → `import.rs` → `dedupe.rs`; demo mode runs through a guest pool (`guest_pool.rs`).
 - **`src-tauri/`** is **not a workspace member** (own `Cargo.toml`, listed in the root workspace `exclude`). Its `commands/` wrap the exporter crates and push/pull for the desktop app. Format/build it with `--manifest-path`.

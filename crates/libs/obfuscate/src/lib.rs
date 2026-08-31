@@ -11,7 +11,10 @@ mod names;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+// Only the `#[cfg(test)]` fixture builders below own paths.
+#[cfg(test)]
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use anyhow::{Context, Result, bail};
@@ -817,154 +820,6 @@ fn obfuscate_attachments_json(raw: &str) -> String {
         }
     }
     serde_json::to_string(&value).unwrap_or_else(|_| "[]".into())
-}
-
-/// Obfuscate iMazing vendor CSV(s) into an output directory.
-///
-/// # Errors
-///
-/// Returns an error when a CSV cannot be read or the output cannot be written.
-pub fn obfuscate_imazing(input: &Path, output_dir: &Path, anon: &mut Obfuscator) -> Result<usize> {
-    fs::create_dir_all(output_dir)?;
-    materialize_placeholders(output_dir)?;
-    let inputs: Vec<PathBuf> = if input.is_file() {
-        vec![input.to_path_buf()]
-    } else if input.is_dir() {
-        let mut paths: Vec<PathBuf> = fs::read_dir(input)?
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| {
-                p.extension()
-                    .and_then(|e| e.to_str())
-                    .is_some_and(|e| e.eq_ignore_ascii_case("csv"))
-            })
-            .collect();
-        paths.sort();
-        paths
-    } else {
-        bail!("input not found: {}", input.display());
-    };
-    if inputs.is_empty() {
-        bail!("no CSV files found at {}", input.display());
-    }
-    let mut n = 0usize;
-    for src in inputs {
-        let dest = output_dir.join(src.file_name().context("CSV path missing file name")?);
-        obfuscate_imazing_csv_file(&src, &dest, anon)?;
-        n += 1;
-    }
-    Ok(n)
-}
-
-fn obfuscate_imazing_csv_file(input: &Path, output: &Path, anon: &mut Obfuscator) -> Result<()> {
-    let mut rdr = csv::ReaderBuilder::new()
-        .flexible(true)
-        .from_path(input)
-        .with_context(|| format!("read {}", input.display()))?;
-    let headers = rdr.headers()?.clone();
-    let mut rows = Vec::new();
-    for result in rdr.records() {
-        let record = result?;
-        rows.push(obfuscate_imazing_record(&headers, &record, anon));
-    }
-    let mut wtr =
-        csv::Writer::from_path(output).with_context(|| format!("write {}", output.display()))?;
-    wtr.write_record(&headers)?;
-    for row in &rows {
-        wtr.write_record(row)?;
-    }
-    wtr.flush()?;
-    Ok(())
-}
-
-/// Obfuscate an iMazing Chat Session value (`Name`, `Name & Name`, or phones).
-fn obfuscate_imazing_session(raw: &str, anon: &mut Obfuscator) -> String {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-    // Prefer phone/email rewrite when present in the whole string.
-    let mixed = anon.obfuscate_mixed_field(trimmed);
-    if mixed != trimmed {
-        return mixed;
-    }
-    // Name-only sessions: split on " & " and remap each display name.
-    trimmed
-        .split(" & ")
-        .map(|part| {
-            let p = part.trim();
-            if p.is_empty() {
-                String::new()
-            } else if looks_like_email(p) || p.chars().filter(|c| c.is_ascii_digit()).count() >= 5 {
-                anon.obfuscate_handle(p)
-            } else {
-                anon.obfuscate_display_name(p)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" & ")
-}
-
-fn obfuscate_imazing_record(
-    headers: &csv::StringRecord,
-    record: &csv::StringRecord,
-    anon: &mut Obfuscator,
-) -> csv::StringRecord {
-    let mut out = csv::StringRecord::new();
-    let mut chat_session_original = String::new();
-    let mut sender_id_original = String::new();
-    for (i, header) in headers.iter().enumerate() {
-        let val = record.get(i).unwrap_or("");
-        let new_val = match header {
-            "Chat Session" => {
-                chat_session_original = val.to_string();
-                obfuscate_imazing_session(val, anon)
-            }
-            "Replying to" => {
-                if val.trim().is_empty() {
-                    String::new()
-                } else {
-                    obfuscate_imazing_session(val, anon)
-                }
-            }
-            "Sender ID" => {
-                sender_id_original = val.to_string();
-                anon.obfuscate_handle(val)
-            }
-            "Sender Name" => {
-                if val.is_empty() {
-                    String::new()
-                } else if !chat_session_original.is_empty()
-                    && normalize_name_key(val) == normalize_name_key(&chat_session_original)
-                {
-                    // Keep chat title and peer name aligned when iMazing used the same string.
-                    anon.obfuscate_display_name(&chat_session_original)
-                } else if !sender_id_original.is_empty() {
-                    anon.display_name_for_handle(&sender_id_original)
-                } else {
-                    anon.obfuscate_display_name(val)
-                }
-            }
-            "Text" | "Subject" | "Reactions" => anon.obfuscate_text(val),
-            "Attachment" => {
-                if val.trim().is_empty() {
-                    String::new()
-                } else {
-                    let class = classify_attachment(None, Some(val));
-                    // iMazing often stores bare filenames; use basename of placeholder.
-                    Path::new(placeholder_rel_path(class))
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("placeholder.bin")
-                        .to_string()
-                }
-            }
-            "Attachment type" => val.to_string(),
-            _ => val.to_string(),
-        };
-        out.push_field(&new_val);
-    }
-    out
 }
 
 #[cfg(test)]

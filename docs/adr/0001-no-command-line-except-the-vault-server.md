@@ -54,3 +54,8 @@ commands again. They are, and that is not the question.
 - The exporter crates keep `run` as their entire public entry point. Adding a
   binary back to one of them is a decision about product surface, not a
   convenience.
+- The documentation pages for these commands were deleted without redirects.
+  Before a stable release this project keeps no compatibility path — not for
+  database schemas, not for stored vault data, and not for URLs — so those
+  addresses return 404 rather than pointing somewhere that does not answer the
+  question they were bookmarked for.

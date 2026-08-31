@@ -34,8 +34,8 @@ imazing-exporter = { path = "../crates/exporters/imazing-exporter", default-feat
 whatsapp-exporter = { path = "../crates/exporters/whatsapp-exporter", default-features = false }
 imessage-ir-exporter = { path = "../crates/exporters/imessage-ir-exporter", default-features = false }
 message-reexport = { path = "../crates/libs/reexport" }
-vault-push = { path = "../crates/cli/vault-push" }
-vault-pull = { path = "../crates/cli/vault-pull" }
+vault-push = { path = "../crates/libs/vault-push" }
+vault-pull = { path = "../crates/libs/vault-pull" }
 
 [dev-dependencies]
 tempfile = "3"

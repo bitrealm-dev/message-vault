@@ -63,7 +63,7 @@ Rows are scoped by `account_id` in a shared `vault.db`.
 - Login and registration are each rate-limited to 20 attempts per username per
   60 seconds, tracked separately (a username's login attempts do not count
   against its registration attempts, or the reverse).
-- Each account can create named **API tokens** for `vault-push` / `vault-pull`
+- Each account can create named **API tokens** for programs that call the HTTP API
   (stored hashed; shown once when created). GUI sessions use a separate rotating
   token.
 - Five columns on `accounts` govern what a signed-in session may do, each

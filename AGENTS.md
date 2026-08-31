@@ -83,10 +83,10 @@ The product has two pieces:
 message-vault
 ├── config/                 # vault server config templates (copy example → config.toml)
 ├── crates/                 # Rust workspace (src-tauri is excluded)
-│   ├── cli/                # vault-push and vault-pull (import/export a running vault)
 │   ├── core/               # shared form model, jobs, export.ini
 │   ├── exporters/          # backup parsers (iMessage, WhatsApp, SMS, experimental)
-│   ├── libs/               # shared libraries (ir, ir-format, reexport, contacts, media, …)
+│   ├── libs/               # shared libraries (ir, ir-format, reexport, contacts, media,
+│   │                       #   vault-push, vault-pull, …)
 │   └── vault/              # message-vault-server (HTTP API + SQLite) and demo-seed
 ├── docker/                 # Dockerfile and Compose for a release-shaped vault image
 ├── docs/                   # Astro Starlight site (bitrealm.io)

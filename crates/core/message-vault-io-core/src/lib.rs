@@ -7,8 +7,6 @@
 
 pub mod attachment_jobs;
 pub mod attachments;
-#[cfg(feature = "cli")]
-mod cli;
 mod config;
 mod exporters;
 mod pipeline;
@@ -21,8 +19,6 @@ pub use attachment_jobs::{
     stage_conversation_attachments,
 };
 pub use attachments::{attachment_dest_name, copy_if_missing, digest_prefix, write_if_missing};
-#[cfg(feature = "cli")]
-pub use cli::{CommonCli, clap_command, run_cli};
 pub use config::{
     AppleConfig, ContactsConfig, ExporterConfig, FormatConfig, GoSmsProConfig, ImazingConfig,
     MediaConfig, ObfuscateConfig, OpenExtractConfig, OutputFormat, SmsBackupPlusConfig,

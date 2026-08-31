@@ -161,13 +161,26 @@ become separate issues. Correcting that page is not optional in any case:
 it is wrong in three ways today, and fixing one while leaving two would
 still mislead a reader.
 
-**9. `extract-to-files.md` is deleted with a redirect; `convert-formats.md`
-keeps its format table and loses the command.** Every sentence in
-`extract-to-files.md` is about running a command that will not exist. The
-format table is different — it describes the output files rather than the
-tool, and a person choosing EML in the new picker needs to know it embeds
-media and writes one file per message. That table moves alongside
-`reference/export-structure.md` and `reference/csv-columns.md`.
+**9. `extract-to-files.md` is deleted; `convert-formats.md` keeps its format
+table and loses the command.** Every sentence in `extract-to-files.md` is
+about running a command that will not exist. The format table is different —
+it describes the output files rather than the tool, and a person choosing EML
+in the new picker needs to know it embeds media and writes one file per
+message. That table moves alongside `reference/export-structure.md` and
+`reference/csv-columns.md`.
+
+**A redirect is added only for the page that moved.** `convert-formats.md`
+becomes `reference/export-formats.md`, same content at a new path, so its old
+URL redirects. The eleven `reference/cli/` pages and `extract-to-files.md` get
+none: the commands they documented no longer exist, so those URLs return 404.
+
+The documentation owes nothing to a removed feature, for the same reason the
+database owes nothing to an old schema. This project has no migration path for
+tables or columns and does not preserve vault data across a rebuild; an old
+documentation URL is the same kind of unearned cost. Pointing those pages at the
+Export how-to would also make a deletion look like a move — someone who
+bookmarked `vault-push`'s flag reference would land on a page about clicking a
+button, learning neither the answer nor that the command is gone.
 
 `convert-formats.md` should say that Convert has no screen yet rather than
 implying the operation was withdrawn.
@@ -246,9 +259,9 @@ continue the existing log. No step interface is added.
 - Delete the eleven files under
   `docs/src/content/docs/vault/developer/reference/cli/` and the sidebar
   group in `docs/astro.config.mjs`. `server-cli.md` stays where it is.
-- Delete `extract-to-files.md` and add a redirect to
-  `export-from-the-vault.md`. Rewrite `convert-formats.md` as format
-  reference without the command.
+- Delete `extract-to-files.md`, with no redirect. Move `convert-formats.md`
+  to `reference/export-formats.md`, redirect its old URL, and rewrite it as
+  format reference without the command.
 - Edit the twenty remaining source pages that name a deleted command, and
   the ten crate READMEs.
 
