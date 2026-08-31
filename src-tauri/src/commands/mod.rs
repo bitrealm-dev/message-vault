@@ -13,6 +13,7 @@
 pub mod events;
 pub mod extract;
 pub mod ffmpeg;
+pub mod format;
 pub mod jobs;
 pub mod paths;
 pub mod progress;

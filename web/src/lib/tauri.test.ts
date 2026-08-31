@@ -8,14 +8,14 @@ import {
 } from "./tauri";
 
 const invoke = vi.fn();
-const resolveImportStagingParent = vi.fn();
+const resolveStagingParent = vi.fn();
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invoke(...args),
 }));
 
 vi.mock("./system-settings", () => ({
-  resolveImportStagingParent: (...args: unknown[]) => resolveImportStagingParent(...args),
+  resolveStagingParent: (...args: unknown[]) => resolveStagingParent(...args),
 }));
 
 function reportJson(overrides: Partial<PushFinishedReport> = {}): string {
@@ -138,15 +138,15 @@ describe("parseTauriJobResult", () => {
 describe("staging command wrappers resolve their own staging root", () => {
   beforeEach(async () => {
     invoke.mockReset();
-    resolveImportStagingParent.mockReset();
+    resolveStagingParent.mockReset();
     invoke.mockResolvedValue(undefined);
-    resolveImportStagingParent.mockResolvedValue("/home/sam/message-vault");
+    resolveStagingParent.mockResolvedValue("/home/sam/message-vault");
   });
 
   it("invokeSummarizeStaging resolves the root itself rather than taking one from the caller", async () => {
     await invokeSummarizeStaging({ staging_dir: "/home/sam/message-vault/staging-run" });
 
-    expect(resolveImportStagingParent).toHaveBeenCalledTimes(1);
+    expect(resolveStagingParent).toHaveBeenCalledTimes(1);
     expect(invoke).toHaveBeenCalledWith("summarize_staging", {
       args: expect.objectContaining({
         stagingDir: "/home/sam/message-vault/staging-run",
@@ -161,7 +161,7 @@ describe("staging command wrappers resolve their own staging root", () => {
       attachment_media: "convert",
     });
 
-    expect(resolveImportStagingParent).toHaveBeenCalledTimes(1);
+    expect(resolveStagingParent).toHaveBeenCalledTimes(1);
     expect(invoke).toHaveBeenCalledWith("transcode_staging", {
       args: expect.objectContaining({
         stagingDir: "/home/sam/message-vault/staging-run",
@@ -174,7 +174,7 @@ describe("staging command wrappers resolve their own staging root", () => {
   it("invokeDeleteStaging resolves the root itself rather than taking one from the caller", async () => {
     await invokeDeleteStaging({ staging_dir: "/home/sam/message-vault/staging-run" });
 
-    expect(resolveImportStagingParent).toHaveBeenCalledTimes(1);
+    expect(resolveStagingParent).toHaveBeenCalledTimes(1);
     expect(invoke).toHaveBeenCalledWith("delete_staging", {
       args: {
         stagingDir: "/home/sam/message-vault/staging-run",
@@ -184,11 +184,11 @@ describe("staging command wrappers resolve their own staging root", () => {
   });
 
   it("rejects rather than calling through when the staging root cannot be resolved", async () => {
-    resolveImportStagingParent.mockResolvedValue("");
+    resolveStagingParent.mockResolvedValue("");
 
     await expect(
       invokeSummarizeStaging({ staging_dir: "/home/sam/message-vault/staging-run" }),
-    ).rejects.toThrow(/import staging directory/i);
+    ).rejects.toThrow(/staging directory/i);
     expect(invoke).not.toHaveBeenCalled();
   });
 });

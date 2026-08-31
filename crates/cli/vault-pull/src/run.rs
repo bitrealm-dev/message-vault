@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use message_ir::ConversationDocument;
+use message_ir_format::write_export_sentinel;
 use message_vault_io_core::{CancelFlag, check_cancel, parallel_for_each};
 use serde::Serialize;
 use vault_http::{auth_check as authenticate, with_retries};
@@ -103,6 +104,31 @@ pub fn compose_query(base: &str, after: Option<&str>, before: Option<&str>) -> S
 ///
 /// Returns an error when the key or output folder is missing, login fails, a
 /// page or download fails, or a conversation file cannot be written.
+/// Create the output folder and its `attachments/` child, and mark the folder
+/// as a Message Vault export.
+///
+/// The sentinel names this folder as one an export wrote. The desktop app
+/// refuses to clean or transcode a folder without it
+/// (`resolve_staging_child` in `src-tauri/src/commands/staging.rs`), which is
+/// what stands between a path bug and a recursive delete somewhere else on
+/// disk. A pulled folder that skipped the sentinel could not be used as
+/// export staging.
+///
+/// # Errors
+///
+/// Returns an error when the folder, its `attachments/` child, or the
+/// sentinel cannot be written.
+fn prepare_out_dir(out_dir: &Path, skip_attachments: bool) -> Result<()> {
+    fs::create_dir_all(out_dir).with_context(|| format!("create {}", out_dir.display()))?;
+    if !skip_attachments {
+        let attachments_dir = out_dir.join("attachments");
+        fs::create_dir_all(&attachments_dir)
+            .with_context(|| format!("create {}", attachments_dir.display()))?;
+    }
+    write_export_sentinel(out_dir)
+        .with_context(|| format!("mark {} as an export folder", out_dir.display()))
+}
+
 pub fn run(
     cfg: &VaultPullConfig,
     mut on_progress: Option<&mut ProgressFn<'_>>,
@@ -140,12 +166,7 @@ pub fn run(
         }),
     );
 
-    fs::create_dir_all(&cfg.out_dir)
-        .with_context(|| format!("create {}", cfg.out_dir.display()))?;
-    let attachments_dir = cfg.out_dir.join("attachments");
-    if !cfg.skip_attachments {
-        fs::create_dir_all(&attachments_dir)?;
-    }
+    prepare_out_dir(&cfg.out_dir, cfg.skip_attachments)?;
 
     // Load the local skip log so a later run does not re-download files already on disk.
     let journal_path = crate::journal::journal_path(&cfg.out_dir);
@@ -498,4 +519,48 @@ fn sanitize_source_suffix(source: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod out_dir_tests {
+    use super::*;
+    use message_ir_format::EXPORT_SENTINEL;
+
+    #[test]
+    fn marks_the_folder_as_an_export() {
+        // Without the sentinel the desktop app's staging guard refuses to
+        // clean a pulled folder, so an export that staged into one would
+        // leave the staging folder behind.
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("pulled");
+
+        prepare_out_dir(&out, false).unwrap();
+
+        assert!(out.join(EXPORT_SENTINEL).is_file());
+    }
+
+    #[test]
+    fn creates_attachments_unless_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let with = dir.path().join("with");
+        let without = dir.path().join("without");
+
+        prepare_out_dir(&with, false).unwrap();
+        prepare_out_dir(&without, true).unwrap();
+
+        assert!(with.join("attachments").is_dir());
+        assert!(!without.join("attachments").exists());
+    }
+
+    #[test]
+    fn runs_again_over_a_folder_it_already_prepared() {
+        // A second pull into the same folder is the resume path.
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("pulled");
+
+        prepare_out_dir(&out, false).unwrap();
+        prepare_out_dir(&out, false).unwrap();
+
+        assert!(out.join(EXPORT_SENTINEL).is_file());
+    }
 }

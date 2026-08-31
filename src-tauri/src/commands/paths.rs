@@ -133,7 +133,7 @@ pub fn home_dir() -> Result<HomeDirInfo, String> {
 
 /// Open a file or folder with the operating system's default handler.
 ///
-/// Only paths under `staging_root` are allowed. That is the Import Staging
+/// Only paths under `staging_root` are allowed. That is the Staging
 /// Directory from Settings (default `{home}/message-vault`), where staging
 /// folders and `vault-push.log` live.
 ///
@@ -202,7 +202,7 @@ fn resolve_absolute(
     Ok(path)
 }
 
-/// Resolve the Import Staging Directory: trimmed, absolute, canonicalized
+/// Resolve the Staging Directory: trimmed, absolute, canonicalized
 /// when it exists on disk (else lexically normalized so a not-yet-created
 /// root still resolves), and never the filesystem root.
 ///
@@ -218,8 +218,8 @@ fn resolve_absolute(
 pub(crate) fn resolve_staging_root(staging_root: &str) -> Result<PathBuf, String> {
     let root = resolve_absolute(
         staging_root,
-        "Import staging directory is empty",
-        "Import staging directory must be absolute",
+        "Staging directory is empty",
+        "Staging directory must be absolute",
     )?;
     let root = if root.exists() {
         root.canonicalize()
@@ -245,14 +245,14 @@ pub(crate) fn resolve_openable_path(raw: &str, staging_root: &str) -> Result<Pat
             .canonicalize()
             .map_err(|error| format!("Could not resolve path: {error}"))?;
         if !canonical.starts_with(&root) {
-            return Err("Path is outside the import staging folder".to_string());
+            return Err("Path is outside the staging folder".to_string());
         }
         return Ok(canonical);
     }
 
     let normalized = normalize_lexically(&candidate);
     if !normalized.starts_with(&root) {
-        return Err("Path is outside the import staging folder".to_string());
+        return Err("Path is outside the staging folder".to_string());
     }
     Ok(normalized)
 }
@@ -260,7 +260,7 @@ pub(crate) fn resolve_openable_path(raw: &str, staging_root: &str) -> Result<Pat
 /// `/` (and a Windows drive root) would make `starts_with` true for every absolute path.
 fn reject_filesystem_root(root: &Path) -> Result<(), String> {
     if root.parent().is_none() {
-        return Err("Import staging directory cannot be the filesystem root".to_string());
+        return Err("Staging directory cannot be the filesystem root".to_string());
     }
     Ok(())
 }
@@ -280,7 +280,7 @@ mod tests {
     #[test]
     fn rejects_empty_staging_root() {
         let err = resolve_openable_path("/home/sam/message-vault/staging", "  ").unwrap_err();
-        assert!(err.contains("staging directory is empty"));
+        assert!(err.contains("Staging directory is empty"));
     }
 
     #[test]
