@@ -5,7 +5,7 @@ use std::fs::File;
 use std::path::Path;
 
 /// Phone / fax columns commonly used by vCard CSV exports.
-pub const VCARD_CSV_PHONE_COLUMNS: &[&str] = &[
+const VCARD_CSV_PHONE_COLUMNS: &[&str] = &[
     "mobile phone",
     "home phone",
     "work phone",
@@ -31,7 +31,7 @@ pub struct ContactCsvRow {
 }
 
 /// Normalize a Contacts CSV header the same way book/validate loaders do.
-pub fn normalize_vcard_csv_header(h: &str) -> String {
+fn normalize_vcard_csv_header(h: &str) -> String {
     h.trim()
         .trim_start_matches('\u{feff}')
         .to_ascii_lowercase()
@@ -39,13 +39,13 @@ pub fn normalize_vcard_csv_header(h: &str) -> String {
 }
 
 /// True for phone columns (`Mobile Phone`, …). Bare `phones` is excluded.
-pub fn is_phone_header(h: &str) -> bool {
+fn is_phone_header(h: &str) -> bool {
     h != "phones" && h.contains("phone")
 }
 
 /// Column indexes for a vCard CSV header row.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VcardCsvColumns {
+pub(crate) struct VcardCsvColumns {
     /// Index of the first-name column, if present.
     pub first: Option<usize>,
     /// Index of the middle-name column, if present.
@@ -60,7 +60,7 @@ pub struct VcardCsvColumns {
 
 impl VcardCsvColumns {
     /// Resolve column indexes from raw header names.
-    pub fn from_headers<I, S>(headers: I) -> Self
+    pub(crate) fn from_headers<I, S>(headers: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
@@ -88,13 +88,8 @@ impl VcardCsvColumns {
     }
 
     /// True when the header looks like a vCard CSV export.
-    pub fn looks_like_vcard_csv(&self) -> bool {
+    fn looks_like_vcard_csv(&self) -> bool {
         self.first.is_some() || !self.phones.is_empty()
-    }
-
-    /// Strict vault/validate shape: First Name, Last Name, and at least one phone column.
-    pub fn has_name_and_phone_columns(&self) -> bool {
-        self.first.is_some() && self.last.is_some() && !self.phones.is_empty()
     }
 }
 
@@ -197,14 +192,13 @@ mod tests {
         assert_eq!(cols.phones, vec![3]);
         assert_eq!(cols.notes, Some(4));
         assert!(cols.looks_like_vcard_csv());
-        assert!(cols.has_name_and_phone_columns());
     }
 
     #[test]
     fn accepts_generic_phone_column() {
         let cols = VcardCsvColumns::from_headers(["First Name", "Last Name", "Phone 1"]);
         assert!(cols.phones.contains(&2));
-        assert!(cols.has_name_and_phone_columns());
+        assert!(cols.looks_like_vcard_csv());
     }
 
     #[test]

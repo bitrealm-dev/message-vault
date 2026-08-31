@@ -22,13 +22,12 @@ pub use attachments::{attachment_dest_name, copy_if_missing, digest_prefix, writ
 pub use cli::{CommonCli, clap_command, run_cli};
 pub use config::{
     AppleConfig, ContactsConfig, ExporterConfig, FormatConfig, GoSmsProConfig, ImazingConfig,
-    MediaConfig, OUTPUT_FORMATS_MAIL, ObfuscateConfig, OpenExtractConfig, OutputFormat,
-    SmsBackupPlusConfig, SmsBackupRestoreConfig, SourceConfig, WhatsappConfig,
+    MediaConfig, ObfuscateConfig, OpenExtractConfig, OutputFormat, SmsBackupPlusConfig,
+    SmsBackupRestoreConfig, SourceConfig, WhatsappConfig,
 };
 pub use exporters::{
-    APPLE_PLATFORMS, ATTACHMENT_MEDIA, ApplePlatform, AttachmentMedia,
-    CONVERT_COMPRESS_FFMPEG_REQUIRED, ContactsKind, EXPORTERS, Exporter, Form, MAX_RESOLUTIONS,
-    WHATSAPP_PLATFORMS, WhatsappPlatform, contacts_kind_from_path, ensure_output_dir,
+    ApplePlatform, AttachmentMedia, CONVERT_COMPRESS_FFMPEG_REQUIRED, ContactsKind, Exporter, Form,
+    WhatsappPlatform, contacts_kind_from_path, ensure_output_dir,
 };
 pub use pipeline::{
     ExportReport, RunResult, discover_files, export_meta, name_stem, parse_date_range,

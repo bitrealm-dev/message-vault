@@ -20,7 +20,7 @@ const PROBE_BAND_FLOOR: f64 = 0.4;
 /// reads as probably still too big rather than likely to fit.
 ///
 /// The margin is what stops a near miss from reading as a promise (decision 13).
-pub const PROBABLY_FITS_MARGIN: f64 = 0.8;
+const PROBABLY_FITS_MARGIN: f64 = 0.8;
 
 /// How a staged attachment is expected to land against the size limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

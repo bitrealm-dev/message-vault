@@ -24,10 +24,7 @@ pub use book::{ContactsBook, resolve_contacts_cli};
 pub use mapping::NameMapping;
 pub use validate::{
     ContactsFormat, ContactsInputError, ValidateMode, ValidateReport, detect_contacts_format,
-    probe_contacts_input, validate_contacts_file,
+    validate_contacts_file,
 };
-pub use vcard_csv::{
-    ContactCsvRow, VCARD_CSV_PHONE_COLUMNS, VcardCsvColumns, is_phone_header,
-    normalize_vcard_csv_header, read_vcard_csv_rows,
-};
-pub use vcf::{VcfCard, extract_tags, parse_vcf, parse_vcf_str, split_categories, strip_tags};
+pub use vcard_csv::{ContactCsvRow, read_vcard_csv_rows};
+pub use vcf::{VcfCard, extract_tags, parse_vcf, strip_tags};

@@ -2,7 +2,7 @@
 
 use crate::util::read_attachment_file;
 use anyhow::Result;
-use media::{CompressOptions, MediaMode, MediaReport};
+use media::{CompressOptions, MediaMode};
 use message_ir::{ConversationDocument, IrAttachment, IrDirection, IrParticipant};
 use message_vault_io_core::{LogSink, MediaConfig, ObfuscateConfig, emit_log};
 use obfuscate::{
@@ -10,13 +10,6 @@ use obfuscate::{
     resolve_obfuscator_with_log,
 };
 use std::path::Path;
-
-#[cfg(test)]
-use anyhow::Context;
-#[cfg(test)]
-use std::collections::HashMap;
-#[cfg(test)]
-use std::fs;
 
 /// Options passed into [`crate::FormatSink`] for media and obfuscation.
 #[derive(Debug, Clone)]
@@ -75,29 +68,6 @@ impl ExportTransforms {
     pub fn copies_attachments(&self) -> bool {
         // Obfuscate discards real bytes; skip staging them in the first place.
         !self.obfuscate && self.media.copies_attachments()
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn apply_media_remap(doc: &mut ConversationDocument, remap: &HashMap<String, String>) {
-    if remap.is_empty() {
-        return;
-    }
-    for msg in &mut doc.messages {
-        for att in &mut msg.attachments {
-            if let Some(path) = att.path.as_mut()
-                && let Some(new_rel) = remap.get(path.as_str())
-            {
-                *path = new_rel.clone();
-                // Bytes on disk changed (possibly same path); drop stale digests.
-                att.digest_sha256 = None;
-                att.size_bytes = None;
-                att.bytes = None;
-                if let Some(mime) = mime_for_rel(new_rel) {
-                    att.mime_type = Some(mime);
-                }
-            }
-        }
     }
 }
 
@@ -188,59 +158,7 @@ fn obfuscate_attachment(att: &mut IrAttachment) {
     att.bytes = None;
 }
 
-#[cfg(test)]
-fn refresh_missing_attachment_digests(
-    docs: &mut [ConversationDocument],
-    output_dir: &Path,
-) -> Result<()> {
-    for doc in docs.iter_mut() {
-        for msg in &mut doc.messages {
-            for att in &mut msg.attachments {
-                if att.digest_sha256.as_deref().is_some_and(|s| !s.is_empty()) {
-                    continue;
-                }
-                let Some(rel) = att.path.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
-                    continue;
-                };
-                let abs = output_dir.join(rel);
-                if !abs.is_file() {
-                    continue;
-                }
-                let meta = fs::metadata(&abs)
-                    .with_context(|| format!("stat attachment {}", abs.display()))?;
-                att.size_bytes = Some(meta.len());
-                att.digest_sha256 = Some(media::file_sha256(&abs)?);
-            }
-        }
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-fn mime_for_rel(rel: &str) -> Option<String> {
-    let ext = Path::new(rel)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    Some(
-        match ext.as_str() {
-            "jpg" | "jpeg" => "image/jpeg",
-            "png" => "image/png",
-            "gif" => "image/gif",
-            "webp" => "image/webp",
-            "mp4" | "m4v" => "video/mp4",
-            "mov" => "video/quicktime",
-            "mp3" => "audio/mpeg",
-            "m4a" => "audio/mp4",
-            _ => return None,
-        }
-        .into(),
-    )
-}
-
 pub(crate) struct TransformOutcome {
-    pub media: MediaReport,
     pub obfuscated_docs: usize,
 }
 
@@ -259,8 +177,6 @@ pub(crate) fn apply_transforms(
 
     // Convert/compress runs in `run_attachment_jobs` before documents are
     // written. Finish only obfuscates and packages.
-    let media = MediaReport::default();
-
     let mut obfuscated_docs = 0usize;
     if transforms.obfuscate {
         materialize_placeholders(output_dir)?;
@@ -279,10 +195,7 @@ pub(crate) fn apply_transforms(
         }
     }
 
-    Ok(TransformOutcome {
-        media,
-        obfuscated_docs,
-    })
+    Ok(TransformOutcome { obfuscated_docs })
 }
 
 #[cfg(test)]
@@ -293,7 +206,6 @@ mod tests {
         ConversationMeta, ConversationStats, ExportMeta, IrConversationType, IrMessage,
         IrMessageKind, IrParticipant, IrService, SCHEMA_VERSION,
     };
-    use sha2::{Digest, Sha256};
     use std::fs;
 
     fn doc_with_image_attachment() -> ConversationDocument {
@@ -347,49 +259,6 @@ mod tests {
     }
 
     #[test]
-    fn media_remap_clears_stale_digest() {
-        let mut doc = doc_with_image_attachment();
-        doc.messages[0].attachments[0].path = Some("attachments/photo.png".into());
-        doc.messages[0].attachments[0].digest_sha256 = Some("a".repeat(64));
-        doc.messages[0].attachments[0].size_bytes = Some(12);
-        let mut remap = HashMap::new();
-        remap.insert(
-            "attachments/photo.png".into(),
-            "attachments/photo.jpg".into(),
-        );
-        apply_media_remap(&mut doc, &remap);
-        let att = &doc.messages[0].attachments[0];
-        assert_eq!(att.path.as_deref(), Some("attachments/photo.jpg"));
-        assert!(att.digest_sha256.is_none());
-        assert!(att.size_bytes.is_none());
-        assert_eq!(att.mime_type.as_deref(), Some("image/jpeg"));
-    }
-
-    #[test]
-    fn refresh_digests_fills_missing_after_remap() {
-        let tmp = tempfile::tempdir().unwrap();
-        let att_dir = tmp.path().join("attachments");
-        fs::create_dir_all(&att_dir).unwrap();
-        let bytes = b"fresh-jpeg-bytes";
-        fs::write(att_dir.join("photo.jpg"), bytes).unwrap();
-
-        let mut docs = vec![doc_with_image_attachment()];
-        docs[0].messages[0].attachments[0].path = Some("attachments/photo.png".into());
-        docs[0].messages[0].attachments[0].digest_sha256 = Some("b".repeat(64));
-        let mut remap = HashMap::new();
-        remap.insert(
-            "attachments/photo.png".into(),
-            "attachments/photo.jpg".into(),
-        );
-        apply_media_remap(&mut docs[0], &remap);
-        refresh_missing_attachment_digests(&mut docs, tmp.path()).unwrap();
-        let att = &docs[0].messages[0].attachments[0];
-        let expected = hex::encode(Sha256::digest(bytes));
-        assert_eq!(att.digest_sha256.as_deref(), Some(expected.as_str()));
-        assert_eq!(att.size_bytes, Some(bytes.len() as u64));
-    }
-
-    #[test]
     fn obfuscate_disables_copy_and_media_tools() {
         let t = ExportTransforms {
             media: MediaMode::Convert,
@@ -425,7 +294,6 @@ mod tests {
         };
         let outcome = apply_transforms(&mut docs, tmp.path(), &transforms, false).unwrap();
         assert_eq!(outcome.obfuscated_docs, 1);
-        assert_eq!(outcome.media.processed, 0);
 
         assert!(!att.join("real-photo.jpg").exists());
         assert!(att.join("placeholder.jpg").is_file());
@@ -467,7 +335,7 @@ mod tests {
             ..ExportTransforms::none()
         };
         let outcome = apply_transforms(&mut docs, tmp.path(), &transforms, false).unwrap();
-        assert_eq!(outcome.media.processed, 0);
+        assert_eq!(outcome.obfuscated_docs, 0);
         assert_eq!(
             docs[0].messages[0].attachments[0].path.as_deref(),
             Some("attachments/keep.bin")

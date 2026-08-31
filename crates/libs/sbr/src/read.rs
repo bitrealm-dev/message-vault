@@ -679,25 +679,6 @@ fn parse_mms(
     })
 }
 
-/// Parse one XML file into records, collecting every message in memory.
-///
-/// Prefer [`parse_file_with`] when the caller can stage attachment bytes
-/// per message: that drops each payload as soon as it is written instead of
-/// holding every decoded blob until the file ends.
-///
-/// # Errors
-///
-/// Returns an error when the file cannot be opened or the XML cannot be parsed.
-pub fn parse_file(path: &Path, owners: &HashSet<String>) -> Result<(Vec<Record>, ParseStats)> {
-    let mut records = Vec::new();
-    let mut stats = ParseStats::default();
-    parse_file_with(path, owners, &mut stats, |record| {
-        records.push(record);
-        Ok(())
-    })?;
-    Ok((records, stats))
-}
-
 /// Parse one XML file, calling `on_record` for each message as soon as it is
 /// complete.
 ///

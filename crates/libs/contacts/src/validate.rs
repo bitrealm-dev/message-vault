@@ -100,15 +100,6 @@ impl ContactsInputError {
     }
 }
 
-/// Probe that `path` exists and is a contacts `.csv` / `.vcf` this crate can validate.
-///
-/// # Errors
-///
-/// Returns [`ContactsInputError`] when the path is missing or the format is unknown.
-pub fn probe_contacts_input(path: &Path) -> Result<(), ContactsInputError> {
-    detect_format(path).map(|_| ())
-}
-
 /// Validate contacts beside `input`.
 ///
 /// - [`ValidateMode::Update`]: write `{stem}-update.{ext}` (or `{stem}-update-N` when the
@@ -817,18 +808,18 @@ mod tests {
     }
 
     #[test]
-    fn probe_rejects_missing_wrong_ext_and_bad_format() {
+    fn detect_rejects_missing_wrong_ext_and_bad_format() {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("nope.csv");
-        let err = probe_contacts_input(&missing).unwrap_err();
+        let err = detect_contacts_format(&missing).unwrap_err();
         assert!(err.message.contains("not found"));
 
         let wrong_ext = write(&dir, "contacts.txt", "BEGIN:VCARD\nEND:VCARD\n");
-        let err = probe_contacts_input(&wrong_ext).unwrap_err();
+        let err = detect_contacts_format(&wrong_ext).unwrap_err();
         assert!(err.message.contains("must be a .csv or .vcf"));
 
         let bad_csv = write(&dir, "contacts.csv", "name,phone\nAda,123\n");
-        let err = probe_contacts_input(&bad_csv).unwrap_err();
+        let err = detect_contacts_format(&bad_csv).unwrap_err();
         assert_eq!(err.message, UNRECOGNIZED_CONTACTS_FORMAT);
         assert!(err.details.iter().any(|d| d.contains("First Name")));
         assert!(err.details.iter().any(|d| d.contains("Last Name")));
@@ -838,12 +829,12 @@ mod tests {
             "partial.csv",
             "First Name,Mobile Phone\nAda,+15551234567\n",
         );
-        let err = probe_contacts_input(&missing_last).unwrap_err();
+        let err = detect_contacts_format(&missing_last).unwrap_err();
         assert_eq!(err.message, UNRECOGNIZED_CONTACTS_FORMAT);
         assert!(err.details.iter().any(|d| d.contains("Last Name")));
 
         let empty_vcf = write(&dir, "empty.vcf", "NOTE: not a vcard\n");
-        let err = probe_contacts_input(&empty_vcf).unwrap_err();
+        let err = detect_contacts_format(&empty_vcf).unwrap_err();
         assert_eq!(err.message, UNRECOGNIZED_CONTACTS_FORMAT);
         assert!(err.details.iter().any(|d| d.contains("BEGIN:VCARD")));
 
@@ -852,10 +843,13 @@ mod tests {
             "vcard.csv",
             "First Name,Last Name,Mobile Phone\nAda,Lovelace,+15551234567\n",
         );
-        probe_contacts_input(&vcard_csv).unwrap();
+        assert_eq!(
+            detect_contacts_format(&vcard_csv).unwrap(),
+            ContactsFormat::VcardCsv
+        );
 
         let vcf = write(&dir, "ok.vcf", "BEGIN:VCARD\nFN:Ada\nEND:VCARD\n");
-        probe_contacts_input(&vcf).unwrap();
+        assert_eq!(detect_contacts_format(&vcf).unwrap(), ContactsFormat::Vcf);
     }
 
     #[test]

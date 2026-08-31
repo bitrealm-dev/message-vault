@@ -49,7 +49,6 @@ pub struct ImportResponse {
     #[serde(default)]
     pub messages_appended: u64,
     #[serde(default)]
-    #[allow(dead_code)]
     pub messages_deduped: u64,
     #[serde(default)]
     #[allow(dead_code)]

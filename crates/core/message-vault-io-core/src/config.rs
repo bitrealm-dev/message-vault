@@ -86,16 +86,6 @@ impl OutputFormat {
     }
 }
 
-/// Values shown in the GUI for full packaging choices (JSON first = default).
-pub const OUTPUT_FORMATS_MAIL: [OutputFormat; 6] = [
-    OutputFormat::Json,
-    OutputFormat::Jsonl,
-    OutputFormat::Csv,
-    OutputFormat::Eml,
-    OutputFormat::Mbox,
-    OutputFormat::Xml,
-];
-
 /// Shared export inputs. Source-specific fields are in [`Self::source`].
 #[derive(Debug, Clone)]
 pub struct ExporterConfig {
@@ -235,7 +225,6 @@ pub enum SourceConfig {
     /// WhatsApp backup source.
     Whatsapp(WhatsappConfig),
     /// Existing Message Vault output → another IR format (`message-reexporter`).
-    /// Not listed in [`crate::exporters::EXPORTERS`] (own GUI Format tab).
     Format(FormatConfig),
 }
 
@@ -313,10 +302,6 @@ pub struct AppleConfig {
     pub conversation_filter: Option<String>,
     /// Use the destination caller id as the outgoing From display name.
     pub use_caller_id: bool,
-    /// Whether to show per-message progress lines (GUI-only).
-    pub show_progress: bool,
-    /// Whether to skip the free-disk-space check (GUI-only).
-    pub ignore_disk_space: bool,
 }
 
 impl Default for AppleConfig {
@@ -329,8 +314,6 @@ impl Default for AppleConfig {
             backup_password: None,
             conversation_filter: None,
             use_caller_id: true,
-            show_progress: false,
-            ignore_disk_space: false,
         }
     }
 }

@@ -11,21 +11,10 @@ use media::{MaxResolution, MediaMode};
 use message_csv::DateRange;
 
 use crate::config::{
-    AppleConfig, ContactsConfig, ExporterConfig, FormatConfig, GoSmsProConfig, ImazingConfig,
-    MediaConfig, ObfuscateConfig, OpenExtractConfig, OutputFormat, SmsBackupPlusConfig,
-    SmsBackupRestoreConfig, SourceConfig, WhatsappConfig,
+    AppleConfig, ContactsConfig, ExporterConfig, GoSmsProConfig, ImazingConfig, MediaConfig,
+    ObfuscateConfig, OpenExtractConfig, OutputFormat, SmsBackupPlusConfig, SmsBackupRestoreConfig,
+    SourceConfig, WhatsappConfig,
 };
-
-/// Supported exporters first, then experimental (alphabetical by display name).
-pub const EXPORTERS: [Exporter; 7] = [
-    Exporter::Imessage,
-    Exporter::SmsBackupRestore,
-    Exporter::Whatsapp,
-    Exporter::GoSmsPro,
-    Exporter::Imazing,
-    Exporter::OpenExtract,
-    Exporter::SmsBackupPlus,
-];
 
 /// iMessage Import / CLI copy when Convert or Compress is selected and ffmpeg is missing.
 pub const CONVERT_COMPRESS_FFMPEG_REQUIRED: &str = "Convert and Compress need ffmpeg and ffprobe. Put them on PATH, or in the desktop app set the ffmpeg directory in Settings → System.";
@@ -50,106 +39,6 @@ pub enum Exporter {
     Whatsapp,
 }
 
-impl Exporter {
-    /// Standalone CLI binary name for this backup type.
-    pub fn binary(self) -> &'static str {
-        match self {
-            Self::GoSmsPro => "go-sms-pro-exporter",
-            Self::SmsBackupRestore => "sms-backup-restore-exporter",
-            Self::SmsBackupPlus => "sms-backup-plus-exporter",
-            Self::OpenExtract => "openextract-exporter",
-            Self::Imazing => "imazing-exporter",
-            Self::Imessage => "imessage-ir-exporter",
-            Self::Whatsapp => "whatsapp-exporter",
-        }
-    }
-
-    /// Short product name shown in the backup-type dropdown.
-    pub fn display_name(self) -> &'static str {
-        match self {
-            Self::GoSmsPro => "GO SMS Pro",
-            Self::SmsBackupRestore => "SMS Backup & Restore",
-            Self::SmsBackupPlus => "SMS Backup+",
-            Self::OpenExtract => "OpenExtract",
-            Self::Imazing => "iMazing",
-            Self::Imessage => "iPhone backup",
-            Self::Whatsapp => "WhatsApp",
-        }
-    }
-
-    /// Officially supported exporters (XML/spec or maintained bridges).
-    pub fn is_supported(self) -> bool {
-        matches!(
-            self,
-            Self::Imessage | Self::SmsBackupRestore | Self::Whatsapp
-        )
-    }
-
-    /// Backup-type dropdown label; experimental exporters get a suffix.
-    pub fn dropdown_label(self) -> String {
-        if self.is_supported() {
-            self.display_name().to_string()
-        } else {
-            format!("{} (experimental)", self.display_name())
-        }
-    }
-
-    /// Form title / hyperlink text (may be longer than the dropdown label).
-    pub fn link_label(self) -> &'static str {
-        match self {
-            Self::Imessage => "imessage-ir-exporter",
-            other => other.display_name(),
-        }
-    }
-
-    /// Homepage or docs URL for this backup type.
-    pub fn product_url(self) -> &'static str {
-        match self {
-            Self::GoSmsPro => "https://play.google.com/store/apps/details?id=com.jb.gosms",
-            Self::SmsBackupRestore => "https://www.synctech.com.au/sms-backup-restore/",
-            Self::SmsBackupPlus => "https://github.com/jberkel/sms-backup-plus",
-            Self::OpenExtract => "https://www.openextract.app/",
-            Self::Imazing => "https://imazing.com/",
-            Self::Imessage => {
-                "https://github.com/bitrealm-io/message-vault/tree/main/crates/exporters/imessage-ir-exporter"
-            }
-            Self::Whatsapp => "https://github.com/KnugiHK/WhatsApp-Chat-Exporter",
-        }
-    }
-
-    /// Default output folder name under the user's export directory.
-    pub fn output_subdir(self) -> &'static str {
-        match self {
-            Self::GoSmsPro => "go-sms-pro",
-            Self::SmsBackupRestore => "sms-backup-restore",
-            Self::SmsBackupPlus => "sms-backup-plus",
-            Self::OpenExtract => "openextract",
-            Self::Imazing => "imazing",
-            Self::Imessage => "iphone-backup",
-            Self::Whatsapp => "whatsapp",
-        }
-    }
-
-    /// INI section name / `exporter=` value (same as [`Self::output_subdir`]).
-    pub fn ini_key(self) -> &'static str {
-        self.output_subdir()
-    }
-
-    /// Parse an `export.ini` `exporter=` value, or `None` if unknown.
-    pub fn from_ini_key(key: &str) -> Option<Self> {
-        match key.trim().to_ascii_lowercase().as_str() {
-            "go-sms-pro" => Some(Self::GoSmsPro),
-            "sms-backup-restore" => Some(Self::SmsBackupRestore),
-            "sms-backup-plus" => Some(Self::SmsBackupPlus),
-            "openextract" => Some(Self::OpenExtract),
-            "imazing" => Some(Self::Imazing),
-            "iphone-backup" => Some(Self::Imessage),
-            "whatsapp" => Some(Self::Whatsapp),
-            _ => None,
-        }
-    }
-}
-
 /// Android vs iOS for the WhatsApp / wtsexporter bridge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WhatsappPlatform {
@@ -169,34 +58,6 @@ impl fmt::Display for WhatsappPlatform {
     }
 }
 
-impl WhatsappPlatform {
-    /// CLI flag value (`android` or `ios`).
-    pub fn as_cli_str(self) -> &'static str {
-        match self {
-            Self::Android => "android",
-            Self::Ios => "ios",
-        }
-    }
-
-    /// Value stored in `export.ini` for this platform.
-    pub fn as_ini_str(self) -> &'static str {
-        self.as_cli_str()
-    }
-
-    /// Parse an `export.ini` WhatsApp platform string, or `None` if unknown.
-    pub fn from_ini_str(s: &str) -> Option<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "android" | "a" | "" => Some(Self::Android),
-            "ios" | "iphone" | "ipad" | "i" => Some(Self::Ios),
-            _ => None,
-        }
-    }
-}
-
-/// The WhatsApp platforms in GUI dropdown order.
-pub const WHATSAPP_PLATFORMS: [WhatsappPlatform; 2] =
-    [WhatsappPlatform::Android, WhatsappPlatform::Ios];
-
 /// Create `path` and parents if missing.
 ///
 /// # Errors
@@ -209,12 +70,6 @@ pub fn ensure_output_dir(path: &Path) -> Result<(), String> {
             path.display()
         )
     })
-}
-
-impl fmt::Display for Exporter {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.display_name())
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -295,13 +150,9 @@ impl AttachmentMedia {
         matches!(self, Self::Convert | Self::Compress)
     }
 
-    /// Value stored in `export.ini` for this media choice.
-    pub fn as_ini_str(self) -> &'static str {
-        self.media_mode().as_str()
-    }
-
-    /// Parse an `export.ini` media string, or `None` if unknown.
-    pub fn from_ini_str(s: &str) -> Option<Self> {
+    /// Parse a media-mode wire string (`clone`, `convert`, `compress`,
+    /// `disabled`), or `None` if unknown.
+    pub fn parse(s: &str) -> Option<Self> {
         MediaMode::parse(s).map(|mode| match mode {
             MediaMode::Clone => Self::Clone,
             MediaMode::Convert => Self::Convert,
@@ -310,21 +161,6 @@ impl AttachmentMedia {
         })
     }
 }
-
-/// The attachment-media choices in GUI dropdown order.
-pub const ATTACHMENT_MEDIA: [AttachmentMedia; 4] = [
-    AttachmentMedia::Clone,
-    AttachmentMedia::Convert,
-    AttachmentMedia::Compress,
-    AttachmentMedia::Disabled,
-];
-
-/// The video resolution choices for compress mode.
-pub const MAX_RESOLUTIONS: [MaxResolution; 3] = [
-    MaxResolution::P720,
-    MaxResolution::P1080,
-    MaxResolution::P4k,
-];
 
 /// iPhone vs Mac backup layout for iMessage / iMazing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -347,34 +183,6 @@ impl fmt::Display for ApplePlatform {
         })
     }
 }
-
-impl ApplePlatform {
-    /// Value stored in `export.ini` for this Apple platform.
-    pub fn as_ini_str(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::MacOs => "macos",
-            Self::Ios => "ios",
-        }
-    }
-
-    /// Parse an `export.ini` Apple platform string, or `None` if unknown.
-    pub fn from_ini_str(s: &str) -> Option<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "auto" | "" => Some(Self::Auto),
-            "macos" | "mac" | "mac-os" => Some(Self::MacOs),
-            "ios" | "iphone" => Some(Self::Ios),
-            _ => None,
-        }
-    }
-}
-
-/// The Apple platform choices in GUI dropdown order.
-pub const APPLE_PLATFORMS: [ApplePlatform; 3] = [
-    ApplePlatform::Auto,
-    ApplePlatform::MacOs,
-    ApplePlatform::Ios,
-];
 
 /// GUI field set for one backup type, plus shared output and media options.
 #[derive(Debug, Clone)]
@@ -511,44 +319,6 @@ impl Form {
         }
     }
 
-    /// Validate shared output options and build a Format-tab configuration.
-    ///
-    /// # Errors
-    ///
-    /// Returns one string per validation problem (missing folder, bad media, …).
-    pub fn to_format_config(
-        &self,
-        input: &str,
-        output: &str,
-        output_format: OutputFormat,
-    ) -> Result<ExporterConfig, Vec<String>> {
-        let mut errors = Vec::new();
-        let input = require_existing_directory(input, "Input directory", &mut errors);
-        required_text(output, "Output directory", &mut errors);
-        let obfuscate = self.validate_obfuscate(&mut errors);
-        let media = self.validate_media(&mut errors);
-        let config = ExporterConfig {
-            inputs: input.into_iter().collect(),
-            output: PathBuf::from(output.trim()),
-            date_range: DateRange::default(),
-            timezone: None,
-            contacts: None,
-            obfuscate,
-            media,
-            cancel: None,
-            log: None,
-            output_format,
-            resume: false,
-            source: SourceConfig::Format(FormatConfig {}),
-        };
-
-        if errors.is_empty() {
-            Ok(config)
-        } else {
-            Err(errors)
-        }
-    }
-
     /// Build an iMessage config, pushing path and ffmpeg problems onto `errors`.
     fn to_imessage_config(
         &self,
@@ -600,8 +370,6 @@ impl Form {
                 backup_password: non_empty(self.backup_password.trim()).map(str::to_string),
                 conversation_filter: non_empty(self.conversation_filter.trim()).map(str::to_string),
                 use_caller_id: true,
-                show_progress: false,
-                ignore_disk_space: false,
             }),
         }
     }
@@ -970,25 +738,6 @@ fn required_text(value: &str, label: &str, errors: &mut Vec<String>) {
     }
 }
 
-/// Require an existing directory; push a message onto `errors` if missing.
-fn require_existing_directory(
-    value: &str,
-    label: &str,
-    errors: &mut Vec<String>,
-) -> Option<PathBuf> {
-    let value = value.trim();
-    if value.is_empty() {
-        errors.push(format!("{label} is required."));
-        return None;
-    }
-    let path = PathBuf::from(value);
-    if !path.is_dir() {
-        errors.push(format!("{label} does not exist: {value}"));
-        return None;
-    }
-    Some(path)
-}
-
 /// Return a trimmed hex seed, or push an error when the string is not hex.
 fn validate_obfuscate_seed(seed: &str, errors: &mut Vec<String>) -> Option<String> {
     let seed = seed.trim();
@@ -1123,31 +872,6 @@ mod tests {
     }
 
     #[test]
-    fn exporters_order_supported_then_experimental_alpha() {
-        assert_eq!(
-            &EXPORTERS[..3],
-            &[
-                Exporter::Imessage,
-                Exporter::SmsBackupRestore,
-                Exporter::Whatsapp,
-            ]
-        );
-        assert!(EXPORTERS[..3].iter().all(|e| e.is_supported()));
-        assert!(EXPORTERS[3..].iter().all(|e| !e.is_supported()));
-
-        let experimental: Vec<_> = EXPORTERS[3..].iter().map(|e| e.display_name()).collect();
-        let mut sorted = experimental.clone();
-        sorted.sort_by_key(|a| a.to_lowercase());
-        assert_eq!(experimental, sorted);
-
-        assert_eq!(Exporter::Imessage.dropdown_label(), "iPhone backup");
-        assert_eq!(
-            Exporter::GoSmsPro.dropdown_label(),
-            "GO SMS Pro (experimental)"
-        );
-    }
-
-    #[test]
     fn imessage_requires_output_and_uses_caller_id() {
         let form = Form {
             output: String::new(),
@@ -1166,8 +890,6 @@ mod tests {
         };
         assert!(apple.use_caller_id);
         assert_eq!(apple.copy_method, "clone");
-        assert!(!apple.ignore_disk_space);
-        assert!(!apple.show_progress);
     }
 
     #[test]
@@ -1351,46 +1073,6 @@ mod tests {
         ensure_output_dir(&out).unwrap();
         assert!(out.is_dir());
         let _ = fs::remove_dir_all(&out);
-    }
-
-    #[test]
-    fn reexport_config_uses_shared_output_validation() {
-        let input = tempfile::tempdir().unwrap();
-        let form = Form {
-            obfuscate_seed: "01234567".into(),
-            attachment_media: AttachmentMedia::Disabled,
-            ..Form::default()
-        };
-
-        let config = form
-            .to_format_config(input.path().to_str().unwrap(), "out", OutputFormat::Json)
-            .unwrap();
-
-        assert_eq!(config.inputs, vec![input.path().to_path_buf()]);
-        assert!(config.obfuscate.enabled);
-        assert_eq!(config.obfuscate.seed.as_deref(), Some("01234567"));
-        assert!(matches!(config.source, SourceConfig::Format(_)));
-    }
-
-    #[test]
-    fn format_config_reports_paths_and_shared_options_together() {
-        let form = Form {
-            obfuscate_seed: "invalid".into(),
-            attachment_media: AttachmentMedia::Disabled,
-            ..Form::default()
-        };
-
-        let errors = form
-            .to_format_config("", "", OutputFormat::Json)
-            .unwrap_err();
-
-        assert!(errors.iter().any(|error| error.contains("Input directory")));
-        assert!(
-            errors
-                .iter()
-                .any(|error| error.contains("Output directory"))
-        );
-        assert!(errors.iter().any(|error| error.contains("Obfuscate seed")));
     }
 
     struct RestoreToolsDir;
