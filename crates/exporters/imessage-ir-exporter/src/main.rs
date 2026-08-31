@@ -4,8 +4,7 @@ use imessage_ir_exporter::cli::Cli;
 use imessage_ir_exporter::run;
 use media::compress_options_from_cli;
 use message_vault_io_core::{
-    AppleConfig, ApplePlatform, ExporterConfig, MediaConfig, OutputFormat, SourceConfig,
-    parse_date_range,
+    AppleConfig, ApplePlatform, ExporterConfig, OutputFormat, SourceConfig, parse_date_range,
 };
 
 fn main() -> Result<()> {
@@ -38,29 +37,21 @@ pub(crate) fn build_config_from_cli(cli: &Cli) -> Result<ExporterConfig> {
         inputs.push(path.clone());
     }
 
-    Ok(ExporterConfig {
-        inputs,
-        output: common.output.clone(),
+    let compress = compress_options_from_cli(
+        common.media_max_resolution,
+        common.media_max_fps,
+        &common.media_min_size,
+        common.media_skip_efficient,
+    )?;
+    // `--contacts` carries the macOS AddressBook path; the shared
+    // ContactsConfig (CSV/VCF) the constructor derives comes from the same
+    // flag.
+    Ok(common.exporter_config(
         date_range,
-        timezone: None,
-        // `--contacts` carries the macOS AddressBook path; the shared
-        // ContactsConfig (CSV/VCF) is derived from the same flag.
-        contacts: common.contacts_config(),
-        obfuscate: common.obfuscate_config(),
-        media: MediaConfig {
-            mode: common.media_mode,
-            compress: compress_options_from_cli(
-                common.media_max_resolution,
-                common.media_max_fps,
-                &common.media_min_size,
-                common.media_skip_efficient,
-            )?,
-        },
-        cancel: None,
-        log: None,
         output_format,
-        resume: false,
-        source: SourceConfig::Apple(AppleConfig {
+        compress,
+        inputs,
+        SourceConfig::Apple(AppleConfig {
             platform,
             attachment_root: cli.attachment_root.clone(),
             copy_method: cli.copy_method.clone(),
@@ -69,13 +60,14 @@ pub(crate) fn build_config_from_cli(cli: &Cli) -> Result<ExporterConfig> {
             conversation_filter: cli.conversation.clone(),
             use_caller_id: cli.use_caller_id,
         }),
-    })
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use media::{MaxResolution, MediaMode};
+    use message_vault_io_core::MediaConfig;
 
     #[test]
     fn media_flags_reach_the_config() {

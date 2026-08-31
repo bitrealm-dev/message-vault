@@ -27,7 +27,8 @@ use message_ir::{
     IrService, SCHEMA_VERSION, owner_sender, parse_json_value,
 };
 use message_ir_format::{
-    AttachmentSource, ConversationUnit, FormatSink, FormatSinkResult, WriteQueueOptions,
+    AttachmentSource, ConversationUnit, ExportWriter, ExportWriterParts, FormatSinkResult,
+    WriteQueueOptions,
 };
 use message_vault_io_core::{AttachmentJob, OutputFormat, run_attachment_jobs};
 
@@ -93,21 +94,23 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
     // after parse by the shared runner, so prior IR artifacts (including stale
     // attachments/) must be cleaned first — same pattern as WhatsApp / SMS
     // Backup & Restore. A resumed run is the exception: what the interrupted
-    // run wrote is exactly the work this one gets to skip.
-    let (mut sink, attachments_dir) = if session.options.resume {
-        FormatSink::open_resume(
-            &session.options.export_path,
-            format,
-            session.options.transforms.clone(),
-        )
-    } else {
-        FormatSink::open_prepared(
-            &session.options.export_path,
-            format,
-            session.options.transforms.clone(),
-        )
-    }
-    .map_err(|e| RuntimeError::InvalidOptions(format!("open export sink: {e:#}")))?;
+    // run wrote is exactly the work this one gets to skip. The shared writer
+    // makes the open and the queue-or-sink decision; the drain stays local
+    // because the encrypted-backup loader cannot go through
+    // `ExportWriter::finish`.
+    let ExportWriterParts {
+        mut sink,
+        attachments_dir,
+        use_queue,
+        ..
+    } = ExportWriter::open(
+        &session.options.export_path,
+        format,
+        session.options.transforms.clone(),
+        session.options.resume,
+    )
+    .map_err(|e| RuntimeError::InvalidOptions(format!("open export sink: {e:#}")))?
+    .into_parts();
 
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
     let mut current_message_row = -1;
@@ -171,12 +174,9 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
         ));
     }
 
-    // JSONL without obfuscation is the import path: it goes on the write
-    // queue, which writes each conversation's attachments before the
-    // conversation file and can therefore skip what a previous run finished.
-    // Obfuscation is stateful across documents and the other formats merge or
-    // embed at finish, so they keep the sink path.
-    let use_queue = format == OutputFormat::Jsonl && !session.options.transforms.obfuscate;
+    // The queue-or-sink decision came from `ExportWriter::open`: JSONL
+    // without obfuscation is the import path and drains the write queue;
+    // everything else keeps the sink path.
     if use_queue {
         return drain_conversations(session, conversations);
     }

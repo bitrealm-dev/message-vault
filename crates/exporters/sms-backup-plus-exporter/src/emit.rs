@@ -1,28 +1,18 @@
 //! Convert SMS Backup+ `.eml` trees into the shared conversation structure,
-//! then write the chosen output format via [`FormatSink`].
+//! then write the chosen output format via [`ExportWriter`].
 
-use crate::attachments_emit::{
-    merge_attachments, pending_attachment_to_ir, queue_attachments, stage_conversation_attachments,
-};
+use crate::attachments_emit::{merge_attachments, pending_attachment_to_ir, queue_attachments};
 use crate::identity::{chat_id_for, cover_identity, timestamp_ms};
 use crate::parse_emit::{ParsedEmlKind, collect_eml_paths, parse_one_eml};
 use crate::types::ParsedMessage;
 use anyhow::{Context, Result, bail};
 use contacts::{ContactsBook, NameMapping};
-#[cfg(test)]
-use media::CompressOptions;
-use media::MediaMode;
-use message_csv::{DateRange, format_local_ts, stable_guid};
+use message_csv::DateRange;
 use message_ir::{
-    ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, HandleType,
-    IrAttachment, IrConversationType, IrDirection, IrMessage, IrMessageKind, IrParticipant,
-    IrService, IrSource, PendingAttachment, PendingConversation, PendingMessage, SCHEMA_VERSION,
-    owner_sender, parse_android_type,
+    ExportMeta, IrAttachment, IrService, IrSource, PendingAttachment, PendingConversation,
+    PendingMessage, ProjectionHooks, parse_android_type, pending_to_document, prepare_conversation,
 };
-use message_ir_format::{
-    AttachmentSource, ConversationUnit, ExportTransforms, FormatSink, FormatSinkResult,
-    WriteQueueOptions,
-};
+use message_ir_format::{AttachmentSource, ExportTransforms, ExportWriter, FormatSinkResult};
 use message_vault_io_core::{
     CancelFlag, ExportReport, LogSink, OutputFormat, emit_log, prepare_outputs,
 };
@@ -34,11 +24,6 @@ use std::path::{Path, PathBuf};
 const EXPORT_SOURCE: &str = "sms-backup-plus";
 const EXPORT_TOOL: &str = "SMS Backup+";
 const EXPORT_TOOL_VERSION: &str = "1.5.11";
-
-/// Read a per-exporter counter from the report's `extra` map.
-fn count(report: &ExportReport, key: &str) -> u64 {
-    report.extra.get(key).copied().unwrap_or(0)
-}
 
 fn relative_eml_path(
     eml_path: &Path,
@@ -60,6 +45,13 @@ fn relative_eml_path(
     eml_path.display().to_string()
 }
 
+/// Get or create the pending conversation for `chat_id`, unioning rosters.
+///
+/// Unlike the shared `ensure_conversation` (which seeds a new entry only),
+/// group membership changes over time here, and a later message's smaller
+/// roster must not shrink the participant list. (A roster change that yields a
+/// different chat_key still splits the conversation into fragments; this keeps
+/// each fragment's participant list complete within that key.)
 fn ensure_convo<'a>(
     map: &'a mut HashMap<String, PendingConversation>,
     chat_id: &str,
@@ -71,25 +63,12 @@ fn ensure_convo<'a>(
     if !map.contains_key(chat_id) {
         map.insert(
             chat_id.to_string(),
-            PendingConversation {
-                chat_id: chat_id.to_string(),
-                display_name,
-                participant_e164s: Vec::new(),
-                messages: Vec::new(),
-                is_group,
-                has_attachments: false,
-                extra: BTreeMap::new(),
-            },
+            PendingConversation::new(chat_id, is_group, display_name, Vec::new()),
         );
     }
     let convo = map
         .get_mut(chat_id)
         .expect("just inserted or already present");
-    // Union rosters across messages: group membership changes over time, and a
-    // later message's smaller roster must not shrink the participant list. (A
-    // roster change that yields a different chat_key still splits the
-    // conversation into fragments; this keeps each fragment's participant list
-    // complete within that key.)
     convo.participant_e164s.extend(participant_e164s);
     convo.participant_e164s.sort();
     convo.participant_e164s.dedup();
@@ -186,46 +165,6 @@ fn add_message(
     convo.messages.push(pending_from_parsed(msg, pending_atts));
 }
 
-fn prepare_conversation(convo: &mut PendingConversation, report: &mut ExportReport) -> bool {
-    if convo.messages.is_empty() {
-        return false;
-    }
-    convo.messages.sort_by_key(|m| m.sort_key);
-    message_vault_io_core::prune_and_finish_conversation(convo, report, |k| k)
-}
-
-fn display_names_for_handles(convo: &PendingConversation) -> HashMap<String, String> {
-    let mut names = HashMap::new();
-    for msg in &convo.messages {
-        if !msg.sender_handle.is_empty() {
-            let handle = phone::normalize_guarded(
-                &msg.sender_handle,
-                phone::PhoneRegion::for_raw(&msg.sender_handle),
-            )
-            .normalized;
-            if let Some(name) = msg
-                .sender_display_name
-                .as_deref()
-                .map(str::trim)
-                .filter(|n| !n.is_empty())
-            {
-                names.entry(handle).or_insert_with(|| name.to_string());
-            }
-        }
-        if !convo.is_group {
-            let name = msg.extra_str("contact_name").trim();
-            if !name.is_empty() {
-                for peer in &convo.participant_e164s {
-                    names
-                        .entry(peer.clone())
-                        .or_insert_with(|| name.to_string());
-                }
-            }
-        }
-    }
-    names
-}
-
 /// Format each participant's digits as E.164 when unambiguous, dropping empties.
 fn peer_handles_from_digits(participant_digits: &[(String, Option<String>)]) -> Vec<String> {
     participant_digits
@@ -235,16 +174,6 @@ fn peer_handles_from_digits(participant_digits: &[(String, Option<String>)]) -> 
         .collect()
 }
 
-/// First non-empty `contact_name` extra on a message in this conversation.
-fn first_contact_name(convo: &PendingConversation) -> Option<String> {
-    convo
-        .messages
-        .iter()
-        .map(|m| m.extra_str("contact_name").trim())
-        .find(|n| !n.is_empty())
-        .map(str::to_string)
-}
-
 /// True when the path has a `.eml` extension (any case).
 pub(super) fn is_eml_file(p: &Path) -> bool {
     p.extension()
@@ -252,123 +181,36 @@ pub(super) fn is_eml_file(p: &Path) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("eml"))
 }
 
-/// Build a [`ConversationDocument`] from one pending conversation.
-///
-/// Currently always returns `Ok`. The `Result` matches the other exporters.
-fn pending_to_document(
-    chat_id: &str,
-    convo: &PendingConversation,
-    owner_handle: &str,
-    report: &mut ExportReport,
-    blob_bytes: &std::collections::HashMap<String, Vec<u8>>,
-) -> Result<ConversationDocument> {
-    let name_by_handle = display_names_for_handles(convo);
-    let mut participants: Vec<IrParticipant> = convo
-        .participant_e164s
-        .iter()
-        .filter(|h| !h.is_empty())
-        .map(|h| IrParticipant {
-            handle: h.clone(),
-            display_name: name_by_handle.get(h).cloned(),
-            handle_type: Some(HandleType::Phone),
-        })
-        .collect();
-    if participants.is_empty() && !convo.is_group && !chat_id.is_empty() {
-        participants.push(IrParticipant {
-            handle: chat_id.to_string(),
-            display_name: name_by_handle
-                .get(chat_id)
-                .cloned()
-                .or_else(|| first_contact_name(convo)),
-            handle_type: Some(HandleType::Phone),
-        });
+/// SMS Backup+ deltas of the shared [`pending_to_document`] projection.
+struct SbpProjection<'a> {
+    export: ExportMeta,
+    blob_bytes: &'a HashMap<String, Vec<u8>>,
+}
+
+impl ProjectionHooks for SbpProjection<'_> {
+    fn export(&self) -> ExportMeta {
+        self.export.clone()
     }
 
-    let owner_meta = ExportMeta {
-        source: String::new(),
-        tool: String::new(),
-        tool_version: String::new(),
-        owner_handle: Some(owner_handle.to_string()),
-        owner_display_name: None,
-    };
-    let export = message_vault_io_core::export_meta(
-        EXPORT_SOURCE,
-        EXPORT_TOOL,
-        EXPORT_TOOL_VERSION,
-        &owner_meta,
-    );
-    let (owner_sender_handle, owner_sender_display) = owner_sender(&export);
+    fn service(&self, _msg: &PendingMessage) -> IrService {
+        IrService::Sms
+    }
 
-    let mut messages = Vec::with_capacity(convo.messages.len());
-    for msg in &convo.messages {
-        if msg.is_from_me {
-            report.sent += 1;
-        } else {
-            report.received += 1;
-        }
-        report.messages += 1;
-        let secs = msg.sort_key;
-        let (ts_local, _, _) = format_local_ts(secs).expect("timestamp validated above");
-        let digests: Vec<String> = msg
-            .attachments
-            .iter()
-            .map(|a| a.digest_sha256.clone().unwrap_or_default())
-            .collect();
-        let guid = stable_guid(chat_id, &ts_local, msg.is_from_me, &msg.text, &digests);
-        let timestamp_unix_ms = msg
-            .extra_str("date_ms")
-            .parse::<i64>()
-            .unwrap_or_else(|_| secs.saturating_mul(1000));
-        let (sender_handle, sender_display_name) = if msg.is_from_me {
-            (owner_sender_handle.clone(), owner_sender_display.clone())
-        } else {
-            (
-                if msg.sender_handle.is_empty() {
-                    None
-                } else {
-                    Some(
-                        phone::normalize_guarded(
-                            &msg.sender_handle,
-                            phone::PhoneRegion::for_raw(&msg.sender_handle),
-                        )
-                        .normalized,
-                    )
-                },
-                msg.sender_display_name.clone(),
-            )
-        };
-        let attachments: Vec<IrAttachment> = msg
-            .attachments
-            .iter()
-            .map(|a| pending_attachment_to_ir(a, blob_bytes))
-            .collect();
-        let message_kind = if msg.attachments.is_empty() {
-            IrMessageKind::Sms
-        } else {
-            IrMessageKind::Mms
-        };
+    fn normalize_handle(&self, raw: &str) -> String {
+        phone::normalize_guarded(raw, phone::PhoneRegion::for_raw(raw)).normalized
+    }
 
+    fn attachment_to_ir(&self, att: &PendingAttachment, _msg: &PendingMessage) -> IrAttachment {
+        pending_attachment_to_ir(att, self.blob_bytes)
+    }
+
+    fn source(&self, convo: &PendingConversation, msg: &PendingMessage) -> IrSource {
         let mut fields = serde_json::Map::new();
-        let source_kind = msg.extra_str("source_kind");
-        if !source_kind.is_empty() {
-            fields.insert(
-                "source_kind".into(),
-                serde_json::Value::String(source_kind.to_string()),
-            );
-        }
-        let smssync_id = msg.extra_str("smssync_id");
-        if !smssync_id.is_empty() {
-            fields.insert(
-                "smssync_id".into(),
-                serde_json::Value::String(smssync_id.to_string()),
-            );
-        }
-        let eml_path = msg.extra_str("eml_path");
-        if !eml_path.is_empty() {
-            fields.insert(
-                "eml_path".into(),
-                serde_json::Value::String(eml_path.to_string()),
-            );
+        for key in ["source_kind", "smssync_id", "eml_path"] {
+            let value = msg.extra_str(key);
+            if !value.is_empty() {
+                fields.insert(key.into(), serde_json::Value::String(value.to_string()));
+            }
         }
         if let Some(title) = convo.display_name.as_deref().filter(|t| !t.is_empty()) {
             // Android group title stored as data only. Filenames do not use it.
@@ -377,50 +219,11 @@ fn pending_to_document(
                 serde_json::Value::String(title.to_string()),
             );
         }
-        let source = IrSource {
+        IrSource {
             android_type: parse_android_type(msg.extra_str("android_type")),
             fields,
         }
-        .into_option();
-
-        messages.push(IrMessage {
-            guid,
-            timestamp_unix_ms,
-            direction: if msg.is_from_me {
-                IrDirection::Outgoing
-            } else {
-                IrDirection::Incoming
-            },
-            service: IrService::Sms,
-            message_kind,
-            sender_handle,
-            sender_display_name,
-            subject: None,
-            text: msg.text.clone(),
-            attachments,
-            imessage: None,
-            source,
-        });
     }
-
-    Ok(ConversationDocument {
-        schema_version: SCHEMA_VERSION,
-        export,
-        conversation: ConversationMeta {
-            chat_identifier: chat_id.to_string(),
-            conversation_type: if convo.is_group {
-                IrConversationType::Group
-            } else {
-                IrConversationType::Individual
-            },
-            // Android group titles are not used for filenames.
-            group_title: None,
-            participants,
-            stats: ConversationStats::default(),
-        },
-        messages,
-        packaging_stem_suffix: None,
-    })
 }
 
 const EML_PROGRESS_EVERY: u64 = 5000;
@@ -527,23 +330,9 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
     let input_paths: Vec<PathBuf> = inputs.iter().map(|p| p.as_ref().to_path_buf()).collect();
     let (inputs, output_dir) = prepare_outputs(&input_paths, output_dir)?;
 
-    let copy_attachments = transforms.copies_attachments();
-    let media_mode = if copy_attachments {
-        transforms.media
-    } else {
-        MediaMode::Disabled
-    };
-    let compress = transforms.compress.clone();
-    // Captured before `transforms` moves into the sink: the queue path is for
-    // the import, which is JSONL and never obfuscated.
-    let use_queue = output_format == OutputFormat::Jsonl && !transforms.obfuscate;
-    let (sink, attachments_dir) = if resume {
-        FormatSink::open_resume(&output_dir, output_format, transforms)
-    } else {
-        FormatSink::open_prepared(&output_dir, output_format, transforms)
-    }?;
-    let mut blob_bytes: std::collections::HashMap<String, Vec<u8>> =
-        std::collections::HashMap::new();
+    let writer = ExportWriter::open(&output_dir, output_format, transforms, resume)?;
+    let copy_attachments = writer.copies_attachments();
+    let mut blob_bytes: HashMap<String, Vec<u8>> = HashMap::new();
 
     let input_roots = inputs.clone();
     let file_inputs: HashSet<PathBuf> = input_roots
@@ -662,65 +451,43 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
         log,
         format!(
             "parsed: flat_eml={} archive_eml={} messages={} unknown_chat={} skipped_not_sms_backup_plus={} skipped_parse_error={} skipped_bad_date={}",
-            count(&report, "flat_eml"),
-            count(&report, "archive_eml"),
-            count(&report, "messages_before_dedupe"),
-            count(&report, "unknown_chat_messages"),
-            count(&report, "skipped_not_sms_backup_plus"),
-            count(&report, "skipped_parse_error"),
+            report.extra("flat_eml"),
+            report.extra("archive_eml"),
+            report.extra("messages_before_dedupe"),
+            report.extra("unknown_chat_messages"),
+            report.extra("skipped_not_sms_backup_plus"),
+            report.extra("skipped_parse_error"),
             report.skipped_invalid_date
         ),
     );
 
+    let hooks = SbpProjection {
+        export: message_vault_io_core::export_meta(
+            EXPORT_SOURCE,
+            EXPORT_TOOL,
+            EXPORT_TOOL_VERSION,
+            Some(owner_handle),
+            None,
+        ),
+        blob_bytes: &blob_bytes,
+    };
     let mut documents = Vec::new();
     for (chat_id, mut convo) in conversations {
         message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
-        if !prepare_conversation(&mut convo, &mut report) {
+        let (keep, skipped) =
+            prepare_conversation(&mut convo, |a, b| a.sort_key.cmp(&b.sort_key), |k| k);
+        report.skipped_invalid_date += skipped;
+        if !keep {
             continue;
         }
-        documents.push(pending_to_document(
-            &chat_id,
-            &convo,
-            &owner_handle,
-            &mut report,
-            &blob_bytes,
-        )?);
+        let (doc, tally) = pending_to_document(&chat_id, &convo, &hooks);
+        report.messages += tally.messages;
+        report.sent += tally.sent;
+        report.received += tally.received;
+        documents.push(doc);
     }
 
-    let sink_result = if use_queue {
-        let units: Vec<ConversationUnit> = documents
-            .into_iter()
-            .map(|doc| {
-                ConversationUnit::from_doc(doc, |_, att| {
-                    let hint = att
-                        .size_bytes
-                        .or_else(|| att.bytes.as_ref().map(|b| b.len() as u64));
-                    match att.bytes.take() {
-                        Some(bytes) => (AttachmentSource::Bytes(bytes), hint),
-                        None => (AttachmentSource::Missing, hint),
-                    }
-                })
-            })
-            .collect();
-        let options = WriteQueueOptions {
-            media: media_mode,
-            compress: compress.clone(),
-            resume,
-            writer_count: 0,
-        };
-        message_ir_format::drain_units(&output_dir, units, &options, log, cancel, &mut report)?
-    } else {
-        stage_conversation_attachments(
-            &mut documents,
-            &attachments_dir,
-            media_mode,
-            &compress,
-            log,
-            cancel,
-            &mut report,
-        )
-        .map_err(anyhow::Error::msg)?;
-
+    if !writer.use_queue() {
         vlog(
             verbose,
             log,
@@ -730,8 +497,21 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
                 report.duplicates_dropped
             ),
         );
-        message_ir_format::write_documents_through_sink(documents, sink, log, cancel, &mut report)?
-    };
+    }
+    let sink_result = writer.finish(
+        documents,
+        &mut |att| {
+            let hint = att
+                .size_bytes
+                .or_else(|| att.bytes.as_ref().map(|b| b.len() as u64));
+            match att.bytes.take() {
+                Some(bytes) => (AttachmentSource::Bytes(bytes), hint),
+                None => (AttachmentSource::Missing, hint),
+            }
+        },
+        cancel,
+        &mut report,
+    )?;
 
     vlog(
         verbose,
@@ -761,6 +541,11 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
 mod tests {
     use super::*;
     use crate::types::AttachmentBlob;
+    use media::{CompressOptions, MediaMode};
+    use message_ir::{
+        ConversationDocument, ConversationMeta, ConversationStats, IrConversationType, IrDirection,
+        IrMessage, IrMessageKind, SCHEMA_VERSION,
+    };
 
     #[test]
     fn merge_attachments_unions_by_digest() {
@@ -855,11 +640,17 @@ mod tests {
             }],
             packaging_stem_suffix: None,
         };
-        stage_conversation_attachments(
+        let payloads: Vec<Option<Vec<u8>>> = doc
+            .messages
+            .iter()
+            .flat_map(|msg| msg.attachments.iter().map(|att| att.bytes.clone()))
+            .collect();
+        message_vault_io_core::stage_conversation_attachments(
             std::slice::from_mut(&mut doc),
             &att_dir,
             MediaMode::Clone,
             &CompressOptions::default(),
+            |i| Ok(payloads.get(i).cloned().flatten()),
             None,
             None,
             &mut report,

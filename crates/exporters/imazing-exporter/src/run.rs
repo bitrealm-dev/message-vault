@@ -18,7 +18,7 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
     message_vault_io_core::check_cancel(config.cancel.as_ref()).map_err(anyhow::Error::msg)?;
     let input = config.require_input().map_err(anyhow::Error::msg)?;
     let mut messages = Vec::new();
-    let result = message_ir_format::run_pipeline(
+    let result = message_ir_format::run_pipeline_with_contacts(
         config,
         |config, _log_fn| {
             let (contacts_csv, contacts_vcf) = config.contacts_csv_vcf();

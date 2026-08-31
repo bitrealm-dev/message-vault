@@ -1,21 +1,47 @@
 //! The shared exporter run skeleton and tail.
 
 use crate::{ExportTransforms, FormatSinkResult};
-use contacts::ContactsBook;
+use contacts::{ContactsBook, resolve_contacts_cli};
 use message_vault_io_core::{ExportReport, ExporterConfig, RunResult, check_cancel};
 
-/// The shared exporter run skeleton: cancel check, contacts resolution,
-/// transforms, conversion, media-failure bail, and result assembly.
-///
-/// `load_contacts` resolves the contacts book (exporters with custom
-/// loading pass their own closure); `convert` runs the source-specific
-/// conversion and returns the report and finished sink.
+/// [`run_pipeline_with_contacts`] with the default contacts step: resolve
+/// the config's `--contacts` / `--vcf` through [`resolve_contacts_cli`]
+/// (which warns when neither is set).
 ///
 /// # Errors
 ///
 /// Returns an error when the user cancels, contacts cannot be loaded,
 /// conversion fails, or media processing fails for every candidate file.
 pub fn run_pipeline(
+    config: &ExporterConfig,
+    convert: impl FnOnce(
+        &ContactsBook,
+        ExportTransforms,
+    ) -> anyhow::Result<(ExportReport, FormatSinkResult)>,
+) -> anyhow::Result<RunResult> {
+    run_pipeline_with_contacts(
+        config,
+        |config, log_fn| {
+            let (contacts_path, vcf) = config.contacts_csv_vcf();
+            resolve_contacts_cli(contacts_path, vcf, Some(log_fn)).map(|(book, _)| book)
+        },
+        convert,
+    )
+}
+
+/// The shared exporter run skeleton: cancel check, contacts resolution,
+/// transforms, conversion, media-failure bail, and result assembly.
+///
+/// `load_contacts` resolves the contacts book (exporters with custom
+/// loading — iMazing — pass their own closure; the rest use
+/// [`run_pipeline`]); `convert` runs the source-specific conversion and
+/// returns the report and finished sink.
+///
+/// # Errors
+///
+/// Returns an error when the user cancels, contacts cannot be loaded,
+/// conversion fails, or media processing fails for every candidate file.
+pub fn run_pipeline_with_contacts(
     config: &ExporterConfig,
     load_contacts: impl FnOnce(&ExporterConfig, &dyn Fn(&str)) -> anyhow::Result<ContactsBook>,
     convert: impl FnOnce(
