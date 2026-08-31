@@ -14,12 +14,14 @@ mod data_source;
 mod emit;
 mod error;
 mod fields;
+mod identity;
 mod options;
 mod run;
 mod session;
 
 pub use backup::ios_backup_encrypted_flag;
 pub use error::ENCRYPTED_BACKUP_PASSWORD_REQUIRED;
+pub use identity::{backup_identities, ios_backup_phone_number};
 pub use message_vault_io_core::RunResult;
 pub use run::run;
 
