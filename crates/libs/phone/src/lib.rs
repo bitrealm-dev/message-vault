@@ -72,19 +72,6 @@ pub fn sanitize_number(num: &str) -> Option<String> {
     }
 }
 
-/// Format already-sanitized digits as E.164 (`+1…` for 10-digit US).
-///
-/// Pass the output of [`sanitize_number`], not a raw user string.
-pub fn to_e164(digits: &str) -> String {
-    if digits.len() == 10 {
-        format!("+1{digits}")
-    } else if digits.starts_with('+') {
-        digits.to_string()
-    } else {
-        format!("+{digits}")
-    }
-}
-
 /// E.164 only when the parse is unambiguous for `region`.
 ///
 /// Unlike [`sanitize_number`], this does **not** accept short codes or
@@ -341,13 +328,6 @@ mod tests {
     fn sanitize_keeps_short_codes() {
         assert_eq!(sanitize_number("7535").as_deref(), Some("7535"));
         assert_eq!(sanitize_number("73737").as_deref(), Some("73737"));
-        assert_eq!(to_e164("7535"), "+7535");
-        assert_eq!(to_e164("73737"), "+73737");
-    }
-
-    #[test]
-    fn e164_us() {
-        assert_eq!(to_e164("5555550100"), "+15555550100");
     }
 
     #[test]

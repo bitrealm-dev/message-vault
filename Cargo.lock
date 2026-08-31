@@ -1847,7 +1847,6 @@ dependencies = [
  "contacts",
  "csv",
  "fs2",
- "hex",
  "mail",
  "media",
  "message-csv",

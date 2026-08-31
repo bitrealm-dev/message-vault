@@ -17,9 +17,7 @@ mod process;
 mod size;
 mod tools;
 
-pub use estimate::{
-    PROBABLY_FITS_MARGIN, SizeVerdict, classify_probed, estimate_bytes, needs_probe,
-};
+pub use estimate::{SizeVerdict, classify_probed, estimate_bytes, needs_probe};
 pub use probe::{MediaProbe, probe_media};
 pub use process::{
     MediaReport, TranscodeOutcome, collect_media_files, derivative_name,

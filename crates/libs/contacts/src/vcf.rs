@@ -36,10 +36,8 @@ pub fn parse_vcf(path: &Path) -> Result<Vec<VcfCard>> {
 
 /// Parse VCF text into cards (unfolded lines).
 ///
-/// # Errors
-///
 /// The `Result` is for a stable API; parsing text currently always returns `Ok`.
-pub fn parse_vcf_str(text: &str) -> Result<Vec<VcfCard>> {
+fn parse_vcf_str(text: &str) -> Result<Vec<VcfCard>> {
     let lines = unfold_lines(text);
     let mut cards = Vec::new();
     let mut current: Option<VcfCard> = None;
@@ -136,7 +134,7 @@ fn unescape(s: &str) -> String {
 }
 
 /// Split a CATEGORIES value on unescaped commas, then unescape each token.
-pub fn split_categories(raw: &str) -> Vec<String> {
+fn split_categories(raw: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
     let mut chars = raw.chars().peekable();

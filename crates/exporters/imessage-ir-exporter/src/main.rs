@@ -68,8 +68,6 @@ pub(crate) fn build_config_from_cli(cli: &Cli) -> Result<ExporterConfig> {
             backup_password: cli.backup_password.clone(),
             conversation_filter: cli.conversation.clone(),
             use_caller_id: cli.use_caller_id,
-            show_progress: false,
-            ignore_disk_space: false,
         }),
     })
 }

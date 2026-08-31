@@ -32,7 +32,6 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::extract::extract,
             commands::extract::cancel,
-            commands::format::format,
             commands::ffmpeg::probe_ffmpeg_tools,
             commands::ffmpeg::set_ffmpeg_tools_dir,
             commands::paths::home_dir,

@@ -313,7 +313,7 @@ pub(crate) fn parse_attachment_media(raw: Option<&str>) -> Result<AttachmentMedi
         "skip" => "disabled",
         other => other,
     };
-    AttachmentMedia::from_ini_str(key).ok_or_else(|| {
+    AttachmentMedia::parse(key).ok_or_else(|| {
         format!("invalid attachment_media '{raw}' (expected copy, convert, compress, or skip)")
     })
 }

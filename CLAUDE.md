@@ -24,7 +24,7 @@ vendor backup (chat.db, SMS XML, WhatsApp crypt15, …)
 
 - **`crates/libs/ir`** (`message-ir`) is the shared conversation model every exporter writes: `ConversationDocument` holds export metadata, participants, and messages. `schema_version` is `3` and independent of the product version.
 - **`crates/libs/ir-format`** reads/writes on-disk formats (JSON, CSV, EML, SBR XML) to/from IR; **`crates/libs/reexport`** converts between existing export formats.
-- **`crates/core/message-vault-io-core`** — shared export pipeline, jobs, form model, `export.ini`. Avoids `anyhow` so the desktop app stays lightweight; callers map `String` errors at the edge.
+- **`crates/core/message-vault-io-core`** — shared export pipeline, jobs, form model. Avoids `anyhow` so the desktop app stays lightweight; callers map `String` errors at the edge.
 - **`crates/vault/server`** — each `*_api.rs` file is one Axum route group; `db/` modules mirror the table sources in `schema/sql/*.sql`, which the server embeds at compile time (`db/schema.rs`) — change tables there, not in a live db file. Import path: `jsonl.rs` → `import.rs` → `dedupe.rs`; demo mode runs through a guest pool (`guest_pool.rs`).
 - **`src-tauri/`** is **not a workspace member** (own `Cargo.toml`, listed in the root workspace `exclude`). Its `commands/` wrap the exporter crates and push/pull for the desktop app. Format/build it with `--manifest-path`.
 - **`web/src/lib/api.ts`** is the vault API client; `web/src/lib/tauri.ts` wraps desktop-only commands; `desktopFeatures.ts` gates them. Tests sit next to sources as `*.test.ts(x)` (Vitest + Testing Library).

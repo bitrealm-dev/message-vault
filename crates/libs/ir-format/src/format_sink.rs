@@ -186,7 +186,9 @@ impl FormatSink {
 
         let mut result = FormatSinkResult {
             xml_path: None,
-            media: outcome.media,
+            // Convert/compress runs in `run_attachment_jobs` before documents
+            // reach the sink; finish itself does no media work.
+            media: MediaReport::default(),
             obfuscated_docs: outcome.obfuscated_docs,
         };
 

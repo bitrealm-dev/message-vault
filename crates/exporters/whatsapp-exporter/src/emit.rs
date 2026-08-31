@@ -491,34 +491,6 @@ fn path_within_any(path: &Path, roots: &[PathBuf]) -> bool {
     })
 }
 
-/// Pick a unique attachment file name under `output/attachments/`.
-#[cfg(test)]
-fn unique_name(output: &Path, chat_stem: &str, original: &str, msg: &MessageJson) -> String {
-    let dir = output.join("attachments");
-    let short: String = key_id_string(msg).chars().take(12).collect();
-    let primary = format!("{chat_stem}_{original}");
-    if !dir.join(&primary).exists() {
-        return primary;
-    }
-    if !short.is_empty() {
-        let with_key = format!("{chat_stem}_{short}_{original}");
-        if !dir.join(&with_key).exists() {
-            return with_key;
-        }
-    }
-    for n in 2u32.. {
-        let name = if short.is_empty() {
-            format!("{chat_stem}_{n}_{original}")
-        } else {
-            format!("{chat_stem}_{short}_{n}_{original}")
-        };
-        if !dir.join(&name).exists() {
-            return name;
-        }
-    }
-    unreachable!("u32 counter exhausted for attachment names");
-}
-
 /// WhatsApp `key_id` as a string (empty when missing).
 fn key_id_string(msg: &MessageJson) -> String {
     match &msg.key_id {
@@ -727,36 +699,6 @@ fn pending_to_document(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-
-    fn msg_with_key(key: &str) -> MessageJson {
-        MessageJson {
-            from_me: false,
-            timestamp: Some(1.0),
-            data: None,
-            sender: None,
-            media: json!(true),
-            mime: Some("image/jpeg".into()),
-            caption: None,
-            sticker: false,
-            key_id: Some(json!(key)),
-            reply: None,
-            reactions: json!({}),
-        }
-    }
-
-    #[test]
-    fn unique_name_avoids_overwrite_on_repeated_collision() {
-        let tmp = tempfile::tempdir().unwrap();
-        let att = tmp.path().join("attachments");
-        fs::create_dir_all(&att).unwrap();
-        let msg = msg_with_key("SAMEKEY");
-        fs::write(att.join("chat_IMG_001.jpg"), b"a").unwrap();
-        fs::write(att.join("chat_SAMEKEY_IMG_001.jpg"), b"b").unwrap();
-        let name = unique_name(tmp.path(), "chat", "IMG_001.jpg", &msg);
-        assert_eq!(name, "chat_SAMEKEY_2_IMG_001.jpg");
-        assert!(!att.join(&name).exists());
-    }
 
     #[test]
     fn resolve_media_rejects_absolute_paths_outside_roots() {
