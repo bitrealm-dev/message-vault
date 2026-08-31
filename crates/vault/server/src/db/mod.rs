@@ -8,6 +8,7 @@ pub mod dialect;
 pub mod engine;
 pub mod handles;
 pub mod permissions;
+pub(crate) mod pg_ddl;
 pub mod saved_searches;
 pub mod schema;
 pub mod session_tokens;

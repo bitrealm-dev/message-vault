@@ -39,18 +39,6 @@ const FTS_POSTGRES_DDL: &str = include_str!("../../../../../schema/sql/fts_postg
 const DROP_MESSAGES_FTS_TRIGGERS_PG_SQL: &str =
     include_str!("../../../../../schema/sql/fts_postgres_drop.sql");
 
-/// Postgres DDL variants; the FTS index and its sync triggers live in
-/// `FTS_POSTGRES_DDL` / `DROP_MESSAGES_FTS_TRIGGERS_PG_SQL` (see
-/// [`ensure_messages_fts`]).
-const PG_ACCOUNTS_DDL: &str = include_str!("../../../../../schema/sql/pg_accounts.sql");
-const PG_MESSAGE_TABLES_DDL: &str = include_str!("../../../../../schema/sql/pg_messages.sql");
-const PG_STAGING_TABLES_DDL: &str = include_str!("../../../../../schema/sql/pg_staging.sql");
-const PG_CONTACTS_TABLES_DDL: &str = include_str!("../../../../../schema/sql/pg_contacts.sql");
-const PG_SAVED_SEARCHES_DDL: &str = include_str!("../../../../../schema/sql/pg_saved_searches.sql");
-/// Postgres FKs that reference tables created by a later DDL file (applied
-/// last, see `schema/sql/pg_fks.sql`).
-const PG_FKS_DDL: &str = include_str!("../../../../../schema/sql/pg_fks.sql");
-
 /// Current vault schema version, stamped into each SQLite database with
 /// `PRAGMA user_version`. Bump this whenever any `schema/sql/*.sql` file
 /// changes; a database at any other version is rebuilt empty (see
@@ -160,17 +148,23 @@ async fn apply_vault_ddl(conn: &mut AnyConnection) -> Result<()> {
 }
 
 /// The Postgres DDL that creates the vault's own tables, in the order the
-/// vault installs it. The installer, the rebuild's drop list, and the drift
-/// guard all read this one array, so a new DDL file cannot reach one of them
-/// and miss the others.
-const PG_VAULT_TABLE_DDL: [&str; 5] = [
-    PG_ACCOUNTS_DDL,
-    // Contacts before messages: the messages DDL references contact tables.
-    PG_CONTACTS_TABLES_DDL,
-    PG_MESSAGE_TABLES_DDL,
-    PG_STAGING_TABLES_DDL,
-    PG_SAVED_SEARCHES_DDL,
-];
+/// vault installs it — transpiled from the SQLite originals (see
+/// [`crate::db::pg_ddl`]). The installer, the rebuild's drop list, and the
+/// drift guard all read this one value, so a DDL file cannot reach one of
+/// them and miss the others.
+fn pg_vault_table_ddl() -> &'static crate::db::pg_ddl::PgDdl {
+    static DDL: std::sync::OnceLock<crate::db::pg_ddl::PgDdl> = std::sync::OnceLock::new();
+    DDL.get_or_init(|| {
+        crate::db::pg_ddl::transpile(&[
+            ACCOUNTS_DDL,
+            // Contacts before messages: the messages DDL references contact tables.
+            CONTACTS_TABLES_DDL,
+            MESSAGE_TABLES_DDL,
+            STAGING_TABLES_DDL,
+            SAVED_SEARCHES_DDL,
+        ])
+    })
+}
 
 /// Every table name the embedded Postgres DDL creates, parsed from the DDL
 /// itself so the rebuild's drop list cannot drift from what the vault
@@ -182,7 +176,7 @@ const PG_VAULT_TABLE_DDL: [&str; 5] = [
 fn pg_vault_table_names() -> Vec<&'static str> {
     const CREATE_TABLE: &str = "CREATE TABLE IF NOT EXISTS ";
     let mut names: Vec<&'static str> = Vec::new();
-    for ddl in PG_VAULT_TABLE_DDL {
+    for ddl in &pg_vault_table_ddl().files {
         for line in ddl.lines() {
             let Some(rest) = line.trim_start().strip_prefix(CREATE_TABLE) else {
                 continue;
@@ -253,12 +247,12 @@ async fn apply_postgres_vault_ddl(conn: &mut AnyConnection) -> Result<()> {
             drop_pg_user_tables(&mut tx).await?;
         }
         // Same ordering as the SQLite variant: contacts before messages.
-        for ddl in PG_VAULT_TABLE_DDL {
+        for ddl in &pg_vault_table_ddl().files {
             execute_batch(&mut tx, ddl).await?;
         }
-        // Post-hoc FKs last: they reference tables from both the accounts
-        // and contacts DDL sets.
-        execute_batch(&mut tx, PG_FKS_DDL).await?;
+        // Post-hoc FKs last: they reference tables created across the DDL
+        // sequence (see `pg_ddl` rule 4).
+        execute_batch(&mut tx, &pg_vault_table_ddl().deferred_fks).await?;
         // FTS last, same as the SQLite variant: the tsvector column, GIN
         // index, and sync triggers all target tables created above.
         ensure_messages_fts(&mut tx).await?;
@@ -1698,7 +1692,8 @@ mod tests {
                 "{expected} missing from {names:?}"
             );
         }
-        let declared = PG_VAULT_TABLE_DDL
+        let declared = pg_vault_table_ddl()
+            .files
             .iter()
             .flat_map(|ddl| ddl.lines())
             .filter(|line| line.trim_start().starts_with("CREATE TABLE"))
@@ -1743,8 +1738,9 @@ mod tests {
 
     #[test]
     fn split_ddl_keeps_do_blocks_intact() {
-        let stmts = split_ddl(include_str!("../../../../../schema/sql/pg_fks.sql"));
-        assert_eq!(stmts.len(), 1, "pg_fks.sql must be one DO block");
+        let fks = &pg_vault_table_ddl().deferred_fks;
+        let stmts = split_ddl(fks);
+        assert_eq!(stmts.len(), 1, "the deferred FKs must be one DO block");
         assert!(
             stmts[0].starts_with("DO $$"),
             "unexpected split: {}",
