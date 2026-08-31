@@ -269,8 +269,8 @@ fn aggregates_multiple_conversations_into_one_import_request() {
     let import = server.mock(|when, then| {
         when.method(POST)
             .path("/v1/import")
-            .body_contains("+15555550101")
-            .body_contains("+15555550102");
+            .body_includes("+15555550101")
+            .body_includes("+15555550102");
         then.status(200).json_body(json!({
             "ok": true,
             "messages": 1,
@@ -321,8 +321,8 @@ fn flushes_at_message_limit_and_replaces_only_first_request() {
         when.method(POST)
             .path("/v1/import")
             .query_param("mode", "replace")
-            .body_contains("+15555550101")
-            .body_contains("+15555550102");
+            .body_includes("+15555550101")
+            .body_includes("+15555550102");
         then.status(200).json_body(json!({
             "ok": true,
             "messages": 2,
@@ -334,7 +334,7 @@ fn flushes_at_message_limit_and_replaces_only_first_request() {
         when.method(POST)
             .path("/v1/import")
             .query_param("mode", "append")
-            .body_contains("+15555550103");
+            .body_includes("+15555550103");
         then.status(200).json_body(json!({
             "ok": true,
             "messages": 1,
@@ -374,8 +374,8 @@ fn failed_combined_request_only_fails_its_files() {
     let failed = server.mock(|when, then| {
         when.method(POST)
             .path("/v1/import")
-            .body_contains("+15555550101")
-            .body_contains("+15555550102");
+            .body_includes("+15555550101")
+            .body_includes("+15555550102");
         then.status(500).json_body(json!({
             "ok": false,
             "error": "intentional batch failure"
@@ -384,7 +384,7 @@ fn failed_combined_request_only_fails_its_files() {
     let succeeded = server.mock(|when, then| {
         when.method(POST)
             .path("/v1/import")
-            .body_contains("+15555550103");
+            .body_includes("+15555550103");
         then.status(200).json_body(json!({
             "ok": true,
             "messages": 1,
@@ -988,7 +988,7 @@ fn multipart_aborts_on_hash_mismatch_complete() {
     });
     let _part = server.mock(|when, then| {
         when.method(PUT)
-            .path_contains(format!("/v1/assets/{digest}/uploads/up-bad/parts/"));
+            .path_includes(format!("/v1/assets/{digest}/uploads/up-bad/parts/"));
         then.status(200)
             .json_body(json!({ "ok": true, "part": 1, "bytes": 24 }));
     });
@@ -1097,7 +1097,7 @@ fn verify_digests_fails_on_mismatch() {
         }));
     });
     let put = server.mock(|when, then| {
-        when.method(PUT).path_contains("/v1/assets/");
+        when.method(PUT).path_includes("/v1/assets/");
         then.status(200)
             .json_body(json!({ "ok": true, "already_present": false }));
     });
@@ -1252,9 +1252,9 @@ fn skips_oversized_attachment_keeps_conversation_ok() {
     let import = server.mock(|when, then| {
         when.method(POST)
             .path("/v1/import")
-            .body_contains(r#""missing_reason":"too_large""#)
-            .body_contains("big.bin")
-            .body_contains(&small_digest);
+            .body_includes(r#""missing_reason":"too_large""#)
+            .body_includes("big.bin")
+            .body_includes(&small_digest);
         then.status(200).json_body(json!({
             "ok": true,
             "messages": 1,
@@ -1365,9 +1365,9 @@ fn skips_missing_attachment_file_keeps_conversation_ok() {
     let import = server.mock(|when, then| {
         when.method(POST)
             .path("/v1/import")
-            .body_contains(r#""missing_reason":"file_missing""#)
-            .body_contains("gone.bin")
-            .body_contains(&small_digest);
+            .body_includes(r#""missing_reason":"file_missing""#)
+            .body_includes("gone.bin")
+            .body_includes(&small_digest);
         then.status(200).json_body(json!({
             "ok": true,
             "messages": 1,
@@ -1456,9 +1456,9 @@ fn keeps_conversation_ok_when_skipped_attachment_has_no_path() {
     let import = server.mock(|when, then| {
         when.method(POST)
             .path("/v1/import")
-            .body_contains(r#""missing_reason":"skipped""#)
-            .body_contains("IMG_0421.HEIC")
-            .body_contains("image/heic");
+            .body_includes(r#""missing_reason":"skipped""#)
+            .body_includes("IMG_0421.HEIC")
+            .body_includes("image/heic");
         then.status(200).json_body(json!({
             "ok": true,
             "messages": 1,
@@ -1528,8 +1528,8 @@ fn reports_pathless_attachment_without_reason_as_no_path() {
     let import = server.mock(|when, then| {
         when.method(POST)
             .path("/v1/import")
-            .body_contains(r#""missing_reason":"no_path""#)
-            .body_contains("mystery.bin");
+            .body_includes(r#""missing_reason":"no_path""#)
+            .body_includes("mystery.bin");
         then.status(200).json_body(json!({
             "ok": true,
             "messages": 1,
