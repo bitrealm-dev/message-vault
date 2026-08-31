@@ -69,7 +69,7 @@ use message_ir::{ConversationDocument, IrAttachment};
 use message_vault_io_core::{CancelFlag, check_cancel, mime_for_rel};
 
 use crate::read_json::read_conversation_jsonl;
-use crate::util::UNSAFE_ATTACHMENT_PATH_PREFIX;
+use crate::util::safe_attachment_path;
 use crate::write::write_conversation_jsonl_to;
 
 /// Suffix on a derivative that is written but not yet committed.
@@ -368,24 +368,6 @@ fn pending_in(
     Ok(out)
 }
 
-/// Resolve `rel` (an attachment's recorded relative path) under `staging_dir`,
-/// rejecting anything that could escape it.
-///
-/// `pub(crate)`: shared with `staging_summary`, which resolves the same
-/// recorded paths to measure them.
-pub(crate) fn safe_attachment_path(staging_dir: &Path, rel: &str) -> Result<PathBuf> {
-    let rel_path = Path::new(rel);
-    if rel_path.is_absolute() {
-        anyhow::bail!("{UNSAFE_ATTACHMENT_PATH_PREFIX}: {rel}");
-    }
-    for comp in rel_path.components() {
-        if matches!(comp, std::path::Component::ParentDir) {
-            anyhow::bail!("{UNSAFE_ATTACHMENT_PATH_PREFIX} (contains ..): {rel}");
-        }
-    }
-    Ok(staging_dir.join(rel_path))
-}
-
 /// Find a file under `staging_dir/attachments` whose stem is `orig_stem` and
 /// that the media step would still touch — the crash-heal search.
 fn find_recoverable_original(
@@ -476,31 +458,31 @@ fn patch_all_matching(
     }
 }
 
-/// What a heal recovery repoints an attachment at: the recovered original,
-/// read fresh off disk.
-struct RecoveredOriginal {
+/// What a repoint writes into every matching attachment: the target file's
+/// doc-relative path, digest, size, and MIME type, read fresh off disk.
+struct DiskAttachmentFields {
     rel: String,
     digest: String,
     size: u64,
     mime: Option<String>,
 }
 
-/// Compute the fields a heal repoint writes, from `src` (the recovered
-/// original) on disk.
+/// Compute the fields a repoint writes, from `src` on disk.
 ///
-/// Shared by both places a heal has to fall back to the original rather than
-/// a derivative: the media step declining the file (`Skipped`), and ffmpeg
-/// failing on it (`Err`). In both cases `recorded_rel` — the phantom `-mv`
-/// name a crashed prior run already wrote into the document — must not be
-/// left standing, since nothing will ever exist under it.
-fn recovered_original_fields(src: &Path) -> Result<RecoveredOriginal> {
+/// Used by [`apply_repoint`] (aiming at an existing derivative) and by both
+/// places a heal has to fall back to the recovered original rather than a
+/// derivative: the media step declining the file (`Skipped`), and ffmpeg
+/// failing on it (`Err`). In the heal cases `recorded_rel` — the phantom
+/// `-mv` name a crashed prior run already wrote into the document — must not
+/// be left standing, since nothing will ever exist under it.
+fn disk_attachment_fields(src: &Path) -> Result<DiskAttachmentFields> {
     let rel = attachment_rel(src)?;
     let digest = media::file_sha256(src)?;
     let size = std::fs::metadata(src)
         .with_context(|| format!("stat {}", src.display()))?
         .len();
     let mime = mime_for_rel(&rel);
-    Ok(RecoveredOriginal {
+    Ok(DiskAttachmentFields {
         rel,
         digest,
         size,
@@ -549,7 +531,7 @@ fn apply_transcode(
                 // pointing at a name that can never exist. Repoint at the
                 // recovered original first, exactly like the `Skipped` heal
                 // arm below, then record the failure on it.
-                let r = recovered_original_fields(src)?;
+                let r = disk_attachment_fields(src)?;
                 patch_all_matching(doc, recorded_rel, |att| {
                     att.path = Some(r.rel.clone());
                     att.digest_sha256 = Some(r.digest.clone());
@@ -578,7 +560,7 @@ fn apply_transcode(
                 // nothing will ever produce — the media step declined this
                 // file. Repoint it back at the recovered original so a
                 // resume does not chase a name that can never exist.
-                let r = recovered_original_fields(src)?;
+                let r = disk_attachment_fields(src)?;
                 patch_all_matching(doc, recorded_rel, |att| {
                     att.path = Some(r.rel.clone());
                     att.digest_sha256 = Some(r.digest.clone());
@@ -654,17 +636,12 @@ fn apply_repoint(
     derivative: &Path,
     report: &mut TranscodeReport,
 ) -> Result<()> {
-    let rel = attachment_rel(derivative)?;
-    let digest = media::file_sha256(derivative)?;
-    let size = std::fs::metadata(derivative)
-        .with_context(|| format!("stat {}", derivative.display()))?
-        .len();
-    let mime = mime_for_rel(&rel);
+    let r = disk_attachment_fields(derivative)?;
     patch_all_matching(doc, recorded_rel, |att| {
-        att.path = Some(rel.clone());
-        att.digest_sha256 = Some(digest.clone());
-        att.size_bytes = Some(size);
-        att.mime_type = mime.clone();
+        att.path = Some(r.rel.clone());
+        att.digest_sha256 = Some(r.digest.clone());
+        att.size_bytes = Some(r.size);
+        att.mime_type = r.mime.clone();
         att.missing_reason = None;
     });
     write_conversation_jsonl_to(jsonl, doc)?;

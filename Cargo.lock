@@ -1753,7 +1753,6 @@ dependencies = [
  "chrono",
  "mail-builder",
  "mailparse",
- "message-csv",
  "message-ir",
  "serde",
  "serde_json",
@@ -1802,10 +1801,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "csv",
- "hex",
+ "message-ir",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "tempfile",
 ]
 
@@ -1906,6 +1904,7 @@ dependencies = [
  "fs2",
  "futures-util",
  "libc",
+ "media",
  "message-ir",
  "message-ir-format",
  "phone",
@@ -2051,6 +2050,7 @@ dependencies = [
  "csv",
  "hex",
  "hmac 0.13.0",
+ "media",
  "rand 0.10.2",
  "regex",
  "serde_json",

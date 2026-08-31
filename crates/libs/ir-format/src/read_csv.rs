@@ -3,44 +3,17 @@
 use crate::CSV_HEADERS;
 use crate::normalize::{imessage_from_parts, source_from_parts};
 use anyhow::{Context, Result, bail};
-use message_csv::AttachmentCell;
+use message_csv::{AttachmentCell, ParticipantCell};
 use message_ir::{
     ConversationDocument, ConversationHeader, ConversationMeta, ConversationStats, ExportMeta,
     HandleType, IrAttachment, IrConversationType, IrDirection, IrImessage, IrMessage,
-    IrMessageKind, IrParticipant, IrService, SCHEMA_VERSION, parse_android_type,
+    IrMessageKind, IrParticipant, IrService, SCHEMA_VERSION, nonempty, parse_android_type,
 };
-use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
-
-#[derive(Debug, Deserialize)]
-struct ParticipantCell {
-    handle: String,
-    #[serde(default)]
-    display_name: String,
-    /// Absent (legacy cells) → `Some(HandleType::Other)`; explicit `null` →
-    /// `None`; any other string is parsed leniently via [`HandleType::parse`].
-    #[serde(
-        default = "default_participant_handle_type",
-        deserialize_with = "deserialize_handle_type"
-    )]
-    handle_type: Option<HandleType>,
-}
-
-fn default_participant_handle_type() -> Option<HandleType> {
-    Some(HandleType::Other)
-}
-
-fn deserialize_handle_type<'de, D>(de: D) -> Result<Option<HandleType>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let s = Option::<String>::deserialize(de)?;
-    Ok(s.map(|s| HandleType::parse(&s)))
-}
 
 /// Read a conversation CSV written by `write_conversation_csv`.
 ///
@@ -62,7 +35,7 @@ pub fn read_conversation_csv(path: &Path) -> Result<ConversationDocument> {
         .iter()
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
-    validate_headers(&headers)?;
+    let cols = validate_headers(&headers)?;
 
     let mut rows = Vec::new();
     for (i, result) in rdr.records().enumerate() {
@@ -74,7 +47,7 @@ pub fn read_conversation_csv(path: &Path) -> Result<ConversationDocument> {
         bail!("CSV has no data rows: {}", path.display());
     }
 
-    let header = header_from_row(&headers, &rows[0])?;
+    let header = header_from_row(&cols, &rows[0])?;
     let packaging_stem_suffix = path
         .file_stem()
         .and_then(|n| n.to_str())
@@ -83,7 +56,7 @@ pub fn read_conversation_csv(path: &Path) -> Result<ConversationDocument> {
     let mut messages = Vec::with_capacity(rows.len());
     for (i, record) in rows.iter().enumerate() {
         messages.push(
-            message_from_record(&headers, record)
+            message_from_record(&cols, record)
                 .with_context(|| format!("parse CSV row {} in {}", i + 1, path.display()))?,
         );
     }
@@ -99,8 +72,11 @@ pub fn read_conversation_csv(path: &Path) -> Result<ConversationDocument> {
     Ok(doc)
 }
 
-fn header_from_row(headers: &[String], row: &csv::StringRecord) -> Result<ConversationHeader> {
-    let get = |name: &str| cell(headers, row, name).unwrap_or("");
+fn header_from_row(
+    cols: &HashMap<&str, usize>,
+    row: &csv::StringRecord,
+) -> Result<ConversationHeader> {
+    let get = |name: &str| cell(cols, row, name).unwrap_or("");
     let mut participants = parse_participants(get("participants_json"));
     // Legacy files predate handle_type in the participants cell. For
     // single-participant conversations, fall back to the per-row
@@ -139,8 +115,8 @@ fn header_from_row(headers: &[String], row: &csv::StringRecord) -> Result<Conver
     })
 }
 
-fn message_from_record(headers: &[String], row: &csv::StringRecord) -> Result<IrMessage> {
-    let get = |name: &str| cell(headers, row, name).unwrap_or("");
+fn message_from_record(cols: &HashMap<&str, usize>, row: &csv::StringRecord) -> Result<IrMessage> {
+    let get = |name: &str| cell(cols, row, name).unwrap_or("");
     let timestamp_unix_ms = get("timestamp_unix_ms")
         .parse::<i64>()
         .with_context(|| format!("bad timestamp_unix_ms {:?}", get("timestamp_unix_ms")))?;
@@ -207,32 +183,28 @@ fn message_from_record(headers: &[String], row: &csv::StringRecord) -> Result<Ir
     })
 }
 
-fn validate_headers(headers: &[String]) -> Result<()> {
-    let set: HashMap<&str, usize> = headers
-        .iter()
-        .enumerate()
-        .map(|(i, h)| (h.as_str(), i))
-        .collect();
+/// Check every required column is present and return the name → index map
+/// used for per-row lookups.
+fn validate_headers(headers: &[String]) -> Result<HashMap<&str, usize>> {
+    let mut cols: HashMap<&str, usize> = HashMap::with_capacity(headers.len());
+    for (i, h) in headers.iter().enumerate() {
+        // First occurrence wins, matching the old linear `position` lookup.
+        cols.entry(h.as_str()).or_insert(i);
+    }
     for required in CSV_HEADERS {
-        if !set.contains_key(required) {
+        if !cols.contains_key(required) {
             bail!("CSV missing required column `{required}`");
         }
     }
-    Ok(())
+    Ok(cols)
 }
 
-fn cell<'a>(headers: &[String], row: &'a csv::StringRecord, name: &str) -> Option<&'a str> {
-    let idx = headers.iter().position(|h| h == name)?;
-    row.get(idx)
-}
-
-fn nonempty(s: &str) -> Option<String> {
-    let t = s.trim();
-    if t.is_empty() {
-        None
-    } else {
-        Some(t.to_string())
-    }
+fn cell<'a>(
+    cols: &HashMap<&str, usize>,
+    row: &'a csv::StringRecord,
+    name: &str,
+) -> Option<&'a str> {
+    row.get(*cols.get(name)?)
 }
 
 fn parse_bool(s: &str) -> bool {

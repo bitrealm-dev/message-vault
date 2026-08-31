@@ -32,13 +32,7 @@ pub(super) fn queue_pdu_attachments(
         );
         out.push(PendingAttachment {
             rel_path: String::new(),
-            content_type: media::mime_for_ext(&att.ext)
-                .or(match att.ext.as_str() {
-                    ".wav" => Some("audio/wav"),
-                    _ => None,
-                })
-                .unwrap_or("")
-                .to_string(),
+            content_type: media::mime_for_ext(&att.ext).unwrap_or("").to_string(),
             extension: att.ext.trim_start_matches('.').to_string(),
             digest_sha256: Some(digest_hex),
             name_hint: att.smil_name.clone().or(Some(name)),

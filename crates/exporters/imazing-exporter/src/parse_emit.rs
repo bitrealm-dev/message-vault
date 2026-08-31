@@ -44,8 +44,7 @@ pub(super) fn collect_peer_info(
         } else if sanitize_number(sid).is_some() {
             // Format as E.164 (the international phone-number format that starts
             // with +) when unambiguous. Otherwise keep digits as-is. Never invent `+0…`.
-            handles
-                .insert(phone::normalize_guarded(sid, phone::PhoneRegion::for_raw(sid)).normalized);
+            handles.insert(phone::normalize_lenient(sid));
         }
         for phone in phones_in_text(&row.chat_session) {
             handles.insert(phone);
@@ -65,9 +64,7 @@ pub(super) fn collect_peer_info(
                 continue;
             }
             if sanitize_number(label).is_some() {
-                handles.insert(
-                    phone::normalize_guarded(label, phone::PhoneRegion::for_raw(label)).normalized,
-                );
+                handles.insert(phone::normalize_lenient(label));
                 continue;
             }
             if let Some((e164, _)) = book.lookup_handle_by_name(label) {
@@ -166,11 +163,7 @@ fn phones_in_text(text: &str) -> Vec<String> {
                 i += 1;
             }
             if i > start + 1 && sanitize_number(&text[start..i]).is_some() {
-                let e164 = phone::normalize_guarded(
-                    &text[start..i],
-                    phone::PhoneRegion::for_raw(&text[start..i]),
-                )
-                .normalized;
+                let e164 = phone::normalize_lenient(&text[start..i]);
                 if !out.contains(&e164) {
                     out.push(e164);
                 }
@@ -236,8 +229,7 @@ fn resolve_chat_identifier(
     if sanitize_number(session).is_some() {
         // Format as E.164 when unambiguous. Otherwise keep digits as-is. Never
         // invent `+0…`. The contacts book keys entries by the same policy.
-        let handle =
-            phone::normalize_guarded(session, phone::PhoneRegion::for_raw(session)).normalized;
+        let handle = phone::normalize_lenient(session);
         let name = book
             .lookup_name_by_handle(&handle, HandleType::Phone)
             .unwrap_or("")
@@ -272,8 +264,7 @@ pub(super) fn resolve_sender(
         let handle = if row.sender_id.contains('@') {
             row.sender_id.trim().to_string()
         } else if sanitize_number(&row.sender_id).is_some() {
-            phone::normalize_guarded(&row.sender_id, phone::PhoneRegion::for_raw(&row.sender_id))
-                .normalized
+            phone::normalize_lenient(&row.sender_id)
         } else {
             String::new()
         };
@@ -285,13 +276,11 @@ pub(super) fn resolve_sender(
         handle = row.sender_id.trim().to_string();
     } else if sanitize_number(&row.sender_id).is_some() {
         // Format as E.164 when unambiguous. Otherwise keep digits as-is. Never invent `+0…`.
-        handle =
-            phone::normalize_guarded(&row.sender_id, phone::PhoneRegion::for_raw(&row.sender_id))
-                .normalized;
+        handle = phone::normalize_lenient(&row.sender_id);
     } else if !chat_id.contains('@')
         && (chat_id.starts_with('+') || sanitize_number(chat_id).is_some())
     {
-        handle = phone::normalize_guarded(chat_id, phone::PhoneRegion::for_raw(chat_id)).normalized;
+        handle = phone::normalize_lenient(chat_id);
     } else if !row.sender_name.is_empty()
         && let Some((e164, _)) = book.lookup_handle_by_name(&row.sender_name)
     {

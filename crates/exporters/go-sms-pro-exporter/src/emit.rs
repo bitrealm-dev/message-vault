@@ -437,11 +437,9 @@ pub(crate) fn convert_export(
     let input_dir = &inputs[0];
 
     let owners = OwnerHandleSet::from_phones(owner_phones)?;
-    let owner_handle = guarded_phone(
-        owners
-            .primary_phone_digit()
-            .context("owner phone has no usable digits")?,
-    );
+    let owner_handle = owners
+        .primary_owner_handle()
+        .expect("from_phones guarantees a phone owner handle");
     let mut report = ExportReport::default();
     let mut skips = SkipDetails::default();
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();

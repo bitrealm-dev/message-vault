@@ -35,7 +35,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -48,7 +48,6 @@ use message_ir::ConversationHeader;
 use message_ir_format::read_conversation_jsonl;
 use message_vault_io_core::{CancelFlag, check_cancel, parallel_for_each};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::AuthInfo;
 use crate::http::{self, AssetPutRequest, CompleteImportArgs, HttpSession, PostImportArgs};
@@ -596,29 +595,6 @@ fn normalize_digest_sha256(digest: &str) -> Result<String> {
     Ok(s)
 }
 
-/// Read a whole file and return its sha256 as a lowercase hex string.
-///
-/// "Hashing" here means feeding every byte into the SHA-256 algorithm. The
-/// result is a fingerprint: same file bytes → same hex string. The file is
-/// read in 64 KiB chunks so a large video does not have to sit entirely in RAM.
-///
-/// # Errors
-///
-/// Returns an error when the file cannot be opened or read.
-fn hash_file(path: &Path) -> Result<String> {
-    let mut file = File::open(path).with_context(|| format!("open {}", path.display()))?;
-    let mut hasher = Sha256::new();
-    let mut buf = [0u8; 1024 * 64];
-    loop {
-        let n = file.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Ok(hex::encode(hasher.finalize()))
-}
-
 /// Resolve the SHA-256 fingerprint for an attachment file.
 ///
 /// SHA-256 is a short hex fingerprint of the file bytes. The default is to hash
@@ -698,7 +674,8 @@ fn resolve_attachment_digest(args: ResolveAttachmentDigestArgs<'_>) -> Result<St
     }
 
     // Hash from disk — the default path.
-    let disk_digest = hash_file(abs).with_context(|| format!("{name}: hash {rel}"))?;
+    let disk_digest =
+        message_ir::file_sha256(abs).with_context(|| format!("{name}: hash {rel}"))?;
 
     // Compare the hash of the file on disk to the fingerprint in the JSON Lines file.
     if let Some(claimed_digest) = claimed.as_deref()
@@ -2875,6 +2852,7 @@ fn apply_import_outcome(args: ApplyImportOutcome<'_, '_, '_>) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
 
     fn chunk(body_bytes: usize, messages: usize) -> ImportChunk {
         ImportChunk {

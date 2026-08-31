@@ -171,12 +171,7 @@ enum Outcome {
     Skipped,
 }
 
-#[derive(Clone, Copy)]
-pub(crate) enum Kind {
-    Image,
-    Video,
-    Audio,
-}
+pub(crate) use crate::mime::Kind;
 
 /// List the files a media pass would touch under `root`.
 ///
@@ -283,25 +278,14 @@ fn try_remux_replace(path: &Path, commit: Commit<'_>) -> Result<Option<PathBuf>>
     }
 }
 
-pub(crate) fn classify(path: &Path) -> Option<Kind> {
+/// Media [`Kind`] of a file, from its extension via the shared
+/// extension table in [`crate::mime`]; `None` for unrecognized extensions
+/// and for this crate's own in-progress temp files.
+pub fn classify(path: &Path) -> Option<Kind> {
     if is_msgmedia_temp(path) {
         return None;
     }
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    match ext.as_str() {
-        "jpg" | "jpeg" | "png" | "webp" | "bmp" | "tif" | "tiff" | "heic" | "heif" | "gif" => {
-            Some(Kind::Image)
-        }
-        "mp4" | "m4v" | "mov" | "3gp" | "3gpp" | "webm" | "mpeg" | "mpg" | "mkv" | "avi" => {
-            Some(Kind::Video)
-        }
-        "mp3" | "m4a" | "aac" | "caf" | "amr" | "wav" | "ogg" | "opus" => Some(Kind::Audio),
-        _ => None,
-    }
+    crate::mime::kind_for_ext(path.extension().and_then(|e| e.to_str()).unwrap_or(""))
 }
 
 /// Run the media step over one file, committing however `commit` says.

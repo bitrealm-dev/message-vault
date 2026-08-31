@@ -1,6 +1,6 @@
 //! Read SMS Backup & Restore XML into [`ConversationDocument`] values.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use media::{CompressOptions, MediaMode};
 use message_csv::{DateRange, format_local_ts, stable_guid};
 use message_ir::{
@@ -243,13 +243,7 @@ fn chat_id(record: &Record) -> String {
         // Guarded policy on the raw address: E.164 only when unambiguous, so
         // a trunk-zero `020 7946 0000` stays digits-as-is instead of being
         // fabricated into `+02079460000`.
-        ConversationKind::Individual => {
-            let guarded = phone::normalize_guarded(
-                &record.chat_key,
-                phone::PhoneRegion::for_raw(&record.chat_key),
-            );
-            guarded.normalized
-        }
+        ConversationKind::Individual => phone::normalize_lenient(&record.chat_key),
     }
 }
 
@@ -262,10 +256,7 @@ fn add_record(
     let peers = record
         .participant_digits
         .iter()
-        .map(|(d, _)| {
-            let guarded = phone::normalize_guarded(d, phone::PhoneRegion::for_raw(d));
-            guarded.normalized
-        })
+        .map(|(d, _)| phone::normalize_lenient(d))
         .filter(|d| !d.is_empty())
         .collect();
     let conversation = conversations
@@ -327,10 +318,7 @@ fn names_by_handle(conversation: &PendingConversation) -> HashMap<String, String
                 .filter(|s| !s.is_empty()),
         ) {
             names
-                .entry(
-                    phone::normalize_guarded(digits, phone::PhoneRegion::for_raw(digits))
-                        .normalized,
-                )
+                .entry(phone::normalize_lenient(digits))
                 .or_insert_with(|| name.to_string());
         }
         if conversation.kind == ConversationKind::Individual {
@@ -383,9 +371,10 @@ fn to_document(
             owner.clone()
         } else {
             (
-                message.sender_digits.as_deref().map(|d| {
-                    phone::normalize_guarded(d, phone::PhoneRegion::for_raw(d)).normalized
-                }),
+                message
+                    .sender_digits
+                    .as_deref()
+                    .map(phone::normalize_lenient),
                 message.sender_display_name.clone(),
             )
         };
@@ -504,11 +493,8 @@ pub fn read_sbr_documents(
         (HashSet::new(), None)
     } else {
         let owners = OwnerHandleSet::from_phones(&owner_phones)?;
-        let primary = owners
-            .primary_phone_digit()
-            .context("owner phone has no usable digits")?;
-        let guarded = phone::normalize_guarded(primary, phone::PhoneRegion::Usa);
-        (owners.all_phone_digits(), Some(guarded.normalized))
+        // from_phones guarantees at least one phone handle in the set.
+        (owners.all_phone_digits(), owners.primary_owner_handle())
     };
     let mut report = SbrReadReport::default();
     let mut conversations = BTreeMap::new();

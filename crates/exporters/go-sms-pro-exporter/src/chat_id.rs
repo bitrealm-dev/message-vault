@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 /// when the digits are unambiguous for the US-centric crate. Otherwise keep
 /// the digits as-is. Never invent `+0…`.
 pub(super) fn guarded_phone(digits: &str) -> String {
-    phone::normalize_guarded(digits, phone::PhoneRegion::Usa).normalized
+    phone::normalize_digits_us(digits).unwrap_or_default()
 }
 
 /// Format digit strings as E.164 (the international phone-number format that

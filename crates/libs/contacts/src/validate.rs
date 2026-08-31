@@ -1,9 +1,9 @@
-//! Copy a contacts VCF/CSV and rewrite phones that [`normalize_certain`] accepts.
+//! Copy a contacts VCF/CSV and rewrite phones that [`normalize_checked`] accepts.
 
 use crate::name::collapse_inner_whitespace;
-use crate::vcard_csv::VcardCsvColumns;
+use crate::vcard_csv::{VcardCsvColumns, normalize_vcard_csv_header};
 use anyhow::{Context, Result, bail};
-use phone::{PhoneRegion, normalize_certain, normalize_uncertain_reason};
+use phone::{PhoneRegion, normalize_checked};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Write;
@@ -78,7 +78,11 @@ pub struct ContactsInputError {
 
 impl std::fmt::Display for ContactsInputError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
+        if self.details.is_empty() {
+            write!(f, "{}", self.message)
+        } else {
+            write!(f, "{} ({})", self.message, self.details.join("; "))
+        }
     }
 }
 
@@ -120,32 +124,21 @@ pub fn validate_contacts_file(
     }
 
     let write = mode == ValidateMode::Update;
-    let format = detect_format(input).map_err(|e| {
-        if e.details.is_empty() {
-            anyhow::anyhow!("{}", e.message)
-        } else {
-            anyhow::anyhow!("{} ({})", e.message, e.details.join("; "))
-        }
-    })?;
+    let format = detect_format(input)?;
     let (output_path, log_path) = corrected_output_paths(input);
 
     let mode_label = match mode {
         ValidateMode::Check => "check",
         ValidateMode::Update => "format",
     };
-    let mut log_lines: Vec<String> = Vec::new();
-    log_lines.push(format!(
+    let mut acc = ValidateAccum::default();
+    acc.log_lines.push(format!(
         "# contacts-validate mode={mode_label} region={region}"
     ));
-    log_lines.push(format!("# input={}", input.display()));
-    log_lines.push(String::new());
+    acc.log_lines.push(format!("# input={}", input.display()));
+    acc.log_lines.push(String::new());
 
-    let mut rewritten = 0u64;
-    let mut uncertain = 0u64;
-    // e164 → list of contact labels (with row) that own it (after rewrite)
-    let mut by_e164: HashMap<String, Vec<String>> = HashMap::new();
     let mut cards: Vec<OutCard> = Vec::new();
-    let mut unable: Vec<UnableEntry> = Vec::new();
 
     match format {
         ContactsFormat::Vcf => {
@@ -154,11 +147,7 @@ pub fn validate_contacts_file(
                 output: &output_path,
                 region,
                 write,
-                rewritten: &mut rewritten,
-                uncertain: &mut uncertain,
-                log_lines: &mut log_lines,
-                unable: &mut unable,
-                by_e164: &mut by_e164,
+                acc: &mut acc,
             })?;
         }
         ContactsFormat::VcardCsv => {
@@ -167,11 +156,7 @@ pub fn validate_contacts_file(
                 output: &output_path,
                 region,
                 write,
-                rewritten: &mut rewritten,
-                uncertain: &mut uncertain,
-                log_lines: &mut log_lines,
-                unable: &mut unable,
-                by_e164: &mut by_e164,
+                acc: &mut acc,
                 cards: &mut cards,
             })?;
         }
@@ -187,24 +172,27 @@ pub fn validate_contacts_file(
         None
     };
 
-    emit_uncertain_sections(&mut log_lines, &unable);
+    let unable = std::mem::take(&mut acc.unable);
+    emit_uncertain_sections(&mut acc.log_lines, &unable);
 
     let mut duplicate_groups = 0u64;
-    log_lines.push(String::new());
-    log_lines.push("Duplicate numbers (same E.164 on more than one contact)".into());
-    let mut keys: Vec<_> = by_e164.keys().cloned().collect();
+    acc.log_lines.push(String::new());
+    acc.log_lines
+        .push("Duplicate numbers (same E.164 on more than one contact)".into());
+    let mut keys: Vec<_> = acc.by_e164.keys().cloned().collect();
     keys.sort();
     let mut any_dup = false;
     for e164 in keys {
-        let names = by_e164.get(&e164).cloned().unwrap_or_default();
+        let names = acc.by_e164.get(&e164).cloned().unwrap_or_default();
         if names.len() > 1 {
             duplicate_groups += 1;
             any_dup = true;
-            log_lines.push(format!("  {e164}: {}", names.join(" | ")));
+            acc.log_lines
+                .push(format!("  {e164}: {}", names.join(" | ")));
         }
     }
     if !any_dup {
-        log_lines.push("  (none)".into());
+        acc.log_lines.push("  (none)".into());
     }
 
     let file_written = if write {
@@ -212,32 +200,52 @@ pub fn validate_contacts_file(
     } else {
         "none".into()
     };
-    log_lines.push(String::new());
-    log_lines.push("Summary".into());
-    log_lines.push(format!("  - Numbers formatted: {rewritten}"));
-    log_lines.push(format!("  - Uncertain: {uncertain}"));
-    log_lines.push(format!("  - Duplicates: {duplicate_groups}"));
-    log_lines.push(format!("  - Mode: {mode_label}"));
-    log_lines.push(format!("    - File written: {file_written}"));
+    acc.log_lines.push(String::new());
+    acc.log_lines.push("Summary".into());
+    acc.log_lines
+        .push(format!("  - Numbers formatted: {}", acc.rewritten));
+    acc.log_lines
+        .push(format!("  - Uncertain: {}", acc.uncertain));
+    acc.log_lines
+        .push(format!("  - Duplicates: {duplicate_groups}"));
+    acc.log_lines.push(format!("  - Mode: {mode_label}"));
+    acc.log_lines
+        .push(format!("    - File written: {file_written}"));
 
     if write {
         let mut log_file =
             File::create(&log_path).with_context(|| format!("create {}", log_path.display()))?;
-        for line in &log_lines {
+        for line in &acc.log_lines {
             writeln!(log_file, "{line}")?;
         }
     }
 
     Ok(ValidateReport {
-        rewritten,
-        uncertain,
+        rewritten: acc.rewritten,
+        uncertain: acc.uncertain,
         duplicate_groups,
         output_path,
         vcf_path,
         log_path,
         wrote_files: write,
-        log_lines,
+        log_lines: acc.log_lines,
     })
+}
+
+/// Counters, log lines, and duplicate/uncertain accumulators threaded through
+/// every rewrite pass as one `&mut`.
+#[derive(Debug, Default)]
+struct ValidateAccum {
+    /// Count of phones rewritten to a certain E.164.
+    rewritten: u64,
+    /// Count of phones left unchanged as uncertain.
+    uncertain: u64,
+    /// Full validate.log contents.
+    log_lines: Vec<String>,
+    /// Phones that could not be made certain, grouped later by reason.
+    unable: Vec<UnableEntry>,
+    /// e164 → list of contact labels (with row) that own it (after rewrite).
+    by_e164: HashMap<String, Vec<String>>,
 }
 
 fn corrected_output_paths(input: &Path) -> (PathBuf, PathBuf) {
@@ -270,18 +278,6 @@ fn update_output_stem(stem: &str) -> String {
         return format!("{prefix}-update-{}", n + 1);
     }
     format!("{stem}-update")
-}
-
-fn normalize_header_name(h: &str) -> String {
-    h.trim()
-        .trim_start_matches('\u{feff}')
-        .to_ascii_lowercase()
-        .replace('_', " ")
-}
-
-fn is_phone_header(h: &str) -> bool {
-    // Bare `phones` is not a vCard CSV / Outlook phone column name.
-    h != "phones" && h.contains("phone")
 }
 
 /// Detect VCF or vCard CSV (First Name, Last Name, phone columns).
@@ -357,13 +353,14 @@ fn detect_csv_format(path: &Path) -> Result<ContactsFormat, ContactsInputError> 
             format!("could not read CSV header: {e}"),
         ])
     })?;
-    let header_l: Vec<String> = headers.iter().map(normalize_header_name).collect();
-    let has_first = header_l.iter().any(|h| h == "first name");
-    let has_last = header_l.iter().any(|h| h == "last name");
-    let phone_cols: Vec<&str> = header_l
+    let header_l: Vec<String> = headers.iter().map(normalize_vcard_csv_header).collect();
+    let cols = VcardCsvColumns::from_headers(headers.iter());
+    let has_first = cols.first.is_some();
+    let has_last = cols.last.is_some();
+    let phone_cols: Vec<&str> = cols
+        .phones
         .iter()
-        .filter(|h| is_phone_header(h))
-        .map(String::as_str)
+        .filter_map(|&i| header_l.get(i).map(String::as_str))
         .collect();
     let has_phone = !phone_cols.is_empty();
 
@@ -443,11 +440,7 @@ struct RewritePhoneTokenArgs<'a> {
     /// Name shown under UNCERTAIN FORMAT (name or `row N`).
     contact_uncertain: &'a str,
     region: PhoneRegion,
-    rewritten: &'a mut u64,
-    uncertain: &'a mut u64,
-    log_lines: &'a mut Vec<String>,
-    unable: &'a mut Vec<UnableEntry>,
-    by_e164: &'a mut HashMap<String, Vec<String>>,
+    acc: &'a mut ValidateAccum,
     log_success: bool,
 }
 
@@ -457,39 +450,35 @@ fn rewrite_phone_token(args: RewritePhoneTokenArgs<'_>) -> String {
         contact_dup,
         contact_uncertain,
         region,
-        rewritten,
-        uncertain,
-        log_lines,
-        unable,
-        by_e164,
+        acc,
         log_success,
     } = args;
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return raw.to_string();
     }
-    match normalize_certain(trimmed, region) {
-        Some(e164) => {
-            *rewritten += 1;
-            by_e164
+    match normalize_checked(trimmed, region) {
+        Ok(e164) => {
+            acc.rewritten += 1;
+            acc.by_e164
                 .entry(e164.clone())
                 .or_default()
                 .push(contact_dup.to_string());
             if log_success {
                 if e164 == trimmed {
-                    log_lines.push(format!("TEL contact={contact_dup:?} phone={e164}"));
+                    acc.log_lines
+                        .push(format!("TEL contact={contact_dup:?} phone={e164}"));
                 } else {
-                    log_lines.push(format!(
+                    acc.log_lines.push(format!(
                         "REWRITTEN contact={contact_dup:?} phone={trimmed:?} -> {e164}"
                     ));
                 }
             }
             e164
         }
-        None => {
-            *uncertain += 1;
-            let reason = normalize_uncertain_reason(trimmed, region);
-            unable.push(UnableEntry {
+        Err(reason) => {
+            acc.uncertain += 1;
+            acc.unable.push(UnableEntry {
                 contact: contact_uncertain.to_string(),
                 phone: trimmed.to_string(),
                 reason,
@@ -505,11 +494,7 @@ struct RewritePhoneListArgs<'a> {
     contact_uncertain: &'a str,
     region: PhoneRegion,
     sep: char,
-    rewritten: &'a mut u64,
-    uncertain: &'a mut u64,
-    log_lines: &'a mut Vec<String>,
-    unable: &'a mut Vec<UnableEntry>,
-    by_e164: &'a mut HashMap<String, Vec<String>>,
+    acc: &'a mut ValidateAccum,
 }
 
 fn rewrite_phone_list(args: RewritePhoneListArgs<'_>) -> String {
@@ -519,11 +504,7 @@ fn rewrite_phone_list(args: RewritePhoneListArgs<'_>) -> String {
         contact_uncertain,
         region,
         sep,
-        rewritten,
-        uncertain,
-        log_lines,
-        unable,
-        by_e164,
+        acc,
     } = args;
     if raw.trim().is_empty() {
         return raw.to_string();
@@ -536,11 +517,7 @@ fn rewrite_phone_list(args: RewritePhoneListArgs<'_>) -> String {
                 contact_dup,
                 contact_uncertain,
                 region,
-                rewritten,
-                uncertain,
-                log_lines,
-                unable,
-                by_e164,
+                acc,
                 log_success: false,
             })
         })
@@ -553,11 +530,7 @@ struct RewriteVcfArgs<'a> {
     output: &'a Path,
     region: PhoneRegion,
     write: bool,
-    rewritten: &'a mut u64,
-    uncertain: &'a mut u64,
-    log_lines: &'a mut Vec<String>,
-    unable: &'a mut Vec<UnableEntry>,
-    by_e164: &'a mut HashMap<String, Vec<String>>,
+    acc: &'a mut ValidateAccum,
 }
 
 fn rewrite_vcf(args: RewriteVcfArgs<'_>) -> Result<()> {
@@ -566,11 +539,7 @@ fn rewrite_vcf(args: RewriteVcfArgs<'_>) -> Result<()> {
         output,
         region,
         write,
-        rewritten,
-        uncertain,
-        log_lines,
-        unable,
-        by_e164,
+        acc,
     } = args;
     let text = fs::read_to_string(input).with_context(|| format!("read {}", input.display()))?;
     let mut out = String::new();
@@ -582,13 +551,14 @@ fn rewrite_vcf(args: RewriteVcfArgs<'_>) -> Result<()> {
         if upper == "BEGIN:VCARD" {
             card_index += 1;
             current_name = "(unnamed)".into();
-            log_lines.push(format!("# vcard {card_index} begin"));
+            acc.log_lines.push(format!("# vcard {card_index} begin"));
             out.push_str(line);
             out.push('\n');
             continue;
         }
         if upper == "END:VCARD" {
-            log_lines.push(format!("# vcard {card_index} end name={current_name:?}"));
+            acc.log_lines
+                .push(format!("# vcard {card_index} end name={current_name:?}"));
             out.push_str(line);
             out.push('\n');
             continue;
@@ -598,7 +568,8 @@ fn rewrite_vcf(args: RewriteVcfArgs<'_>) -> Result<()> {
             if current_name.is_empty() {
                 current_name = "(unnamed)".into();
             }
-            log_lines.push(format!("# vcard {card_index} FN={current_name:?}"));
+            acc.log_lines
+                .push(format!("# vcard {card_index} FN={current_name:?}"));
             out.push_str(line);
             out.push('\n');
             continue;
@@ -613,7 +584,8 @@ fn rewrite_vcf(args: RewriteVcfArgs<'_>) -> Result<()> {
             if current_name.is_empty() {
                 current_name = "(unnamed)".into();
             }
-            log_lines.push(format!("# vcard {card_index} N={current_name:?}"));
+            acc.log_lines
+                .push(format!("# vcard {card_index} N={current_name:?}"));
             out.push_str(line);
             out.push('\n');
             continue;
@@ -629,11 +601,7 @@ fn rewrite_vcf(args: RewriteVcfArgs<'_>) -> Result<()> {
                 contact_dup: &label,
                 contact_uncertain: &display,
                 region,
-                rewritten,
-                uncertain,
-                log_lines,
-                unable,
-                by_e164,
+                acc,
                 log_success: true,
             });
             out.push_str(prefix);
@@ -690,11 +658,7 @@ struct RewriteVcardCsvArgs<'a> {
     output: &'a Path,
     region: PhoneRegion,
     write: bool,
-    rewritten: &'a mut u64,
-    uncertain: &'a mut u64,
-    log_lines: &'a mut Vec<String>,
-    unable: &'a mut Vec<UnableEntry>,
-    by_e164: &'a mut HashMap<String, Vec<String>>,
+    acc: &'a mut ValidateAccum,
     cards: &'a mut Vec<OutCard>,
 }
 
@@ -704,11 +668,7 @@ fn rewrite_vcard_csv(args: RewriteVcardCsvArgs<'_>) -> Result<()> {
         output,
         region,
         write,
-        rewritten,
-        uncertain,
-        log_lines,
-        unable,
-        by_e164,
+        acc,
         cards,
     } = args;
     let file = File::open(input).with_context(|| format!("open {}", input.display()))?;
@@ -763,11 +723,7 @@ fn rewrite_vcard_csv(args: RewriteVcardCsvArgs<'_>) -> Result<()> {
                     contact_uncertain: &contact_uncertain,
                     region,
                     sep: ';',
-                    rewritten,
-                    uncertain,
-                    log_lines,
-                    unable,
-                    by_e164,
+                    acc,
                 });
                 for p in cell.split(';') {
                     let p = p.trim();

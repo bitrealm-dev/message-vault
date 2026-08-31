@@ -162,22 +162,6 @@ impl SbrBackupWriter {
     }
 }
 
-/// Escape a value for use inside a double-quoted XML attribute.
-fn escape_attr(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for ch in value.chars() {
-        match ch {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&apos;"),
-            c => out.push(c),
-        }
-    }
-    out
-}
-
 /// Standard base64 for MMS `data` attributes.
 pub fn encode_part_data(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
@@ -185,7 +169,9 @@ pub fn encode_part_data(bytes: &[u8]) -> String {
 
 fn write_attrs(w: &mut impl Write, attrs: &BTreeMap<String, String>) -> Result<()> {
     for (k, v) in attrs {
-        write!(w, r#" {}="{}""#, k, escape_attr(v))?;
+        // quick-xml's full escape covers exactly the double-quoted attribute
+        // set (`&` `<` `>` `"` `'`).
+        write!(w, r#" {}="{}""#, k, quick_xml::escape::escape(v.as_str()))?;
     }
     Ok(())
 }

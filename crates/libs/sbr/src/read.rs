@@ -5,7 +5,7 @@ use base64::Engine;
 use phone::sanitize_number;
 use quick_xml::{Reader, XmlVersion, events::Event};
 use regex::Regex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::BufRead;
@@ -73,7 +73,11 @@ pub struct AttachmentBlob {
 }
 
 /// Serde-tagged raw source bag (`kind: sms|mms`) preserved for write-back.
-#[derive(Debug, Clone, Serialize)]
+///
+/// `Deserialize` recovers the bag from an IR message's `source.fields` on the
+/// write-back path (`ir-format`'s SBR writer); `parts`/`addrs` default to
+/// empty so a bag written without them still parses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum SourceFields {
     /// Raw SMS source bag.
@@ -88,8 +92,10 @@ pub enum SourceFields {
         /// Raw MMS attributes.
         attrs: BTreeMap<String, String>,
         /// Raw `<part>` attribute maps.
+        #[serde(default)]
         parts: Vec<BTreeMap<String, String>>,
         /// Raw `<addr>` attribute maps.
+        #[serde(default)]
         addrs: Vec<BTreeMap<String, String>>,
     },
 }
@@ -630,7 +636,7 @@ fn parse_mms(
             "Group: {}",
             peers
                 .iter()
-                .map(|d| phone::normalize_guarded(d, phone::PhoneRegion::for_raw(d)).normalized)
+                .map(|d| phone::normalize_lenient(d))
                 .collect::<Vec<_>>()
                 .join(", ")
         )
@@ -639,7 +645,7 @@ fn parse_mms(
             "Group: {}, and {} others",
             peers[..4]
                 .iter()
-                .map(|d| phone::normalize_guarded(d, phone::PhoneRegion::for_raw(d)).normalized)
+                .map(|d| phone::normalize_lenient(d))
                 .collect::<Vec<_>>()
                 .join(", "),
             peers.len() - 4
@@ -811,16 +817,11 @@ pub fn infer_owner_phones(path: &Path) -> Result<Vec<String>> {
                         if get(&a, "type").trim() == MMS_ADDR_FROM {
                             let raw = get(&a, "address");
                             if !raw.eq_ignore_ascii_case(INSERT_ADDRESS_TOKEN)
-                                && let Some(digits) = sanitize_number(raw).filter(|d| d != "0")
-                            {
                                 // Guarded (US-digit form, matching
                                 // OwnerPhoneSet): never a fabricated `+0…`.
-                                *counts
-                                    .entry(
-                                        phone::normalize_guarded(&digits, phone::PhoneRegion::Usa)
-                                            .normalized,
-                                    )
-                                    .or_default() += 1;
+                                && let Some(normalized) = phone::normalize_digits_us(raw)
+                            {
+                                *counts.entry(normalized).or_default() += 1;
                             }
                         }
                     }

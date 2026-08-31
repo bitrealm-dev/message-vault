@@ -14,7 +14,7 @@ use message_ir::HandleType;
 /// Rejects junk like `"4"` or `"06"`.
 const MIN_PHONE_DIGITS: usize = 4;
 
-/// Region rules for [`normalize_certain`] (contacts validation only).
+/// Region rules for [`normalize_checked`] (contacts validation only).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PhoneRegion {
     /// US NANP: certain only for 10 digits or 11 digits starting with `1`.
@@ -72,69 +72,49 @@ pub fn sanitize_number(num: &str) -> Option<String> {
     }
 }
 
-/// E.164 only when the parse is unambiguous for `region`.
+/// E.164 when the parse is unambiguous for `region`, else the human-readable
+/// reason it is not.
 ///
 /// Unlike [`sanitize_number`], this does **not** accept short codes or
 /// ambiguous lengths. Contacts validation uses this before rewriting files.
-pub fn normalize_certain(raw: &str, region: PhoneRegion) -> Option<String> {
+/// The error strings are fixed so the validate log groups failures under one
+/// header per reason.
+///
+/// # Errors
+///
+/// Returns the reason the value is not certain E.164 (empty, no digits, wrong
+/// digit count for the region, missing `+` in international mode, or a
+/// country code starting with 0 — 0 is the trunk prefix, so `+020…` would be
+/// fabricated).
+pub fn normalize_checked(raw: &str, region: PhoneRegion) -> Result<String, String> {
     let raw = raw.trim();
     if raw.is_empty() {
-        return None;
+        return Err("empty phone".into());
     }
     let digits: String = raw.chars().filter(|c| c.is_ascii_digit()).collect();
     match region {
         PhoneRegion::Usa => {
             if digits.len() == 10 {
-                Some(format!("+1{digits}"))
+                Ok(format!("+1{digits}"))
             } else if digits.len() == 11 && digits.starts_with('1') {
-                Some(format!("+{digits}"))
-            } else {
-                None
-            }
-        }
-        PhoneRegion::International => {
-            if !raw.contains('+') {
-                return None;
-            }
-            // E.164 country codes never start with 0 (0 is the trunk prefix),
-            // so a `+020…` value is fabricated, not certain.
-            if (8..=15).contains(&digits.len()) && !digits.starts_with('0') {
-                Some(format!("+{digits}"))
-            } else {
-                None
-            }
-        }
-    }
-}
-
-/// Human-readable reason when [`normalize_certain`] returns `None`.
-pub fn normalize_uncertain_reason(raw: &str, region: PhoneRegion) -> String {
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return "empty phone".into();
-    }
-    let digits: String = raw.chars().filter(|c| c.is_ascii_digit()).collect();
-    match region {
-        PhoneRegion::Usa => {
-            if digits.len() == 10 || (digits.len() == 11 && digits.starts_with('1')) {
-                "unexpected: looked certain".into()
+                Ok(format!("+{digits}"))
             } else if digits.is_empty() {
-                "no digits".into()
+                Err("no digits".into())
             } else {
-                // Fixed string so validate log groups all USA length failures under one header.
-                "USA needs 10 digits or 11 starting with 1".into()
+                Err("USA needs 10 digits or 11 starting with 1".into())
             }
         }
         PhoneRegion::International => {
             if !raw.contains('+') {
-                "international mode requires a leading +".into()
+                Err("international mode requires a leading +".into())
             } else if digits.starts_with('0') {
-                // Fixed string so validate log groups all country-code-0 failures.
-                "international country code cannot start with 0".into()
-            } else if !(8..=15).contains(&digits.len()) {
-                "international needs 8–15 digits after +".into()
+                // E.164 country codes never start with 0 (0 is the trunk
+                // prefix), so a `+020…` value is fabricated, not certain.
+                Err("international country code cannot start with 0".into())
+            } else if (8..=15).contains(&digits.len()) {
+                Ok(format!("+{digits}"))
             } else {
-                "unexpected: looked certain".into()
+                Err("international needs 8–15 digits after +".into())
             }
         }
     }
@@ -159,19 +139,42 @@ pub struct GuardedNormalize {
 /// `020 7946 0000` would otherwise become the invalid `+02079460000`) and
 /// attach a human-readable reason so the vault can show it for review.
 pub fn normalize_guarded(raw: &str, region: PhoneRegion) -> GuardedNormalize {
-    match normalize_certain(raw, region) {
-        Some(e164) => GuardedNormalize {
+    match normalize_checked(raw, region) {
+        Ok(e164) => GuardedNormalize {
             normalized: e164,
             note: None,
         },
-        None => {
-            let digits = sanitize_number(raw).unwrap_or_default();
-            GuardedNormalize {
-                normalized: digits.clone(),
-                note: Some(normalize_uncertain_reason(raw, region)),
-            }
-        }
+        Err(reason) => GuardedNormalize {
+            normalized: sanitize_number(raw).unwrap_or_default(),
+            note: Some(reason),
+        },
     }
+}
+
+/// Guarded normalization with the region inferred from the raw value: the
+/// lenient one-argument policy loaders and exporters share.
+///
+/// Policy: [`PhoneRegion::for_raw`] picks the region (a `+`-prefixed value
+/// uses international rules, anything else US), then [`normalize_guarded`]
+/// yields E.164 when the parse is certain and the sanitized digits as-is
+/// otherwise — never a fabricated `+0…`. The result is empty when no usable
+/// digits survive (fewer than 4). The guard note is dropped; call
+/// [`normalize_guarded`] directly when the caller records the note.
+pub fn normalize_lenient(raw: &str) -> String {
+    normalize_guarded(raw, PhoneRegion::for_raw(raw)).normalized
+}
+
+/// Sanitize to US digits, then apply the guarded policy: the one-argument
+/// form for values already known to be phone-shaped digit strings.
+///
+/// Policy: `None` when [`sanitize_number`] finds no usable digits (fewer than
+/// 4 after stripping formatting and a leading US `1`). Otherwise the guarded
+/// form of the digits under [`PhoneRegion::Usa`]: `+1…` E.164 when the digit
+/// count is unambiguous, else the sanitized digits as-is (short codes and
+/// trunk-zero locals stay digits — never a fabricated `+0…`).
+pub fn normalize_digits_us(raw: &str) -> Option<String> {
+    let digits = sanitize_number(raw)?;
+    Some(normalize_guarded(&digits, PhoneRegion::Usa).normalized)
 }
 
 /// One normalization policy for a typed handle, shared by the vault, the
@@ -280,6 +283,17 @@ impl OwnerHandleSet {
             .find(|(_, t)| *t == HandleType::Phone)
             .map(|(v, _)| v.as_str())
     }
+
+    /// The guarded-normalized primary owner phone, for callers that need one
+    /// representative owner value (e.g. `owner_handle` in export metadata).
+    ///
+    /// `None` only when the set holds no phone-typed handles. A set built
+    /// with [`OwnerHandleSet::from_phones`] always returns `Some`: that
+    /// constructor rejects an empty list and types every entry as a phone.
+    pub fn primary_owner_handle(&self) -> Option<String> {
+        self.primary_phone_digit()
+            .map(|d| normalize_guarded(d, PhoneRegion::Usa).normalized)
+    }
 }
 
 /// Strip a stored phone handle back to digits for comparison with [`sanitize_number`].
@@ -333,19 +347,22 @@ mod tests {
     #[test]
     fn certain_usa() {
         assert_eq!(
-            normalize_certain("(542).341-2398", PhoneRegion::Usa).as_deref(),
+            normalize_checked("(542).341-2398", PhoneRegion::Usa)
+                .ok()
+                .as_deref(),
             Some("+15423412398")
         );
         assert_eq!(
-            normalize_certain("1-555-456-7890", PhoneRegion::Usa).as_deref(),
+            normalize_checked("1-555-456-7890", PhoneRegion::Usa)
+                .ok()
+                .as_deref(),
             Some("+15554567890")
         );
-        assert_eq!(
-            normalize_certain("1555-4567", PhoneRegion::Usa),
-            None,
+        assert!(
+            normalize_checked("1555-4567", PhoneRegion::Usa).is_err(),
             "too short for USA certainty"
         );
-        assert_eq!(normalize_certain("+442071838750", PhoneRegion::Usa), None);
+        assert!(normalize_checked("+442071838750", PhoneRegion::Usa).is_err());
     }
 
     #[test]
@@ -369,10 +386,7 @@ mod tests {
     fn guarded_rejects_fabricated_plus_zero() {
         // E.164 country codes never start with 0: `+020…` must not be trusted
         // as certain even when it has a plausible digit count.
-        assert_eq!(
-            normalize_certain("+02079460000", PhoneRegion::International),
-            None
-        );
+        assert!(normalize_checked("+02079460000", PhoneRegion::International).is_err());
         let g = normalize_guarded("+02079460000", PhoneRegion::International);
         assert_eq!(g.normalized, "02079460000");
         assert_eq!(
@@ -417,18 +431,81 @@ mod tests {
     #[test]
     fn certain_international() {
         assert_eq!(
-            normalize_certain("+44 20 7183 8750", PhoneRegion::International).as_deref(),
+            normalize_checked("+44 20 7183 8750", PhoneRegion::International)
+                .ok()
+                .as_deref(),
             Some("+442071838750")
         );
-        assert_eq!(
-            normalize_certain("(542).341-2398", PhoneRegion::International),
-            None,
+        assert!(
+            normalize_checked("(542).341-2398", PhoneRegion::International).is_err(),
             "no leading +"
         );
         assert_eq!(
-            normalize_certain("+1-542-341-2398", PhoneRegion::International).as_deref(),
+            normalize_checked("+1-542-341-2398", PhoneRegion::International)
+                .ok()
+                .as_deref(),
             Some("+15423412398")
         );
+    }
+
+    #[test]
+    fn checked_rejects_with_fixed_reasons() {
+        assert_eq!(
+            normalize_checked("+12", PhoneRegion::International),
+            Err("international needs 8–15 digits after +".into())
+        );
+        assert_eq!(
+            normalize_checked("442079460000", PhoneRegion::International),
+            Err("international mode requires a leading +".into())
+        );
+        assert_eq!(
+            normalize_checked("", PhoneRegion::Usa),
+            Err("empty phone".into())
+        );
+        assert_eq!(
+            normalize_checked("abc", PhoneRegion::Usa),
+            Err("no digits".into())
+        );
+    }
+
+    #[test]
+    fn lenient_one_arg_matches_guarded_for_raw() {
+        assert_eq!(normalize_lenient("(555) 555-0100"), "+15555550100");
+        assert_eq!(normalize_lenient("+44 20 7183 8750"), "+442071838750");
+        assert_eq!(normalize_lenient("020 7946 0000"), "02079460000");
+        assert_eq!(normalize_lenient("+02079460000"), "02079460000");
+        assert_eq!(normalize_lenient("7535"), "7535");
+        assert_eq!(normalize_lenient("no digits here"), "");
+    }
+
+    #[test]
+    fn digits_us_one_arg_sanitizes_then_guards() {
+        assert_eq!(
+            normalize_digits_us("+1 (555) 555-0100").as_deref(),
+            Some("+15555550100")
+        );
+        assert_eq!(normalize_digits_us("7535").as_deref(), Some("7535"));
+        assert_eq!(
+            normalize_digits_us("020 7946 0000").as_deref(),
+            Some("02079460000")
+        );
+        assert_eq!(normalize_digits_us("06"), None);
+        assert_eq!(normalize_digits_us(""), None);
+    }
+
+    #[test]
+    fn primary_owner_handle_present_for_phone_sets() {
+        let owners = OwnerHandleSet::from_phones(&["(555) 555-0100".into()]).unwrap();
+        assert_eq!(
+            owners.primary_owner_handle().as_deref(),
+            Some("+15555550100")
+        );
+        let trunk = OwnerHandleSet::from_phones(&["020 7946 0000".into()]).unwrap();
+        assert_eq!(trunk.primary_owner_handle().as_deref(), Some("02079460000"));
+        // Only a phone-free set has no primary owner handle.
+        let email_only =
+            OwnerHandleSet::new(&[("a@example.com".into(), HandleType::Email)]).unwrap();
+        assert_eq!(email_only.primary_owner_handle(), None);
     }
 
     #[test]

@@ -687,13 +687,10 @@ pub fn derived_rel_path(sha256: &str, ext: &str) -> String {
     crate::assets::shard_rel_path(sha256, ext)
 }
 
+/// MIME type for a derived-media extension, from the shared table in
+/// [`media`]; `application/octet-stream` for anything unrecognized.
 fn mime_for_ext(ext: &str) -> &'static str {
-    match ext {
-        ".jpg" | ".jpeg" => "image/jpeg",
-        ".mp4" => "video/mp4",
-        ".mp3" => "audio/mpeg",
-        _ => "application/octet-stream",
-    }
+    media::mime_for_ext(ext).unwrap_or("application/octet-stream")
 }
 
 fn store_derived_bytes(derived_dir: &Path, buf: &[u8], ext: &str) -> Result<DerivedBlob> {
