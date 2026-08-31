@@ -5,13 +5,10 @@
 
 use axum::Json;
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
 
 use crate::named_membership::{self, tag_spec};
-use crate::server::{
-    ApiError, AppState, MembershipChangedResponse, require_full_access, resolve_auth,
-};
+use crate::server::{ApiError, AppState, FullAccess, MembershipChangedResponse};
 
 /// A tag name.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -81,11 +78,8 @@ pub(crate) struct MessageTagMembersResponse {
 )]
 pub(crate) async fn message_tags_list_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
 ) -> Result<Json<MessageTagsListResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     let tags = named_membership::list_names(tag_spec(), &mut conn, &auth.account_id).await?;
     Ok(Json(MessageTagsListResponse { tags }))
@@ -108,12 +102,9 @@ pub(crate) async fn message_tags_list_handler(
 )]
 pub(crate) async fn message_tags_create_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     Json(body): Json<MessageTagNameBody>,
 ) -> Result<Json<MessageTagNamedListResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     let name = body.name;
     let created =
@@ -143,12 +134,9 @@ pub(crate) async fn message_tags_create_handler(
 )]
 pub(crate) async fn message_tags_rename_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     Json(body): Json<MessageTagRenameBody>,
 ) -> Result<Json<MessageTagNamedListResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     let name = named_membership::rename_name(
         tag_spec(),
@@ -179,12 +167,9 @@ pub(crate) async fn message_tags_rename_handler(
 )]
 pub(crate) async fn message_tags_delete_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     Json(body): Json<MessageTagNameBody>,
 ) -> Result<Json<MessageTagDeleteResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     named_membership::delete_name(tag_spec(), &mut conn, &auth.account_id, &body.name).await?;
     let tags = named_membership::list_names(tag_spec(), &mut conn, &auth.account_id).await?;
@@ -207,12 +192,9 @@ pub(crate) async fn message_tags_delete_handler(
 )]
 pub(crate) async fn message_tags_members_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     Query(query): Query<MessageTagMembersQuery>,
 ) -> Result<Json<MessageTagMembersResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     let member_conversation_ids =
         named_membership::list_member_ids(tag_spec(), &mut conn, &auth.account_id, &query.name)
@@ -240,12 +222,9 @@ pub(crate) async fn message_tags_members_handler(
 )]
 pub(crate) async fn message_tags_membership_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     Json(body): Json<MessageTagMembershipBody>,
 ) -> Result<Json<MembershipChangedResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     let changed = named_membership::set_membership(
         tag_spec(),

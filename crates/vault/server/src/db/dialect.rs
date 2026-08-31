@@ -9,11 +9,10 @@ use crate::db::engine::DbEngine;
 
 /// Case-insensitive substring match fragment (`%term%` patterns).
 ///
-/// The `?` placeholder form is **only** for the renumber-pass fragments
-/// consumed by the Task 5 SqlParam renumberer, which rewrites `?` to the
-/// right `$n`; nothing else may use it. Hand-numbered SQL must use
-/// [`like_ci_numbered`] instead — sqlx Any does no client-side placeholder
-/// rewriting, so a bare `?` is invalid on Postgres.
+/// The `?` placeholder form is **only** for fragments consumed by the
+/// [`crate::db::sql::renumber_placeholders`] pass, which rewrites `?` to the
+/// right `$n`; nothing else may use it — sqlx Any does no client-side
+/// placeholder rewriting, so a bare `?` is invalid on Postgres.
 pub fn like_ci(engine: DbEngine) -> &'static str {
     match engine {
         DbEngine::Sqlite => "LIKE ? COLLATE NOCASE",
@@ -21,13 +20,26 @@ pub fn like_ci(engine: DbEngine) -> &'static str {
     }
 }
 
-/// Case-insensitive substring match with an explicit numbered placeholder
-/// (`%term%` patterns), for SQL that hand-numbers its binds. `n` is the
-/// 1-based index of the pattern argument in the statement.
-pub fn like_ci_numbered(engine: DbEngine, n: usize) -> String {
+/// Case-insensitive equality on a name column (`COLLATE NOCASE` is invalid
+/// Postgres SQL; Postgres lower()s both sides). `column` is the full column
+/// expression (`name`, `ct.name`); the alias must stay INSIDE `lower()` —
+/// `ct.lower(...)` parses as a schema-qualified function call. `placeholder`
+/// is the placeholder text: `"?"` for renumber-pass fragments, `"$2"` for
+/// hand-numbered SQL.
+pub fn name_eq_ci(engine: DbEngine, column: &str, placeholder: &str) -> String {
     match engine {
-        DbEngine::Sqlite => format!("LIKE ${n} COLLATE NOCASE"),
-        DbEngine::Postgres => format!("ILIKE ${n}"),
+        DbEngine::Sqlite => format!("{column} = {placeholder} COLLATE NOCASE"),
+        DbEngine::Postgres => format!("lower({column}) = lower({placeholder})"),
+    }
+}
+
+/// Case-insensitive A–Z `ORDER BY` on a name column, matching [`name_eq_ci`].
+/// `column` is the full column expression (`name`, `n.name`); append further
+/// sort keys with a leading comma.
+pub fn order_by_name_ci(engine: DbEngine, column: &str) -> String {
+    match engine {
+        DbEngine::Sqlite => format!("ORDER BY {column} COLLATE NOCASE"),
+        DbEngine::Postgres => format!("ORDER BY lower({column})"),
     }
 }
 
@@ -126,17 +138,45 @@ mod tests {
     }
 
     #[test]
-    fn like_ci_numbered_emits_engine_placeholders() {
+    fn name_eq_ci_keeps_alias_inside_lower() {
         assert_eq!(
-            like_ci_numbered(DbEngine::Sqlite, 1),
-            "LIKE $1 COLLATE NOCASE"
+            name_eq_ci(DbEngine::Sqlite, "name", "$2"),
+            "name = $2 COLLATE NOCASE"
         );
-        assert_eq!(like_ci_numbered(DbEngine::Postgres, 1), "ILIKE $1");
         assert_eq!(
-            like_ci_numbered(DbEngine::Sqlite, 3),
-            "LIKE $3 COLLATE NOCASE"
+            name_eq_ci(DbEngine::Postgres, "name", "$2"),
+            "lower(name) = lower($2)"
         );
-        assert_eq!(like_ci_numbered(DbEngine::Postgres, 3), "ILIKE $3");
+        assert_eq!(
+            name_eq_ci(DbEngine::Sqlite, "ct.name", "?"),
+            "ct.name = ? COLLATE NOCASE"
+        );
+        // The alias stays inside lower(): `ct.lower(...)` would parse as a
+        // schema-qualified function call.
+        assert_eq!(
+            name_eq_ci(DbEngine::Postgres, "ct.name", "?"),
+            "lower(ct.name) = lower(?)"
+        );
+    }
+
+    #[test]
+    fn order_by_name_ci_emits_engine_collations() {
+        assert_eq!(
+            order_by_name_ci(DbEngine::Sqlite, "name"),
+            "ORDER BY name COLLATE NOCASE"
+        );
+        assert_eq!(
+            order_by_name_ci(DbEngine::Postgres, "name"),
+            "ORDER BY lower(name)"
+        );
+        assert_eq!(
+            order_by_name_ci(DbEngine::Sqlite, "n.name"),
+            "ORDER BY n.name COLLATE NOCASE"
+        );
+        assert_eq!(
+            order_by_name_ci(DbEngine::Postgres, "n.name"),
+            "ORDER BY lower(n.name)"
+        );
     }
 
     #[test]

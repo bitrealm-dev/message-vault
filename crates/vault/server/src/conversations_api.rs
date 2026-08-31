@@ -4,17 +4,19 @@ use std::collections::{HashMap, HashSet};
 
 use axum::Json;
 use axum::extract::{Path as AxumPath, Query, State};
-use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
 use sqlx::AnyConnection;
 use sqlx::Row;
 
-use crate::db::dialect::{engine_of, like_ci_numbered};
+use crate::db::dialect::{engine_of, like_ci, name_eq_ci};
 use crate::db::engine::DbEngine;
-use crate::db::sql::{fold_in_id_chunks, group_rows_by_id, in_placeholders};
-use crate::export_api::ExportQueryError;
-use crate::search_query::{CountComparison, parse_count_comparison};
-use crate::server::{ApiError, AppState, require_full_access, resolve_auth};
+use crate::db::sql::{
+    SqlParam, bind_args, fold_in_id_chunks, group_rows_by_id, in_placeholders,
+    renumber_placeholders,
+};
+use crate::export_api::{ExportQueryError, has_message_tag_sql};
+use crate::search_query::{CountComparison, extract_keyed_ops, parse_count_comparison};
+use crate::server::{ApiError, AppState, FullAccess};
 
 pub use crate::page_limits::{
     DEFAULT_LIST_LIMIT, MAX_CONVERSATION_LIST_LIMIT as MAX_LIST_LIMIT, MAX_LIST_OFFSET,
@@ -98,14 +100,6 @@ impl ConversationOrder {
             (ConversationSort::Messages, SortOrder::Asc) => "message_count ASC, c.id ASC",
         }
     }
-}
-
-/// One bound value in the dynamic list query. sqlx Any has no
-/// user-constructible dynamic value, so binds ride this enum and are chained
-/// onto the statement in order at execution time.
-enum Bind {
-    Text(String),
-    Int(i64),
 }
 
 /// One page of the conversation list.
@@ -229,77 +223,7 @@ fn parse_participants_comparison(raw: &str) -> Option<CountComparison> {
     parse_count_comparison(t)
 }
 
-/// Pull `people:` / `tag:` / `within:` / `label:` (optional leading `-`) and quoted values.
-fn pull_named_ops(q: &str) -> (String, Vec<(String, String, bool)>) {
-    const KEYS: &[&str] = &["people", "tag", "within", "label"];
-    let mut rest = String::new();
-    let mut found = Vec::new();
-    let bytes = q.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-            i += 1;
-        }
-        if i >= bytes.len() {
-            break;
-        }
-        let start = i;
-        let negated = bytes[i] == b'-';
-        let key_start = if negated { i + 1 } else { i };
-        let mut j = key_start;
-        while j < bytes.len() && bytes[j] != b':' && !bytes[j].is_ascii_whitespace() {
-            j += 1;
-        }
-        if j < bytes.len() && bytes[j] == b':' {
-            let key = q[key_start..j].to_ascii_lowercase();
-            if KEYS.contains(&key.as_str()) {
-                j += 1;
-                let value = if j < bytes.len() && bytes[j] == b'"' {
-                    j += 1;
-                    let v0 = j;
-                    while j < bytes.len() && bytes[j] != b'"' {
-                        j += 1;
-                    }
-                    let v = q[v0..j].to_string();
-                    if j < bytes.len() {
-                        j += 1;
-                    }
-                    v
-                } else {
-                    let v0 = j;
-                    while j < bytes.len() && !bytes[j].is_ascii_whitespace() {
-                        j += 1;
-                    }
-                    q[v0..j].to_string()
-                };
-                if !value.is_empty() {
-                    found.push((key, value, negated));
-                }
-                i = j;
-                continue;
-            }
-        }
-        while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
-            i += 1;
-        }
-        if !rest.is_empty() {
-            rest.push(' ');
-        }
-        rest.push_str(&q[start..i]);
-    }
-    (rest, found)
-}
-
-/// Case-insensitive name equality for one engine (`COLLATE NOCASE` is
-/// invalid Postgres SQL; Postgres uses `lower()`).
-fn name_eq_sql(engine: DbEngine, placeholder: usize) -> String {
-    match engine {
-        DbEngine::Sqlite => format!("name = ${placeholder} COLLATE NOCASE"),
-        DbEngine::Postgres => format!("lower(name) = lower(${placeholder})"),
-    }
-}
-
-fn involves_people_group_sql(engine: DbEngine, exclude: bool, placeholder: usize) -> String {
+fn involves_people_group_sql(engine: DbEngine, exclude: bool) -> String {
     let exists = if exclude { "NOT EXISTS" } else { "EXISTS" };
     format!(
         "{exists} (
@@ -317,21 +241,7 @@ fn involves_people_group_sql(engine: DbEngine, exclude: bool, placeholder: usize
                )
              )
          )",
-        name_eq = name_eq_sql(engine, placeholder)
-    )
-}
-
-fn has_message_tag_sql(engine: DbEngine, exclude: bool, placeholder: usize) -> String {
-    let exists = if exclude { "NOT EXISTS" } else { "EXISTS" };
-    format!(
-        "{exists} (
-           SELECT 1 FROM message_tag_members ctm
-           JOIN message_tags ct ON ct.id = ctm.tag_id
-           WHERE ctm.conversation_id = c.id
-             AND ct.account_id = c.account_id
-             AND {name_eq}
-         )",
-        name_eq = name_eq_sql(engine, placeholder)
+        name_eq = name_eq_ci(engine, "cg.name", "?")
     )
 }
 
@@ -345,8 +255,12 @@ fn has_message_tag_sql(engine: DbEngine, exclude: bool, placeholder: usize) -> S
 fn parse_conversation_list_query(q: &str) -> ConversationListQuery {
     let mut out = ConversationListQuery::default();
     let mut text_parts: Vec<&str> = Vec::new();
-    let (remainder, named) = pull_named_ops(q);
-    for (key, value, negated) in named {
+    // Every occurrence is pulled, in order (`first_only` off), so a repeated
+    // key keeps its last-writer-wins behaviour below; `-key:` negates.
+    let (remainder, named) =
+        extract_keyed_ops(q, &["people", "tag", "within", "label"], true, false);
+    for op in named {
+        let (key, value, negated) = (op.key, op.value, op.negated);
         match key.as_str() {
             "tag" => {
                 if value.eq_ignore_ascii_case("none") {
@@ -458,8 +372,12 @@ pub async fn list_conversations_sorted(
     let parsed = parse_conversation_list_query(q.trim());
     let engine = engine_of(conn);
 
-    let mut where_parts = vec!["c.account_id = $1".to_string()];
-    let mut params: Vec<Bind> = vec![Bind::Text(account_id.to_string())];
+    // Placeholder convention: every fragment writes `?`; the statement is
+    // renumbered to `$1..$N` once, so textual placeholder order must equal
+    // `params` push order (fragments are appended and bound in the same
+    // sequence, for both engines).
+    let mut where_parts = vec!["c.account_id = ?".to_string()];
+    let mut params: Vec<SqlParam> = vec![SqlParam::Text(account_id.to_string())];
 
     if parsed.trash_only {
         // Match normal-list exclusion: conversation trash OR chat-handle trash.
@@ -493,47 +411,40 @@ pub async fn list_conversations_sorted(
 
     if let Some(ref handle) = parsed.handle {
         if let Some(ref service) = parsed.service {
-            let n = params.len() + 1;
-            where_parts.push(format!(
+            where_parts.push(
                 "(
-                    (hc.raw = ${n} AND lower(hc.service) = lower(${n1}))
+                    (hc.raw = ? AND lower(hc.service) = lower(?))
                     OR EXISTS (
                         SELECT 1 FROM participants p
                         JOIN handles ph ON ph.id = p.handle_id
                         WHERE p.conversation_id = c.id
-                          AND ph.raw = ${n2}
-                          AND lower(ph.service) = lower(${n3})
+                          AND ph.raw = ?
+                          AND lower(ph.service) = lower(?)
                     )
-                  )",
-                n = n,
-                n1 = n + 1,
-                n2 = n + 2,
-                n3 = n + 3
-            ));
-            params.push(Bind::Text(handle.clone()));
-            params.push(Bind::Text(service.clone()));
-            params.push(Bind::Text(handle.clone()));
-            params.push(Bind::Text(service.clone()));
+                  )"
+                .into(),
+            );
+            params.push(SqlParam::Text(handle.clone()));
+            params.push(SqlParam::Text(service.clone()));
+            params.push(SqlParam::Text(handle.clone()));
+            params.push(SqlParam::Text(service.clone()));
         } else {
-            let n = params.len() + 1;
-            where_parts.push(format!(
-                "(hc.raw = ${n} OR EXISTS (
+            where_parts.push(
+                "(hc.raw = ? OR EXISTS (
                     SELECT 1 FROM participants p
                     JOIN handles ph ON ph.id = p.handle_id
-                    WHERE p.conversation_id = c.id AND ph.raw = ${n1}
-                  ))",
-                n = n,
-                n1 = n + 1
-            ));
-            params.push(Bind::Text(handle.clone()));
-            params.push(Bind::Text(handle.clone()));
+                    WHERE p.conversation_id = c.id AND ph.raw = ?
+                  ))"
+                .into(),
+            );
+            params.push(SqlParam::Text(handle.clone()));
+            params.push(SqlParam::Text(handle.clone()));
         }
     }
 
     if let Some(contact_id) = parsed.contact_id {
-        let n = params.len() + 1;
-        where_parts.push(crate::contacts_api::involves_contact_expr(&format!("${n}")));
-        params.push(Bind::Int(contact_id));
+        where_parts.push(crate::contacts_api::involves_contact_expr("?"));
+        params.push(SqlParam::Int(contact_id));
     }
 
     match parsed.type_filter {
@@ -547,33 +458,28 @@ pub async fn list_conversations_sorted(
     }
 
     if let Some(ref cmp) = parsed.participants {
-        let n = params.len() + 1;
         where_parts.push(format!(
-            "(SELECT COUNT(*) FROM participants pcnt WHERE pcnt.conversation_id = c.id) {} ${n}",
+            "(SELECT COUNT(*) FROM participants pcnt WHERE pcnt.conversation_id = c.id) {} ?",
             cmp.comparator.as_str()
         ));
-        params.push(Bind::Int(cmp.value as i64));
+        params.push(SqlParam::Int(cmp.value as i64));
     }
 
     if let Some(ref people) = parsed.people {
-        let n = params.len() + 1;
-        where_parts.push(involves_people_group_sql(engine, false, n));
-        params.push(Bind::Text(people.clone()));
+        where_parts.push(involves_people_group_sql(engine, false));
+        params.push(SqlParam::Text(people.clone()));
     }
     if let Some(ref people) = parsed.exclude_people {
-        let n = params.len() + 1;
-        where_parts.push(involves_people_group_sql(engine, true, n));
-        params.push(Bind::Text(people.clone()));
+        where_parts.push(involves_people_group_sql(engine, true));
+        params.push(SqlParam::Text(people.clone()));
     }
     if let Some(ref tag) = parsed.tag {
-        let n = params.len() + 1;
-        where_parts.push(has_message_tag_sql(engine, false, n));
-        params.push(Bind::Text(tag.clone()));
+        where_parts.push(has_message_tag_sql(engine, false));
+        params.push(SqlParam::Text(tag.clone()));
     }
     if let Some(ref tag) = parsed.exclude_tag {
-        let n = params.len() + 1;
-        where_parts.push(has_message_tag_sql(engine, true, n));
-        params.push(Bind::Text(tag.clone()));
+        where_parts.push(has_message_tag_sql(engine, true));
+        params.push(SqlParam::Text(tag.clone()));
     }
     if parsed.no_tag {
         where_parts.push(
@@ -587,64 +493,53 @@ pub async fn list_conversations_sorted(
     }
 
     if let Some(import_id) = parsed.import_id {
-        let n = params.len() + 1;
-        where_parts.push(format!(
+        where_parts.push(
             "EXISTS (
                SELECT 1 FROM messages m
                WHERE m.conversation_id = c.id
                  AND m.account_id = c.account_id
-                 AND m.import_id = ${n}
+                 AND m.import_id = ?
              )"
-        ));
-        params.push(Bind::Int(import_id));
+            .into(),
+        );
+        params.push(SqlParam::Int(import_id));
     }
 
     if let Some(ref text) = parsed.text {
-        let n = params.len() + 1;
         where_parts.push(format!(
-            "(c.group_title {} OR hc.raw {} OR EXISTS (
+            "(c.group_title {like} OR hc.raw {like} OR EXISTS (
                 SELECT 1 FROM participants p
                 JOIN handles ph ON ph.id = p.handle_id
                 LEFT JOIN contacts ct ON ct.id = p.contact_id
                 WHERE p.conversation_id = c.id
                   AND (
-                    ph.raw {}
-                    OR coalesce(p.name_alias, '') {}
-                    OR coalesce(ct.preferred_name, '') {}
+                    ph.raw {like}
+                    OR coalesce(p.name_alias, '') {like}
+                    OR coalesce(ct.preferred_name, '') {like}
                   )
               ))",
-            like_ci_numbered(engine, n),
-            like_ci_numbered(engine, n + 1),
-            like_ci_numbered(engine, n + 2),
-            like_ci_numbered(engine, n + 3),
-            like_ci_numbered(engine, n + 4),
+            like = like_ci(engine),
         ));
         let like = format!("%{text}%");
         for _ in 0..5 {
-            params.push(Bind::Text(like.clone()));
+            params.push(SqlParam::Text(like.clone()));
         }
     }
 
     let where_sql = where_parts.join(" AND ");
 
-    let count_sql = format!(
+    let count_sql = renumber_placeholders(&format!(
         "SELECT COUNT(*)
          FROM conversations c
          JOIN handles hc ON hc.id = c.chat_handle_id
          WHERE {where_sql}"
-    );
-    let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
-    for p in &params {
-        match p {
-            Bind::Text(v) => count_q = count_q.bind(v.clone()),
-            Bind::Int(v) => count_q = count_q.bind(*v),
-        }
-    }
-    let total: i64 = count_q.fetch_one(&mut *conn).await?;
+    ));
+    let total: i64 = sqlx::query_scalar_with(&count_sql, bind_args(&params))
+        .fetch_one(&mut *conn)
+        .await?;
     let total = total.max(0) as u64;
 
-    let page_n = params.len() + 1;
-    let sql = format!(
+    let sql = renumber_placeholders(&format!(
         "SELECT c.id,
                 c.conversation_type,
                 c.group_title,
@@ -660,21 +555,12 @@ pub async fn list_conversations_sorted(
          JOIN handles hc ON hc.id = c.chat_handle_id
          WHERE {where_sql}
          ORDER BY {order_by}
-         LIMIT ${page_n} OFFSET ${page_n_plus}",
+         LIMIT ? OFFSET ?",
         order_by = order.order_by_sql(),
-        page_n = page_n,
-        page_n_plus = page_n + 1
-    );
-    let mut page_q = sqlx::query_as::<_, RawConversationRow>(&sql);
-    for p in &params {
-        match p {
-            Bind::Text(v) => page_q = page_q.bind(v.clone()),
-            Bind::Int(v) => page_q = page_q.bind(*v),
-        }
-    }
-    let rows: Vec<RawConversationRow> = page_q
-        .bind(limit as i64)
-        .bind(offset as i64)
+    ));
+    params.push(SqlParam::Int(limit as i64));
+    params.push(SqlParam::Int(offset as i64));
+    let rows: Vec<RawConversationRow> = sqlx::query_as_with(&sql, bind_args(&params))
         .fetch_all(&mut *conn)
         .await?;
     let rows: Vec<RawConversation> = rows
@@ -1013,12 +899,9 @@ pub(crate) struct ConversationsPageQuery {
 )]
 pub(crate) async fn conversations_list_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     Query(query): Query<ConversationsPageQuery>,
 ) -> Result<Json<ConversationListPage>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     let q = query.q.unwrap_or_default();
     let limit = query.limit.unwrap_or(DEFAULT_LIST_LIMIT);
@@ -1054,12 +937,9 @@ pub(crate) async fn conversations_list_handler(
 )]
 pub(crate) async fn conversation_sources_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     AxumPath(conversation_id): AxumPath<i64>,
 ) -> Result<Json<ConversationSourcesPage>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     let page = list_conversation_source_stats(&mut conn, &auth.account_id, conversation_id).await?;
     page.map(Json)

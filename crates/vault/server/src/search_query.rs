@@ -328,6 +328,112 @@ fn read_quoted(s: &str, start: usize) -> (String, usize) {
     (phrase, i)
 }
 
+/// One `key:value` operator pulled out of a list query by
+/// [`extract_keyed_ops`].
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct KeyedOp {
+    /// Matched key, lowercased, without any leading `-` or trailing `:`.
+    pub key: String,
+    /// Operator value, quotes removed. Never empty.
+    pub value: String,
+    /// The operator was written `-key:value` (only when `negation` is on).
+    pub negated: bool,
+}
+
+/// Pull `key:value` / `key:"quoted value"` operators out of a list query.
+///
+/// Scans whitespace-separated tokens. A token that starts with a recognized
+/// key (case-insensitive) followed by `:` becomes an operator; its value runs
+/// to the closing quote (quoted form, so it may contain spaces) or to the next
+/// whitespace (bare form). A matched operator is consumed even when its value
+/// is empty; every other token is joined back into the returned remainder
+/// with single spaces, in order.
+///
+/// `negation`: a leading `-` marks the operator negated (`-tag:x`); when off,
+/// a `-`-prefixed token never matches a key and stays in the remainder.
+///
+/// `first_only`: only a key's first occurrence is an operator — later
+/// occurrences stay in the remainder as plain text (the contact-list
+/// behaviour, where a second `group:` token falls through to the free-text
+/// filter). When off, every occurrence is returned, in query order.
+///
+/// Byte scanning is safe here: every delimiter examined (`-`, `:`, `"`,
+/// ASCII whitespace) is ASCII, and values are taken as `&str` slices, so
+/// multi-byte text passes through intact (unlike `read_quoted`, which is
+/// only used on already-validated search syntax).
+pub(crate) fn extract_keyed_ops(
+    q: &str,
+    keys: &[&str],
+    negation: bool,
+    first_only: bool,
+) -> (String, Vec<KeyedOp>) {
+    let mut rest = String::new();
+    let mut found: Vec<KeyedOp> = Vec::new();
+    let mut matched_keys: Vec<String> = Vec::new();
+    let bytes = q.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+        let start = i;
+        let negated = negation && bytes[i] == b'-';
+        let key_start = if negated { i + 1 } else { i };
+        let mut j = key_start;
+        while j < bytes.len() && bytes[j] != b':' && !bytes[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        if j < bytes.len() && bytes[j] == b':' {
+            let key = q[key_start..j].to_ascii_lowercase();
+            let taken = first_only && matched_keys.contains(&key);
+            if keys.contains(&key.as_str()) && !taken {
+                j += 1;
+                let value = if j < bytes.len() && bytes[j] == b'"' {
+                    j += 1;
+                    let v0 = j;
+                    while j < bytes.len() && bytes[j] != b'"' {
+                        j += 1;
+                    }
+                    let v = q[v0..j].to_string();
+                    if j < bytes.len() {
+                        j += 1;
+                    }
+                    v
+                } else {
+                    let v0 = j;
+                    while j < bytes.len() && !bytes[j].is_ascii_whitespace() {
+                        j += 1;
+                    }
+                    q[v0..j].to_string()
+                };
+                if first_only {
+                    matched_keys.push(key.clone());
+                }
+                if !value.is_empty() {
+                    found.push(KeyedOp {
+                        key,
+                        value,
+                        negated,
+                    });
+                }
+                i = j;
+                continue;
+            }
+        }
+        while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if !rest.is_empty() {
+            rest.push(' ');
+        }
+        rest.push_str(&q[start..i]);
+    }
+    (rest, found)
+}
+
 /// Split a search string into operator tokens, quoted phrases, and parentheses.
 fn tokenize(input: &str) -> Vec<String> {
     let mut tokens = Vec::new();
@@ -1115,6 +1221,77 @@ impl fmt::Display for ConversationTypeFilter {
 mod tests {
     use super::*;
     use serde_json::Value;
+
+    fn op(key: &str, value: &str, negated: bool) -> KeyedOp {
+        KeyedOp {
+            key: key.into(),
+            value: value.into(),
+            negated,
+        }
+    }
+
+    #[test]
+    fn extract_keyed_ops_pulls_bare_quoted_and_negated() {
+        let (rest, found) = extract_keyed_ops(
+            r#"hello people:"Old Friends" -tag:Spam label:Work world"#,
+            &["people", "tag", "within", "label"],
+            true,
+            false,
+        );
+        assert_eq!(rest, "hello world");
+        assert_eq!(
+            found,
+            vec![
+                op("people", "Old Friends", false),
+                op("tag", "Spam", true),
+                op("label", "Work", false),
+            ]
+        );
+    }
+
+    #[test]
+    fn extract_keyed_ops_keeps_unrecognized_keys_in_remainder() {
+        let (rest, found) =
+            extract_keyed_ops("handle:+1555 TAG:x subgroup:y", &["tag"], true, false);
+        assert_eq!(rest, "handle:+1555 subgroup:y");
+        assert_eq!(found, vec![op("tag", "x", false)]);
+    }
+
+    #[test]
+    fn extract_keyed_ops_without_negation_leaves_dash_tokens_alone() {
+        let (rest, found) = extract_keyed_ops("-group:Family group:Work", &["group"], false, true);
+        assert_eq!(rest, "-group:Family");
+        assert_eq!(found, vec![op("group", "Work", false)]);
+    }
+
+    #[test]
+    fn extract_keyed_ops_first_only_leaves_repeats_in_remainder() {
+        let (rest, found) = extract_keyed_ops("group:a group:b", &["group"], false, true);
+        assert_eq!(rest, "group:b");
+        assert_eq!(found, vec![op("group", "a", false)]);
+
+        // Without first_only every occurrence is returned, in order.
+        let (rest, found) = extract_keyed_ops("group:a group:b", &["group"], false, false);
+        assert_eq!(rest, "");
+        assert_eq!(
+            found,
+            vec![op("group", "a", false), op("group", "b", false)]
+        );
+    }
+
+    #[test]
+    fn extract_keyed_ops_consumes_empty_values_without_an_op() {
+        let (rest, found) = extract_keyed_ops(r#"tag: tag:"" hi"#, &["tag"], true, false);
+        assert_eq!(rest, "hi");
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn extract_keyed_ops_keeps_multibyte_values_intact() {
+        let (rest, found) = extract_keyed_ops(r#"tag:"Café ☕" naïve"#, &["tag"], true, false);
+        assert_eq!(rest, "naïve");
+        assert_eq!(found, vec![op("tag", "Café ☕", false)]);
+    }
 
     #[test]
     fn golden_parse_cases_match_typescript() {

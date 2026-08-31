@@ -7,20 +7,10 @@
 
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
 
-use crate::db::saved_searches::{self, SavedSearch, SavedSearchError, SavedSearchKind};
-use crate::server::{ApiError, AppState, require_full_access, resolve_auth};
-
-fn map_saved_search_error(err: SavedSearchError) -> ApiError {
-    match err {
-        SavedSearchError::BadRequest(m) => ApiError::BadRequest(m),
-        SavedSearchError::NotFound(m) => ApiError::NotFound(m),
-        SavedSearchError::Conflict(m) => ApiError::Conflict(m),
-        SavedSearchError::Internal(m) => ApiError::Internal(m),
-    }
-}
+use crate::db::saved_searches::{self, SavedSearch, SavedSearchKind};
+use crate::server::{ApiError, AppState, FullAccess};
 
 /// A saved search's name and query.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -67,14 +57,10 @@ pub(crate) struct SavedSearchDeleteResponse {
 )]
 pub(crate) async fn saved_searches_list_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
 ) -> Result<Json<SavedSearchesListResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
     let mut conn = state.db.acquire().await?;
-    let saved_searches = saved_searches::list(&mut conn, &auth.account_id)
-        .await
-        .map_err(map_saved_search_error)?;
+    let saved_searches = saved_searches::list(&mut conn, &auth.account_id).await?;
     Ok(Json(SavedSearchesListResponse { saved_searches }))
 }
 
@@ -95,11 +81,9 @@ pub(crate) async fn saved_searches_list_handler(
 )]
 pub(crate) async fn saved_searches_create_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     Json(body): Json<SavedSearchBody>,
 ) -> Result<Json<SavedSearchResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
     let mut conn = state.db.acquire().await?;
     let saved_search = saved_searches::create(
         &mut conn,
@@ -108,11 +92,8 @@ pub(crate) async fn saved_searches_create_handler(
         &body.query,
         SavedSearchKind::Manual,
     )
-    .await
-    .map_err(map_saved_search_error)?;
-    let saved_searches = saved_searches::list(&mut conn, &auth.account_id)
-        .await
-        .map_err(map_saved_search_error)?;
+    .await?;
+    let saved_searches = saved_searches::list(&mut conn, &auth.account_id).await?;
     Ok(Json(SavedSearchResponse {
         saved_search,
         saved_searches,
@@ -138,20 +119,14 @@ pub(crate) async fn saved_searches_create_handler(
 )]
 pub(crate) async fn saved_searches_update_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     Path(id): Path<i64>,
     Json(body): Json<SavedSearchBody>,
 ) -> Result<Json<SavedSearchResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
     let mut conn = state.db.acquire().await?;
     let saved_search =
-        saved_searches::update(&mut conn, &auth.account_id, id, &body.name, &body.query)
-            .await
-            .map_err(map_saved_search_error)?;
-    let saved_searches = saved_searches::list(&mut conn, &auth.account_id)
-        .await
-        .map_err(map_saved_search_error)?;
+        saved_searches::update(&mut conn, &auth.account_id, id, &body.name, &body.query).await?;
+    let saved_searches = saved_searches::list(&mut conn, &auth.account_id).await?;
     Ok(Json(SavedSearchResponse {
         saved_search,
         saved_searches,
@@ -178,18 +153,12 @@ pub(crate) async fn saved_searches_update_handler(
 )]
 pub(crate) async fn saved_searches_delete_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     Path(id): Path<i64>,
 ) -> Result<Json<SavedSearchDeleteResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
     let mut conn = state.db.acquire().await?;
-    saved_searches::delete(&mut conn, &auth.account_id, id)
-        .await
-        .map_err(map_saved_search_error)?;
-    let saved_searches = saved_searches::list(&mut conn, &auth.account_id)
-        .await
-        .map_err(map_saved_search_error)?;
+    saved_searches::delete(&mut conn, &auth.account_id, id).await?;
+    let saved_searches = saved_searches::list(&mut conn, &auth.account_id).await?;
     Ok(Json(SavedSearchDeleteResponse {
         ok: true,
         saved_searches,

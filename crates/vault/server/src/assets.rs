@@ -23,9 +23,9 @@ use axum::response::Response;
 use crate::asset_uploads;
 use crate::config::validate_source_id;
 use crate::server::{
-    ApiError, AppState, discard_body, read_body_limited, require_export_access,
-    require_import_access, require_import_or_export_access, resolve_auth, resolve_import_account,
-    stream_body_to_file, upload_content_type,
+    ApiError, AppState, AuthIdentity, ExportAccess, ImportAccess, ImportOrExportAccess,
+    discard_body, read_body_limited, resolve_import_account, stream_body_to_file,
+    upload_content_type,
 };
 
 /// Counts of files handled during one asset store pass.
@@ -666,28 +666,19 @@ enum AssetAccess {
 
 async fn resolve_asset_lookup(
     state: &AppState,
-    headers: &HeaderMap,
+    auth: &AuthIdentity,
     sha256: &str,
     query: &AssetPutQuery,
     access: AssetAccess,
 ) -> Result<(String, String, Option<StoredAsset>), ApiError> {
-    let auth = resolve_auth(headers, state).await?;
-    // A download streams the file itself, so hashing it during lookup would read
-    // every byte twice. Probe and write lookups decide whether a client may skip
-    // sending bytes, so those keep verifying the stored blob.
+    // The handler's extractor already checked the capability for this access
+    // mode; here the mode only picks the lookup strategy. A download streams
+    // the file itself, so hashing it during lookup would read every byte
+    // twice. Probe and write lookups decide whether a client may skip sending
+    // bytes, so those keep verifying the stored blob.
     let verify_stored_bytes = match access {
-        AssetAccess::Read => {
-            require_export_access(&auth)?;
-            false
-        }
-        AssetAccess::Write => {
-            require_import_access(&auth)?;
-            true
-        }
-        AssetAccess::Probe => {
-            require_import_or_export_access(&auth)?;
-            true
-        }
+        AssetAccess::Read => false,
+        AssetAccess::Write | AssetAccess::Probe => true,
     };
     if query.source.trim().is_empty() {
         return Err(ApiError::BadRequest(
@@ -695,7 +686,7 @@ async fn resolve_asset_lookup(
         ));
     }
     validate_source_id(&query.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    let account = resolve_import_account(&auth, query.account.as_deref(), &state.db).await?;
+    let account = resolve_import_account(auth, query.account.as_deref(), &state.db).await?;
     let source_id = query.source.clone();
 
     let cfg = Arc::clone(&state.cfg);
@@ -740,12 +731,12 @@ async fn resolve_asset_lookup(
 )]
 pub(crate) async fn asset_head_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ImportOrExportAccess(auth): ImportOrExportAccess,
     AxumPath(sha256): AxumPath<String>,
     Query(query): Query<AssetPutQuery>,
 ) -> Result<Json<AssetPutResponse>, ApiError> {
     let (_account, _source_id, existing) =
-        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Probe).await?;
+        resolve_asset_lookup(&state, &auth, &sha256, &query, AssetAccess::Probe).await?;
     let Some(stored) = existing else {
         return Err(ApiError::NotFound("asset not found".into()));
     };
@@ -775,12 +766,12 @@ pub(crate) async fn asset_head_handler(
 )]
 pub(crate) async fn asset_get_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ExportAccess(auth): ExportAccess,
     AxumPath(sha256): AxumPath<String>,
     Query(query): Query<AssetPutQuery>,
 ) -> Result<Response, ApiError> {
     let (account, source_id, existing) =
-        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Read).await?;
+        resolve_asset_lookup(&state, &auth, &sha256, &query, AssetAccess::Read).await?;
     let Some(stored) = existing else {
         return Err(ApiError::NotFound("asset not found".into()));
     };
@@ -854,13 +845,14 @@ pub(crate) async fn asset_get_handler(
 )]
 pub(crate) async fn asset_put_handler(
     State(state): State<AppState>,
+    ImportAccess(auth): ImportAccess,
     headers: HeaderMap,
     AxumPath(sha256): AxumPath<String>,
     Query(query): Query<AssetPutQuery>,
     request: Request,
 ) -> Result<Json<AssetPutResponse>, ApiError> {
     let (account, source_id, existing) =
-        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
+        resolve_asset_lookup(&state, &auth, &sha256, &query, AssetAccess::Write).await?;
 
     let mime = upload_content_type(&headers);
 
@@ -977,13 +969,13 @@ pub(crate) struct AssetUploadAbortResponse {
 )]
 pub(crate) async fn asset_upload_start_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ImportAccess(auth): ImportAccess,
     AxumPath(sha256): AxumPath<String>,
     Query(query): Query<AssetPutQuery>,
     Json(body): Json<AssetUploadStartBody>,
 ) -> Result<Json<AssetUploadStartResponse>, ApiError> {
     let (account, source_id, _existing) =
-        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
+        resolve_asset_lookup(&state, &auth, &sha256, &query, AssetAccess::Write).await?;
     let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
     let mime = body.mime.clone();
     let bytes = body.bytes;
@@ -1042,13 +1034,13 @@ pub(crate) async fn asset_upload_start_handler(
 )]
 pub(crate) async fn asset_upload_part_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ImportAccess(auth): ImportAccess,
     AxumPath((sha256, upload_id, part)): AxumPath<(String, String, u32)>,
     Query(query): Query<AssetPutQuery>,
     request: Request,
 ) -> Result<Json<AssetUploadPartResponse>, ApiError> {
     let (account, source_id, _existing) =
-        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
+        resolve_asset_lookup(&state, &auth, &sha256, &query, AssetAccess::Write).await?;
     if part == 0 {
         return Err(ApiError::BadRequest("part number must be >= 1".into()));
     }
@@ -1091,12 +1083,12 @@ pub(crate) async fn asset_upload_part_handler(
 )]
 pub(crate) async fn asset_upload_complete_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ImportAccess(auth): ImportAccess,
     AxumPath((sha256, upload_id)): AxumPath<(String, String)>,
     Query(query): Query<AssetPutQuery>,
 ) -> Result<Json<AssetPutResponse>, ApiError> {
     let (account, source_id, existing) =
-        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
+        resolve_asset_lookup(&state, &auth, &sha256, &query, AssetAccess::Write).await?;
     if let Some(stored) = existing {
         // Drop staging if a concurrent single-PUT won the race.
         let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
@@ -1153,12 +1145,12 @@ pub(crate) async fn asset_upload_complete_handler(
 )]
 pub(crate) async fn asset_upload_abort_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ImportAccess(auth): ImportAccess,
     AxumPath((sha256, upload_id)): AxumPath<(String, String)>,
     Query(query): Query<AssetPutQuery>,
 ) -> Result<Json<AssetUploadAbortResponse>, ApiError> {
     let (account, source_id, _existing) =
-        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
+        resolve_asset_lookup(&state, &auth, &sha256, &query, AssetAccess::Write).await?;
     let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
     let sha = sha256.clone();
     let uid = upload_id.clone();

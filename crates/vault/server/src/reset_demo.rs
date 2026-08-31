@@ -69,6 +69,94 @@ struct PreparedBundle {
     contacts_vcf: PathBuf,
 }
 
+/// One per-source import in a demo reset. Both reset transports (the SQLite
+/// path and `--db-url`) loop over [`DEMO_IMPORT_SOURCES`], so the sources,
+/// their order, and their Replace-then-Append modes stay in sync.
+struct DemoImportSource {
+    /// Label printed in the "Reset demo — preparing replacement" header.
+    label: &'static str,
+    /// Source id recorded on the imported conversations.
+    source: &'static str,
+    /// Staging directory inside the prepared bundle.
+    staging_dir: fn(&PreparedBundle) -> &PathBuf,
+    /// The first source replaces the demo account's data; the rest append.
+    mode: ImportMode,
+    /// Load the bundle's contacts VCF and overwrite existing contacts.
+    with_contacts: bool,
+}
+
+const DEMO_IMPORT_SOURCES: [DemoImportSource; 3] = [
+    DemoImportSource {
+        label: "imessage",
+        source: IMESSAGE_SOURCE,
+        staging_dir: |bundle| &bundle.imessage_dir,
+        mode: ImportMode::Replace,
+        with_contacts: true,
+    },
+    DemoImportSource {
+        label: "android",
+        source: SBR_SOURCE,
+        staging_dir: |bundle| &bundle.sbr_dir,
+        mode: ImportMode::Append,
+        with_contacts: false,
+    },
+    DemoImportSource {
+        label: "whatsapp",
+        source: WHATSAPP_SOURCE,
+        staging_dir: |bundle| &bundle.whatsapp_dir,
+        mode: ImportMode::Append,
+        with_contacts: false,
+    },
+];
+
+/// Print the "preparing replacement" header both reset transports share.
+fn print_reset_header(account_id: &str, prepared: &PreparedBundle, db: &dyn std::fmt::Display) {
+    println!("Reset demo — preparing replacement");
+    println!("  account:      {account_id}");
+    for source in &DEMO_IMPORT_SOURCES {
+        println!(
+            "  {:<14}{}",
+            format!("{}:", source.label),
+            (source.staging_dir)(prepared).display()
+        );
+    }
+    println!("  db:           {db}");
+}
+
+/// Shared post-import tail: fill dedupe content keys, convert media, and warn
+/// (but continue) when some attachments fail conversion.
+async fn dedupe_and_process_assets(
+    cfg: &Config,
+    db_path: &Path,
+    account_id: &str,
+    db_url: Option<&str>,
+) -> Result<(dedupe::DedupeStats, process_assets::ProcessAssetsStats)> {
+    let dedupe_stats = dedupe::run_dedupe(db_path, account_id, 2, db_url).await?;
+    println!("Reset demo — processing prepared assets");
+    let process_stats = process_assets::run(
+        cfg,
+        &ProcessAssetsOptions {
+            force: false,
+            dry_run: false,
+            skip_image: false,
+            skip_video: false,
+            skip_audio: false,
+            db: None,
+            source: None,
+            db_url: db_url.map(str::to_string),
+        },
+    )
+    .await
+    .context("process-assets after prepared demo import")?;
+    if process_stats.errors > 0 {
+        eprintln!(
+            "warning: {} demo attachment(s) failed conversion; originals stay in place and reset-demo continues",
+            process_stats.errors
+        );
+    }
+    Ok((dedupe_stats, process_stats))
+}
+
 struct ResetPreparedStats {
     import: import::ImportStats,
     dedupe_keys_filled: u64,
@@ -262,100 +350,39 @@ async fn reset_prepared_bundle_at_url(
     let prepared = validate_prepared_bundle(bundle)?;
     wipe_demo_account_at_url(cfg, account_id, db_url).await?;
 
-    println!("Reset demo — preparing replacement");
-    println!("  account:      {account_id}");
-    println!("  imessage:     {}", prepared.imessage_dir.display());
-    println!("  android:      {}", prepared.sbr_dir.display());
-    println!("  whatsapp:     {}", prepared.whatsapp_dir.display());
-    println!(
-        "  db:           {}",
-        crate::import_cli::redact_db_url(db_url)
+    print_reset_header(
+        account_id,
+        &prepared,
+        &crate::import_cli::redact_db_url(db_url),
     );
 
     seed_demo_account_at_url(db_url, account_id, &prepared.seed).await?;
-    let mut import_stats = crate::import_cli::run(
-        cfg,
-        &crate::import_cli::CliImportOptions {
-            account_id: account_id.to_string(),
-            input_dir: prepared.imessage_dir.clone(),
-            db_path: None,
-            db_url: Some(db_url.to_string()),
-            assets_dir: None,
-            source_override: Some(IMESSAGE_SOURCE.to_string()),
-            mode: ImportMode::Replace,
-            media: crate::import_media::MediaMode::Copy,
-            contacts: Some(prepared.contacts_vcf.clone()),
-            overwrite_contacts: true,
-            skip_dedupe: true,
-            window_secs: 2,
-        },
-    )
-    .await?
-    .import;
-    let sbr_stats = crate::import_cli::run(
-        cfg,
-        &crate::import_cli::CliImportOptions {
-            account_id: account_id.to_string(),
-            input_dir: prepared.sbr_dir.clone(),
-            db_path: None,
-            db_url: Some(db_url.to_string()),
-            assets_dir: None,
-            source_override: Some(SBR_SOURCE.to_string()),
-            mode: ImportMode::Append,
-            media: crate::import_media::MediaMode::Copy,
-            contacts: None,
-            overwrite_contacts: false,
-            skip_dedupe: true,
-            window_secs: 2,
-        },
-    )
-    .await?
-    .import;
-    merge_import_stats(&mut import_stats, &sbr_stats);
-    let whatsapp_stats = crate::import_cli::run(
-        cfg,
-        &crate::import_cli::CliImportOptions {
-            account_id: account_id.to_string(),
-            input_dir: prepared.whatsapp_dir.clone(),
-            db_path: None,
-            db_url: Some(db_url.to_string()),
-            assets_dir: None,
-            source_override: Some(WHATSAPP_SOURCE.to_string()),
-            mode: ImportMode::Append,
-            media: crate::import_media::MediaMode::Copy,
-            contacts: None,
-            overwrite_contacts: false,
-            skip_dedupe: true,
-            window_secs: 2,
-        },
-    )
-    .await?
-    .import;
-    merge_import_stats(&mut import_stats, &whatsapp_stats);
-
-    let dedupe_stats = dedupe::run_dedupe(&cfg.paths.db, account_id, 2, Some(db_url)).await?;
-    println!("Reset demo — processing prepared assets");
-    let process_stats = process_assets::run(
-        cfg,
-        &ProcessAssetsOptions {
-            force: false,
-            dry_run: false,
-            skip_image: false,
-            skip_video: false,
-            skip_audio: false,
-            db: None,
-            source: None,
-            db_url: Some(db_url.to_string()),
-        },
-    )
-    .await
-    .context("process-assets after prepared demo import")?;
-    if process_stats.errors > 0 {
-        eprintln!(
-            "warning: {} demo attachment(s) failed conversion; originals stay in place and reset-demo continues",
-            process_stats.errors
-        );
+    let mut import_stats = import::ImportStats::default();
+    for source in &DEMO_IMPORT_SOURCES {
+        let stats = crate::import_cli::run(
+            cfg,
+            &crate::import_cli::CliImportOptions {
+                account_id: account_id.to_string(),
+                input_dir: (source.staging_dir)(&prepared).clone(),
+                db_path: None,
+                db_url: Some(db_url.to_string()),
+                assets_dir: None,
+                source_override: Some(source.source.to_string()),
+                mode: source.mode,
+                media: crate::import_media::MediaMode::Copy,
+                contacts: source.with_contacts.then(|| prepared.contacts_vcf.clone()),
+                overwrite_contacts: source.with_contacts,
+                skip_dedupe: true,
+                window_secs: 2,
+            },
+        )
+        .await?
+        .import;
+        merge_import_stats(&mut import_stats, &stats);
     }
+
+    let (dedupe_stats, process_stats) =
+        dedupe_and_process_assets(cfg, &cfg.paths.db, account_id, Some(db_url)).await?;
 
     vacuum_after_demo_url(db_url).await;
 
@@ -396,82 +423,32 @@ async fn reset_prepared_bundle(
     temporary_cfg.paths.data_dir = data_work.path().to_path_buf();
     wipe_demo_account(&temporary_cfg, account_id).await?;
 
-    println!("Reset demo — preparing replacement");
-    println!("  account:      {account_id}");
-    println!("  imessage:     {}", prepared.imessage_dir.display());
-    println!("  android:      {}", prepared.sbr_dir.display());
-    println!("  whatsapp:     {}", prepared.whatsapp_dir.display());
-    println!("  db:           {}", cfg.paths.db.display());
+    print_reset_header(account_id, &prepared, &cfg.paths.db.display());
 
     seed_demo_account(&prepared_db, account_id, &prepared.seed).await?;
-    let imessage_assets = temporary_cfg
-        .paths
-        .assets_dir_for_account(account_id, IMESSAGE_SOURCE);
-    let sbr_assets = temporary_cfg
-        .paths
-        .assets_dir_for_account(account_id, SBR_SOURCE);
-    let whatsapp_assets = temporary_cfg
-        .paths
-        .assets_dir_for_account(account_id, WHATSAPP_SOURCE);
-    let mut import_stats = import::import_export(&ImportExportArgs {
-        export_dir: &prepared.imessage_dir,
-        db_path: &prepared_db,
-        assets_dir: &imessage_assets,
-        contacts: Some(&prepared.contacts_vcf),
-        overwrite_contacts: true,
-        mode: ImportMode::Replace,
-        source: IMESSAGE_SOURCE,
-        account_id,
-    })
-    .await?;
-    let sbr_stats = import::import_export(&ImportExportArgs {
-        export_dir: &prepared.sbr_dir,
-        db_path: &prepared_db,
-        assets_dir: &sbr_assets,
-        contacts: None,
-        overwrite_contacts: false,
-        mode: ImportMode::Append,
-        source: SBR_SOURCE,
-        account_id,
-    })
-    .await?;
-    merge_import_stats(&mut import_stats, &sbr_stats);
-    let whatsapp_stats = import::import_export(&ImportExportArgs {
-        export_dir: &prepared.whatsapp_dir,
-        db_path: &prepared_db,
-        assets_dir: &whatsapp_assets,
-        contacts: None,
-        overwrite_contacts: false,
-        mode: ImportMode::Append,
-        source: WHATSAPP_SOURCE,
-        account_id,
-    })
-    .await?;
-    merge_import_stats(&mut import_stats, &whatsapp_stats);
-
-    let dedupe_stats = dedupe::run_dedupe(&prepared_db, account_id, 2, None).await?;
-    println!("Reset demo — processing prepared assets");
-    let process_stats = process_assets::run(
-        &temporary_cfg,
-        &ProcessAssetsOptions {
-            force: false,
-            dry_run: false,
-            skip_image: false,
-            skip_video: false,
-            skip_audio: false,
-            db: None,
-            source: None,
-            db_url: None,
-        },
-    )
-    .await
-    .context("process-assets after prepared demo import")?;
-    if process_stats.errors > 0 {
-        eprintln!(
-            "warning: {} demo attachment(s) failed conversion; originals stay in place and reset-demo continues",
-            process_stats.errors
-        );
+    let mut import_stats = import::ImportStats::default();
+    for source in &DEMO_IMPORT_SOURCES {
+        let assets_dir = temporary_cfg
+            .paths
+            .assets_dir_for_account(account_id, source.source);
+        let stats = import::import_export(&ImportExportArgs {
+            export_dir: (source.staging_dir)(&prepared),
+            db_path: &prepared_db,
+            assets_dir: &assets_dir,
+            contacts: source
+                .with_contacts
+                .then_some(prepared.contacts_vcf.as_path()),
+            overwrite_contacts: source.with_contacts,
+            mode: source.mode,
+            source: source.source,
+            account_id,
+        })
+        .await?;
+        merge_import_stats(&mut import_stats, &stats);
     }
+
+    let (dedupe_stats, process_stats) =
+        dedupe_and_process_assets(&temporary_cfg, &prepared_db, account_id, None).await?;
 
     vacuum_after_demo_path(&prepared_db).await;
 

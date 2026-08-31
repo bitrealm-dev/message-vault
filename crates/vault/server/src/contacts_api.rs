@@ -7,27 +7,21 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{Result as AnyResult, bail};
 use axum::Json;
 use axum::extract::{Path as AxumPath, Query, State};
-use axum::http::HeaderMap;
 use message_ir::HandleType;
 use serde::{Deserialize, Serialize};
 use sqlx::AnyConnection;
 
 use crate::db::contacts::{self, contact_id_for_handle};
-use crate::db::dialect::{engine_of, group_concat_unit_separator, like_ci_numbered};
-use crate::db::engine::DbEngine;
+use crate::db::dialect::{
+    engine_of, group_concat_unit_separator, like_ci, name_eq_ci, order_by_name_ci,
+};
 use crate::db::handles::{infer_handle_type_from_shape, normalize_handle};
-use crate::db::sql::in_placeholders;
+use crate::db::sql::{SqlParam, bind_args, in_placeholders, renumber_placeholders};
 use crate::export_api::ExportQueryError;
-use crate::server::{ApiError, AppState, require_full_access, resolve_auth};
+use crate::search_query::extract_keyed_ops;
+use crate::server::{ApiError, AppState, FullAccess};
 
 pub use crate::page_limits::{DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, MAX_LIST_OFFSET};
-
-/// One bound value in the dynamic list query. sqlx Any has no
-/// user-constructible dynamic value, so binds ride this enum and are chained
-/// onto the statement in order at execution time.
-enum Bind {
-    Text(String),
-}
 
 /// One page of the contact list.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -300,14 +294,13 @@ fn involved_message_date_agg(involves: &str, min_or_max: &str) -> String {
 
 fn push_contact_date_bounds(
     where_parts: &mut Vec<String>,
-    params: &mut Vec<Bind>,
+    params: &mut Vec<SqlParam>,
     bounds: &[DateBound],
     agg: &str,
 ) {
     for bound in bounds {
-        let n = params.len() + 1;
-        where_parts.push(format!("{agg} {} date(${n})", date_bound_cmp(bound.op)));
-        params.push(Bind::Text(bound.ymd.clone()));
+        where_parts.push(format!("{agg} {} date(?)", date_bound_cmp(bound.op)));
+        params.push(SqlParam::Text(bound.ymd.clone()));
     }
 }
 
@@ -381,48 +374,18 @@ fn expand_service_token(value: &str) -> Vec<String> {
     }
 }
 
-/// Pull `prefix:"quoted value"` or `prefix:bare` from `q`. Returns (value, remainder).
+/// Pull the first `prefix:"quoted value"` or `prefix:bare` token from `q`.
+/// Returns (value, remainder); a repeated `prefix:` stays in the remainder
+/// (and later falls through to the free-text filter). `prefix` includes the
+/// trailing `:`.
 fn take_prefixed_quoted_or_bare(q: &str, prefix: &str) -> (Option<String>, String) {
-    let q = q.trim();
-    if q.is_empty() {
-        return (None, String::new());
-    }
-    let lower = q.to_ascii_lowercase();
-    let quoted = format!("{prefix}\"");
-    if let Some(start) = lower.find(&quoted) {
-        let after = start + quoted.len();
-        if let Some(rel_end) = q[after..].find('"') {
-            let end = after + rel_end;
-            let value = q[after..end].to_string();
-            let mut rest = String::new();
-            rest.push_str(&q[..start]);
-            rest.push_str(&q[end + 1..]);
-            return (
-                Some(value).filter(|s| !s.is_empty()),
-                rest.split_whitespace().collect::<Vec<_>>().join(" "),
-            );
-        }
-    }
-    if let Some(start) = lower.find(prefix) {
-        let after = start + prefix.len();
-        if q.get(after..after + 1) != Some("\"") {
-            let end = q[after..]
-                .find(char::is_whitespace)
-                .map(|i| after + i)
-                .unwrap_or(q.len());
-            if end > after {
-                let value = q[after..end].trim_matches('"').to_string();
-                let mut rest = String::new();
-                rest.push_str(&q[..start]);
-                rest.push_str(&q[end..]);
-                return (
-                    Some(value).filter(|s| !s.is_empty()),
-                    rest.split_whitespace().collect::<Vec<_>>().join(" "),
-                );
-            }
-        }
-    }
-    (None, q.to_string())
+    let key = prefix.trim_end_matches(':');
+    let (rest, mut found) = extract_keyed_ops(q, &[key], false, true);
+    let value = found
+        .pop()
+        .map(|op| op.value.trim_matches('"').to_string())
+        .filter(|s| !s.is_empty());
+    (value, rest)
 }
 
 fn apply_group_token(out: &mut ContactListFilters, raw: &str) {
@@ -521,15 +484,6 @@ fn parse_contact_list_filters(q: &str) -> ContactListFilters {
     out
 }
 
-/// Case-insensitive group-name equality for one engine (`COLLATE NOCASE` is
-/// invalid Postgres SQL; Postgres uses `lower()`).
-fn group_name_eq_sql(engine: DbEngine, placeholder: usize) -> String {
-    match engine {
-        DbEngine::Sqlite => format!("cl.name = ${placeholder} COLLATE NOCASE"),
-        DbEngine::Postgres => format!("lower(cl.name) = lower(${placeholder})"),
-    }
-}
-
 /// Flat list of contacts: id, display name, handle count, and handle values (paged).
 ///
 /// `q` matches preferred name or any linked handle (raw/normalized), case-insensitive.
@@ -563,47 +517,46 @@ pub async fn list_contacts(
     let involves = involves_ct_sql();
     let has_messages_sql = contact_has_messages_sql();
 
+    // Placeholder convention: every fragment writes `?`; the statement is
+    // renumbered to `$1..$N` once, so textual placeholder order must equal
+    // `params` push order (fragments are appended and bound in the same
+    // sequence, for both engines).
     let mut where_parts = vec![
-        "ct.account_id = $1".to_string(),
+        "ct.account_id = ?".to_string(),
         NOT_TRASHED_CONTACT_SQL.to_string(),
     ];
-    let mut params: Vec<Bind> = vec![Bind::Text(account_id.to_string())];
+    let mut params: Vec<SqlParam> = vec![SqlParam::Text(account_id.to_string())];
 
     if let Some(ref handle) = filters.handle {
-        let n = params.len() + 1;
         where_parts.push(format!(
             "EXISTS (
                SELECT 1 FROM contact_handles ch
                JOIN handles h ON h.id = ch.handle_id
                WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id
-                 AND (h.raw {} OR coalesce(h.normalized, '') {})
+                 AND (h.raw {like} OR coalesce(h.normalized, '') {like})
              )",
-            like_ci_numbered(engine, n),
-            like_ci_numbered(engine, n + 1),
+            like = like_ci(engine),
         ));
         let like = format!("%{handle}%");
-        params.push(Bind::Text(like.clone()));
-        params.push(Bind::Text(like));
+        params.push(SqlParam::Text(like.clone()));
+        params.push(SqlParam::Text(like));
     }
 
     if !filters.text.is_empty() {
-        let n = params.len() + 1;
         where_parts.push(format!(
-            "(COALESCE(NULLIF(trim(ct.preferred_name), ''), '(unknown)') {}
+            "(COALESCE(NULLIF(trim(ct.preferred_name), ''), '(unknown)') {like}
               OR EXISTS (
                 SELECT 1 FROM contact_handles ch
                 JOIN handles h ON h.id = ch.handle_id
                 WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id
-                  AND (h.raw {} OR coalesce(h.normalized, '') {})
+                  AND (h.raw {like} OR coalesce(h.normalized, '') {like})
               ))",
-            like_ci_numbered(engine, n),
-            like_ci_numbered(engine, n + 1),
-            like_ci_numbered(engine, n + 2),
+            like = like_ci(engine),
         ));
         let like = format!("%{}%", filters.text);
-        params.push(Bind::Text(like.clone()));
-        params.push(Bind::Text(like.clone()));
-        params.push(Bind::Text(like));
+        params.push(SqlParam::Text(like.clone()));
+        params.push(SqlParam::Text(like.clone()));
+        params.push(SqlParam::Text(like));
     }
 
     match filters.has_messages {
@@ -643,7 +596,6 @@ pub async fn list_contacts(
     }
 
     if let Some(ref label) = filters.group {
-        let n = params.len() + 1;
         where_parts.push(format!(
             "EXISTS (
                SELECT 1 FROM contact_group_members clm
@@ -652,9 +604,9 @@ pub async fn list_contacts(
                  AND cl.account_id = ct.account_id
                  AND {}
              )",
-            group_name_eq_sql(engine, n),
+            name_eq_ci(engine, "cl.name", "?"),
         ));
-        params.push(Bind::Text(label.clone()));
+        params.push(SqlParam::Text(label.clone()));
     } else if filters.no_group {
         where_parts.push(
             "NOT EXISTS (
@@ -668,8 +620,7 @@ pub async fn list_contacts(
     }
 
     if !filters.services.is_empty() {
-        let n = params.len() + 1;
-        let placeholders = in_placeholders(n, filters.services.len());
+        let placeholders = vec!["?"; filters.services.len()].join(",");
         where_parts.push(format!(
             "EXISTS (
                SELECT 1 FROM conversations c
@@ -680,7 +631,7 @@ pub async fn list_contacts(
              )"
         ));
         for s in &filters.services {
-            params.push(Bind::Text(s.clone()));
+            params.push(SqlParam::Text(s.clone()));
         }
     }
 
@@ -698,22 +649,16 @@ pub async fn list_contacts(
     );
 
     let where_sql = where_parts.join(" AND ");
-    let count_sql = format!("SELECT COUNT(*) FROM contacts ct WHERE {where_sql}");
-    let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
-    for p in &params {
-        match p {
-            Bind::Text(v) => count_q = count_q.bind(v.clone()),
-        }
-    }
-    let total: i64 = count_q.fetch_one(&mut *conn).await?;
+    let count_sql = renumber_placeholders(&format!(
+        "SELECT COUNT(*) FROM contacts ct WHERE {where_sql}"
+    ));
+    let total: i64 = sqlx::query_scalar_with(&count_sql, bind_args(&params))
+        .fetch_one(&mut *conn)
+        .await?;
     let total = total.max(0) as u64;
 
-    let order_by = match engine {
-        DbEngine::Sqlite => "ORDER BY name COLLATE NOCASE, ct.id",
-        DbEngine::Postgres => "ORDER BY lower(name), ct.id",
-    };
-    let page_n = params.len() + 1;
-    let sql = format!(
+    let order_by = format!("{}, ct.id", order_by_name_ci(engine, "name"));
+    let sql = renumber_placeholders(&format!(
         "SELECT ct.id,
                 COALESCE(NULLIF(trim(ct.preferred_name), ''), '(unknown)') AS name,
                 (SELECT COUNT(*)
@@ -741,21 +686,13 @@ pub async fn list_contacts(
          FROM contacts ct
          WHERE {where_sql}
          {order_by}
-         LIMIT ${page_n} OFFSET ${page_n_plus}",
+         LIMIT ? OFFSET ?",
         handles_agg = group_concat_unit_separator(engine, "val"),
         groups_agg = group_concat_unit_separator(engine, "cl.name"),
-        page_n = page_n,
-        page_n_plus = page_n + 1
-    );
-    let mut page_q = sqlx::query_as::<_, ContactRow>(&sql);
-    for p in &params {
-        match p {
-            Bind::Text(v) => page_q = page_q.bind(v.clone()),
-        }
-    }
-    let rows: Vec<ContactRow> = page_q
-        .bind(limit as i64)
-        .bind(offset as i64)
+    ));
+    params.push(SqlParam::Int(limit as i64));
+    params.push(SqlParam::Int(offset as i64));
+    let rows: Vec<ContactRow> = sqlx::query_as_with(&sql, bind_args(&params))
         .fetch_all(&mut *conn)
         .await?;
 
@@ -806,45 +743,7 @@ type ContactRow = (i64, String, i64, Option<String>, String, Option<String>);
 
 /// Parse `q` into optional handle filter + free-text remainder.
 fn parse_contact_list_query(q: &str) -> (Option<String>, String) {
-    let q = q.trim();
-    if q.is_empty() {
-        return (None, String::new());
-    }
-    let lower = q.to_ascii_lowercase();
-    if let Some(start) = lower.find("handle:\"") {
-        let after = start + "handle:\"".len();
-        if let Some(rel_end) = q[after..].find('"') {
-            let end = after + rel_end;
-            let handle = q[after..end].to_string();
-            let mut rest = String::new();
-            rest.push_str(&q[..start]);
-            rest.push_str(&q[end + 1..]);
-            return (
-                Some(handle).filter(|s| !s.is_empty()),
-                rest.split_whitespace().collect::<Vec<_>>().join(" "),
-            );
-        }
-    }
-    if let Some(start) = lower.find("handle:") {
-        let after = start + "handle:".len();
-        if q.get(after..after + 1) != Some("\"") {
-            let end = q[after..]
-                .find(char::is_whitespace)
-                .map(|i| after + i)
-                .unwrap_or(q.len());
-            if end > after {
-                let handle = q[after..end].trim_matches('"').to_string();
-                let mut rest = String::new();
-                rest.push_str(&q[..start]);
-                rest.push_str(&q[end..]);
-                return (
-                    Some(handle).filter(|s| !s.is_empty()),
-                    rest.split_whitespace().collect::<Vec<_>>().join(" "),
-                );
-            }
-        }
-    }
-    (None, q.to_string())
+    take_prefixed_quoted_or_bare(q, "handle:")
 }
 
 /// Full contact view: per-handle service + date range + direct message count,
@@ -1217,21 +1116,17 @@ async fn unknown_contact_identifiers(
 )]
 pub(crate) async fn contact_match_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     Json(body): Json<ContactMatchBody>,
 ) -> Result<Json<ContactMatchResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
     if body.identifiers.len() > MAX_MATCH_IDENTIFIERS {
         return Err(ApiError::BadRequest(format!(
             "at most {MAX_MATCH_IDENTIFIERS} identifiers"
         )));
     }
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
-    let unknown = unknown_contact_identifiers(&mut conn, &auth.account_id, &body.identifiers)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let unknown =
+        unknown_contact_identifiers(&mut conn, &auth.account_id, &body.identifiers).await?;
     Ok(Json(ContactMatchResponse { unknown }))
 }
 
@@ -1520,12 +1415,9 @@ async fn touch_ok(conn: &mut AnyConnection, account_id: &str, contact_id: i64) -
 )]
 pub(crate) async fn contacts_list_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     Query(query): Query<crate::server::ListPageQuery>,
 ) -> Result<Json<ContactListPage>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     let q = query.q.unwrap_or_default();
     let limit = query.limit.unwrap_or(DEFAULT_LIST_LIMIT);
@@ -1550,18 +1442,15 @@ pub(crate) async fn contacts_list_handler(
 )]
 pub(crate) async fn contact_summaries_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     Json(body): Json<ContactSummariesBody>,
 ) -> Result<Json<ContactSummariesPage>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
     if body.ids.len() > MAX_LIST_LIMIT {
         return Err(ApiError::BadRequest(format!(
             "at most {} contact ids",
             MAX_LIST_LIMIT
         )));
     }
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     let page = get_contact_summaries(&mut conn, &auth.account_id, &body.ids)
         .await
@@ -1586,12 +1475,9 @@ pub(crate) async fn contact_summaries_handler(
 )]
 pub(crate) async fn contact_detail_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     AxumPath(contact_id): AxumPath<i64>,
 ) -> Result<Json<ContactDetail>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     let detail = get_contact_detail(&mut conn, &auth.account_id, contact_id).await?;
     detail
@@ -1617,20 +1503,16 @@ pub(crate) async fn contact_detail_handler(
 )]
 pub(crate) async fn contact_mutate_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     AxumPath(contact_id): AxumPath<i64>,
     Json(body): Json<ContactMutationBody>,
 ) -> Result<Json<ContactDetail>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    // TODO(#148): pool acquire
     let mut conn = state.db.acquire().await?;
     match mutate_contact(&mut conn, &auth.account_id, contact_id, &body).await {
         Ok(false) => Err(ApiError::NotFound("contact not found".into())),
         Err(e) => Err(ApiError::BadRequest(e.to_string())),
         Ok(true) => get_contact_detail(&mut conn, &auth.account_id, contact_id)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .await?
             .ok_or_else(|| ApiError::Internal("contact missing after mutate".into()))
             .map(Json),
     }

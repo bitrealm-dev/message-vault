@@ -170,18 +170,37 @@ pub async fn lookup_account_for_api_token(
     }
 }
 
-/// Create a named API token. Returns `(id, label, permissions, created_at, expires_at, plaintext_token)`.
+/// A freshly created API token, including the plaintext secret.
+///
+/// This is the only place the plaintext `token` exists; everything else
+/// stores or returns the hash and the masked hint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreatedApiToken {
+    /// Token id (UUID).
+    pub id: String,
+    /// The validated (trimmed) label as stored.
+    pub label: String,
+    /// What this token may do.
+    pub permissions: Permissions,
+    /// Creation time as a Unix-seconds string.
+    pub created_at: String,
+    /// Unix-seconds expiry; `None` means no expiry.
+    pub expires_at: Option<String>,
+    /// The plaintext secret (`mv-api-…`), shown to the caller exactly once.
+    pub token: String,
+}
+
+/// Create a named API token.
 ///
 /// Returns `ApiTokenMutationError::InvalidLabel` when the label is empty
 /// or longer than 120 characters, and `Other` for database failures.
-#[allow(clippy::type_complexity)]
 pub async fn create_api_token(
     conn: &mut AnyConnection,
     account_id: &str,
     label: &str,
     permissions: Permissions,
     expires_in_days: Option<u64>,
-) -> Result<(String, String, Permissions, String, Option<String>, String), ApiTokenMutationError> {
+) -> Result<CreatedApiToken, ApiTokenMutationError> {
     let label = validate_api_token_label(label)?;
     let id = uuid::Uuid::new_v4().to_string();
     let token = generate_api_token()?;
@@ -210,7 +229,14 @@ pub async fn create_api_token(
     .execute(&mut *conn)
     .await
     .with_context(|| format!("insert API token for {account_id}"))?;
-    Ok((id, label_owned, permissions, created_at, expires_at, token))
+    Ok(CreatedApiToken {
+        id,
+        label: label_owned,
+        permissions,
+        created_at,
+        expires_at,
+        token,
+    })
 }
 
 /// Raw row for [`list_api_tokens`] before disabled/expiry mapping into
@@ -386,7 +412,7 @@ mod tests {
     async fn create_list_lookup_delete() {
         let (pool, _dir, account_id) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
-        let (id, _label, permissions, _created_at, _expires_at, token) = create_api_token(
+        let created = create_api_token(
             &mut conn,
             &account_id,
             " laptop CLI ",
@@ -399,9 +425,11 @@ mod tests {
         )
         .await
         .unwrap();
+        let id = created.id;
+        let token = created.token;
         assert!(token.starts_with("mv-api-"));
         assert_eq!(
-            permissions,
+            created.permissions,
             Permissions {
                 import: false,
                 export: true,
@@ -486,10 +514,10 @@ mod tests {
     async fn rename_label() {
         let (pool, _dir, account_id) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
-        let (id, _, _, _, _, _) =
-            create_api_token(&mut conn, &account_id, "old name", Permissions::all(), None)
-                .await
-                .unwrap();
+        let id = create_api_token(&mut conn, &account_id, "old name", Permissions::all(), None)
+            .await
+            .unwrap()
+            .id;
         assert!(
             update_api_token_label(&mut conn, &account_id, &id, " new name ")
                 .await

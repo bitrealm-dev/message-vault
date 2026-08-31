@@ -7,12 +7,11 @@
 
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
 use sqlx::{AnyConnection, Connection};
 
 use crate::db::account_profile;
-use crate::server::{ApiError, AppState, require_admin, resolve_auth};
+use crate::server::{Admin, ApiError, AppState};
 
 /// One account as an administrator sees it.
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
@@ -113,9 +112,8 @@ async fn load_admin_user(
         return Ok(None);
     };
     let message_count = account_message_count(conn, account_id).await?;
-    let storage_bytes = crate::db::vault_imports::account_attachment_bytes(conn, account_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let storage_bytes =
+        crate::db::vault_imports::account_attachment_bytes(conn, account_id).await?;
     Ok(Some(AdminUser {
         account_id: account_id.to_string(),
         username,
@@ -127,6 +125,22 @@ async fn load_admin_user(
         message_count,
         storage_bytes,
     }))
+}
+
+/// Return `404 Not Found` unless an account with this id exists.
+async fn require_account_exists(
+    conn: &mut AnyConnection,
+    account_id: &str,
+) -> Result<(), ApiError> {
+    if account_profile::username_for_account(conn, account_id)
+        .await?
+        .is_none()
+    {
+        return Err(ApiError::NotFound(format!(
+            "account {account_id} not found"
+        )));
+    }
+    Ok(())
 }
 
 /// List every account with its flags, message count, and storage use.
@@ -143,11 +157,8 @@ async fn load_admin_user(
 )]
 pub async fn list_users_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Admin(_auth): Admin,
 ) -> Result<Json<ListUsersResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_admin(&auth)?;
-
     let mut conn = state.db.acquire().await?;
     let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM accounts ORDER BY username")
         .fetch_all(&mut *conn)
@@ -180,12 +191,9 @@ pub async fn list_users_handler(
 )]
 pub async fn create_user_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Admin(_auth): Admin,
     Json(req): Json<CreateUserRequest>,
 ) -> Result<Json<AdminUser>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_admin(&auth)?;
-
     let username = crate::auth::normalize_username(&req.username);
     if !crate::auth::is_valid_username(&username) {
         return Err(ApiError::BadRequest(
@@ -193,8 +201,7 @@ pub async fn create_user_handler(
         ));
     }
     crate::auth::validate_password_policy(&req.password)?;
-    let password_hash =
-        crate::auth::hash_password(&req.password).map_err(|e| ApiError::Internal(e.to_string()))?;
+    let password_hash = crate::auth::hash_password(&req.password)?;
 
     let mut conn = state.db.acquire().await?;
     // insert_account and the optional set_admin must land together: a failure
@@ -216,9 +223,7 @@ pub async fn create_user_handler(
         .await
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
     if req.is_admin {
-        account_profile::set_admin(&mut tx, &account_id, true)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        account_profile::set_admin(&mut tx, &account_id, true).await?;
     }
     tx.commit().await?;
 
@@ -250,25 +255,14 @@ pub async fn create_user_handler(
 pub async fn patch_user_handler(
     State(state): State<AppState>,
     Path(target): Path<String>,
-    headers: HeaderMap,
+    Admin(_auth): Admin,
     Json(req): Json<PatchUserRequest>,
 ) -> Result<Json<AdminUser>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_admin(&auth)?;
-
     let mut conn = state.db.acquire().await?;
-    if account_profile::username_for_account(&mut conn, &target)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .is_none()
-    {
-        return Err(ApiError::NotFound(format!("account {target} not found")));
-    }
+    require_account_exists(&mut conn, &target).await?;
 
     if (req.is_admin == Some(false) || req.disabled == Some(true))
-        && account_profile::is_last_admin(&mut conn, &target)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
+        && account_profile::is_last_admin(&mut conn, &target).await?
     {
         return Err(ApiError::BadRequest(
             "this is the only administrator; promote another account first".into(),
@@ -276,34 +270,20 @@ pub async fn patch_user_handler(
     }
 
     if let Some(is_admin) = req.is_admin {
-        account_profile::set_admin(&mut conn, &target, is_admin)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        account_profile::set_admin(&mut conn, &target, is_admin).await?;
     }
-    if let Some(disabled) = req.disabled {
-        sqlx::query("UPDATE accounts SET disabled = $1 WHERE id = $2")
-            .bind(disabled as i32)
-            .bind(&target)
-            .execute(&mut *conn)
-            .await?;
-    }
-    if let Some(can_import) = req.can_import {
-        sqlx::query("UPDATE accounts SET can_import = $1 WHERE id = $2")
-            .bind(can_import as i32)
-            .bind(&target)
-            .execute(&mut *conn)
-            .await?;
-    }
-    if let Some(can_export) = req.can_export {
-        sqlx::query("UPDATE accounts SET can_export = $1 WHERE id = $2")
-            .bind(can_export as i32)
-            .bind(&target)
-            .execute(&mut *conn)
-            .await?;
-    }
-    if let Some(can_delete) = req.can_delete {
-        sqlx::query("UPDATE accounts SET can_delete = $1 WHERE id = $2")
-            .bind(can_delete as i32)
+    // Column names come from this compile-time array, never from the
+    // request, so formatting them into the SQL is safe; values stay bound.
+    let flags = [
+        ("disabled", req.disabled),
+        ("can_import", req.can_import),
+        ("can_export", req.can_export),
+        ("can_delete", req.can_delete),
+    ];
+    for (column, value) in flags {
+        let Some(value) = value else { continue };
+        sqlx::query(&format!("UPDATE accounts SET {column} = $1 WHERE id = $2"))
+            .bind(value as i32)
             .bind(&target)
             .execute(&mut *conn)
             .await?;
@@ -337,29 +317,16 @@ pub async fn patch_user_handler(
 pub async fn set_user_password_handler(
     State(state): State<AppState>,
     Path(target): Path<String>,
-    headers: HeaderMap,
+    Admin(_auth): Admin,
     Json(req): Json<SetPasswordRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_admin(&auth)?;
     crate::auth::validate_password_policy(&req.password)?;
-    let hash =
-        crate::auth::hash_password(&req.password).map_err(|e| ApiError::Internal(e.to_string()))?;
+    let hash = crate::auth::hash_password(&req.password)?;
 
     let mut conn = state.db.acquire().await?;
-    if account_profile::username_for_account(&mut conn, &target)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .is_none()
-    {
-        return Err(ApiError::NotFound(format!("account {target} not found")));
-    }
-    account_profile::update_password_hash(&mut conn, &target, &hash)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    crate::db::session_tokens::revoke_account_sessions(&mut conn, &target)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    require_account_exists(&mut conn, &target).await?;
+    account_profile::update_password_hash(&mut conn, &target, &hash).await?;
+    crate::db::session_tokens::revoke_account_sessions(&mut conn, &target).await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -382,30 +349,18 @@ pub async fn set_user_password_handler(
 pub async fn delete_user_messages_handler(
     State(state): State<AppState>,
     Path(target): Path<String>,
-    headers: HeaderMap,
+    Admin(_auth): Admin,
 ) -> Result<Json<crate::profile::DeleteMessagesResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_admin(&auth)?;
-
     let mut conn = state.db.acquire().await?;
-    if account_profile::username_for_account(&mut conn, &target)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .is_none()
-    {
-        return Err(ApiError::NotFound(format!("account {target} not found")));
-    }
+    require_account_exists(&mut conn, &target).await?;
 
-    let stats = account_profile::delete_all_messages_for_account(&mut conn, &target)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let stats = account_profile::delete_all_messages_for_account(&mut conn, &target).await?;
     crate::profile::remove_account_asset_trees(
         &state.cfg.paths.data_dir,
         &target,
         &state.cfg.paths.assets_dir,
         &state.cfg.paths.assets_converted_dir,
-    )
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    )?;
 
     Ok(Json(crate::profile::DeleteMessagesResponse {
         ok: true,
@@ -433,31 +388,17 @@ pub async fn delete_user_messages_handler(
 pub async fn delete_user_handler(
     State(state): State<AppState>,
     Path(target): Path<String>,
-    headers: HeaderMap,
+    Admin(_auth): Admin,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_admin(&auth)?;
-
     let mut conn = state.db.acquire().await?;
-    if account_profile::username_for_account(&mut conn, &target)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .is_none()
-    {
-        return Err(ApiError::NotFound(format!("account {target} not found")));
-    }
-    if account_profile::is_last_admin(&mut conn, &target)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-    {
+    require_account_exists(&mut conn, &target).await?;
+    if account_profile::is_last_admin(&mut conn, &target).await? {
         return Err(ApiError::BadRequest(
             "this is the only administrator; promote another account first".into(),
         ));
     }
 
-    account_profile::delete_account(&mut conn, &target)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    account_profile::delete_account(&mut conn, &target).await?;
     let account_root = state.cfg.paths.data_dir.join(&target);
     if account_root.exists() {
         tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&account_root))
@@ -490,10 +431,11 @@ mod tests {
     }
 
     /// One case per route: an ordinary (non-admin) session gets 403 on every
-    /// handler, not just the list endpoint. This is the regression net for
-    /// `require_admin` being the first thing each handler calls — if it were
-    /// ever dropped from one handler, this is what would catch it (the code
-    /// itself is correct today; this test exists so it stays that way).
+    /// handler, not just the list endpoint. The `Admin` extractor now makes a
+    /// missing guard a compile error (a handler cannot take the wrong
+    /// parameter type unnoticed), so this test's remaining job is smaller but
+    /// real: it pins the wire behavior — 403, on every route, through the
+    /// real HTTP stack — which the type system alone does not promise.
     #[tokio::test]
     async fn every_admin_route_refuses_an_ordinary_session() {
         let vault = test_vault().await;
@@ -580,7 +522,7 @@ mod tests {
             capability: crate::server::AuthCapability::ApiToken(auth.permissions()),
         };
         assert!(!token_auth.is_admin());
-        assert!(require_admin(&token_auth).is_err());
+        assert!(crate::server::require_admin(&token_auth).is_err());
     }
 
     #[tokio::test]

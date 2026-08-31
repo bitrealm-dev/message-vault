@@ -2,13 +2,12 @@
 
 use axum::Json;
 use axum::extract::{Path as AxumPath, State};
-use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
 
 use crate::db::api_tokens;
 use crate::db::permissions::Permissions;
 use crate::db::schema;
-use crate::server::{ApiError, AppState, require_full_access, resolve_auth};
+use crate::server::{ApiError, AppState, FullAccess};
 
 /// One named API token as shown in Settings: label, permissions, and masked secret.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -156,23 +155,13 @@ pub struct RenameApiTokenResponse {
 )]
 pub async fn list_api_tokens_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
 ) -> Result<Json<ListApiTokensResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
     let account_id = auth.account_id;
 
-    let mut conn = state
-        .db
-        .acquire()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    schema::ensure_accounts_schema(&mut conn)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let rows = api_tokens::list_api_tokens(&mut conn, &account_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let mut conn = state.db.acquire().await?;
+    schema::ensure_accounts_schema(&mut conn).await?;
+    let rows = api_tokens::list_api_tokens(&mut conn, &account_id).await?;
     let items = rows.into_iter().map(ApiTokenItem::from).collect();
 
     Ok(Json(ListApiTokensResponse { items }))
@@ -195,11 +184,9 @@ pub async fn list_api_tokens_handler(
 )]
 pub async fn create_api_token_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     Json(req): Json<CreateApiTokenRequest>,
 ) -> Result<Json<CreateApiTokenResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
     let account_id = auth.account_id;
     let label = req.label;
     let permissions = Permissions {
@@ -209,29 +196,23 @@ pub async fn create_api_token_handler(
     };
     let expires_in_days = req.expires_in_days;
 
-    let mut conn = state
-        .db
-        .acquire()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    schema::ensure_accounts_schema(&mut conn)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let mut conn = state.db.acquire().await?;
+    schema::ensure_accounts_schema(&mut conn).await?;
     let created =
         api_tokens::create_api_token(&mut conn, &account_id, &label, permissions, expires_in_days)
             .await
             .map_err(map_label_error)?;
 
     Ok(Json(CreateApiTokenResponse {
-        id: created.0,
-        label: created.1,
-        can_import: created.2.import,
-        can_export: created.2.export,
-        can_delete: created.2.delete,
-        created_at: created.3,
-        expires_at: created.4,
-        token_hint: api_tokens::mask_api_token(&created.5),
-        token: created.5,
+        id: created.id,
+        label: created.label,
+        can_import: created.permissions.import,
+        can_export: created.permissions.export,
+        can_delete: created.permissions.delete,
+        created_at: created.created_at,
+        expires_at: created.expires_at,
+        token_hint: api_tokens::mask_api_token(&created.token),
+        token: created.token,
     }))
 }
 
@@ -251,24 +232,14 @@ pub async fn create_api_token_handler(
 )]
 pub async fn delete_api_token_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<DeleteApiTokenResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
     let account_id = auth.account_id;
 
-    let mut conn = state
-        .db
-        .acquire()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    schema::ensure_accounts_schema(&mut conn)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let deleted = api_tokens::delete_api_token(&mut conn, &account_id, &id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let mut conn = state.db.acquire().await?;
+    schema::ensure_accounts_schema(&mut conn).await?;
+    let deleted = api_tokens::delete_api_token(&mut conn, &account_id, &id).await?;
 
     if !deleted {
         return Err(ApiError::NotFound("API token not found".into()));
@@ -294,24 +265,16 @@ pub async fn delete_api_token_handler(
 )]
 pub async fn rename_api_token_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    FullAccess(auth): FullAccess,
     AxumPath(id): AxumPath<String>,
     Json(req): Json<RenameApiTokenRequest>,
 ) -> Result<Json<RenameApiTokenResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
     let account_id = auth.account_id;
     let label = req.label;
     let id_for_resp = id.clone();
 
-    let mut conn = state
-        .db
-        .acquire()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    schema::ensure_accounts_schema(&mut conn)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let mut conn = state.db.acquire().await?;
+    schema::ensure_accounts_schema(&mut conn).await?;
     let trimmed = label.trim().to_string();
     let ok = api_tokens::update_api_token_label(&mut conn, &account_id, &id, &trimmed)
         .await

@@ -162,6 +162,76 @@ pub fn require_delete_access(auth: &AuthIdentity) -> Result<(), ApiError> {
     ))
 }
 
+/// Extract the Bearer credential: handlers take `auth: AuthIdentity` (or one
+/// of the capability wrappers below) instead of hand-rolling the
+/// `resolve_auth` + `require_*` preamble. Rejections are the same
+/// [`ApiError`] responses the preamble produced.
+impl axum::extract::FromRequestParts<AppState> for AuthIdentity {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        resolve_auth(&parts.headers, state).await
+    }
+}
+
+/// Define a newtype extractor that resolves the Bearer credential and runs one
+/// `require_*` capability check, so a route cannot compile without its guard.
+macro_rules! auth_guard {
+    ($(#[$doc:meta])* $name:ident, $check:path) => {
+        $(#[$doc])*
+        pub struct $name(pub AuthIdentity);
+
+        impl axum::extract::FromRequestParts<AppState> for $name {
+            type Rejection = ApiError;
+
+            async fn from_request_parts(
+                parts: &mut axum::http::request::Parts,
+                state: &AppState,
+            ) -> Result<Self, Self::Rejection> {
+                let auth = resolve_auth(&parts.headers, state).await?;
+                $check(&auth)?;
+                Ok(Self(auth))
+            }
+        }
+    };
+}
+
+auth_guard!(
+    /// Signed-in session (API tokens rejected); wraps [`require_full_access`].
+    FullAccess,
+    require_full_access
+);
+auth_guard!(
+    /// Signed-in administrator session; wraps [`require_admin`].
+    Admin,
+    require_admin
+);
+auth_guard!(
+    /// Credential that may import; wraps [`require_import_access`].
+    ImportAccess,
+    require_import_access
+);
+auth_guard!(
+    /// Credential that may export; wraps [`require_export_access`].
+    ExportAccess,
+    require_export_access
+);
+auth_guard!(
+    /// Credential that may import or export, for asset probes; wraps
+    /// [`require_import_or_export_access`].
+    ImportOrExportAccess,
+    require_import_or_export_access
+);
+auth_guard!(
+    /// Credential that may destroy message data; wraps
+    /// [`require_delete_access`].
+    DeleteAccess,
+    require_delete_access
+);
+
 /// Shared server state passed to every HTTP handler.
 #[derive(Clone)]
 pub struct AppState {
@@ -269,6 +339,19 @@ impl From<crate::db::vault_imports::ImportLookupError> for ApiError {
                 Self::BadRequest(message)
             }
             crate::db::vault_imports::ImportLookupError::Db(err) => Self::Internal(err.to_string()),
+        }
+    }
+}
+
+impl From<crate::db::vault_imports::StartImportError> for ApiError {
+    fn from(e: crate::db::vault_imports::StartImportError) -> Self {
+        match e {
+            err @ crate::db::vault_imports::StartImportError::AlreadyActive => {
+                // One wording for the 409, shared with the CLI paths that
+                // surface the same error through anyhow.
+                Self::Conflict(err.to_string())
+            }
+            crate::db::vault_imports::StartImportError::Db(err) => Self::Internal(err.to_string()),
         }
     }
 }
@@ -500,10 +583,7 @@ async fn resolve_account_ref_async(
     pool: &sqlx::AnyPool,
     account_ref: &str,
 ) -> Result<String, ApiError> {
-    let mut conn = pool
-        .acquire()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let mut conn = pool.acquire().await?;
     account_profile::resolve_account_ref(&mut conn, account_ref)
         .await
         .map_err(|e| ApiError::BadRequest(e.to_string()))
@@ -544,11 +624,7 @@ pub async fn resolve_auth(headers: &HeaderMap, state: &AppState) -> Result<AuthI
     let token = bearer_token(headers)?;
     // Always look up against SQLite so rotate/delete in Settings takes effect
     // without restarting serve (no process-local token cache).
-    let mut conn = state
-        .db
-        .acquire()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let mut conn = state.db.acquire().await?;
     resolve_auth_on_conn(&mut conn, &token).await
 }
 
@@ -562,9 +638,7 @@ pub async fn resolve_auth_on_conn(
     conn: &mut AnyConnection,
     token: &str,
 ) -> Result<AuthIdentity, ApiError> {
-    schema::ensure_accounts_schema(conn)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    schema::ensure_accounts_schema(conn).await?;
 
     // Credential-specific bit not yet folded into `AuthCapability`: a session
     // carries no extra state, an API token carries its own (pre-intersection)
@@ -576,15 +650,12 @@ pub async fn resolve_auth_on_conn(
     }
 
     let resolved = if let Some(account_id) =
-        session_tokens::lookup_account_for_token(&mut *conn, token)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
+        session_tokens::lookup_account_for_token(&mut *conn, token).await?
     {
         Some((account_id, Credential::Session))
     } else {
         api_tokens::lookup_account_for_api_token(&mut *conn, token)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .await?
             .map(|tok| (tok.account_id, Credential::ApiToken(tok.permissions)))
     };
 
@@ -593,8 +664,7 @@ pub async fn resolve_auth_on_conn(
     };
 
     let auth = account_profile::load_account_auth(&mut *conn, &account_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .await?
         .ok_or_else(|| ApiError::Unauthorized("account no longer exists".into()))?;
     if auth.disabled {
         return Err(ApiError::Forbidden("this account is disabled".into()));
@@ -868,7 +938,9 @@ mod tests {
                 .await
                 .unwrap();
 
-        let identity = resolve_auth_on_conn(&mut conn, &created.5).await.unwrap();
+        let identity = resolve_auth_on_conn(&mut conn, &created.token)
+            .await
+            .unwrap();
 
         assert!(
             !identity.permissions().import,
@@ -913,7 +985,7 @@ mod tests {
             api_tokens::create_api_token(&mut conn, TEST_ACCOUNT, "tool", Permissions::all(), None)
                 .await
                 .unwrap();
-        let token = created.5;
+        let token = created.token;
 
         // The API token works while the account is active.
         resolve_auth_on_conn(&mut conn, &token).await.unwrap();
@@ -978,6 +1050,14 @@ mod tests {
             format!("Bearer {token}").parse().unwrap(),
         );
         headers
+    }
+
+    /// Resolve the token the way the `ImportAccess` extractor would, for
+    /// tests that call import handlers directly instead of over HTTP.
+    async fn import_access(state: &AppState, token: &str) -> ImportAccess {
+        let auth = resolve_auth(&auth_headers(token), state).await.unwrap();
+        require_import_access(&auth).unwrap();
+        ImportAccess(auth)
     }
 
     async fn get_path(state: AppState, path: &str) -> reqwest::Response {
@@ -1191,7 +1271,7 @@ mod tests {
 
         let response = imports_complete_handler(
             State(state.clone()),
-            auth_headers(&token),
+            import_access(&state, &token).await,
             AxumPath(import_id),
             Json(body),
         )
@@ -1202,9 +1282,13 @@ mod tests {
         assert_eq!(response.0.attachment_count, 2);
         assert_eq!(response.0.bytes_uploaded, 100);
 
-        let detail = imports_get_handler(State(state), auth_headers(&token), AxumPath(import_id))
-            .await
-            .unwrap();
+        let detail = imports_get_handler(
+            State(state.clone()),
+            import_access(&state, &token).await,
+            AxumPath(import_id),
+        )
+        .await
+        .unwrap();
         let value = detail.0;
         assert_eq!(value.id, import_id);
         assert_eq!(value.duration_ms, Some(48_000));
@@ -1239,7 +1323,7 @@ mod tests {
         };
         let response = imports_complete_handler(
             State(state.clone()),
-            auth_headers(&token),
+            import_access(&state, &token).await,
             AxumPath(import_id),
             Json(body),
         )
@@ -1267,7 +1351,7 @@ mod tests {
         };
         let err = imports_complete_handler(
             State(state.clone()),
-            auth_headers(&token),
+            import_access(&state, &token).await,
             AxumPath(import_id),
             Json(body),
         )
@@ -1310,7 +1394,7 @@ mod tests {
 
         let err = imports_complete_handler(
             State(state.clone()),
-            auth_headers(&token),
+            import_access(&state, &token).await,
             AxumPath(import_id),
             Json(body),
         )
@@ -1335,9 +1419,13 @@ mod tests {
     #[tokio::test]
     async fn imports_get_handler_returns_not_found_for_missing_import() {
         let (_tmp, state, token, import_id) = test_state().await;
-        let err = imports_get_handler(State(state), auth_headers(&token), AxumPath(import_id + 1))
-            .await
-            .unwrap_err();
+        let err = imports_get_handler(
+            State(state.clone()),
+            import_access(&state, &token).await,
+            AxumPath(import_id + 1),
+        )
+        .await
+        .unwrap_err();
 
         match err {
             ApiError::NotFound(msg) => {
@@ -1367,20 +1455,24 @@ mod tests {
         // `test_state` already opened a session; close it so this one can start.
         let _ = imports_discard_handler(
             State(state.clone()),
-            auth_headers(&token),
+            import_access(&state, &token).await,
             AxumPath(import_id),
         )
         .await
         .unwrap();
 
-        let created =
-            imports_create_handler(State(state.clone()), auth_headers(&token), Json(body))
+        let created = imports_create_handler(
+            State(state.clone()),
+            import_access(&state, &token).await,
+            Json(body),
+        )
+        .await
+        .unwrap();
+
+        let active =
+            imports_active_handler(State(state.clone()), import_access(&state, &token).await)
                 .await
                 .unwrap();
-
-        let active = imports_active_handler(State(state.clone()), auth_headers(&token))
-            .await
-            .unwrap();
         let session = active.0.session.expect("a live session is reported");
         assert_eq!(session.id, created.0.id);
         assert_eq!(session.stage.as_deref(), Some("write"));
@@ -1399,7 +1491,7 @@ mod tests {
         let (_tmp, state, token, import_id) = test_state().await;
         let _ = imports_discard_handler(
             State(state.clone()),
-            auth_headers(&token),
+            import_access(&state, &token).await,
             AxumPath(import_id),
         )
         .await
@@ -1422,13 +1514,18 @@ mod tests {
             source_fingerprint: None,
             source_identities: None,
         };
-        let _ = imports_create_handler(State(state.clone()), auth_headers(&token), Json(body))
-            .await
-            .unwrap();
+        let _ = imports_create_handler(
+            State(state.clone()),
+            import_access(&state, &token).await,
+            Json(body),
+        )
+        .await
+        .unwrap();
 
-        let active = imports_active_handler(State(state.clone()), auth_headers(&token))
-            .await
-            .unwrap();
+        let active =
+            imports_active_handler(State(state.clone()), import_access(&state, &token).await)
+                .await
+                .unwrap();
         let session = active.0.session.expect("a live session is reported");
         assert_eq!(
             session.form["source"], "imessage-ios",
@@ -1453,7 +1550,7 @@ mod tests {
         let (_tmp, state, token, import_id) = test_state().await;
         let _ = imports_discard_handler(
             State(state.clone()),
-            auth_headers(&token),
+            import_access(&state, &token).await,
             AxumPath(import_id),
         )
         .await
@@ -1471,13 +1568,18 @@ mod tests {
             source_fingerprint: None,
             source_identities: Some(serde_json::json!(["+15550001111", "owner@example.com"])),
         };
-        let _ = imports_create_handler(State(state.clone()), auth_headers(&token), Json(body))
-            .await
-            .unwrap();
+        let _ = imports_create_handler(
+            State(state.clone()),
+            import_access(&state, &token).await,
+            Json(body),
+        )
+        .await
+        .unwrap();
 
-        let active = imports_active_handler(State(state.clone()), auth_headers(&token))
-            .await
-            .unwrap();
+        let active =
+            imports_active_handler(State(state.clone()), import_access(&state, &token).await)
+                .await
+                .unwrap();
         let session = active.0.session.expect("a live session is reported");
         assert_eq!(
             session.source_identities,
@@ -1500,9 +1602,13 @@ mod tests {
             source_fingerprint: None,
             source_identities: None,
         };
-        let err = imports_create_handler(State(state.clone()), auth_headers(&token), Json(body))
-            .await
-            .unwrap_err();
+        let err = imports_create_handler(
+            State(state.clone()),
+            import_access(&state, &token).await,
+            Json(body),
+        )
+        .await
+        .unwrap_err();
         let ApiError::Conflict(message) = &err else {
             panic!("expected Conflict, got {err:?}");
         };
@@ -1521,7 +1627,7 @@ mod tests {
 
         let _ = imports_stage_handler(
             State(state.clone()),
-            auth_headers(&token),
+            import_access(&state, &token).await,
             AxumPath(import_id),
             Json(SetImportStageBody {
                 stage: "pushing".into(),
@@ -1530,14 +1636,15 @@ mod tests {
         )
         .await
         .unwrap();
-        let active = imports_active_handler(State(state.clone()), auth_headers(&token))
-            .await
-            .unwrap();
+        let active =
+            imports_active_handler(State(state.clone()), import_access(&state, &token).await)
+                .await
+                .unwrap();
         assert_eq!(active.0.session.unwrap().stage.as_deref(), Some("pushing"));
 
         let err = imports_stage_handler(
             State(state.clone()),
-            auth_headers(&token),
+            import_access(&state, &token).await,
             AxumPath(import_id),
             Json(SetImportStageBody {
                 stage: "halfway".into(),
@@ -1554,14 +1661,15 @@ mod tests {
         let (_tmp, state, token, import_id) = test_state().await;
         let _ = imports_discard_handler(
             State(state.clone()),
-            auth_headers(&token),
+            import_access(&state, &token).await,
             AxumPath(import_id),
         )
         .await
         .unwrap();
-        let active = imports_active_handler(State(state.clone()), auth_headers(&token))
-            .await
-            .unwrap();
+        let active =
+            imports_active_handler(State(state.clone()), import_access(&state, &token).await)
+                .await
+                .unwrap();
         assert!(active.0.session.is_none());
     }
 
@@ -1576,11 +1684,11 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
     }
 
-    /// `require_import_access` guards `GET /v1/imports`: with `can_import`
-    /// off, the endpoint refuses; turned back on, it succeeds. Nothing else
-    /// in the suite calls this route through the real HTTP stack, so
-    /// deleting or inverting the guard inside the handler would ship green
-    /// without this test.
+    /// The `ImportAccess` extractor guards `GET /v1/imports`: with
+    /// `can_import` off, the endpoint refuses; turned back on, it succeeds.
+    /// Nothing else in the suite calls this route through the real HTTP
+    /// stack, so swapping the handler onto a weaker extractor would ship
+    /// green without this test.
     #[tokio::test]
     async fn import_endpoint_honors_can_import_flag() {
         let vault = crate::test_support::test_vault().await;
@@ -1625,8 +1733,9 @@ mod tests {
         );
     }
 
-    /// `require_export_access` guards `GET /v1/export/messages/count`: with
-    /// `can_export` off, the endpoint refuses; turned back on, it succeeds.
+    /// The `ExportAccess` extractor guards `GET /v1/export/messages/count`:
+    /// with `can_export` off, the endpoint refuses; turned back on, it
+    /// succeeds.
     #[tokio::test]
     async fn export_endpoint_honors_can_export_flag() {
         let vault = crate::test_support::test_vault().await;
