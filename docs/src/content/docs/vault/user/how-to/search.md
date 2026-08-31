@@ -49,9 +49,9 @@ The search box accepts operators (the advanced form composes many of these for y
 | `in:title` | Restrict to a conversation by title or handle |
 | `people:Family` | Threads that involve at least one contact in that contact group. Aliases: `within:`, `label:` |
 | `-people:Family` | Hide threads that involve that contact group |
-| `tag:Holiday` | Threads that have this thread tag. Quote names with spaces: `tag:"Work Friends"` |
-| `-tag:Holiday` | Hide threads that have this thread tag |
-| `tag:none` | Threads with no thread tags |
+| `tag:Holiday` | Threads that have this message tag. Quote names with spaces: `tag:"Work Friends"` |
+| `-tag:Holiday` | Hide threads that have this message tag |
+| `tag:none` | Threads with no message tags |
 | `within:Family` | Same as `people:` (older spelling) |
 | `search:contacts` | Switch to Contacts search |
 | `handle:text` | (Contacts) combined name or number contains text |

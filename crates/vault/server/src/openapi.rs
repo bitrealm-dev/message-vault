@@ -31,7 +31,7 @@ use crate::server::AppState;
         (name = "Assets", description = "Attachment bytes"),
         (name = "Contacts", description = "Address book and contact groups"),
         (name = "Conversations", description = "Conversation list and sources"),
-        (name = "Thread tags", description = "Labels on conversations"),
+        (name = "Message tags", description = "Tags on conversations"),
         (name = "Admin", description = "User management for administrators")
     )
 )]
@@ -98,11 +98,19 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(
             crate::contact_groups_api::contact_groups_membership_handler
         ))
-        .routes(routes!(crate::thread_tags_api::thread_tags_list_handler))
-        .routes(routes!(crate::thread_tags_api::thread_tags_create_handler))
-        .routes(routes!(crate::thread_tags_api::thread_tags_rename_handler))
-        .routes(routes!(crate::thread_tags_api::thread_tags_delete_handler))
-        .routes(routes!(crate::thread_tags_api::thread_tags_members_handler))
+        .routes(routes!(crate::message_tags_api::message_tags_list_handler))
+        .routes(routes!(
+            crate::message_tags_api::message_tags_create_handler
+        ))
+        .routes(routes!(
+            crate::message_tags_api::message_tags_rename_handler
+        ))
+        .routes(routes!(
+            crate::message_tags_api::message_tags_delete_handler
+        ))
+        .routes(routes!(
+            crate::message_tags_api::message_tags_members_handler
+        ))
         .routes(routes!(
             crate::saved_searches_api::saved_searches_list_handler
         ))
@@ -116,7 +124,7 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
             crate::saved_searches_api::saved_searches_delete_handler
         ))
         .routes(routes!(
-            crate::thread_tags_api::thread_tags_membership_handler
+            crate::message_tags_api::message_tags_membership_handler
         ))
         .routes(routes!(
             crate::conversations_api::conversations_list_handler
@@ -254,8 +262,8 @@ mod tests {
             "/v1/contact-groups",
             "/v1/contact-groups/members",
             "/v1/contacts/groups",
-            "/v1/thread-tags",
-            "/v1/thread-tags/members",
+            "/v1/message-tags",
+            "/v1/message-tags/members",
             "/v1/saved-searches",
             "/v1/saved-searches/{id}",
             "/v1/conversations/tags",

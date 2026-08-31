@@ -144,11 +144,38 @@ CREATE TABLE IF NOT EXISTS vault_imports (
     -- Time spent uploading in milliseconds.
     upload_ms INTEGER,
     -- JSON blob with a human-readable run summary for Import History.
-    summary_json TEXT
+    summary_json TEXT,
+    -- Where a live session is: parse, write, awaiting_gate_1, transcode,
+    -- awaiting_gate_2, or pushing. NULL once the run is over, and on rows
+    -- written before sessions existed. \`status\` says how a run ended;
+    -- \`stage\` says where it is.
+    stage TEXT,
+    -- Absolute path to this session's staging folder on the client. The
+    -- database holds the pointer so resuming means asking the vault where
+    -- to go, rather than guessing from a directory listing.
+    staging_dir TEXT,
+    -- Which install created the session, so another machine can say where
+    -- it belongs instead of failing to open a path that was never local.
+    device_id TEXT,
+    -- Import form snapshot: restores the screen, and restarts the run with
+    -- the same settings.
+    form_json TEXT,
+    -- Source path, size, mtime, and message count. A backup that grew
+    -- between attempts has different conversation boundaries.
+    source_fingerprint TEXT,
+    -- Addresses the backup's device sent from (JSON array), read by the
+    -- client before parsing. Lets a resumed Gate 1 show the identity list
+    -- without re-reading the backup.
+    source_identities TEXT
 );
 
 CREATE INDEX IF NOT EXISTS ix_vault_imports_account_started
     ON vault_imports(account_id, started_at DESC);
+
+-- At most one live import session per account. A partial unique index
+-- rather than application logic, so it holds against a racing client.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_vault_imports_active_account
+    ON vault_imports(account_id) WHERE status = 'running';
 
 -- Per-item warning or error recorded during an import run.
 CREATE TABLE IF NOT EXISTS vault_import_issues (
@@ -332,7 +359,7 @@ CREATE TABLE IF NOT EXISTS tapbacks (
 CREATE INDEX IF NOT EXISTS ix_tapbacks_message_id ON tapbacks (message_id);
 
 -- Named tag a user can stamp on whole conversations.
-CREATE TABLE IF NOT EXISTS conversation_tags (
+CREATE TABLE IF NOT EXISTS message_tags (
     -- Surrogate primary key for this tag.
     id INTEGER PRIMARY KEY,
     -- Owning vault account (\`accounts.id\`).
@@ -342,12 +369,12 @@ CREATE TABLE IF NOT EXISTS conversation_tags (
     UNIQUE(account_id, name)
 );
 
--- Membership of a conversation in a thread tag.
-CREATE TABLE IF NOT EXISTS conversation_tag_members (
+-- Membership of a conversation in a message tag.
+CREATE TABLE IF NOT EXISTS message_tag_members (
     -- Tagged conversation (\`conversations.id\`).
     conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    -- Tag that includes the conversation (\`conversation_tags.id\`).
-    tag_id INTEGER NOT NULL REFERENCES conversation_tags(id) ON DELETE CASCADE,
+    -- Tag that includes the conversation (\`message_tags.id\`).
+    tag_id INTEGER NOT NULL REFERENCES message_tags(id) ON DELETE CASCADE,
     PRIMARY KEY (conversation_id, tag_id)
 );
 `;

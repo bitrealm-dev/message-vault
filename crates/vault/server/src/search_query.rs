@@ -240,7 +240,7 @@ pub struct ParsedSearchQuery {
     pub within: Option<String>,
     /// Hide threads that involve this contact group (`-people:`).
     pub exclude_people: Option<String>,
-    /// Thread tag include (`tag:`).
+    /// Message tag include (`tag:`).
     pub tag: Option<String>,
     /// Hide threads that have this tag (`-tag:`).
     pub exclude_tag: Option<String>,

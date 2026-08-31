@@ -22,8 +22,8 @@ vi.mock("../lib/useContactGroups", () => ({
   useContactGroups: () => ({ groups: [] }),
 }));
 
-vi.mock("../lib/useThreadTags", () => ({
-  useThreadTags: () => ({ tags: [] }),
+vi.mock("../lib/useMessageTags", () => ({
+  useMessageTags: () => ({ tags: [] }),
 }));
 
 vi.mock("../lib/tauri-check", () => ({

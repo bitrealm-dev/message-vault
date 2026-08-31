@@ -4,7 +4,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it } from "vitest";
-import ThreadTagsNav from "./ThreadTagsNav";
+import MessageTagsNav from "./MessageTagsNav";
 
 afterEach(() => {
   cleanup();
@@ -13,7 +13,7 @@ afterEach(() => {
 function renderNav(path: string) {
   return render(
     <MemoryRouter initialEntries={[path]}>
-      <ThreadTagsNav tags={["Work"]} />
+      <MessageTagsNav tags={["Work"]} />
     </MemoryRouter>,
   );
 }
@@ -22,7 +22,7 @@ function classTokens(el: Element): string[] {
   return el.className.split(/\s+/).filter(Boolean);
 }
 
-describe("ThreadTagsNav", () => {
+describe("MessageTagsNav", () => {
   it("titles the section Message Tags", () => {
     renderNav("/");
     expect(screen.getByRole("button", { name: "Message Tags" })).toBeTruthy();

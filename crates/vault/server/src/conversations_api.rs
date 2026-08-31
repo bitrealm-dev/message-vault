@@ -162,7 +162,7 @@ pub struct ConversationSummary {
     /// Group label from the export, when present.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-    /// Thread tags on this conversation.
+    /// Message tags on this conversation.
     pub tags: Vec<String>,
 }
 
@@ -208,11 +208,11 @@ struct ConversationListQuery {
     people: Option<String>,
     /// Hide threads that involve that contact group (`-people:`).
     exclude_people: Option<String>,
-    /// Thread tag name (`tag:`).
+    /// Message tag name (`tag:`).
     tag: Option<String>,
     /// Hide threads that have that tag (`-tag:`).
     exclude_tag: Option<String>,
-    /// Threads with no thread tags (`tag:none`).
+    /// Threads with no message tags (`tag:none`).
     no_tag: bool,
     text: Option<String>,
 }
@@ -321,12 +321,12 @@ fn involves_people_group_sql(engine: DbEngine, exclude: bool, placeholder: usize
     )
 }
 
-fn has_thread_tag_sql(engine: DbEngine, exclude: bool, placeholder: usize) -> String {
+fn has_message_tag_sql(engine: DbEngine, exclude: bool, placeholder: usize) -> String {
     let exists = if exclude { "NOT EXISTS" } else { "EXISTS" };
     format!(
         "{exists} (
-           SELECT 1 FROM conversation_tag_members ctm
-           JOIN conversation_tags ct ON ct.id = ctm.tag_id
+           SELECT 1 FROM message_tag_members ctm
+           JOIN message_tags ct ON ct.id = ctm.tag_id
            WHERE ctm.conversation_id = c.id
              AND ct.account_id = c.account_id
              AND {name_eq}
@@ -431,7 +431,7 @@ fn parse_conversation_list_query(q: &str) -> ConversationListQuery {
 /// - `contact:<id>`: conversations involving any handle of that contact
 /// - `import:<id>`: conversations with at least one message from that import session
 /// - `people:<name>` / `-people:<name>`: involve (or hide) a contact group
-/// - `tag:<name>` / `-tag:<name>`: have (or hide) a thread tag
+/// - `tag:<name>` / `-tag:<name>`: have (or hide) a message tag
 /// - `is:direct` / `is:group`: restrict by conversation type
 /// - other text: case-insensitive match on group title or participant handle/name
 ///
@@ -567,19 +567,19 @@ pub async fn list_conversations_sorted(
     }
     if let Some(ref tag) = parsed.tag {
         let n = params.len() + 1;
-        where_parts.push(has_thread_tag_sql(engine, false, n));
+        where_parts.push(has_message_tag_sql(engine, false, n));
         params.push(Bind::Text(tag.clone()));
     }
     if let Some(ref tag) = parsed.exclude_tag {
         let n = params.len() + 1;
-        where_parts.push(has_thread_tag_sql(engine, true, n));
+        where_parts.push(has_message_tag_sql(engine, true, n));
         params.push(Bind::Text(tag.clone()));
     }
     if parsed.no_tag {
         where_parts.push(
             "NOT EXISTS (
-               SELECT 1 FROM conversation_tag_members ctm
-               JOIN conversation_tags ct ON ct.id = ctm.tag_id
+               SELECT 1 FROM message_tag_members ctm
+               JOIN message_tags ct ON ct.id = ctm.tag_id
                WHERE ctm.conversation_id = c.id AND ct.account_id = c.account_id
              )"
             .into(),
@@ -703,7 +703,7 @@ pub async fn list_conversations_sorted(
     let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
     let mut participants = load_participants(conn, &ids).await?;
     let source_sets = load_conversation_sources(conn, &ids).await?;
-    let mut tag_sets = crate::thread_tags_api::tags_for_conversations(conn, account_id, &ids)
+    let mut tag_sets = crate::message_tags_api::tags_for_conversations(conn, account_id, &ids)
         .await
         .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
 
@@ -2505,7 +2505,7 @@ mod tests {
     async fn list_conversations_filters_by_tag_and_people() {
         let (pool, _dir, account) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
-        crate::thread_tags_api::set_conversations_tag_membership(
+        crate::message_tags_api::set_conversations_tag_membership(
             &mut conn,
             &account,
             &[1],

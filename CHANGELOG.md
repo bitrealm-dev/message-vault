@@ -22,6 +22,7 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ### Changed
 
+- 2026-08-31: The `/v1/thread-tags` route group is now `/v1/message-tags`, matching the product's Message Tag vocabulary; the OpenAPI tag reads "Message tags" and the backing tables are `message_tags` / `message_tag_members` (vault schema 7; existing databases are rebuilt empty). Saved searches and the `tag:` operator are unchanged.
 - 2026-08-30: The vault allows the packaged desktop app's three origins (`tauri://localhost`, `http://tauri.localhost`, `https://tauri.localhost`) without being configured to. A vault built from source ships `cors_origins` commented out, and the desktop app pointed at it failed in a way that reads as an unreachable server while `curl` to the same port succeeded. `cors_origins` still governs every other origin, and `["*"]` is unchanged.
 - 2026-08-28: Postgres JSONL staging writes up to 1000 rows per `INSERT` (SQLite stays at the 999-bind cap, about 55 message rows). Same statement shape on both engines.
 - 2026-08-27: Import writes staging messages, attachments, and tapbacks in multi-row chunks and reuses sender handle ids for the rest of the import, so JSONL staging is no longer one database call per row.

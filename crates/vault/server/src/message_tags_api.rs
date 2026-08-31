@@ -1,4 +1,4 @@
-//! Thread tags stored in `conversation_tags` / `conversation_tag_members`.
+//! Message tags stored in `message_tags` / `message_tag_members`.
 
 use std::collections::HashMap;
 
@@ -90,8 +90,8 @@ pub(crate) async fn tags_for_conversation(
     };
     let sql = format!(
         "SELECT ct.name
-         FROM conversation_tags ct
-         JOIN conversation_tag_members m ON m.tag_id = ct.id
+         FROM message_tags ct
+         JOIN message_tag_members m ON m.tag_id = ct.id
          WHERE ct.account_id = $1 AND m.conversation_id = $2
          {order}"
     );
@@ -120,8 +120,8 @@ pub async fn tags_for_conversations(
             };
             let sql = format!(
                 "SELECT m.conversation_id, ct.name
-                 FROM conversation_tag_members m
-                 JOIN conversation_tags ct ON ct.id = m.tag_id
+                 FROM message_tag_members m
+                 JOIN message_tags ct ON ct.id = m.tag_id
                  WHERE ct.account_id = $1 AND m.conversation_id IN ({placeholders})
                  {order}"
             );
@@ -147,25 +147,25 @@ fn map_tag_error(err: TagError) -> ApiError {
 
 /// A tag name.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub(crate) struct ThreadTagNameBody {
+pub(crate) struct MessageTagNameBody {
     name: String,
 }
 
 /// Old and new tag names.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub(crate) struct ThreadTagRenameBody {
+pub(crate) struct MessageTagRenameBody {
     from: String,
     to: String,
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct ThreadTagMembersQuery {
+pub(crate) struct MessageTagMembersQuery {
     name: String,
 }
 
 /// Conversation ids, tag name, and enable flag.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub(crate) struct ThreadTagMembershipBody {
+pub(crate) struct MessageTagMembershipBody {
     ids: Vec<i64>,
     name: String,
     enable: bool,
@@ -173,48 +173,48 @@ pub(crate) struct ThreadTagMembershipBody {
 
 /// The account's tag names.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ThreadTagsListResponse {
+pub(crate) struct MessageTagsListResponse {
     tags: Vec<String>,
 }
 
 /// The affected tag plus the updated list.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ThreadTagNamedListResponse {
+pub(crate) struct MessageTagNamedListResponse {
     name: String,
     tags: Vec<String>,
 }
 
 /// The updated list after deletion.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ThreadTagDeleteResponse {
+pub(crate) struct MessageTagDeleteResponse {
     ok: bool,
     tags: Vec<String>,
 }
 
 /// Conversation ids carrying the named tag.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ThreadTagMembersResponse {
+pub(crate) struct MessageTagMembersResponse {
     name: String,
     #[serde(rename = "memberConversationIds")]
     member_conversation_ids: Vec<i64>,
 }
 
-/// List the account's thread tags (A–Z, reserved names hidden).
+/// List the account's message tags (A–Z, reserved names hidden).
 #[utoipa::path(
     get,
-    path = "/v1/thread-tags",
-    tag = "Thread tags",
+    path = "/v1/message-tags",
+    tag = "Message tags",
     security(("bearer" = [])),
     responses(
-        (status = 200, body = ThreadTagsListResponse),
+        (status = 200, body = MessageTagsListResponse),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody)
     )
 )]
-pub(crate) async fn thread_tags_list_handler(
+pub(crate) async fn message_tags_list_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<ThreadTagsListResponse>, ApiError> {
+) -> Result<Json<MessageTagsListResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     // TODO(#148): pool acquire
@@ -222,29 +222,29 @@ pub(crate) async fn thread_tags_list_handler(
     let tags = list_tags(&mut conn, &auth.account_id)
         .await
         .map_err(map_tag_error)?;
-    Ok(Json(ThreadTagsListResponse { tags }))
+    Ok(Json(MessageTagsListResponse { tags }))
 }
 
-/// Create a thread tag and return the updated list.
+/// Create a message tag and return the updated list.
 #[utoipa::path(
     post,
-    path = "/v1/thread-tags",
-    tag = "Thread tags",
+    path = "/v1/message-tags",
+    tag = "Message tags",
     security(("bearer" = [])),
-    request_body = ThreadTagNameBody,
+    request_body = MessageTagNameBody,
     responses(
-        (status = 200, body = ThreadTagNamedListResponse),
+        (status = 200, body = MessageTagNamedListResponse),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody),
         (status = 409, body = crate::server::ErrorBody)
     )
 )]
-pub(crate) async fn thread_tags_create_handler(
+pub(crate) async fn message_tags_create_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<ThreadTagNameBody>,
-) -> Result<Json<ThreadTagNamedListResponse>, ApiError> {
+    Json(body): Json<MessageTagNameBody>,
+) -> Result<Json<MessageTagNamedListResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     // TODO(#148): pool acquire
@@ -256,21 +256,21 @@ pub(crate) async fn thread_tags_create_handler(
     let tags = list_tags(&mut conn, &auth.account_id)
         .await
         .map_err(map_tag_error)?;
-    Ok(Json(ThreadTagNamedListResponse {
+    Ok(Json(MessageTagNamedListResponse {
         name: created,
         tags,
     }))
 }
 
-/// Rename a thread tag and return the updated list.
+/// Rename a message tag and return the updated list.
 #[utoipa::path(
     patch,
-    path = "/v1/thread-tags",
-    tag = "Thread tags",
+    path = "/v1/message-tags",
+    tag = "Message tags",
     security(("bearer" = [])),
-    request_body = ThreadTagRenameBody,
+    request_body = MessageTagRenameBody,
     responses(
-        (status = 200, body = ThreadTagNamedListResponse),
+        (status = 200, body = MessageTagNamedListResponse),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody),
@@ -278,11 +278,11 @@ pub(crate) async fn thread_tags_create_handler(
         (status = 409, body = crate::server::ErrorBody)
     )
 )]
-pub(crate) async fn thread_tags_rename_handler(
+pub(crate) async fn message_tags_rename_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<ThreadTagRenameBody>,
-) -> Result<Json<ThreadTagNamedListResponse>, ApiError> {
+    Json(body): Json<MessageTagRenameBody>,
+) -> Result<Json<MessageTagNamedListResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     // TODO(#148): pool acquire
@@ -293,29 +293,29 @@ pub(crate) async fn thread_tags_rename_handler(
     let tags = list_tags(&mut conn, &auth.account_id)
         .await
         .map_err(map_tag_error)?;
-    Ok(Json(ThreadTagNamedListResponse { name, tags }))
+    Ok(Json(MessageTagNamedListResponse { name, tags }))
 }
 
-/// Delete a thread tag and return the updated list.
+/// Delete a message tag and return the updated list.
 #[utoipa::path(
     delete,
-    path = "/v1/thread-tags",
-    tag = "Thread tags",
+    path = "/v1/message-tags",
+    tag = "Message tags",
     security(("bearer" = [])),
-    request_body = ThreadTagNameBody,
+    request_body = MessageTagNameBody,
     responses(
-        (status = 200, body = ThreadTagDeleteResponse),
+        (status = 200, body = MessageTagDeleteResponse),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody),
         (status = 404, body = crate::server::ErrorBody)
     )
 )]
-pub(crate) async fn thread_tags_delete_handler(
+pub(crate) async fn message_tags_delete_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<ThreadTagNameBody>,
-) -> Result<Json<ThreadTagDeleteResponse>, ApiError> {
+    Json(body): Json<MessageTagNameBody>,
+) -> Result<Json<MessageTagDeleteResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     // TODO(#148): pool acquire
@@ -326,28 +326,28 @@ pub(crate) async fn thread_tags_delete_handler(
     let tags = list_tags(&mut conn, &auth.account_id)
         .await
         .map_err(map_tag_error)?;
-    Ok(Json(ThreadTagDeleteResponse { ok: true, tags }))
+    Ok(Json(MessageTagDeleteResponse { ok: true, tags }))
 }
 
 /// Conversation ids that carry a named tag.
 #[utoipa::path(
     get,
-    path = "/v1/thread-tags/members",
-    tag = "Thread tags",
+    path = "/v1/message-tags/members",
+    tag = "Message tags",
     security(("bearer" = [])),
     params(("name" = String, Query, description = "Tag name")),
     responses(
-        (status = 200, body = ThreadTagMembersResponse),
+        (status = 200, body = MessageTagMembersResponse),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody)
     )
 )]
-pub(crate) async fn thread_tags_members_handler(
+pub(crate) async fn message_tags_members_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(query): Query<ThreadTagMembersQuery>,
-) -> Result<Json<ThreadTagMembersResponse>, ApiError> {
+    Query(query): Query<MessageTagMembersQuery>,
+) -> Result<Json<MessageTagMembersResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     // TODO(#148): pool acquire
@@ -355,7 +355,7 @@ pub(crate) async fn thread_tags_members_handler(
     let member_conversation_ids = list_tag_member_ids(&mut conn, &auth.account_id, &query.name)
         .await
         .map_err(map_tag_error)?;
-    Ok(Json(ThreadTagMembersResponse {
+    Ok(Json(MessageTagMembersResponse {
         name: query.name,
         member_conversation_ids,
     }))
@@ -365,9 +365,9 @@ pub(crate) async fn thread_tags_members_handler(
 #[utoipa::path(
     post,
     path = "/v1/conversations/tags",
-    tag = "Thread tags",
+    tag = "Message tags",
     security(("bearer" = [])),
-    request_body = ThreadTagMembershipBody,
+    request_body = MessageTagMembershipBody,
     responses(
         (status = 200, body = MembershipChangedResponse),
         (status = 400, body = crate::server::ErrorBody),
@@ -376,10 +376,10 @@ pub(crate) async fn thread_tags_members_handler(
         (status = 404, body = crate::server::ErrorBody)
     )
 )]
-pub(crate) async fn thread_tags_membership_handler(
+pub(crate) async fn message_tags_membership_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<ThreadTagMembershipBody>,
+    Json(body): Json<MessageTagMembershipBody>,
 ) -> Result<Json<MembershipChangedResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;

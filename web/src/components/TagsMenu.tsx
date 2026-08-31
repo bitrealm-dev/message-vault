@@ -1,9 +1,9 @@
 import type { MembershipCheckState } from "../lib/membershipChecks";
-import { isReservedTagName, reservedTagError } from "../lib/threadTags";
+import { isReservedTagName, reservedTagError } from "../lib/messageTags";
 import GroupsMenu from "./GroupsMenu";
 import { TagIcon } from "./icons";
 
-/** Assign or remove thread tags on the selected conversations. */
+/** Assign or remove message tags on the selected conversations. */
 export default function TagsMenu({
   allTags,
   checks,
@@ -33,7 +33,7 @@ export default function TagsMenu({
       emptyText="No tags"
       noMatchText="No matching tags"
       createButtonLabel="Create tag"
-      createTitle="Create thread tag"
+      createTitle="Create message tag"
       createPlaceholder="Tag name"
       isReserved={isReservedTagName}
       reservedError={reservedTagError}

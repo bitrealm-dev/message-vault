@@ -50,7 +50,7 @@ Export uses a **metadata** search subset (sender, participants, contact `preferr
 - `source:`, `is:group`, `is:direct` (individual)
 - `people:` / `within:` / `label:` (threads that involve a contact group)
 - `-people:` (hide those threads)
-- `tag:` / `-tag:` (thread tags; `tag:none` for untagged threads)
+- `tag:` / `-tag:` (message tags; `tag:none` for untagged threads)
 - Trash is always excluded; legacy `in:trash` is ignored
 - `search:contacts` on message export returns `400`
 

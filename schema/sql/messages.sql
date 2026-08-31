@@ -158,7 +158,7 @@ CREATE TABLE IF NOT EXISTS tapbacks (
 CREATE INDEX IF NOT EXISTS ix_tapbacks_message_id ON tapbacks (message_id);
 
 -- Named tag a user can stamp on whole conversations.
-CREATE TABLE IF NOT EXISTS conversation_tags (
+CREATE TABLE IF NOT EXISTS message_tags (
     -- Surrogate primary key for this tag.
     id INTEGER PRIMARY KEY,
     -- Owning vault account (`accounts.id`).
@@ -168,11 +168,11 @@ CREATE TABLE IF NOT EXISTS conversation_tags (
     UNIQUE(account_id, name)
 );
 
--- Membership of a conversation in a thread tag.
-CREATE TABLE IF NOT EXISTS conversation_tag_members (
+-- Membership of a conversation in a message tag.
+CREATE TABLE IF NOT EXISTS message_tag_members (
     -- Tagged conversation (`conversations.id`).
     conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    -- Tag that includes the conversation (`conversation_tags.id`).
-    tag_id INTEGER NOT NULL REFERENCES conversation_tags(id) ON DELETE CASCADE,
+    -- Tag that includes the conversation (`message_tags.id`).
+    tag_id INTEGER NOT NULL REFERENCES message_tags(id) ON DELETE CASCADE,
     PRIMARY KEY (conversation_id, tag_id)
 );

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isReservedTagName, reservedTagError, tagListQuery, tagSlug } from "./threadTags";
+import { isReservedTagName, reservedTagError, tagListQuery, tagSlug } from "./messageTags";
 
 describe("tagSlug", () => {
   it("turns spaces into dashes and keeps letter case", () => {

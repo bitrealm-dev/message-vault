@@ -2,10 +2,10 @@ import { useCallback, useState } from "react";
 import { Outlet, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { groupFromSlug } from "../lib/contactGroups";
 import { asMessagesLocationState } from "../lib/messagesLocationState";
-import { tagFromSlug, tagListQuery } from "../lib/threadTags";
+import { tagFromSlug, tagListQuery } from "../lib/messageTags";
 import type { Conversation } from "../lib/types";
 import { useContactGroups } from "../lib/useContactGroups";
-import { useThreadTags } from "../lib/useThreadTags";
+import { useMessageTags } from "../lib/useMessageTags";
 import ContactList from "../screens/ContactList";
 import ConversationList from "../screens/ConversationList";
 import AppHeader from "./AppHeader";
@@ -90,7 +90,7 @@ export default function AppLayout() {
     setClearCheckedRev((n) => n + 1);
   }, []);
   const { groups } = useContactGroups();
-  const { tags } = useThreadTags();
+  const { tags } = useMessageTags();
 
   const pathname = location.pathname;
   const mode = modeFromPathname(pathname);

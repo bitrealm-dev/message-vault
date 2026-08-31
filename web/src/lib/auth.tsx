@@ -12,8 +12,8 @@ import { apiClient, getToken, setBaseUrl, setToken } from "./api";
 import { parsePersistedAuth } from "./authGuards";
 import { clearContactDetailCache } from "./contactDetailCache";
 import { invalidateContactGroups } from "./contactGroups";
+import { invalidateMessageTags } from "./messageTags";
 import { isTauri } from "./tauri-check";
-import { invalidateThreadTags } from "./threadTags";
 import { clearAccountProfile, loadAccountProfile } from "./useAccountProfile";
 
 interface AuthState {
@@ -204,7 +204,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const epoch = ++authEpoch.current;
     clearContactDetailCache();
     invalidateContactGroups();
-    invalidateThreadTags();
+    invalidateMessageTags();
     clearAccountProfile();
     setBaseUrl(serverUrl);
     setToken(token);
@@ -254,7 +254,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(null);
     clearContactDetailCache();
     invalidateContactGroups();
-    invalidateThreadTags();
+    invalidateMessageTags();
     clearAccountProfile();
     clearPersisted();
     setState((s) => ({

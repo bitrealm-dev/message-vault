@@ -44,8 +44,8 @@ vi.mock("./contactGroups", () => ({
   invalidateContactGroups: vi.fn(),
 }));
 
-vi.mock("./threadTags", () => ({
-  invalidateThreadTags: vi.fn(),
+vi.mock("./messageTags", () => ({
+  invalidateMessageTags: vi.fn(),
 }));
 
 const STORAGE_KEY = "message-vault-auth";

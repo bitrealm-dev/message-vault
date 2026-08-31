@@ -12,7 +12,7 @@ import { isTauri } from "../lib/tauri-check";
 import { resizeHandleGutter } from "../lib/tw";
 import { useAccountProfile } from "../lib/useAccountProfile";
 import { useContactGroups } from "../lib/useContactGroups";
-import { useThreadTags } from "../lib/useThreadTags";
+import { useMessageTags } from "../lib/useMessageTags";
 import { Z_ROW_MENU } from "../lib/zLayers";
 import ColumnResizeHandle from "./ColumnResizeHandle";
 import { useReportColumnResizing } from "./columnResizeState";
@@ -26,6 +26,7 @@ import {
   LEFT_PANEL_STORAGE_KEY,
   LEFT_PANEL_WIDTH_VAR,
 } from "./leftPanelWidth";
+import MessageTagsNav from "./MessageTagsNav";
 import NavCollapsibleSection from "./NavCollapsibleSection";
 import NavGlyphButton from "./NavGlyphButton";
 import {
@@ -36,7 +37,6 @@ import {
 } from "./navSectionLayout";
 import PopupMenu from "./PopupMenu";
 import SavedSearchForm from "./SavedSearchForm";
-import ThreadTagsNav from "./ThreadTagsNav";
 import { useColumnResize } from "./useColumnResize";
 
 function NavIcon({ children }: { children: ReactNode }) {
@@ -156,7 +156,7 @@ export default function LeftPanel({
   const [menuFor, setMenuFor] = useState<number | null>(null);
   const savedSearchMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const { groups: contactGroups } = useContactGroups();
-  const { tags: threadTags } = useThreadTags();
+  const { tags: messageTags } = useMessageTags();
 
   return (
     <div
@@ -322,7 +322,7 @@ export default function LeftPanel({
           )}
         </NavCollapsibleSection>
 
-        <ThreadTagsNav tags={threadTags} />
+        <MessageTagsNav tags={messageTags} />
       </div>
 
       {showGroupForm ? (
