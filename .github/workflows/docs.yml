@@ -40,7 +40,7 @@ jobs:
           key: ${{ runner.os }}-docs-cargo-${{ hashFiles('Cargo.lock') }}
 
       - name: Build rustdoc
-        run: cargo doc --workspace --no-deps --exclude message-vault-io-gui
+        run: cargo doc --workspace --no-deps
 
       - name: Copy rustdoc into the docs site
         run: |

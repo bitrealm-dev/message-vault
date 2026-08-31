@@ -15,10 +15,7 @@
 
 ignore = [
     # Unmaintained crates, transitive and unfixable today:
-    "RUSTSEC-2025-0052", # async-std discontinued (dev-dep via httpmock)
     "RUSTSEC-2024-0436", # paste unmaintained (via image/exr)
-    "RUSTSEC-2026-0206", # rustybuzz unmaintained (legacy Slint GUI's usvg)
-    "RUSTSEC-2026-0192", # ttf-parser unmaintained (legacy Slint GUI's usvg)
     { id = "RUSTSEC-2026-0194", reason = "quick-xml quadratic duplicate-attribute scan: pinned by imessage-database =4.2.0 -> plist =1.9.0 -> quick-xml 0.39.4; parses the user's own local macOS/iOS data, never network input. Revisit when imessage-database releases." },
     { id = "RUSTSEC-2026-0195", reason = "quick-xml unbounded namespace allocation: same chain and exposure as RUSTSEC-2026-0194." },
 ]

@@ -28,7 +28,7 @@ vendor backup (chat.db, SMS XML, WhatsApp crypt15, …)
 - **`crates/vault/server`** — each `*_api.rs` file is one Axum route group; `db/` modules mirror the table sources in `schema/sql/*.sql`, which the server embeds at compile time (`db/schema.rs`) — change tables there, not in a live db file. Import path: `jsonl.rs` → `import.rs` → `dedupe.rs`; demo mode runs through a guest pool (`guest_pool.rs`).
 - **`src-tauri/`** is **not a workspace member** (own `Cargo.toml`, listed in the root workspace `exclude`). Its `commands/` wrap the exporter crates and push/pull for the desktop app. Format/build it with `--manifest-path`.
 - **`web/src/lib/api.ts`** is the vault API client; `web/src/lib/tauri.ts` wraps desktop-only commands; `desktopFeatures.ts` gates them. Tests sit next to sources as `*.test.ts(x)` (Vitest + Testing Library).
-- **Not the product path**: `crates/message-vault-io-gui/` (legacy Slint GUI) and `web-next/` (legacy Next.js browse UI). New features go in `web/` + `src-tauri/` + `crates/vault/server/`.
+- **Not the product path**: `web-next/` (legacy Next.js browse UI). New features go in `web/` + `src-tauri/` + `crates/vault/server/`. The old Slint GUI is gone; its screens are recorded in `docs/superpowers/reference/legacy-slint-gui.md`.
 - Design specs and implementation plans live in `docs/superpowers/specs/` and `docs/superpowers/plans/` — check them before starting work that overlaps.
 
 ## Commands
@@ -57,7 +57,7 @@ cargo build --manifest-path src-tauri/Cargo.toml
 cd web && npm run lint && npm test            # Biome + Vitest (CI runs `biome ci`)
 cd docs && npm run check && npm run build     # docs tree only
 ./scripts/format-all.sh                       # rewrite: rustfmt (workspace + src-tauri) + Biome
-./scripts/lint-all.sh                         # Clippy (workspace except Slint GUI + src-tauri) + Biome
+./scripts/lint-all.sh                         # Clippy (workspace + src-tauri) + Biome
 ./scripts/check-pr.sh                         # all of the above in one pass; stops on first failure
 ```
 
@@ -65,7 +65,7 @@ After `web/` UI changes, verify in the browser with the Playwright MCP (`plugin-
 
 ## Rules that are easy to get wrong
 
-- **Version lockstep** (current `0.8.3`): `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `web/package.json`, `crates/vault/server/Cargo.toml` all carry the product version. Leave other crates at `0.1.0`; never bump `message-vault-io-gui` (`0.6.0`) or `web-next` (`0.3.0`).
+- **Version lockstep** (current `0.8.3`): `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `web/package.json`, `crates/vault/server/Cargo.toml` all carry the product version. Leave other crates at `0.1.0`; never bump `web-next` (`0.3.0`).
 - **Pushing a `v*` tag ships a release** — CI builds the Docker image and desktop installers and creates a GitHub Release. Never create or push tags unless asked.
 - **CI gates**: rustfmt, workspace build + test, Biome `ci` (lint and format drift), Vitest. Clippy is not gated — run `./scripts/lint-all.sh` locally.
 - **Git workflow**: never commit to `main`; use a branch or worktree. Verify PR state with `gh pr view` / `gh pr list` / `gh pr checks` before pushing — don't assume. Don't merge PRs unless explicitly asked.

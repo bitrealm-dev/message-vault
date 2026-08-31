@@ -75,7 +75,7 @@ The product has two pieces:
 | Docs site              | Astro 7 + Starlight, published to GitHub Pages at bitrealm.io.                                                                    |
 | Packaging              | Docker (Node 22 + Rust image). GitHub Actions on `v*` tags builds the image and Tauri installers.                                 |
 | Helpers on PATH        | `ffmpeg` / `ffprobe` for media. `wtsexporter` (Python) for WhatsApp. `gh` for GitHub.                                             |
-| Not the product path   | Legacy Slint 1.17 GUI (`crates/message-vault-io-gui/`). Restored Next.js 16 browse app (`web-next/`, better-sqlite3).             |
+| Not the product path   | Restored Next.js 16 browse app (`web-next/`, better-sqlite3).                                                                     |
 
 ### Directory map (`tree -L 2 message-vault`)
 
@@ -87,7 +87,6 @@ message-vault
 │   ├── core/               # shared form model, jobs, export.ini
 │   ├── exporters/          # backup parsers (iMessage, WhatsApp, SMS, experimental)
 │   ├── libs/               # shared libraries (ir, ir-format, reexport, contacts, media, …)
-│   ├── message-vault-io-gui/  # legacy Slint desktop GUI (not the product path)
 │   └── vault/              # message-vault-server (HTTP API + SQLite) and demo-seed
 ├── docker/                 # Dockerfile and Compose for a release-shaped vault image
 ├── docs/                   # Astro Starlight site (bitrealm.io)
@@ -98,7 +97,7 @@ message-vault
 ├── schema/                 # SQLite schema for the vault
 │   └── sql/                # CREATE TABLE sources embedded by the server
 ├── scripts/                # host helpers (run-vault-dev, build-static, schema sync)
-│   ├── deprecated/         # old Slint packaging scripts
+│   ├── deprecated/         # retired helper scripts
 │   └── test/               # scripted test helpers
 ├── src-tauri/              # Tauri v2 native shell (not a workspace member)
 │   ├── capabilities/       # Tauri permission manifests
@@ -113,7 +112,7 @@ message-vault
 ```
 
 ```text
-# ❌ BAD — crates/message-vault-io-gui or web-next with v2 schema IS NOT the product!
+# ❌ BAD — web-next with v2 schema IS NOT the product!
 # ✅ GOOD — product UI is web/ + src-tauri/; vault API is crates/vault/server/; schema v3 only
 ```
 
@@ -238,7 +237,7 @@ cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 # Rewrite Rust (workspace + src-tauri) and web/ (Biome)
 ./scripts/format-all.sh
 
-# Clippy (workspace except Slint GUI + src-tauri) and web lint (Biome).
+# Clippy (workspace + src-tauri) and web lint (Biome).
 # Warnings do not fail.
 ./scripts/lint-all.sh
 
@@ -268,7 +267,7 @@ npm run build             # tsc && vite build
 npm run dev               # Vite on http://localhost:5173 (proxies /v1 to :8080)
 ```
 
-From the repository root, `./scripts/format-all.sh` runs rustfmt then the web formatter. `./scripts/lint-all.sh` runs Clippy (workspace except `message-vault-io-gui`, plus `src-tauri`) then the web linter. `./scripts/check-pr.sh` calls `format-all.sh`, then build/test/lint. CI does not run Clippy.
+From the repository root, `./scripts/format-all.sh` runs rustfmt then the web formatter. `./scripts/lint-all.sh` runs Clippy (workspace plus `src-tauri`) then the web linter. `./scripts/check-pr.sh` calls `format-all.sh`, then build/test/lint. CI does not run Clippy.
 
 Do not start a separate `npm run dev` while `cargo tauri dev` is running. Tauri starts Vite itself.
 
@@ -305,7 +304,7 @@ Three version numbers are easy to mix up:
 - `web/package.json` — Vite SPA
 - `crates/vault/server/Cargo.toml` — vault server crate
 
-Leave most other `Cargo.toml` files at `0.1.0`. Do not bump `crates/message-vault-io-gui/` (`0.6.0`) or `web-next/` (`0.3.0`) for a product release.
+Leave most other `Cargo.toml` files at `0.1.0`. Do not bump `web-next/` (`0.3.0`) for a product release.
 
 **Ship a release**
 

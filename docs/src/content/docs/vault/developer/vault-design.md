@@ -19,7 +19,6 @@ message-vault
 │   ├── core/               # shared import/export job settings used by CLI and the desktop app
 │   ├── exporters/          # parse iMessage, WhatsApp, SMS, and other backups into JSONL
 │   ├── libs/               # shared code those exporters and the vault use (format, contacts, media)
-│   ├── message-vault-io-gui/  # old Slint desktop app — skip for new work
 │   └── vault/              # message-vault-server (API + SQLite) and demo-seed (sample inbox)
 ├── docker/                 # image and Compose file that look like a published vault
 ├── docs/                   # bitrealm.io (User Guide, Developer docs, landing page)
