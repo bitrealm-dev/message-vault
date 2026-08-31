@@ -66,7 +66,7 @@ pub(crate) fn convert_json(
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
 
     for (jid, chat) in store {
-        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        message_vault_io_core::check_cancel(cancel)?;
         if jid.starts_with('_') {
             // Reserved / system keys if any.
             continue;
@@ -99,7 +99,7 @@ pub(crate) fn convert_json(
     let mut documents = Vec::new();
     let mut media_sources: Vec<Option<PathBuf>> = Vec::new();
     for (chat_id, mut convo) in conversations {
-        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        message_vault_io_core::check_cancel(cancel)?;
         let (keep, skipped) = prepare_conversation(
             &mut convo,
             |a, b| {

@@ -395,7 +395,7 @@ pub fn write_documents_through_sink(
     );
     let mut written = 0u64;
     for doc in documents {
-        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        message_vault_io_core::check_cancel(cancel)?;
         written += 1;
         sink.write_document(doc)?;
         report.conversations += 1;

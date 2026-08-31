@@ -6,14 +6,12 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result, bail};
 use message_ir::ConversationDocument;
-use message_vault_io_core::{CancelFlag, check_cancel};
+use message_vault_io_core::{CancelFlag, check_cancel, parallel_for_each};
 use serde::Serialize;
-use vault_push::authenticate;
+use vault_http::{auth_check as authenticate, with_retries};
 
 use crate::http::{ExportMessage, ExportMessagesArgs, HttpSession};
 use crate::project::{build_document, conversation_key, to_ir_message};
@@ -22,6 +20,8 @@ use crate::project::{build_document, conversation_key, to_ir_message};
 pub const DEFAULT_PAGE_LIMIT: usize = 100;
 /// Default number of parallel asset download workers.
 pub const DEFAULT_ASSET_DOWNLOAD_WORKERS: usize = 8;
+/// Extra tries for transient HTTP failures, matching the vault-push default.
+const MAX_RETRIES: u32 = 3;
 
 /// Settings for one download run (output folder, URL, search, flags).
 #[derive(Debug, Clone)]
@@ -38,10 +38,6 @@ pub struct VaultPullConfig {
     pub cancel: Option<CancelFlag>,
     /// Number of parallel asset download workers (default 8).
     pub asset_download_workers: usize,
-    /// Ignore the journal and re-download everything.
-    pub force: bool,
-    /// Path to the pull journal file. Defaults to out_dir/.vault-pull-state.jsonl.
-    pub journal_path: Option<PathBuf>,
 }
 
 /// Final summary of a download (conversations, messages, attachment counts).
@@ -152,17 +148,10 @@ pub fn run(
     }
 
     // Load the local skip log so a later run does not re-download files already on disk.
-    let journal_path = cfg
-        .journal_path
-        .clone()
-        .unwrap_or_else(|| crate::journal::journal_path(&cfg.out_dir));
-    let journal_state = if cfg.force {
-        crate::journal::PullJournalState::default()
-    } else {
-        crate::journal::load(&journal_path, &cfg.base_url, &username)?
-    };
+    let journal_path = crate::journal::journal_path(&cfg.out_dir);
+    let journal_state = crate::journal::load(&journal_path, &cfg.base_url, &username)?;
 
-    if journal_state.backup_complete && !cfg.force {
+    if journal_state.backup_complete {
         emit(
             &mut on_progress,
             ProgressEvent::Log(
@@ -180,15 +169,20 @@ pub fn run(
     let mut total_messages = 0u64;
 
     loop {
-        check_cancel(cfg.cancel.as_ref()).map_err(|e| anyhow::anyhow!("{e}"))?;
-        let page = session.export_messages(ExportMessagesArgs {
-            base_url: &cfg.base_url,
-            key: &cfg.key,
-            q: &q,
-            limit: cfg.page_limit.max(1),
-            cursor: cursor.as_deref(),
-            account: &account,
-            source: cfg.source.as_deref(),
+        check_cancel(cfg.cancel.as_ref())?;
+        let page = with_retries(MAX_RETRIES, || {
+            crate::http::export_messages(
+                &session,
+                ExportMessagesArgs {
+                    base_url: &cfg.base_url,
+                    key: &cfg.key,
+                    q: &q,
+                    limit: cfg.page_limit.max(1),
+                    cursor: cursor.as_deref(),
+                    account: &account,
+                    source: cfg.source.as_deref(),
+                },
+            )
         })?;
         total_messages += page.messages.len() as u64;
         emit(
@@ -385,13 +379,14 @@ fn assets_needing_download(
 /// Download unique attachments in parallel using work-stealing workers.
 ///
 /// Same pattern as vault-push `upload_assets`: jobs are collected, then
-/// `asset_download_workers` threads pull from a shared `AtomicUsize` counter.
-/// Files already on disk are skipped (counted as `skipped`).
+/// [`parallel_for_each`] runs them on `asset_download_workers` threads.
+/// Files already on disk are skipped (counted as `skipped`); each download
+/// retries transient HTTP failures like push does.
 ///
 /// # Errors
 ///
-/// Returns an error when a download fails, a dest path cannot be created, or
-/// cancel is requested.
+/// Returns an error when a download fails after retries, a dest path cannot be
+/// created, or cancel is requested.
 struct DownloadAssetsParallelArgs<'a> {
     session: &'a crate::http::HttpSession,
     base_url: &'a str,
@@ -432,52 +427,26 @@ fn download_assets_parallel(args: DownloadAssetsParallelArgs<'_>) -> Result<Asse
         });
     }
 
-    if jobs.is_empty() {
-        return Ok(stats);
-    }
-
-    let worker_count = workers.max(1).min(jobs.len());
-    let next_job = AtomicUsize::new(0);
-    let results = Mutex::new(
-        std::iter::repeat_with(|| None)
-            .take(jobs.len())
-            .collect::<Vec<Option<Result<u64, String>>>>(),
-    );
-
-    std::thread::scope(|scope| {
-        for _ in 0..worker_count {
-            scope.spawn(|| {
-                loop {
-                    let index = next_job.fetch_add(1, Ordering::Relaxed);
-                    if index >= jobs.len() {
-                        break;
-                    }
-                    let job = &jobs[index];
-                    let result = (|| -> Result<u64> {
-                        check_cancel(cancel).map_err(|e| anyhow::anyhow!("{e}"))?;
-                        session.download_asset(
-                            base_url,
-                            key,
-                            account,
-                            &job.source,
-                            &job.sha256,
-                            &job.dest,
-                        )?;
-                        let meta = fs::metadata(&job.dest).with_context(|| {
-                            format!("stat after download {}", job.dest.display())
-                        })?;
-                        Ok(meta.len())
-                    })()
-                    .map_err(|e| e.to_string());
-                    results.lock().expect("asset result mutex poisoned")[index] = Some(result);
-                }
-            });
-        }
+    let results = parallel_for_each(&jobs, workers, cancel, |job| {
+        with_retries(MAX_RETRIES, || {
+            crate::http::download_asset(
+                session,
+                base_url,
+                key,
+                account,
+                &job.source,
+                &job.sha256,
+                &job.dest,
+            )?;
+            let meta = fs::metadata(&job.dest)
+                .with_context(|| format!("stat after download {}", job.dest.display()))?;
+            Ok(meta.len())
+        })
+        .map_err(|e| e.to_string())
     });
 
-    let mut results = results.into_inner().expect("asset result mutex poisoned");
-    for result in results.drain(..) {
-        match result.expect("every asset job has a result") {
+    for result in results {
+        match result {
             Ok(bytes) => {
                 stats.bytes = stats.bytes.saturating_add(bytes);
                 stats.downloaded += 1;

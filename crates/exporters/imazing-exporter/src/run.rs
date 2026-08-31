@@ -15,7 +15,7 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
     let SourceConfig::Imazing(_) = &config.source else {
         bail!("imazing-exporter requires SourceConfig::Imazing");
     };
-    message_vault_io_core::check_cancel(config.cancel.as_ref()).map_err(anyhow::Error::msg)?;
+    message_vault_io_core::check_cancel(config.cancel.as_ref())?;
     let input = config.require_input().map_err(anyhow::Error::msg)?;
     let mut messages = Vec::new();
     let result = message_ir_format::run_pipeline_with_contacts(

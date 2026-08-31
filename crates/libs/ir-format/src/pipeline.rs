@@ -49,7 +49,7 @@ pub fn run_pipeline_with_contacts(
         ExportTransforms,
     ) -> anyhow::Result<(ExportReport, FormatSinkResult)>,
 ) -> anyhow::Result<RunResult> {
-    check_cancel(config.cancel.as_ref()).map_err(anyhow::Error::msg)?;
+    check_cancel(config.cancel.as_ref())?;
     let mut messages = Vec::new();
     let log_fn = |line: &str| config.emit_log(line);
     let contacts = load_contacts(config, &log_fn)?;

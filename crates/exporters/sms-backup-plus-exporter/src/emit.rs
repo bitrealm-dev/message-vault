@@ -351,7 +351,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
     // Pre-size for typical 1:1 chat counts; grows as needed.
     conversations.reserve((total / 4).min(50_000) as usize);
 
-    message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+    message_vault_io_core::check_cancel(cancel)?;
 
     let owner_all_digits = owners.all_phone_digits();
 
@@ -360,7 +360,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
     const EML_PARSE_CHUNK: usize = 256;
     let mut scanned: u64 = 0;
     for chunk in eml_paths.chunks(EML_PARSE_CHUNK) {
-        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        message_vault_io_core::check_cancel(cancel)?;
         let outcomes: Vec<ParsedEmlKind> = chunk
             .par_iter()
             .map(|eml_path| {
@@ -380,7 +380,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
             .collect();
 
         for outcome in outcomes {
-            message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+            message_vault_io_core::check_cancel(cancel)?;
             scanned += 1;
             report_progress(verbose, log, "scanned", scanned, total);
             match outcome {
@@ -473,7 +473,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
     };
     let mut documents = Vec::new();
     for (chat_id, mut convo) in conversations {
-        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        message_vault_io_core::check_cancel(cancel)?;
         let (keep, skipped) =
             prepare_conversation(&mut convo, |a, b| a.sort_key.cmp(&b.sort_key), |k| k);
         report.skipped_invalid_date += skipped;

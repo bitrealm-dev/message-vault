@@ -36,4 +36,6 @@ pub use pipeline::{
     ExportReport, RunResult, discover_files, export_meta, name_stem, parse_date_range,
     parse_date_range_tz, prepare_outputs, print_result, prune_and_finish_conversation,
 };
-pub use process::{CancelFlag, LogSink, check_cancel, emit_log, is_cancelled};
+pub use process::{
+    CancelFlag, Cancelled, LogSink, check_cancel, emit_log, is_cancelled, parallel_for_each,
+};

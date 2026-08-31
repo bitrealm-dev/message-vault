@@ -4,7 +4,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use tauri::Emitter;
-use vault_pull::{ProgressEvent, VaultPullConfig, run as run_pull};
+use vault_pull::{
+    DEFAULT_ASSET_DOWNLOAD_WORKERS, DEFAULT_PAGE_LIMIT, ProgressEvent, VaultPullConfig,
+    run as run_pull,
+};
 
 use super::jobs::{reset_and_clone_cancel, spawn_job};
 use crate::state::AppState;
@@ -55,11 +58,9 @@ pub async fn pull(
             query: args.query,
             source: None,
             skip_attachments: args.skip_attachments,
-            page_limit: 100,
+            page_limit: DEFAULT_PAGE_LIMIT,
             cancel: Some(cancel),
-            asset_download_workers: 8,
-            force: false,
-            journal_path: None,
+            asset_download_workers: DEFAULT_ASSET_DOWNLOAD_WORKERS,
         };
 
         let mut progress = |event: ProgressEvent| match event {

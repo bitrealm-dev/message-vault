@@ -514,13 +514,13 @@ pub fn read_sbr_documents(
     let mut conversations = BTreeMap::new();
     let keep_bytes = options.copy_attachments || options.keep_attachment_bytes;
     for path in paths {
-        check_cancel(options.cancel).map_err(anyhow::Error::msg)?;
+        check_cancel(options.cancel)?;
         // Decode attachment bytes during parse; file writes wait until every
         // conversation is built. Messages that parse before an XML error are
         // kept; stats are merged even when the file is truncated.
         let mut stats = ParseStats::default();
         let parse_result = parse_file_with(&path, &owners, &mut stats, |record| {
-            check_cancel(options.cancel).map_err(anyhow::Error::msg)?;
+            check_cancel(options.cancel)?;
             if !options.date_range.contains_secs_f64(record.timestamp_secs) {
                 report.skipped_out_of_range += 1;
                 return Ok(());
@@ -544,7 +544,7 @@ pub fn read_sbr_documents(
             report.errors.push(format!("{}: {error:#}", path.display()));
         }
     }
-    check_cancel(options.cancel).map_err(anyhow::Error::msg)?;
+    check_cancel(options.cancel)?;
     let mut documents = Vec::new();
     for (id, mut conversation) in conversations {
         dedupe(&mut conversation.messages);

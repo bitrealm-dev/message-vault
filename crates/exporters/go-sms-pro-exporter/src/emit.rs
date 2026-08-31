@@ -455,7 +455,7 @@ pub(crate) fn convert_export(
     xml_paths.sort();
 
     for xml_path in xml_paths {
-        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        message_vault_io_core::check_cancel(cancel)?;
         match parse_xml_file(&xml_path) {
             Ok((msgs, stats)) => {
                 report.bump("xml_messages_seen", stats.messages);
@@ -493,7 +493,7 @@ pub(crate) fn convert_export(
     pdu_paths.sort();
 
     for pdu_path in pdu_paths {
-        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        message_vault_io_core::check_cancel(cancel)?;
         let all_digits = owners.all_phone_digits();
         match parse_pdu_file(
             &pdu_path,
@@ -533,7 +533,7 @@ pub(crate) fn convert_export(
         }
     }
 
-    message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+    message_vault_io_core::check_cancel(cancel)?;
 
     let hooks = GoSmsProjection {
         export: message_vault_io_core::export_meta(

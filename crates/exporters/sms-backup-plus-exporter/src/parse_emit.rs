@@ -42,7 +42,7 @@ pub(super) fn collect_eml_paths<P: AsRef<Path>>(
 
     let mut paths = Vec::new();
     for input in inputs {
-        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        message_vault_io_core::check_cancel(cancel)?;
         let input = input.as_ref();
         if input.is_file() {
             if is_eml_file(input) {
