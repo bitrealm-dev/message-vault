@@ -38,6 +38,8 @@ const invokeDeleteStagingMock = vi.fn();
 const probeFfmpegToolsMock = vi.fn<(dir: string | null) => Promise<FfmpegToolsProbe>>();
 const setImportStageMock = vi.fn();
 const discardImportSessionMock = vi.fn();
+const invokeImessageBackupIdentitiesMock = vi.fn();
+const loadAccountProfileMock = vi.fn();
 
 /**
  * `onExtractEvents` stands in for the real Tauri event listener. Its default
@@ -63,8 +65,14 @@ vi.mock("../../lib/tauri", () => ({
   invokeTranscodeStaging: (...args: unknown[]) => invokeTranscodeStagingMock(...args),
   invokeDeleteStaging: (...args: unknown[]) => invokeDeleteStagingMock(...args),
   probeFfmpegTools: (...args: [string | null]) => probeFfmpegToolsMock(...args),
+  invokeImessageBackupIdentities: (...args: unknown[]) =>
+    invokeImessageBackupIdentitiesMock(...args),
   onExtractEvents: (...args: [{ onProgress?: (event: ImportProgressEvent) => void }]) =>
     onExtractEventsMock(...args),
+}));
+
+vi.mock("../../lib/useAccountProfile", () => ({
+  loadAccountProfile: (...args: unknown[]) => loadAccountProfileMock(...args),
 }));
 
 vi.mock("../../hooks/useTauriJob", () => ({
@@ -262,6 +270,13 @@ describe("useImportJob wiring", () => {
     setImportStageMock.mockResolvedValue(undefined);
     discardImportSessionMock.mockReset();
     discardImportSessionMock.mockResolvedValue(undefined);
+    invokeImessageBackupIdentitiesMock.mockReset();
+    // No identities read by default, so the identity check never stops an
+    // existing test that doesn't set up its own probe/profile response
+    // (needsIdentityStop is a no-op on an empty list, fail-open by design).
+    invokeImessageBackupIdentitiesMock.mockResolvedValue([]);
+    loadAccountProfileMock.mockReset();
+    loadAccountProfileMock.mockResolvedValue({ phones: [], emails: [] });
     postMock.mockImplementation(async (path: string) => {
       if (path === "/v1/imports") return { id: 1 };
       return {};
@@ -799,6 +814,92 @@ describe("useImportJob wiring", () => {
     await act(() => result.current.startImport(form({ attachmentMedia: "convert" })));
     expect(result.current.mediaToolsMissing).toBe(true);
   });
+
+  describe("identity check", () => {
+    function imessageForm() {
+      return form();
+    }
+
+    function sbrForm() {
+      return { ...baseForm, source: "sms-backup-restore" };
+    }
+
+    it("stops at identity_stop when nothing the backup sent from is on the profile", async () => {
+      invokeImessageBackupIdentitiesMock.mockResolvedValue(["+15550001111"]);
+      loadAccountProfileMock.mockResolvedValue({ phones: ["+15559999999"], emails: [] });
+      const { result } = renderHook(() => useImportJob());
+      await act(async () => {
+        await result.current.startImport(imessageForm());
+      });
+      expect(result.current.phase).toBe("identity_stop");
+      expect(result.current.sourceIdentities).toEqual(["+15550001111"]);
+      // Nothing was created: no session POST, no extract.
+      expect(postMock).not.toHaveBeenCalled();
+      expect(invokeExtractMock).not.toHaveBeenCalled();
+    });
+
+    it("continueAfterIdentityStop proceeds and sends the identities on the session", async () => {
+      invokeImessageBackupIdentitiesMock.mockResolvedValue(["+15550001111"]);
+      loadAccountProfileMock.mockResolvedValue({ phones: ["+15559999999"], emails: [] });
+      const { result } = renderHook(() => useImportJob());
+      await act(async () => {
+        await result.current.startImport(imessageForm());
+      });
+      await act(async () => {
+        await result.current.continueAfterIdentityStop();
+      });
+      expect(postMock).toHaveBeenCalledWith(
+        "/v1/imports",
+        expect.objectContaining({ source_identities: ["+15550001111"] }),
+      );
+    });
+
+    it("cancelIdentityStop returns to the form with nothing created", async () => {
+      invokeImessageBackupIdentitiesMock.mockResolvedValue(["+15550001111"]);
+      loadAccountProfileMock.mockResolvedValue({ phones: [], emails: [] });
+      const { result } = renderHook(() => useImportJob());
+      await act(async () => {
+        await result.current.startImport(imessageForm());
+      });
+      act(() => {
+        result.current.cancelIdentityStop();
+      });
+      expect(result.current.phase).toBe("form");
+      expect(postMock).not.toHaveBeenCalled();
+    });
+
+    it("proceeds without a stop when an identity matches, sending the list", async () => {
+      invokeImessageBackupIdentitiesMock.mockResolvedValue(["+15550001111"]);
+      loadAccountProfileMock.mockResolvedValue({ phones: ["+1 555 000 1111"], emails: [] });
+      const { result } = renderHook(() => useImportJob());
+      await act(async () => {
+        await result.current.startImport(imessageForm());
+      });
+      expect(result.current.phase).not.toBe("identity_stop");
+      expect(postMock).toHaveBeenCalledWith(
+        "/v1/imports",
+        expect.objectContaining({ source_identities: ["+15550001111"] }),
+      );
+    });
+
+    it("fails open when the probe errors", async () => {
+      invokeImessageBackupIdentitiesMock.mockRejectedValue(new Error("locked"));
+      loadAccountProfileMock.mockResolvedValue({ phones: [], emails: [] });
+      const { result } = renderHook(() => useImportJob());
+      await act(async () => {
+        await result.current.startImport(imessageForm());
+      });
+      expect(result.current.phase).not.toBe("identity_stop");
+    });
+
+    it("does not probe non-iMessage sources", async () => {
+      const { result } = renderHook(() => useImportJob());
+      await act(async () => {
+        await result.current.startImport(sbrForm());
+      });
+      expect(invokeImessageBackupIdentitiesMock).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe("useImportJob resume path", () => {
@@ -1012,6 +1113,7 @@ function activeSession(overrides: Partial<ActiveImportSession> = {}): ActiveImpo
     device_id: "this-device",
     form: validSnapshot,
     source_fingerprint: null,
+    source_identities: null,
     summary: null,
     ...overrides,
   };

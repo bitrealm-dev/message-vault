@@ -31,6 +31,8 @@ export type ActiveImportSession = {
   device_id: string | null;
   form: unknown;
   source_fingerprint: SourceFingerprint | null;
+  /** Addresses the backup's device sent from (JSON array), or null. */
+  source_identities: unknown;
   /** What was approved at the last gate passed, or null. Mirrors what
    * `setImportStage`'s `approvedPlan` argument last wrote. */
   summary: unknown;
