@@ -703,9 +703,14 @@ pub async fn list_conversations_sorted(
     let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
     let mut participants = load_participants(conn, &ids).await?;
     let source_sets = load_conversation_sources(conn, &ids).await?;
-    let mut tag_sets = crate::message_tags_api::tags_for_conversations(conn, account_id, &ids)
-        .await
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+    let mut tag_sets = crate::named_membership::names_for_items(
+        crate::named_membership::tag_spec(),
+        conn,
+        account_id,
+        &ids,
+    )
+    .await
+    .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
 
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
@@ -2505,7 +2510,8 @@ mod tests {
     async fn list_conversations_filters_by_tag_and_people() {
         let (pool, _dir, account) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
-        crate::message_tags_api::set_conversations_tag_membership(
+        crate::named_membership::set_membership(
+            crate::named_membership::tag_spec(),
             &mut conn,
             &account,
             &[1],
@@ -2549,7 +2555,8 @@ mod tests {
         .execute(&mut *conn)
         .await
         .unwrap();
-        crate::contact_groups_api::set_contacts_group_membership(
+        crate::named_membership::set_membership(
+            crate::named_membership::group_spec(),
             &mut conn,
             &account,
             &[contact_id],
