@@ -17,19 +17,7 @@ pub type HandleIdCache = HashMap<(String, String, String, String), i64>;
 /// `020 7946 0000` becomes `02079460000` flagged, never `+02079460000`.
 /// Email: lowercased. Username/Other: verbatim (trimmed).
 pub fn normalize_handle(raw: &str, handle_type: HandleType) -> (String, Option<String>) {
-    match handle_type {
-        HandleType::Phone => {
-            let guarded = phone::normalize_guarded(raw, phone::PhoneRegion::for_raw(raw));
-            if guarded.normalized.is_empty() {
-                // No usable digits: fall back to the raw, unflagged.
-                (raw.trim().to_string(), None)
-            } else {
-                (guarded.normalized, guarded.note)
-            }
-        }
-        HandleType::Email => (raw.trim().to_lowercase(), None),
-        HandleType::Username | HandleType::Other => (raw.trim().to_string(), None),
-    }
+    phone::normalize_typed_handle(raw, handle_type)
 }
 
 /// Infer a handle type from the handle's shape when the source does not say.

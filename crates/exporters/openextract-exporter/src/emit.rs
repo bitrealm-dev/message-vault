@@ -268,14 +268,12 @@ fn resolve_chat(book: &ContactsBook, peer: &str) -> (String, String, bool) {
     if peer.is_empty() || peer.eq_ignore_ascii_case("unknown") {
         return ("unknown".to_string(), String::new(), true);
     }
-    if let Some(digits) = sanitize_number(peer) {
+    if sanitize_number(peer).is_some() {
         // Format as E.164 when unambiguous. Otherwise keep digits as-is. Never invent `+0…`.
         let handle = phone::normalize_guarded(peer, phone::PhoneRegion::for_raw(peer)).normalized;
-        // The contacts book keys entries by its own US-digit form; look up
-        // with that form so +-prefixed raws still resolve names.
-        let book_form = phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized;
+        // The contacts book keys entries by the same guarded policy.
         let name = book
-            .lookup_name_by_handle(&book_form, HandleType::Phone)
+            .lookup_name_by_handle(&handle, HandleType::Phone)
             .unwrap_or("")
             .to_string();
         return (handle, name, false);
@@ -333,9 +331,9 @@ fn resolve_sender(
 
     let display = if !contact_name.is_empty() {
         contact_name.to_string()
-    } else if let Some(digits) = sanitize_number(&row.sender) {
+    } else if sanitize_number(&row.sender).is_some() {
         book.lookup_name_by_handle(
-            &phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized,
+            &phone::normalize_typed_handle(&row.sender, HandleType::Phone).0,
             HandleType::Phone,
         )
         .unwrap_or("")

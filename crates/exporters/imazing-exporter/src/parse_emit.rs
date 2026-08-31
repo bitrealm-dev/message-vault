@@ -205,10 +205,10 @@ fn resolve_chat_identifier(
     }
 
     if let Some(handle) = peer_handles.first() {
-        let contact_name = if let Some(digits) = sanitize_number(handle) {
-            // The book keys entries by its own US-digit form.
+        let contact_name = if sanitize_number(handle).is_some() {
+            // The book keys entries by the shared guarded policy.
             book.lookup_name_by_handle(
-                &phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized,
+                &phone::normalize_typed_handle(handle, HandleType::Phone).0,
                 HandleType::Phone,
             )
             .unwrap_or("")
@@ -233,14 +233,13 @@ fn resolve_chat_identifier(
     if session.contains('@') {
         return (session.to_string(), String::new(), false);
     }
-    if let Some(digits) = sanitize_number(session) {
+    if sanitize_number(session).is_some() {
         // Format as E.164 when unambiguous. Otherwise keep digits as-is. Never
-        // invent `+0…`. The contacts book looks up its own US-digit form.
+        // invent `+0…`. The contacts book keys entries by the same policy.
         let handle =
             phone::normalize_guarded(session, phone::PhoneRegion::for_raw(session)).normalized;
-        let book_form = phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized;
         let name = book
-            .lookup_name_by_handle(&book_form, HandleType::Phone)
+            .lookup_name_by_handle(&handle, HandleType::Phone)
             .unwrap_or("")
             .to_string();
         return (handle, name, false);
@@ -300,13 +299,11 @@ pub(super) fn resolve_sender(
     }
 
     let mut display = row.sender_name.trim().to_string();
-    if display.is_empty()
-        && let Some(digits) = sanitize_number(&handle)
-    {
-        // The book keys entries by its own US-digit form.
+    if display.is_empty() && sanitize_number(&handle).is_some() {
+        // The book keys entries by the shared guarded policy.
         display = book
             .lookup_name_by_handle(
-                &phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized,
+                &phone::normalize_typed_handle(&handle, HandleType::Phone).0,
                 HandleType::Phone,
             )
             .unwrap_or("")

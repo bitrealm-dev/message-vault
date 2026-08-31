@@ -200,13 +200,7 @@ impl ContactsBook {
 }
 
 fn normalize_handle(raw: &str, handle_type: HandleType) -> String {
-    match handle_type {
-        HandleType::Phone => sanitize_number(raw)
-            .map(|d| phone::normalize_guarded(&d, phone::PhoneRegion::Usa).normalized)
-            .unwrap_or_else(|| raw.to_string()),
-        HandleType::Email => raw.trim().to_lowercase(),
-        HandleType::Username | HandleType::Other => raw.trim().to_string(),
-    }
+    phone::normalize_typed_handle(raw, handle_type).0
 }
 
 /// Load contacts from at most one of `--contacts` or `--vcf`.
