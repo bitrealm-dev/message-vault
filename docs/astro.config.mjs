@@ -127,21 +127,10 @@ export default defineConfig({
   site: 'https://bitrealm.io',
   redirects: {
     '/vault/developer/docker-compose/': '/vault/developer/docker/',
-    // The command-line tools were retired; the desktop app is the only
-    // user surface. See docs/adr/0001 in the repository.
-    '/vault/developer/reference/cli/': '/vault/user/how-to/export-from-the-vault/',
-    '/vault/user/how-to/extract-to-files/': '/vault/user/import-from-a-backup/',
+    // Same content, new path. The command-line reference pages that were
+    // removed alongside this one get no redirect: those commands no longer
+    // exist, so a 404 is the honest answer. See docs/adr/0001.
     '/vault/user/how-to/convert-formats/': '/vault/developer/reference/export-formats/',
-    '/vault/developer/reference/cli/imessage-ir-exporter/': '/vault/user/how-to/export-from-the-vault/',
-    '/vault/developer/reference/cli/sms-backup-restore-exporter/': '/vault/user/how-to/export-from-the-vault/',
-    '/vault/developer/reference/cli/whatsapp-exporter/': '/vault/user/how-to/export-from-the-vault/',
-    '/vault/developer/reference/cli/go-sms-pro-exporter/': '/vault/user/how-to/export-from-the-vault/',
-    '/vault/developer/reference/cli/imazing-exporter/': '/vault/user/how-to/export-from-the-vault/',
-    '/vault/developer/reference/cli/openextract-exporter/': '/vault/user/how-to/export-from-the-vault/',
-    '/vault/developer/reference/cli/sms-backup-plus-exporter/': '/vault/user/how-to/export-from-the-vault/',
-    '/vault/developer/reference/cli/message-reexporter/': '/vault/user/how-to/export-from-the-vault/',
-    '/vault/developer/reference/cli/vault-push/': '/vault/user/how-to/export-from-the-vault/',
-    '/vault/developer/reference/cli/vault-pull/': '/vault/user/how-to/export-from-the-vault/',
   },
   integrations: [
     mermaid({
