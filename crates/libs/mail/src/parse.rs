@@ -1,8 +1,9 @@
 //! Parse `.eml` / mboxrd back into [`MailMessage`].
 
-use crate::{Direction, MailAttachment, MailMessage, Participant};
+use crate::{MailAttachment, MailMessage, Participant};
 use anyhow::{Context, Result};
 use mailparse::{MailHeader, MailHeaderMap, ParsedMail};
+use message_ir::{IrDirection, IrImessage, IrMessage, IrMessageKind, IrService, IrSource};
 use serde::Deserialize;
 use std::fs;
 use std::path::Path;
@@ -40,18 +41,16 @@ pub fn mail_message_from_eml_bytes(bytes: &[u8]) -> Result<MailMessage> {
         .to_ascii_lowercase()
         .as_str()
     {
-        "outgoing" => Direction::Outgoing,
-        _ => Direction::Incoming,
+        "outgoing" => IrDirection::Outgoing,
+        _ => IrDirection::Incoming,
     };
-    let service = header_or(headers, "X-ME-Service", "sms");
-    let message_kind = header_or(headers, "X-ME-Message-Kind", "sms");
+    let service = IrService::parse(&header_or(headers, "X-ME-Service", "sms"));
+    let message_kind = IrMessageKind::parse(&header_or(headers, "X-ME-Message-Kind", "sms"));
     let sender_handle = optional_header(headers, "X-ME-Sender-Handle");
     let sender_display_name = optional_header(headers, "X-ME-Sender-Display-Name");
     let owner_handle = optional_header(headers, "X-ME-Owner-Handle").unwrap_or_default();
     let owner_display_name = optional_header(headers, "X-ME-Owner-Display-Name");
     let subject = optional_header(headers, "X-ME-Subject");
-    let android_type = optional_header(headers, "X-ME-Android-Type");
-    let source_fields_json = optional_header(headers, "X-ME-Source-Fields");
     let export_source = header_or(headers, "X-ME-Export-Source", "");
     let export_tool = header_or(headers, "X-ME-Export-Tool", "");
     let export_tool_version = header_or(headers, "X-ME-Export-Tool-Version", "");
@@ -59,50 +58,88 @@ pub fn mail_message_from_eml_bytes(bytes: &[u8]) -> Result<MailMessage> {
     let text = extract_text_body(&mail).unwrap_or_default();
     let attachments = merge_attachments(&mail, headers)?;
 
+    let source = {
+        let android_type = optional_header(headers, "X-ME-Android-Type")
+            .and_then(|s| s.trim().parse::<i32>().ok());
+        let fields = optional_header(headers, "X-ME-Source-Fields")
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        let src = IrSource {
+            android_type,
+            fields,
+        };
+        if src.android_type.is_none() && src.fields.is_empty() {
+            None
+        } else {
+            Some(src)
+        }
+    };
+
+    let imessage = {
+        let bag = IrImessage {
+            is_reply: header_bool(headers, "X-ME-Is-Reply"),
+            in_reply_to_guid: optional_header(headers, "X-ME-Thread-Originator-Guid"),
+            thread_originator_part: header_u32(headers, "X-ME-Thread-Originator-Part"),
+            num_replies: header_u32(headers, "X-ME-Num-Replies"),
+            is_deleted: header_bool(headers, "X-ME-Is-Deleted"),
+            send_effect: optional_header(headers, "X-ME-Send-Effect"),
+            shared_location: optional_header(headers, "X-ME-Shared-Location"),
+            announcement: optional_header(headers, "X-ME-Announcement"),
+            read_receipt_rfc3339: optional_header(headers, "X-ME-Read-Receipt"),
+            parts: header_json(headers, "X-ME-Parts"),
+            edits: header_json(headers, "X-ME-Edits"),
+            tapbacks: header_json(headers, "X-ME-Tapbacks"),
+            app: header_json(headers, "X-ME-App"),
+            balloon_bundle_id: optional_header(headers, "X-ME-Balloon-Bundle-Id"),
+            balloon_kind: optional_header(headers, "X-ME-Balloon-Kind"),
+            associated_guid: optional_header(headers, "X-ME-Associated-Guid"),
+            associated_part: header_u32(headers, "X-ME-Associated-Part"),
+            tapback_kind: optional_header(headers, "X-ME-Tapback-Kind"),
+            tapback_emoji: optional_header(headers, "X-ME-Tapback-Emoji"),
+            tapback_action: optional_header(headers, "X-ME-Tapback-Action"),
+        };
+        if bag.is_empty() { None } else { Some(bag) }
+    };
+
     Ok(MailMessage {
         chat_identifier,
         conversation_type,
         group_title,
         participants,
-        guid,
-        timestamp_unix_ms,
-        direction,
-        service,
-        message_kind,
-        sender_handle,
-        sender_display_name,
         owner_handle,
         owner_display_name,
-        subject,
-        text,
-        android_type,
-        source_fields_json,
         export_source,
         export_tool,
         export_tool_version,
-        attachments,
         filename_suffix: None,
-        is_reply: header_bool(headers, "X-ME-Is-Reply"),
-        in_reply_to_guid: optional_header(headers, "X-ME-Thread-Originator-Guid"),
-        thread_originator_part: header_u32(headers, "X-ME-Thread-Originator-Part"),
-        num_replies: header_u32(headers, "X-ME-Num-Replies"),
-        is_deleted: header_bool(headers, "X-ME-Is-Deleted"),
-        send_effect: optional_header(headers, "X-ME-Send-Effect"),
-        shared_location: optional_header(headers, "X-ME-Shared-Location"),
-        announcement: optional_header(headers, "X-ME-Announcement"),
-        read_receipt_rfc3339: optional_header(headers, "X-ME-Read-Receipt"),
-        parts_json: optional_header(headers, "X-ME-Parts"),
-        edits_json: optional_header(headers, "X-ME-Edits"),
-        app_json: optional_header(headers, "X-ME-App"),
-        balloon_bundle_id: optional_header(headers, "X-ME-Balloon-Bundle-Id"),
-        balloon_kind: optional_header(headers, "X-ME-Balloon-Kind"),
-        tapbacks_json: optional_header(headers, "X-ME-Tapbacks"),
-        associated_guid: optional_header(headers, "X-ME-Associated-Guid"),
-        associated_part: header_u32(headers, "X-ME-Associated-Part"),
-        tapback_kind: optional_header(headers, "X-ME-Tapback-Kind"),
-        tapback_emoji: optional_header(headers, "X-ME-Tapback-Emoji"),
-        tapback_action: optional_header(headers, "X-ME-Tapback-Action"),
+        message: IrMessage {
+            guid,
+            timestamp_unix_ms,
+            direction,
+            service,
+            message_kind,
+            sender_handle,
+            sender_display_name,
+            subject,
+            text,
+            // Attachment payloads live in `MailMessage::attachments`; readers
+            // that build IR fill this list from there.
+            attachments: Vec::new(),
+            imessage,
+            source,
+        },
+        attachments,
     })
+}
+
+/// Parse a JSON header cell, treating blank and `null` as `None`.
+fn header_json(headers: &[MailHeader<'_>], name: &str) -> Option<serde_json::Value> {
+    let s = optional_header(headers, name)?;
+    let t = s.trim();
+    if t.is_empty() || t == "null" {
+        return None;
+    }
+    serde_json::from_str(t).ok()
 }
 
 /// Read an mboxrd file and parse each record into [`MailMessage`].
@@ -304,11 +341,11 @@ fn collect_mime_attachments(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Direction, MailMessage, Participant, SmsMailFields, write_message_file};
+    use crate::{MailMessage, Participant, write_message_file};
 
     #[test]
     fn roundtrip_eml_headers_and_body() {
-        let msg = MailMessage::sms(SmsMailFields {
+        let msg = MailMessage {
             chat_identifier: "+15555550101".into(),
             conversation_type: "individual".into(),
             group_title: None,
@@ -316,37 +353,48 @@ mod tests {
                 handle: "+15555550101".into(),
                 display_name: Some("Sam".into()),
             }],
-            guid: "aabbccddeeff00112233445566778899".into(),
-            timestamp_unix_ms: 1_400_773_261_000,
-            direction: Direction::Outgoing,
-            service: "sms".into(),
-            message_kind: "sms".into(),
-            sender_handle: Some("+15555550100".into()),
-            sender_display_name: Some("Me".into()),
             owner_handle: "+15555550100".into(),
-            subject: None,
-            text: "hello roundtrip".into(),
-            android_type: Some("2".into()),
-            source_fields_json: Some(r#"{"address":"+15555550101"}"#.into()),
+            owner_display_name: Some("Me".into()),
             export_source: "sms-backup-restore".into(),
             export_tool: "SMS Backup & Restore".into(),
             export_tool_version: "10.26.003".into(),
-            attachments: vec![],
             filename_suffix: None,
-        });
-        let mut msg = msg;
-        msg.owner_display_name = Some("Me".into());
+            message: IrMessage {
+                guid: "aabbccddeeff00112233445566778899".into(),
+                timestamp_unix_ms: 1_400_773_261_000,
+                direction: IrDirection::Outgoing,
+                service: IrService::Sms,
+                message_kind: IrMessageKind::Sms,
+                sender_handle: Some("+15555550100".into()),
+                sender_display_name: Some("Me".into()),
+                subject: None,
+                text: "hello roundtrip".into(),
+                attachments: Vec::new(),
+                imessage: None,
+                source: Some(IrSource {
+                    android_type: Some(2),
+                    fields: serde_json::from_str(r#"{"address":"+15555550101"}"#).unwrap(),
+                }),
+            },
+            attachments: vec![],
+        };
 
         let tmp = tempfile::tempdir().unwrap();
         let path = write_message_file(&tmp.path().join("chat"), 1, &msg).unwrap();
         let bytes = fs::read(&path).unwrap();
         let parsed = mail_message_from_eml_bytes(&bytes).unwrap();
-        assert_eq!(parsed.text, "hello roundtrip");
-        assert_eq!(parsed.direction, Direction::Outgoing);
-        assert_eq!(parsed.sender_handle.as_deref(), Some("+15555550100"));
+        assert_eq!(parsed.message.text, "hello roundtrip");
+        assert_eq!(parsed.message.direction, IrDirection::Outgoing);
+        assert_eq!(
+            parsed.message.sender_handle.as_deref(),
+            Some("+15555550100")
+        );
         assert_eq!(parsed.owner_handle, "+15555550100");
         assert_eq!(parsed.owner_display_name.as_deref(), Some("Me"));
-        assert_eq!(parsed.android_type.as_deref(), Some("2"));
+        assert_eq!(
+            parsed.message.source.as_ref().and_then(|s| s.android_type),
+            Some(2)
+        );
     }
 
     #[test]

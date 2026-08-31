@@ -20,7 +20,7 @@ use imessage_database::{
     },
     util::dates::TIMESTAMP_FACTOR,
 };
-use mail::{Direction as MailDirection, MailMessage, Participant};
+use mail::{MailMessage, Participant};
 use message_ir::{
     ConversationDocument, ConversationMeta, ExportMeta, HandleType, IrAttachment,
     IrConversationType, IrDirection, IrImessage, IrMessage, IrMessageKind, IrParticipant,
@@ -565,11 +565,7 @@ fn mail_message_to_ir(
         });
     }
 
-    let direction = match mail.direction {
-        MailDirection::Incoming => IrDirection::Incoming,
-        MailDirection::Outgoing => IrDirection::Outgoing,
-    };
-    let (sender_handle, sender_display_name) = match direction {
+    let (sender_handle, sender_display_name) = match mail.message.direction {
         IrDirection::Outgoing => {
             let export = ExportMeta {
                 source: mail.export_source.clone(),
@@ -580,77 +576,17 @@ fn mail_message_to_ir(
             };
             owner_sender(&export)
         }
-        IrDirection::Incoming => (mail.sender_handle.clone(), mail.sender_display_name.clone()),
+        IrDirection::Incoming => (
+            mail.message.sender_handle.clone(),
+            mail.message.sender_display_name.clone(),
+        ),
     };
 
-    Ok(IrMessage {
-        guid: mail.guid.clone(),
-        timestamp_unix_ms: mail.timestamp_unix_ms,
-        direction,
-        service: IrService::parse(&mail.service),
-        message_kind: IrMessageKind::parse(&mail.message_kind),
-        sender_handle,
-        sender_display_name,
-        subject: mail.subject.clone(),
-        text: mail.text.clone(),
-        attachments,
-        imessage: imessage_bag(mail),
-        source: None,
-    })
-}
-
-/// Build typed [`IrImessage`] from `MailMessage` extension fields.
-///
-/// Nested Apple blobs (`parts` / `edits` / `tapbacks` / `app`) are parsed from
-/// JSON strings into [`serde_json::Value`]s. Owner display name lives on
-/// [`ExportMeta`], not here.
-fn imessage_bag(mail: &MailMessage) -> Option<IrImessage> {
-    fn nonempty(s: &Option<String>) -> Option<String> {
-        s.as_deref()
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(str::to_string)
-    }
-
-    IrImessage {
-        is_reply: mail.is_reply,
-        in_reply_to_guid: nonempty(&mail.in_reply_to_guid),
-        thread_originator_part: mail.thread_originator_part,
-        num_replies: mail.num_replies,
-        is_deleted: mail.is_deleted,
-        send_effect: nonempty(&mail.send_effect),
-        shared_location: nonempty(&mail.shared_location),
-        announcement: nonempty(&mail.announcement),
-        read_receipt_rfc3339: nonempty(&mail.read_receipt_rfc3339),
-        parts: mail
-            .parts_json
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .map(parse_json_value),
-        edits: mail
-            .edits_json
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .map(parse_json_value),
-        tapbacks: mail
-            .tapbacks_json
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .map(parse_json_value),
-        app: mail
-            .app_json
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .map(parse_json_value),
-        balloon_bundle_id: nonempty(&mail.balloon_bundle_id),
-        balloon_kind: nonempty(&mail.balloon_kind),
-        associated_guid: nonempty(&mail.associated_guid),
-        associated_part: mail.associated_part,
-        tapback_kind: nonempty(&mail.tapback_kind),
-        tapback_emoji: nonempty(&mail.tapback_emoji),
-        tapback_action: nonempty(&mail.tapback_action),
-    }
-    .into_option()
+    let mut out = mail.message.clone();
+    out.sender_handle = sender_handle;
+    out.sender_display_name = sender_display_name;
+    out.attachments = attachments;
+    Ok(out)
 }
 
 /// Message time as milliseconds since 1970-01-01 UTC.
@@ -1084,17 +1020,6 @@ fn build_mail_message(
         None
     };
 
-    let parts_json = if parts.is_empty() {
-        None
-    } else {
-        Some(serde_json::to_string(&parts).unwrap_or_else(|_| "[]".into()))
-    };
-    let edits_json = if edits.is_empty() {
-        None
-    } else {
-        Some(serde_json::to_string(&edits).unwrap_or_else(|_| "[]".into()))
-    };
-    let app_json = app_value.map(|v| serde_json::to_string(&v).unwrap_or_else(|_| "null".into()));
     let tapbacks_json = if message.is_tapback() {
         None
     } else {
@@ -1103,53 +1028,74 @@ fn build_mail_message(
 
     let owner_handle = message.destination_caller_id.clone().unwrap_or_default();
 
+    fn nonempty(s: Option<String>) -> Option<String> {
+        s.as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+    }
+
+    let bag = IrImessage {
+        is_reply,
+        in_reply_to_guid: nonempty(in_reply_to_guid),
+        thread_originator_part,
+        num_replies,
+        is_deleted: message.is_deleted(),
+        send_effect: nonempty(send_effect),
+        shared_location: nonempty(shared_location),
+        announcement: nonempty(announcement),
+        read_receipt_rfc3339: nonempty(read_receipt_rfc3339),
+        parts: if parts.is_empty() {
+            None
+        } else {
+            serde_json::to_value(&parts).ok()
+        },
+        edits: if edits.is_empty() {
+            None
+        } else {
+            serde_json::to_value(&edits).ok()
+        },
+        tapbacks: tapbacks_json.as_deref().map(parse_json_value),
+        app: app_value,
+        balloon_bundle_id: nonempty(balloon_bundle_id),
+        balloon_kind: nonempty(balloon_kind),
+        associated_guid: nonempty(associated_guid),
+        associated_part,
+        tapback_kind: nonempty(tapback_kind),
+        tapback_emoji: nonempty(tapback_emoji),
+        tapback_action: nonempty(tapback_action),
+    };
+
     let mail = MailMessage {
         chat_identifier,
         conversation_type,
         group_title,
         participants,
-        guid: message.guid.clone(),
-        timestamp_unix_ms: timestamp_unix_ms(message, session.offset),
-        direction: if is_from_me {
-            MailDirection::Outgoing
-        } else {
-            MailDirection::Incoming
-        },
-        service,
-        message_kind,
-        sender_handle,
-        sender_display_name,
         owner_handle,
         owner_display_name: owner_display_name(session, message),
-        subject: message.subject.clone().filter(|s| !s.is_empty()),
-        text,
-        android_type: None,
-        source_fields_json: None,
         export_source: EXPORT_SOURCE.into(),
         export_tool: EXPORT_TOOL.into(),
         export_tool_version: env!("CARGO_PKG_VERSION").into(),
-        attachments: mail_attachments,
         filename_suffix: None,
-        is_reply,
-        in_reply_to_guid,
-        thread_originator_part,
-        num_replies,
-        is_deleted: message.is_deleted(),
-        send_effect,
-        shared_location,
-        announcement,
-        read_receipt_rfc3339,
-        parts_json,
-        edits_json,
-        app_json,
-        balloon_bundle_id,
-        balloon_kind,
-        tapbacks_json,
-        associated_guid,
-        associated_part,
-        tapback_kind,
-        tapback_emoji,
-        tapback_action,
+        message: IrMessage {
+            guid: message.guid.clone(),
+            timestamp_unix_ms: timestamp_unix_ms(message, session.offset),
+            direction: if is_from_me {
+                IrDirection::Outgoing
+            } else {
+                IrDirection::Incoming
+            },
+            service: IrService::parse(&service),
+            message_kind: IrMessageKind::parse(&message_kind),
+            sender_handle,
+            sender_display_name,
+            subject: message.subject.clone().filter(|s| !s.is_empty()),
+            text,
+            attachments: Vec::new(),
+            imessage: bag.into_option(),
+            source: None,
+        },
+        attachments: mail_attachments,
     };
     Ok((mail, loads))
 }
@@ -1158,7 +1104,6 @@ fn build_mail_message(
 mod tests {
     use super::*;
     use mail::MailAttachment;
-    use sha2::{Digest, Sha256};
     use std::fs;
 
     #[test]
@@ -1174,26 +1119,31 @@ mod tests {
     }
 
     fn sample_mail_with_attachment(bytes: Vec<u8>) -> MailMessage {
-        MailMessage::sms(mail::SmsMailFields {
+        MailMessage {
             chat_identifier: "+15555550122".into(),
             conversation_type: "individual".into(),
             group_title: None,
             participants: vec![],
-            guid: "guid-1".into(),
-            timestamp_unix_ms: 1_609_459_200_000,
-            direction: MailDirection::Incoming,
-            service: "SMS".into(),
-            message_kind: "sms".into(),
-            sender_handle: Some("+15555550122".into()),
-            sender_display_name: None,
             owner_handle: "+15555550100".into(),
-            subject: None,
-            text: "hi".into(),
-            android_type: None,
-            source_fields_json: None,
+            owner_display_name: None,
             export_source: "imessage".into(),
             export_tool: "test".into(),
             export_tool_version: "0".into(),
+            filename_suffix: None,
+            message: IrMessage {
+                guid: "guid-1".into(),
+                timestamp_unix_ms: 1_609_459_200_000,
+                direction: IrDirection::Incoming,
+                service: IrService::Sms,
+                message_kind: IrMessageKind::Sms,
+                sender_handle: Some("+15555550122".into()),
+                sender_display_name: None,
+                subject: None,
+                text: "hi".into(),
+                attachments: Vec::new(),
+                imessage: None,
+                source: None,
+            },
             attachments: vec![MailAttachment {
                 bytes,
                 meta: message_ir::AttachmentMeta {
@@ -1206,8 +1156,7 @@ mod tests {
                 transcription: None,
                 sticker_effect: None,
             }],
-            filename_suffix: None,
-        })
+        }
     }
 
     #[test]

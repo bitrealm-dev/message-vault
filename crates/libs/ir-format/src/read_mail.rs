@@ -1,14 +1,10 @@
 //! Read an EML folder or mboxrd mailbox back into a [`ConversationDocument`].
 
-use crate::normalize::{imessage_from_parts, source_from_parts};
 use anyhow::{Context, Result, bail};
-use mail::{
-    Direction as MailDirection, MailMessage, mail_message_from_eml_bytes, mail_messages_from_mbox,
-};
+use mail::{MailMessage, mail_message_from_eml_bytes, mail_messages_from_mbox};
 use message_ir::{
     ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, IrAttachment,
-    IrConversationType, IrDirection, IrImessage, IrMessage, IrMessageKind, IrParticipant,
-    IrService, SCHEMA_VERSION, parse_android_type,
+    IrConversationType, IrMessage, IrParticipant, SCHEMA_VERSION,
 };
 use message_vault_io_core::discover_files;
 use std::fs;
@@ -71,9 +67,10 @@ pub fn read_conversation_mbox(path: &Path) -> Result<ConversationDocument> {
 
 /// Order mail messages by timestamp, then GUID, so both readers agree.
 fn cmp_mail_messages(a: &MailMessage, b: &MailMessage) -> std::cmp::Ordering {
-    a.timestamp_unix_ms
-        .cmp(&b.timestamp_unix_ms)
-        .then_with(|| a.guid.cmp(&b.guid))
+    a.message
+        .timestamp_unix_ms
+        .cmp(&b.message.timestamp_unix_ms)
+        .then_with(|| a.message.guid.cmp(&b.message.guid))
 }
 
 /// Map a list of [`MailMessage`] values from one conversation into a
@@ -151,54 +148,13 @@ fn participant_from_mail(p: &mail::Participant) -> IrParticipant {
 }
 
 /// Map one mail message into the shared conversation message type.
+///
+/// The message already travels as [`IrMessage`]; only the attachment list is
+/// rebuilt, from the parsed MIME parts (which carry the bytes).
 fn ir_message_from_mail(msg: &MailMessage) -> IrMessage {
-    let direction = match msg.direction {
-        MailDirection::Incoming => IrDirection::Incoming,
-        MailDirection::Outgoing => IrDirection::Outgoing,
-    };
-    let source = source_from_parts(
-        msg.android_type.as_deref().and_then(parse_android_type),
-        msg.source_fields_json.as_deref().unwrap_or(""),
-    );
-    let imessage = imessage_from_parts(IrImessage {
-        is_reply: msg.is_reply,
-        in_reply_to_guid: msg.in_reply_to_guid.clone(),
-        thread_originator_part: msg.thread_originator_part,
-        num_replies: msg.num_replies,
-        is_deleted: msg.is_deleted,
-        send_effect: msg.send_effect.clone(),
-        shared_location: msg.shared_location.clone(),
-        announcement: msg.announcement.clone(),
-        read_receipt_rfc3339: msg.read_receipt_rfc3339.clone(),
-        parts: parse_json_opt(msg.parts_json.as_deref()),
-        edits: parse_json_opt(msg.edits_json.as_deref()),
-        tapbacks: parse_json_opt(msg.tapbacks_json.as_deref()),
-        app: parse_json_opt(msg.app_json.as_deref()),
-        balloon_bundle_id: msg.balloon_bundle_id.clone(),
-        balloon_kind: msg.balloon_kind.clone(),
-        associated_guid: msg.associated_guid.clone(),
-        associated_part: msg.associated_part,
-        tapback_kind: msg.tapback_kind.clone(),
-        tapback_emoji: msg.tapback_emoji.clone(),
-        tapback_action: msg.tapback_action.clone(),
-    });
-
-    let attachments = msg.attachments.iter().map(attachment_from_mail).collect();
-
-    IrMessage {
-        guid: msg.guid.clone(),
-        timestamp_unix_ms: msg.timestamp_unix_ms,
-        direction,
-        service: IrService::parse(&msg.service),
-        message_kind: IrMessageKind::parse(&msg.message_kind),
-        sender_handle: msg.sender_handle.clone().filter(|s| !s.is_empty()),
-        sender_display_name: msg.sender_display_name.clone().filter(|s| !s.is_empty()),
-        subject: msg.subject.clone().filter(|s| !s.is_empty()),
-        text: msg.text.clone(),
-        attachments,
-        imessage,
-        source,
-    }
+    let mut out = msg.message.clone();
+    out.attachments = msg.attachments.iter().map(attachment_from_mail).collect();
+    out
 }
 
 /// Map one mail attachment into [`IrAttachment`].
@@ -210,15 +166,6 @@ fn attachment_from_mail(a: &mail::MailAttachment) -> IrAttachment {
         Some(a.bytes.clone())
     };
     att
-}
-
-/// Parse an optional JSON cell, treating blank and `null` as `None`.
-fn parse_json_opt(s: Option<&str>) -> Option<serde_json::Value> {
-    let t = s?.trim();
-    if t.is_empty() || t == "null" {
-        return None;
-    }
-    serde_json::from_str(t).ok()
 }
 
 /// Trimmed owned string, or `None` when blank.
