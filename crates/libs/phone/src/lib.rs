@@ -187,6 +187,30 @@ pub fn normalize_guarded(raw: &str, region: PhoneRegion) -> GuardedNormalize {
     }
 }
 
+/// One normalization policy for a typed handle, shared by the vault, the
+/// contacts book, and the exporters.
+///
+/// Phone: guarded E.164 via [`normalize_guarded`] with [`PhoneRegion::for_raw`]
+/// (a `+`-prefixed value keeps international rules; anything else is treated
+/// as US), falling back to the trimmed raw value when no digits survive.
+/// Email: lowercased. Username/Other: verbatim (trimmed). The second value is
+/// the guard note, when the phone form was uncertain.
+pub fn normalize_typed_handle(raw: &str, handle_type: HandleType) -> (String, Option<String>) {
+    match handle_type {
+        HandleType::Phone => {
+            let guarded = normalize_guarded(raw, PhoneRegion::for_raw(raw));
+            if guarded.normalized.is_empty() {
+                // No usable digits: fall back to the raw, unflagged.
+                (raw.trim().to_string(), None)
+            } else {
+                (guarded.normalized, guarded.note)
+            }
+        }
+        HandleType::Email => (raw.trim().to_lowercase(), None),
+        HandleType::Username | HandleType::Other => (raw.trim().to_string(), None),
+    }
+}
+
 /// All configured owner handles (normalized, typed).
 #[derive(Debug, Clone)]
 pub struct OwnerHandleSet {
@@ -282,6 +306,21 @@ fn phone_digits_if_phone(value: &str, handle_type: HandleType) -> Option<String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn typed_handle_policy_matches_the_vault_for_international_numbers() {
+        // The contacts book and the vault must key this identically:
+        // for_raw keeps the + signal, so the E.164 form survives.
+        let (uk, note) = normalize_typed_handle("+44 20 7946 0000", HandleType::Phone);
+        assert_eq!(uk, "+442079460000");
+        assert!(note.is_none());
+        let (us, _) = normalize_typed_handle("(555) 555-0100", HandleType::Phone);
+        assert_eq!(us, "+15555550100");
+        let (email, _) = normalize_typed_handle(" Bob@Example.COM ", HandleType::Email);
+        assert_eq!(email, "bob@example.com");
+        let (wordy, _) = normalize_typed_handle("no digits here", HandleType::Phone);
+        assert_eq!(wordy, "no digits here");
+    }
 
     #[test]
     fn sanitize_strips_plus_one() {

@@ -77,19 +77,12 @@ impl NameMapping {
                 .map(|s| HandleType::parse(s.trim()))
                 .unwrap_or(HandleType::Phone);
 
-            let normalized = match handle_type {
-                HandleType::Phone => {
-                    let Some(digits) = sanitize_number(handle_raw) else {
-                        continue;
-                    };
-                    // Guarded policy: digits-as-is when the value is ambiguous
-                    // (never fabricate a `+0…` value); the note is produced
-                    // server-side, where the handles table stores it.
-                    phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized
-                }
-                HandleType::Email => handle_raw.trim().to_lowercase(),
-                HandleType::Username | HandleType::Other => handle_raw.trim().to_string(),
-            };
+            if handle_type == HandleType::Phone && sanitize_number(handle_raw).is_none() {
+                continue;
+            }
+            // Shared guarded policy (never fabricates a `+0…` value); the
+            // note is produced server-side, where the handles table stores it.
+            let normalized = phone::normalize_typed_handle(handle_raw, handle_type).0;
 
             let key = normalize_name_key(&incorrect);
             if key.is_empty() {
