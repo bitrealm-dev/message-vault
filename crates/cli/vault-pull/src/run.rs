@@ -60,14 +60,6 @@ pub struct PullReport {
     pub out_dir: String,
 }
 
-/// Counts from a dry-run export query (no downloads and no JSON Lines files written).
-#[derive(Debug, Clone, Serialize)]
-pub struct QueryStats {
-    pub messages: u64,
-    pub attachments: u64,
-    pub total_bytes: u64,
-}
-
 /// Live progress sent to the CLI or desktop app during a query or download.
 #[derive(Debug, Clone)]
 pub enum ProgressEvent {
@@ -92,14 +84,6 @@ fn emit(on_progress: &mut Option<&mut ProgressFn<'_>>, event: ProgressEvent) {
     }
 }
 
-/// The one-line result summary shown after a query finishes.
-fn query_result_log(stats: &QueryStats) -> String {
-    format!(
-        "Query result: {} message(s), {} attachment(s), {} byte(s)",
-        stats.messages, stats.attachments, stats.total_bytes
-    )
-}
-
 /// Compose `after:` / `before:` operators onto a base query string.
 pub fn compose_query(base: &str, after: Option<&str>, before: Option<&str>) -> String {
     let mut parts = Vec::new();
@@ -114,156 +98,6 @@ pub fn compose_query(base: &str, after: Option<&str>, before: Option<&str>) -> S
         parts.push(format!("before:{b}"));
     }
     parts.join(" ")
-}
-
-/// Prefer `GET /v1/export/messages/count`; fall back to paging the export
-/// endpoint on older vaults that lack the count route.
-/// Does not download assets or write JSON Lines. `cfg.out_dir` is ignored.
-///
-/// # Errors
-///
-/// Returns an error when the key is missing, login fails, or a page request fails.
-pub fn query_stats(
-    cfg: &VaultPullConfig,
-    mut on_progress: Option<&mut ProgressFn<'_>>,
-) -> Result<QueryStats> {
-    if cfg.key.trim().is_empty() {
-        bail!("vault key is required");
-    }
-
-    let auth = authenticate(&cfg.base_url, &cfg.key, &cfg.username)
-        .map_err(|e| anyhow::anyhow!("{}", e.detail()))?;
-    let account = auth.account_id.clone();
-    let username = auth.username.clone().unwrap_or_else(|| account.clone());
-    emit(
-        &mut on_progress,
-        ProgressEvent::Auth {
-            account_id: account.clone(),
-            username: username.clone(),
-        },
-    );
-    emit(
-        &mut on_progress,
-        ProgressEvent::Log(format!("Authenticated as {username} ({account})")),
-    );
-
-    let q = cfg.query.trim().to_string();
-    emit(
-        &mut on_progress,
-        ProgressEvent::Log(if q.is_empty() {
-            "Query: (all messages)".into()
-        } else {
-            format!("Query: {q}")
-        }),
-    );
-
-    let session = HttpSession::new()?;
-    if let Some(count) = session.export_message_count(
-        &cfg.base_url,
-        &cfg.key,
-        &q,
-        &account,
-        cfg.source.as_deref(),
-    )? {
-        let stats = QueryStats {
-            messages: count.messages,
-            attachments: count.attachments,
-            total_bytes: count.total_bytes,
-        };
-        emit(
-            &mut on_progress,
-            ProgressEvent::Log(query_result_log(&stats)),
-        );
-        return Ok(stats);
-    }
-
-    emit(
-        &mut on_progress,
-        ProgressEvent::Log(
-            "Count endpoint not available; paging export messages for stats…".into(),
-        ),
-    );
-    query_stats_by_paging(cfg, &session, &account, &q, &mut on_progress)
-}
-
-/// Count messages and unique attachments by walking every export page.
-///
-/// # Errors
-///
-/// Returns an error when a page request fails or cancel is requested.
-fn query_stats_by_paging(
-    cfg: &VaultPullConfig,
-    session: &HttpSession,
-    account: &str,
-    q: &str,
-    on_progress: &mut Option<&mut ProgressFn<'_>>,
-) -> Result<QueryStats> {
-    let mut cursor: Option<String> = None;
-    let mut total_messages = 0u64;
-    // sha256 -> size_bytes (None if unknown / older imports)
-    let mut unique_assets: HashMap<String, Option<u64>> = HashMap::new();
-
-    loop {
-        check_cancel(cfg.cancel.as_ref()).map_err(|e| anyhow::anyhow!("{e}"))?;
-        let page = session.export_messages(ExportMessagesArgs {
-            base_url: &cfg.base_url,
-            key: &cfg.key,
-            q,
-            limit: cfg.page_limit.max(1),
-            cursor: cursor.as_deref(),
-            account,
-            source: cfg.source.as_deref(),
-        })?;
-        total_messages += page.messages.len() as u64;
-        emit(
-            on_progress,
-            ProgressEvent::Page {
-                messages: page.messages.len(),
-                total_so_far: total_messages,
-            },
-        );
-        emit(
-            on_progress,
-            ProgressEvent::Log(format!(
-                "Fetched {} message(s) ({} total)",
-                page.messages.len(),
-                total_messages
-            )),
-        );
-
-        for msg in &page.messages {
-            for att in &msg.attachments {
-                if let Some(sha) = att
-                    .sha256
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                {
-                    unique_assets
-                        .entry(sha.to_string())
-                        .and_modify(|existing| {
-                            if existing.is_none() {
-                                *existing = att.size_bytes;
-                            }
-                        })
-                        .or_insert(att.size_bytes);
-                }
-            }
-        }
-
-        match page.next_cursor {
-            Some(next) if !next.is_empty() => cursor = Some(next),
-            _ => break,
-        }
-    }
-
-    let stats = QueryStats {
-        messages: total_messages,
-        attachments: unique_assets.len() as u64,
-        total_bytes: unique_assets.values().filter_map(|size| *size).sum(),
-    };
-    emit(on_progress, ProgressEvent::Log(query_result_log(&stats)));
-    Ok(stats)
 }
 
 /// Download matching messages into `cfg.out_dir` as JSON Lines plus attachments.
