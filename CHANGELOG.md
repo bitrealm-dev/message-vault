@@ -11,6 +11,10 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ## [Unreleased]
 
+### Removed
+
+- 2026-08-31: The legacy Slint desktop GUI (`crates/message-vault-io-gui`) is gone. The Tauri desktop app is the product path. Its screens are recorded, one image per exporter, in `docs/superpowers/reference/legacy-slint-gui.md`.
+
 ### Fixed
 
 - 2026-08-30: Message Vault Settings no longer reports an address it has not probed. Editing the address after a failed Test used to fall back to the card's own connection — which belongs to the vault already saved — and turn the line green. An address typed but not tried now reads `Not tested`.

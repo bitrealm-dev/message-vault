@@ -218,7 +218,7 @@ Most first PRs touch one of these:
 - **Import from a phone backup** — `crates/exporters/` and, for the native file dialogs, `src-tauri/`
 - **This guidebook** — `docs/src/content/docs/`
 
-Don't start in `crates/message-vault-io-gui/` or `web-next/`; those are old UIs still in the tree.
+Don't start in `web-next/`; that's an old UI still in the tree.
 
 The full folder list is on [Vault Design → Directory map](/vault/developer/vault-design/#directory-map).
 
@@ -254,7 +254,7 @@ From the repository root:
 
 That script runs `./scripts/format-all.sh` first (rustfmt on the workspace and `src-tauri/`, then Biome on `web/`; it rewrites files). Then it builds and tests the workspace, lints and tests `web/`, and checks and builds `docs/`. It stops on the first failure. It runs `npm ci` in `web/` or `docs/` only when that tree has no `node_modules` yet. If rustfmt or Biome changed files, commit those changes before opening the pull request.
 
-Clippy is not part of that script or of CI. Run `./scripts/lint-all.sh` locally to run Clippy on the workspace (except the legacy Slint GUI crate) and `src-tauri/`, then the web linter.
+Clippy is not part of that script or of CI. Run `./scripts/lint-all.sh` locally to run Clippy on the workspace and `src-tauri/`, then the web linter.
 
 While iterating on one crate, `cargo test -p go-sms-pro-exporter` is enough. Exporter smoke tests use committed fixtures; personal phone backups are not required.
 
