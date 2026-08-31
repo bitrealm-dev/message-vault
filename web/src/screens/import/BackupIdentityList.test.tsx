@@ -41,4 +41,14 @@ describe("BackupIdentityList", () => {
       screen.getByText("This backup doesn't record which account it came from."),
     ).toBeInTheDocument();
   });
+
+  it("shows only the value while the profile hasn't loaded", () => {
+    render(
+      <BackupIdentityList identities={["owner@example.com"]} profile={null} onAdd={vi.fn()} />,
+    );
+    expect(screen.getByText("owner@example.com")).toBeInTheDocument();
+    expect(screen.queryByText("On your profile")).not.toBeInTheDocument();
+    expect(screen.queryByText("Not on your profile")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add to profile" })).not.toBeInTheDocument();
+  });
 });
