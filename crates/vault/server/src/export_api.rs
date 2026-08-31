@@ -805,11 +805,11 @@ async fn build_message_filters(
         where_parts.push(format!("NOT {}", involves_contacts_sql(&ids)));
     }
     if let Some(tag) = &parsed.tag {
-        where_parts.push(has_thread_tag_sql(engine, false));
+        where_parts.push(has_message_tag_sql(engine, false));
         params.push(SqlParam::Text(tag.clone()));
     }
     if let Some(tag) = &parsed.exclude_tag {
-        where_parts.push(has_thread_tag_sql(engine, true));
+        where_parts.push(has_message_tag_sql(engine, true));
         params.push(SqlParam::Text(tag.clone()));
     }
 
@@ -1038,12 +1038,12 @@ fn name_eq_sql(engine: DbEngine, alias: &str, placeholder: usize) -> String {
     }
 }
 
-fn has_thread_tag_sql(engine: DbEngine, exclude: bool) -> String {
+fn has_message_tag_sql(engine: DbEngine, exclude: bool) -> String {
     let exists = if exclude { "NOT EXISTS" } else { "EXISTS" };
     format!(
         "{exists} (
-           SELECT 1 FROM conversation_tag_members ctm
-           JOIN conversation_tags ct ON ct.id = ctm.tag_id
+           SELECT 1 FROM message_tag_members ctm
+           JOIN message_tags ct ON ct.id = ctm.tag_id
            WHERE ctm.conversation_id = c.id
              AND ct.account_id = c.account_id
              AND {name_eq}
@@ -2052,12 +2052,12 @@ mod tests {
 
     /// The case-insensitive equality fragments must keep the table alias
     /// INSIDE `lower()` on Postgres — `ct.lower(...)` parses as a
-    /// schema-qualified function call — at both call sites: the thread-tag
+    /// schema-qualified function call — at both call sites: the message-tag
     /// subquery (alias `ct`) and the contact-group lookup (alias `cg`). The
     /// SQLite arms stay alias-outside COLLATE NOCASE, unchanged.
     #[test]
     fn pg_ci_eq_keeps_alias_inside_lower() {
-        let tag_sql = has_thread_tag_sql(DbEngine::Postgres, false);
+        let tag_sql = has_message_tag_sql(DbEngine::Postgres, false);
         assert!(tag_sql.contains("lower(ct.name) = lower(?)"), "{tag_sql}");
         assert!(!tag_sql.contains("ct.lower("), "{tag_sql}");
 
@@ -2066,7 +2066,7 @@ mod tests {
         assert!(!group_eq.contains("cg.lower("));
 
         // SQLite arms are byte-identical in behavior to the pre-port form.
-        let tag_sqlite = has_thread_tag_sql(DbEngine::Sqlite, false);
+        let tag_sqlite = has_message_tag_sql(DbEngine::Sqlite, false);
         assert!(
             tag_sqlite.contains("ct.name = ? COLLATE NOCASE"),
             "{tag_sqlite}"

@@ -3,11 +3,11 @@ import { apiClient } from "./api";
 import { useAuth } from "./auth";
 
 /**
- * Contact groups and thread tags are the same feature over different nouns: a
+ * Contact groups and message tags are the same feature over different nouns: a
  * named set the account owns, a membership call that puts rows in or out of it,
  * a module-level cache with an in-flight guard, and a DOM event that tells the
  * open UI to refetch. This builds one from a description of the nouns so the
- * two do not drift apart — they had already started to, with `threadTags`
+ * two do not drift apart — they had already started to, with `messageTags`
  * re-exporting `contactGroups`' slug helpers verbatim.
  */
 

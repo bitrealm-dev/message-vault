@@ -20,6 +20,7 @@ pub(crate) mod import_cli;
 pub(crate) mod import_media;
 pub(crate) mod jsonl;
 pub(crate) mod media_tools;
+pub(crate) mod message_tags_api;
 pub(crate) mod models;
 pub(crate) mod named_membership;
 pub(crate) mod openapi;
@@ -33,7 +34,6 @@ pub(crate) mod search_query;
 pub(crate) mod server;
 #[cfg(test)]
 pub mod test_support;
-pub(crate) mod thread_tags_api;
 
 pub use server::{ApiError, AppState, AuthCapability, AuthIdentity, ErrorBody, resolve_auth, run};
 

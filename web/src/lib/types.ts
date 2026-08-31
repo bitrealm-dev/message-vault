@@ -16,7 +16,7 @@ export interface Conversation {
   service: string;
   is_group: boolean;
   label: string | null;
-  /** Thread tags on this conversation. */
+  /** Message tags on this conversation. */
   tags?: string[];
 }
 

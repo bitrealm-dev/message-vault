@@ -1,4 +1,4 @@
-//! Shared CRUD for named membership sets (thread tags and contact groups).
+//! Shared CRUD for named membership sets (message tags and contact groups).
 //!
 //! Both domains store a named set (rows in a names table) whose members are
 //! conversation or contact ids. The operations are identical apart from table
@@ -54,9 +54,9 @@ type ChangeHook = for<'a> fn(
 /// `member_table` is the table members must exist in. All values are compile
 /// time constants, so the SQL built from them is fixed at build time.
 pub struct MembershipSpec {
-    /// Names table (`conversation_tags` / `contact_groups`).
+    /// Names table (`message_tags` / `contact_groups`).
     pub table: &'static str,
-    /// Membership table (`conversation_tag_members` / `contact_group_members`).
+    /// Membership table (`message_tag_members` / `contact_group_members`).
     pub members_table: &'static str,
     /// Column on the membership table that references the names table.
     pub name_column: &'static str,
@@ -79,11 +79,11 @@ pub struct MembershipSpec {
     pub on_change: Option<ChangeHook>,
 }
 
-/// Thread tags on conversations.
+/// Message tags on conversations.
 pub fn tag_spec() -> &'static MembershipSpec {
     static SPEC: MembershipSpec = MembershipSpec {
-        table: "conversation_tags",
-        members_table: "conversation_tag_members",
+        table: "message_tags",
+        members_table: "message_tag_members",
         name_column: "tag_id",
         member_column: "conversation_id",
         member_table: "conversations",

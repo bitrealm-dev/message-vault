@@ -104,7 +104,7 @@ export function PeopleGroupIcon({ size, className, ...rest }: IconProps) {
   );
 }
 
-/** Price-tag shape — a thread tag. */
+/** Price-tag shape — a message tag. */
 export function TagIcon({ size, className, ...rest }: IconProps) {
   return (
     <IconShell size={size} className={className} {...rest}>

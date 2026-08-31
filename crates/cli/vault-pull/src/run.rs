@@ -33,8 +33,6 @@ pub struct VaultPullConfig {
     pub key: String,
     /// Free-form Fastmail-style query (may be empty).
     pub query: String,
-    pub after: Option<String>,
-    pub before: Option<String>,
     pub source: Option<String>,
     pub skip_attachments: bool,
     pub page_limit: usize,
@@ -149,7 +147,7 @@ pub fn query_stats(
         ProgressEvent::Log(format!("Authenticated as {username} ({account})")),
     );
 
-    let q = compose_query(&cfg.query, cfg.after.as_deref(), cfg.before.as_deref());
+    let q = cfg.query.trim().to_string();
     emit(
         &mut on_progress,
         ProgressEvent::Log(if q.is_empty() {
@@ -305,7 +303,7 @@ pub fn run(
         ProgressEvent::Log(format!("Authenticated as {username} ({account})")),
     );
 
-    let q = compose_query(&cfg.query, cfg.after.as_deref(), cfg.before.as_deref());
+    let q = cfg.query.trim().to_string();
     emit(
         &mut on_progress,
         ProgressEvent::Log(if q.is_empty() {

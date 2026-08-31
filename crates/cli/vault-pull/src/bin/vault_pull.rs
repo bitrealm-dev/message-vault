@@ -51,8 +51,6 @@ fn real_main() -> Result<ExitCode> {
         key: cli.key,
         query: q,
         // already composed into query
-        after: None,
-        before: None,
         source: cli.source,
         skip_attachments: cli.skip_attachments,
         page_limit: cli.page_limit,

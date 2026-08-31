@@ -1,9 +1,9 @@
-import { tagSlug, threadTags } from "../lib/threadTags";
+import { messageTags, tagSlug } from "../lib/messageTags";
 import { TagIcon } from "./icons";
 import NavEntityList, { type NavEntityCopy } from "./NavEntityList";
 
 const COPY: NavEntityCopy = {
-  id: "thread-tags",
+  id: "message-tags",
   title: "Message Tags",
   routeBase: "/tag",
   emptyRoute: "/no-tag",
@@ -19,11 +19,11 @@ const COPY: NavEntityCopy = {
   deleteError: "Could not delete tag",
 };
 
-export default function ThreadTagsNav({ tags }: { tags: string[] }) {
+export default function MessageTagsNav({ tags }: { tags: string[] }) {
   return (
     <NavEntityList
       names={tags}
-      collection={threadTags}
+      collection={messageTags}
       slug={tagSlug}
       icon={<TagIcon size={15} />}
       emptyIcon={<TagIcon size={15} />}

@@ -16,10 +16,10 @@ import {
   saveConversationSort,
 } from "../lib/conversationSort";
 import { checksFromMembers } from "../lib/membershipChecks";
-import { createThreadTag, setConversationTagMembership } from "../lib/threadTags";
+import { createMessageTag, setConversationTagMembership } from "../lib/messageTags";
 import type { Conversation } from "../lib/types";
+import { useMessageTags } from "../lib/useMessageTags";
 import { formatVisibleRange, type PagedFetchPage, usePagedList } from "../lib/usePagedList";
-import { useThreadTags } from "../lib/useThreadTags";
 
 const QUERY_DEBOUNCE_MS = 300;
 
@@ -45,7 +45,7 @@ export default function ConversationList({
   const [tagOverrides, setTagOverrides] = useState<Record<string, string[]>>({});
   const [membershipRev, setMembershipRev] = useState(0);
   const [sortState, setSortState] = useState<ConversationSortState>(() => loadConversationSort());
-  const { tags: allTags } = useThreadTags();
+  const { tags: allTags } = useMessageTags();
   const setRightToolbar = useSetRightToolbar();
 
   useEffect(() => {
@@ -163,7 +163,7 @@ export default function ConversationList({
           void (async () => {
             const existing = allTags.find((t) => t.toLowerCase() === name.toLowerCase());
             if (!existing) {
-              await createThreadTag(name);
+              await createMessageTag(name);
             }
             await applyMembership(existing ?? name, true);
           })();
