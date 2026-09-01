@@ -324,6 +324,11 @@ struct ContactListFilters {
     group: Option<String>,
     /// Contacts with no group memberships (`group:none` / `has:no-group`).
     no_group: bool,
+    /// The Unknown Contact Group (`group:unknown`): a contact with no identity
+    /// at all, or with identities but no preferred name. Membership is computed
+    /// from contact state, not stored, so it empties as the person works
+    /// through it.
+    unknown: bool,
 }
 
 fn normalize_ymd(raw: &str) -> Option<String> {
@@ -396,6 +401,15 @@ fn apply_group_token(out: &mut ContactListFilters, raw: &str) {
     let lower = value.to_ascii_lowercase();
     if lower == "none" || lower == "no-group" || lower == "no-label" {
         out.no_group = true;
+        out.group = None;
+        return;
+    }
+    // Unknown is a permanent Contact Group whose membership is computed from
+    // contact state rather than stored in `contact_group_members`, so it never
+    // reaches the stored-group branch.
+    if lower == "unknown" {
+        out.unknown = true;
+        out.no_group = false;
         out.group = None;
         return;
     }
@@ -593,6 +607,10 @@ pub async fn list_contacts(
              )"
             .into(),
         );
+    }
+
+    if filters.unknown {
+        where_parts.push(crate::db::contacts::UNKNOWN_CONTACT_SQL.to_string());
     }
 
     if let Some(ref label) = filters.group {
@@ -1279,14 +1297,15 @@ pub async fn mutate_contact(
             // Already linked — no address-book change.
             return Ok(true);
         }
-        sqlx::query(
-            "INSERT INTO contact_handles (account_id, handle_id, contact_id)
-             VALUES ($1, $2, $3)",
+        // The person attached this identity themselves, so a later address
+        // book load leaves it alone.
+        crate::db::contacts::link_handle_to_contact(
+            conn,
+            account_id,
+            handle_id,
+            contact_id,
+            crate::db::contacts::Origin::User,
         )
-        .bind(account_id)
-        .bind(handle_id)
-        .bind(contact_id)
-        .execute(&mut *conn)
         .await?;
         return touch_ok(conn, account_id, contact_id).await;
     }
@@ -2821,6 +2840,48 @@ mod tests {
             })
         );
         assert!(parse_date_bound_value("<=2024-01-15", DateBoundOp::OnOrAfter).is_none());
+    }
+
+    #[tokio::test]
+    async fn unknown_group_collects_contacts_missing_a_name_or_an_identity() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        // Knows who and how to reach them: not Unknown.
+        insert_contact_with_handle(&mut conn, &account, "Ada", "+15555550100").await;
+        // Has an identity, no preferred name: Unknown by the second clause.
+        insert_contact_with_handle(&mut conn, &account, "", "+15555550200").await;
+        // Has a name, no identity at all: Unknown by the first clause.
+        crate::db::contacts::create_contact(
+            &mut conn,
+            &account,
+            "Sarah",
+            crate::db::contacts::Origin::Import,
+        )
+        .await
+        .unwrap();
+
+        let unknown = list_contacts(&mut conn, &account, "group:unknown", DEFAULT_LIST_LIMIT, 0)
+            .await
+            .unwrap();
+        assert_eq!(unknown.total, 2);
+        let mut names: Vec<String> = unknown.contacts.iter().map(|c| c.name.clone()).collect();
+        names.sort();
+        // The list renders a nameless contact as "(unknown)".
+        assert_eq!(names, vec!["(unknown)".to_string(), "Sarah".to_string()]);
+
+        // Naming the nameless one takes it out of Unknown, because membership
+        // is computed rather than stored.
+        sqlx::query("UPDATE contacts SET preferred_name = 'Ben' WHERE account_id = $1 AND trim(preferred_name) = ''")
+            .bind(&account)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let after = list_contacts(&mut conn, &account, "group:unknown", DEFAULT_LIST_LIMIT, 0)
+            .await
+            .unwrap();
+        assert_eq!(after.total, 1);
+        assert_eq!(after.contacts[0].name, "Sarah");
     }
 
     #[tokio::test]

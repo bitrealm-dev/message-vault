@@ -7,9 +7,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use media::{CompressOptions, MediaMode};
-use message_csv::DateRange;
 
-use crate::exporters::{ApplePlatform, ContactsKind, Exporter, WhatsappPlatform};
+use crate::exporters::{ApplePlatform, Exporter, WhatsappPlatform};
 use crate::process::{CancelFlag, LogSink, emit_log};
 
 /// Output packaging projected from the common message.
@@ -92,19 +91,11 @@ pub struct ExporterConfig {
     /// Input paths (usually one). SMS Backup+ CLI may pass several; WhatsApp may leave empty.
     pub inputs: Vec<PathBuf>,
     /// Output directory the export is written to (packaging plus `attachments/`).
-    /// Set from the CLI `--output` flag.
     pub output: PathBuf,
-    /// Optional `[start, end)` message window (`YYYY-MM-DD`, local midnight).
-    /// Set from the CLI `--start-date` / `--end-date` flags.
-    pub date_range: DateRange,
     /// Optional fixed UTC offset for naive timestamps, e.g. `UTC-05:00`.
     /// When `None`, dates are interpreted in host-local time.
     pub timezone: Option<String>,
-    /// Optional contacts file used to resolve phone numbers to names.
-    /// Set from the CLI `--contacts` / `--vcf` flags.
-    pub contacts: Option<ContactsConfig>,
     /// Fake-name rewrite settings; `None`-equivalent when disabled.
-    /// Set from the CLI `--obfuscate` / `--obfuscate-seed` flags.
     pub obfuscate: ObfuscateConfig,
     /// Attachment handling for FormatSink (none / copy / convert / compress).
     pub media: MediaConfig,
@@ -146,37 +137,9 @@ impl ExporterConfig {
         }
     }
 
-    /// Split contacts into `(--contacts, --vcf)` paths for loaders that take both.
-    pub fn contacts_csv_vcf(&self) -> (Option<PathBuf>, Option<PathBuf>) {
-        match &self.contacts {
-            Some(c) => c.csv_and_vcf(),
-            None => (None, None),
-        }
-    }
-
     /// True when fake-name rewrite is on, or a seed was supplied.
     pub fn obfuscate_active(&self) -> bool {
         self.obfuscate.enabled || self.obfuscate.seed.is_some()
-    }
-}
-
-/// Path and kind of an optional contacts file used to resolve phone numbers to names.
-#[derive(Debug, Clone)]
-pub struct ContactsConfig {
-    /// Contacts file path (CSV or VCF).
-    pub path: PathBuf,
-    /// How the contacts file is parsed.
-    pub kind: ContactsKind,
-}
-
-impl ContactsConfig {
-    /// Split this contacts file into `(csv_path, vcf_path)` for loaders that take both.
-    pub fn csv_and_vcf(&self) -> (Option<PathBuf>, Option<PathBuf>) {
-        match self.kind {
-            ContactsKind::Csv => (Some(self.path.clone()), None),
-            ContactsKind::Vcf => (None, Some(self.path.clone())),
-            ContactsKind::None => (None, None),
-        }
     }
 }
 
@@ -263,14 +226,12 @@ pub struct SmsBackupRestoreConfig {
 }
 
 #[derive(Debug, Clone)]
-/// SMS Backup+ extras: owner phones/emails, optional name-mapping file, log flags.
+/// SMS Backup+ extras: owner phones/emails and log flags.
 pub struct SmsBackupPlusConfig {
     /// Owner phone numbers used to mark outgoing messages.
     pub owner_phones: Vec<String>,
     /// Owner email addresses used to mark outgoing messages.
     pub owner_emails: Vec<String>,
-    /// Optional incorrect-name mapping file path (CSV).
-    pub name_mapping: Option<PathBuf>,
     /// Whether to emit verbose log lines.
     pub verbose: bool,
     /// Whether to print the end-of-run summary.
@@ -286,7 +247,7 @@ pub struct OpenExtractConfig {}
 pub struct ImazingConfig {}
 
 #[derive(Debug, Clone)]
-/// iMessage / iPhone backup extras: platform, copy method, contacts, password.
+/// iMessage / iPhone backup extras: platform, copy method, address book, password.
 pub struct AppleConfig {
     /// iPhone vs Mac backup layout; `None` means auto-detect.
     pub platform: Option<ApplePlatform>,
@@ -298,8 +259,6 @@ pub struct AppleConfig {
     pub apple_contacts: Option<PathBuf>,
     /// Apple backup decryption password (never written to `export.ini`).
     pub backup_password: Option<String>,
-    /// iMessage conversation filter (chat id).
-    pub conversation_filter: Option<String>,
     /// Use the destination caller id as the outgoing From display name.
     pub use_caller_id: bool,
 }
@@ -312,7 +271,6 @@ impl Default for AppleConfig {
             copy_method: "clone".into(),
             apple_contacts: None,
             backup_password: None,
-            conversation_filter: None,
             use_caller_id: true,
         }
     }

@@ -167,7 +167,6 @@ fn load_documents(
             input_dir,
             SbrReadOptions {
                 owner_phones: &[],
-                date_range: &config.date_range,
                 attachments_dir: Some(&attachments_dir),
                 copy_attachments,
                 keep_attachment_bytes: false,
@@ -462,9 +461,7 @@ mod tests {
         ExporterConfig {
             inputs: vec![input.to_path_buf()],
             output: output.to_path_buf(),
-            date_range: Default::default(),
             timezone: None,
-            contacts: None,
             obfuscate: ObfuscateConfig::default(),
             media: MediaConfig::default(),
             cancel: None,

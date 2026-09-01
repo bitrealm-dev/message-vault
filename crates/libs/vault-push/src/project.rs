@@ -162,7 +162,7 @@ mod tests {
                 conversation_type: IrConversationType::Individual,
                 group_title: None,
                 participants: vec![IrParticipant {
-                    handle: "+15555550101".into(),
+                    handle: Some("+15555550101".into()),
                     display_name: Some("Sam".into()),
                     handle_type: None,
                 }],
@@ -172,7 +172,7 @@ mod tests {
             packaging_stem_suffix: None,
         };
         let header = String::from_utf8(document_header_line(&doc).unwrap()).unwrap();
-        assert!(header.contains(r#""schema_version":3"#));
+        assert!(header.contains(r#""schema_version":4"#));
         assert!(header.contains(r#""sms-backup-restore""#));
         assert!(!header.contains(r#""record":"conversation""#));
 

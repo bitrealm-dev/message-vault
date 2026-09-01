@@ -4,8 +4,14 @@ CREATE TABLE IF NOT EXISTS contacts (
     id INTEGER PRIMARY KEY,
     -- Owning vault account (`accounts.id`).
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    -- Display name shown in the UI (address-book preferred name only).
+    -- Display name shown in the UI. Empty until something supplies a name;
+    -- a contact with identities and no preferred name is Unknown.
     preferred_name TEXT NOT NULL,
+    -- Where this row came from: 'address_book', 'import', or 'user'. Loading
+    -- an address book replaces only the rows the address book owns.
+    origin TEXT NOT NULL DEFAULT 'user',
+    -- When the row was first recorded. Stored and queryable; not displayed.
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
     -- Address-book shape last changed (not message activity).
     last_modified TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -28,6 +34,12 @@ CREATE TABLE IF NOT EXISTS handles (
     handle_type TEXT NOT NULL,
     -- Platform identity: 'phone' | 'whatsapp' (not per-message SMS/iMessage/RCS).
     service TEXT NOT NULL,
+    -- Where this row came from: 'address_book', 'import', or 'user'.
+    origin TEXT NOT NULL DEFAULT 'import',
+    -- When the identity was first recorded. Queryable; not displayed.
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    -- When the identity last changed. Queryable; not displayed.
+    last_modified TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(account_id, normalized, handle_type, service)
 );
 
@@ -44,6 +56,8 @@ CREATE TABLE IF NOT EXISTS contact_handles (
     contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
     -- Name the source gave for this handle (may differ from preferred_name).
     name_alias TEXT,
+    -- Where this link came from: 'address_book', 'import', or 'user'.
+    origin TEXT NOT NULL DEFAULT 'import',
     PRIMARY KEY (account_id, handle_id)
 );
 

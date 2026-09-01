@@ -26,12 +26,14 @@ CREATE TABLE IF NOT EXISTS participants (
     -- Parent conversation (`conversations.id`).
     conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     -- Participant identity (`handles.id`).
-    handle_id INTEGER NOT NULL REFERENCES handles(id) ON DELETE CASCADE,
+    -- Participant identity. NULL when the source named this person and
+    -- recorded no address for them; `contact_id` then carries who they are.
+    handle_id INTEGER REFERENCES handles(id) ON DELETE CASCADE,
     -- Resolved address-book contact when known (`contacts.id`).
     contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
     -- Display name residue from the source for this participant.
     name_alias TEXT,
-    UNIQUE(conversation_id, handle_id)
+    UNIQUE(conversation_id, handle_id, contact_id)
 );
 
 CREATE INDEX IF NOT EXISTS ix_participants_handle_id ON participants (handle_id);

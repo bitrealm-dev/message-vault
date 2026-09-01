@@ -301,20 +301,31 @@ pub fn default_participants(
         .iter()
         .filter(|h| !h.is_empty())
         .map(|h| IrParticipant {
-            handle: h.clone(),
+            handle: Some(h.clone()),
             display_name: name_by_handle.get(h).cloned(),
             handle_type: Some(HandleType::Phone),
         })
         .collect();
     if participants.is_empty() && !convo.is_group && !chat_id.is_empty() {
-        participants.push(IrParticipant {
-            handle: chat_id.to_string(),
-            display_name: name_by_handle
-                .get(chat_id)
-                .cloned()
-                .or_else(|| convo.first_contact_name()),
-            handle_type: Some(HandleType::Phone),
-        });
+        if convo.extra.contains_key(crate::CHAT_ID_IS_NAME) {
+            // The source named this person and recorded no address for them,
+            // so the chat id is a stem of the name — not something to store
+            // as an identity.
+            participants.push(IrParticipant {
+                handle: None,
+                display_name: convo.first_contact_name(),
+                handle_type: None,
+            });
+        } else {
+            participants.push(IrParticipant {
+                handle: Some(chat_id.to_string()),
+                display_name: name_by_handle
+                    .get(chat_id)
+                    .cloned()
+                    .or_else(|| convo.first_contact_name()),
+                handle_type: Some(HandleType::Phone),
+            });
+        }
     }
     participants
 }
@@ -451,7 +462,10 @@ mod tests {
 
         let (doc, _) = pending_to_document("+15555550122", &convo, &TestHooks);
         assert_eq!(doc.conversation.participants.len(), 1);
-        assert_eq!(doc.conversation.participants[0].handle, "+15555550122");
+        assert_eq!(
+            doc.conversation.participants[0].handle.as_deref(),
+            Some("+15555550122")
+        );
         assert_eq!(
             doc.conversation.participants[0].display_name.as_deref(),
             Some("Bob")

@@ -390,7 +390,7 @@ Thanks\r\n",
     }
 
     #[test]
-    fn parses_archive_with_unknown_phone() {
+    fn archive_named_peer_without_a_phone_keys_by_name() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("archive.eml");
         std::fs::write(
@@ -411,7 +411,9 @@ Hi there\r\n",
         let (msgs, _) = parse_archive_eml_mail(&path, &mail, &headers).unwrap();
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].chat_key, "");
-        assert_eq!(crate::identity::chat_id_for(&msgs[0]), "unknown");
+        // The archive names the peer and records no address, so the chat is
+        // keyed by the name rather than merged into a shared `unknown` chat.
+        assert_eq!(crate::identity::chat_id_for(&msgs[0]), "Mystery");
         assert_eq!(msgs[0].text, "Hi there");
     }
 

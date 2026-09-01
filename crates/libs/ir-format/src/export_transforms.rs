@@ -136,7 +136,9 @@ pub(crate) fn obfuscate_document(doc: &mut ConversationDocument, anon: &mut Obfu
 }
 
 fn obfuscate_participant(p: &mut IrParticipant, anon: &mut Obfuscator) {
-    p.handle = anon.obfuscate_handle(&p.handle);
+    if let Some(handle) = p.handle.as_mut() {
+        *handle = anon.obfuscate_handle(handle);
+    }
     if let Some(n) = p.display_name.as_mut() {
         *n = anon.obfuscate_display_name(n);
     }
@@ -223,7 +225,7 @@ mod tests {
                 conversation_type: IrConversationType::Individual,
                 group_title: None,
                 participants: vec![IrParticipant {
-                    handle: "+15555550101".into(),
+                    handle: Some("+15555550101".into()),
                     display_name: Some("Sam".into()),
                     handle_type: None,
                 }],

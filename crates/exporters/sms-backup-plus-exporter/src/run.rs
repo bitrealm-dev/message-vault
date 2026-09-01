@@ -2,11 +2,10 @@
 
 use crate::emit::{ConvertExportArgs, convert_export};
 use anyhow::{Result, bail};
-use contacts::{NameMapping, resolve_contacts_cli};
 use message_ir_format::ExportTransforms;
 use message_vault_io_core::{ExporterConfig, RunResult, SourceConfig};
 
-/// Check the required inputs, resolve contacts and name mapping, then convert.
+/// Check the required inputs, then convert.
 ///
 /// The shared `run_pipeline` cannot host this exporter's `--no-summary` flag
 /// (it appends the summary lines unconditionally), so the SMS Backup+ specifics
@@ -33,19 +32,6 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
         bail!("no input given: pass --input PATH");
     }
 
-    let (contacts_path, vcf) = config.contacts_csv_vcf();
-    let log_fn = |line: &str| config.emit_log(line);
-    let (contacts_book, contacts_resolved) =
-        resolve_contacts_cli(contacts_path, vcf, Some(&log_fn))?;
-    let (name_mapping, _) = NameMapping::load_optional(source.name_mapping.as_deref())?;
-
-    if source.verbose {
-        match contacts_resolved.as_ref() {
-            Some(path) => config.emit_log(format!("contacts: {}", path.display())),
-            None => config.emit_log("contacts: (none)"),
-        }
-    }
-
     let mut transforms = ExportTransforms::from_configs(&config.media, &config.obfuscate);
     transforms.log = config.log.clone();
     let (report, sink) = convert_export(ConvertExportArgs {
@@ -53,9 +39,6 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
         output_dir: &config.output,
         owner_phones: &source.owner_phones,
         owner_emails: &source.owner_emails,
-        contacts: &contacts_book,
-        name_mapping: &name_mapping,
-        date_range: &config.date_range,
         verbose: source.verbose,
         transforms,
         output_format: config.output_format,

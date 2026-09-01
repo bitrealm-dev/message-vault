@@ -4,7 +4,7 @@ use crate::emit::{ConvertExportArgs, convert_export};
 use anyhow::{Result, bail};
 use message_vault_io_core::{ExporterConfig, RunResult, SourceConfig};
 
-/// Resolve contacts, convert, then apply media transforms and obfuscation.
+/// Convert, then apply media transforms and obfuscation.
 ///
 /// # Errors
 ///
@@ -16,13 +16,11 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
     };
     message_vault_io_core::check_cancel(config.cancel.as_ref())?;
     let input = config.require_input().map_err(anyhow::Error::msg)?;
-    message_ir_format::run_pipeline(config, |contacts, transforms| {
+    message_ir_format::run_pipeline(config, |transforms| {
         convert_export(ConvertExportArgs {
             input,
             output_dir: &config.output,
             owner_phones: &source.owner_phones,
-            contacts,
-            date_range: &config.date_range,
             transforms,
             output_format: config.output_format,
             cancel: config.cancel.as_ref(),

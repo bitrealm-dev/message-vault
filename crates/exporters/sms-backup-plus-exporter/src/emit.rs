@@ -2,12 +2,10 @@
 //! then write the chosen output format via [`ExportWriter`].
 
 use crate::attachments_emit::{merge_attachments, pending_attachment_to_ir, queue_attachments};
-use crate::identity::{chat_id_for, cover_identity, timestamp_ms};
+use crate::identity::{chat_id_for, cover_identity, name_only_key, timestamp_ms};
 use crate::parse_emit::{ParsedEmlKind, collect_eml_paths, parse_one_eml};
 use crate::types::ParsedMessage;
 use anyhow::{Result, bail};
-use contacts::{ContactsBook, NameMapping};
-use message_csv::DateRange;
 use message_ir::{
     ExportMeta, IrAttachment, IrService, IrSource, PendingAttachment, PendingConversation,
     PendingMessage, ProjectionHooks, parse_android_type, pending_to_document, prepare_conversation,
@@ -130,6 +128,7 @@ fn add_message(
 ) {
     let chat_id = chat_id_for(&msg);
     let dedupe_key = cover_identity(&msg);
+    let name_only = name_only_key(&msg).is_some();
 
     let peers: Vec<String> = peer_handles_from_digits(&msg.participant_digits);
     let convo = ensure_convo(
@@ -139,6 +138,11 @@ fn add_message(
         msg.group_title.clone(),
         peers,
     );
+    if name_only {
+        convo
+            .extra
+            .insert(message_ir::CHAT_ID_IS_NAME.to_string(), "1".to_string());
+    }
 
     report.bump("messages_before_dedupe", 1);
 
@@ -250,9 +254,6 @@ pub(crate) struct ConvertExportArgs<'a, P: AsRef<Path>> {
     pub output_dir: &'a Path,
     pub owner_phones: &'a [String],
     pub owner_emails: &'a [String],
-    pub contacts: &'a ContactsBook,
-    pub name_mapping: &'a NameMapping,
-    pub date_range: &'a DateRange,
     pub verbose: bool,
     pub transforms: ExportTransforms,
     pub output_format: OutputFormat,
@@ -283,9 +284,6 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
         output_dir,
         owner_phones,
         owner_emails,
-        contacts,
-        name_mapping,
-        date_range,
         verbose,
         transforms,
         output_format,
@@ -317,11 +315,6 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
         verbose,
         log,
         format!("owner emails: {}", owner_emails_lc.len()),
-    );
-    vlog(
-        verbose,
-        log,
-        format!("contacts entries (by phone): {}", contacts.len()),
     );
     vlog(verbose, log, format!("output: {}", output_dir.display()));
 
@@ -366,14 +359,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
                     return ParsedEmlKind::Cancelled;
                 }
                 let rel_path = relative_eml_path(eml_path, &input_roots, &file_inputs);
-                parse_one_eml(
-                    eml_path,
-                    rel_path,
-                    &owner_all_digits,
-                    &owner_emails_lc,
-                    contacts,
-                    name_mapping,
-                )
+                parse_one_eml(eml_path, rel_path, &owner_all_digits, &owner_emails_lc)
             })
             .collect();
 
@@ -393,10 +379,6 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
                     report.bump("archive_eml", 1);
                     report.skipped_invalid_date += skipped_dates;
                     for msg in msgs {
-                        if !date_range.contains_secs_f64(msg.timestamp_secs) {
-                            report.skipped_out_of_range += 1;
-                            continue;
-                        }
                         if msg.chat_key.is_empty() {
                             report.bump("unknown_chat_messages", 1);
                         }
@@ -410,10 +392,6 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
                     _path_display: _,
                 } => {
                     report.bump("flat_eml", 1);
-                    if !date_range.contains_secs_f64(msg.timestamp_secs) {
-                        report.skipped_out_of_range += 1;
-                        continue;
-                    }
                     if msg.chat_key.is_empty() {
                         report.bump("unknown_chat_messages", 1);
                     }

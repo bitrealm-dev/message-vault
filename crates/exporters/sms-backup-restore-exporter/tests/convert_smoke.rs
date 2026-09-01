@@ -1,7 +1,5 @@
 use crate::emit::{ConvertExportArgs, convert_export};
 use anyhow::Result;
-use contacts::ContactsBook;
-use message_csv::DateRange;
 use message_ir_format::{ExportTransforms, FormatSinkResult};
 use message_vault_io_core::testutil::{assert_csv_header, empty_contacts};
 use message_vault_io_core::{ExportReport, OutputFormat};
@@ -11,7 +9,6 @@ use std::path::{Path, PathBuf};
 fn convert(
     input: &Path,
     output: &Path,
-    contacts: &ContactsBook,
     owner_phones: &[String],
     output_format: OutputFormat,
 ) -> Result<(ExportReport, FormatSinkResult)> {
@@ -19,8 +16,6 @@ fn convert(
         input,
         output_dir: output,
         owner_phones,
-        contacts,
-        date_range: &DateRange::default(),
         transforms: ExportTransforms::none(),
         output_format,
         cancel: None,
@@ -34,11 +29,9 @@ fn convert_export_smoke_on_sample_fixture() {
     assert!(fixture.is_file(), "missing fixture: {}", fixture.display());
 
     let tmp = tempfile::tempdir().expect("tempdir");
-    let contacts = empty_contacts(&tmp);
     let (report, _) = convert(
         &fixture,
         tmp.path(),
-        &contacts,
         &["+15555550100".into()],
         OutputFormat::Csv,
     )
@@ -100,11 +93,9 @@ fn dedupes_overlapping_xml_files() {
     fs::write(input_dir.join("b.xml"), xml).unwrap();
 
     let out = tmp.path().join("out");
-    let contacts = empty_contacts(&tmp);
     let (report, _) = convert(
         &input_dir,
         &out,
-        &contacts,
         &["+15555550100".into()],
         OutputFormat::Csv,
     )
@@ -124,11 +115,9 @@ fn dedupes_overlapping_xml_files() {
 fn rejects_owner_phone_without_digits() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.xml");
     let tmp = tempfile::tempdir().expect("tempdir");
-    let contacts = empty_contacts(&tmp);
     let err = convert(
         &fixture,
         tmp.path(),
-        &contacts,
         &["not-a-phone".into()],
         OutputFormat::Csv,
     )
@@ -147,7 +136,6 @@ fn cancel_during_the_write_phase_stops_the_export() {
 
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.xml");
     let tmp = tempfile::tempdir().expect("tempdir");
-    let contacts = empty_contacts(&tmp);
     let out = tmp.path().join("out");
     fs::create_dir_all(&out).unwrap();
 
@@ -168,8 +156,6 @@ fn cancel_during_the_write_phase_stops_the_export() {
         input: &fixture,
         output_dir: &out,
         owner_phones: &["+15555550100".into()],
-        contacts: &contacts,
-        date_range: &DateRange::default(),
         transforms,
         output_format: OutputFormat::Csv,
         cancel: Some(&cancel),
@@ -197,11 +183,9 @@ fn convert_export_eml_writes_conversation_folder() {
     assert!(fixture.is_file(), "missing fixture: {}", fixture.display());
 
     let tmp = tempfile::tempdir().expect("tempdir");
-    let contacts = empty_contacts(&tmp);
     let (report, _) = convert(
         &fixture,
         tmp.path(),
-        &contacts,
         &["+15555550100".into()],
         OutputFormat::Eml,
     )
@@ -255,15 +239,13 @@ fn convert_export_eml_writes_conversation_folder() {
 }
 
 #[test]
-fn convert_export_json_and_jsonl_use_pristine_v3() {
+fn convert_export_json_and_jsonl_use_pristine_v4() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.xml");
     let tmp = tempfile::tempdir().expect("tempdir");
-    let contacts = empty_contacts(&tmp);
 
     let (report, _) = convert(
         &fixture,
         tmp.path(),
-        &contacts,
         &["+15555550100".into()],
         OutputFormat::Json,
     )
@@ -277,7 +259,7 @@ fn convert_export_json_and_jsonl_use_pristine_v3() {
         .expect("expected .json");
     let raw = fs::read_to_string(&json_path).unwrap();
     let doc: serde_json::Value = serde_json::from_str(&raw).unwrap();
-    assert_eq!(doc["schema_version"], 3);
+    assert_eq!(doc["schema_version"], 4);
     assert!(
         doc["conversation"]["stats"]["message_count"]
             .as_u64()
@@ -308,7 +290,6 @@ fn convert_export_json_and_jsonl_use_pristine_v3() {
     let (_report, _) = convert(
         &fixture,
         &out_jsonl,
-        &contacts,
         &["+15555550100".into()],
         OutputFormat::Jsonl,
     )
@@ -323,7 +304,7 @@ fn convert_export_json_and_jsonl_use_pristine_v3() {
     let body = fs::read_to_string(&jsonl_path).unwrap();
     let mut lines = body.lines();
     let header: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
-    assert_eq!(header["schema_version"], 3);
+    assert_eq!(header["schema_version"], 4);
     assert!(header.get("messages").is_none());
     assert!(
         header["conversation"]["stats"]["message_count"]
@@ -339,7 +320,6 @@ fn convert_export_json_and_jsonl_use_pristine_v3() {
 fn jsonl_drains_the_write_queue_and_a_second_run_resumes_it() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.xml");
     let tmp = tempfile::tempdir().expect("tempdir");
-    let contacts = empty_contacts(&tmp);
     let out = tmp.path().join("out");
     fs::create_dir_all(&out).expect("out dir");
 
@@ -348,8 +328,6 @@ fn jsonl_drains_the_write_queue_and_a_second_run_resumes_it() {
             input: &fixture,
             output_dir: &out,
             owner_phones: &[],
-            contacts: &contacts,
-            date_range: &DateRange::default(),
             transforms: ExportTransforms::none(),
             output_format: OutputFormat::Jsonl,
             cancel: None,

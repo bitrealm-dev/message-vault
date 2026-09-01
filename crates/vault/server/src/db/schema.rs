@@ -1044,7 +1044,14 @@ mod tests {
         );
         assert_eq!(
             column_names(&mut *conn, "contacts").await,
-            ["id", "account_id", "preferred_name", "last_modified"]
+            [
+                "id",
+                "account_id",
+                "preferred_name",
+                "origin",
+                "created_at",
+                "last_modified"
+            ]
         );
         assert_eq!(
             column_names(&mut *conn, "contact_groups").await,
@@ -1063,7 +1070,10 @@ mod tests {
                 "normalized",
                 "normalized_note",
                 "handle_type",
-                "service"
+                "service",
+                "origin",
+                "created_at",
+                "last_modified"
             ]
         );
         assert!(

@@ -5,12 +5,7 @@ use std::path::Path;
 
 use imessage_database::{
     tables::table::DEFAULT_PATH_IOS,
-    util::{
-        dates::{TIMESTAMP_FACTOR, get_offset},
-        dirs::default_db_path,
-        platform::Platform,
-        query_context::QueryContext,
-    },
+    util::{dirs::default_db_path, platform::Platform, query_context::QueryContext},
 };
 use message_ir_format::ExportTransforms;
 use message_vault_io_core::{ApplePlatform, ExporterConfig, RunResult, SourceConfig};
@@ -40,7 +35,6 @@ pub fn run(config: &ExporterConfig) -> anyhow::Result<RunResult> {
     let options = options_from_export_config(config)?;
     let format = options.output_format;
     let mut session = MailSession::new(options)?;
-    session.resolve_filtered_handles();
     check_cancel(config)?;
     let sink = run_export(&session)?;
     check_cancel(config)?;
@@ -74,21 +68,7 @@ fn options_from_export_config(config: &ExporterConfig) -> Result<MailOptions, Ru
         ));
     };
 
-    let mut query_context = QueryContext::default();
-    // QueryContext stores nanoseconds since the Apple epoch (2001-01-01 UTC);
-    // DateRange stores Unix seconds at local midnight. Convert the same way
-    // `QueryContext::set_start`/`set_end` convert `YYYY-MM-DD` strings.
-    let offset_ns = get_offset() * TIMESTAMP_FACTOR;
-    query_context.start = config
-        .date_range
-        .start_secs
-        .map(|s| unix_secs_to_apple_ns(s, offset_ns));
-    // DateRange.end_secs is exclusive (`secs >= end` rejected). QueryContext
-    // filters with inclusive `m.date <= end`, so subtract 1 ns.
-    query_context.end = config
-        .date_range
-        .end_secs
-        .map(|s| exclusive_unix_end_to_inclusive_apple_ns(s, offset_ns));
+    let query_context = QueryContext::default();
 
     let db_path = match config.primary_input() {
         Some(path) if !path.as_os_str().is_empty() => path.to_path_buf(),
@@ -181,7 +161,6 @@ fn options_from_export_config(config: &ExporterConfig) -> Result<MailOptions, Ru
         query_context,
         use_caller_id: source.use_caller_id,
         platform,
-        conversation_filter: source.conversation_filter.clone(),
         cleartext_password: source.backup_password.clone(),
         contacts_path: source.apple_contacts.clone(),
         attachment_embed,
@@ -197,15 +176,6 @@ fn options_from_export_config(config: &ExporterConfig) -> Result<MailOptions, Ru
     })
 }
 
-fn unix_secs_to_apple_ns(secs: i64, offset_ns: i64) -> i64 {
-    secs * TIMESTAMP_FACTOR - offset_ns
-}
-
-/// Convert exclusive Unix end seconds to an inclusive Apple-ns bound for `m.date <= end`.
-fn exclusive_unix_end_to_inclusive_apple_ns(end_secs: i64, offset_ns: i64) -> i64 {
-    unix_secs_to_apple_ns(end_secs, offset_ns).saturating_sub(1)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,16 +183,14 @@ mod tests {
         APPLE_CONTACTS_MISSING, ATTACHMENT_FOLDER_MISSING, MESSAGES_DATABASE_MISSING,
         NOT_AN_IPHONE_BACKUP,
     };
-    use message_vault_io_core::{AppleConfig, MediaConfig, OutputFormat, parse_date_range};
+    use message_vault_io_core::{AppleConfig, MediaConfig, OutputFormat};
     use std::{fs, path::Path};
 
     fn apple_cfg(input: &Path, apple: AppleConfig) -> ExporterConfig {
         ExporterConfig {
             inputs: vec![input.to_path_buf()],
             output: input.join("_export_out"),
-            date_range: parse_date_range(None, None).unwrap(),
             timezone: None,
-            contacts: None,
             obfuscate: Default::default(),
             media: MediaConfig::default(),
             cancel: None,
@@ -231,17 +199,6 @@ mod tests {
             resume: false,
             source: SourceConfig::Apple(apple),
         }
-    }
-
-    #[test]
-    fn exclusive_end_maps_to_inclusive_sql_bound() {
-        let offset_ns = 0;
-        let end_secs = 1_578_009_600; // 2020-01-03 00:00:00 UTC
-        let inclusive = exclusive_unix_end_to_inclusive_apple_ns(end_secs, offset_ns);
-        let at_bound = unix_secs_to_apple_ns(end_secs, offset_ns);
-        assert_eq!(inclusive, at_bound - 1);
-        // A message stamped exactly at the exclusive midnight must fail `<= inclusive`.
-        assert!(at_bound > inclusive);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 use anyhow::{Result, bail};
 use media::{CompressOptions, MediaMode};
-use message_csv::{DateRange, format_local_ts, stable_guid};
+use message_csv::{format_local_ts, stable_guid};
 use message_ir::{
     ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, HandleType,
     IrAttachment, IrConversationType, IrDirection, IrMessage, IrMessageKind, IrParticipant,
@@ -62,7 +62,6 @@ pub struct SbrReadOptions<'a> {
     /// Known owner phone numbers (empty triggers inference).
     pub owner_phones: &'a [String],
     /// Date window messages must fall inside.
-    pub date_range: &'a DateRange,
     /// Directory staged attachments are written to.
     pub attachments_dir: Option<&'a Path>,
     /// Whether to write staged attachment files.
@@ -427,7 +426,7 @@ fn to_document(
         .iter()
         .filter(|h| !h.is_empty())
         .map(|handle| IrParticipant {
-            handle: handle.clone(),
+            handle: Some(handle.clone()),
             display_name: names.get(handle).cloned(),
             // SBR conversation participants are E.164 phone numbers by
             // construction (participant_e164s), so the type is always Phone.
@@ -507,10 +506,6 @@ pub fn read_sbr_documents(
         let mut stats = ParseStats::default();
         let parse_result = parse_file_with(&path, &owners, &mut stats, |record| {
             check_cancel(options.cancel)?;
-            if !options.date_range.contains_secs_f64(record.timestamp_secs) {
-                report.skipped_out_of_range += 1;
-                return Ok(());
-            }
             let attachments = queue_attachments(&record.attachments, keep_bytes);
             match add_record(&mut conversations, record, attachments) {
                 Ok(()) => Ok(()),
@@ -566,14 +561,12 @@ mod tests {
 
     fn opts<'a>(
         owner_phones: &'a [String],
-        date_range: &'a DateRange,
         attachments_dir: Option<&'a Path>,
         copy_attachments: bool,
         keep_attachment_bytes: bool,
     ) -> SbrReadOptions<'a> {
         SbrReadOptions {
             owner_phones,
-            date_range,
             attachments_dir,
             copy_attachments,
             keep_attachment_bytes,
@@ -596,11 +589,8 @@ mod tests {
         fs::write(&input, r#"<smses><mms date="1400773400000" msg_box="2" address="+15555550101" extra="yes"><parts><part seq="0" ct="image/jpeg" name="pic.jpg" data="aGVsbG8="/></parts><addrs><addr address="+15555550100" type="137" charset="106"/><addr address="+15555550101" type="151"/></addrs></mms></smses>"#).unwrap();
         let output = dir.path().join("output");
         let stage = output.join("attachments");
-        let (docs, report) = read_sbr_documents(
-            &input,
-            opts(&[], &DateRange::default(), Some(&stage), true, false),
-        )
-        .unwrap();
+        let (docs, report) =
+            read_sbr_documents(&input, opts(&[], Some(&stage), true, false)).unwrap();
         assert_eq!(report.attachments_saved, 1);
         let staged: Vec<_> = fs::read_dir(&stage)
             .unwrap()
@@ -639,11 +629,8 @@ mod tests {
         .unwrap();
         let output = dir.path().join("output");
         let stage = output.join("attachments");
-        let (docs, report) = read_sbr_documents(
-            &input,
-            opts(&[], &DateRange::default(), Some(&stage), true, false),
-        )
-        .unwrap();
+        let (docs, report) =
+            read_sbr_documents(&input, opts(&[], Some(&stage), true, false)).unwrap();
         assert_eq!(report.attachments_saved, 1);
         let mut writer = SbrBackupSession::create(&output).unwrap();
         writer.append_document(&docs[0]).unwrap();
@@ -663,9 +650,7 @@ mod tests {
         )
         .unwrap();
         fs::write(input.join("broken.xml"), "<smses><mms date=").unwrap();
-        let (docs, report) =
-            read_sbr_documents(&input, opts(&[], &DateRange::default(), None, false, false))
-                .unwrap();
+        let (docs, report) = read_sbr_documents(&input, opts(&[], None, false, false)).unwrap();
         assert_eq!(docs[0].export.owner_handle.as_deref(), Some("+15555550100"));
         assert_eq!(report.errors.len(), 1);
     }
@@ -680,11 +665,7 @@ mod tests {
         )
         .unwrap();
         let owner = vec!["+15555550100".to_string()];
-        let (docs, report) = read_sbr_documents(
-            &input,
-            opts(&owner, &DateRange::default(), None, false, false),
-        )
-        .unwrap();
+        let (docs, report) = read_sbr_documents(&input, opts(&owner, None, false, false)).unwrap();
         assert_eq!(docs.len(), 1);
         assert_eq!(docs[0].messages.len(), 1);
         assert_eq!(docs[0].messages[0].text, "kept");
@@ -702,8 +683,7 @@ mod tests {
         fs::write(&input, r#"<smses><mms date="1400773400000" msg_box="2" address="+15555550101"><parts><part seq="0" ct="image/jpeg" name="pic.jpg" data="aGVsbG8="/></parts><addrs><addr address="+15555550100" type="137" charset="106"/><addr address="+15555550101" type="151"/></addrs></mms></smses>"#).unwrap();
         let stage = dir.path().join("output").join("attachments");
 
-        let range = DateRange::default();
-        let mut options = opts(&[], &range, Some(&stage), true, true);
+        let mut options = opts(&[], Some(&stage), true, true);
         options.stage_attachments = false;
         let (docs, report) = read_sbr_documents(&input, options).unwrap();
 

@@ -1,7 +1,5 @@
 use crate::emit::{ConvertExportArgs, convert_export};
 use anyhow::Result;
-use contacts::{ContactsBook, NameMapping};
-use message_csv::DateRange;
 use message_ir_format::{ExportTransforms, FormatSinkResult};
 use message_vault_io_core::testutil::{assert_csv_header, csv_files};
 use message_vault_io_core::{ExportReport, OutputFormat};
@@ -12,23 +10,12 @@ fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
 }
 
-fn empty_book() -> ContactsBook {
-    ContactsBook::empty()
-}
-
-fn empty_mapping() -> NameMapping {
-    NameMapping::empty()
-}
-
 fn convert(inputs: &[&Path], output_dir: &Path) -> Result<(ExportReport, FormatSinkResult)> {
     convert_export(ConvertExportArgs {
         inputs,
         output_dir,
         owner_phones: &["+15555550100".into()],
         owner_emails: &["owner@example.com".into()],
-        contacts: &empty_book(),
-        name_mapping: &empty_mapping(),
-        date_range: &DateRange::default(),
         verbose: false,
         transforms: ExportTransforms::none(),
         output_format: OutputFormat::Csv,
@@ -190,9 +177,6 @@ fn jsonl_drains_the_write_queue_and_a_second_run_resumes_it() {
             output_dir: &out,
             owner_phones: &["+15555550100".into()],
             owner_emails: &["owner@example.com".into()],
-            contacts: &empty_book(),
-            name_mapping: &empty_mapping(),
-            date_range: &DateRange::default(),
             verbose: false,
             transforms: ExportTransforms::none(),
             output_format: OutputFormat::Jsonl,

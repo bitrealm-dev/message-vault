@@ -41,6 +41,63 @@ impl ContactNameMode {
     }
 }
 
+/// The contact that owns `handle_id`, creating one when nothing owns it yet.
+///
+/// Every participant an import meets becomes a contact. A contact created here
+/// carries no preferred name — the vault knows how to reach this person and
+/// not who they are — which is what puts it in Unknown until someone names it.
+/// The display name the source supplied stays on the identity as residue
+/// rather than being promoted to a preferred name, because the same number
+/// arrives spelled differently across backups.
+pub(super) async fn ensure_contact_for_handle(
+    tx: &mut AnyConnection,
+    account_id: &str,
+    handle_id: i64,
+    stats: &mut ImportStats,
+) -> Result<i64> {
+    if let Some(existing) = ensure_sibling_contact_link(tx, account_id, handle_id).await? {
+        return Ok(existing);
+    }
+    let contact_id = contacts::create_contact(tx, account_id, "", contacts::Origin::Import).await?;
+    contacts::link_handle_to_contact(
+        tx,
+        account_id,
+        handle_id,
+        contact_id,
+        contacts::Origin::Import,
+    )
+    .await?;
+    stats.contacts_created += 1;
+    Ok(contact_id)
+}
+
+/// Bind a participant the source named without recording any address.
+///
+/// A single existing contact under that name is reused, so the same person
+/// named across several conversations does not become several contacts. When
+/// no contact matches — or when two do, which is ambiguous — a contact is
+/// created carrying the name and no identity. Either way the result is Unknown
+/// until the person supplies an address for them.
+///
+/// Returns the contact and the display name to record on the participant.
+pub(super) async fn resolve_name_only_participant(
+    tx: &mut AnyConnection,
+    account_id: &str,
+    name: Option<&str>,
+) -> Result<(Option<i64>, Option<String>)> {
+    let Some(name) = nonempty_str(name) else {
+        // A participant with neither an address nor a name says nothing at
+        // all; there is nothing to create and nothing to show.
+        return Ok((None, None));
+    };
+    if let Some(existing) = contacts::contact_id_by_preferred_name(tx, account_id, name).await? {
+        return Ok((Some(existing), Some(name.to_string())));
+    }
+    let contact_id =
+        contacts::create_contact(tx, account_id, name, contacts::Origin::Import).await?;
+    Ok((Some(contact_id), Some(name.to_string())))
+}
+
 pub(super) async fn resolve_incoming_sender_handle(
     tx: &mut AnyConnection,
     cache: &mut HandleIdCache,

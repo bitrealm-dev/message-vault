@@ -2,12 +2,10 @@
 //! [`ParsedMessage`]s (archive or flat format) in parallel chunks.
 
 use crate::archive::parse_archive_eml_mail;
-use crate::contacts::{apply_name_mapping, enrich_display_names, fill_unknown_phone};
 use crate::emit::is_eml_file;
 use crate::flat_eml::{MailHeaders, is_archive_eml, is_flat_sms_eml, parse_flat_eml_mail};
 use crate::types::ParsedMessage;
 use anyhow::{Result, bail};
-use contacts::{ContactsBook, NameMapping};
 use message_vault_io_core::CancelFlag;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -98,8 +96,6 @@ pub(super) fn parse_one_eml(
     rel_path: String,
     owner_digits: &HashSet<String>,
     owner_emails_lc: &[String],
-    contacts: &ContactsBook,
-    name_mapping: &NameMapping,
 ) -> ParsedEmlKind {
     let bytes = match std::fs::read(eml_path) {
         Ok(b) => b,
@@ -121,9 +117,6 @@ pub(super) fn parse_one_eml(
             Ok((mut msgs, skipped_dates)) => {
                 for msg in &mut msgs {
                     msg.eml_path = rel_path.clone();
-                    let _ = apply_name_mapping(msg, name_mapping, contacts);
-                    let _ = fill_unknown_phone(msg, contacts);
-                    enrich_display_names(msg, contacts);
                 }
                 ParsedEmlKind::Archive {
                     msgs,
@@ -137,9 +130,6 @@ pub(super) fn parse_one_eml(
         match parse_flat_eml_mail(eml_path, &mail, &headers, owner_digits, owner_emails_lc) {
             Ok(Some(mut msg)) => {
                 msg.eml_path = rel_path;
-                let _ = apply_name_mapping(&mut msg, name_mapping, contacts);
-                let _ = fill_unknown_phone(&mut msg, contacts);
-                enrich_display_names(&mut msg, contacts);
                 ParsedEmlKind::Flat {
                     msg: Box::new(msg),
                     _path_display: path_display,

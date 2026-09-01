@@ -6,7 +6,7 @@ use crate::parse::{
     ChatJson, MessageJson, load_chat_store, media_path, message_text, timestamp_ms, timestamp_secs,
 };
 use anyhow::{Context, Result};
-use message_csv::{DateRange, format_local_ts, json_cell};
+use message_csv::{format_local_ts, json_cell};
 use message_ir::{
     ExportMeta, HandleType, IrAttachment, IrParticipant, IrService, IrSource, PendingAttachment,
     PendingConversation, PendingMessage, ProjectionHooks, SortKeyUnit, pending_to_document,
@@ -48,7 +48,6 @@ fn ext_of(name: &str) -> String {
 pub(crate) fn convert_json(
     json_path: &Path,
     output: &Path,
-    date_range: &DateRange,
     transforms: ExportTransforms,
     media_search_roots: &[PathBuf],
     output_format: OutputFormat,
@@ -74,7 +73,6 @@ pub(crate) fn convert_json(
         match ingest_chat(
             &jid,
             &chat,
-            date_range,
             copy_attachments,
             media_search_roots,
             &mut report,
@@ -142,7 +140,6 @@ pub(crate) fn convert_json(
 fn ingest_chat(
     jid: &str,
     chat: &ChatJson,
-    date_range: &DateRange,
     copy_attachments: bool,
     media_search_roots: &[PathBuf],
     report: &mut ExportReport,
@@ -177,10 +174,6 @@ fn ingest_chat(
         let secs = timestamp_secs(ts_raw);
         if format_local_ts(secs).is_none() {
             report.skipped_invalid_date += 1;
-            continue;
-        }
-        if !date_range.contains_secs(secs) {
-            report.skipped_out_of_range += 1;
             continue;
         }
 
@@ -464,7 +457,7 @@ impl ProjectionHooks for WhatsappProjection {
             .iter()
             .filter(|h| !h.is_empty())
             .map(|h| IrParticipant {
-                handle: h.clone(),
+                handle: Some(h.clone()),
                 display_name: None,
                 handle_type: Some(HandleType::Phone),
             })

@@ -191,7 +191,9 @@ pub fn summarize_staging(
         summary.conversations += 1;
         summary.messages += doc.messages.len() as u64;
         for participant in &doc.conversation.participants {
-            contacts.insert(participant.handle.clone());
+            if let Some(handle) = participant.handle.clone() {
+                contacts.insert(handle);
+            }
         }
         for msg in &doc.messages {
             for att in &msg.attachments {
@@ -374,7 +376,7 @@ mod tests {
         let mut doc_a = message_ir::testutil::sample_document("hi from conversation A");
         doc_a.conversation.chat_identifier = "+15550101".into();
         doc_a.conversation.participants = vec![IrParticipant {
-            handle: "+15550101".into(),
+            handle: Some("+15550101".into()),
             display_name: Some("A".into()),
             handle_type: Some(HandleType::Phone),
         }];
@@ -408,12 +410,12 @@ mod tests {
         doc_b.conversation.chat_identifier = "+15550100".into();
         doc_b.conversation.participants = vec![
             IrParticipant {
-                handle: "+15550101".into(),
+                handle: Some("+15550101".into()),
                 display_name: None,
                 handle_type: Some(HandleType::Phone),
             },
             IrParticipant {
-                handle: "+15550100".into(),
+                handle: Some("+15550100".into()),
                 display_name: Some("B".into()),
                 handle_type: Some(HandleType::Phone),
             },

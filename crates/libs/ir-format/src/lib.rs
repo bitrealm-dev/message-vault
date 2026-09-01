@@ -32,7 +32,7 @@ pub use clean::{EXPORT_SENTINEL, clean_previous_ir_output, write_export_sentinel
 pub use export_transforms::ExportTransforms;
 pub use export_writer::{ExportWriter, ExportWriterParts};
 pub use format_sink::{FormatSink, FormatSinkResult, write_documents_through_sink};
-pub use pipeline::{finish_run, run_pipeline, run_pipeline_with_contacts};
+pub use pipeline::{finish_run, run_pipeline};
 pub use read_csv::read_conversation_csv;
 pub use read_json::{read_conversation_json, read_conversation_jsonl};
 pub use read_mail::{read_conversation_eml_dir, read_conversation_mbox};

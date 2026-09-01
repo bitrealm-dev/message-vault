@@ -227,7 +227,11 @@ fn parse_participants(raw: &str) -> Vec<IrParticipant> {
     cells
         .into_iter()
         .map(|p| IrParticipant {
-            handle: p.handle,
+            handle: if p.handle.is_empty() {
+                None
+            } else {
+                Some(p.handle)
+            },
             display_name: if p.display_name.is_empty() {
                 None
             } else {

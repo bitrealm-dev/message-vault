@@ -20,13 +20,13 @@ pub use attachment_jobs::{
 };
 pub use attachments::{attachment_dest_name, copy_if_missing, digest_prefix, write_if_missing};
 pub use config::{
-    AppleConfig, ContactsConfig, ExporterConfig, FormatConfig, GoSmsProConfig, ImazingConfig,
-    MediaConfig, ObfuscateConfig, OpenExtractConfig, OutputFormat, SmsBackupPlusConfig,
-    SmsBackupRestoreConfig, SourceConfig, WhatsappConfig,
+    AppleConfig, ExporterConfig, FormatConfig, GoSmsProConfig, ImazingConfig, MediaConfig,
+    ObfuscateConfig, OpenExtractConfig, OutputFormat, SmsBackupPlusConfig, SmsBackupRestoreConfig,
+    SourceConfig, WhatsappConfig,
 };
 pub use exporters::{
-    ApplePlatform, AttachmentMedia, CONVERT_COMPRESS_FFMPEG_REQUIRED, ContactsKind, Exporter, Form,
-    WhatsappPlatform, contacts_kind_from_path, ensure_output_dir,
+    ApplePlatform, AttachmentMedia, CONVERT_COMPRESS_FFMPEG_REQUIRED, Exporter, Form,
+    WhatsappPlatform, ensure_output_dir,
 };
 pub use pipeline::{
     ExportReport, RunResult, discover_files, export_meta, name_stem, parse_date_range,

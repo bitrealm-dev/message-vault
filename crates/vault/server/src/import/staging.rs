@@ -21,8 +21,8 @@ use crate::jsonl;
 use crate::models::{AttachmentRecord, ExportRecord, MessageRecord, clean_body};
 
 use super::contact_name::{
-    apply_contact_name_mode, contact_preferred_name, ensure_sibling_contact_link,
-    resolve_incoming_sender_handle, seed_contact_handle_alias,
+    apply_contact_name_mode, contact_preferred_name, ensure_contact_for_handle,
+    resolve_incoming_sender_handle, resolve_name_only_participant, seed_contact_handle_alias,
 };
 use super::{ImportOptions, ImportStats};
 
@@ -247,7 +247,7 @@ type ConversationHeader = (
     String,
     Option<String>,
     Option<String>,
-    Vec<(String, Option<String>, Option<HandleType>)>,
+    Vec<(Option<String>, Option<String>, Option<HandleType>)>,
     String,
 );
 
@@ -497,7 +497,8 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
         stats.phones_needing_review += 1;
     }
     if !cached {
-        let _ = ensure_sibling_contact_link(tx, &stmts.account_id, chat_handle_id).await?;
+        let _ =
+            ensure_contact_for_handle(tx, &stmts.account_id, chat_handle_id, &mut stats).await?;
     }
 
     let conversation_id: i64 = sqlx::query_scalar(INSERT_CONVERSATION)
@@ -512,6 +513,22 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
     stats.conversations = 1;
 
     for (handle, name_alias, handle_type) in kept_participants {
+        let Some(handle) = handle else {
+            // The source named this person and recorded no address for them.
+            // Nothing but a contact can hold a name with no identity, so the
+            // participant is bound to one and carries no handle.
+            let (contact_id, name_alias) =
+                resolve_name_only_participant(tx, &stmts.account_id, name_alias.as_deref()).await?;
+            sqlx::query(INSERT_PARTICIPANT)
+                .bind(conversation_id)
+                .bind(Option::<i64>::None)
+                .bind(contact_id)
+                .bind(name_alias)
+                .execute(&mut *tx)
+                .await?;
+            stats.participants += 1;
+            continue;
+        };
         // Prefer the source-provided type; fall back to shape inference.
         let handle_type = handle_type.unwrap_or_else(|| infer_handle_type(&handle));
         let (handle_id, flagged, _cached) = upsert_handle_row_cached(
@@ -526,18 +543,16 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
         if flagged {
             stats.phones_needing_review += 1;
         }
-        let contact_id = ensure_sibling_contact_link(tx, &stmts.account_id, handle_id).await?;
+        let contact_id =
+            ensure_contact_for_handle(tx, &stmts.account_id, handle_id, &mut stats).await?;
         // Seed contact identity alias from the import display name (first wins).
         seed_contact_handle_alias(tx, &stmts.account_id, handle_id, name_alias.as_deref()).await?;
-        let vault_name = match contact_id {
-            Some(id) => contact_preferred_name(tx, &stmts.account_id, id).await?,
-            None => None,
-        };
+        let vault_name = contact_preferred_name(tx, &stmts.account_id, contact_id).await?;
         let name_alias = apply_contact_name_mode(opts.contact_name_mode, name_alias, vault_name);
         sqlx::query(INSERT_PARTICIPANT)
             .bind(conversation_id)
             .bind(handle_id)
-            .bind(contact_id)
+            .bind(Some(contact_id))
             .bind(name_alias)
             .execute(&mut *tx)
             .await?;

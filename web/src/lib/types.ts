@@ -120,9 +120,6 @@ export interface ExtractConfig {
   media_max_resolution?: string;
   media_max_fps?: string;
   media_min_size?: string;
-  conversation_filter?: string;
-  start_date?: string;
-  end_date?: string;
   obfuscate?: boolean;
   /** Owner phone numbers for Android SMS exporters (repeatable). */
   owner_phones?: string[];

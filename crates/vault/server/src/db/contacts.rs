@@ -1,14 +1,10 @@
 //! Address book loading (VCF or vCard CSV) and contact/group/handle links.
 
-use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use contacts::{
-    ContactsFormat, detect_contacts_format, extract_tags, parse_vcf, read_vcard_csv_rows,
-    strip_tags,
-};
+use contacts::{ContactsFormat, detect_contacts_format, parse_vcf, read_vcard_csv_rows};
 use sqlx::{AnyConnection, Connection};
 
 /// Bump `contacts.last_modified` after an address-book shape change.
@@ -26,6 +22,129 @@ pub async fn touch_contact(
         .await?;
     Ok(())
 }
+
+/// Where a contact, identity, or link came from.
+///
+/// Loading an address book replaces only the rows the address book owns, so
+/// identities an import discovered and names a person typed both survive a
+/// refresh of the address book.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Origin {
+    /// Loaded from an address book file the person supplied.
+    AddressBook,
+    /// Discovered while importing messages.
+    Import,
+    /// Created or edited by the person.
+    User,
+}
+
+impl Origin {
+    /// Storage id (`address_book` / `import` / `user`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AddressBook => "address_book",
+            Self::Import => "import",
+            Self::User => "user",
+        }
+    }
+}
+
+/// Create a contact carrying `preferred_name`, which may be empty.
+///
+/// # Errors
+///
+/// Returns an error when the insert fails.
+pub async fn create_contact(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    preferred_name: &str,
+    origin: Origin,
+) -> Result<i64> {
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO contacts (account_id, preferred_name, origin) VALUES ($1, $2, $3) RETURNING id",
+    )
+    .bind(account_id)
+    .bind(preferred_name)
+    .bind(origin.as_str())
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(id)
+}
+
+/// Link `handle_id` to `contact_id`, doing nothing when the link exists.
+///
+/// # Errors
+///
+/// Returns an error when the insert fails.
+pub async fn link_handle_to_contact(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    handle_id: i64,
+    contact_id: i64,
+    origin: Origin,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO contact_handles (account_id, handle_id, contact_id, origin)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(account_id)
+    .bind(handle_id)
+    .bind(contact_id)
+    .bind(origin.as_str())
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// The contact this account already has under exactly `name`, if any.
+///
+/// Used to resolve a participant the source named without recording any
+/// address: a unique match binds to that contact instead of creating a second
+/// row for the same person.
+///
+/// # Errors
+///
+/// Returns an error when the query fails.
+pub async fn contact_id_by_preferred_name(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    name: &str,
+) -> Result<Option<i64>> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    // Two contacts sharing a name is ambiguous, and choosing between them
+    // would silently merge different people. Leave that for the person.
+    let ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM contacts
+         WHERE account_id = $1 AND lower(trim(preferred_name)) = lower($2)
+         LIMIT 2",
+    )
+    .bind(account_id)
+    .bind(name)
+    .fetch_all(&mut *conn)
+    .await?;
+    match ids.as_slice() {
+        [id] => Ok(Some(*id)),
+        _ => Ok(None),
+    }
+}
+
+/// SQL predicate selecting the Unknown contacts of alias `ct`.
+///
+/// Unknown is a contact missing either half of what makes a contact useful:
+/// one with no identity at all, or one with identities but no preferred name.
+/// Membership is computed rather than stored, because a contact stops being
+/// Unknown the moment someone names it or links an identity to it.
+pub const UNKNOWN_CONTACT_SQL: &str = "(
+    trim(ct.preferred_name) = ''
+    OR NOT EXISTS (
+        SELECT 1 FROM contact_handles ch2
+        WHERE ch2.account_id = ct.account_id AND ch2.contact_id = ct.id
+    )
+)";
 
 /// Contact linked to a handle via `contact_handles`, if any.
 pub async fn contact_id_for_handle(
@@ -52,8 +171,6 @@ pub struct ContactLoadStats {
     pub phones: u64,
     /// Contact–group links created.
     pub groups: u64,
-    /// Emails restored into `account_emails`.
-    pub emails_restored: u64,
     /// True when loading was skipped (contacts already loaded and not forced).
     pub skipped: bool,
     /// Phone handles written with a review note (ambiguous normalized form).
@@ -109,104 +226,6 @@ fn phone_handles_only(handles: &[String]) -> Vec<(String, Option<String>)> {
     out
 }
 
-/// Phones on a contact, plus email `(handle_id, raw)` pairs for restore.
-type ContactPhonesAndEmails = (HashSet<String>, Vec<(i64, String)>);
-
-/// Emails attached to a contact, keyed for restore by that contact's phone set.
-#[derive(Debug, Default)]
-struct EmailSnapshot {
-    /// One entry per contact that had emails: (phones on that contact, emails).
-    /// Emails are (handle_id, raw) so restore can re-link the `handles` row.
-    entries: Vec<ContactPhonesAndEmails>,
-}
-
-async fn snapshot_email_handles(
-    conn: &mut AnyConnection,
-    account_id: &str,
-) -> Result<EmailSnapshot> {
-    let mut by_contact: HashMap<i64, ContactPhonesAndEmails> = HashMap::new();
-
-    let rows: Vec<(i64, i64, String, String, String)> = sqlx::query_as(
-        "SELECT ch.contact_id, h.id, h.raw, h.normalized, h.handle_type
-         FROM contact_handles ch
-         JOIN handles h ON h.id = ch.handle_id
-         WHERE ch.account_id = $1
-         ORDER BY ch.contact_id, h.handle_type, h.raw",
-    )
-    .bind(account_id)
-    .fetch_all(&mut *conn)
-    .await?;
-    for (contact_id, handle_id, raw, normalized, handle_type) in rows {
-        let entry = by_contact.entry(contact_id).or_default();
-        if handle_type == "email" {
-            entry.1.push((handle_id, raw));
-        } else {
-            entry.0.insert(normalized);
-        }
-    }
-    Ok(EmailSnapshot {
-        entries: by_contact
-            .into_values()
-            .filter(|(_, emails)| !emails.is_empty())
-            .collect(),
-    })
-}
-
-async fn restore_email_handles(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    snapshot: &EmailSnapshot,
-) -> Result<u64> {
-    if snapshot.entries.is_empty() {
-        return Ok(0);
-    }
-
-    let mut restored = 0u64;
-    for (phones, emails) in &snapshot.entries {
-        let mut contact_id: Option<i64> = None;
-        for phone in phones {
-            let found: Option<i64> = sqlx::query_scalar(
-                "SELECT ch.contact_id
-                 FROM contact_handles ch
-                 JOIN handles h ON h.id = ch.handle_id
-                 WHERE ch.account_id = $1 AND h.handle_type = 'phone' AND h.normalized = $2",
-            )
-            .bind(account_id)
-            .bind(phone)
-            .fetch_optional(&mut *conn)
-            .await?;
-            if let Some(id) = found {
-                contact_id = Some(id);
-                break;
-            }
-        }
-        let Some(id) = contact_id else {
-            continue;
-        };
-        for (handle_id, email) in emails {
-            let owner = contact_id_for_handle(conn, account_id, *handle_id).await?;
-            if let Some(existing) = owner {
-                if existing != id {
-                    eprintln!(
-                        "warning: email handle {email} already belongs to contact {existing}; not restoring onto {id}"
-                    );
-                }
-                continue;
-            }
-            sqlx::query(
-                "INSERT INTO contact_handles (account_id, handle_id, contact_id) VALUES ($1, $2, $3)",
-            )
-            .bind(account_id)
-            .bind(handle_id)
-            .bind(id)
-            .execute(&mut *conn)
-            .await?;
-            restored += 1;
-        }
-    }
-    Ok(restored)
-}
-
 /// Load contacts from an address book when the account table is empty or when
 /// `overwrite` is true.
 ///
@@ -214,7 +233,7 @@ async fn restore_email_handles(
 /// columns — a contacts app VCF exported as CSV).
 ///
 /// Pass `None` to skip address-book load (keep existing SQLite contacts).
-/// On overwrite, email handles already in SQLite are snapshotted by phone set
+/// On overwrite, only the rows the address book owns are replaced.
 /// and reattached after reload (address-book files are phone-oriented).
 pub async fn load_contacts_if_needed(
     conn: &mut AnyConnection,
@@ -251,51 +270,53 @@ pub async fn load_contacts_if_needed(
             path.display()
         );
         if count > 0 && overwrite {
-            delete_account_contacts(conn, account_id).await?;
+            delete_address_book_contacts(conn, account_id).await?;
         }
         return Ok(ContactLoadStats::default());
     }
 
-    let email_snapshot = if count > 0 && overwrite {
-        snapshot_email_handles(conn, account_id).await?
-    } else {
-        EmailSnapshot::default()
-    };
-
-    delete_account_contacts(conn, account_id).await?;
+    delete_address_book_contacts(conn, account_id).await?;
 
     let format = contacts_file_format(path)?;
-    let mut stats = match format {
+    let stats = match format {
         ContactsFormat::VcardCsv => load_from_vcard_csv(conn, path, account_id).await?,
         ContactsFormat::Vcf => load_from_vcf(conn, path, account_id).await?,
     };
-    stats.emails_restored = restore_email_handles(conn, account_id, &email_snapshot).await?;
-    if stats.emails_restored > 0 {
-        eprintln!(
-            "contacts: restored {} email handle(s) from previous DB (address book is phone-only)",
-            stats.emails_restored
-        );
-    }
     Ok(stats)
 }
 
-async fn delete_account_contacts(conn: &mut AnyConnection, account_id: &str) -> Result<()> {
+/// Remove only what the address book owns, so a reload refreshes the file's
+/// rows and leaves everything else standing.
+///
+/// Contact Groups are never touched: a person builds those by hand, and losing
+/// them because the phone's contacts were refreshed would be a bug. Identities
+/// an import discovered survive too, which is what makes the email-handle
+/// special case unnecessary — an address book is phone-only, so email
+/// identities simply carry a different origin and are not the book's to
+/// remove.
+async fn delete_address_book_contacts(conn: &mut AnyConnection, account_id: &str) -> Result<()> {
+    let book = Origin::AddressBook.as_str();
     sqlx::query(
-        "DELETE FROM contact_group_members WHERE contact_id IN (SELECT id FROM contacts WHERE account_id = $1)",
+        "DELETE FROM contact_group_members
+         WHERE contact_id IN (SELECT id FROM contacts WHERE account_id = $1 AND origin = $2)",
     )
     .bind(account_id)
+    .bind(book)
     .execute(&mut *conn)
     .await?;
-    sqlx::query("DELETE FROM contact_handles WHERE account_id = $1")
+    sqlx::query("DELETE FROM contact_handles WHERE account_id = $1 AND origin = $2")
         .bind(account_id)
+        .bind(book)
         .execute(&mut *conn)
         .await?;
-    sqlx::query("DELETE FROM contact_groups WHERE account_id = $1")
+    sqlx::query("DELETE FROM handles WHERE account_id = $1 AND origin = $2")
         .bind(account_id)
+        .bind(book)
         .execute(&mut *conn)
         .await?;
-    sqlx::query("DELETE FROM contacts WHERE account_id = $1")
+    sqlx::query("DELETE FROM contacts WHERE account_id = $1 AND origin = $2")
         .bind(account_id)
+        .bind(book)
         .execute(&mut *conn)
         .await?;
     Ok(())
@@ -359,10 +380,12 @@ async fn load_from_vcf(
             continue;
         }
 
-        let (fn_stripped, fn_tags) = extract_tags(&card.fn_raw);
-        let first = strip_tags(&card.n_given);
-        let middle = strip_tags(&card.n_middle);
-        let last = strip_tags(&card.n_family);
+        // The bracket-tag convention this used to read is gone: a name that
+        // contains brackets is stored as written.
+        let fn_stripped = card.fn_raw.trim().to_string();
+        let first = card.n_given.trim().to_string();
+        let middle = card.n_middle.trim().to_string();
+        let last = card.n_family.trim().to_string();
 
         let nickname = if last.is_empty()
             && !fn_stripped.is_empty()
@@ -400,28 +423,12 @@ async fn load_from_vcf(
             }
         };
 
-        let mut groups = Vec::new();
-        for tag in fn_tags {
-            let t = tag.trim();
-            if t.is_empty() || t.eq_ignore_ascii_case("People") {
-                continue;
-            }
-            groups.push(t.to_string());
-        }
-        for category in &card.categories {
-            let t = category.trim();
-            if t.is_empty() || t.eq_ignore_ascii_case("People") {
-                continue;
-            }
-            if !groups.iter().any(|g| g.eq_ignore_ascii_case(t)) {
-                groups.push(t.to_string());
-            }
-        }
-
+        // Contact Groups are the person's own; an address book never
+        // creates them.
         drafts.push(ContactDraft {
             phones,
             preferred_name,
-            groups,
+            groups: Vec::new(),
         });
     }
 
@@ -442,10 +449,13 @@ async fn insert_contact_drafts(
     let mut tx = conn.begin().await?;
 
     for draft in drafts {
-        // Insert contact
-        let preferred_name = draft.preferred_name.as_deref().unwrap_or("Unknown");
+        // A card with no name leaves the preferred name empty rather than
+        // storing the literal word "Unknown" as someone's name; the contact is
+        // then Unknown by the computed rule, which is the same thing said once.
+        let preferred_name = draft.preferred_name.as_deref().unwrap_or("");
         let contact_id: i64 = sqlx::query_scalar(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, $2) RETURNING id",
+            "INSERT INTO contacts (account_id, preferred_name, origin)
+             VALUES ($1, $2, 'address_book') RETURNING id",
         )
         .bind(account_id)
         .bind(preferred_name)
@@ -456,8 +466,8 @@ async fn insert_contact_drafts(
         for (phone, note) in &draft.phones {
             // Ensure handle exists; the note flags ambiguous values for review.
             sqlx::query(
-                "INSERT INTO handles (account_id, raw, normalized, normalized_note, handle_type, service)
-                 VALUES ($1, $2, $3, $4, 'phone', 'phone')
+                "INSERT INTO handles (account_id, raw, normalized, normalized_note, handle_type, service, origin)
+                 VALUES ($1, $2, $3, $4, 'phone', 'phone', 'address_book')
                  ON CONFLICT DO NOTHING",
             )
             .bind(account_id)
@@ -477,8 +487,8 @@ async fn insert_contact_drafts(
 
             // Link contact to handle
             sqlx::query(
-                "INSERT INTO contact_handles (account_id, handle_id, contact_id)
-                 VALUES ($1, $2, $3)
+                "INSERT INTO contact_handles (account_id, handle_id, contact_id, origin)
+                 VALUES ($1, $2, $3, 'address_book')
                  ON CONFLICT DO NOTHING",
             )
             .bind(account_id)
@@ -759,7 +769,9 @@ mod tests {
             .unwrap();
         assert_eq!(stats.contacts, 2);
         assert_eq!(stats.phones, 3);
-        assert_eq!(stats.groups, 3);
+        // An address book no longer creates Contact Groups; those belong to
+        // the person, and a CATEGORIES line is not one of theirs.
+        assert_eq!(stats.groups, 0);
 
         let preferred_name: String = sqlx::query_scalar(
             "SELECT c.preferred_name FROM contacts c
@@ -782,13 +794,9 @@ mod tests {
         .fetch_all(&mut *conn)
         .await
         .unwrap();
-        assert_eq!(
-            groups,
-            vec![
-                "Family".to_string(),
-                "Friends".to_string(),
-                "Work".to_string()
-            ]
+        assert!(
+            groups.is_empty(),
+            "the address book must not create Contact Groups: {groups:?}"
         );
     }
 }

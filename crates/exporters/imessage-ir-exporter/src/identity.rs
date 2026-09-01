@@ -56,7 +56,6 @@ pub fn backup_identities(
         query_context: QueryContext::default(),
         use_caller_id: true,
         platform: if ios { Platform::iOS } else { Platform::macOS },
-        conversation_filter: None,
         cleartext_password: backup_password.map(str::to_string),
         contacts_path: None,
         attachment_embed: AttachmentEmbed::Disabled,

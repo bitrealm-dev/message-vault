@@ -6789,6 +6789,7 @@
           "assets_missing",
           "contacts",
           "contact_handles",
+          "contacts_created",
           "contact_group_links",
           "contacts_skipped",
           "messages_deduped",
@@ -6837,6 +6838,12 @@
             "type": "integer",
             "format": "int64",
             "description": "Contacts loaded from the address book.",
+            "minimum": 0
+          },
+          "contacts_created": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Contacts the import created for participants nothing else owned.",
             "minimum": 0
           },
           "contacts_skipped": {

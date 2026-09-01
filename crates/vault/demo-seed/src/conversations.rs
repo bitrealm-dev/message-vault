@@ -726,7 +726,7 @@ fn optional_display_name(display: String) -> Option<String> {
 /// One participant for a one-to-one conversation: the other person's phone or email.
 fn individual_participants(chat_id: &str, display_name: Option<String>) -> Vec<IrParticipant> {
     vec![IrParticipant {
-        handle: chat_id.into(),
+        handle: Some(chat_id.into()),
         display_name,
         handle_type: None,
     }]
@@ -865,9 +865,13 @@ fn write_group<R: Rng>(args: WriteGroupArgs<'_, R>) -> Result<()> {
         return Ok(());
     }
 
-    let mut handles = Vec::with_capacity(participants.len());
+    // Demo group members always carry an address; a name-only participant has
+    // nothing to send from.
+    let mut handles: Vec<String> = Vec::with_capacity(participants.len());
     for participant in &participants {
-        handles.push(participant.handle.clone());
+        if let Some(handle) = participant.handle.clone() {
+            handles.push(handle);
+        }
     }
     let msg_count = ((group.msgs_per_year * group.span_years).round() as isize).max(1) as usize;
     let timestamps = bursty_timestamps(
@@ -990,7 +994,7 @@ fn phone_only_participants(handles: &[String]) -> Vec<IrParticipant> {
     let mut participants = Vec::with_capacity(handles.len());
     for handle in handles {
         participants.push(IrParticipant {
-            handle: handle.clone(),
+            handle: Some(handle.clone()),
             display_name: None,
             handle_type: None,
         });
@@ -1008,7 +1012,7 @@ fn named_group_participants(roster: &Roster, member_idxs: &[usize]) -> Vec<IrPar
         let hint = contact.display_hint();
         let display_name = optional_display_name(hint);
         participants.push(IrParticipant {
-            handle: contact.primary_phone().into(),
+            handle: Some(contact.primary_phone().into()),
             display_name,
             handle_type: None,
         });
@@ -1078,7 +1082,7 @@ fn write_header_only(
     let mut participants = Vec::with_capacity(member_phones.len());
     for handle in member_phones {
         participants.push(IrParticipant {
-            handle: (*handle).into(),
+            handle: Some((*handle).into()),
             display_name: None,
             handle_type: None,
         });
