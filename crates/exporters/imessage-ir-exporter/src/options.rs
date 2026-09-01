@@ -52,7 +52,6 @@ pub(crate) struct MailOptions {
     pub query_context: QueryContext,
     pub use_caller_id: bool,
     pub platform: Platform,
-    pub conversation_filter: Option<String>,
     pub cleartext_password: Option<String>,
     pub contacts_path: Option<PathBuf>,
     pub attachment_embed: AttachmentEmbed,

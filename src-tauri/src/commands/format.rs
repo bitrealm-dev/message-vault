@@ -49,9 +49,7 @@ pub async fn format(
         let config = ExporterConfig {
             inputs: vec![PathBuf::from(&input_dir)],
             output: PathBuf::from(&output_dir),
-            date_range: Default::default(),
             timezone: None,
-            contacts: None,
             obfuscate: Default::default(),
             media: MediaConfig::default(),
             cancel: Some(cancel),

@@ -7,7 +7,6 @@
 mod archive;
 mod assets;
 mod attachments_emit;
-mod contacts;
 mod emit;
 mod flat_eml;
 mod identity;

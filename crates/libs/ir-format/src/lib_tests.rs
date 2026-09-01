@@ -20,7 +20,7 @@ fn writes_json_csv_jsonl_and_eml() {
     assert!(json_path.ends_with("+15555550101.json"));
     let raw = fs::read_to_string(&json_path).unwrap();
     let parsed: ConversationDocument = serde_json::from_str(&raw).unwrap();
-    assert_eq!(parsed.schema_version, 3);
+    assert_eq!(parsed.schema_version, 4);
     assert_eq!(parsed.messages[0].text, "hello ir");
     assert!(parsed.messages[0].attachments.is_empty());
     assert_eq!(
@@ -51,7 +51,7 @@ fn writes_json_csv_jsonl_and_eml() {
     let jsonl = fs::read_to_string(&jsonl_path).unwrap();
     let mut lines = jsonl.lines();
     let header: Value = serde_json::from_str(lines.next().unwrap()).unwrap();
-    assert_eq!(header["schema_version"], 3);
+    assert_eq!(header["schema_version"], 4);
     assert!(header.get("messages").is_none());
     assert_eq!(header["conversation"]["stats"]["message_count"], 1);
     let msg_line: Value = serde_json::from_str(lines.next().unwrap()).unwrap();
@@ -87,7 +87,7 @@ fn sample_imessage_doc() -> ConversationDocument {
             conversation_type: IrConversationType::Individual,
             group_title: None,
             participants: vec![IrParticipant {
-                handle: "+15555550101".into(),
+                handle: Some("+15555550101".into()),
                 display_name: Some("Sam".into()),
                 handle_type: Some(HandleType::Phone),
             }],

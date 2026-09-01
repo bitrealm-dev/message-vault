@@ -1,5 +1,4 @@
 use crate::emit::convert_json;
-use message_csv::DateRange;
 use message_ir_format::ExportTransforms;
 use message_vault_io_core::OutputFormat;
 use std::fs;
@@ -14,7 +13,6 @@ fn convert_fixture_json_individual_and_group() {
     let (report, _) = convert_json(
         &fixture,
         tmp.path(),
-        &DateRange::default(),
         ExportTransforms::none(),
         &[],
         OutputFormat::Csv,
@@ -83,7 +81,6 @@ fn copies_ios_style_media_true_data_paths() {
     let (report, _) = convert_json(
         &json_path,
         out.path(),
-        &DateRange::default(),
         ExportTransforms::none(),
         &[media_root.path().to_path_buf()],
         OutputFormat::Csv,
@@ -126,7 +123,6 @@ fn jsonl_drains_the_write_queue_and_a_second_run_resumes_it() {
     let (report, _) = convert_json(
         &fixture,
         tmp.path(),
-        &DateRange::default(),
         ExportTransforms::none(),
         &[],
         OutputFormat::Jsonl,
@@ -158,7 +154,6 @@ fn jsonl_drains_the_write_queue_and_a_second_run_resumes_it() {
     let (resumed, _) = convert_json(
         &fixture,
         tmp.path(),
-        &DateRange::default(),
         ExportTransforms::none(),
         &[],
         OutputFormat::Jsonl,

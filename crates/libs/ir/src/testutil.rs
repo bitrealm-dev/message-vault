@@ -23,7 +23,7 @@ pub fn sample_document(text: &str) -> ConversationDocument {
             conversation_type: IrConversationType::Individual,
             group_title: None,
             participants: vec![IrParticipant {
-                handle: "+15555550101".into(),
+                handle: Some("+15555550101".into()),
                 display_name: Some("Sam".into()),
                 handle_type: Some(crate::HandleType::Phone),
             }],

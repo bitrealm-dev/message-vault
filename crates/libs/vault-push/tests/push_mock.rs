@@ -35,7 +35,7 @@ fn sample_doc() -> ConversationDocument {
             conversation_type: IrConversationType::Individual,
             group_title: None,
             participants: vec![IrParticipant {
-                handle: "+15555550101".into(),
+                handle: Some("+15555550101".into()),
                 display_name: Some("Sam".into()),
                 handle_type: None,
             }],
@@ -63,7 +63,7 @@ fn sample_doc() -> ConversationDocument {
 fn sample_doc_for(handle: &str, guid: &str) -> ConversationDocument {
     let mut doc = sample_doc();
     doc.conversation.chat_identifier = handle.into();
-    doc.conversation.participants[0].handle = handle.into();
+    doc.conversation.participants[0].handle = Some(handle.into());
     doc.messages[0].guid = guid.into();
     doc.messages[0].sender_handle = Some(handle.into());
     doc

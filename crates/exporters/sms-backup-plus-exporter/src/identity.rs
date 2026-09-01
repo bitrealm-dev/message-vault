@@ -14,18 +14,36 @@ use crate::types::ParsedMessage;
 
 /// Who this chat is with, as a stable string (E.164 phone or `chat-…` for groups).
 ///
-/// Name-only / unresolved peers use the stem `unknown` so they still get a CSV
-/// (`unknown.csv`) instead of being dropped.
+/// When the archive gives a name and no address, the chat is keyed by a stem
+/// of that name so each person gets their own conversation. Collapsing them
+/// all into one `unknown` chat would merge unrelated people; the vault
+/// resolves the name against contacts on import.
 pub(crate) fn chat_id_for(msg: &ParsedMessage) -> String {
     if msg.conversation_type == "group" {
         format!("chat-{}", msg.chat_key)
     } else if msg.chat_key.is_empty() {
-        "unknown".to_string()
+        match name_only_key(msg) {
+            Some(key) => key,
+            None => "unknown".to_string(),
+        }
     } else {
         // Format as E.164 only when unambiguous, so a trunk-zero value stays
         // digits-as-is instead of becoming `+02079460000`.
         phone::normalize_lenient(&msg.chat_key)
     }
+}
+
+/// A stem of the peer's name, when the archive named them and recorded no
+/// address. `None` when there is no usable name either.
+pub(crate) fn name_only_key(msg: &ParsedMessage) -> Option<String> {
+    if msg.conversation_type == "group" || !msg.chat_key.is_empty() {
+        return None;
+    }
+    let name = msg.name_alias.as_deref().map(str::trim).unwrap_or("");
+    if name.is_empty() {
+        return None;
+    }
+    Some(message_vault_io_core::name_stem(name))
 }
 
 /// Message time as milliseconds since 1970 (for identity strings).

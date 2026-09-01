@@ -145,12 +145,6 @@ pub struct ExtractArgs {
     pub media_max_fps: Option<String>,
     /// Smallest media file size that still counts as an attachment, for example `20M`.
     pub media_min_size: Option<String>,
-    /// Conversation filter string passed to the exporter.
-    pub conversation_filter: Option<String>,
-    /// Export start date, inclusive, in `YYYY-MM-DD` form.
-    pub start_date: Option<String>,
-    /// Export end date, inclusive, in `YYYY-MM-DD` form.
-    pub end_date: Option<String>,
     /// When true, replace names and phone numbers with fake ones.
     pub obfuscate: Option<bool>,
     /// Owner phone numbers for Android SMS exporters (SMS Backup & Restore).
@@ -198,9 +192,6 @@ pub async fn extract(
         media_max_resolution: parse_max_resolution(args.media_max_resolution.as_deref())?,
         media_max_fps: args.media_max_fps.unwrap_or_else(|| "30".into()),
         media_min_size: args.media_min_size.unwrap_or_else(|| "20M".into()),
-        conversation_filter: args.conversation_filter.unwrap_or_default(),
-        start_date: args.start_date.unwrap_or_default(),
-        end_date: args.end_date.unwrap_or_default(),
         obfuscate: args.obfuscate.unwrap_or(false),
         // `Form` trims and drops empty values itself, so the raw strings can
         // pass through unchanged.
@@ -281,9 +272,6 @@ struct ExtractOptions {
     media_max_resolution: MaxResolution,
     media_max_fps: String,
     media_min_size: String,
-    conversation_filter: String,
-    start_date: String,
-    end_date: String,
     obfuscate: bool,
     owner_phones: Vec<String>,
     attachment_root: String,
@@ -420,9 +408,6 @@ fn build_exporter_config(
         media_max_resolution: options.media_max_resolution,
         media_max_fps: options.media_max_fps.clone(),
         media_min_size: options.media_min_size.clone(),
-        conversation_filter: options.conversation_filter.clone(),
-        start_date: options.start_date.clone(),
-        end_date: options.end_date.clone(),
         obfuscate: options.obfuscate,
         // Import and Push read conversation files as JSON Lines (one JSON
         // object per line).
@@ -525,9 +510,6 @@ mod tests {
             media_max_resolution: MaxResolution::default(),
             media_max_fps: "30".into(),
             media_min_size: "20M".into(),
-            conversation_filter: String::new(),
-            start_date: String::new(),
-            end_date: String::new(),
             obfuscate: false,
             owner_phones,
             attachment_root: String::new(),

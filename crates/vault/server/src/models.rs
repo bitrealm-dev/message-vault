@@ -41,8 +41,9 @@ pub struct ConversationRecord {
 /// One participant of an imported conversation.
 #[derive(Debug, Clone)]
 pub struct ParticipantRecord {
-    /// Raw handle value.
-    pub handle: String,
+    /// Raw identity value. `None` when the source named this person and
+    /// recorded no address for them; `name_alias` then carries who they are.
+    pub handle: Option<String>,
     /// Display-name alias, when the export supplied one.
     pub name_alias: Option<String>,
     /// Handle type (phone, email, or username).
@@ -395,7 +396,7 @@ mod tests {
     #[test]
     fn parses_ir_sms_without_imessage_bag() {
         let lines = [
-            r#"{"schema_version":3,"export":{"source":"sms-backup-restore","tool":"t","tool_version":"1","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550101","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550101","display_name":"Sam"}],"stats":{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1400773261000,"last_timestamp_unix_ms":1400773261000}}}"#.to_string(),
+            r#"{"schema_version":4,"export":{"source":"sms-backup-restore","tool":"t","tool_version":"1","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550101","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550101","display_name":"Sam"}],"stats":{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1400773261000,"last_timestamp_unix_ms":1400773261000}}}"#.to_string(),
             r#"{"guid":"g1","timestamp_unix_ms":1400773261000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550101","sender_display_name":"Sam","subject":null,"text":"hello","attachments":[],"imessage":null,"source":null}"#.to_string(),
         ];
         let records = parse_ir_lines(lines).unwrap();
@@ -418,7 +419,7 @@ mod tests {
     fn parses_concatenated_ir_conversations() {
         let header = |chat: &str| {
             format!(
-                r#"{{"schema_version":3,"export":{{"source":"sms-backup-restore","tool":"t","tool_version":"1","owner_handle":null,"owner_display_name":null}},"conversation":{{"chat_identifier":"{chat}","conversation_type":"individual","group_title":null,"participants":[{{"handle":"{chat}","display_name":null}}],"stats":{{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1400773261000,"last_timestamp_unix_ms":1400773261000}}}}}}"#
+                r#"{{"schema_version":4,"export":{{"source":"sms-backup-restore","tool":"t","tool_version":"1","owner_handle":null,"owner_display_name":null}},"conversation":{{"chat_identifier":"{chat}","conversation_type":"individual","group_title":null,"participants":[{{"handle":"{chat}","display_name":null}}],"stats":{{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1400773261000,"last_timestamp_unix_ms":1400773261000}}}}}}"#
             )
         };
         let msg = |guid: &str, handle: &str| {

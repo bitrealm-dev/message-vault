@@ -8,12 +8,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use media::{MaxResolution, MediaMode};
-use message_csv::DateRange;
 
 use crate::config::{
-    AppleConfig, ContactsConfig, ExporterConfig, GoSmsProConfig, ImazingConfig, MediaConfig,
-    ObfuscateConfig, OpenExtractConfig, OutputFormat, SmsBackupPlusConfig, SmsBackupRestoreConfig,
-    SourceConfig, WhatsappConfig,
+    AppleConfig, ExporterConfig, GoSmsProConfig, ImazingConfig, MediaConfig, ObfuscateConfig,
+    OpenExtractConfig, OutputFormat, SmsBackupPlusConfig, SmsBackupRestoreConfig, SourceConfig,
+    WhatsappConfig,
 };
 
 /// iMessage Import / CLI copy when Convert or Compress is selected and ffmpeg is missing.
@@ -70,42 +69,6 @@ pub fn ensure_output_dir(path: &Path) -> Result<(), String> {
             path.display()
         )
     })
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-/// How a contacts file is parsed: none, CSV, or vCard (VCF).
-pub enum ContactsKind {
-    #[default]
-    /// No contacts file.
-    None,
-    /// CSV contacts file.
-    Csv,
-    /// vCard (VCF) contacts file.
-    Vcf,
-}
-
-/// Infer contacts kind from a path extension (empty → [`ContactsKind::None`]).
-pub fn contacts_kind_from_path(path: &str) -> ContactsKind {
-    let path = path.trim();
-    if path.is_empty() {
-        return ContactsKind::None;
-    }
-    let lower = path.to_ascii_lowercase();
-    if lower.ends_with(".vcf") || lower.ends_with(".vcard") {
-        ContactsKind::Vcf
-    } else {
-        ContactsKind::Csv
-    }
-}
-
-impl fmt::Display for ContactsKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::None => "No contacts",
-            Self::Csv => "Contacts CSV",
-            Self::Vcf => "Contacts VCF",
-        })
-    }
 }
 
 /// How attachments are copied or converted when writing output files.
@@ -191,16 +154,10 @@ pub struct Form {
     pub input: String,
     /// Output directory for the export.
     pub output: String,
-    /// Contacts file path (CSV or VCF) for phone→name resolution.
-    pub contacts: String,
-    /// How the contacts file is parsed.
-    pub contacts_kind: ContactsKind,
     /// Comma-separated owner phone numbers (marks outgoing messages).
     pub owner_phones: String,
     /// Comma-separated owner email addresses (marks outgoing messages).
     pub owner_emails: String,
-    /// Optional incorrect-name mapping file path.
-    pub name_mapping: String,
     /// Optional fixed UTC offset (e.g. `UTC-05:00`) for naive timestamps.
     pub timezone: String,
     /// Whether to rewrite output with stable fake identities.
@@ -213,12 +170,6 @@ pub struct Form {
     pub db_path: String,
     /// Apple backup attachment root directory.
     pub attachment_root: String,
-    /// Start-date filter (`YYYY-MM-DD`).
-    pub start_date: String,
-    /// End-date filter (`YYYY-MM-DD`, exclusive).
-    pub end_date: String,
-    /// iMessage conversation filter (chat id).
-    pub conversation_filter: String,
     /// macOS AddressBook path (Apple sources).
     pub apple_contacts: String,
     /// Apple backup decryption password (never written to `export.ini`).
@@ -258,20 +209,14 @@ impl Default for Form {
         Self {
             input: String::new(),
             output: String::new(),
-            contacts: String::new(),
-            contacts_kind: ContactsKind::default(),
             owner_phones: String::new(),
             owner_emails: String::new(),
-            name_mapping: String::new(),
             timezone: String::new(),
             obfuscate: false,
             obfuscate_seed: String::new(),
             advanced: false,
             db_path: String::new(),
             attachment_root: String::new(),
-            start_date: String::new(),
-            end_date: String::new(),
-            conversation_filter: String::new(),
             apple_contacts: String::new(),
             backup_password: String::new(),
             output_format: OutputFormat::default(),
@@ -345,17 +290,10 @@ impl Form {
         let inputs = non_empty(self.db_path.trim())
             .map(|p| vec![PathBuf::from(p)])
             .unwrap_or_default();
-        let date_range = parse_date_range_local(
-            non_empty(self.start_date.trim()),
-            non_empty(self.end_date.trim()),
-            errors,
-        );
         ExporterConfig {
             inputs,
             output: PathBuf::from(self.output.trim()),
-            date_range,
             timezone: None,
-            contacts: None,
             obfuscate,
             media,
             cancel: None,
@@ -368,7 +306,6 @@ impl Form {
                 copy_method,
                 apple_contacts: non_empty_path(&self.apple_contacts),
                 backup_password: non_empty(self.backup_password.trim()).map(str::to_string),
-                conversation_filter: non_empty(self.conversation_filter.trim()).map(str::to_string),
                 use_caller_id: true,
             }),
         }
@@ -397,17 +334,10 @@ impl Form {
             errors.push("Backup path is required for iOS.".into());
         }
         let media = self.validate_media(errors);
-        let date_range = parse_date_range_local(
-            non_empty(self.start_date.trim()),
-            non_empty(self.end_date.trim()),
-            errors,
-        );
         ExporterConfig {
             inputs,
             output: PathBuf::from(self.output.trim()),
-            date_range,
             timezone: None,
-            contacts: None,
             obfuscate,
             media,
             cancel: None,
@@ -437,24 +367,10 @@ impl Form {
         required_text(&self.output, "Output", errors);
         let media = self.validate_media(errors);
         let timezone = non_empty(self.timezone.trim()).map(str::to_string);
-        let date_range = match DateRange::parse_optional_tz(
-            non_empty(self.start_date.trim()),
-            non_empty(self.end_date.trim()),
-            timezone.as_deref(),
-        ) {
-            Ok(range) => range,
-            Err(error) => {
-                errors.push(error.to_string());
-                DateRange::default()
-            }
-        };
-        let contacts = self.contacts_config(errors);
         ExporterConfig {
             inputs: input.into_iter().collect(),
             output: PathBuf::from(self.output.trim()),
-            date_range,
             timezone: timezone.clone(),
-            contacts,
             obfuscate,
             media,
             cancel: None,
@@ -473,19 +389,11 @@ impl Form {
     ) -> ExporterConfig {
         let input = require_single_existing_path(&self.input, "Input", errors);
         required_text(&self.output, "Output", errors);
-        let contacts = self.contacts_config(errors);
-        let date_range = parse_date_range_local(
-            non_empty(self.start_date.trim()),
-            non_empty(self.end_date.trim()),
-            errors,
-        );
         let media = self.validate_media(errors);
         ExporterConfig {
             inputs: input.into_iter().collect(),
             output: PathBuf::from(self.output.trim()),
-            date_range,
             timezone: None,
-            contacts,
             obfuscate,
             media,
             cancel: None,
@@ -502,13 +410,11 @@ impl Form {
         obfuscate: ObfuscateConfig,
         errors: &mut Vec<String>,
     ) -> ExporterConfig {
-        let (inputs, contacts, date_range, media, owner_phones) = self.android_common(errors);
+        let (inputs, media, owner_phones) = self.android_common(errors);
         ExporterConfig {
             inputs,
             output: PathBuf::from(self.output.trim()),
-            date_range,
             timezone: None,
-            contacts,
             obfuscate,
             media,
             cancel: None,
@@ -525,13 +431,11 @@ impl Form {
         obfuscate: ObfuscateConfig,
         errors: &mut Vec<String>,
     ) -> ExporterConfig {
-        let (inputs, contacts, date_range, media, owner_phones) = self.android_common(errors);
+        let (inputs, media, owner_phones) = self.android_common(errors);
         ExporterConfig {
             inputs,
             output: PathBuf::from(self.output.trim()),
-            date_range,
             timezone: None,
-            contacts,
             obfuscate,
             media,
             cancel: None,
@@ -548,7 +452,7 @@ impl Form {
         obfuscate: ObfuscateConfig,
         errors: &mut Vec<String>,
     ) -> ExporterConfig {
-        let (inputs, contacts, date_range, media, owner_phones) = self.android_common(errors);
+        let (inputs, media, owner_phones) = self.android_common(errors);
         let owner_emails: Vec<String> = values(&self.owner_emails)
             .into_iter()
             .map(str::to_string)
@@ -559,9 +463,7 @@ impl Form {
         ExporterConfig {
             inputs,
             output: PathBuf::from(self.output.trim()),
-            date_range,
             timezone: None,
-            contacts,
             obfuscate,
             media,
             cancel: None,
@@ -571,24 +473,14 @@ impl Form {
             source: SourceConfig::SmsBackupPlus(SmsBackupPlusConfig {
                 owner_phones,
                 owner_emails,
-                name_mapping: non_empty_path(&self.name_mapping),
                 verbose: true,
                 include_summary: true,
             }),
         }
     }
 
-    /// Shared Android backup fields: input path, owner phones, contacts, dates, media.
-    fn android_common(
-        &self,
-        errors: &mut Vec<String>,
-    ) -> (
-        Vec<PathBuf>,
-        Option<ContactsConfig>,
-        DateRange,
-        MediaConfig,
-        Vec<String>,
-    ) {
+    /// Shared Android backup fields: input path, owner phones, media.
+    fn android_common(&self, errors: &mut Vec<String>) -> (Vec<PathBuf>, MediaConfig, Vec<String>) {
         let input = require_single_existing_path(&self.input, "Input", errors);
         required_text(&self.output, "Output", errors);
         let mut owner_phones = Vec::new();
@@ -598,49 +490,8 @@ impl Form {
         if owner_phones.is_empty() {
             errors.push("At least one phone number is required.".into());
         }
-        let contacts = self.contacts_config(errors);
-        let date_range = parse_date_range_local(
-            non_empty(self.start_date.trim()),
-            non_empty(self.end_date.trim()),
-            errors,
-        );
         let media = self.validate_media(errors);
-        (
-            input.into_iter().collect(),
-            contacts,
-            date_range,
-            media,
-            owner_phones,
-        )
-    }
-
-    /// Contacts file from the form, or `None` when the user chose no contacts.
-    fn contacts_config(&self, errors: &mut Vec<String>) -> Option<ContactsConfig> {
-        match self.contacts_kind {
-            ContactsKind::None => None,
-            ContactsKind::Csv => {
-                if self.contacts.trim().is_empty() {
-                    errors.push("Choose a contacts CSV or select No contacts.".into());
-                    None
-                } else {
-                    Some(ContactsConfig {
-                        path: PathBuf::from(self.contacts.trim()),
-                        kind: ContactsKind::Csv,
-                    })
-                }
-            }
-            ContactsKind::Vcf => {
-                if self.contacts.trim().is_empty() {
-                    errors.push("Choose a contacts VCF or select No contacts.".into());
-                    None
-                } else {
-                    Some(ContactsConfig {
-                        path: PathBuf::from(self.contacts.trim()),
-                        kind: ContactsKind::Vcf,
-                    })
-                }
-            }
-        }
+        (input.into_iter().collect(), media, owner_phones)
     }
 
     /// Media options for Android exporters (always validate compress settings).
@@ -749,21 +600,6 @@ fn validate_obfuscate_seed(seed: &str, errors: &mut Vec<String>) -> Option<Strin
         None
     } else {
         Some(seed.to_string())
-    }
-}
-
-/// Parse optional start/end dates in host-local time; push parse errors onto `errors`.
-fn parse_date_range_local(
-    start: Option<&str>,
-    end: Option<&str>,
-    errors: &mut Vec<String>,
-) -> DateRange {
-    match DateRange::parse(start, end) {
-        Ok(range) => range,
-        Err(error) => {
-            errors.push(error.to_string());
-            DateRange::default()
-        }
     }
 }
 
@@ -943,16 +779,13 @@ mod tests {
     }
 
     #[test]
-    fn openextract_passes_date_range() {
+    fn openextract_builds_its_own_source() {
         let form = Form {
             input: std::env::current_dir().unwrap().display().to_string(),
             output: "out".into(),
-            start_date: "2020-01-01".into(),
-            end_date: "2020-02-01".into(),
             ..Form::default()
         };
         let config = form.to_config(Exporter::OpenExtract).unwrap();
-        assert!(!config.date_range.is_unbounded());
         assert!(matches!(config.source, SourceConfig::OpenExtract(_)));
     }
 
@@ -962,7 +795,6 @@ mod tests {
             input: std::env::current_dir().unwrap().display().to_string(),
             output: "out".into(),
             timezone: "UTC-05:00".into(),
-            start_date: "2020-01-01".into(),
             ..Form::default()
         };
         let config = form.to_config(Exporter::Imazing).unwrap();
@@ -970,24 +802,6 @@ mod tests {
             panic!("expected Imazing");
         };
         assert_eq!(config.timezone.as_deref(), Some("UTC-05:00"));
-    }
-
-    #[test]
-    fn imazing_honors_vcf_contacts_kind() {
-        let form = Form {
-            input: std::env::current_dir().unwrap().display().to_string(),
-            output: "out".into(),
-            contacts: "/tmp/contacts.vcf".into(),
-            contacts_kind: ContactsKind::Vcf,
-            ..Form::default()
-        };
-        let config = form.to_config(Exporter::Imazing).unwrap();
-        let contacts = config.contacts.as_ref().expect("contacts");
-        assert_eq!(contacts.kind, ContactsKind::Vcf);
-        assert_eq!(contacts.path, PathBuf::from("/tmp/contacts.vcf"));
-        let (csv, vcf) = config.contacts_csv_vcf();
-        assert!(csv.is_none());
-        assert_eq!(vcf, Some(PathBuf::from("/tmp/contacts.vcf")));
     }
 
     #[test]

@@ -146,7 +146,7 @@ fn participants_from_seed(seed: &ExportMessage) -> Vec<IrParticipant> {
     let mut participants = Vec::with_capacity(seed.conversation.participants.len());
     for p in &seed.conversation.participants {
         participants.push(IrParticipant {
-            handle: p.handle.clone(),
+            handle: Some(p.handle.clone()),
             display_name: p.name_alias.clone(),
             handle_type: None,
         });

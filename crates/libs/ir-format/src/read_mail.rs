@@ -126,9 +126,13 @@ fn document_from_mail_messages(
 /// handle string (`@` → email, digit-heavy → phone, else other).
 fn participant_from_mail(p: &mail::Participant) -> IrParticipant {
     IrParticipant {
-        handle: p.handle.clone(),
+        handle: nonempty(&p.handle),
         display_name: p.display_name.as_deref().and_then(nonempty),
-        handle_type: Some(crate::util::infer_handle_type(&p.handle)),
+        handle_type: if p.handle.trim().is_empty() {
+            None
+        } else {
+            Some(crate::util::infer_handle_type(&p.handle))
+        },
     }
 }
 

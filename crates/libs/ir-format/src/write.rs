@@ -194,7 +194,7 @@ pub(crate) fn write_conversation_csv(
             .participants
             .iter()
             .map(|p| ParticipantCell {
-                handle: p.handle.clone(),
+                handle: p.handle.clone().unwrap_or_default(),
                 display_name: p.display_name.clone().unwrap_or_default(),
                 handle_type: p.handle_type,
             })
@@ -358,7 +358,7 @@ pub fn document_to_mail_messages(
         .participants
         .iter()
         .map(|p| Participant {
-            handle: p.handle.clone(),
+            handle: p.handle.clone().unwrap_or_default(),
             display_name: p.display_name.clone(),
         })
         .collect();

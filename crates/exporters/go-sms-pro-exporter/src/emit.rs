@@ -6,9 +6,7 @@ use crate::attachments_emit::{pending_attachment_to_ir, queue_pdu_attachments};
 use crate::chat_id::{chat_id_group, chat_id_individual, guarded_phone};
 use crate::xml::{SkippedBadAddrDetail, XmlMessage, parse_xml_file};
 use anyhow::{Context, Result, bail};
-use contacts::ContactsBook;
 use go_sms_mms::{ParsedPdu, parse_pdu_file};
-use message_csv::DateRange;
 use message_ir::{
     ExportMeta, HandleType, IrAttachment, IrService, IrSource, PendingAttachment,
     PendingConversation, PendingMessage, ProjectionHooks, ensure_conversation, parse_android_type,
@@ -371,32 +369,11 @@ impl ProjectionHooks for GoSmsProjection<'_> {
     }
 }
 
-/// Fill `contact_name` and sender display name from the contacts book.
-fn enrich_pending_names(book: &ContactsBook, chat_id: &str, msg: &mut PendingMessage) {
-    let phones: Vec<&str> = if msg.sender_handle.is_empty() {
-        vec![chat_id]
-    } else {
-        vec![msg.sender_handle.as_str(), chat_id]
-    };
-    for phone in phones {
-        let contact_name = msg.extra_str("contact_name").to_string();
-        if let Some(name) = book.enrich_display_name(phone, HandleType::Phone, &contact_name) {
-            msg.extra.insert("contact_name".into(), name);
-        }
-        let cur = msg.sender_display_name.as_deref().unwrap_or("");
-        if let Some(name) = book.enrich_display_name(phone, HandleType::Phone, cur) {
-            msg.sender_display_name = Some(name);
-        }
-    }
-}
-
 /// Inputs for [`convert_export`].
 pub(crate) struct ConvertExportArgs<'a> {
     pub input_dir: &'a Path,
     pub output_dir: &'a Path,
     pub owner_phones: &'a [String],
-    pub contacts: &'a ContactsBook,
-    pub date_range: &'a DateRange,
     pub transforms: ExportTransforms,
     pub output_format: OutputFormat,
     pub cancel: Option<&'a CancelFlag>,
@@ -422,8 +399,6 @@ pub(crate) fn convert_export(
         input_dir,
         output_dir,
         owner_phones,
-        contacts,
-        date_range,
         transforms,
         output_format,
         cancel,
@@ -468,17 +443,7 @@ pub(crate) fn convert_export(
                         d,
                     );
                 }
-                let msgs: Vec<_> = msgs
-                    .into_iter()
-                    .filter(|msg| {
-                        if date_range.contains_secs_f64(msg.timestamp_secs) {
-                            true
-                        } else {
-                            report.skipped_out_of_range += 1;
-                            false
-                        }
-                    })
-                    .collect();
+                let msgs: Vec<_> = msgs.into_iter().collect();
                 add_xml_messages(&mut conversations, msgs);
             }
             Err(err) => report
@@ -507,10 +472,6 @@ pub(crate) fn convert_export(
                 }
             }
             Ok(Some(parsed)) => {
-                if !date_range.contains_secs(parsed.timestamp) {
-                    report.skipped_out_of_range += 1;
-                    continue;
-                }
                 match queue_pdu_attachments(&parsed, copy_attachments, &mut blob_bytes) {
                     Ok(atts) => add_pdu_message(
                         &mut conversations,
@@ -545,9 +506,6 @@ pub(crate) fn convert_export(
     };
     let mut documents = Vec::new();
     for (chat_id, mut convo) in conversations {
-        for msg in &mut convo.messages {
-            enrich_pending_names(contacts, &chat_id, msg);
-        }
         dedupe_messages(&mut convo.messages);
         let (keep, skipped) =
             prepare_conversation(&mut convo, |a, b| a.sort_key.cmp(&b.sort_key), |k| k);

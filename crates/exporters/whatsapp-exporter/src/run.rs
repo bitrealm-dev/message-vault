@@ -111,7 +111,6 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
     let (report, sink) = convert_json(
         &json_path,
         &config.output,
-        &config.date_range,
         transforms,
         &media_roots,
         config.output_format,

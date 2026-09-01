@@ -26,7 +26,17 @@ pub use projection::{
 };
 
 /// Schema version written into every [`ConversationDocument`] (currently 3).
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
+
+/// `PendingConversation::extra` key marking a chat keyed by a person's name
+/// rather than an address.
+///
+/// The rescue exporters (iMazing, OpenExtract, SMS Backup+) read formats that
+/// sometimes identify the other party by name alone. They set this so the
+/// projection emits a participant carrying the name and no identity, instead
+/// of promoting the name stem into the handle field. The vault resolves the
+/// name against contacts on import.
+pub const CHAT_ID_IS_NAME: &str = "chat_id_is_name";
 /// One exported chat: export metadata, conversation roster and stats, and messages.
 ///
 /// This is the common-message schema every exporter writes and every reader
@@ -154,11 +164,19 @@ pub struct ConversationStats {
     pub last_timestamp_unix_ms: Option<i64>,
 }
 
-/// One chat member: handle, optional display name and handle type.
+/// One chat member: an identity, a display name, or both.
+///
+/// `handle` is `None` when the source named a person without recording any
+/// address for them — the rescue exporters (iMazing, OpenExtract, SMS
+/// Backup+) read formats that identify the other party by name alone. Such a
+/// participant always carries a `display_name`; the vault reconciles it
+/// against contacts on import rather than the exporter inventing an address.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IrParticipant {
-    /// Phone, email, or username string.
-    pub handle: String,
+    /// Phone, email, or username string; `None` when the source recorded no
+    /// address for this person.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<String>,
     /// Display name shown in UIs; `None` when the source has none.
     pub display_name: Option<String>,
     /// Known kind of `handle`; `None` when the source did not record one.
@@ -546,7 +564,7 @@ impl ConversationDocument {
             .conversation
             .participants
             .iter()
-            .map(|p| p.handle.clone())
+            .filter_map(|p| p.handle.clone())
             .collect();
         conversation_stem(
             self.conversation.conversation_type.as_str(),

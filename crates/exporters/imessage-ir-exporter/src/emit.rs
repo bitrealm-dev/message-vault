@@ -368,7 +368,7 @@ fn mail_participants_to_ir(participants: Vec<Participant>) -> Vec<IrParticipant>
         .map(|p| {
             let handle_type = handle_type_for(&p.handle);
             IrParticipant {
-                handle: p.handle,
+                handle: Some(p.handle),
                 display_name: p.display_name,
                 handle_type: Some(handle_type),
             }

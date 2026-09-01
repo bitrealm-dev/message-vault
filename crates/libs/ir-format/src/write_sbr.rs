@@ -306,8 +306,11 @@ fn synthesize_addrs(
         IrDirection::Outgoing => {
             if doc.conversation.conversation_type == IrConversationType::Group {
                 for p in &doc.conversation.participants {
-                    if p.handle != owner {
-                        addrs.push(addr_entry(&p.handle, MMS_ADDR_TO));
+                    let Some(handle) = p.handle.as_deref() else {
+                        continue;
+                    };
+                    if handle != owner {
+                        addrs.push(addr_entry(handle, MMS_ADDR_TO));
                     }
                 }
             } else {
@@ -336,8 +339,13 @@ fn peer_address(doc: &ConversationDocument, msg: &IrMessage) -> String {
     {
         return h.to_string();
     }
-    if let Some(p) = doc.conversation.participants.first() {
-        return p.handle.clone();
+    if let Some(handle) = doc
+        .conversation
+        .participants
+        .first()
+        .and_then(|p| p.handle.clone())
+    {
+        return handle;
     }
     doc.conversation.chat_identifier.clone()
 }
@@ -347,11 +355,16 @@ fn mms_address_field(doc: &ConversationDocument) -> String {
         doc.conversation
             .participants
             .iter()
-            .map(|p| p.handle.as_str())
+            .filter_map(|p| p.handle.as_deref())
             .collect::<Vec<_>>()
             .join("~")
-    } else if let Some(p) = doc.conversation.participants.first() {
-        p.handle.clone()
+    } else if let Some(handle) = doc
+        .conversation
+        .participants
+        .first()
+        .and_then(|p| p.handle.clone())
+    {
+        handle
     } else {
         doc.conversation.chat_identifier.clone()
     }

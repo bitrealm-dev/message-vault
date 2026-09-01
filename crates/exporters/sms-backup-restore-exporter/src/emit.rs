@@ -2,9 +2,6 @@
 //! write the chosen output format via [`ExportWriter`].
 
 use anyhow::Result;
-use contacts::ContactsBook;
-use message_csv::DateRange;
-use message_ir::{ConversationDocument, HandleType};
 use message_ir_format::{
     AttachmentSource, ExportTransforms, ExportWriter, FormatSinkResult, SbrReadOptions,
     SbrReadReport, read_sbr_documents,
@@ -48,36 +45,11 @@ fn to_core_report(report: SbrReadReport) -> ExportReport {
     out
 }
 
-/// Fill participant and sender display names from the contacts book.
-fn enrich_contacts(book: &ContactsBook, documents: &mut [ConversationDocument]) {
-    for document in documents {
-        for participant in &mut document.conversation.participants {
-            let current = participant.display_name.as_deref().unwrap_or("");
-            if let Some(name) =
-                book.enrich_display_name(&participant.handle, HandleType::Phone, current)
-            {
-                participant.display_name = Some(name);
-            }
-        }
-        for message in &mut document.messages {
-            let Some(handle) = message.sender_handle.as_deref() else {
-                continue;
-            };
-            let current = message.sender_display_name.as_deref().unwrap_or("");
-            if let Some(name) = book.enrich_display_name(handle, HandleType::Phone, current) {
-                message.sender_display_name = Some(name);
-            }
-        }
-    }
-}
-
 /// Inputs for [`convert_export`].
 pub(crate) struct ConvertExportArgs<'a> {
     pub input: &'a Path,
     pub output_dir: &'a Path,
     pub owner_phones: &'a [String],
-    pub contacts: &'a ContactsBook,
-    pub date_range: &'a DateRange,
     pub transforms: ExportTransforms,
     pub output_format: OutputFormat,
     pub cancel: Option<&'a CancelFlag>,
@@ -109,7 +81,6 @@ pub(crate) fn convert_export(
         args.input,
         SbrReadOptions {
             owner_phones: args.owner_phones,
-            date_range: args.date_range,
             attachments_dir: Some(writer.attachments_dir()),
             copy_attachments: writer.copies_attachments(),
             // The bytes ride into the shared write tail, which stages them
@@ -122,7 +93,6 @@ pub(crate) fn convert_export(
             cancel: args.cancel,
         },
     )?;
-    enrich_contacts(args.contacts, &mut documents);
 
     // The reader already counted conversations (and staged nothing, so its
     // attachments_saved is zero); zero the conversation counter so the shared

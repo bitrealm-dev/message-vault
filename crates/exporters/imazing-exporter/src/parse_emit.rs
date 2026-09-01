@@ -4,11 +4,9 @@ use crate::emit::TransportFamily;
 use crate::parse::{RawRow, SourceKind};
 use anyhow::Result;
 use chrono::{FixedOffset, Local, LocalResult, NaiveDateTime, TimeZone};
-use contacts::ContactsBook;
 use message_csv::parse_utc_offset;
-use message_ir::HandleType;
 use phone::sanitize_number;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 impl TransportFamily {
     pub(super) fn from_kind(kind: SourceKind) -> Self {
@@ -28,12 +26,7 @@ pub(super) struct PeerInfo {
     pub(super) unresolved_roster_labels: u64,
 }
 
-pub(super) fn collect_peer_info(
-    book: &ContactsBook,
-    kind: SourceKind,
-    session: &str,
-    rows: &[&RawRow],
-) -> PeerInfo {
+pub(super) fn collect_peer_info(kind: SourceKind, session: &str, rows: &[&RawRow]) -> PeerInfo {
     let mut handles: HashSet<String> = HashSet::new();
     for row in rows {
         let sid = row.sender_id.trim();
@@ -51,8 +44,32 @@ pub(super) fn collect_peer_info(
         }
     }
 
+    // The rows themselves pair a sender's name with their address. That is the
+    // only name-to-address mapping available now that no contacts file is
+    // supplied, and it comes from the source rather than from outside it.
+    let mut handle_by_sender_name: HashMap<String, String> = HashMap::new();
+    for row in rows {
+        let name = row.sender_name.trim();
+        let sid = row.sender_id.trim();
+        if name.is_empty() || sid.is_empty() {
+            continue;
+        }
+        let handle = if sid.contains('@') {
+            sid.to_string()
+        } else if sanitize_number(sid).is_some() {
+            phone::normalize_lenient(sid)
+        } else {
+            continue;
+        };
+        handle_by_sender_name
+            .entry(name.to_ascii_lowercase())
+            .or_insert(handle);
+    }
+
     let mut unresolved_roster_labels = 0u64;
-    // Messages group rosters encode members as "A & B & C". Resolve silent members via contacts.
+    // Messages group rosters encode members as "A & B & C". A member who never
+    // sent a message has no address anywhere in the source; report them rather
+    // than invent one.
     if kind == SourceKind::Messages && session.contains(" & ") {
         for part in session.split(" & ") {
             let label = part.trim();
@@ -67,10 +84,11 @@ pub(super) fn collect_peer_info(
                 handles.insert(phone::normalize_lenient(label));
                 continue;
             }
-            if let Some((e164, _)) = book.lookup_handle_by_name(label) {
-                handles.insert(e164);
-            } else {
-                unresolved_roster_labels += 1;
+            match handle_by_sender_name.get(&label.to_ascii_lowercase()) {
+                Some(handle) => {
+                    handles.insert(handle.clone());
+                }
+                None => unresolved_roster_labels += 1,
             }
         }
     }
@@ -85,7 +103,7 @@ pub(super) fn collect_peer_info(
     };
 
     let (chat_id, contact_name, unresolved_chat) =
-        resolve_chat_identifier(book, session, &peer_handles, group);
+        resolve_chat_identifier(session, &peer_handles, group);
     PeerInfo {
         chat_id,
         contact_name,
@@ -175,12 +193,12 @@ fn phones_in_text(text: &str) -> Vec<String> {
     out
 }
 
-/// Resolve a session into `(chat_identifier, contact_name, unresolved_phone)`.
+/// Resolve a session into `(chat_identifier, contact_name, name_only)`.
 ///
-/// The third value is `true` only when the chat id could not be resolved
-/// and callers should record the raw phone as unresolved.
+/// The third value is `true` when the session names a person and the source
+/// recorded no address for them; the chat is then keyed by a stem of the name
+/// and the vault reconciles it on import.
 fn resolve_chat_identifier(
-    book: &ContactsBook,
     session: &str,
     peer_handles: &[String],
     group: bool,
@@ -198,23 +216,7 @@ fn resolve_chat_identifier(
     }
 
     if let Some(handle) = peer_handles.first() {
-        let contact_name = if sanitize_number(handle).is_some() {
-            // The book keys entries by the shared guarded policy.
-            book.lookup_name_by_handle(
-                &phone::normalize_typed_handle(handle, HandleType::Phone).0,
-                HandleType::Phone,
-            )
-            .unwrap_or("")
-            .to_string()
-        } else {
-            String::new()
-        };
-        let contact_name = if contact_name.is_empty() {
-            session.trim().to_string()
-        } else {
-            contact_name
-        };
-        return (handle.clone(), contact_name, false);
+        return (handle.clone(), session.trim().to_string(), false);
     }
 
     let session = session.trim();
@@ -228,16 +230,8 @@ fn resolve_chat_identifier(
     }
     if sanitize_number(session).is_some() {
         // Format as E.164 when unambiguous. Otherwise keep digits as-is. Never
-        // invent `+0…`. The contacts book keys entries by the same policy.
-        let handle = phone::normalize_lenient(session);
-        let name = book
-            .lookup_name_by_handle(&handle, HandleType::Phone)
-            .unwrap_or("")
-            .to_string();
-        return (handle, name, false);
-    }
-    if let Some((e164, _)) = book.lookup_handle_by_name(session) {
-        return (e164, session.to_string(), false);
+        // invent `+0…`.
+        return (phone::normalize_lenient(session), String::new(), false);
     }
     (
         message_vault_io_core::name_stem(session),
@@ -247,7 +241,6 @@ fn resolve_chat_identifier(
 }
 
 pub(super) fn resolve_sender(
-    book: &ContactsBook,
     row: &RawRow,
     is_from_me: bool,
     is_notification: bool,
@@ -281,23 +274,9 @@ pub(super) fn resolve_sender(
         && (chat_id.starts_with('+') || sanitize_number(chat_id).is_some())
     {
         handle = phone::normalize_lenient(chat_id);
-    } else if !row.sender_name.is_empty()
-        && let Some((e164, _)) = book.lookup_handle_by_name(&row.sender_name)
-    {
-        handle = e164;
     }
 
     let mut display = row.sender_name.trim().to_string();
-    if display.is_empty() && sanitize_number(&handle).is_some() {
-        // The book keys entries by the shared guarded policy.
-        display = book
-            .lookup_name_by_handle(
-                &phone::normalize_typed_handle(&handle, HandleType::Phone).0,
-                HandleType::Phone,
-            )
-            .unwrap_or("")
-            .to_string();
-    }
     if display.is_empty() && !contact_name.is_empty() {
         display = contact_name.to_string();
     }
