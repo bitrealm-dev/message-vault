@@ -9,14 +9,14 @@ import {
   TableHeader,
 } from "react-aria-components";
 import { afterEach, describe, expect, it } from "vitest";
-import type { CachedContactHandle } from "../../lib/contactDetailCache";
+import type { ContactHandle } from "../../lib/contactDetail";
 import { renderHandleTableRow } from "./HandleTableRow";
 
 afterEach(() => {
   cleanup();
 });
 
-const sample: CachedContactHandle & { id: string } = {
+const sample: ContactHandle & { id: string } = {
   id: "h1",
   handle: "+1555121212",
   service: "phone",

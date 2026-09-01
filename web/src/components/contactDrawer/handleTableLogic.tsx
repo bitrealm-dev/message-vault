@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { CachedContactHandle } from "../../lib/contactDetailCache";
+import type { ContactHandle } from "../../lib/contactDetail";
 import { formatHandleDate, formatHandleServiceLabel } from "./contactDrawerTypes";
 
 export function handleDateCell(iso: string | null | undefined): string {
@@ -46,7 +46,7 @@ export function removeIdentityConfirmBody(target: RemoveIdentityTarget): ReactNo
   );
 }
 
-export function sortValue(h: CachedContactHandle, col: string): string | number {
+export function sortValue(h: ContactHandle, col: string): string | number {
   switch (col) {
     case "service":
       return formatHandleServiceLabel(h.handle, h.service).toLowerCase();

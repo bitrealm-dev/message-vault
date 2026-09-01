@@ -11,9 +11,8 @@ import {
 } from "react";
 import { getToken, setBaseUrl, setToken } from "./api";
 import { parsePersistedAuth } from "./authGuards";
-import { clearContactDetailCache } from "./contactDetailCache";
 import { isTauri } from "./tauri-check";
-import { clearAccountProfile, loadAccountProfile } from "./useAccountProfile";
+import { fetchAccountProfileFor } from "./useAccountProfile";
 import { checkAuth, logout as vaultLogout } from "./vaultApi";
 
 interface AuthState {
@@ -163,7 +162,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // Re-read the profile so a stale "needs setup" flag can correct itself.
         try {
-          const profile = await loadAccountProfile(true);
+          const profile = await fetchAccountProfileFor(queryClient, state.accountId, true);
           if (!cancelled && profile) {
             const needsOnboarding = profileNeedsOnboarding(profile);
             setState((s) => {
@@ -199,7 +198,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [state.isAuthenticated, restored, state.serverUrl, state.token]);
+  }, [state.isAuthenticated, restored, state.serverUrl, state.token, queryClient, state.accountId]);
 
   const setServer = useCallback((url: string) => {
     setBaseUrl(url);
@@ -212,14 +211,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // One call, and it cannot be incomplete: every cached vault entry is named
       // with the account that filled it, so this only releases memory.
       resetVaultCache();
-      clearContactDetailCache();
-      clearAccountProfile();
       setBaseUrl(serverUrl);
       setToken(token);
 
       // New accounts have no profile yet, so send them through setup.
       let needsOnboarding = false;
-      const profile = await loadAccountProfile(true);
+      const profile = await fetchAccountProfileFor(queryClient, accountId, true);
       // A failed profile request leaves `profile` null; assume one exists rather
       // than locking the user out of the app they just signed in to.
       if (profile) needsOnboarding = profileNeedsOnboarding(profile);
@@ -241,6 +238,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // One call, and it cannot be incomplete: every cached vault entry is named
       // with the account that filled it, so this only releases memory.
       resetVaultCache,
+      queryClient,
     ],
   );
 
@@ -267,8 +265,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setToken(null);
     resetVaultCache();
-    clearContactDetailCache();
-    clearAccountProfile();
     clearPersisted();
     setState((s) => ({
       ...s,

@@ -1,15 +1,31 @@
 /** @vitest-environment jsdom */
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, render as rtlRender, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CachedContactDetail } from "../lib/contactDetailCache";
-import {
-  clearContactDetailCache,
-  fetchContactDetail,
-  getCachedContactDetail,
-} from "../lib/contactDetailCache";
+import { type ContactDetail, contactDetailKey } from "../lib/contactDetail";
+import { vaultQueryKey } from "../lib/vaultQueryKey";
 import ContactDrawer from "./ContactDrawer";
+
+vi.mock("../lib/auth", () => ({ useAuth: () => ({ accountId: "test-account" }) }));
+
+let client: QueryClient;
+
+/** Render inside a fresh cache, the way the app renders inside the app's. */
+function render(ui: ReactElement) {
+  return rtlRender(ui, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    ),
+  });
+}
+
+/** Put a contact in the cache, as an earlier open of the drawer would have. */
+function seed(detail: ContactDetail): void {
+  client.setQueryData(vaultQueryKey("test-account", contactDetailKey(detail.id)), detail);
+}
 
 const get = vi.fn();
 const post = vi.fn();
@@ -18,7 +34,7 @@ vi.mock("../lib/vaultApi", () => ({
   getContact: (...args: unknown[]) => get(...args),
   updateContact: (...args: unknown[]) => post(...args),
 }));
-function detail(id: number, overrides: Partial<CachedContactDetail> = {}): CachedContactDetail {
+function detail(id: number, overrides: Partial<ContactDetail> = {}): ContactDetail {
   return {
     id,
     name: `Contact ${id}`,
@@ -50,18 +66,28 @@ describe("ContactDrawer", () => {
   });
 
   beforeEach(() => {
-    clearContactDetailCache();
     get.mockReset();
     post.mockReset();
     post.mockResolvedValue(undefined);
+    client = new QueryClient({
+      // Seeded entries have no observer until the drawer opens that contact, so
+      // they must survive collection to stand in for an earlier open.
+      defaultOptions: {
+        queries: {
+          retry: false,
+          gcTime: Number.POSITIVE_INFINITY,
+          staleTime: Number.POSITIVE_INFINITY,
+        },
+      },
+    });
   });
 
   it("keeps groups and avoids zero counts on first paint when switching to an uncached contact", async () => {
     const a = detail(1);
-    await fetchContactDetail("1", async () => a);
+    seed(a);
 
-    let resolveB!: (d: CachedContactDetail) => void;
-    const pendingB = new Promise<CachedContactDetail>((resolve) => {
+    let resolveB!: (d: ContactDetail) => void;
+    const pendingB = new Promise<ContactDetail>((resolve) => {
       resolveB = resolve;
     });
     get.mockImplementation((id: string) => {
@@ -137,9 +163,8 @@ describe("ContactDrawer", () => {
         },
       ],
     });
-    await fetchContactDetail("1", async () => a);
-    await fetchContactDetail("2", async () => b);
-    expect(getCachedContactDetail("2")?.name).toBe("Cached Bob");
+    seed(a);
+    seed(b);
 
     get.mockImplementation((id: string) => {
       if (String(id) === "1") return Promise.resolve(a);
@@ -181,8 +206,8 @@ describe("ContactDrawer", () => {
   });
 
   it("does not claim No groups while loading without preview groups", async () => {
-    let resolveDetail!: (d: CachedContactDetail) => void;
-    const pending = new Promise<CachedContactDetail>((resolve) => {
+    let resolveDetail!: (d: ContactDetail) => void;
+    const pending = new Promise<ContactDetail>((resolve) => {
       resolveDetail = resolve;
     });
     get.mockImplementation(() => pending);
@@ -203,8 +228,8 @@ describe("ContactDrawer", () => {
   });
 
   it("stubs one handle row when preview lists raw and normalized forms of the same identity", async () => {
-    let resolveDetail!: (d: CachedContactDetail) => void;
-    const pending = new Promise<CachedContactDetail>((resolve) => {
+    let resolveDetail!: (d: ContactDetail) => void;
+    const pending = new Promise<ContactDetail>((resolve) => {
       resolveDetail = resolve;
     });
     get.mockImplementation(() => pending);
@@ -259,8 +284,8 @@ describe("ContactDrawer", () => {
   });
 
   it("stubs overlay handles from thread preview while detail is pending", async () => {
-    let resolveDetail!: (d: CachedContactDetail) => void;
-    const pending = new Promise<CachedContactDetail>((resolve) => {
+    let resolveDetail!: (d: ContactDetail) => void;
+    const pending = new Promise<ContactDetail>((resolve) => {
       resolveDetail = resolve;
     });
     get.mockImplementation(() => pending);
@@ -310,8 +335,8 @@ describe("ContactDrawer", () => {
   });
 
   it("stubs one overlay identity row when thread preview has no handle strings", async () => {
-    let resolveDetail!: (d: CachedContactDetail) => void;
-    const pending = new Promise<CachedContactDetail>((resolve) => {
+    let resolveDetail!: (d: ContactDetail) => void;
+    const pending = new Promise<ContactDetail>((resolve) => {
       resolveDetail = resolve;
     });
     get.mockImplementation(() => pending);
@@ -344,8 +369,8 @@ describe("ContactDrawer", () => {
   });
 
   it("stubs two identities when preview lists raw then normalized for each", async () => {
-    let resolveDetail!: (d: CachedContactDetail) => void;
-    const pending = new Promise<CachedContactDetail>((resolve) => {
+    let resolveDetail!: (d: ContactDetail) => void;
+    const pending = new Promise<ContactDetail>((resolve) => {
       resolveDetail = resolve;
     });
     get.mockImplementation(() => pending);
@@ -408,8 +433,8 @@ describe("ContactDrawer", () => {
   });
 
   it("keeps the edit-name control mounted and disabled while detail is loading", async () => {
-    let resolveDetail!: (d: CachedContactDetail) => void;
-    const pending = new Promise<CachedContactDetail>((resolve) => {
+    let resolveDetail!: (d: ContactDetail) => void;
+    const pending = new Promise<ContactDetail>((resolve) => {
       resolveDetail = resolve;
     });
     get.mockImplementation(() => pending);

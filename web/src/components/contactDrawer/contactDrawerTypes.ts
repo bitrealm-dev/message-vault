@@ -1,4 +1,4 @@
-import type { CachedContactDetail, CachedContactHandle } from "../../lib/contactDetailCache";
+import type { ContactDetail, ContactHandle } from "../../lib/contactDetail";
 import { formatIsoDateOnly } from "../../lib/formatDate";
 
 export type {
@@ -120,7 +120,7 @@ export function formatHandleDate(iso: string | null | undefined): string | null 
   return formatIsoDateOnly(iso);
 }
 
-export function emptyHandleRow(handle: string): CachedContactHandle {
+export function emptyHandleRow(handle: string): ContactHandle {
   return {
     handle,
     service: null,
@@ -151,7 +151,7 @@ function handleStubKey(handle: string): string {
 export function previewHandleStubRows(
   handles: string[] | undefined,
   handleCount: number | undefined,
-): CachedContactHandle[] {
+): ContactHandle[] {
   const unique: string[] = [];
   const seen = new Set<string>();
   for (const handle of handles ?? []) {
@@ -164,14 +164,14 @@ export function previewHandleStubRows(
     handleCount != null && Number.isFinite(handleCount)
       ? Math.max(0, Math.floor(handleCount))
       : unique.length;
-  const rows: CachedContactHandle[] = [];
+  const rows: ContactHandle[] = [];
   for (let i = 0; i < count; i++) {
     rows.push(emptyHandleRow(unique[i] ?? HANDLE_STUB_PLACEHOLDER));
   }
   return rows;
 }
 
-export function sumHandleTotals(handles: CachedContactDetail["handles"]): {
+export function sumHandleTotals(handles: ContactDetail["handles"]): {
   individual_conversations: number;
   group_conversations: number;
   individual_message_count: number;

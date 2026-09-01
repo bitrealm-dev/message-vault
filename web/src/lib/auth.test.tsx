@@ -41,10 +41,6 @@ vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => getCurrentWindow(),
 }));
 
-vi.mock("./contactDetailCache", () => ({
-  clearContactDetailCache: vi.fn(),
-}));
-
 vi.mock("./contactGroups", () => ({
   invalidateContactGroups: vi.fn(),
 }));
