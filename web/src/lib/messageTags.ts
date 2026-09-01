@@ -1,5 +1,5 @@
 import { groupFromSlug, groupSlug } from "./contactGroups";
-import { createNameCollection } from "./nameCollection";
+import { createNameCollection, useNameCollectionActions } from "./nameCollection";
 import {
   createMessageTag as vaultCreateMessageTag,
   deleteMessageTag as vaultDeleteMessageTag,
@@ -34,8 +34,6 @@ export function reservedTagError(name: string): string {
   return `"${name.trim()}" is a reserved tag`;
 }
 
-export const MESSAGE_TAGS_CHANGED_EVENT = "mv-message-tags-changed";
-
 export const messageTags = createNameCollection({
   routes: {
     list: vaultListMessageTags,
@@ -44,9 +42,9 @@ export const messageTags = createNameCollection({
     remove: vaultDeleteMessageTag,
     setMembership: vaultSetMessageTagMembership,
   },
+  cacheKey: "message-tags",
   responseKey: "tags",
   queryToken: "tag",
-  changedEvent: MESSAGE_TAGS_CHANGED_EVENT,
   reservedNames: RESERVED_TAG_NAMES,
   reservedError: reservedTagError,
 });
@@ -62,9 +60,7 @@ export const tagFromSlug = groupFromSlug;
 /** Build the thread-list query for a tag page plus optional typed search. */
 export const tagListQuery = messageTags.listQuery;
 
-export const fetchMessageTags = messageTags.fetchAll;
-export const invalidateMessageTags = messageTags.invalidate;
-export const createMessageTag = messageTags.create;
-export const renameMessageTag = messageTags.rename;
-export const deleteMessageTag = messageTags.remove;
-export const setConversationTagMembership = messageTags.setMembership;
+/** Create, rename, delete, and set membership on Message Tags. */
+export function useMessageTagActions() {
+  return useNameCollectionActions(messageTags);
+}

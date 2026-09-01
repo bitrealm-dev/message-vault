@@ -9,12 +9,11 @@ import { apiErrorMessage } from "../lib/apiErrorMessage";
 import { getCachedContactDetail, updateCachedContactGroups } from "../lib/contactDetailCache";
 import {
   contactBelongsToGroup,
-  createContactGroup,
   GROUP_FILTER_TOKEN_RE,
   groupListQuery,
   hasGroupFilterToken,
-  setContactGroupMembership,
   UNKNOWN_GROUP,
+  useContactGroupActions,
 } from "../lib/contactGroups";
 import {
   type ContactNameSortState,
@@ -174,6 +173,7 @@ export default function ContactList({
   /** Unfiltered contact list, so group clicks can filter in the browser. */
   const fullCatalogRef = useRef<Contact[] | null>(null);
   const { groups: allGroups } = useContactGroups();
+  const groupActions = useContactGroupActions();
   const setRightToolbar = useSetRightToolbar();
 
   const onNameSortChange = (next: ContactNameSortState) => {
@@ -322,31 +322,34 @@ export default function ContactList({
     [allGroups, assignTargets, groupOverrides],
   );
 
-  const applyMembership = useCallback(async (name: string, enable: boolean) => {
-    const targets = assignTargetsRef.current;
-    const ids = targets.map((c) => Number(c.id)).filter((id) => Number.isFinite(id) && id > 0);
-    if (ids.length === 0) return;
-    const nextOverrides = { ...groupOverridesRef.current };
-    for (const c of targets) {
-      const groups = withGroupMembership(groupsForContact(c, nextOverrides), name, enable);
-      nextOverrides[c.id] = groups;
-      updateCachedContactGroups(c.id, groups);
-    }
-    groupOverridesRef.current = nextOverrides;
-    setGroupOverrides(nextOverrides);
-    try {
-      await setContactGroupMembership(ids, name, enable);
-    } catch {
-      const reverted = { ...groupOverridesRef.current };
+  const applyMembership = useCallback(
+    async (name: string, enable: boolean) => {
+      const targets = assignTargetsRef.current;
+      const ids = targets.map((c) => Number(c.id)).filter((id) => Number.isFinite(id) && id > 0);
+      if (ids.length === 0) return;
+      const nextOverrides = { ...groupOverridesRef.current };
       for (const c of targets) {
-        const groups = withGroupMembership(groupsForContact(c, reverted), name, !enable);
-        reverted[c.id] = groups;
+        const groups = withGroupMembership(groupsForContact(c, nextOverrides), name, enable);
+        nextOverrides[c.id] = groups;
         updateCachedContactGroups(c.id, groups);
       }
-      groupOverridesRef.current = reverted;
-      setGroupOverrides(reverted);
-    }
-  }, []);
+      groupOverridesRef.current = nextOverrides;
+      setGroupOverrides(nextOverrides);
+      try {
+        await groupActions.setMembership(ids, name, enable);
+      } catch {
+        const reverted = { ...groupOverridesRef.current };
+        for (const c of targets) {
+          const groups = withGroupMembership(groupsForContact(c, reverted), name, !enable);
+          reverted[c.id] = groups;
+          updateCachedContactGroups(c.id, groups);
+        }
+        groupOverridesRef.current = reverted;
+        setGroupOverrides(reverted);
+      }
+    },
+    [groupActions.setMembership],
+  );
 
   /** Drop every group on the selected contacts in one paint, then tell the server in parallel. */
   const clearAllMembership = useCallback(async () => {
@@ -367,7 +370,7 @@ export default function ContactList({
     groupOverridesRef.current = nextOverrides;
     setGroupOverrides(nextOverrides);
     const results = await Promise.allSettled(
-      [...names].map((name) => setContactGroupMembership(ids, name, false)),
+      [...names].map((name) => groupActions.setMembership(ids, name, false)),
     );
     const failed = [...names].filter((_, i) => results[i].status === "rejected");
     if (failed.length === 0) return;
@@ -381,7 +384,7 @@ export default function ContactList({
     }
     groupOverridesRef.current = reverted;
     setGroupOverrides(reverted);
-  }, []);
+  }, [groupActions.setMembership]);
 
   const menuDisabled = assignTargets.length === 0 && !groupsMenuOpen;
 
@@ -402,7 +405,7 @@ export default function ContactList({
           void (async () => {
             const existing = allGroups.find((g) => g.toLowerCase() === name.toLowerCase());
             if (!existing) {
-              await createContactGroup(name);
+              await groupActions.create(name);
             }
             await applyMembership(existing ?? name, true);
           })();
@@ -420,6 +423,7 @@ export default function ContactList({
     groupsMenuOpen,
     menuDisabled,
     setRightToolbar,
+    groupActions.create,
   ]);
 
   useEffect(() => () => setRightToolbar(null), [setRightToolbar]);

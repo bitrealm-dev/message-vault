@@ -17,7 +17,7 @@ import {
 } from "../lib/conversationSort";
 import { formatVisibleRange } from "../lib/listPaging";
 import { checksFromMembers } from "../lib/membershipChecks";
-import { createMessageTag, setConversationTagMembership } from "../lib/messageTags";
+import { useMessageTagActions } from "../lib/messageTags";
 import type { Conversation } from "../lib/types";
 import { useMessageTags } from "../lib/useMessageTags";
 import { listConversations } from "../lib/vaultApi";
@@ -34,6 +34,7 @@ export default function ConversationList({
   onSelect: (conversation: Conversation) => void;
   query: string;
 }) {
+  const tagActions = useMessageTagActions();
   const [debouncedQ, setDebouncedQ] = useState(query);
   const [visibleRange, setVisibleRange] = useState<VisibleRange>({ start: 0, end: 0 });
   const [checkedIds, setCheckedIds] = useState<Set<string>>(() => new Set());
@@ -124,7 +125,7 @@ export default function ConversationList({
         .map((c) => Number(c.id))
         .filter((id) => Number.isFinite(id) && id > 0);
       if (ids.length === 0) return;
-      await setConversationTagMembership(ids, name, enable);
+      await tagActions.setMembership(ids, name, enable);
       setTagOverrides((prev) => {
         const next = { ...prev };
         for (const c of targetConversations) {
@@ -141,7 +142,7 @@ export default function ConversationList({
         setMembershipRev((n) => n + 1);
       }
     },
-    [query, targetConversations],
+    [query, targetConversations, tagActions.setMembership],
   );
 
   useEffect(() => {
@@ -158,7 +159,7 @@ export default function ConversationList({
           void (async () => {
             const existing = allTags.find((t) => t.toLowerCase() === name.toLowerCase());
             if (!existing) {
-              await createMessageTag(name);
+              await tagActions.create(name);
             }
             await applyMembership(existing ?? name, true);
           })();
@@ -177,7 +178,14 @@ export default function ConversationList({
       />,
     );
     return () => setRightToolbar(null);
-  }, [allTags, applyMembership, setRightToolbar, tagChecks, targetConversations]);
+  }, [
+    allTags,
+    applyMembership,
+    setRightToolbar,
+    tagChecks,
+    targetConversations,
+    tagActions.create,
+  ]);
 
   const selectAllChecked =
     displayConversations.length > 0 && displayConversations.every((c) => checkedIds.has(c.id));

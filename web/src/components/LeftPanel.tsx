@@ -1,13 +1,7 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { canUseImportExportWithProfile } from "../lib/desktopFeatures";
-import {
-  createSavedSearch,
-  deleteSavedSearch,
-  type SavedSearch,
-  updateSavedSearch,
-  useSavedSearches,
-} from "../lib/savedSearches";
+import { type SavedSearch, useSavedSearchActions, useSavedSearches } from "../lib/savedSearches";
 import { isTauri } from "../lib/tauri-check";
 import { resizeHandleGutter } from "../lib/tw";
 import { useAccountProfile } from "../lib/useAccountProfile";
@@ -151,6 +145,7 @@ export default function LeftPanel({
   }
 
   const { savedSearches: groups } = useSavedSearches();
+  const savedSearchActions = useSavedSearchActions();
   const [showGroupForm, setShowGroupForm] = useState(false);
   const [editFor, setEditFor] = useState<SavedSearch | null>(null);
   const [menuFor, setMenuFor] = useState<number | null>(null);
@@ -311,7 +306,7 @@ export default function LeftPanel({
                       {
                         label: "Delete",
                         onSelect: () => {
-                          void deleteSavedSearch(g.id);
+                          void savedSearchActions.remove(g.id);
                         },
                       },
                     ]}
@@ -328,7 +323,7 @@ export default function LeftPanel({
       {showGroupForm ? (
         <SavedSearchForm
           onSave={(name, query) => {
-            void createSavedSearch(name, query);
+            void savedSearchActions.create(name, query);
             setShowGroupForm(false);
           }}
           onCancel={() => setShowGroupForm(false)}
@@ -339,7 +334,7 @@ export default function LeftPanel({
           key={editFor.id}
           initial={{ name: editFor.name, query: editFor.query }}
           onSave={(name, query) => {
-            void updateSavedSearch(editFor.id, name, query);
+            void savedSearchActions.update(editFor.id, name, query);
             setEditFor(null);
           }}
           onCancel={() => setEditFor(null)}

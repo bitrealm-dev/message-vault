@@ -1,7 +1,7 @@
 import { type ReactNode, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiErrorMessage } from "../lib/apiErrorMessage";
-import type { NameCollection } from "../lib/nameCollection";
+import { type NameCollection, useNameCollectionActions } from "../lib/nameCollection";
 import { Z_ROW_MENU } from "../lib/zLayers";
 import GroupNameDialog from "./GroupNameDialog";
 import { EllipsisIcon } from "./icons";
@@ -68,6 +68,7 @@ export default function NavEntityList({
 }) {
   const location = useLocation();
   const navigate = useNavigate();
+  const actions = useNameCollectionActions(collection);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -83,7 +84,7 @@ export default function NavEntityList({
     setBusy(true);
     setError(null);
     try {
-      const created = await collection.create(name);
+      const created = await actions.create(name);
       setCreateOpen(false);
       navigate(`${copy.routeBase}/${slug(created)}`);
     } catch (err) {
@@ -101,7 +102,7 @@ export default function NavEntityList({
     setBusy(true);
     setError(null);
     try {
-      const next = await collection.rename(from, to);
+      const next = await actions.rename(from, to);
       setRenameFor(null);
       if (location.pathname === `${copy.routeBase}/${slug(from)}`) {
         navigate(`${copy.routeBase}/${slug(next)}`);
@@ -118,7 +119,7 @@ export default function NavEntityList({
     setError(null);
     setMenuFor(null);
     try {
-      await collection.remove(name);
+      await actions.remove(name);
       if (location.pathname === `${copy.routeBase}/${slug(name)}`) {
         navigate(copy.fallbackRoute);
       }

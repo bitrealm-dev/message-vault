@@ -43,6 +43,20 @@ describe("useVaultQuery", () => {
   });
 
   it("does not hand one account the entry another account filled", async () => {
+    // A cache that keeps entries and treats them as fresh, which is the only
+    // condition under which the old shape could serve the wrong account. With
+    // entries collected on unmount the refetch happens anyway and the test
+    // would pass whether or not the key names the account.
+    client = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          gcTime: Number.POSITIVE_INFINITY,
+          staleTime: Number.POSITIVE_INFINITY,
+        },
+      },
+    });
+
     const fetchGroups = vi.fn(async () => ["Family"]);
     const first = renderHook(() => useVaultQuery(["contact-groups"], fetchGroups), { wrapper });
     await waitFor(() => expect(first.result.current.data).toEqual(["Family"]));
@@ -54,6 +68,7 @@ describe("useVaultQuery", () => {
     const second = renderHook(() => useVaultQuery(["contact-groups"], fetchGroups), { wrapper });
 
     await waitFor(() => expect(second.result.current.data).toEqual(["Work"]));
+    expect(second.result.current.data).not.toEqual(["Family"]);
     expect(fetchGroups).toHaveBeenCalledTimes(2);
   });
 

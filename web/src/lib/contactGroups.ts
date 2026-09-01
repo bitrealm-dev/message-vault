@@ -1,4 +1,4 @@
-import { createNameCollection } from "./nameCollection";
+import { createNameCollection, useNameCollectionActions } from "./nameCollection";
 import {
   createContactGroup as vaultCreateContactGroup,
   deleteContactGroup as vaultDeleteContactGroup,
@@ -64,8 +64,6 @@ export function reservedGroupError(name: string): string {
   return `"${name.trim()}" is a reserved group`;
 }
 
-export const CONTACT_GROUPS_CHANGED_EVENT = "mv-contact-groups-changed";
-
 export const contactGroups = createNameCollection({
   routes: {
     list: vaultListContactGroups,
@@ -74,9 +72,9 @@ export const contactGroups = createNameCollection({
     remove: vaultDeleteContactGroup,
     setMembership: vaultSetContactGroupMembership,
   },
+  cacheKey: "contact-groups",
   responseKey: "groups",
   queryToken: "group",
-  changedEvent: CONTACT_GROUPS_CHANGED_EVENT,
   reservedNames: RESERVED_GROUP_NAMES,
   reservedError: reservedGroupError,
 });
@@ -141,10 +139,7 @@ export function contactBelongsToGroup(
 /** Build the contact-list query for a group page plus optional typed search. */
 export const groupListQuery = contactGroups.listQuery;
 
-/** Load group names for the signed-in account. Reuses an in-flight request. */
-export const fetchContactGroups = contactGroups.fetchAll;
-export const invalidateContactGroups = contactGroups.invalidate;
-export const createContactGroup = contactGroups.create;
-export const renameContactGroup = contactGroups.rename;
-export const deleteContactGroup = contactGroups.remove;
-export const setContactGroupMembership = contactGroups.setMembership;
+/** Create, rename, delete, and set membership on Contact Groups. */
+export function useContactGroupActions() {
+  return useNameCollectionActions(contactGroups);
+}
