@@ -30,9 +30,7 @@ import {
 import { useCallback } from "react";
 import { useAuth } from "./auth";
 import { PAGE_SIZE_FILL, PAGE_SIZE_FIRST } from "./listPaging";
-
-/** A cache key, before the account is put in front of it. */
-export type VaultQueryKey = readonly unknown[];
+import { ANONYMOUS_ACCOUNT, type VaultQueryKey, vaultQueryKey } from "./vaultQueryKey";
 
 /**
  * Build the query client.
@@ -65,7 +63,7 @@ export function createVaultQueryClient(): QueryClient {
  */
 function useAccountScope(): string {
   const { accountId } = useAuth();
-  return accountId ?? "anonymous";
+  return accountId ?? ANONYMOUS_ACCOUNT;
 }
 
 /**
@@ -82,7 +80,7 @@ export function useVaultQuery<TData>(
 ): UseQueryResult<TData, Error> {
   const account = useAccountScope();
   return useQuery<TData, Error, TData>({
-    queryKey: ["vault", account, ...key],
+    queryKey: vaultQueryKey(account, key),
     queryFn: ({ signal }) => queryFn(signal),
     ...options,
   });
@@ -100,7 +98,7 @@ export function useVaultInvalidate(): (key: VaultQueryKey) => Promise<void> {
   const client = useQueryClient();
   const account = useAccountScope();
   return useCallback(
-    (key: VaultQueryKey) => client.invalidateQueries({ queryKey: ["vault", account, ...key] }),
+    (key: VaultQueryKey) => client.invalidateQueries({ queryKey: vaultQueryKey(account, key) }),
     [client, account],
   );
 }
@@ -117,7 +115,7 @@ export function useVaultSetCached(): <T>(key: VaultQueryKey, value: T) => void {
   const account = useAccountScope();
   return useCallback(
     <T>(key: VaultQueryKey, value: T) => {
-      client.setQueryData(["vault", account, ...key], value);
+      client.setQueryData(vaultQueryKey(account, key), value);
     },
     [client, account],
   );
@@ -178,7 +176,7 @@ export function useVaultPagedList<T>(
     unknown[],
     number
   >({
-    queryKey: ["vault", account, ...key],
+    queryKey: vaultQueryKey(account, key),
     initialPageParam: 0,
     queryFn: ({ pageParam, signal }) =>
       fetchPage({
@@ -211,3 +209,5 @@ export function useVaultPagedList<T>(
     },
   };
 }
+
+export type { VaultQueryKey };

@@ -46,7 +46,7 @@ import type {
   ImportIssueEvent,
   ImportProgressEvent,
 } from "../../lib/types";
-import { loadAccountProfile } from "../../lib/useAccountProfile";
+import { useFetchAccountProfile } from "../../lib/useAccountProfile";
 import { completeImport, createImport } from "../../lib/vaultApi";
 import { importSessionCreateBody } from "../../lib/vaultSource";
 import { whatsappExtractFields } from "../../lib/whatsappExtractFields";
@@ -419,6 +419,7 @@ export function parseStoredStagingSummary(raw: unknown): StagingSummary | undefi
 
 /** Run extract then upload for one import, and keep step progress for the UI. */
 export function useImportJob() {
+  const fetchAccountProfile = useFetchAccountProfile();
   const { token } = useAuth();
   const { run: runTauriJob, cancel } = useTauriJob();
   const [running, setRunning] = useState(false);
@@ -1236,7 +1237,7 @@ export function useImportJob() {
             backupPassword: form.backupPassword,
           }).catch(() => []);
           setSourceIdentities(identities);
-          const profile = await loadAccountProfile();
+          const profile = await fetchAccountProfile();
           if (needsIdentityStop(identities, profile)) {
             pendingIdentityFormRef.current = form;
             setPhase("identity_stop");

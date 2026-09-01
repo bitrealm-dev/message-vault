@@ -73,7 +73,10 @@ vi.mock("../../lib/tauri", () => ({
 }));
 
 vi.mock("../../lib/useAccountProfile", () => ({
-  loadAccountProfile: (...args: unknown[]) => loadAccountProfileMock(...args),
+  useFetchAccountProfile:
+    () =>
+    (...args: unknown[]) =>
+      loadAccountProfileMock(...args),
 }));
 
 vi.mock("../../hooks/useTauriJob", () => ({

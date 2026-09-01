@@ -141,14 +141,18 @@ nothing — the opposite of the pattern this decision removes.
   on `GET /v1/export/messages` and `GET /v1/export/messages/count`, which keep
   the prefix. The rename happens in the same pull request as the route
   functions, so those functions are written once against their final URLs.
-- The work lands as three pull requests, split for reviewability rather than to
-  avoid breaking anything. The first adds the generated types, the route
-  functions, and the drift check, renames the routes, and converts every call
-  site. The second adds TanStack Query and converts the `useResource` and
-  `usePagedList` screens. The third converts the four caches, deletes the browser
-  events, adds account-scoped cache keys, and closes the Saved Searches leak with
-  a test that signing in as a second account reads nothing belonging to the
-  first.
+- The work landed as four pull requests, split for reviewability rather than to
+  avoid breaking anything. The first added the generated types, the route
+  functions, and the drift check, renamed the routes, and converted every call
+  site. The second added TanStack Query and converted the `useResource` and
+  `usePagedList` screens. The third converted Contact Groups, Message Tags, and
+  Saved Searches, added account-scoped cache keys, and closed the Saved Searches
+  leak. The fourth converted the contact-detail and account-profile caches,
+  which needed restructuring rather than a swap: one was read during render and
+  written in place for optimistic group chips, and the other was loaded from
+  outside React during sign-in.
+- `auth.tsx` clears nothing by hand. Its two lists are one `queryClient.clear()`
+  in each path, which releases memory and nothing more.
 - `contact_id` on a conversation participant became an `i64`. It was the only
   contact id on the whole API sent as a string; every other shape — the contact
   list, one contact, a selection summary, an import's contacts, and the

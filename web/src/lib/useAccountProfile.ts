@@ -1,85 +1,23 @@
-import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useCallback } from "react";
 import type { AccountProfile } from "./account";
+import { useAuth } from "./auth";
 import { getAccountProfile } from "./vaultApi";
+import { useVaultQuery, useVaultSetCached } from "./vaultQuery";
+import { ANONYMOUS_ACCOUNT, vaultQueryKey } from "./vaultQueryKey";
 
 /**
- * One shared copy of `GET /v1/account/profile`.
+ * The signed-in account's profile.
  *
- * This used to be a per-hook fetch with a constant key, which shares nothing —
- * that shape holds its state per hook instance, so every mounted caller
- * issued its own request for the same endpoint. The state lives at module scope
- * instead, with concurrent callers joining the in-flight request, matching the
- * cache-and-dedupe shape already used by `contactDetailCache` and
- * `contactGroups`.
+ * This used to be a module-level store with its own in-flight guard, its own
+ * subscriber list, and a `clearAccountProfile` that `auth.tsx` had to remember
+ * to call on both sign-in and sign-out. All of that is TanStack Query's now,
+ * and the entry is named with the account, so nothing has to be cleared for
+ * one account to stop seeing another's profile.
  */
 
-type ProfileState = {
-  profile: AccountProfile | null;
-  loading: boolean;
-  error: string;
-};
-
-/** Loading until the first request settles, so guards do not act on a null profile. */
-let state: ProfileState = { profile: null, loading: true, error: "" };
-let inflight: Promise<AccountProfile | null> | null = null;
-let loaded = false;
-
-const listeners = new Set<() => void>();
-
-function setState(next: ProfileState): void {
-  state = next;
-  for (const listener of listeners) listener();
-}
-
-function subscribe(onStoreChange: () => void): () => void {
-  listeners.add(onStoreChange);
-  return () => {
-    listeners.delete(onStoreChange);
-  };
-}
-
-function getSnapshot(): ProfileState {
-  return state;
-}
-
-/**
- * Fetch the profile, sharing one request across callers. Returns the cached
- * value without a request unless `force` is set.
- */
-export function loadAccountProfile(force = false): Promise<AccountProfile | null> {
-  if (inflight) return inflight;
-  if (loaded && !force) return Promise.resolve(state.profile);
-
-  setState({ ...state, loading: true, error: "" });
-  inflight = getAccountProfile()
-    .then((profile) => {
-      loaded = true;
-      setState({ profile, loading: false, error: "" });
-      return profile;
-    })
-    .catch((e: unknown) => {
-      loaded = true;
-      setState({ profile: null, loading: false, error: String(e) });
-      return null;
-    })
-    .finally(() => {
-      inflight = null;
-    });
-  return inflight;
-}
-
-/** Apply a POST response without requesting the profile again. */
-export function setAccountProfile(profile: AccountProfile | null): void {
-  loaded = true;
-  setState({ profile, loading: false, error: "" });
-}
-
-/** Drop the cached profile. Call on sign-in and sign-out so it cannot outlive a session. */
-export function clearAccountProfile(): void {
-  loaded = false;
-  inflight = null;
-  setState({ profile: null, loading: true, error: "" });
-}
+/** Cache key parts, before the account is put in front of them. */
+export const ACCOUNT_PROFILE_KEY = ["account-profile"] as const;
 
 export function useAccountProfile(): {
   profile: AccountProfile | null;
@@ -88,21 +26,55 @@ export function useAccountProfile(): {
   error: string;
   reload: () => void;
 } {
-  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const setCached = useVaultSetCached();
+  const { data, isPending, error, refetch } = useVaultQuery(ACCOUNT_PROFILE_KEY, (signal) =>
+    getAccountProfile({ signal }),
+  );
 
-  useEffect(() => {
-    void loadAccountProfile();
-  }, []);
+  const setProfile = useCallback(
+    (profile: AccountProfile | null) => {
+      setCached(ACCOUNT_PROFILE_KEY, profile);
+    },
+    [setCached],
+  );
 
   const reload = useCallback(() => {
-    void loadAccountProfile(true);
-  }, []);
+    void refetch();
+  }, [refetch]);
 
   return {
-    profile: snapshot.profile,
-    setProfile: setAccountProfile,
-    loading: snapshot.loading,
-    error: snapshot.error,
+    profile: data ?? null,
+    setProfile,
+    loading: isPending,
+    error: error ? error.message : "",
     reload,
   };
+}
+
+/**
+ * Read the profile outside a render — during sign-in, and before an import
+ * decides whether the backup belongs to this person.
+ *
+ * `accountId` is passed explicitly because sign-in knows the account before the
+ * auth state carries it, and the entry has to land under the key the hook above
+ * will read.
+ */
+export function fetchAccountProfileFor(
+  client: ReturnType<typeof useQueryClient>,
+  accountId: string | null,
+  force = false,
+): Promise<AccountProfile | null> {
+  const key = vaultQueryKey(accountId ?? ANONYMOUS_ACCOUNT, ACCOUNT_PROFILE_KEY);
+  if (force) client.removeQueries({ queryKey: key });
+  return client.fetchQuery({ queryKey: key, queryFn: () => getAccountProfile() }).catch(() => null);
+}
+
+/** The same, for a caller that is already inside the signed-in tree. */
+export function useFetchAccountProfile(): (force?: boolean) => Promise<AccountProfile | null> {
+  const client = useQueryClient();
+  const { accountId } = useAuth();
+  return useCallback(
+    (force = false) => fetchAccountProfileFor(client, accountId, force),
+    [client, accountId],
+  );
 }

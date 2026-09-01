@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import {
-  type CachedContactDetail,
-  CONTACT_DETAIL_CHANGED_EVENT,
-  fetchContactDetail,
-  getCachedContactDetail,
-  invalidateContactDetail,
-} from "../lib/contactDetailCache";
-import { getContact, updateContact } from "../lib/vaultApi";
+import { type ContactDetail, useContactDetail, useContactDetailCache } from "../lib/contactDetail";
+import { updateContact } from "../lib/vaultApi";
 import Button from "./Button";
 import { ContactDrawerHandles } from "./contactDrawer/ContactDrawerHandles";
 import {
@@ -15,8 +9,6 @@ import {
   previewHandleStubRows,
 } from "./contactDrawer/contactDrawerTypes";
 import { PencilIcon } from "./icons";
-
-type ContactDetail = CachedContactDetail;
 
 /**
  * Overlay mode only: dock to the right edge of the list column.
@@ -90,7 +82,8 @@ export default function ContactDrawer({
   }) => void;
   variant?: "docked" | "overlay";
 }) {
-  const [detail, setDetail] = useState<ContactDetail | null>(null);
+  const detailCache = useContactDetailCache();
+  const { detail: matchedDetail } = useContactDetail(contactId);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
   const nameEditorRef = useRef<HTMLDivElement>(null);
@@ -98,14 +91,6 @@ export default function ContactDrawer({
   const savingNameRef = useRef(false);
   const drawerLeft = useDrawerLeft(variant === "overlay" && !!contactId);
 
-  // Prefer in-state detail only when it matches this contact; otherwise use cache
-  // during render so a cache hit never paints a loading flash.
-  const matchedDetail =
-    contactId && detail && String(detail.id) === String(contactId)
-      ? detail
-      : contactId
-        ? getCachedContactDetail(contactId)
-        : null;
   const detailMatches = !!matchedDetail;
   const previewMatches = !!contactId && !!preview && String(preview.id) === String(contactId);
   const matchedName = matchedDetail?.name;
@@ -118,57 +103,15 @@ export default function ContactDrawer({
   const loading = !detailMatches;
 
   const loadDetail = () => {
-    if (!contactId) return;
-    invalidateContactDetail(contactId);
-    void fetchContactDetail(contactId, (id, opts) => getContact(id, opts))
-      .then((next) => {
-        if (String(next.id) !== String(contactId)) return;
-        setDetail(next);
-      })
-      .catch(() => {
-        /* keep preview; detail stays unset */
-      });
+    if (contactId) detailCache.invalidate(contactId);
   };
 
+  // Opening a different contact resets the name editor. Loading the contact
+  // itself is the query's job, and the group chips a contact-list edit writes
+  // into the cache re-render here without an event to subscribe to.
   useEffect(() => {
     setEditingName(false);
-    if (!contactId) {
-      setDetail(null);
-      return;
-    }
-
-    const cached = getCachedContactDetail(contactId);
-    setDetail(cached);
-
-    const ac = new AbortController();
-    if (!cached) {
-      void fetchContactDetail(contactId, (id, opts) => getContact(id, opts), ac.signal)
-        .then((next) => {
-          if (ac.signal.aborted) return;
-          setDetail(next);
-        })
-        .catch(() => {
-          /* aborted or failed — preview still shown */
-        });
-    }
-    return () => ac.abort();
-  }, [contactId]);
-
-  useEffect(() => {
-    if (!contactId) return;
-    const onChange = (e: Event) => {
-      const ce = e as CustomEvent<{ id?: string; groups?: string[] }>;
-      if (String(ce.detail?.id) !== String(contactId)) return;
-      const groups = ce.detail?.groups;
-      if (!groups) return;
-      setDetail((prev) => {
-        if (!prev || String(prev.id) !== String(contactId)) return prev;
-        return { ...prev, groups };
-      });
-    };
-    globalThis.addEventListener(CONTACT_DETAIL_CHANGED_EVENT, onChange);
-    return () => globalThis.removeEventListener(CONTACT_DETAIL_CHANGED_EVENT, onChange);
-  }, [contactId]);
+  }, []);
 
   useEffect(() => {
     setNameValue(displayName === "Loading…" ? "" : displayName);

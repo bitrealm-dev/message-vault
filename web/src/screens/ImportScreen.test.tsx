@@ -5,12 +5,12 @@
 // may flash on screen while that check is in flight, and a vault that
 // can't answer falls through to the form rather than blocking it.
 
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ActiveImportSession } from "../lib/importSession";
 import type { StagingSummary } from "../lib/tauri";
-import { clearAccountProfile } from "../lib/useAccountProfile";
+import { mockedAuth, renderWithVault } from "../test/vaultProviders";
 import type { GateDelta } from "./import/gateDelta";
 import type { ResumeDecision } from "./import/resumeDecision";
 
@@ -95,6 +95,8 @@ vi.mock("../lib/tauri", () => ({
   invokePathStat: (...args: unknown[]) => invokePathStatMock(...args),
   invokeDeleteStaging: (...args: unknown[]) => invokeDeleteStagingMock(...args),
 }));
+
+vi.mock("../lib/auth", () => ({ useAuth: () => mockedAuth }));
 
 vi.mock("../lib/tauri-check", () => ({
   isTauri: () => false,
@@ -212,9 +214,6 @@ function deferred<T>() {
 
 describe("ImportScreen entering Import", () => {
   beforeEach(() => {
-    // useAccountProfile caches at module scope; without this, only the
-    // first test in this file ever reaches the profile GET mock below.
-    clearAccountProfile();
     hookState.phase = "form";
     hookState.gateSummary = null;
     hookState.gateDelta = null;
@@ -258,7 +257,7 @@ describe("ImportScreen entering Import", () => {
     const pending = deferred<ActiveImportSession | null>();
     getActiveImportSessionMock.mockReturnValue(pending.promise);
 
-    render(<ImportScreen />);
+    renderWithVault(<ImportScreen />);
 
     expect(screen.queryByTestId("import-form")).not.toBeInTheDocument();
     expect(screen.queryByTestId("resume-panel")).not.toBeInTheDocument();
@@ -273,7 +272,7 @@ describe("ImportScreen entering Import", () => {
 
   it("shows the form when there is no active session", async () => {
     getActiveImportSessionMock.mockResolvedValue(null);
-    render(<ImportScreen />);
+    renderWithVault(<ImportScreen />);
 
     expect(await screen.findByTestId("import-form")).toBeInTheDocument();
     expect(screen.queryByTestId("resume-panel")).not.toBeInTheDocument();
@@ -281,7 +280,7 @@ describe("ImportScreen entering Import", () => {
 
   it("falls through to the form when the vault cannot answer", async () => {
     getActiveImportSessionMock.mockRejectedValue(new Error("network down"));
-    render(<ImportScreen />);
+    renderWithVault(<ImportScreen />);
 
     expect(await screen.findByTestId("import-form")).toBeInTheDocument();
     expect(screen.queryByTestId("resume-panel")).not.toBeInTheDocument();
@@ -289,7 +288,7 @@ describe("ImportScreen entering Import", () => {
 
   it("shows the resume panel instead of the form for a resumable session", async () => {
     getActiveImportSessionMock.mockResolvedValue(session({ stage: "pushing" }));
-    render(<ImportScreen />);
+    renderWithVault(<ImportScreen />);
 
     expect(await screen.findByTestId("resume-panel")).toBeInTheDocument();
     expect(screen.getByTestId("resume-kind")).toHaveTextContent("resume_push");
@@ -299,7 +298,7 @@ describe("ImportScreen entering Import", () => {
   it("discards the session and drops through to the form", async () => {
     const user = userEvent.setup();
     getActiveImportSessionMock.mockResolvedValue(session({ stage: "pushing" }));
-    render(<ImportScreen />);
+    renderWithVault(<ImportScreen />);
 
     await screen.findByTestId("resume-panel");
     await user.click(screen.getByText("discard-action"));
@@ -321,7 +320,7 @@ describe("ImportScreen entering Import", () => {
         staging_dir: "/home/u/message-vault/staging-260830",
       }),
     );
-    render(<ImportScreen />);
+    renderWithVault(<ImportScreen />);
 
     await screen.findByTestId("resume-panel");
     await user.click(screen.getByText("discard-action"));
@@ -345,7 +344,7 @@ describe("ImportScreen entering Import", () => {
         staging_dir: "/home/u/message-vault/staging-260830",
       }),
     );
-    render(<ImportScreen />);
+    renderWithVault(<ImportScreen />);
 
     await screen.findByTestId("resume-panel");
     expect(screen.getByTestId("resume-kind")).toHaveTextContent("other_device");
@@ -383,7 +382,7 @@ describe("ImportScreen entering Import", () => {
         },
       }),
     );
-    render(<ImportScreen />);
+    renderWithVault(<ImportScreen />);
 
     await screen.findByTestId("resume-panel");
     await user.click(screen.getByText("resume-action"));
@@ -430,7 +429,7 @@ describe("ImportScreen entering Import", () => {
           form: restorableForm,
         }),
       );
-      render(<ImportScreen />);
+      renderWithVault(<ImportScreen />);
 
       await screen.findByTestId("resume-panel");
       expect(screen.getByTestId("resume-kind")).toHaveTextContent(kind);
@@ -461,7 +460,7 @@ describe("ImportScreen entering Import", () => {
     getActiveImportSessionMock.mockResolvedValue(
       session({ stage: "awaiting_gate_1", form: restorableForm }),
     );
-    const { rerender } = render(<ImportScreen />);
+    const { rerender } = renderWithVault(<ImportScreen />);
 
     await screen.findByTestId("resume-panel");
     expect(screen.getByTestId("resume-kind")).toHaveTextContent("resume_gate");
@@ -512,7 +511,7 @@ describe("ImportScreen entering Import", () => {
         },
       }),
     );
-    render(<ImportScreen />);
+    renderWithVault(<ImportScreen />);
 
     await screen.findByTestId("resume-panel");
     expect(screen.getByTestId("resume-kind")).toHaveTextContent("restart");
@@ -573,7 +572,7 @@ describe("ImportScreen entering Import", () => {
         sizeBytes: 1000,
         modifiedUnixMs: 1_700_000_000_000,
       });
-    render(<ImportScreen />);
+    renderWithVault(<ImportScreen />);
 
     expect(await screen.findByTestId("resume-panel")).toBeInTheDocument();
     expect(screen.getByTestId("resume-kind")).toHaveTextContent("resume_write");
@@ -613,7 +612,7 @@ describe("ImportScreen entering Import", () => {
         sizeBytes: 999_999,
         modifiedUnixMs: 1_700_000_000_000,
       });
-    render(<ImportScreen />);
+    renderWithVault(<ImportScreen />);
 
     expect(await screen.findByTestId("resume-panel")).toBeInTheDocument();
     expect(screen.getByTestId("resume-kind")).toHaveTextContent("source_changed");
@@ -624,7 +623,7 @@ describe("ImportScreen entering Import", () => {
     // leaves a session open server-side that the screen has forgotten. If
     // Back never re-checks, the user gets a form whose Import button 409s.
     getActiveImportSessionMock.mockResolvedValue(null);
-    const { rerender } = render(<ImportScreen />);
+    const { rerender } = renderWithVault(<ImportScreen />);
 
     expect(await screen.findByTestId("import-form")).toBeInTheDocument();
     expect(getActiveImportSessionMock).toHaveBeenCalledTimes(1);
@@ -682,7 +681,7 @@ describe("ImportScreen entering Import", () => {
     // second click lands on a live button.
     const pendingDiscard = deferred<void>();
     discardImportSessionMock.mockReturnValue(pendingDiscard.promise);
-    render(<ImportScreen />);
+    renderWithVault(<ImportScreen />);
 
     await screen.findByTestId("resume-panel");
     await user.click(screen.getByText("resume-action"));
@@ -705,7 +704,7 @@ describe("ImportScreen entering Import", () => {
     getActiveImportSessionMock.mockResolvedValue(
       session({ stage: "pushing", form: { nonsense: true } }),
     );
-    render(<ImportScreen />);
+    renderWithVault(<ImportScreen />);
 
     await screen.findByTestId("resume-panel");
     expect(screen.getByTestId("resume-kind")).toHaveTextContent("resume_push");
@@ -719,7 +718,7 @@ describe("ImportScreen entering Import", () => {
     const user = userEvent.setup();
     getActiveImportSessionMock.mockResolvedValue(session({ stage: "pushing" }));
     discardImportSessionMock.mockRejectedValue(new Error("network down"));
-    render(<ImportScreen />);
+    renderWithVault(<ImportScreen />);
 
     await screen.findByTestId("resume-panel");
     await user.click(screen.getByText("discard-action"));
@@ -755,7 +754,7 @@ describe("ImportScreen entering Import", () => {
       }),
     );
     discardImportSessionMock.mockRejectedValue(new Error("network down"));
-    render(<ImportScreen />);
+    renderWithVault(<ImportScreen />);
 
     await screen.findByTestId("resume-panel");
     await user.click(screen.getByText("resume-action"));
@@ -770,9 +769,6 @@ describe("ImportScreen entering Import", () => {
 
 describe("ImportScreen gates", () => {
   beforeEach(() => {
-    // useAccountProfile caches at module scope; without this, only the
-    // first test in this file ever reaches the profile GET mock below.
-    clearAccountProfile();
     hookState.phase = "form";
     hookState.gateSummary = null;
     hookState.gateDelta = null;
@@ -813,7 +809,7 @@ describe("ImportScreen gates", () => {
     hookState.phase = "gate_1";
     hookState.gateSummary = stagingSummary({ contactIdentifiers: ["+15551234567"] });
     const user = userEvent.setup();
-    render(<ImportScreen />);
+    renderWithVault(<ImportScreen />);
 
     expect(await screen.findByTestId("gate-one")).toBeInTheDocument();
     expect(screen.queryByTestId("import-form")).not.toBeInTheDocument();
@@ -830,7 +826,7 @@ describe("ImportScreen gates", () => {
     hookState.gateSummary = stagingSummary();
     hookState.gateDelta = { lostCount: 0, stillFlagged: [], cameOutFine: 0, hasChanges: false };
     const user = userEvent.setup();
-    render(<ImportScreen />);
+    renderWithVault(<ImportScreen />);
 
     expect(await screen.findByTestId("gate-two")).toBeInTheDocument();
 
@@ -845,7 +841,7 @@ describe("ImportScreen gates", () => {
     hookState.phase = "gate_1";
     hookState.gateSummary = stagingSummary({ contactIdentifiers: ["a", "b", "c"] });
     apiPostMock.mockResolvedValue({ unknown: ["a", "c"] });
-    render(<ImportScreen />);
+    renderWithVault(<ImportScreen />);
 
     await screen.findByTestId("gate-one");
     await act(async () => {
@@ -863,7 +859,7 @@ describe("ImportScreen gates", () => {
     hookState.gateSummary = stagingSummary({ contactIdentifiers: identifiers });
     apiPostMock.mockResolvedValueOnce({ unknown: Array(400).fill("x") });
     apiPostMock.mockResolvedValueOnce({ unknown: Array(30).fill("y") });
-    render(<ImportScreen />);
+    renderWithVault(<ImportScreen />);
 
     await screen.findByTestId("gate-one");
     await act(async () => {
@@ -882,7 +878,7 @@ describe("ImportScreen gates", () => {
     hookState.phase = "gate_1";
     hookState.gateSummary = stagingSummary({ contactIdentifiers: ["a"] });
     apiPostMock.mockRejectedValue(new Error("network down"));
-    render(<ImportScreen />);
+    renderWithVault(<ImportScreen />);
 
     await screen.findByTestId("gate-one");
     await act(async () => {
@@ -895,7 +891,7 @@ describe("ImportScreen gates", () => {
   it("shows the identity stop screen for the identity_stop phase", async () => {
     hookState.phase = "identity_stop";
     hookState.sourceIdentities = ["+15550001111"];
-    render(<ImportScreen />);
+    renderWithVault(<ImportScreen />);
 
     expect(
       await screen.findByText("None of the addresses this backup sent from are on your profile."),
@@ -907,7 +903,7 @@ describe("ImportScreen gates", () => {
     hookState.sourceIdentities = ["+15550001111"];
     apiPostMock.mockRejectedValue(new Error("network down"));
     const user = userEvent.setup();
-    render(<ImportScreen />);
+    renderWithVault(<ImportScreen />);
 
     await user.click(await screen.findByText("Add to profile"));
 

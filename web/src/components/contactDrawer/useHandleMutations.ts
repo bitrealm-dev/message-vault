@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { CachedContactHandle } from "../../lib/contactDetailCache";
+import type { ContactHandle } from "../../lib/contactDetail";
 import { updateContact } from "../../lib/vaultApi";
 import { formatHandleServiceLabel, handleServiceSelectValue } from "./contactDrawerTypes";
 import { conversationCount, type RemoveIdentityTarget } from "./handleTableLogic";
@@ -24,7 +24,7 @@ export function useHandleMutations({
     setRemoveTarget(null);
   }, [contactId]);
 
-  const requestRemoveHandle = (h: CachedContactHandle) => {
+  const requestRemoveHandle = (h: ContactHandle) => {
     if (busy) return;
     setRemoveTarget({
       handle: h.handle,

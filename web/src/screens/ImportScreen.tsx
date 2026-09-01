@@ -32,7 +32,7 @@ import {
 } from "../lib/tauri";
 import { isTauri } from "../lib/tauri-check";
 import type { AttachmentMediaMode, ContactNameMode } from "../lib/types";
-import { loadAccountProfile, useAccountProfile } from "../lib/useAccountProfile";
+import { useAccountProfile, useFetchAccountProfile } from "../lib/useAccountProfile";
 import { matchContacts, updateAccountProfile } from "../lib/vaultApi";
 import {
   emptyWhatsappPathStats,
@@ -90,6 +90,7 @@ async function probePath(path: string): Promise<PathStat | null> {
 }
 
 export default function ImportScreen() {
+  const fetchAccountProfile = useFetchAccountProfile();
   const {
     phase,
     steps,
@@ -422,7 +423,7 @@ export default function ImportScreen() {
     setProfilePhonesError(false);
     void (async () => {
       try {
-        const profile = await loadAccountProfile();
+        const profile = await fetchAccountProfile();
         if (cancelled) return;
         if (!profile) throw new Error("profile unavailable");
         setProfilePhones([...profile.phones]);
@@ -445,7 +446,7 @@ export default function ImportScreen() {
     return () => {
       cancelled = true;
     };
-  }, [source]);
+  }, [source, fetchAccountProfile]);
 
   useEffect(() => {
     return () => {

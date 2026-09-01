@@ -6,7 +6,7 @@ import GroupsMenu from "../components/GroupsMenu";
 import InfiniteOffsetList from "../components/InfiniteOffsetList";
 import { useSetRightToolbar } from "../components/useRightToolbar";
 import { apiErrorMessage } from "../lib/apiErrorMessage";
-import { getCachedContactDetail, updateCachedContactGroups } from "../lib/contactDetailCache";
+import { useContactDetailCache } from "../lib/contactDetail";
 import {
   contactBelongsToGroup,
   GROUP_FILTER_TOKEN_RE,
@@ -128,8 +128,12 @@ function normalizeContacts(rows: ContactsPage["contacts"] | undefined): Contact[
 }
 
 /** Prefer a local override, then the open-drawer cache, then the list row. */
-function groupsForContact(c: Contact, overrides: Record<string, string[]>): string[] {
-  return overrides[c.id] ?? getCachedContactDetail(c.id)?.groups ?? c.groups ?? [];
+function groupsForContact(
+  c: Contact,
+  overrides: Record<string, string[]>,
+  readCached: (id: string) => { groups?: string[] } | null,
+): string[] {
+  return overrides[c.id] ?? readCached(c.id)?.groups ?? c.groups ?? [];
 }
 
 /** Add or remove one group name, matching letter case the same way the list does. */
@@ -174,6 +178,7 @@ export default function ContactList({
   const fullCatalogRef = useRef<Contact[] | null>(null);
   const { groups: allGroups } = useContactGroups();
   const groupActions = useContactGroupActions();
+  const detailCache = useContactDetailCache();
   const setRightToolbar = useSetRightToolbar();
 
   const onNameSortChange = (next: ContactNameSortState) => {
@@ -317,9 +322,9 @@ export default function ContactList({
     () =>
       checksFromMembers(
         allGroups,
-        assignTargets.map((c) => groupsForContact(c, groupOverrides)),
+        assignTargets.map((c) => groupsForContact(c, groupOverrides, detailCache.read)),
       ),
-    [allGroups, assignTargets, groupOverrides],
+    [allGroups, assignTargets, groupOverrides, detailCache.read],
   );
 
   const applyMembership = useCallback(
@@ -329,9 +334,13 @@ export default function ContactList({
       if (ids.length === 0) return;
       const nextOverrides = { ...groupOverridesRef.current };
       for (const c of targets) {
-        const groups = withGroupMembership(groupsForContact(c, nextOverrides), name, enable);
+        const groups = withGroupMembership(
+          groupsForContact(c, nextOverrides, detailCache.read),
+          name,
+          enable,
+        );
         nextOverrides[c.id] = groups;
-        updateCachedContactGroups(c.id, groups);
+        detailCache.setGroups(c.id, groups);
       }
       groupOverridesRef.current = nextOverrides;
       setGroupOverrides(nextOverrides);
@@ -340,15 +349,19 @@ export default function ContactList({
       } catch {
         const reverted = { ...groupOverridesRef.current };
         for (const c of targets) {
-          const groups = withGroupMembership(groupsForContact(c, reverted), name, !enable);
+          const groups = withGroupMembership(
+            groupsForContact(c, reverted, detailCache.read),
+            name,
+            !enable,
+          );
           reverted[c.id] = groups;
-          updateCachedContactGroups(c.id, groups);
+          detailCache.setGroups(c.id, groups);
         }
         groupOverridesRef.current = reverted;
         setGroupOverrides(reverted);
       }
     },
-    [groupActions.setMembership],
+    [groupActions.setMembership, detailCache.read, detailCache.setGroups],
   );
 
   /** Drop every group on the selected contacts in one paint, then tell the server in parallel. */
@@ -360,11 +373,11 @@ export default function ContactList({
     const names = new Set<string>();
     const nextOverrides = { ...groupOverridesRef.current };
     for (const c of targets) {
-      const current = groupsForContact(c, nextOverrides);
+      const current = groupsForContact(c, nextOverrides, detailCache.read);
       priorById[c.id] = current;
       for (const g of current) names.add(g);
       nextOverrides[c.id] = [];
-      updateCachedContactGroups(c.id, []);
+      detailCache.setGroups(c.id, []);
     }
     if (names.size === 0) return;
     groupOverridesRef.current = nextOverrides;
@@ -380,11 +393,11 @@ export default function ContactList({
         failed.some((name) => name.toLowerCase() === g.toLowerCase()),
       );
       reverted[c.id] = groups;
-      updateCachedContactGroups(c.id, groups);
+      detailCache.setGroups(c.id, groups);
     }
     groupOverridesRef.current = reverted;
     setGroupOverrides(reverted);
-  }, [groupActions.setMembership]);
+  }, [groupActions.setMembership, detailCache.setGroups, detailCache.read]);
 
   const menuDisabled = assignTargets.length === 0 && !groupsMenuOpen;
 

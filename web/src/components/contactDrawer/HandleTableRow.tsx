@@ -1,5 +1,5 @@
 import { Cell, Row } from "react-aria-components";
-import type { CachedContactHandle } from "../../lib/contactDetailCache";
+import type { ContactHandle } from "../../lib/contactDetail";
 import Button from "../Button";
 import { TrashIcon } from "../icons";
 import {
@@ -18,12 +18,12 @@ const tdGroupMessagesClass = `${tdRightClass} relative !pr-9`;
 
 /** Returns a RAC `Row` element (must stay a direct TableBody child). */
 export function renderHandleTableRow(
-  h: CachedContactHandle & { id: string },
+  h: ContactHandle & { id: string },
   opts: {
     busy: boolean;
     loading: boolean;
     onBrowse?: BrowseFn;
-    onRequestRemove: (h: CachedContactHandle) => void;
+    onRequestRemove: (h: ContactHandle) => void;
   },
 ) {
   const convos = conversationCount(h);
@@ -89,7 +89,7 @@ export function renderHandleTableRow(
 }
 
 export function renderHandleSummaryRow(
-  totals: CachedContactHandle,
+  totals: ContactHandle,
   onBrowse?: BrowseFn,
   loading = false,
 ) {

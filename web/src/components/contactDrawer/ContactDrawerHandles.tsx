@@ -8,7 +8,7 @@ import {
   TableBody,
   TableHeader,
 } from "react-aria-components";
-import type { CachedContactDetail, CachedContactHandle } from "../../lib/contactDetailCache";
+import type { ContactDetail, ContactHandle } from "../../lib/contactDetail";
 import Button from "../Button";
 import ConfirmDialog from "../ConfirmDialog";
 import DataCard, { dataCardHeaderRowClass } from "../DataCard";
@@ -52,7 +52,7 @@ type ColumnSize = {
 };
 
 function collectColumnWidths(
-  handleRows: CachedContactDetail["handles"],
+  handleRows: ContactDetail["handles"],
   loading: boolean,
 ): {
   service: ColumnSize;
@@ -130,7 +130,7 @@ export function ContactDrawerHandles({
   toolbarExtra,
 }: {
   contactId: string;
-  handleRows: CachedContactDetail["handles"];
+  handleRows: ContactDetail["handles"];
   loading: boolean;
   onHandlesChanged: () => void;
   onBrowse?: BrowseFn;
@@ -158,7 +158,7 @@ export function ContactDrawerHandles({
     [handleRows, loading],
   );
   const sortedRows = useMemo(() => {
-    type RowItem = CachedContactHandle & { id: string };
+    type RowItem = ContactHandle & { id: string };
     const rows: RowItem[] = handleRows.map((h, i) => ({
       ...h,
       id: `${h.handle}-${i}`,
@@ -180,7 +180,7 @@ export function ContactDrawerHandles({
     setSortDescriptor(null);
   }, [contactId]);
 
-  const footerAsHandle: CachedContactHandle = {
+  const footerAsHandle: ContactHandle = {
     ...emptyHandleRow(""),
     ...totals,
   };
