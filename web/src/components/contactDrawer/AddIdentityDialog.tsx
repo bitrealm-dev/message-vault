@@ -19,7 +19,7 @@ const selectTriggerClass =
 const selectValueClass = "!text-[0.875rem] !font-normal !leading-none";
 
 function identityAlreadyExists(
-  existing: { handle: string; service: string | null }[],
+  existing: { handle: string; service?: string | null }[],
   handle: string,
   service: string,
 ): boolean {
@@ -45,7 +45,7 @@ export default function AddIdentityDialog({
   busy?: boolean;
   /** Why the last submit failed. The dialog stays open so it can be retried. */
   error?: string;
-  existingHandles?: { handle: string; service: string | null }[];
+  existingHandles?: { handle: string; service?: string | null }[];
   onClose: () => void;
   onConfirm: (args: { handle: string; service: string }) => void;
 }) {

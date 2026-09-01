@@ -80,11 +80,13 @@ vi.mock("../lib/deviceId", () => ({
   getDeviceId: () => "this-device",
 }));
 
-vi.mock("../lib/api", () => ({
-  apiClient: {
-    post: (...args: unknown[]) => apiPostMock(...args),
-    get: (...args: unknown[]) => apiGetMock(...args),
-  },
+// The three vault calls this screen makes, faked by name. The rest of
+// vaultApi stays real, since other modules in this graph import from it.
+vi.mock("../lib/vaultApi", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/vaultApi")>()),
+  matchContacts: (...args: unknown[]) => apiPostMock(...args),
+  updateAccountProfile: (...args: unknown[]) => apiPostMock(...args),
+  getAccountProfile: (...args: unknown[]) => apiGetMock(...args),
 }));
 
 vi.mock("../lib/tauri", () => ({
@@ -851,9 +853,7 @@ describe("ImportScreen gates", () => {
     });
 
     expect(apiPostMock).toHaveBeenCalledTimes(1);
-    expect(apiPostMock).toHaveBeenCalledWith("/v1/contacts/match", {
-      identifiers: ["a", "b", "c"],
-    });
+    expect(apiPostMock).toHaveBeenCalledWith({ identifiers: ["a", "b", "c"] });
     expect(screen.getByTestId("gate-one-unknown-contacts")).toHaveTextContent("2");
   });
 
@@ -872,7 +872,7 @@ describe("ImportScreen gates", () => {
     });
 
     expect(apiPostMock).toHaveBeenCalledTimes(2);
-    const bodies = apiPostMock.mock.calls.map(([, body]) => body as { identifiers: string[] });
+    const bodies = apiPostMock.mock.calls.map(([body]) => body as { identifiers: string[] });
     expect(bodies[0]?.identifiers).toHaveLength(500);
     expect(bodies[1]?.identifiers).toHaveLength(120);
     expect(screen.getByTestId("gate-one-unknown-contacts")).toHaveTextContent("430");

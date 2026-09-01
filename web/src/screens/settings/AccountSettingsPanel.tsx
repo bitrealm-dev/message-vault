@@ -1,8 +1,8 @@
 import { useState } from "react";
 import Button from "../../components/Button";
-import { apiClient } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { useAccountProfile } from "../../lib/useAccountProfile";
+import { changePassword } from "../../lib/vaultApi";
 import { AddressBookSection } from "./AddressBookSection";
 import { ApiTokensSection } from "./ApiTokensSection";
 import { ProfileDangerZone } from "./ProfileDangerZone";
@@ -41,7 +41,7 @@ export function AccountSettingsPanel() {
       return;
     }
     try {
-      const res = await apiClient.post<{ ok: boolean; token: string }>("/v1/auth/change-password", {
+      const res = await changePassword({
         current_password: currentPw,
         new_password: newPw,
       });

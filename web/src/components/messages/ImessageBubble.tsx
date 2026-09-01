@@ -44,7 +44,7 @@ export default function ImessageBubble({
 
   return (
     <ChatBubbleRow
-      messageId={message.id}
+      messageId={String(message.id)}
       mine={mine}
       isActive={isActive}
       palette="imessage"

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import { apiClient } from "./api";
 import { useAuth } from "./auth";
 
 /**
@@ -11,12 +10,23 @@ import { useAuth } from "./auth";
  * re-exporting `contactGroups`' slug helpers verbatim.
  */
 
+/** The four vault calls one of these collections is built from. */
+export type NameCollectionRoutes = {
+  list: (opts?: { signal?: AbortSignal }) => Promise<Record<string, unknown>>;
+  create: (body: { name: string }) => Promise<Record<string, unknown>>;
+  rename: (body: { from: string; to: string }) => Promise<Record<string, unknown>>;
+  remove: (body: { name: string }) => Promise<Record<string, unknown>>;
+  setMembership: (body: {
+    ids: number[];
+    name: string;
+    enable: boolean;
+  }) => Promise<{ changed: number }>;
+};
+
 export type NameCollectionConfig = {
-  /** Collection endpoint, e.g. `/v1/contact-groups`. */
-  endpoint: string;
-  /** Membership endpoint, e.g. `/v1/contacts/groups`. */
-  membershipEndpoint: string;
-  /** Key holding the name array in every response from `endpoint`. */
+  /** The vault calls this collection is made of. */
+  routes: NameCollectionRoutes;
+  /** Key holding the name array in every list or mutation response. */
   responseKey: string;
   /** Search token used in list queries, e.g. `group` for `group:Family`. */
   queryToken: string;
@@ -63,8 +73,8 @@ export function createNameCollection(config: NameCollectionConfig): NameCollecti
   async function fetchAll(signal?: AbortSignal): Promise<string[]> {
     if (cached !== null && !signal) return cached;
     if (inflight && !signal) return inflight;
-    const req = apiClient
-      .get<Record<string, unknown>>(config.endpoint, { signal })
+    const req = config.routes
+      .list({ signal })
       .then((res) => {
         const names = namesFrom(res);
         cached = names;
@@ -81,31 +91,27 @@ export function createNameCollection(config: NameCollectionConfig): NameCollecti
     const trimmed = name.trim();
     if (!trimmed) throw new Error("name required");
     if (isReserved(trimmed)) throw new Error(config.reservedError(trimmed));
-    const res = await apiClient.post<Record<string, unknown>>(config.endpoint, { name: trimmed });
+    const res = await config.routes.create({ name: trimmed });
     cached = namesFrom(res);
     notifyChanged();
     return String(res.name);
   }
 
   async function rename(from: string, to: string): Promise<string> {
-    const res = await apiClient.patch<Record<string, unknown>>(config.endpoint, { from, to });
+    const res = await config.routes.rename({ from, to });
     cached = namesFrom(res);
     notifyChanged();
     return String(res.name);
   }
 
   async function remove(name: string): Promise<void> {
-    const res = await apiClient.delete<Record<string, unknown>>(config.endpoint, { name });
+    const res = await config.routes.remove({ name });
     cached = namesFrom(res);
     notifyChanged();
   }
 
   async function setMembership(ids: number[], name: string, enable: boolean): Promise<number> {
-    const res = await apiClient.post<{ changed: number }>(config.membershipEndpoint, {
-      ids,
-      name,
-      enable,
-    });
+    const res = await config.routes.setMembership({ ids, name, enable });
     notifyChanged();
     return res.changed;
   }

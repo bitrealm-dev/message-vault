@@ -12,7 +12,8 @@
     "format": "biome check --write --linter-enabled=false .",
     "format:check": "biome check --linter-enabled=false .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "gen:api": "npx --yes openapi-typescript@7.13.0 ../docs/src/assets/openapi.json -o src/lib/vaultApi.types.ts"
   },
   "dependencies": {
     "@internationalized/date": "^3.12.3",

@@ -2,23 +2,24 @@
 
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { apiClient } from "../../lib/api";
 import type { Message } from "../../lib/types";
+import { countExportMessages, exportMessages } from "../../lib/vaultApi";
 import {
   buildFooterLabel,
   conversationYears,
   useConversationMessages,
 } from "./useConversationMessages";
 
-vi.mock("../../lib/api", () => ({
-  apiClient: {
-    get: vi.fn(),
-  },
+vi.mock("../../lib/vaultApi", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/vaultApi")>()),
+  exportMessages: vi.fn(),
+  countExportMessages: vi.fn(),
 }));
 
-const get = vi.mocked(apiClient.get);
+const getMessages = vi.mocked(exportMessages);
+const getCount = vi.mocked(countExportMessages);
 
-function message(id: string): Message {
+function message(id: number): Message {
   return {
     id,
     source: "test",
@@ -29,9 +30,13 @@ function message(id: string): Message {
     is_from_me: false,
     sender: "someone",
     subject: null,
-    text: id,
+    text: `from-${id}`,
+    is_announcement: false,
+    is_reply: false,
+    num_replies: 0,
+    sort_order: id,
     conversation: {
-      id: "c",
+      id: 1,
       chat_identifier: "c",
       conversation_type: "direct",
       group_title: null,
@@ -55,19 +60,19 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-/** Route the mocked client: conversation A hangs on `slow`, conversation B answers at once. */
+/** Route the mocked calls: conversation A hangs on `slow`, conversation B answers at once. */
 function routeGets(slow: Promise<{ messages: Message[] }>) {
-  const impl = (path: string) => {
-    if (path.includes("/count")) return Promise.resolve({ messages: 1 });
-    if (path.includes("in%3AA")) return slow;
-    return Promise.resolve({ messages: [message("from-B")] });
-  };
-  get.mockImplementation(impl as unknown as typeof apiClient.get);
+  getCount.mockResolvedValue({ messages: 1 } as never);
+  getMessages.mockImplementation(((params: { q: string }) =>
+    params.q.includes("in:A")
+      ? slow
+      : Promise.resolve({ messages: [message(2)] })) as unknown as typeof exportMessages);
 }
 
 describe("useConversationMessages", () => {
   beforeEach(() => {
-    get.mockReset();
+    getMessages.mockReset();
+    getCount.mockReset();
   });
 
   it("ignores a slow response from the conversation the user navigated away from", async () => {
@@ -80,14 +85,14 @@ describe("useConversationMessages", () => {
     );
 
     rerender({ id: "B" });
-    await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual(["from-B"]));
+    await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual([2]));
 
     await act(async () => {
-      slow.resolve({ messages: [message("from-A")] });
+      slow.resolve({ messages: [message(1)] });
       await slow.promise;
     });
 
-    expect(result.current.messages.map((m) => m.id)).toEqual(["from-B"]);
+    expect(result.current.messages.map((m) => m.id)).toEqual([2]);
     expect(result.current.loading).toBe(false);
   });
 
@@ -101,7 +106,7 @@ describe("useConversationMessages", () => {
     );
 
     rerender({ id: "B" });
-    await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual(["from-B"]));
+    await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual([2]));
 
     // The abort surfaces as a rejection; it must not blank B's messages.
     await act(async () => {
@@ -109,7 +114,7 @@ describe("useConversationMessages", () => {
       await slow.promise.catch(() => {});
     });
 
-    expect(result.current.messages.map((m) => m.id)).toEqual(["from-B"]);
+    expect(result.current.messages.map((m) => m.id)).toEqual([2]);
     expect(result.current.loading).toBe(false);
   });
 });

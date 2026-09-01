@@ -8,8 +8,8 @@ import {
   TableBody,
   TableHeader,
 } from "react-aria-components";
-import { apiClient } from "../lib/api";
 import { getCachedContactDetail } from "../lib/contactDetailCache";
+import { getContactSummaries } from "../lib/vaultApi";
 import Button from "./Button";
 import { type ContactPreview, sumHandleTotals } from "./contactDrawer/contactDrawerTypes";
 import { CountCell, SortableColumn } from "./contactDrawer/handleTableHelpers";
@@ -37,10 +37,6 @@ type ContactSelectionSummary = {
   group_conversations: number;
   individual_message_count: number;
   group_message_count: number;
-};
-
-type ContactSummariesPage = {
-  contacts: ContactSelectionSummary[];
 };
 
 type RowMetrics = {
@@ -140,15 +136,7 @@ export default function CheckedContactsPanel({
     if (batches.length === 0) {
       return () => ac.abort();
     }
-    void Promise.all(
-      batches.map((ids) =>
-        apiClient.post<ContactSummariesPage>(
-          "/v1/export/contacts/summaries",
-          { ids },
-          { signal: ac.signal },
-        ),
-      ),
-    )
+    void Promise.all(batches.map((ids) => getContactSummaries({ ids }, { signal: ac.signal })))
       .then((pages) => {
         if (ac.signal.aborted) return;
         setMetrics((prev) => {

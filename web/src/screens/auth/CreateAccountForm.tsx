@@ -4,10 +4,10 @@ import AuthSubmitButton from "../../components/AuthSubmitButton";
 import { LockIcon, PersonIcon } from "../../components/icons";
 import PasswordField from "../../components/PasswordField";
 import TextField from "../../components/TextField";
-import { apiClient, setBaseUrl } from "../../lib/api";
+import { setBaseUrl } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
-import type { SessionResponse } from "../../lib/authGuards";
 import { useAsyncAction } from "../../lib/useAsyncAction";
+import { register as registerAccount } from "../../lib/vaultApi";
 
 /**
  * New vault account: username plus the password twice.
@@ -51,7 +51,7 @@ export default function CreateAccountForm({
 
       const url = serverUrl.trim();
       setBaseUrl(url);
-      const res = await apiClient.post<SessionResponse>("/v1/auth/register", {
+      const res = await registerAccount({
         username: username.trim(),
         password,
         preferred_name: null,

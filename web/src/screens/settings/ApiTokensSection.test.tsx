@@ -8,13 +8,11 @@ import { ApiTokensSection } from "./ApiTokensSection";
 const apiGet = vi.hoisted(() => vi.fn());
 const apiPost = vi.hoisted(() => vi.fn());
 
-vi.mock("../../lib/api", () => ({
-  apiClient: {
-    get: (...args: unknown[]) => apiGet(...args),
-    post: (...args: unknown[]) => apiPost(...args),
-    patch: vi.fn(),
-    delete: vi.fn(),
-  },
+vi.mock("../../lib/vaultApi", () => ({
+  listApiTokens: (...args: unknown[]) => apiGet(...args),
+  createApiToken: (...args: unknown[]) => apiPost(...args),
+  renameApiToken: vi.fn(),
+  deleteApiToken: vi.fn(),
 }));
 
 afterEach(() => {
@@ -63,8 +61,7 @@ describe("ApiTokensSection create form", () => {
     await waitFor(() => {
       expect(apiPost).toHaveBeenCalledTimes(1);
     });
-    const [path, body] = apiPost.mock.calls[0] as [string, unknown];
-    expect(path).toBe("/v1/account/api-tokens");
+    const [body] = apiPost.mock.calls[0] as [unknown];
     expect(body).toEqual({
       label: "My token",
       can_import: true,
@@ -93,7 +90,7 @@ describe("ApiTokensSection create form", () => {
     await waitFor(() => {
       expect(apiPost).toHaveBeenCalledTimes(1);
     });
-    expect(apiPost.mock.calls[0][1]).toEqual({
+    expect(apiPost.mock.calls[0][0]).toEqual({
       label: "Destroyer",
       can_import: true,
       can_export: true,
@@ -157,7 +154,7 @@ describe("ApiTokensSection create form", () => {
     await waitFor(() => {
       expect(apiPost).toHaveBeenCalledTimes(1);
     });
-    expect(apiPost.mock.calls[0][1]).toEqual({
+    expect(apiPost.mock.calls[0][0]).toEqual({
       label: "No import",
       can_import: false,
       can_export: true,

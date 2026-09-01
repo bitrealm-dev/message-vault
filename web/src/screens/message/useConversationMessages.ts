@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiClient } from "../../lib/api";
 import type { Message } from "../../lib/types";
+import { countExportMessages, exportMessages } from "../../lib/vaultApi";
 
 /** Page size for full-conversation browsing. */
 export const PAGE_SIZE = 50;
@@ -54,20 +54,14 @@ async function fetchAllMessagesForQuery(
   q: string,
   signal: AbortSignal,
 ): Promise<{ messages: Message[]; total: number }> {
-  const countRes = await apiClient.get<{ messages: number }>(
-    `/v1/export/messages/count?q=${encodeURIComponent(q)}`,
-    { signal },
-  );
+  const countRes = await countExportMessages({ q }, { signal });
   const total = countRes.messages ?? 0;
   if (total === 0) return { messages: [], total: 0 };
 
   const collected: Message[] = [];
   let offset = 0;
   while (offset < total) {
-    const msgRes = await apiClient.get<{ messages: Message[] }>(
-      `/v1/export/messages?q=${encodeURIComponent(q)}&offset=${offset}&limit=${YEAR_FETCH_LIMIT}`,
-      { signal },
-    );
+    const msgRes = await exportMessages({ q, offset, limit: YEAR_FETCH_LIMIT }, { signal });
     const batch = msgRes.messages ?? [];
     collected.push(...batch);
     if (batch.length === 0) break;
@@ -115,14 +109,8 @@ export function useConversationMessages(conversationId: string) {
       try {
         const q = `in:${conversationId}`;
         const [msgRes, countRes] = await Promise.all([
-          apiClient.get<{ messages: Message[] }>(
-            `/v1/export/messages?q=${encodeURIComponent(q)}&offset=${newOffset}&limit=${PAGE_SIZE}`,
-            { signal },
-          ),
-          apiClient.get<{ messages: number }>(
-            `/v1/export/messages/count?q=${encodeURIComponent(q)}`,
-            { signal },
-          ),
+          exportMessages({ q, offset: newOffset, limit: PAGE_SIZE }, { signal }),
+          countExportMessages({ q }, { signal }),
         ]);
         if (signal.aborted) return;
         setMessages(msgRes.messages);

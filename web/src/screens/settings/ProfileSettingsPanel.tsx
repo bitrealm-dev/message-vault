@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import Button from "../../components/Button";
 import Select, { ListBoxItem, selectItemClassName } from "../../components/Select";
 import type { AccountProfile } from "../../lib/account";
-import { apiClient } from "../../lib/api";
 import {
   HANDLE_SERVICE_OPTIONS,
   HANDLE_SERVICES,
@@ -12,6 +11,7 @@ import {
 import { phonesMatch } from "../../lib/phoneTokens";
 import { parseSelectKey } from "../../lib/selectKey";
 import { useAccountProfile } from "../../lib/useAccountProfile";
+import { updateAccountProfile } from "../../lib/vaultApi";
 import { inputClassName, sectionTitleClass } from "./profileStyles";
 
 /** Profile settings: display name and phone/email/WhatsApp handles. */
@@ -41,7 +41,7 @@ export function ProfileSettingsPanel() {
   const handleSaveName = async () => {
     setNameError("");
     try {
-      const updated = await apiClient.post<AccountProfile>("/v1/account/profile", {
+      const updated = await updateAccountProfile({
         preferred_name: name.trim() || null,
       });
       setProfile(updated);
@@ -68,7 +68,7 @@ export function ProfileSettingsPanel() {
     setHandleError("");
     setHandleBusy(true);
     try {
-      const updated = await apiClient.post<AccountProfile>("/v1/account/profile", {
+      const updated = await updateAccountProfile({
         handles: [{ handle: value, service: newHandleService }],
       });
       setProfile(updated);
@@ -87,7 +87,7 @@ export function ProfileSettingsPanel() {
     setHandleError("");
     setHandleBusy(true);
     try {
-      const updated = await apiClient.post<AccountProfile>("/v1/account/profile", {
+      const updated = await updateAccountProfile({
         remove_handles: [{ handle, service }],
       });
       setProfile(updated);

@@ -7,7 +7,7 @@
     "root": ".."
   },
   "files": {
-    "includes": ["**", "!!**/dist", "!package-lock.json"]
+    "includes": ["**", "!!**/dist", "!package-lock.json", "!src/lib/vaultApi.types.ts"]
   },
   "formatter": {
     "enabled": true,

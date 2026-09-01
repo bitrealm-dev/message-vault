@@ -1,4 +1,11 @@
 import { createNameCollection } from "./nameCollection";
+import {
+  createContactGroup as vaultCreateContactGroup,
+  deleteContactGroup as vaultDeleteContactGroup,
+  listContactGroups as vaultListContactGroups,
+  renameContactGroup as vaultRenameContactGroup,
+  setContactGroupMembership as vaultSetContactGroupMembership,
+} from "./vaultApi";
 
 /** Names that must not be created as user groups. */
 export const RESERVED_GROUP_NAMES = new Set(
@@ -60,8 +67,13 @@ export function reservedGroupError(name: string): string {
 export const CONTACT_GROUPS_CHANGED_EVENT = "mv-contact-groups-changed";
 
 export const contactGroups = createNameCollection({
-  endpoint: "/v1/contact-groups",
-  membershipEndpoint: "/v1/contacts/groups",
+  routes: {
+    list: vaultListContactGroups,
+    create: vaultCreateContactGroup,
+    rename: vaultRenameContactGroup,
+    remove: vaultDeleteContactGroup,
+    setMembership: vaultSetContactGroupMembership,
+  },
   responseKey: "groups",
   queryToken: "group",
   changedEvent: CONTACT_GROUPS_CHANGED_EVENT,

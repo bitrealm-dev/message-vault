@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiClient } from "./api";
+import { listContacts } from "./vaultApi";
 
 /** Operators the conversation list API actually understands. */
 const OPERATORS = ["handle:", "contact:", "is:", "participants:"];
@@ -71,15 +71,7 @@ export function useSearchSuggestions(value: string, enabled: boolean): Suggestio
     }
     const ac = new AbortController();
     const t = window.setTimeout(() => {
-      const params = new URLSearchParams({
-        q: valuePart,
-        limit: "20",
-        offset: "0",
-      });
-      apiClient
-        .get<{ contacts: ContactName[] }>(`/v1/export/contacts?${params}`, {
-          signal: ac.signal,
-        })
+      listContacts({ q: valuePart, limit: 20, offset: 0 }, { signal: ac.signal })
         .then((res) =>
           setContacts(
             (res.contacts || []).map((c) => ({

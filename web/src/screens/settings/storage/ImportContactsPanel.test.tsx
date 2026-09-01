@@ -2,14 +2,14 @@
 
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { apiClient } from "../../../lib/api";
+import { getImportContacts } from "../../../lib/vaultApi";
 import ImportContactsPanel from "./ImportContactsPanel";
 
-vi.mock("../../../lib/api", () => ({
-  apiClient: { get: vi.fn() },
+vi.mock("../../../lib/vaultApi", () => ({
+  getImportContacts: vi.fn(),
 }));
 
-const get = vi.mocked(apiClient.get);
+const get = vi.mocked(getImportContacts);
 
 describe("ImportContactsPanel", () => {
   beforeEach(() => {
@@ -24,7 +24,7 @@ describe("ImportContactsPanel", () => {
     get.mockResolvedValue({ contacts: [], new_count: 0, changed_count: 0 });
     render(<ImportContactsPanel importId={42} />);
     expect(await screen.findByText("This import changed no contacts.")).toBeInTheDocument();
-    expect(get).toHaveBeenCalledWith("/v1/imports/42/contacts");
+    expect(get).toHaveBeenCalledWith(42);
   });
 
   it("counts new against changed", async () => {

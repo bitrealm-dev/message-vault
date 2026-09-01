@@ -1,15 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { apiClient } from "./api";
 import { fetchConversationById } from "./fetchConversationById";
 import type { Conversation } from "./types";
+import { listConversations } from "./vaultApi";
 
-vi.mock("./api", () => ({
-  apiClient: {
-    get: vi.fn(),
-  },
+vi.mock("./vaultApi", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./vaultApi")>()),
+  listConversations: vi.fn(),
 }));
 
-const get = vi.mocked(apiClient.get);
+const get = vi.mocked(listConversations);
 
 function conv(id: string): Conversation {
   return {
@@ -69,7 +68,7 @@ describe("fetchConversationById", () => {
     await expect(fetchConversationById("missing")).resolves.toBeNull();
   });
 
-  it("forwards AbortSignal to apiClient.get", async () => {
+  it("forwards AbortSignal to listConversations", async () => {
     const controller = new AbortController();
     get.mockResolvedValueOnce({
       conversations: [conv("1")],

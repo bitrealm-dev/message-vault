@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { apiClient } from "./api";
 import { useAuth } from "./auth";
+import {
+  createSavedSearch as createVaultSavedSearch,
+  deleteSavedSearch as deleteVaultSavedSearch,
+  listSavedSearches,
+  updateSavedSearch as updateVaultSavedSearch,
+} from "./vaultApi";
 
 /**
  * Saved searches live in the vault, not in the browser. They belong to an
@@ -57,8 +62,7 @@ function adopt(res: ListResponse): SavedSearch[] {
 export async function fetchSavedSearches(signal?: AbortSignal): Promise<SavedSearch[]> {
   if (cached !== null && !signal) return cached;
   if (inflight && !signal) return inflight;
-  const req = apiClient
-    .get<ListResponse>("/v1/saved-searches", { signal })
+  const req = listSavedSearches({ signal })
     .then((res) => {
       const list = listFrom(res);
       cached = list;
@@ -72,7 +76,7 @@ export async function fetchSavedSearches(signal?: AbortSignal): Promise<SavedSea
 }
 
 export async function createSavedSearch(name: string, query: string): Promise<SavedSearch[]> {
-  return adopt(await apiClient.post<ListResponse>("/v1/saved-searches", { name, query }));
+  return adopt(await createVaultSavedSearch({ name, query }));
 }
 
 /** Replace a saved search's name and query. The id and kind do not change. */
@@ -81,7 +85,7 @@ export async function updateSavedSearch(
   name: string,
   query: string,
 ): Promise<SavedSearch[]> {
-  return adopt(await apiClient.patch<ListResponse>(`/v1/saved-searches/${id}`, { name, query }));
+  return adopt(await updateVaultSavedSearch(id, { name, query }));
 }
 
 /**
@@ -92,7 +96,7 @@ export async function updateSavedSearch(
  * still shows it.
  */
 export async function deleteSavedSearch(id: number): Promise<SavedSearch[]> {
-  return adopt(await apiClient.delete<ListResponse>(`/v1/saved-searches/${id}`));
+  return adopt(await deleteVaultSavedSearch(id));
 }
 
 /** Drop the module cache, so the next read goes to the vault. */

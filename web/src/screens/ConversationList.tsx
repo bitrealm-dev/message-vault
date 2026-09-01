@@ -9,7 +9,6 @@ import ListRangePill, {
 import TagsMenu from "../components/TagsMenu";
 import { useSetRightToolbar } from "../components/useRightToolbar";
 import VirtualList, { type VisibleRange } from "../components/VirtualList";
-import { apiClient } from "../lib/api";
 import {
   type ConversationSortState,
   loadConversationSort,
@@ -20,15 +19,9 @@ import { createMessageTag, setConversationTagMembership } from "../lib/messageTa
 import type { Conversation } from "../lib/types";
 import { useMessageTags } from "../lib/useMessageTags";
 import { formatVisibleRange, type PagedFetchPage, usePagedList } from "../lib/usePagedList";
+import { listConversations } from "../lib/vaultApi";
 
 const QUERY_DEBOUNCE_MS = 300;
-
-type ConversationsPage = {
-  conversations: Conversation[];
-  total: number;
-  limit: number;
-  offset: number;
-};
 
 export default function ConversationList({
   selectedId,
@@ -70,16 +63,16 @@ export default function ConversationList({
 
   const fetchPage = useCallback<PagedFetchPage<Conversation>>(
     async ({ limit, offset, signal }) => {
-      const params = new URLSearchParams({
-        q: debouncedQ,
-        limit: String(limit),
-        offset: String(offset),
-        sort: sortState.sort,
-        order: sortState.order,
-      });
-      const res = await apiClient.get<ConversationsPage>(`/v1/export/conversations?${params}`, {
-        signal,
-      });
+      const res = await listConversations(
+        {
+          q: debouncedQ,
+          limit,
+          offset,
+          sort: sortState.sort,
+          order: sortState.order,
+        },
+        { signal },
+      );
       return {
         items: res.conversations || [],
         total: res.total ?? 0,

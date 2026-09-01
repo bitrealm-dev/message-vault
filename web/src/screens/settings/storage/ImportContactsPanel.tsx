@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiClient } from "../../../lib/api";
+import { getImportContacts } from "../../../lib/vaultApi";
 
 /** One contact an import run created or changed. */
 type ImportContactRow = {
@@ -33,8 +33,7 @@ export default function ImportContactsPanel({ importId }: { importId: number }) 
     let cancelled = false;
     setLoading(true);
     setError("");
-    apiClient
-      .get<ImportContactsResponse>(`/v1/imports/${importId}/contacts`)
+    getImportContacts(importId)
       .then((res) => {
         if (!cancelled) setData(res);
       })

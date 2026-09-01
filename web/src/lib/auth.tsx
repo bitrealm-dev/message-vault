@@ -8,13 +8,14 @@ import {
   useRef,
   useState,
 } from "react";
-import { apiClient, getToken, setBaseUrl, setToken } from "./api";
+import { getToken, setBaseUrl, setToken } from "./api";
 import { parsePersistedAuth } from "./authGuards";
 import { clearContactDetailCache } from "./contactDetailCache";
 import { invalidateContactGroups } from "./contactGroups";
 import { invalidateMessageTags } from "./messageTags";
 import { isTauri } from "./tauri-check";
 import { clearAccountProfile, loadAccountProfile } from "./useAccountProfile";
+import { checkAuth, logout as vaultLogout } from "./vaultApi";
 
 interface AuthState {
   serverUrl: string;
@@ -152,7 +153,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         setBaseUrl(state.serverUrl);
         setToken(state.token);
-        await apiClient.get("/v1/auth/check");
+        await checkAuth();
         if (cancelled) return;
 
         // Re-read the profile so a stale "needs setup" flag can correct itself.
@@ -246,7 +247,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Await so close-to-quit can finish (or time out) before the WebView dies.
     if (getToken()) {
       try {
-        await apiClient.post("/v1/auth/logout", {}, { signal: logoutTimeoutSignal() });
+        await vaultLogout({ signal: logoutTimeoutSignal() });
       } catch {
         // Vault unreachable, 401, or timeout — still clear the local session.
       }

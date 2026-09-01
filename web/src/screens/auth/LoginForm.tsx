@@ -4,10 +4,10 @@ import AuthSubmitButton from "../../components/AuthSubmitButton";
 import { LockIcon, PersonIcon } from "../../components/icons";
 import PasswordField from "../../components/PasswordField";
 import TextField from "../../components/TextField";
-import { apiClient, setBaseUrl } from "../../lib/api";
+import { setBaseUrl } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
-import type { SessionResponse } from "../../lib/authGuards";
 import { useAsyncAction } from "../../lib/useAsyncAction";
+import { login as vaultLogin } from "../../lib/vaultApi";
 
 /** Username and password login for a vault running in local auth mode. */
 export default function LoginForm({
@@ -39,7 +39,7 @@ export default function LoginForm({
       // leave the client pointed at a bad host while the form still holds
       // the good address.
       setBaseUrl(url);
-      const res = await apiClient.post<SessionResponse>("/v1/auth/login", { username, password });
+      const res = await vaultLogin({ username, password });
       // Awaited so the profile lookup inside `login` has decided where to send
       // the user before this form drops its busy state.
       await login(url, res.token, res.account_id);

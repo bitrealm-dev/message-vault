@@ -1,10 +1,9 @@
 import { useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
-import { apiClient } from "../lib/api";
 import { useResource } from "../lib/useResource";
+import { listConversations } from "../lib/vaultApi";
 
 /** Only `total` is read; the rows themselves are rendered by the list column. */
-type ConversationsCountPage = { total?: number };
 
 /**
  * Trashed conversations are listed in the left column by the shared
@@ -24,13 +23,7 @@ export default function TrashScreen() {
 
   const fetchCount = useCallback(
     async (signal: AbortSignal) => {
-      const params = new URLSearchParams({ q: query, limit: "1", offset: "0" });
-      const res = await apiClient.get<ConversationsCountPage>(
-        `/v1/export/conversations?${params}`,
-        {
-          signal,
-        },
-      );
+      const res = await listConversations({ q: query, limit: 1, offset: 0 }, { signal });
       return res.total ?? 0;
     },
     [query],

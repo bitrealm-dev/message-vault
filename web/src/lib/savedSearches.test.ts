@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { apiClient } from "./api";
 import {
   createSavedSearch,
   deleteSavedSearch,
@@ -10,20 +9,27 @@ import {
   type SavedSearch,
   updateSavedSearch,
 } from "./savedSearches";
+import {
+  createSavedSearch as createVaultSavedSearch,
+  deleteSavedSearch as deleteVaultSavedSearch,
+  listSavedSearches,
+  updateSavedSearch as updateVaultSavedSearch,
+} from "./vaultApi";
 
-vi.mock("./api", () => ({
-  apiClient: {
-    get: vi.fn(),
-    post: vi.fn(),
-    patch: vi.fn(),
-    delete: vi.fn(),
-  },
+// Every module imports something from vaultApi, so replace only the four
+// calls under test and leave the rest of the module real.
+vi.mock("./vaultApi", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./vaultApi")>()),
+  listSavedSearches: vi.fn(),
+  createSavedSearch: vi.fn(),
+  updateSavedSearch: vi.fn(),
+  deleteSavedSearch: vi.fn(),
 }));
 
-const get = vi.mocked(apiClient.get);
-const post = vi.mocked(apiClient.post);
-const patch = vi.mocked(apiClient.patch);
-const del = vi.mocked(apiClient.delete);
+const get = vi.mocked(listSavedSearches);
+const post = vi.mocked(createVaultSavedSearch);
+const patch = vi.mocked(updateVaultSavedSearch);
+const del = vi.mocked(deleteVaultSavedSearch);
 
 function search(id: number, name: string, kind = "manual"): SavedSearch {
   return { id, name, query: `is:group ${name}`, kind };
@@ -41,7 +47,7 @@ describe("savedSearches", () => {
   it("reads the list from the vault, not from browser storage", async () => {
     get.mockResolvedValue({ savedSearches: [search(1, "Family")] });
     expect(await fetchSavedSearches()).toEqual([search(1, "Family")]);
-    expect(get).toHaveBeenCalledWith("/v1/saved-searches", { signal: undefined });
+    expect(get).toHaveBeenCalledWith({ signal: undefined });
   });
 
   it("serves a second read from cache without asking the vault again", async () => {
@@ -65,16 +71,13 @@ describe("savedSearches", () => {
   it("addresses an update by id, sending both fields", async () => {
     patch.mockResolvedValue({ savedSearches: [search(3, "Renamed")] });
     await updateSavedSearch(3, "Renamed", "is:direct");
-    expect(patch).toHaveBeenCalledWith("/v1/saved-searches/3", {
-      name: "Renamed",
-      query: "is:direct",
-    });
+    expect(patch).toHaveBeenCalledWith(3, { name: "Renamed", query: "is:direct" });
   });
 
   it("addresses a delete by id", async () => {
     del.mockResolvedValue({ savedSearches: [] });
     await deleteSavedSearch(7);
-    expect(del).toHaveBeenCalledWith("/v1/saved-searches/7");
+    expect(del).toHaveBeenCalledWith(7);
   });
 
   it("takes the refreshed list from a mutation instead of refetching", async () => {

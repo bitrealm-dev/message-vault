@@ -46,7 +46,7 @@ function GroupIcon() {
 }
 
 function participantLabel(
-  p: { name: string | null; name_alias?: string | null; handle: string },
+  p: { name?: string | null; name_alias?: string | null; handle: string },
   useAliases: boolean,
 ): string {
   return personDisplayLabel(

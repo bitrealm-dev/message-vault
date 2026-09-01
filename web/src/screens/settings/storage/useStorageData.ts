@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { apiClient } from "../../../lib/api";
 import { useResource } from "../../../lib/useResource";
-import type { ImportDetailResponse, ImportRow, TopAttachment } from "./storageUtils";
+import { getAccountStorage, getImport, listImports } from "../../../lib/vaultApi";
+import type { ImportRow, TopAttachment } from "./storageUtils";
 
 type StorageOverview = {
   imports: ImportRow[];
@@ -12,12 +12,8 @@ type StorageOverview = {
 
 async function fetchOverview(signal: AbortSignal): Promise<StorageOverview> {
   const [importsRes, usageRes] = await Promise.all([
-    apiClient.get<{ imports: ImportRow[] }>("/v1/imports", { signal }),
-    apiClient.get<{
-      total_bytes: number;
-      attachment_count: number;
-      top_attachments: TopAttachment[];
-    }>("/v1/account/storage", { signal }),
+    listImports({ signal }),
+    getAccountStorage({ signal }),
   ]);
   return {
     imports: importsRes.imports ?? [],
@@ -45,7 +41,7 @@ export function useStorageData() {
 
   const fetchDetail = useCallback(
     (signal: AbortSignal) =>
-      apiClient.get<ImportDetailResponse>(`/v1/imports/${selectedImportId}`, { signal }),
+      selectedImportId === null ? Promise.resolve(null) : getImport(selectedImportId, { signal }),
     [selectedImportId],
   );
 

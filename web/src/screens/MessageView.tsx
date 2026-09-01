@@ -88,7 +88,7 @@ export default function MessageView({
           },
           useAliases,
         ),
-        contact_id: p.contact_id,
+        contact_id: p.contact_id == null ? null : String(p.contact_id),
       }));
     }
     const fromMsg = messages[0]?.conversation.participants || [];
@@ -101,7 +101,7 @@ export default function MessageView({
         },
         useAliases,
       ),
-      contact_id: p.contact_id,
+      contact_id: p.contact_id == null ? null : String(p.contact_id),
     }));
   }, [conversation.participants, messages, useAliases]);
 
@@ -113,7 +113,10 @@ export default function MessageView({
   const matchIds = useMemo(() => {
     const t = deferredFindTerm.trim().toLowerCase();
     if (!t) return [];
-    return messages.filter((m) => (m.text || "").toLowerCase().includes(t)).map((m) => m.id);
+    // Message ids arrive as numbers; the find bar and the DOM ids are strings.
+    return messages
+      .filter((m) => (m.text || "").toLowerCase().includes(t))
+      .map((m) => String(m.id));
   }, [messages, deferredFindTerm]);
 
   // Scroll the current find match into view.

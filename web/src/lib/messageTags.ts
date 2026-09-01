@@ -1,5 +1,12 @@
 import { groupFromSlug, groupSlug } from "./contactGroups";
 import { createNameCollection } from "./nameCollection";
+import {
+  createMessageTag as vaultCreateMessageTag,
+  deleteMessageTag as vaultDeleteMessageTag,
+  listMessageTags as vaultListMessageTags,
+  renameMessageTag as vaultRenameMessageTag,
+  setMessageTagMembership as vaultSetMessageTagMembership,
+} from "./vaultApi";
 
 /** Names that must not be created as message tags. */
 export const RESERVED_TAG_NAMES = new Set(
@@ -30,8 +37,13 @@ export function reservedTagError(name: string): string {
 export const MESSAGE_TAGS_CHANGED_EVENT = "mv-message-tags-changed";
 
 export const messageTags = createNameCollection({
-  endpoint: "/v1/message-tags",
-  membershipEndpoint: "/v1/conversations/tags",
+  routes: {
+    list: vaultListMessageTags,
+    create: vaultCreateMessageTag,
+    rename: vaultRenameMessageTag,
+    remove: vaultDeleteMessageTag,
+    setMembership: vaultSetMessageTagMembership,
+  },
   responseKey: "tags",
   queryToken: "tag",
   changedEvent: MESSAGE_TAGS_CHANGED_EVENT,

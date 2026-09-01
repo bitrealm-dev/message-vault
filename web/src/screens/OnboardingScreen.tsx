@@ -6,7 +6,6 @@ import Button from "../components/Button";
 import { PersonIcon, PhoneIcon } from "../components/icons";
 import Select, { ListBoxItem, selectItemClassName } from "../components/Select";
 import TextField from "../components/TextField";
-import { apiClient } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import {
   DUPLICATE_HANDLE_MESSAGE,
@@ -20,6 +19,7 @@ import {
 import { parseSelectKey } from "../lib/selectKey";
 import { authCard, authCardBody, authCardFooter, authTitle, pageCenter } from "../lib/uiStyles";
 import { useAsyncAction } from "../lib/useAsyncAction";
+import { updateAccountProfile } from "../lib/vaultApi";
 
 /**
  * The card never scrolls and never resizes, so the list of accounts is bounded
@@ -197,7 +197,7 @@ export default function OnboardingScreen() {
       if (!token || !accountId) {
         throw new Error("Not signed in");
       }
-      await apiClient.post("/v1/account/profile", {
+      await updateAccountProfile({
         preferred_name: displayName.trim(),
         handles: handles
           .filter((h) => h.handle.trim())

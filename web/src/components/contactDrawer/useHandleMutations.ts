@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { apiClient } from "../../lib/api";
 import type { CachedContactHandle } from "../../lib/contactDetailCache";
+import { updateContact } from "../../lib/vaultApi";
 import { formatHandleServiceLabel, handleServiceSelectValue } from "./contactDrawerTypes";
 import { conversationCount, type RemoveIdentityTarget } from "./handleTableLogic";
 
@@ -28,7 +28,7 @@ export function useHandleMutations({
     if (busy) return;
     setRemoveTarget({
       handle: h.handle,
-      service: h.service,
+      service: h.service ?? null,
       serviceLabel: formatHandleServiceLabel(h.handle, h.service),
       threadCount: conversationCount(h),
     });
@@ -41,9 +41,7 @@ export function useHandleMutations({
     setBusy(true);
     setError("");
     try {
-      await apiClient.post(`/v1/export/contacts/${contactId}`, {
-        remove_handle: { handle, service },
-      });
+      await updateContact(contactId, { remove_handle: { handle, service } });
       setRemoveTarget(null);
       onHandlesChanged();
     } catch (e: unknown) {
@@ -59,7 +57,7 @@ export function useHandleMutations({
     setBusy(true);
     setError("");
     try {
-      await apiClient.post(`/v1/export/contacts/${contactId}`, {
+      await updateContact(contactId, {
         add_handle: { handle: args.handle, service: args.service },
       });
       setAdding(false);

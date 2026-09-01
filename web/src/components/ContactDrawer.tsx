@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { apiClient } from "../lib/api";
 import {
   type CachedContactDetail,
   CONTACT_DETAIL_CHANGED_EVENT,
@@ -7,6 +6,7 @@ import {
   getCachedContactDetail,
   invalidateContactDetail,
 } from "../lib/contactDetailCache";
+import { getContact, updateContact } from "../lib/vaultApi";
 import Button from "./Button";
 import { ContactDrawerHandles } from "./contactDrawer/ContactDrawerHandles";
 import {
@@ -120,7 +120,7 @@ export default function ContactDrawer({
   const loadDetail = () => {
     if (!contactId) return;
     invalidateContactDetail(contactId);
-    void fetchContactDetail(contactId, (path, opts) => apiClient.get<ContactDetail>(path, opts))
+    void fetchContactDetail(contactId, (id, opts) => getContact(id, opts))
       .then((next) => {
         if (String(next.id) !== String(contactId)) return;
         setDetail(next);
@@ -142,11 +142,7 @@ export default function ContactDrawer({
 
     const ac = new AbortController();
     if (!cached) {
-      void fetchContactDetail(
-        contactId,
-        (path, opts) => apiClient.get<ContactDetail>(path, opts),
-        ac.signal,
-      )
+      void fetchContactDetail(contactId, (id, opts) => getContact(id, opts), ac.signal)
         .then((next) => {
           if (ac.signal.aborted) return;
           setDetail(next);
@@ -265,9 +261,7 @@ export default function ContactDrawer({
         setEditingName(false);
         return;
       }
-      await apiClient.post(`/v1/export/contacts/${contactId}`, {
-        name: nameValue,
-      });
+      await updateContact(contactId, { name: nameValue });
       setEditingName(false);
       loadDetail();
     } catch {

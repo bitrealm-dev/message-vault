@@ -1,13 +1,11 @@
 import { useCallback, useState } from "react";
-import { apiClient } from "../../lib/api";
 import { useAsyncAction } from "../../lib/useAsyncAction";
 import { useResource } from "../../lib/useResource";
+import { createApiToken, deleteApiToken, listApiTokens, renameApiToken } from "../../lib/vaultApi";
 import type { ApiTokenItem } from "./apiTokensUtils";
 
 const fetchTokens = (signal: AbortSignal) =>
-  apiClient
-    .get<{ items: ApiTokenItem[] }>("/v1/account/api-tokens", { signal })
-    .then((res) => res.items ?? []);
+  listApiTokens({ signal }).then((res) => res.items ?? []);
 
 /**
  * The list goes through `useResource` and each mutation through
@@ -62,15 +60,7 @@ export function useApiTokens() {
     const trimmed = label.trim();
     if (!trimmed) return Promise.resolve();
     return run(async () => {
-      const res = await apiClient.post<{
-        id: string;
-        label: string;
-        can_import: boolean;
-        can_export: boolean;
-        can_delete: boolean;
-        created_at: string;
-        token: string;
-      }>("/v1/account/api-tokens", {
+      const res = await createApiToken({
         label: trimmed,
         can_import: canImport,
         can_export: canExport,
@@ -91,9 +81,7 @@ export function useApiTokens() {
     const trimmed = renameLabel.trim();
     if (!trimmed) return Promise.resolve();
     return run(async () => {
-      await apiClient.patch(`/v1/account/api-tokens/${encodeURIComponent(renameTarget.id)}`, {
-        label: trimmed,
-      });
+      await renameApiToken(renameTarget.id, { label: trimmed });
       setRenameTarget(null);
       setRenameLabel("");
       reload();
@@ -103,7 +91,7 @@ export function useApiTokens() {
   const revoke = (item: ApiTokenItem) =>
     run(async () => {
       try {
-        await apiClient.delete(`/v1/account/api-tokens/${encodeURIComponent(item.id)}`);
+        await deleteApiToken(item.id);
         reload();
       } finally {
         setRevokeTarget(null);

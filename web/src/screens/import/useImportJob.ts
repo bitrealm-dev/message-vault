@@ -5,7 +5,7 @@ import {
   type ImportSummaryView,
 } from "../../components/import/ImportSummaryPanel";
 import { useTauriJob } from "../../hooks/useTauriJob";
-import { apiClient, getBaseUrl } from "../../lib/api";
+import { getBaseUrl } from "../../lib/api";
 import { formatAttachmentProgress } from "../../lib/attachmentProgressCopy";
 import { useAuth } from "../../lib/auth";
 import { needsIdentityStop, parseSourceIdentities } from "../../lib/backupIdentity";
@@ -47,6 +47,7 @@ import type {
   ImportProgressEvent,
 } from "../../lib/types";
 import { loadAccountProfile } from "../../lib/useAccountProfile";
+import { completeImport, createImport } from "../../lib/vaultApi";
 import { importSessionCreateBody } from "../../lib/vaultSource";
 import { whatsappExtractFields } from "../../lib/whatsappExtractFields";
 import { isWhatsappMethod } from "../../lib/whatsappImport";
@@ -638,7 +639,7 @@ export function useImportJob() {
     // `approved`, so leaving it undefined there is a no-op, not a gap.
     approved?: StagingSummary;
   }): Promise<void> {
-    const { sessionId, form, threw, canceled, pushReport, uploadMs, skipComplete, approved } = args;
+    const { sessionId, threw, canceled, pushReport, uploadMs, skipComplete, approved } = args;
     const { parseMs, attachmentsMs, prepareMs } = durationsRef.current;
     const durationMs = performance.now() - importStartedAtRef.current;
     const outcome: ImportSummaryView["status"] = canceled
@@ -686,7 +687,7 @@ export function useImportJob() {
     );
     if (sessionId && !skipComplete) {
       try {
-        await apiClient.post(`/v1/imports/${String(sessionId)}/complete`, {
+        await completeImport(sessionId, {
           ok: outcome !== "failed" && outcome !== "canceled",
           status: outcome,
           message_count: pushReport?.messages_inserted,
@@ -1012,7 +1013,7 @@ export function useImportJob() {
         setStagingDir(outputDir);
 
         const backupStat = await invokePathStat(form.backupPath).catch(() => null);
-        const importSession = await apiClient.post<{ id: number }>("/v1/imports", {
+        const importSession = await createImport({
           ...importSessionCreateBody(form.source),
           stage: "parse",
           staging_dir: outputDir,

@@ -1,5 +1,5 @@
-//! Contact list/detail used by `GET /v1/export/contacts`,
-//! `GET|POST /v1/export/contacts/{id}`, `POST /v1/export/contacts/summaries`,
+//! Contact list/detail used by `GET /v1/contacts`,
+//! `GET /v1/contacts/{id}` and `PATCH /v1/contacts/{id}`, `POST /v1/contacts/summaries`,
 //! and `POST /v1/contacts/match`.
 
 use std::collections::{HashMap, HashSet};
@@ -114,7 +114,7 @@ pub struct ContactRemoveHandlePayload {
     pub service: Option<String>,
 }
 
-/// Body for `POST /v1/export/contacts/{id}`. Exactly one mutation field should be set.
+/// Body for `PATCH /v1/contacts/{id}`. Exactly one mutation field should be set.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ContactMutationBody {
     /// New display name; `None` leaves it unchanged.
@@ -153,7 +153,7 @@ pub struct ContactDetail {
     pub groups: Vec<String>,
 }
 
-/// Body for `POST /v1/export/contacts/summaries`.
+/// Body for `POST /v1/contacts/summaries`.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ContactSummariesBody {
     /// Contact ids to summarize; an empty list covers every contact.
@@ -184,7 +184,7 @@ pub struct ContactSelectionSummary {
     pub group_message_count: u64,
 }
 
-/// Response for `POST /v1/export/contacts/summaries`.
+/// Response for `POST /v1/contacts/summaries`.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactSummariesPage {
     /// One summary per requested contact.
@@ -1512,7 +1512,7 @@ async fn touch_ok(conn: &mut AnyConnection, account_id: &str, contact_id: i64) -
 /// Page through the account's contacts (id, name, handles, groups).
 #[utoipa::path(
     get,
-    path = "/v1/export/contacts",
+    path = "/v1/contacts",
     tag = "Contacts",
     security(("bearer" = [])),
     params(
@@ -1543,7 +1543,7 @@ pub(crate) async fn contacts_list_handler(
 /// First/last message dates and counts for a list of contact ids.
 #[utoipa::path(
     post,
-    path = "/v1/export/contacts/summaries",
+    path = "/v1/contacts/summaries",
     tag = "Contacts",
     security(("bearer" = [])),
     request_body = ContactSummariesBody,
@@ -1576,7 +1576,7 @@ pub(crate) async fn contact_summaries_handler(
 /// memberships.
 #[utoipa::path(
     get,
-    path = "/v1/export/contacts/{id}",
+    path = "/v1/contacts/{id}",
     tag = "Contacts",
     security(("bearer" = [])),
     params(("id" = i64, Path, description = "Contact id")),
@@ -1601,8 +1601,8 @@ pub(crate) async fn contact_detail_handler(
 
 /// Rename a contact or change its linked handles.
 #[utoipa::path(
-    post,
-    path = "/v1/export/contacts/{id}",
+    patch,
+    path = "/v1/contacts/{id}",
     tag = "Contacts",
     security(("bearer" = [])),
     params(("id" = i64, Path, description = "Contact id")),

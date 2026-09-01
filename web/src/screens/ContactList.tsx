@@ -5,7 +5,6 @@ import ContactSortMenu from "../components/ContactSortMenu";
 import GroupsMenu from "../components/GroupsMenu";
 import InfiniteOffsetList from "../components/InfiniteOffsetList";
 import { useSetRightToolbar } from "../components/useRightToolbar";
-import { apiClient } from "../lib/api";
 import { getCachedContactDetail, updateCachedContactGroups } from "../lib/contactDetailCache";
 import {
   contactBelongsToGroup,
@@ -32,6 +31,7 @@ import {
   type PagedFetchPage,
   usePagedList,
 } from "../lib/usePagedList";
+import { listContacts } from "../lib/vaultApi";
 
 const FILTER_DEBOUNCE_MS = 300;
 /** Fixed row height keeps virtualization slots aligned with flex-centered content. */
@@ -186,12 +186,7 @@ export default function ContactList({
 
   const fetchPage = useCallback<PagedFetchPage<Contact>>(
     async ({ limit, offset, signal }) => {
-      const params = new URLSearchParams({
-        q: serverQ,
-        limit: String(limit),
-        offset: String(offset),
-      });
-      const res = await apiClient.get<ContactsPage>(`/v1/export/contacts?${params}`, { signal });
+      const res = await listContacts({ q: serverQ, limit, offset }, { signal });
       return {
         items: normalizeContacts(res.contacts),
         total: res.total ?? 0,

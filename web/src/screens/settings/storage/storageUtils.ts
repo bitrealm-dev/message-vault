@@ -1,5 +1,6 @@
-import type { ImportIssue, ImportSummaryView } from "../../../components/import/ImportSummaryPanel";
+import type { ImportSummaryView } from "../../../components/import/ImportSummaryPanel";
 import { formatDateTime } from "../../../lib/formatDate";
+import type { components } from "../../../lib/vaultApi.types";
 
 export const ATTACHMENT_PAGE_SIZE = 20;
 
@@ -10,44 +11,21 @@ export const thStyle =
   "border-b border-border bg-elevated p-2 px-3 text-left text-[0.813rem] font-medium text-muted";
 export const tdStyle = "border-b border-border p-2 px-3 text-[0.813rem] text-text";
 
-export interface ImportRow {
-  id: number;
-  source: string;
-  started_at: string;
-  finished_at: string | null;
-  message_count: number;
-  attachment_count: number;
-  bytes_uploaded: number;
-}
+/*
+ * These three shapes come from the vault, so they are generated rather than
+ * written here: a field renamed on the server is a build error instead of a
+ * blank cell in the storage table.
+ */
+type Schema = components["schemas"];
 
-export interface TopAttachment {
-  id: number;
-  original_name: string | null;
-  mime_type: string | null;
-  size_bytes: number;
-  conversation_title: string | null;
-  chat_identifier: string;
-}
+/** One past Import Run, as the imports list returns it. */
+export type ImportRow = Schema["ImportSummary"];
 
-export interface ImportDetailResponse {
-  id: number;
-  source: string;
-  tool: string | null;
-  mode: string;
-  status: string;
-  started_at: string;
-  finished_at: string | null;
-  message_count: number;
-  attachment_count: number;
-  bytes_uploaded: number;
-  duration_ms: number | null;
-  parse_ms: number | null;
-  attachments_ms: number | null;
-  prepare_ms: number | null;
-  upload_ms: number | null;
-  summary: unknown;
-  issues: ImportIssue[];
-}
+/** One large attachment in the storage breakdown. */
+export type TopAttachment = Schema["TopAttachment"];
+
+/** One Import Run in full, with its issues. */
+export type ImportDetailResponse = Schema["ImportDetailResponse"];
 
 /** Human-readable file size (for example "1.2 MB"). */
 export function formatBytes(bytes: number): string {

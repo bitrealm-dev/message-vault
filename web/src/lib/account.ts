@@ -1,17 +1,10 @@
-/** Account profile returned by GET /v1/account/profile. */
-export interface AccountProfile {
-  account_id: string;
-  username: string;
-  preferred_name: string | null;
-  phones: string[];
-  emails: string[];
-  is_demo?: boolean;
-  /** May manage users. */
-  is_admin?: boolean;
-  /** May call the import endpoints. */
-  can_import?: boolean;
-  /** May call the export endpoints. */
-  can_export?: boolean;
-  /** May destroy message data. */
-  can_delete?: boolean;
-}
+import type { components } from "./vaultApi.types";
+
+/**
+ * Account profile as the vault returns it from `GET /v1/account/profile`.
+ *
+ * Generated from the vault's own OpenAPI document rather than written here, so
+ * a field renamed on the server becomes a build error instead of a screen that
+ * silently shows nothing.
+ */
+export type AccountProfile = components["schemas"]["AccountProfileResponse"];

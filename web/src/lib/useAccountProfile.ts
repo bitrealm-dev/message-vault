@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import type { AccountProfile } from "./account";
-import { apiClient } from "./api";
+import { getAccountProfile } from "./vaultApi";
 
 /**
  * One shared copy of `GET /v1/account/profile`.
@@ -51,8 +51,7 @@ export function loadAccountProfile(force = false): Promise<AccountProfile | null
   if (loaded && !force) return Promise.resolve(state.profile);
 
   setState({ ...state, loading: true, error: "" });
-  inflight = apiClient
-    .get<AccountProfile>("/v1/account/profile")
+  inflight = getAccountProfile()
     .then((profile) => {
       loaded = true;
       setState({ profile, loading: false, error: "" });

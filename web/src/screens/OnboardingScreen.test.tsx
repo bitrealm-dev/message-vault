@@ -17,10 +17,8 @@ vi.mock("../lib/auth", () => ({
   }),
 }));
 
-vi.mock("../lib/api", () => ({
-  apiClient: {
-    post: (...args: unknown[]) => apiPost(...(args as [])),
-  },
+vi.mock("../lib/vaultApi", () => ({
+  updateAccountProfile: (...args: unknown[]) => apiPost(...(args as [])),
 }));
 
 import OnboardingScreen from "./OnboardingScreen";

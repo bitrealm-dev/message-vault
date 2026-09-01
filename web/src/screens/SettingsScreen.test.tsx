@@ -26,13 +26,9 @@ vi.mock("../lib/auth", () => ({
 }));
 
 const apiGet = vi.hoisted(() => vi.fn());
-vi.mock("../lib/api", () => ({
-  apiClient: {
-    get: (...args: unknown[]) => apiGet(...args),
-    post: vi.fn(),
-    patch: vi.fn(),
-    delete: vi.fn(),
-  },
+vi.mock("../lib/vaultApi", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/vaultApi")>()),
+  listUsers: (...args: unknown[]) => apiGet(...args),
 }));
 
 afterEach(() => {
@@ -86,7 +82,7 @@ describe("SettingsScreen admin gate", () => {
     expect(screen.getByRole("tab", { name: "Account" })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByText(/Everyone with an account on this vault/)).not.toBeInTheDocument();
     // Never called — a 403 was avoided, not just hidden after the fact.
-    expect(apiGet).not.toHaveBeenCalledWith("/v1/admin/users", expect.anything());
+    expect(apiGet).not.toHaveBeenCalled();
   });
 
   it("shows the Users tab and panel to an administrator arriving at ?tab=users", async () => {
@@ -95,7 +91,7 @@ describe("SettingsScreen admin gate", () => {
 
     expect(screen.getByRole("tab", { name: "Users" })).toHaveAttribute("aria-selected", "true");
     await waitFor(() => {
-      expect(apiGet).toHaveBeenCalledWith("/v1/admin/users", expect.anything());
+      expect(apiGet).toHaveBeenCalled();
     });
     expect(screen.getByText(/Everyone with an account on this vault/)).toBeInTheDocument();
   });

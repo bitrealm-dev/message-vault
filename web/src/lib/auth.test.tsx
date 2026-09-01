@@ -16,16 +16,20 @@ const getCurrentWindow = vi.fn();
 let currentToken: string | null = null;
 
 vi.mock("./api", () => ({
-  apiClient: {
-    post: (...args: unknown[]) => post(...args),
-    get: (...args: unknown[]) => get(...args),
-  },
   setToken: (token: string | null) => {
     currentToken = token;
     setTokenFn(token);
   },
   getToken: () => currentToken,
   setBaseUrl: (...args: unknown[]) => setBaseUrl(...args),
+}));
+
+// The two vault calls auth.tsx makes, faked by name. Everything else in
+// vaultApi stays real, since other modules in this graph import from it.
+vi.mock("./vaultApi", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./vaultApi")>()),
+  logout: (...args: unknown[]) => post(...args),
+  checkAuth: (...args: unknown[]) => get(...args),
 }));
 
 vi.mock("./tauri-check", () => ({
@@ -85,7 +89,7 @@ describe("AuthProvider logout", () => {
     });
   });
 
-  it("posts /v1/auth/logout before clearing the token", async () => {
+  it("tells the vault to end the session before clearing the token", async () => {
     seedSession();
     const order: string[] = [];
     post.mockImplementation(async () => {
@@ -105,11 +109,7 @@ describe("AuthProvider logout", () => {
       await result.current.logout();
     });
 
-    expect(post).toHaveBeenCalledWith(
-      "/v1/auth/logout",
-      {},
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
+    expect(post).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(order.indexOf("post")).toBeGreaterThanOrEqual(0);
     expect(order.indexOf("clear-token")).toBeGreaterThan(order.indexOf("post"));
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
@@ -193,11 +193,7 @@ describe("AuthProvider logout", () => {
     });
 
     expect(preventDefault).toHaveBeenCalled();
-    expect(post).toHaveBeenCalledWith(
-      "/v1/auth/logout",
-      {},
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
+    expect(post).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
     expect(result.current.isAuthenticated).toBe(false);
     expect(destroy).toHaveBeenCalled();
