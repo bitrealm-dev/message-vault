@@ -5,6 +5,7 @@ import ContactSortMenu from "../components/ContactSortMenu";
 import GroupsMenu from "../components/GroupsMenu";
 import InfiniteOffsetList from "../components/InfiniteOffsetList";
 import { useSetRightToolbar } from "../components/useRightToolbar";
+import { apiErrorMessage } from "../lib/apiErrorMessage";
 import { getCachedContactDetail, updateCachedContactGroups } from "../lib/contactDetailCache";
 import {
   contactBelongsToGroup,
@@ -23,15 +24,11 @@ import {
   saveContactNameSort,
 } from "../lib/contactSort";
 import { highlightText } from "../lib/highlightText";
+import { PAGE_SIZE_CONTACTS_FIRST, PAGE_SIZE_FIRST } from "../lib/listPaging";
 import { checksFromMembers } from "../lib/membershipChecks";
 import { useContactGroups } from "../lib/useContactGroups";
-import {
-  PAGE_SIZE_CONTACTS_FIRST,
-  PAGE_SIZE_FIRST,
-  type PagedFetchPage,
-  usePagedList,
-} from "../lib/usePagedList";
 import { listContacts } from "../lib/vaultApi";
+import { type PagedFetchPage, useVaultPagedList } from "../lib/vaultQuery";
 
 const FILTER_DEBOUNCE_MS = 300;
 /** Fixed row height keeps virtualization slots aligned with flex-centered content. */
@@ -204,7 +201,7 @@ export default function ContactList({
     error,
     hasMore,
     loadMore: requestMore,
-  } = usePagedList(serverQ, fetchPage, {
+  } = useVaultPagedList(["contacts", serverQ], fetchPage, {
     firstPageSize: serverQ.trim() ? PAGE_SIZE_FIRST : PAGE_SIZE_CONTACTS_FIRST,
   });
 
@@ -441,7 +438,7 @@ export default function ContactList({
       loading={loading}
       refreshing={refreshing}
       filling={filling}
-      error={error}
+      error={error ? apiErrorMessage(error, "Could not load contacts.") : ""}
       hasMore={hasMore}
       requestMore={requestMore}
       estimateSize={CONTACT_ROW_HEIGHT}

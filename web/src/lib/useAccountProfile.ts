@@ -5,8 +5,8 @@ import { getAccountProfile } from "./vaultApi";
 /**
  * One shared copy of `GET /v1/account/profile`.
  *
- * This used to be a `useResource` with a constant key, which shares nothing —
- * `useResource` holds its state per hook instance, so every mounted caller
+ * This used to be a per-hook fetch with a constant key, which shares nothing —
+ * that shape holds its state per hook instance, so every mounted caller
  * issued its own request for the same endpoint. The state lives at module scope
  * instead, with concurrent callers joining the in-flight request, matching the
  * cache-and-dedupe shape already used by `contactDetailCache` and

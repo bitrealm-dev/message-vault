@@ -9,17 +9,19 @@ import ListRangePill, {
 import TagsMenu from "../components/TagsMenu";
 import { useSetRightToolbar } from "../components/useRightToolbar";
 import VirtualList, { type VisibleRange } from "../components/VirtualList";
+import { apiErrorMessage } from "../lib/apiErrorMessage";
 import {
   type ConversationSortState,
   loadConversationSort,
   saveConversationSort,
 } from "../lib/conversationSort";
+import { formatVisibleRange } from "../lib/listPaging";
 import { checksFromMembers } from "../lib/membershipChecks";
 import { createMessageTag, setConversationTagMembership } from "../lib/messageTags";
 import type { Conversation } from "../lib/types";
 import { useMessageTags } from "../lib/useMessageTags";
-import { formatVisibleRange, type PagedFetchPage, usePagedList } from "../lib/usePagedList";
 import { listConversations } from "../lib/vaultApi";
+import { type PagedFetchPage, useVaultPagedList } from "../lib/vaultQuery";
 
 const QUERY_DEBOUNCE_MS = 300;
 
@@ -90,8 +92,8 @@ export default function ConversationList({
     error,
     hasMore,
     loadMore,
-  } = usePagedList(
-    `${debouncedQ}#${membershipRev}#${sortState.sort}:${sortState.order}`,
+  } = useVaultPagedList(
+    ["conversations", debouncedQ, membershipRev, sortState.sort, sortState.order],
     fetchPage,
   );
 
@@ -192,7 +194,9 @@ export default function ConversationList({
 
   if (error && conversations.length === 0) {
     return (
-      <div className="p-4 text-[0.813rem] text-danger">Could not load conversations: {error}</div>
+      <div className="p-4 text-[0.813rem] text-danger">
+        {apiErrorMessage(error, "Could not load conversations.")}
+      </div>
     );
   }
 

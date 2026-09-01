@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { listActivitySuffix } from "../lib/usePagedList";
+import { listActivitySuffix } from "../lib/listPaging";
 import Checkbox from "./Checkbox";
 
 /** Same height on the sidebar spacer, list toolbar, and right-pane toolbar. */

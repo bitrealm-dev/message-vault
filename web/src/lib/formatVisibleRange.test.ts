@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatVisibleRange, listActivitySuffix } from "./usePagedList";
+import { formatVisibleRange, listActivitySuffix } from "./listPaging";
 
 describe("formatVisibleRange", () => {
   it("handles empty totals", () => {

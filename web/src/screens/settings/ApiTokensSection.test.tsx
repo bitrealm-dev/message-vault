@@ -1,19 +1,23 @@
 /** @vitest-environment jsdom */
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mockedAuth, renderWithVault as render } from "../../test/vaultProviders";
 import { ApiTokensSection } from "./ApiTokensSection";
 
 const apiGet = vi.hoisted(() => vi.fn());
 const apiPost = vi.hoisted(() => vi.fn());
 
-vi.mock("../../lib/vaultApi", () => ({
+vi.mock("../../lib/vaultApi", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/vaultApi")>()),
   listApiTokens: (...args: unknown[]) => apiGet(...args),
   createApiToken: (...args: unknown[]) => apiPost(...args),
   renameApiToken: vi.fn(),
   deleteApiToken: vi.fn(),
 }));
+
+vi.mock("../../lib/auth", () => ({ useAuth: () => mockedAuth }));
 
 afterEach(() => {
   cleanup();

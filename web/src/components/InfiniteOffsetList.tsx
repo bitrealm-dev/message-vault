@@ -11,9 +11,9 @@ import {
 } from "react";
 import { ListBox, ListBoxItem, ListLayout, Virtualizer } from "react-aria-components";
 import { groupByLetter } from "../lib/contactSort";
+import { formatVisibleRange } from "../lib/listPaging";
 import { isTauri } from "../lib/tauri-check";
 import { listRowDividersThin, resizeHandleGutter } from "../lib/tw";
-import { formatVisibleRange } from "../lib/usePagedList";
 import ListRangeHeader from "./ListRangeHeader";
 import ListRangePill, { RANGE_PILL_OVERLAY_INSET, RANGE_PILL_SCROLL_PAD } from "./ListRangePill";
 import VirtualList, { type VisibleRange } from "./VirtualList";

@@ -1,7 +1,8 @@
 import { useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useResource } from "../lib/useResource";
+import { apiErrorMessage } from "../lib/apiErrorMessage";
 import { listConversations } from "../lib/vaultApi";
+import { useVaultQuery } from "../lib/vaultQuery";
 
 /** Only `total` is read; the rows themselves are rendered by the list column. */
 
@@ -29,7 +30,7 @@ export default function TrashScreen() {
     [query],
   );
 
-  const { data, loading, error } = useResource(`trash-count:${query}`, fetchCount);
+  const { data, isPending: loading, error } = useVaultQuery(["trash-count", query], fetchCount);
 
   if (loading) return <div className="p-6 text-[0.875rem] text-muted">Loading…</div>;
 
@@ -41,7 +42,7 @@ export default function TrashScreen() {
       <h2 className="m-0 mb-6">Trash</h2>
       {error && (
         <div className="mb-4 rounded border border-danger-soft-border bg-danger-soft-bg px-3 py-2 text-[0.813rem] text-danger">
-          {error}
+          {apiErrorMessage(error, "Could not load Trash.")}
         </div>
       )}
       {total === 0 ? (

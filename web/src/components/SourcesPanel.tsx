@@ -1,6 +1,7 @@
 import { useCallback } from "react";
-import { useResource } from "../lib/useResource";
+import { apiErrorMessage } from "../lib/apiErrorMessage";
 import { getConversationSources } from "../lib/vaultApi";
+import { useVaultQuery } from "../lib/vaultQuery";
 import ModalShell from "./ModalShell";
 
 export default function SourcesPanel({
@@ -19,7 +20,13 @@ export default function SourcesPanel({
     [conversationId],
   );
 
-  const { data, loading, error } = useResource(conversationId, fetchSources);
+  const {
+    data,
+    isPending: loading,
+    error,
+  } = useVaultQuery(["conversation-sources", conversationId], fetchSources, {
+    enabled: conversationId !== null,
+  });
 
   if (!conversationId) return null;
 
@@ -42,7 +49,7 @@ export default function SourcesPanel({
         <div className="text-[0.875rem] text-muted">Loading…</div>
       ) : error ? (
         <div className="rounded border border-danger-soft-border bg-danger-soft-bg p-2 text-[0.813rem] text-danger">
-          {error}
+          {apiErrorMessage(error, "Could not load sources.")}
         </div>
       ) : sources.length === 0 ? (
         <div className="text-[0.875rem] text-muted">No source data available.</div>

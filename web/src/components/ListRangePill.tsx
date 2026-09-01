@@ -1,4 +1,4 @@
-import { listActivitySuffix } from "../lib/usePagedList";
+import { listActivitySuffix } from "../lib/listPaging";
 
 /** Room under the last row so the floating range pill does not cover a row. */
 export const RANGE_PILL_SCROLL_PAD = 56;
