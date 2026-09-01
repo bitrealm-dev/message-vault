@@ -1,15 +1,8 @@
 import { useRef, useState } from "react";
 import Button from "../../components/Button";
-import { apiClient } from "../../lib/api";
 import { invalidateContactGroups } from "../../lib/contactGroups";
+import { loadAddressBook } from "../../lib/vaultApi";
 import { sectionTitleClass } from "./profileStyles";
-
-/** What the server reports after loading an address book. */
-type AddressBookLoadResponse = {
-  contacts: number;
-  phones: number;
-  phones_needing_review: number;
-};
 
 /** Largest file the server accepts, mirrored here so the refusal is immediate. */
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -43,10 +36,7 @@ export function AddressBookSection() {
         return;
       }
       const content = await file.text();
-      const res = await apiClient.post<AddressBookLoadResponse>("/v1/contacts/address-book", {
-        filename: file.name,
-        content,
-      });
+      const res = await loadAddressBook({ filename: file.name, content });
       const review =
         res.phones_needing_review > 0
           ? `, ${plural(res.phones_needing_review, "number needs", "numbers need")} a look`

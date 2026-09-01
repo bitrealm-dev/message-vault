@@ -26,6 +26,11 @@ function profile(name: string): AccountProfile {
     preferred_name: name,
     phones: [],
     emails: [],
+    is_demo: false,
+    is_admin: false,
+    can_import: true,
+    can_export: true,
+    can_delete: true,
   };
 }
 

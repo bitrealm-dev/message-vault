@@ -39,7 +39,7 @@ export function senderName(m: Message, useAliases: boolean): string {
   if (m.is_from_me) return "Me";
   const labelFor = (p: {
     preferred_name?: string | null;
-    name_alias: string | null;
+    name_alias?: string | null;
     handle: string;
   }) =>
     personDisplayLabel(
@@ -196,7 +196,7 @@ export function ServiceBubbleShell({
   const mine = message.is_from_me;
   const useAliases = useNameAliases();
   return (
-    <ServiceRow messageId={message.id} isActive={isActive}>
+    <ServiceRow messageId={String(message.id)} isActive={isActive}>
       <div
         className={`mb-1 flex gap-2 ${headerAlignClassName ?? ""} ${
           mine ? "justify-end" : "justify-start"

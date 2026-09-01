@@ -37,6 +37,9 @@ cargo test --workspace
 echo "==> cargo check src-tauri"
 cargo check --manifest-path src-tauri/Cargo.toml
 
+echo "==> generated vault API types match the OpenAPI document"
+"${SCRIPT_DIR}/check-generated-api-types.sh"
+
 echo "==> web lint"
 (cd web && npm run lint)
 echo "==> web test"

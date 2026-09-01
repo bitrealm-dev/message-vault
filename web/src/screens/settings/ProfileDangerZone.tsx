@@ -2,8 +2,8 @@ import { useState } from "react";
 import Button from "../../components/Button";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import DeleteAccountDialog from "../../components/DeleteAccountDialog";
-import { apiClient } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
+import { deleteAccount, deleteAllMessages as deleteAllVaultMessages } from "../../lib/vaultApi";
 import { dangerButtonClass } from "./profileStyles";
 
 export function ProfileDangerZone({ isDemo, username }: { isDemo: boolean; username: string }) {
@@ -23,7 +23,7 @@ export function ProfileDangerZone({ isDemo, username }: { isDemo: boolean; usern
     setDeletingMessages(true);
     setDangerError("");
     try {
-      await apiClient.post("/v1/account/delete-messages", { confirm: true });
+      await deleteAllVaultMessages({ confirm: true });
     } catch (e) {
       setDangerError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -37,10 +37,7 @@ export function ProfileDangerZone({ isDemo, username }: { isDemo: boolean; usern
     setDeleting(true);
     setDangerError("");
     try {
-      await apiClient.post("/v1/auth/delete-account", {
-        confirm: true,
-        current_password: currentPassword,
-      });
+      await deleteAccount({ confirm: true, current_password: currentPassword });
       setDeleteDialogOpen(false);
       logout();
     } catch (e) {

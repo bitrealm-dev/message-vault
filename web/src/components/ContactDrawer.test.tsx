@@ -14,16 +14,15 @@ import ContactDrawer from "./ContactDrawer";
 const get = vi.fn();
 const post = vi.fn();
 
-vi.mock("../lib/api", () => ({
-  apiClient: {
-    get: (...args: unknown[]) => get(...args),
-    post: (...args: unknown[]) => post(...args),
-  },
+vi.mock("../lib/vaultApi", () => ({
+  getContact: (...args: unknown[]) => get(...args),
+  updateContact: (...args: unknown[]) => post(...args),
 }));
-function detail(id: string, overrides: Partial<CachedContactDetail> = {}): CachedContactDetail {
+function detail(id: number, overrides: Partial<CachedContactDetail> = {}): CachedContactDetail {
   return {
     id,
     name: `Contact ${id}`,
+    last_modified: "2024-01-01T00:00:00Z",
     handles: [
       {
         handle: `+1555000${id}`,
@@ -58,24 +57,24 @@ describe("ContactDrawer", () => {
   });
 
   it("keeps groups and avoids zero counts on first paint when switching to an uncached contact", async () => {
-    const a = detail("a");
-    await fetchContactDetail("a", async () => a);
+    const a = detail(1);
+    await fetchContactDetail("1", async () => a);
 
     let resolveB!: (d: CachedContactDetail) => void;
     const pendingB = new Promise<CachedContactDetail>((resolve) => {
       resolveB = resolve;
     });
-    get.mockImplementation((path: string) => {
-      if (String(path).includes("/a")) return Promise.resolve(a);
+    get.mockImplementation((id: string) => {
+      if (String(id) === "1") return Promise.resolve(a);
       return pendingB;
     });
 
     const { rerender } = render(
       <ContactDrawer
         variant="docked"
-        contactId="a"
+        contactId="1"
         preview={{
-          id: "a",
+          id: "1",
           name: a.name,
           handles: a.handles.map((h) => h.handle),
           groups: a.groups,
@@ -86,15 +85,15 @@ describe("ContactDrawer", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: a.name })).toBeTruthy();
-      expect(screen.getByText("Group-a")).toBeTruthy();
+      expect(screen.getByText("Group-1")).toBeTruthy();
     });
 
     rerender(
       <ContactDrawer
         variant="docked"
-        contactId="b"
+        contactId="2"
         preview={{
-          id: "b",
+          id: "2",
           name: "Contact b",
           handles: ["+1555000b"],
           groups: ["Family"],
@@ -112,7 +111,7 @@ describe("ContactDrawer", () => {
     const dashes = table.textContent?.match(/—/g) ?? [];
     expect(dashes.length).toBeGreaterThanOrEqual(4);
 
-    resolveB(detail("b", { name: "Contact b", groups: ["Family"] }));
+    resolveB(detail(2, { name: "Contact b", groups: ["Family"] }));
     await waitFor(() => {
       expect(dialog.getAttribute("aria-busy")).toBeNull();
       expect(screen.getAllByText("42").length).toBeGreaterThan(0);
@@ -120,8 +119,8 @@ describe("ContactDrawer", () => {
   });
 
   it("shows cached counts and groups on first paint when switching to a cached contact", async () => {
-    const a = detail("a");
-    const b = detail("b", {
+    const a = detail(1);
+    const b = detail(2, {
       name: "Cached Bob",
       groups: ["Work"],
       handles: [
@@ -138,20 +137,20 @@ describe("ContactDrawer", () => {
         },
       ],
     });
-    await fetchContactDetail("a", async () => a);
-    await fetchContactDetail("b", async () => b);
-    expect(getCachedContactDetail("b")?.name).toBe("Cached Bob");
+    await fetchContactDetail("1", async () => a);
+    await fetchContactDetail("2", async () => b);
+    expect(getCachedContactDetail("2")?.name).toBe("Cached Bob");
 
-    get.mockImplementation((path: string) => {
-      if (String(path).includes("/a")) return Promise.resolve(a);
+    get.mockImplementation((id: string) => {
+      if (String(id) === "1") return Promise.resolve(a);
       return Promise.resolve(b);
     });
 
     const { rerender } = render(
       <ContactDrawer
         variant="docked"
-        contactId="a"
-        preview={{ id: "a", name: a.name, handles: ["+1555000a"], groups: a.groups }}
+        contactId="1"
+        preview={{ id: "1", name: a.name, handles: ["+1555000a"], groups: a.groups }}
         onClose={() => {}}
       />,
     );
@@ -163,9 +162,9 @@ describe("ContactDrawer", () => {
     rerender(
       <ContactDrawer
         variant="docked"
-        contactId="b"
+        contactId="2"
         preview={{
-          id: "b",
+          id: "2",
           name: "Cached Bob",
           handles: ["+15551212"],
           groups: ["Work"],
@@ -188,14 +187,14 @@ describe("ContactDrawer", () => {
     });
     get.mockImplementation(() => pending);
 
-    render(<ContactDrawer variant="overlay" contactId="z" preview={null} onClose={() => {}} />);
+    render(<ContactDrawer variant="overlay" contactId="26" preview={null} onClose={() => {}} />);
 
     const dialog = screen.getByRole("dialog", { name: "Loading…" });
     expect(dialog.getAttribute("aria-busy")).toBe("true");
     expect(screen.queryByText("No groups")).toBeNull();
     expect(screen.getByText("…")).toBeTruthy();
 
-    resolveDetail(detail("z", { name: "Zed", groups: ["Work"] }));
+    resolveDetail(detail(26, { name: "Zed", groups: ["Work"] }));
     await waitFor(() => {
       expect(screen.getByRole("dialog", { name: "Zed" })).toBeTruthy();
       expect(screen.getByText("Work")).toBeTruthy();
@@ -213,9 +212,9 @@ describe("ContactDrawer", () => {
     render(
       <ContactDrawer
         variant="docked"
-        contactId="b"
+        contactId="2"
         preview={{
-          id: "b",
+          id: "2",
           name: "Contact b",
           handles: ["+1555000b", "1555000b"],
           handleCount: 1,
@@ -235,7 +234,7 @@ describe("ContactDrawer", () => {
     expect(table.querySelectorAll('[role="row"]').length).toBe(3);
 
     resolveDetail(
-      detail("b", {
+      detail(2, {
         name: "Contact b",
         groups: ["Family"],
         handles: [
@@ -269,9 +268,9 @@ describe("ContactDrawer", () => {
     render(
       <ContactDrawer
         variant="overlay"
-        contactId="b"
+        contactId="2"
         preview={{
-          id: "b",
+          id: "2",
           name: "Contact b",
           handles: ["+1555000b"],
           handleCount: 1,
@@ -288,7 +287,7 @@ describe("ContactDrawer", () => {
     expect(table.querySelectorAll('[role="row"]').length).toBe(3);
 
     resolveDetail(
-      detail("b", {
+      detail(2, {
         name: "Contact b",
         handles: [
           {
@@ -320,9 +319,9 @@ describe("ContactDrawer", () => {
     render(
       <ContactDrawer
         variant="overlay"
-        contactId="b"
+        contactId="2"
         preview={{
-          id: "b",
+          id: "2",
           name: "Mom",
           handles: [],
           handleCount: 1,
@@ -338,7 +337,7 @@ describe("ContactDrawer", () => {
     expect(table.querySelectorAll('[role="row"]').length).toBe(3);
     expect(table.textContent).toContain("…");
 
-    resolveDetail(detail("b", { name: "Ada Lovelace" }));
+    resolveDetail(detail(2, { name: "Ada Lovelace" }));
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Ada Lovelace" })).toBeTruthy();
     });
@@ -354,9 +353,9 @@ describe("ContactDrawer", () => {
     render(
       <ContactDrawer
         variant="docked"
-        contactId="b"
+        contactId="2"
         preview={{
-          id: "b",
+          id: "2",
           name: "Contact b",
           handles: ["+15550001", "15550001", "+15550002", "15550002"],
           handleCount: 2,
@@ -374,7 +373,7 @@ describe("ContactDrawer", () => {
     expect(table.querySelectorAll('[role="row"]').length).toBe(4);
 
     resolveDetail(
-      detail("b", {
+      detail(2, {
         name: "Contact b",
         groups: ["Family"],
         handles: [
@@ -418,9 +417,9 @@ describe("ContactDrawer", () => {
     render(
       <ContactDrawer
         variant="docked"
-        contactId="b"
+        contactId="2"
         preview={{
-          id: "b",
+          id: "2",
           name: "Contact b",
           handles: ["+1555000b"],
           handleCount: 1,
@@ -433,20 +432,20 @@ describe("ContactDrawer", () => {
     const edit = screen.getByRole("button", { name: "Edit name" });
     expect(edit).toBeDisabled();
 
-    resolveDetail(detail("b", { name: "Contact b", groups: ["Family"] }));
+    resolveDetail(detail(2, { name: "Contact b", groups: ["Family"] }));
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Edit name" })).not.toBeDisabled();
     });
   });
 
   async function openNameEditor(user: ReturnType<typeof userEvent.setup>) {
-    get.mockResolvedValue(detail("a", { name: "Contact a" }));
+    get.mockResolvedValue(detail(1, { name: "Contact a" }));
     render(
       <ContactDrawer
         variant="docked"
-        contactId="a"
+        contactId="1"
         preview={{
-          id: "a",
+          id: "1",
           name: "Contact a",
           handles: ["+1555000a"],
           groups: [],
@@ -520,18 +519,18 @@ describe("ContactDrawer", () => {
     await user.keyboard("{Enter}");
     input.blur();
     await waitFor(() => {
-      expect(post).toHaveBeenCalledWith("/v1/export/contacts/a", { name: "Renamed" });
+      expect(post).toHaveBeenCalledWith("1", { name: "Renamed" });
     });
   });
 
   it("centers identity headers between column markers and keeps Group last", async () => {
-    get.mockResolvedValue(detail("a"));
+    get.mockResolvedValue(detail(1));
     render(
       <ContactDrawer
         variant="docked"
-        contactId="a"
+        contactId="1"
         preview={{
-          id: "a",
+          id: "1",
           name: "Contact a",
           handles: ["+1555000a"],
           groups: [],

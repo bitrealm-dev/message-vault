@@ -18,7 +18,7 @@ vi.mock("../../lib/api", () => ({
 
 const get = vi.mocked(apiClient.get);
 
-function message(id: string): Message {
+function message(id: number): Message {
   return {
     id,
     source: "test",
@@ -29,9 +29,13 @@ function message(id: string): Message {
     is_from_me: false,
     sender: "someone",
     subject: null,
-    text: id,
+    text: `from-${id}`,
+    is_announcement: false,
+    is_reply: false,
+    num_replies: 0,
+    sort_order: id,
     conversation: {
-      id: "c",
+      id: 1,
       chat_identifier: "c",
       conversation_type: "direct",
       group_title: null,
@@ -60,7 +64,7 @@ function routeGets(slow: Promise<{ messages: Message[] }>) {
   const impl = (path: string) => {
     if (path.includes("/count")) return Promise.resolve({ messages: 1 });
     if (path.includes("in%3AA")) return slow;
-    return Promise.resolve({ messages: [message("from-B")] });
+    return Promise.resolve({ messages: [message(2)] });
   };
   get.mockImplementation(impl as unknown as typeof apiClient.get);
 }
@@ -80,14 +84,14 @@ describe("useConversationMessages", () => {
     );
 
     rerender({ id: "B" });
-    await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual(["from-B"]));
+    await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual([2]));
 
     await act(async () => {
-      slow.resolve({ messages: [message("from-A")] });
+      slow.resolve({ messages: [message(1)] });
       await slow.promise;
     });
 
-    expect(result.current.messages.map((m) => m.id)).toEqual(["from-B"]);
+    expect(result.current.messages.map((m) => m.id)).toEqual([2]);
     expect(result.current.loading).toBe(false);
   });
 
@@ -101,7 +105,7 @@ describe("useConversationMessages", () => {
     );
 
     rerender({ id: "B" });
-    await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual(["from-B"]));
+    await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual([2]));
 
     // The abort surfaces as a rejection; it must not blank B's messages.
     await act(async () => {
@@ -109,7 +113,7 @@ describe("useConversationMessages", () => {
       await slow.promise.catch(() => {});
     });
 
-    expect(result.current.messages.map((m) => m.id)).toEqual(["from-B"]);
+    expect(result.current.messages.map((m) => m.id)).toEqual([2]);
     expect(result.current.loading).toBe(false);
   });
 });

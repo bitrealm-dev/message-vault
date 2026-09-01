@@ -1,58 +1,31 @@
-export interface Participant {
-  name: string | null;
-  name_alias?: string | null;
-  handle: string;
-  service: string;
-  contact_id: string | null;
-}
+import type { components } from "./vaultApi.types";
 
-export interface Conversation {
-  id: string;
-  participants: Participant[];
-  message_count: number;
-  last_message_at: string;
-  date_range_start: string | null;
-  date_range_end: string | null;
-  service: string;
-  is_group: boolean;
-  label: string | null;
-  /** Message tags on this conversation. */
-  tags?: string[];
-}
+type Schema = components["schemas"];
 
-export interface MessageParticipant {
-  handle: string;
-  name_alias: string | null;
-  preferred_name?: string | null;
-  contact_id: string | null;
-}
+/*
+ * Shapes the vault returns come from the generated types, so a field renamed
+ * on the server is a build error here rather than an empty screen. Shapes
+ * below that the vault never sends — desktop command arguments, progress
+ * events, and the per-app extras on a message — stay hand-written.
+ */
 
-export interface MessageConversation {
-  id: string;
-  chat_identifier: string;
-  conversation_type: string;
-  group_title: string | null;
-  participants: MessageParticipant[];
-}
+/** One participant in a conversation, as the conversation list returns them. */
+export type Participant = Schema["ConversationParticipant"];
 
-export interface MessageAttachment {
-  path: string | null;
-  original_name: string | null;
-  mime_type: string | null;
-  sha256: string | null;
-  is_sticker: boolean;
-  transcription: string | null;
-  /** Why the file bytes are missing (`too_large` / `file_missing`). Null when the file exists. */
-  missing_reason?: string | null;
-}
+/** One conversation in the browse list. */
+export type Conversation = Schema["ConversationSummary"];
 
-export interface MessageTapback {
-  part_index: number;
-  kind: string;
-  emoji: string | null;
-  is_from_me: boolean;
-  sender: string | null;
-}
+/** One participant on a message the Export routes return. */
+export type MessageParticipant = Schema["ExportParticipant"];
+
+/** The conversation a message belongs to, as the Export routes return it. */
+export type MessageConversation = Schema["ExportConversation"];
+
+/** One attachment on a message. */
+export type MessageAttachment = Schema["ExportAttachment"];
+
+/** One tapback reaction on a message. */
+export type MessageTapback = Schema["ExportTapback"];
 
 export interface Reaction {
   emoji: string;
@@ -79,22 +52,16 @@ export interface EditEntry {
   edited_at: string;
 }
 
-export interface Message {
-  id: string;
-  source: string;
-  service?: string | null;
-  guid: string | null;
-  timestamp: string;
-  timestamp_utc: string | null;
-  is_from_me: boolean;
-  sender: string | null;
-  subject: string | null;
-  text: string | null;
-  conversation: MessageConversation;
-  attachments: MessageAttachment[];
-  tapbacks: MessageTapback[];
-
-  // Extra fields that only some messaging apps send.
+/**
+ * One message as the Export routes return it, plus the per-app extras the
+ * message bubbles render.
+ *
+ * The vault does not currently send any of the optional fields below: they are
+ * not in its OpenAPI document, so the branches that render them never run. They
+ * are kept typed rather than deleted so that removing those branches stays a
+ * separate, reviewable change.
+ */
+export type Message = Schema["ExportMessage"] & {
   reactions?: Reaction[]; // iMessage tapbacks, Discord reactions
   reply_to_message?: MessageRef; // WhatsApp reply chains
   embeds?: Embed[]; // Discord embeds
@@ -104,7 +71,7 @@ export interface Message {
   role_color?: string; // Discord role color
   is_story_reply?: boolean; // Instagram story reply
   forwarded?: boolean; // Instagram forwarding indicator
-}
+};
 
 export type AttachmentMediaMode = "copy" | "convert" | "compress" | "skip";
 

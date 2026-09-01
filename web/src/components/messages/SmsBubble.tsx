@@ -26,7 +26,7 @@ export default function SmsBubble({
 
   return (
     <ChatBubbleRow
-      messageId={message.id}
+      messageId={String(message.id)}
       mine={mine}
       isActive={isActive}
       palette="sms"

@@ -1,27 +1,18 @@
 /** In-memory cache of contact details so reopening a drawer is instant. */
 
-export type CachedContactHandle = {
-  handle: string;
-  service: string | null;
-  name_alias?: string | null;
-  start_date: string | null;
-  end_date: string | null;
-  individual_conversations: number;
-  group_conversations: number;
-  individual_message_count: number;
-  group_message_count: number;
-};
+import type { components } from "./vaultApi.types";
 
-export type CachedContactDetail = {
-  id: string;
-  name: string;
-  handles: CachedContactHandle[];
-  direct_conversations: number;
-  group_conversations: number;
-  total_messages: number;
-  last_modified?: string;
-  groups?: string[];
-};
+/*
+ * The cached shapes are the vault's own: generated, so a field renamed on the
+ * server is a build error rather than a drawer that renders blanks. The cache
+ * is still keyed by the id as a string, because routes and DOM ids are strings.
+ */
+
+/** One handle on a contact, with its per-handle counts. */
+export type CachedContactHandle = components["schemas"]["ContactHandleInfo"];
+
+/** One contact in full, as the contact drawer shows it. */
+export type CachedContactDetail = components["schemas"]["ContactDetail"];
 
 const cache = new Map<string, CachedContactDetail>();
 const inflight = new Map<string, Promise<CachedContactDetail>>();
@@ -79,7 +70,7 @@ export function clearContactDetailCache(): void {
  */
 export async function fetchContactDetail(
   id: string,
-  get: (path: string, opts?: { signal?: AbortSignal }) => Promise<CachedContactDetail>,
+  load: (id: string, opts?: { signal?: AbortSignal }) => Promise<CachedContactDetail>,
   signal?: AbortSignal,
 ): Promise<CachedContactDetail> {
   const key = String(id);
@@ -92,7 +83,7 @@ export async function fetchContactDetail(
     return existing;
   }
 
-  const promise = get(`/v1/export/contacts/${key}`, { signal })
+  const promise = load(key, { signal })
     .then((detail) => {
       setCachedContactDetail(detail);
       return detail;

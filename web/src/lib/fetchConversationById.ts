@@ -1,12 +1,5 @@
-import { apiClient } from "./api";
 import type { Conversation } from "./types";
-
-type ConversationsPage = {
-  conversations: Conversation[];
-  total: number;
-  limit: number;
-  offset: number;
-};
+import { listConversations } from "./vaultApi";
 
 const PAGE_SIZE = 100;
 
@@ -18,14 +11,7 @@ export async function fetchConversationById(
   let offset = 0;
 
   while (true) {
-    const params = new URLSearchParams({
-      q: "",
-      limit: String(PAGE_SIZE),
-      offset: String(offset),
-    });
-    const page = await apiClient.get<ConversationsPage>(`/v1/export/conversations?${params}`, {
-      signal,
-    });
+    const page = await listConversations({ q: "", limit: PAGE_SIZE, offset }, { signal });
 
     const match = (page.conversations || []).find((c) => c.id === conversationId);
     if (match) return match;

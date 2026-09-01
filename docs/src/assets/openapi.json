@@ -2281,6 +2281,93 @@
         ]
       }
     },
+    "/v1/contacts": {
+      "get": {
+        "tags": [
+          "Contacts"
+        ],
+        "summary": "Page through the account's contacts (id, name, handles, groups).",
+        "operationId": "contacts_list_handler",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Contact search; empty lists all",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Page offset",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContactListPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/contacts/address-book": {
       "post": {
         "tags": [
@@ -2490,170 +2577,7 @@
         ]
       }
     },
-    "/v1/conversations/tags": {
-      "post": {
-        "tags": [
-          "Message tags"
-        ],
-        "summary": "Add or remove a tag on conversations.",
-        "operationId": "message_tags_membership_handler",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MessageTagMembershipBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MembershipChangedResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/v1/export/contacts": {
-      "get": {
-        "tags": [
-          "Contacts"
-        ],
-        "summary": "Page through the account's contacts (id, name, handles, groups).",
-        "operationId": "contacts_list_handler",
-        "parameters": [
-          {
-            "name": "q",
-            "in": "query",
-            "description": "Contact search; empty lists all",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Page size",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0
-            }
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "description": "Page offset",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ContactListPage"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/v1/export/contacts/summaries": {
+    "/v1/contacts/summaries": {
       "post": {
         "tags": [
           "Contacts"
@@ -2719,7 +2643,7 @@
         ]
       }
     },
-    "/v1/export/contacts/{id}": {
+    "/v1/contacts/{id}": {
       "get": {
         "tags": [
           "Contacts"
@@ -2786,7 +2710,7 @@
           }
         ]
       },
-      "post": {
+      "patch": {
         "tags": [
           "Contacts"
         ],
@@ -2873,7 +2797,7 @@
         ]
       }
     },
-    "/v1/export/conversations": {
+    "/v1/conversations": {
       "get": {
         "tags": [
           "Conversations"
@@ -2978,7 +2902,83 @@
         ]
       }
     },
-    "/v1/export/conversations/{id}/sources": {
+    "/v1/conversations/tags": {
+      "post": {
+        "tags": [
+          "Message tags"
+        ],
+        "summary": "Add or remove a tag on conversations.",
+        "operationId": "message_tags_membership_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageTagMembershipBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembershipChangedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/conversations/{id}/sources": {
       "get": {
         "tags": [
           "Conversations"
@@ -5648,7 +5648,7 @@
       },
       "ContactMutationBody": {
         "type": "object",
-        "description": "Body for `POST /v1/export/contacts/{id}`. Exactly one mutation field should be set.",
+        "description": "Body for `PATCH /v1/contacts/{id}`. Exactly one mutation field should be set.",
         "properties": {
           "add_handle": {
             "oneOf": [
@@ -5775,7 +5775,7 @@
       },
       "ContactSummariesBody": {
         "type": "object",
-        "description": "Body for `POST /v1/export/contacts/summaries`.",
+        "description": "Body for `POST /v1/contacts/summaries`.",
         "properties": {
           "ids": {
             "type": "array",
@@ -5789,7 +5789,7 @@
       },
       "ContactSummariesPage": {
         "type": "object",
-        "description": "Response for `POST /v1/export/contacts/summaries`.",
+        "description": "Response for `POST /v1/contacts/summaries`.",
         "required": [
           "contacts"
         ],
@@ -5918,10 +5918,11 @@
         "properties": {
           "contact_id": {
             "type": [
-              "string",
+              "integer",
               "null"
             ],
-            "description": "Linked vault contact id, when the handle is linked."
+            "format": "int64",
+            "description": "Linked vault contact id, when the handle is linked. Matches the `id`\nevery other contact shape uses, so a caller can compare the two without\nconverting either."
           },
           "handle": {
             "type": "string",

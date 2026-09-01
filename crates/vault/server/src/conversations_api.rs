@@ -1,4 +1,4 @@
-//! Read-only conversation list used by `GET /v1/export/conversations`.
+//! Read-only conversation list used by `GET /v1/conversations`.
 
 use std::collections::{HashMap, HashSet};
 
@@ -127,9 +127,11 @@ pub struct ConversationParticipant {
     pub handle: String,
     /// Platform service, e.g. `imessage`.
     pub service: String,
-    /// Linked vault contact id, when the handle is linked.
+    /// Linked vault contact id, when the handle is linked. Matches the `id`
+    /// every other contact shape uses, so a caller can compare the two without
+    /// converting either.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub contact_id: Option<String>,
+    pub contact_id: Option<i64>,
 }
 
 /// Conversation row for the list: participants, counts, tags.
@@ -719,7 +721,7 @@ async fn load_participants(
                     service: row
                         .try_get::<String, _>(4)
                         .unwrap_or_else(|_| "unknown".into()),
-                    contact_id: contact_id.map(|id| id.to_string()),
+                    contact_id,
                 },
             ))
         },
@@ -880,7 +882,7 @@ pub(crate) struct ConversationsPageQuery {
 /// Ordered by most recent activity unless `sort` and `order` say otherwise.
 #[utoipa::path(
     get,
-    path = "/v1/export/conversations",
+    path = "/v1/conversations",
     tag = "Conversations",
     security(("bearer" = [])),
     params(
@@ -924,7 +926,7 @@ pub(crate) async fn conversations_list_handler(
 /// Per-backup message counts for one conversation (the Sources panel).
 #[utoipa::path(
     get,
-    path = "/v1/export/conversations/{id}/sources",
+    path = "/v1/conversations/{id}/sources",
     tag = "Conversations",
     security(("bearer" = [])),
     params(("id" = i64, Path, description = "Conversation id")),
@@ -1677,7 +1679,7 @@ mod tests {
         assert_eq!(p.handle, "+15555550200");
         assert_eq!(p.name.as_deref(), Some("Sam Preferred"));
         assert_eq!(p.name_alias.as_deref(), Some("Sammy"));
-        assert_eq!(p.contact_id, Some(contact_id.to_string()));
+        assert_eq!(p.contact_id, Some(contact_id));
     }
 
     #[tokio::test]

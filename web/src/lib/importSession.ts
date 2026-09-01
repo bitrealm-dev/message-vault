@@ -1,14 +1,22 @@
-import { apiClient } from "./api";
 import type { PathStat } from "./tauri";
+import { discardImport, getActiveImport, setImportStage as setStage } from "./vaultApi";
 
 /** Where a live import session is. Mirrors the vault's `ImportStage`. */
-export type ImportStage =
-  | "parse"
-  | "write"
-  | "awaiting_gate_1"
-  | "transcode"
-  | "awaiting_gate_2"
-  | "pushing";
+export const IMPORT_STAGES = [
+  "parse",
+  "write",
+  "awaiting_gate_1",
+  "transcode",
+  "awaiting_gate_2",
+  "pushing",
+] as const;
+
+export type ImportStage = (typeof IMPORT_STAGES)[number];
+
+/** The vault sends `stage` as a plain string; anything unknown reads as null. */
+function asImportStage(value: string | null | undefined): ImportStage | null {
+  return IMPORT_STAGES.includes(value as ImportStage) ? (value as ImportStage) : null;
+}
 
 /** Identity of the backup a session was started from. */
 export type SourceFingerprint = {
@@ -40,8 +48,15 @@ export type ActiveImportSession = {
 
 /** The account's live session, or null when there is none. */
 export async function getActiveImportSession(): Promise<ActiveImportSession | null> {
-  const res = await apiClient.get<{ session: ActiveImportSession | null }>("/v1/imports/active");
-  return res.session ?? null;
+  const session = (await getActiveImport()).session;
+  if (!session) return null;
+  return {
+    ...session,
+    stage: asImportStage(session.stage),
+    staging_dir: session.staging_dir ?? null,
+    device_id: session.device_id ?? null,
+    source_fingerprint: session.source_fingerprint as SourceFingerprint | null,
+  };
 }
 
 /**
@@ -56,12 +71,12 @@ export async function setImportStage(
   stage: ImportStage,
   approvedPlan?: unknown,
 ): Promise<void> {
-  await apiClient.post(`/v1/imports/${String(id)}/stage`, { stage, summary: approvedPlan });
+  await setStage(id, { stage, summary: approvedPlan });
 }
 
 /** Close a session the user gave up on, freeing the account's slot. */
 export async function discardImportSession(id: number): Promise<void> {
-  await apiClient.post(`/v1/imports/${String(id)}/discard`, {});
+  await discardImport(id);
 }
 
 /**

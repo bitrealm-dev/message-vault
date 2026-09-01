@@ -539,6 +539,9 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     eprintln!("  GET  /health");
     eprintln!("  GET  /v1/auth/check   (Bearer session token or API token)");
     eprintln!("  GET  /v1/export/messages?q=&limit=&cursor=&account=  (read-only export)");
+    eprintln!("  GET  /v1/conversations?q=&limit=&offset=  (browse conversations)");
+    eprintln!("  GET  /v1/contacts?q=&limit=&offset=     (browse contacts)");
+    eprintln!("  PATCH /v1/contacts/{{id}}                  (edit a contact)");
     eprintln!("  GET  /v1/export/messages/count?q=&account=&source=  (export match counts)");
     eprintln!("  GET  /v1/assets/{{sha256}}?source=&account=  (download content-addressed media)");
     eprintln!("  GET  /v1/imports       (list past import sessions with stats)");
@@ -1682,6 +1685,49 @@ mod tests {
         let (_tmp, state, token, _import_id) = test_state().await;
         let status = crate::test_support::get_status(&state, "/v1/imports/active", &token).await;
         assert_eq!(status, StatusCode::OK);
+    }
+
+    /// `/v1/contacts/{id}` takes an `i64`, and four literal routes now sit
+    /// beside it: `summaries`, `match`, `address-book`, and the contact-group
+    /// membership route `groups`. All four are `POST`, and editing a contact is
+    /// now a `PATCH`, so if the `{id}` route ever swallowed one of them the
+    /// request would come back 405 (no `POST` on `/v1/contacts/{id}`) instead
+    /// of reaching its own handler. Each assertion below distinguishes
+    /// "matched my route and rejected my body" from "matched the wrong route".
+    #[tokio::test]
+    async fn literal_contact_routes_are_not_captured_by_the_id_route() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let user =
+            crate::test_support::register_via_api(&state, "contact-routes", "hunter2hunter2").await;
+
+        assert_eq!(
+            crate::test_support::get_status(&state, "/v1/contacts", &user.token).await,
+            StatusCode::OK
+        );
+
+        // A real id still reaches the detail handler: an unknown contact is its
+        // 404, not a 400 from a failed `i64` path parse.
+        assert_eq!(
+            crate::test_support::get_status(&state, "/v1/contacts/999999", &user.token).await,
+            StatusCode::NOT_FOUND
+        );
+
+        for path in [
+            "/v1/contacts/summaries",
+            "/v1/contacts/match",
+            "/v1/contacts/address-book",
+            "/v1/contacts/groups",
+        ] {
+            let status =
+                crate::test_support::post_status(&state, path, &user.token, serde_json::json!({}))
+                    .await;
+            assert_ne!(
+                status,
+                StatusCode::METHOD_NOT_ALLOWED,
+                "{path} was captured by /v1/contacts/{{id}}"
+            );
+        }
     }
 
     /// The `ImportAccess` extractor guards `GET /v1/imports`: with

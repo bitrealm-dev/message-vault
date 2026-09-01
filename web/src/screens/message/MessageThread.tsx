@@ -41,7 +41,7 @@ export default function MessageThread({
               key={m.id}
               message={m}
               highlight={findTerm.trim() || undefined}
-              isActive={matchIds.length > 0 && matchIds[activeMatch] === m.id}
+              isActive={matchIds.length > 0 && matchIds[activeMatch] === String(m.id)}
               onAttachmentClick={onAttachmentClick}
             />
           ))

@@ -1,7 +1,14 @@
 import { useCallback, useState } from "react";
-import { apiClient } from "../../lib/api";
 import { useAsyncAction } from "../../lib/useAsyncAction";
 import { useResource } from "../../lib/useResource";
+import {
+  createUser as createVaultUser,
+  deleteUserMessages,
+  deleteUser as deleteVaultUser,
+  listUsers,
+  setUserPassword as setVaultUserPassword,
+  updateUser,
+} from "../../lib/vaultApi";
 
 /** One account as an administrator sees it — mirrors `AdminUser` in `admin_api.rs`. */
 export type AdminUser = {
@@ -16,10 +23,7 @@ export type AdminUser = {
   storage_bytes: number;
 };
 
-const fetchUsers = (signal: AbortSignal) =>
-  apiClient
-    .get<{ items: AdminUser[] }>("/v1/admin/users", { signal })
-    .then((res) => res.items ?? []);
+const fetchUsers = (signal: AbortSignal) => listUsers({ signal }).then((res) => res.items ?? []);
 
 /** The administrator's view of every account, plus the actions on one. */
 export function useAdminUsers() {
@@ -47,11 +51,7 @@ export function useAdminUsers() {
     const password = newPassword;
     if (!username || !password) return Promise.resolve();
     return run(async () => {
-      await apiClient.post("/v1/admin/users", {
-        username,
-        password,
-        is_admin: newIsAdmin,
-      });
+      await createVaultUser({ username, password, is_admin: newIsAdmin });
       setNewUsername("");
       setNewPassword("");
       setNewIsAdmin(false);
@@ -80,10 +80,7 @@ export function useAdminUsers() {
     const password = resetPassword;
     if (!password) return Promise.resolve();
     return run(async () => {
-      await apiClient.put(
-        `/v1/admin/users/${encodeURIComponent(passwordTarget.account_id)}/password`,
-        { password },
-      );
+      await setVaultUserPassword(passwordTarget.account_id, { password });
       setPasswordTarget(null);
       setResetPassword("");
     });
@@ -97,7 +94,7 @@ export function useAdminUsers() {
       >,
     ) =>
       run(async () => {
-        await apiClient.patch(`/v1/admin/users/${encodeURIComponent(id)}`, changes);
+        await updateUser(id, changes);
         reload();
       }),
     [run, reload],
@@ -112,7 +109,7 @@ export function useAdminUsers() {
     (id: string) => {
       let succeeded = false;
       return run(async () => {
-        await apiClient.delete(`/v1/admin/users/${encodeURIComponent(id)}/messages`);
+        await deleteUserMessages(id);
         succeeded = true;
         reload();
       }).then(() => succeeded);
@@ -124,7 +121,7 @@ export function useAdminUsers() {
     (id: string) => {
       let succeeded = false;
       return run(async () => {
-        await apiClient.delete(`/v1/admin/users/${encodeURIComponent(id)}`);
+        await deleteVaultUser(id);
         succeeded = true;
         reload();
       }).then(() => succeeded);

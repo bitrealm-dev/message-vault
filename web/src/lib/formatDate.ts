@@ -35,7 +35,10 @@ export function formatDateTime(iso: string): string {
  * First and last message dates as a span.
  * Returns a single day when start and end format identically.
  */
-export function formatDateSpan(start: string | null, end: string | null): string | null {
+export function formatDateSpan(
+  start: string | null | undefined,
+  end: string | null | undefined,
+): string | null {
   if (start && end) {
     const a = formatDay(start);
     const b = formatDay(end);

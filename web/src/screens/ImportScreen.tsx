@@ -1,6 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import type { AccountProfile } from "../lib/account";
-import { apiClient } from "../lib/api";
 import {
   type IdentityService,
   identityOnProfile,
@@ -35,6 +33,7 @@ import {
 import { isTauri } from "../lib/tauri-check";
 import type { AttachmentMediaMode, ContactNameMode } from "../lib/types";
 import { loadAccountProfile, useAccountProfile } from "../lib/useAccountProfile";
+import { matchContacts, updateAccountProfile } from "../lib/vaultApi";
 import {
   emptyWhatsappPathStats,
   isWhatsappMethod,
@@ -134,7 +133,7 @@ export default function ImportScreen() {
     setIdentityAddError(null);
     setIdentityAddBusy(true);
     try {
-      const updated = await apiClient.post<AccountProfile>("/v1/account/profile", {
+      const updated = await updateAccountProfile({
         handles: [{ handle: value, service }],
       });
       setProfile(updated);
@@ -259,9 +258,7 @@ export default function ImportScreen() {
       try {
         for (let i = 0; i < identifiers.length; i += MAX_MATCH_IDENTIFIERS) {
           const batch = identifiers.slice(i, i + MAX_MATCH_IDENTIFIERS);
-          const res = await apiClient.post<{ unknown: string[] }>("/v1/contacts/match", {
-            identifiers: batch,
-          });
+          const res = await matchContacts({ identifiers: batch });
           total += res.unknown.length;
         }
         if (!cancelled) setUnknownContacts(total);

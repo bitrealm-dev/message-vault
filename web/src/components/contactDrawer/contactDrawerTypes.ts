@@ -78,7 +78,8 @@ export function sameContactPreviews(
 }
 
 export type ThreadParticipantPreviewSource = {
-  contact_id: string | null;
+  /** As the vault sends it: a number. The UI carries contact ids as strings. */
+  contact_id?: number | null;
   handle: string;
   name?: string | null;
   preferred_name?: string | null;
@@ -96,7 +97,9 @@ export function contactPreviewFromThreadParticipants(
   contactId: string,
   participants: readonly ThreadParticipantPreviewSource[],
 ): ContactPreview | null {
-  const matched = participants.filter((p) => p.contact_id === contactId);
+  const matched = participants.filter(
+    (p) => p.contact_id != null && String(p.contact_id) === contactId,
+  );
   if (matched.length === 0) return null;
   const handles = matched.map((p) => p.handle).filter((h) => h.length > 0);
   const named = matched.find((p) =>

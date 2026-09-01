@@ -1,14 +1,7 @@
 import { useCallback } from "react";
-import { apiClient } from "../lib/api";
 import { useResource } from "../lib/useResource";
+import { getConversationSources } from "../lib/vaultApi";
 import ModalShell from "./ModalShell";
-
-interface SourceInfo {
-  backup_name: string;
-  message_count: number;
-  unique_count: number;
-  percentage: number;
-}
 
 export default function SourcesPanel({
   conversationId,
@@ -19,10 +12,8 @@ export default function SourcesPanel({
 }) {
   const fetchSources = useCallback(
     async (signal: AbortSignal) => {
-      const res = await apiClient.get<{ sources: SourceInfo[] }>(
-        `/v1/export/conversations/${conversationId}/sources`,
-        { signal },
-      );
+      if (!conversationId) return [];
+      const res = await getConversationSources(conversationId, { signal });
       return res.sources;
     },
     [conversationId],

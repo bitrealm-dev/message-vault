@@ -257,9 +257,9 @@ mod tests {
         for p in [
             "/v1/export/messages",
             "/v1/export/messages/count",
-            "/v1/export/contacts",
-            "/v1/export/contacts/summaries",
-            "/v1/export/contacts/{id}",
+            "/v1/contacts",
+            "/v1/contacts/summaries",
+            "/v1/contacts/{id}",
             "/v1/contacts/match",
             "/v1/contact-groups",
             "/v1/contact-groups/members",
@@ -269,8 +269,8 @@ mod tests {
             "/v1/saved-searches",
             "/v1/saved-searches/{id}",
             "/v1/conversations/tags",
-            "/v1/export/conversations",
-            "/v1/export/conversations/{id}/sources",
+            "/v1/conversations",
+            "/v1/conversations/{id}/sources",
         ] {
             assert!(paths.contains_key(p), "missing {p}");
         }
