@@ -105,11 +105,22 @@ export function hasGroupFilterToken(raw: string): boolean {
 }
 
 /** True when this contact should appear on the given group page. */
+/**
+ * The permanent Contact Group holding what the vault could not identify: a
+ * contact with no identity, or with identities and no preferred name. The
+ * server computes its membership, so it is never stored on a contact.
+ */
+export const UNKNOWN_GROUP = "unknown";
+
 export function contactBelongsToGroup(
   groups: readonly string[] | undefined,
   groupFilter: string | "none" | null,
 ): boolean {
   if (!groupFilter) return true;
+  // Unknown is computed by the server from contact state, so it never appears
+  // in a contact's stored group names. The rows in hand have already been
+  // filtered; re-checking here would discard every one of them.
+  if (groupFilter === UNKNOWN_GROUP) return true;
   if (groupFilter === "none") return !groups || groups.length === 0;
   const needle = groupFilter.toLowerCase();
   return (groups ?? []).some((g) => g.toLowerCase() === needle);

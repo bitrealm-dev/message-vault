@@ -1,0 +1,82 @@
+/** @vitest-environment jsdom */
+
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { apiClient } from "../../lib/api";
+import { AddressBookSection } from "./AddressBookSection";
+
+vi.mock("../../lib/api", () => ({
+  apiClient: { post: vi.fn() },
+}));
+
+vi.mock("../../lib/contactGroups", () => ({
+  invalidateContactGroups: vi.fn(),
+}));
+
+const post = vi.mocked(apiClient.post);
+
+function chooseFile(name: string, body: string) {
+  const input = screen.getByLabelText("Address book file") as HTMLInputElement;
+  const file = new File([body], name, { type: "text/plain" });
+  fireEvent.change(input, { target: { files: [file] } });
+  return file;
+}
+
+describe("AddressBookSection", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("sends the file's name and text to the vault", async () => {
+    post.mockResolvedValue({ contacts: 2, phones: 3, phones_needing_review: 0 });
+    render(<AddressBookSection />);
+    chooseFile("Contacts.vcf", "BEGIN:VCARD\nEND:VCARD\n");
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(post).toHaveBeenCalledWith("/v1/contacts/address-book", {
+      filename: "Contacts.vcf",
+      content: "BEGIN:VCARD\nEND:VCARD\n",
+    });
+  });
+
+  it("reports what the load changed", async () => {
+    post.mockResolvedValue({ contacts: 2, phones: 3, phones_needing_review: 0 });
+    render(<AddressBookSection />);
+    chooseFile("Contacts.vcf", "BEGIN:VCARD\nEND:VCARD\n");
+
+    expect(await screen.findByText("Loaded 2 contacts and 3 phone numbers.")).toBeInTheDocument();
+  });
+
+  it("says when numbers need a look", async () => {
+    post.mockResolvedValue({ contacts: 1, phones: 1, phones_needing_review: 1 });
+    render(<AddressBookSection />);
+    chooseFile("Contacts.vcf", "BEGIN:VCARD\nEND:VCARD\n");
+
+    expect(
+      await screen.findByText("Loaded 1 contact and 1 phone number, 1 number needs a look."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the reason when the load fails", async () => {
+    post.mockRejectedValue(new Error("address book is empty"));
+    render(<AddressBookSection />);
+    chooseFile("Contacts.vcf", "  ");
+
+    expect(await screen.findByText("address book is empty")).toBeInTheDocument();
+  });
+
+  it("refuses a file past the size the server accepts, without asking the server", async () => {
+    render(<AddressBookSection />);
+    const input = screen.getByLabelText("Address book file") as HTMLInputElement;
+    const file = new File(["x"], "huge.vcf");
+    Object.defineProperty(file, "size", { value: 9 * 1024 * 1024 });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(await screen.findByText("That file is larger than 8 MB.")).toBeInTheDocument();
+    expect(post).not.toHaveBeenCalled();
+  });
+});

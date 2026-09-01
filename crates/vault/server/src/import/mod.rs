@@ -964,6 +964,7 @@ pub(crate) async fn imports_complete_handler(
         )?;
 
     create_import_saved_search(&mut conn, &account, &row).await;
+    create_import_contact_group(&mut conn, &account, &row).await;
 
     Ok(Json(CompleteImportResponse {
         ok: true,
@@ -1007,6 +1008,155 @@ async fn create_import_saved_search(
             row.id, row.message_count
         );
     }
+}
+
+/// One contact an import run touched, and whether the run created it.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ImportContactRow {
+    /// Contact id.
+    pub id: i64,
+    /// Preferred name; empty when the run learned an address and no name.
+    pub name: String,
+    /// True when this run created the contact, false when it only changed one
+    /// that already existed.
+    pub is_new: bool,
+}
+
+/// Response for `GET /v1/imports/{id}/contacts`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ImportContactsResponse {
+    /// Contacts the run created or changed, newest first.
+    pub contacts: Vec<ImportContactRow>,
+    /// How many of them the run created.
+    pub new_count: u64,
+    /// How many it only changed.
+    pub changed_count: u64,
+}
+
+/// List the contacts one import run created or changed.
+///
+/// New and changed are told apart by comparing each contact's `created_at`
+/// against the moment the run started: a contact first recorded during the run
+/// is new, one merely touched is changed.
+#[utoipa::path(
+    get,
+    path = "/v1/imports/{id}/contacts",
+    tag = "Import",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Import session id")),
+    responses(
+        (status = 200, body = ImportContactsResponse),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn import_contacts_handler(
+    State(state): State<AppState>,
+    ImportAccess(auth): ImportAccess,
+    AxumPath(import_id): AxumPath<i64>,
+) -> Result<Json<ImportContactsResponse>, ApiError> {
+    let mut conn = state.db.acquire().await?;
+    let detail =
+        crate::db::vault_imports::get_import_detail(&mut conn, &auth.account_id, import_id)
+            .await
+            .map_err(ApiError::from)?;
+    let started_at = detail.row.started_at.clone();
+
+    let rows: Vec<(i64, String, String)> = sqlx::query_as(
+        "SELECT id, preferred_name, created_at FROM contacts
+         WHERE account_id = $1 AND (created_at >= $2 OR last_modified >= $2)
+         ORDER BY created_at DESC, id DESC",
+    )
+    .bind(&auth.account_id)
+    .bind(&started_at)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|e| ApiError::Internal(format!("list import contacts: {e}")))?;
+
+    let mut new_count = 0u64;
+    let mut changed_count = 0u64;
+    let contacts = rows
+        .into_iter()
+        .map(|(id, name, created_at)| {
+            let is_new = created_at >= started_at;
+            if is_new {
+                new_count += 1;
+            } else {
+                changed_count += 1;
+            }
+            ImportContactRow { id, name, is_new }
+        })
+        .collect();
+
+    Ok(Json(ImportContactsResponse {
+        contacts,
+        new_count,
+        changed_count,
+    }))
+}
+
+/// Create the Contact Group naming the contacts an import run touched.
+///
+/// The group is a shortcut pointing at the run: the person may delete it, and
+/// the `vault_imports` row it describes is permanent either way. Membership is
+/// a snapshot, because what a run brought in is a historical fact that should
+/// not silently rewrite itself as contacts change later.
+///
+/// A failure here is reported and swallowed, the same as the saved search: the
+/// messages are already in the vault, and losing a shortcut is not a reason to
+/// call the import failed.
+async fn create_import_contact_group(
+    conn: &mut sqlx::AnyConnection,
+    account_id: &str,
+    row: &crate::db::vault_imports::VaultImportRow,
+) {
+    let started_at = row.started_at.as_str();
+    if started_at.is_empty() {
+        return;
+    }
+    let touched =
+        match crate::db::contacts::contacts_touched_since(conn, account_id, started_at).await {
+            Ok(ids) if ids.is_empty() => return,
+            Ok(ids) => ids,
+            Err(e) => {
+                eprintln!(
+                    "warning: import {} could not list the contacts it touched: {e:?}",
+                    row.id
+                );
+                return;
+            }
+        };
+    let name = import_contact_group_name(row);
+    if let Err(e) = crate::named_membership::set_membership(
+        crate::named_membership::group_spec(),
+        conn,
+        account_id,
+        &touched,
+        &name,
+        true,
+    )
+    .await
+    {
+        eprintln!(
+            "warning: import {} stored {} contacts but its Contact Group could not be created: {e:?}",
+            row.id,
+            touched.len()
+        );
+        return;
+    }
+    if let Err(e) = crate::db::contacts::set_group_kind(conn, account_id, &name, "import").await {
+        eprintln!(
+            "warning: import {}'s Contact Group was created but not marked as import-made: {e:?}",
+            row.id
+        );
+    }
+}
+
+/// Name for an import run's Contact Group. The run id keeps it unique per
+/// account, which `contact_groups.name` requires.
+fn import_contact_group_name(row: &crate::db::vault_imports::VaultImportRow) -> String {
+    format!("{} import {}", row.source, import_date_ymd(row))
 }
 
 /// Calendar date to name an import's saved search after: the day the run

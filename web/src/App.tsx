@@ -68,6 +68,7 @@ function AppRoutes() {
           <Route path="contacts" element={null} />
           <Route path="group/:slug" element={null} />
           <Route path="no-group" element={null} />
+          <Route path="unknown" element={null} />
           <Route path="tag/:slug" element={null} />
           <Route path="no-tag" element={null} />
           <Route

@@ -1118,6 +1118,101 @@ async fn unknown_contact_identifiers(
         .collect())
 }
 
+/// Largest address book the load route accepts, in bytes.
+///
+/// A phone's contacts export is measured in tens of kilobytes; a few megabytes
+/// is already far past any real address book, and the whole file is read into
+/// memory before parsing.
+pub(crate) const MAX_ADDRESS_BOOK_BYTES: usize = 8 * 1024 * 1024;
+
+/// Body for `POST /v1/contacts/address-book`.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct AddressBookBody {
+    /// File name, used only to tell VCF from vCard CSV.
+    filename: String,
+    /// The file's text.
+    content: String,
+}
+
+/// What loading an address book changed.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct AddressBookLoadResponse {
+    /// Contacts written from the file.
+    pub contacts: u64,
+    /// Phone identities linked to those contacts.
+    pub phones: u64,
+    /// Identities written with a review note (an ambiguous number).
+    pub phones_needing_review: u64,
+}
+
+/// Load a VCF or vCard CSV address book into this account.
+///
+/// This is a standalone act against the vault, never part of an import run:
+/// contacts are vault state, and a person may load them before or after
+/// bringing messages in. Only the rows the address book owns are replaced, so
+/// Contact Groups, names the person typed, and identities an import discovered
+/// all survive.
+#[utoipa::path(
+    post,
+    path = "/v1/contacts/address-book",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    request_body = AddressBookBody,
+    responses(
+        (status = 200, body = AddressBookLoadResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn address_book_load_handler(
+    State(state): State<AppState>,
+    FullAccess(auth): FullAccess,
+    Json(body): Json<AddressBookBody>,
+) -> Result<Json<AddressBookLoadResponse>, ApiError> {
+    if body.content.len() > MAX_ADDRESS_BOOK_BYTES {
+        return Err(ApiError::BadRequest(format!(
+            "address book is larger than {} bytes",
+            MAX_ADDRESS_BOOK_BYTES
+        )));
+    }
+    if body.content.trim().is_empty() {
+        return Err(ApiError::BadRequest("address book is empty".into()));
+    }
+    // The loader detects VCF versus vCard CSV from the path, so the upload is
+    // written to a temp file under its own name rather than being sniffed twice.
+    let dir =
+        tempfile::tempdir().map_err(|e| ApiError::Internal(format!("create temp dir: {e}")))?;
+    let name = sanitized_address_book_name(&body.filename);
+    let path = dir.path().join(name);
+    std::fs::write(&path, body.content.as_bytes())
+        .map_err(|e| ApiError::Internal(format!("write address book: {e}")))?;
+
+    let mut conn = state.db.acquire().await?;
+    let stats = contacts::load_contacts_if_needed(&mut conn, Some(&path), true, &auth.account_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("load address book: {e}")))?;
+    Ok(Json(AddressBookLoadResponse {
+        contacts: stats.contacts,
+        phones: stats.phones,
+        phones_needing_review: stats.phones_needing_review,
+    }))
+}
+
+/// A safe temp file name that keeps the extension the format detector reads.
+///
+/// The uploaded name never becomes a path: only its extension matters, and an
+/// unrecognized one falls back to `.csv`, which is what the detector treats as
+/// vCard CSV.
+fn sanitized_address_book_name(raw: &str) -> String {
+    let lower = raw.trim().to_ascii_lowercase();
+    if lower.ends_with(".vcf") || lower.ends_with(".vcard") {
+        "address-book.vcf".to_string()
+    } else {
+        "address-book.csv".to_string()
+    }
+}
+
 /// Report which identifiers this account has no vault contact for.
 #[utoipa::path(
     post,
@@ -2840,6 +2935,108 @@ mod tests {
             })
         );
         assert!(parse_date_bound_value("<=2024-01-15", DateBoundOp::OnOrAfter).is_none());
+    }
+
+    #[test]
+    fn address_book_upload_name_only_decides_the_format() {
+        assert_eq!(
+            sanitized_address_book_name("Contacts.vcf"),
+            "address-book.vcf"
+        );
+        assert_eq!(
+            sanitized_address_book_name("  contacts.VCARD "),
+            "address-book.vcf"
+        );
+        assert_eq!(
+            sanitized_address_book_name("export.csv"),
+            "address-book.csv"
+        );
+        // A name that tries to escape the temp directory is never used as a path.
+        assert_eq!(
+            sanitized_address_book_name("../../etc/passwd"),
+            "address-book.csv"
+        );
+    }
+
+    #[tokio::test]
+    async fn loading_an_address_book_replaces_only_its_own_rows() {
+        let (pool, dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        // An identity the vault learned from imported messages, and a Contact
+        // Group the person built by hand.
+        let discovered =
+            insert_contact_with_handle(&mut conn, &account, "From Import", "+15555550999").await;
+        sqlx::query("UPDATE contacts SET origin = 'import' WHERE id = $1")
+            .bind(discovered)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        crate::named_membership::set_membership(
+            crate::named_membership::group_spec(),
+            &mut conn,
+            &account,
+            &[discovered],
+            "Family",
+            true,
+        )
+        .await
+        .unwrap();
+
+        let book = dir.path().join("book.vcf");
+        std::fs::write(
+            &book,
+            "BEGIN:VCARD\nVERSION:3.0\nFN:Ada Lovelace\nN:Lovelace;Ada;;;\nTEL:+15551234567\nEND:VCARD\n",
+        )
+        .unwrap();
+        contacts::load_contacts_if_needed(&mut conn, Some(&book), true, &account)
+            .await
+            .unwrap();
+
+        // A second load of a book that dropped Ada removes her, because the
+        // vault knows that row was the book's.
+        let book2 = dir.path().join("book2.vcf");
+        std::fs::write(
+            &book2,
+            "BEGIN:VCARD\nVERSION:3.0\nFN:Grace Hopper\nN:Hopper;Grace;;;\nTEL:+15557654321\nEND:VCARD\n",
+        )
+        .unwrap();
+        contacts::load_contacts_if_needed(&mut conn, Some(&book2), true, &account)
+            .await
+            .unwrap();
+
+        let names: Vec<String> = sqlx::query_scalar(
+            "SELECT preferred_name FROM contacts WHERE account_id = $1 ORDER BY preferred_name",
+        )
+        .bind(&account)
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap();
+        assert!(
+            names.contains(&"From Import".to_string()),
+            "an import-discovered contact must survive a book reload: {names:?}"
+        );
+        assert!(
+            names.contains(&"Grace Hopper".to_string()),
+            "the new book's contact must be present: {names:?}"
+        );
+        assert!(
+            !names.contains(&"Ada Lovelace".to_string()),
+            "a contact the book dropped must go: {names:?}"
+        );
+
+        let groups: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM contact_groups WHERE account_id = $1 ORDER BY name",
+        )
+        .bind(&account)
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(
+            groups,
+            vec!["Family".to_string()],
+            "a Contact Group the person built must survive a book reload"
+        );
     }
 
     #[tokio::test]

@@ -72,6 +72,12 @@ CREATE TABLE IF NOT EXISTS contact_groups (
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     -- Group text unique per account.
     name TEXT NOT NULL,
+    -- How the row was born: 'manual' when a person made it, 'import' when the
+    -- server created it at the end of an import run. An import group is a
+    -- shortcut pointing at that run and the person may delete it; the run's own
+    -- record is permanent. Unknown is not stored here — its membership is
+    -- computed from contact state.
+    kind TEXT NOT NULL DEFAULT 'manual',
     UNIQUE(account_id, name)
 );
 

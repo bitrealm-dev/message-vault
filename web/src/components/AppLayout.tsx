@@ -51,7 +51,12 @@ type ColumnMode = "conversations" | "contacts" | "trash" | "import" | "export" |
 /** Which left-column list to show for this URL. */
 function modeFromPathname(pathname: string): ColumnMode {
   if (pathname.startsWith("/messages/")) return "conversations";
-  if (pathname === "/contacts" || pathname === "/no-group" || pathname.startsWith("/group/")) {
+  if (
+    pathname === "/contacts" ||
+    pathname === "/no-group" ||
+    pathname === "/unknown" ||
+    pathname.startsWith("/group/")
+  ) {
     return "contacts";
   }
   if (pathname === "/no-tag" || pathname.startsWith("/tag/")) {
@@ -97,11 +102,14 @@ export default function AppLayout() {
   const isMessageRoute = pathname.startsWith("/messages/");
   const contactsMode = mode === "contacts";
   const noGroupMode = pathname === "/no-group";
+  const unknownMode = pathname === "/unknown";
   const groupSlugParam = pathname.startsWith("/group/")
     ? decodeURIComponent(pathname.slice("/group/".length))
     : null;
   const activeGroup = groupSlugParam ? groupFromSlug(groupSlugParam, groups) : null;
-  const groupFilter = noGroupMode ? "none" : activeGroup;
+  // "unknown" reaches the server as `group:unknown`, which it answers from
+  // contact state rather than from stored membership.
+  const groupFilter = unknownMode ? "unknown" : noGroupMode ? "none" : activeGroup;
   const noTagMode = pathname === "/no-tag";
   const tagSlugParam = pathname.startsWith("/tag/")
     ? decodeURIComponent(pathname.slice("/tag/".length))
@@ -135,6 +143,8 @@ export default function AppLayout() {
       const params = q ? `?cq=${encodeURIComponent(q)}` : "";
       if (noGroupMode) {
         navigate(`/no-group${params}`);
+      } else if (unknownMode) {
+        navigate(`/unknown${params}`);
       } else if (groupSlugParam) {
         navigate(`/group/${groupSlugParam}${params}`);
       } else {
