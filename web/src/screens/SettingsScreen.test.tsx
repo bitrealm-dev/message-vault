@@ -1,8 +1,9 @@
 /** @vitest-environment jsdom */
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mockedAuth, VaultProviders } from "../test/vaultProviders";
 import SettingsScreen from "./SettingsScreen";
 
 /**
@@ -22,7 +23,7 @@ vi.mock("../lib/useAccountProfile", () => ({
 }));
 
 vi.mock("../lib/auth", () => ({
-  useAuth: () => ({ updateToken: vi.fn() }),
+  useAuth: () => ({ ...mockedAuth, updateToken: vi.fn() }),
 }));
 
 const apiGet = vi.hoisted(() => vi.fn());
@@ -56,9 +57,11 @@ function baseProfile(overrides: Partial<{ is_admin: boolean }>) {
 
 function renderSettings(initialEntries: string[]) {
   return render(
-    <MemoryRouter initialEntries={initialEntries}>
-      <SettingsScreen />
-    </MemoryRouter>,
+    <VaultProviders>
+      <MemoryRouter initialEntries={initialEntries}>
+        <SettingsScreen />
+      </MemoryRouter>
+    </VaultProviders>,
   );
 }
 
@@ -90,9 +93,8 @@ describe("SettingsScreen admin gate", () => {
     renderSettings(["/settings?tab=users"]);
 
     expect(screen.getByRole("tab", { name: "Users" })).toHaveAttribute("aria-selected", "true");
-    await waitFor(() => {
-      expect(apiGet).toHaveBeenCalled();
-    });
-    expect(screen.getByText(/Everyone with an account on this vault/)).toBeInTheDocument();
+    // Wait for the panel itself, not merely for the request to go out.
+    expect(await screen.findByText(/Everyone with an account on this vault/)).toBeInTheDocument();
+    expect(apiGet).toHaveBeenCalled();
   });
 });

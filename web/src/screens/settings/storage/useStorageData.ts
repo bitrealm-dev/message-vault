@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { useResource } from "../../../lib/useResource";
+import { apiErrorMessage } from "../../../lib/apiErrorMessage";
 import { getAccountStorage, getImport, listImports } from "../../../lib/vaultApi";
+import { useVaultQuery } from "../../../lib/vaultQuery";
 import type { ImportRow, TopAttachment } from "./storageUtils";
 
 type StorageOverview = {
@@ -24,7 +25,7 @@ async function fetchOverview(signal: AbortSignal): Promise<StorageOverview> {
 }
 
 /**
- * Both requests run through `useResource`, which already owns the
+ * Both requests run through `useVaultQuery`, which already owns the
  * abort-on-unmount and aborted-guard handling these effects were repeating —
  * and the overview request, written by hand, had no AbortController at all.
  */
@@ -32,7 +33,11 @@ export function useStorageData() {
   const [page, setPage] = useState(0);
   const [selectedImportId, setSelectedImportId] = useState<number | null>(null);
 
-  const { data: overview, loading, error } = useResource("storage/overview", fetchOverview);
+  const {
+    data: overview,
+    isPending: loading,
+    error,
+  } = useVaultQuery(["storage-overview"], fetchOverview);
 
   // A fresh overview invalidates whatever page the user was on.
   useEffect(() => {
@@ -47,9 +52,11 @@ export function useStorageData() {
 
   const {
     data: selectedImport,
-    loading: selectedImportLoading,
+    isPending: selectedImportLoading,
     error: selectedImportError,
-  } = useResource(selectedImportId == null ? null : `imports/${selectedImportId}`, fetchDetail);
+  } = useVaultQuery(["import-detail", selectedImportId], fetchDetail, {
+    enabled: selectedImportId !== null,
+  });
 
   const closeImportDetail = useCallback(() => {
     setSelectedImportId(null);
@@ -67,11 +74,13 @@ export function useStorageData() {
     page,
     setPage,
     loading,
-    error,
+    error: error ? apiErrorMessage(error, "Could not load storage.") : "",
     selectedImportId,
-    selectedImport,
+    selectedImport: selectedImport ?? null,
     selectedImportLoading,
-    selectedImportError,
+    selectedImportError: selectedImportError
+      ? apiErrorMessage(selectedImportError, "Could not load this import.")
+      : "",
     closeImportDetail,
     toggleImportDetail,
   };

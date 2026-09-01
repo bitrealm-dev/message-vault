@@ -57,9 +57,12 @@
               "formatMessageTime",
               "hintStyle",
               "isGroupConversation",
+              "mockedAuth",
+              "renderWithVault",
               "sectionGap",
               "selectItemClassName",
               "senderName",
+              "testQueryClient",
               "useAuth",
               "useTheme"
             ]

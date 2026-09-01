@@ -1,9 +1,12 @@
 /** @vitest-environment jsdom */
 
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mockedAuth, renderWithVault as render } from "../../test/vaultProviders";
 import { AdminUsersPanel } from "./AdminUsersPanel";
+
+vi.mock("../../lib/auth", () => ({ useAuth: () => mockedAuth }));
 
 afterEach(() => {
   cleanup();
@@ -216,11 +219,9 @@ describe("AdminUsersPanel", () => {
     });
 
     render(<AdminUsersPanel />);
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalled();
-    });
-
-    await user.click(screen.getByRole("button", { name: "Add user" }));
+    // Wait for the panel to finish loading, not merely for the request to go
+    // out: the button only exists once the list has rendered.
+    await user.click(await screen.findByRole("button", { name: "Add user" }));
     await user.type(screen.getByLabelText("New user's username"), "carol");
     await user.type(screen.getByLabelText("New user's password"), "hunter2hunter2");
     await user.click(screen.getByLabelText("Allow this user to manage the vault"));

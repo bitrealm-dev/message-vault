@@ -1,14 +1,15 @@
 import { useCallback, useState } from "react";
+import { apiErrorMessage } from "../../lib/apiErrorMessage";
 import { useAsyncAction } from "../../lib/useAsyncAction";
-import { useResource } from "../../lib/useResource";
 import { createApiToken, deleteApiToken, listApiTokens, renameApiToken } from "../../lib/vaultApi";
+import { useVaultQuery } from "../../lib/vaultQuery";
 import type { ApiTokenItem } from "./apiTokensUtils";
 
 const fetchTokens = (signal: AbortSignal) =>
   listApiTokens({ signal }).then((res) => res.items ?? []);
 
 /**
- * The list goes through `useResource` and each mutation through
+ * The list goes through `useVaultQuery` and each mutation through
  * `useAsyncAction` — the busy flag, the cleared-then-captured error and the
  * try/catch/finally around each call were previously written out three times
  * here, matching those hooks line for line.
@@ -26,10 +27,10 @@ export function useApiTokens() {
 
   const {
     data,
-    loading,
+    isPending: loading,
     error: loadError,
-    reload,
-  } = useResource("account/api-tokens", fetchTokens);
+    refetch: reload,
+  } = useVaultQuery(["api-tokens"], fetchTokens);
   const { busy, error: actionError, run, clearError } = useAsyncAction();
 
   const cancelCompose = useCallback(() => {
@@ -101,7 +102,7 @@ export function useApiTokens() {
   return {
     items: data ?? [],
     loading,
-    loadError,
+    loadError: loadError ? apiErrorMessage(loadError, "Could not load API keys.") : "",
     busy,
     composing,
     setComposing,

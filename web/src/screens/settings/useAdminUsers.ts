@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
+import { apiErrorMessage } from "../../lib/apiErrorMessage";
 import { useAsyncAction } from "../../lib/useAsyncAction";
-import { useResource } from "../../lib/useResource";
 import {
   createUser as createVaultUser,
   deleteUserMessages,
@@ -9,6 +9,7 @@ import {
   setUserPassword as setVaultUserPassword,
   updateUser,
 } from "../../lib/vaultApi";
+import { useVaultQuery } from "../../lib/vaultQuery";
 
 /** One account as an administrator sees it — mirrors `AdminUser` in `admin_api.rs`. */
 export type AdminUser = {
@@ -27,7 +28,12 @@ const fetchUsers = (signal: AbortSignal) => listUsers({ signal }).then((res) => 
 
 /** The administrator's view of every account, plus the actions on one. */
 export function useAdminUsers() {
-  const { data, loading, error: loadError, reload } = useResource("admin/users", fetchUsers);
+  const {
+    data,
+    isPending: loading,
+    error: loadError,
+    refetch: reload,
+  } = useVaultQuery(["admin-users"], fetchUsers);
   const { busy, error: actionError, run, clearError } = useAsyncAction();
 
   const [composing, setComposing] = useState(false);
@@ -132,7 +138,7 @@ export function useAdminUsers() {
   return {
     users: data ?? [],
     loading,
-    loadError,
+    loadError: loadError ? apiErrorMessage(loadError, "Could not load users.") : "",
     busy,
     actionError,
     clearError,
