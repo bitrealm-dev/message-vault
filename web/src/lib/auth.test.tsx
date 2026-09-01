@@ -3,6 +3,7 @@
 import { act, render, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { VaultProviders } from "../test/vaultProviders";
 
 const post = vi.fn();
 const get = vi.fn();
@@ -102,7 +103,11 @@ describe("AuthProvider logout", () => {
 
     const { AuthProvider, useAuth } = await import("./auth");
     const { result } = renderHook(() => useAuth(), {
-      wrapper: ({ children }: { children: ReactNode }) => <AuthProvider>{children}</AuthProvider>,
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <VaultProviders>
+          <AuthProvider>{children}</AuthProvider>
+        </VaultProviders>
+      ),
     });
 
     await act(async () => {
@@ -123,7 +128,11 @@ describe("AuthProvider logout", () => {
 
     const { AuthProvider, useAuth } = await import("./auth");
     const { result } = renderHook(() => useAuth(), {
-      wrapper: ({ children }: { children: ReactNode }) => <AuthProvider>{children}</AuthProvider>,
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <VaultProviders>
+          <AuthProvider>{children}</AuthProvider>
+        </VaultProviders>
+      ),
     });
 
     await act(async () => {
@@ -138,7 +147,11 @@ describe("AuthProvider logout", () => {
   it("skips the vault logout request when there is no session token", async () => {
     const { AuthProvider, useAuth } = await import("./auth");
     const { result } = renderHook(() => useAuth(), {
-      wrapper: ({ children }: { children: ReactNode }) => <AuthProvider>{children}</AuthProvider>,
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <VaultProviders>
+          <AuthProvider>{children}</AuthProvider>
+        </VaultProviders>
+      ),
     });
 
     await act(async () => {
@@ -153,9 +166,11 @@ describe("AuthProvider logout", () => {
     isTauri.mockReturnValue(false);
     const { AuthProvider } = await import("./auth");
     render(
-      <AuthProvider>
-        <div>ok</div>
-      </AuthProvider>,
+      <VaultProviders>
+        <AuthProvider>
+          <div>ok</div>
+        </AuthProvider>
+      </VaultProviders>,
     );
 
     await waitFor(() => {
@@ -175,7 +190,11 @@ describe("AuthProvider logout", () => {
     seedSession();
     const { AuthProvider, useAuth } = await import("./auth");
     const { result } = renderHook(() => useAuth(), {
-      wrapper: ({ children }: { children: ReactNode }) => <AuthProvider>{children}</AuthProvider>,
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <VaultProviders>
+          <AuthProvider>{children}</AuthProvider>
+        </VaultProviders>
+      ),
     });
 
     await waitFor(() => {
@@ -211,9 +230,11 @@ describe("AuthProvider logout", () => {
     seedSession();
     const { AuthProvider } = await import("./auth");
     render(
-      <AuthProvider>
-        <div>ok</div>
-      </AuthProvider>,
+      <VaultProviders>
+        <AuthProvider>
+          <div>ok</div>
+        </AuthProvider>
+      </VaultProviders>,
     );
 
     await waitFor(() => {

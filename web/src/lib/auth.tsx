@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   createContext,
@@ -11,8 +12,6 @@ import {
 import { getToken, setBaseUrl, setToken } from "./api";
 import { parsePersistedAuth } from "./authGuards";
 import { clearContactDetailCache } from "./contactDetailCache";
-import { invalidateContactGroups } from "./contactGroups";
-import { invalidateMessageTags } from "./messageTags";
 import { isTauri } from "./tauri-check";
 import { clearAccountProfile, loadAccountProfile } from "./useAccountProfile";
 import { checkAuth, logout as vaultLogout } from "./vaultApi";
@@ -111,6 +110,12 @@ function clearPersisted() {
 
 /** Holds login state for the app and restores a saved session on startup. */
 export function AuthProvider({ children }: { children: ReactNode }) {
+  // Talking to the client directly rather than through `vaultQuery`, which
+  // imports `useAuth` from this module: importing it back would be a cycle.
+  const queryClient = useQueryClient();
+  const resetVaultCache = useCallback(() => {
+    queryClient.clear();
+  }, [queryClient]);
   const [restored, setRestored] = useState(false);
   // Incremented on login and logout so an older profile request is ignored.
   const authEpoch = useRef(0);
@@ -201,35 +206,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setState((s) => ({ ...s, serverUrl: url }));
   }, []);
 
-  const login = useCallback(async (serverUrl: string, token: string, accountId: string) => {
-    const epoch = ++authEpoch.current;
-    clearContactDetailCache();
-    invalidateContactGroups();
-    invalidateMessageTags();
-    clearAccountProfile();
-    setBaseUrl(serverUrl);
-    setToken(token);
+  const login = useCallback(
+    async (serverUrl: string, token: string, accountId: string) => {
+      const epoch = ++authEpoch.current;
+      // One call, and it cannot be incomplete: every cached vault entry is named
+      // with the account that filled it, so this only releases memory.
+      resetVaultCache();
+      clearContactDetailCache();
+      clearAccountProfile();
+      setBaseUrl(serverUrl);
+      setToken(token);
 
-    // New accounts have no profile yet, so send them through setup.
-    let needsOnboarding = false;
-    const profile = await loadAccountProfile(true);
-    // A failed profile request leaves `profile` null; assume one exists rather
-    // than locking the user out of the app they just signed in to.
-    if (profile) needsOnboarding = profileNeedsOnboarding(profile);
+      // New accounts have no profile yet, so send them through setup.
+      let needsOnboarding = false;
+      const profile = await loadAccountProfile(true);
+      // A failed profile request leaves `profile` null; assume one exists rather
+      // than locking the user out of the app they just signed in to.
+      if (profile) needsOnboarding = profileNeedsOnboarding(profile);
 
-    if (authEpoch.current !== epoch) return; // A later login or logout replaced this one.
+      if (authEpoch.current !== epoch) return; // A later login or logout replaced this one.
 
-    const newState: AuthState = {
-      serverUrl,
-      token,
-      accountId,
-      isAuthenticated: true,
-      needsOnboarding,
-    };
-    persistState(newState);
-    setState(newState);
-    setRestored(true);
-  }, []);
+      const newState: AuthState = {
+        serverUrl,
+        token,
+        accountId,
+        isAuthenticated: true,
+        needsOnboarding,
+      };
+      persistState(newState);
+      setState(newState);
+      setRestored(true);
+    },
+    [
+      // One call, and it cannot be incomplete: every cached vault entry is named
+      // with the account that filled it, so this only releases memory.
+      resetVaultCache,
+    ],
+  );
 
   const updateToken = useCallback((token: string) => {
     setToken(token);
@@ -253,9 +266,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
     setToken(null);
+    resetVaultCache();
     clearContactDetailCache();
-    invalidateContactGroups();
-    invalidateMessageTags();
     clearAccountProfile();
     clearPersisted();
     setState((s) => ({
@@ -265,7 +277,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated: false,
       needsOnboarding: false,
     }));
-  }, []);
+  }, [resetVaultCache]);
 
   // Desktop only: on window close, revoke the session then quit.
   const closingRef = useRef(false);

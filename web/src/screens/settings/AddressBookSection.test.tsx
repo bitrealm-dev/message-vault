@@ -10,7 +10,7 @@ vi.mock("../../lib/vaultApi", () => ({
 }));
 
 vi.mock("../../lib/contactGroups", () => ({
-  invalidateContactGroups: vi.fn(),
+  useContactGroupActions: () => ({ invalidate: vi.fn() }),
 }));
 
 const post = vi.mocked(loadAddressBook);

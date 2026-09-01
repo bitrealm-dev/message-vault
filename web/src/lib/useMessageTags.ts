@@ -5,8 +5,7 @@ import { useNameCollection } from "./nameCollection";
 export function useMessageTags(): {
   tags: string[];
   loading: boolean;
-  refresh: () => Promise<void>;
 } {
-  const { names, loading, refresh } = useNameCollection(messageTags);
-  return { tags: names, loading, refresh };
+  const { names, loading } = useNameCollection(messageTags);
+  return { tags: names, loading };
 }

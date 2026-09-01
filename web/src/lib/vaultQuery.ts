@@ -25,7 +25,9 @@ import {
   type UseQueryResult,
   useInfiniteQuery,
   useQuery,
+  useQueryClient,
 } from "@tanstack/react-query";
+import { useCallback } from "react";
 import { useAuth } from "./auth";
 import { PAGE_SIZE_FILL, PAGE_SIZE_FIRST } from "./listPaging";
 
@@ -84,6 +86,41 @@ export function useVaultQuery<TData>(
     queryFn: ({ signal }) => queryFn(signal),
     ...options,
   });
+}
+
+/**
+ * Mark something stale, so whatever is showing it refetches.
+ *
+ * This replaces the browser events the caches used to dispatch: instead of
+ * naming an event and having every interested component subscribe and
+ * unsubscribe, a mutation names what changed and the library refreshes whoever
+ * is reading it.
+ */
+export function useVaultInvalidate(): (key: VaultQueryKey) => Promise<void> {
+  const client = useQueryClient();
+  const account = useAccountScope();
+  return useCallback(
+    (key: VaultQueryKey) => client.invalidateQueries({ queryKey: ["vault", account, ...key] }),
+    [client, account],
+  );
+}
+
+/**
+ * Write a value straight into the cache, so a change shows without a round
+ * trip.
+ *
+ * The vault's mutations answer with the updated value, so there is usually no
+ * reason to ask for it again.
+ */
+export function useVaultSetCached(): <T>(key: VaultQueryKey, value: T) => void {
+  const client = useQueryClient();
+  const account = useAccountScope();
+  return useCallback(
+    <T>(key: VaultQueryKey, value: T) => {
+      client.setQueryData(["vault", account, ...key], value);
+    },
+    [client, account],
+  );
 }
 
 /** One page of an offset-paged list, with the total the vault reported. */

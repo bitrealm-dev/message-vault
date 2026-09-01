@@ -4,6 +4,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mockedAuth, VaultProviders } from "../test/vaultProviders";
 import LeftPanel from "./LeftPanel";
 
 const profileState = vi.hoisted(() => ({
@@ -18,6 +19,8 @@ vi.mock("../lib/useAccountProfile", () => ({
   useAccountProfile: () => ({ profile: profileState.profile }),
 }));
 
+vi.mock("../lib/auth", () => ({ useAuth: () => mockedAuth }));
+
 vi.mock("../lib/useContactGroups", () => ({
   useContactGroups: () => ({ groups: [] }),
 }));
@@ -31,10 +34,12 @@ vi.mock("../lib/tauri-check", () => ({
 }));
 
 vi.mock("../lib/savedSearches", () => ({
-  useSavedSearches: () => ({ savedSearches: savedSearchState.savedSearches }),
-  createSavedSearch: vi.fn(),
-  updateSavedSearch: vi.fn(),
-  deleteSavedSearch: vi.fn(),
+  useSavedSearches: () => ({ savedSearches: savedSearchState.savedSearches, loading: false }),
+  useSavedSearchActions: () => ({
+    create: vi.fn(),
+    update: vi.fn(),
+    remove: vi.fn(),
+  }),
 }));
 
 afterEach(() => {
@@ -50,9 +55,11 @@ beforeEach(() => {
 
 function renderPanel(initialEntries?: string[]) {
   return render(
-    <MemoryRouter initialEntries={initialEntries}>
-      <LeftPanel onSearchChange={() => {}} onSearch={() => {}} />
-    </MemoryRouter>,
+    <VaultProviders>
+      <MemoryRouter initialEntries={initialEntries}>
+        <LeftPanel onSearchChange={() => {}} onSearch={() => {}} />
+      </MemoryRouter>
+    </VaultProviders>,
   );
 }
 

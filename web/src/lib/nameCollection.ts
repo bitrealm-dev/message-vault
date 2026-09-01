@@ -1,13 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
-import { useAuth } from "./auth";
+import { useMemo } from "react";
+import { useVaultInvalidate, useVaultQuery, useVaultSetCached } from "./vaultQuery";
 
 /**
- * Contact groups and message tags are the same feature over different nouns: a
- * named set the account owns, a membership call that puts rows in or out of it,
- * a module-level cache with an in-flight guard, and a DOM event that tells the
- * open UI to refetch. This builds one from a description of the nouns so the
- * two do not drift apart — they had already started to, with `messageTags`
- * re-exporting `contactGroups`' slug helpers verbatim.
+ * Contact Groups and Message Tags are the same feature over different nouns: a
+ * named set the account owns, and a membership call that puts rows in or out of
+ * it. This builds one from a description of the nouns so the two do not drift
+ * apart.
+ *
+ * What used to live here as well — a module-level cache, an in-flight guard,
+ * and a browser event telling the open interface to refetch — is TanStack
+ * Query's now. A mutation says what changed and whoever is showing it
+ * refreshes; nothing subscribes to an event, and nothing has to be cleared when
+ * the account changes.
  */
 
 /** The four vault calls one of these collections is built from. */
@@ -26,95 +30,35 @@ export type NameCollectionRoutes = {
 export type NameCollectionConfig = {
   /** The vault calls this collection is made of. */
   routes: NameCollectionRoutes;
+  /** Name of this collection in a cache key, e.g. `contact-groups`. */
+  cacheKey: string;
   /** Key holding the name array in every list or mutation response. */
   responseKey: string;
   /** Search token used in list queries, e.g. `group` for `group:Family`. */
   queryToken: string;
-  /** DOM event fired when the collection changes. */
-  changedEvent: string;
   reservedNames: ReadonlySet<string>;
   reservedError: (name: string) => string;
 };
 
 export type NameCollection = {
-  changedEvent: string;
+  /** Cache key parts, before the account is put in front of them. */
+  key: readonly [string];
+  routes: NameCollectionRoutes;
+  responseKey: string;
   isReserved: (name: string) => boolean;
   reservedError: (name: string) => string;
-  fetchAll: (signal?: AbortSignal) => Promise<string[]>;
-  invalidate: () => void;
-  create: (name: string) => Promise<string>;
-  rename: (from: string, to: string) => Promise<string>;
-  remove: (name: string) => Promise<void>;
-  setMembership: (ids: number[], name: string, enable: boolean) => Promise<number>;
+  namesFrom: (res: Record<string, unknown>) => string[];
   /** Build the list query for one page of this collection plus a typed search. */
   listQuery: (name: string | "none" | null, search: string) => string;
 };
 
 export function createNameCollection(config: NameCollectionConfig): NameCollection {
-  let cached: string[] | null = null;
-  let inflight: Promise<string[]> | null = null;
-
   const namesFrom = (res: Record<string, unknown>): string[] => {
     const value = res[config.responseKey];
     return Array.isArray(value) ? (value as string[]) : [];
   };
 
-  function notifyChanged(): void {
-    cached = null;
-    try {
-      globalThis.dispatchEvent?.(new Event(config.changedEvent));
-    } catch {
-      // Some browsers block custom events. The next fetch still works.
-    }
-  }
-
   const isReserved = (name: string) => config.reservedNames.has(name.trim().toLowerCase());
-
-  async function fetchAll(signal?: AbortSignal): Promise<string[]> {
-    if (cached !== null && !signal) return cached;
-    if (inflight && !signal) return inflight;
-    const req = config.routes
-      .list({ signal })
-      .then((res) => {
-        const names = namesFrom(res);
-        cached = names;
-        return names;
-      })
-      .finally(() => {
-        inflight = null;
-      });
-    if (!signal) inflight = req;
-    return req;
-  }
-
-  async function create(name: string): Promise<string> {
-    const trimmed = name.trim();
-    if (!trimmed) throw new Error("name required");
-    if (isReserved(trimmed)) throw new Error(config.reservedError(trimmed));
-    const res = await config.routes.create({ name: trimmed });
-    cached = namesFrom(res);
-    notifyChanged();
-    return String(res.name);
-  }
-
-  async function rename(from: string, to: string): Promise<string> {
-    const res = await config.routes.rename({ from, to });
-    cached = namesFrom(res);
-    notifyChanged();
-    return String(res.name);
-  }
-
-  async function remove(name: string): Promise<void> {
-    const res = await config.routes.remove({ name });
-    cached = namesFrom(res);
-    notifyChanged();
-  }
-
-  async function setMembership(ids: number[], name: string, enable: boolean): Promise<number> {
-    const res = await config.routes.setMembership({ ids, name, enable });
-    notifyChanged();
-    return res.changed;
-  }
 
   function listQuery(name: string | "none" | null, search: string): string {
     const parts: string[] = [];
@@ -131,15 +75,12 @@ export function createNameCollection(config: NameCollectionConfig): NameCollecti
   }
 
   return {
-    changedEvent: config.changedEvent,
+    key: [config.cacheKey] as const,
+    routes: config.routes,
+    responseKey: config.responseKey,
     isReserved,
     reservedError: config.reservedError,
-    fetchAll,
-    invalidate: notifyChanged,
-    create,
-    rename,
-    remove,
-    setMembership,
+    namesFrom,
     listQuery,
   };
 }
@@ -148,33 +89,58 @@ export function createNameCollection(config: NameCollectionConfig): NameCollecti
 export function useNameCollection(collection: NameCollection): {
   names: string[];
   loading: boolean;
-  refresh: () => Promise<void>;
 } {
-  const { isAuthenticated, token } = useAuth();
-  const [names, setNames] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data, isPending } = useVaultQuery(collection.key, async (signal) =>
+    collection.namesFrom(await collection.routes.list({ signal })),
+  );
+  return { names: data ?? [], loading: isPending };
+}
 
-  const refresh = useCallback(async () => {
-    try {
-      setNames(await collection.fetchAll());
-    } catch {
-      /* Keep the last good list. A failed refresh must not hide existing names. */
-    } finally {
-      setLoading(false);
-    }
-  }, [collection]);
+/**
+ * The four things a person can do to one of these collections.
+ *
+ * Each mutation writes the list the vault answered with straight into the
+ * cache, so the sidebar updates without a second round trip, and membership
+ * changes invalidate instead, since they change rows rather than names.
+ */
+export function useNameCollectionActions(collection: NameCollection): {
+  create: (name: string) => Promise<string>;
+  rename: (from: string, to: string) => Promise<string>;
+  remove: (name: string) => Promise<void>;
+  setMembership: (ids: number[], name: string, enable: boolean) => Promise<number>;
+  invalidate: () => Promise<void>;
+} {
+  const setCached = useVaultSetCached();
+  const invalidate = useVaultInvalidate();
 
-  useEffect(() => {
-    if (!isAuthenticated || !token) return;
-    void refresh();
-    const onChange = () => {
-      void refresh();
-    };
-    globalThis.addEventListener(collection.changedEvent, onChange);
-    return () => {
-      globalThis.removeEventListener(collection.changedEvent, onChange);
-    };
-  }, [isAuthenticated, refresh, token, collection.changedEvent]);
-
-  return { names, loading, refresh };
+  // One stable object, so a caller can list it as a dependency without
+  // rebuilding every callback that uses it on each render.
+  return useMemo(
+    () => ({
+      async create(name: string) {
+        const trimmed = name.trim();
+        if (!trimmed) throw new Error("name required");
+        if (collection.isReserved(trimmed)) throw new Error(collection.reservedError(trimmed));
+        const res = await collection.routes.create({ name: trimmed });
+        setCached(collection.key, collection.namesFrom(res));
+        return String(res.name);
+      },
+      async rename(from: string, to: string) {
+        const res = await collection.routes.rename({ from, to });
+        setCached(collection.key, collection.namesFrom(res));
+        return String(res.name);
+      },
+      async remove(name: string) {
+        const res = await collection.routes.remove({ name });
+        setCached(collection.key, collection.namesFrom(res));
+      },
+      async setMembership(ids: number[], name: string, enable: boolean) {
+        const res = await collection.routes.setMembership({ ids, name, enable });
+        await invalidate(collection.key);
+        return res.changed;
+      },
+      invalidate: () => invalidate(collection.key),
+    }),
+    [collection, setCached, invalidate],
+  );
 }

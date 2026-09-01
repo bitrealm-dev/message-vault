@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import Button from "../../components/Button";
-import { invalidateContactGroups } from "../../lib/contactGroups";
+import { useContactGroupActions } from "../../lib/contactGroups";
 import { loadAddressBook } from "../../lib/vaultApi";
 import { sectionTitleClass } from "./profileStyles";
 
@@ -20,6 +20,7 @@ function plural(n: number, one: string, many: string): string {
  * hand, and contacts discovered from messages alone.
  */
 export function AddressBookSection() {
+  const groupActions = useContactGroupActions();
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -48,7 +49,7 @@ export function AddressBookSection() {
           "phone numbers",
         )}${review}.`,
       );
-      invalidateContactGroups();
+      void groupActions.invalidate();
     } catch (err) {
       setFailed(true);
       setMessage(err instanceof Error ? err.message : "Could not load that address book.");

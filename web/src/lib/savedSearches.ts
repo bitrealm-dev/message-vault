@@ -1,20 +1,26 @@
-import { useCallback, useEffect, useState } from "react";
-import { useAuth } from "./auth";
+import { useMemo } from "react";
 import {
   createSavedSearch as createVaultSavedSearch,
   deleteSavedSearch as deleteVaultSavedSearch,
   listSavedSearches,
   updateSavedSearch as updateVaultSavedSearch,
 } from "./vaultApi";
+import { useVaultQuery, useVaultSetCached } from "./vaultQuery";
 
 /**
  * Saved searches live in the vault, not in the browser. They belong to an
  * account, so they follow a person to another machine and go away when the
  * vault's data does.
  *
- * Unlike contact groups and message tags this is not a `nameCollection`: a
+ * Unlike Contact Groups and Message Tags this is not a `nameCollection`: a
  * saved search carries a name *and* a query, so it is addressed by id and
  * cannot use that factory's names-only shape.
+ *
+ * The module-level cache and the browser event that used to live here are gone.
+ * They are the reason a second account could be shown the first account's saved
+ * searches: `auth.tsx` cleared four other caches by hand and missed this one.
+ * The cache entry is now named with the account, so there is nothing to
+ * remember.
  */
 
 export interface SavedSearch {
@@ -25,117 +31,52 @@ export interface SavedSearch {
   kind: string;
 }
 
-export const SAVED_SEARCHES_CHANGED_EVENT = "mv-saved-searches-changed";
-
 type ListResponse = { savedSearches?: SavedSearch[] };
 
-let cached: SavedSearch[] | null = null;
-let inflight: Promise<SavedSearch[]> | null = null;
+const SAVED_SEARCHES_KEY = ["saved-searches"] as const;
 
 function listFrom(res: ListResponse): SavedSearch[] {
   return Array.isArray(res.savedSearches) ? res.savedSearches : [];
 }
 
-/**
- * Tell the open UI the list changed.
- *
- * This deliberately leaves the cache alone: every mutation returns the
- * refreshed list, so listeners can read it without a second round trip.
- */
-function notifyChanged(): void {
-  try {
-    globalThis.dispatchEvent?.(new Event(SAVED_SEARCHES_CHANGED_EVENT));
-  } catch {
-    // Some browsers block custom events. The next fetch still works.
-  }
-}
-
-/** Record the list a mutation returned, announce it, and hand it back. */
-function adopt(res: ListResponse): SavedSearch[] {
-  const list = listFrom(res);
-  cached = list;
-  notifyChanged();
-  return list;
-}
-
-/** The account's saved searches, A–Z as the server orders them. */
-export async function fetchSavedSearches(signal?: AbortSignal): Promise<SavedSearch[]> {
-  if (cached !== null && !signal) return cached;
-  if (inflight && !signal) return inflight;
-  const req = listSavedSearches({ signal })
-    .then((res) => {
-      const list = listFrom(res);
-      cached = list;
-      return list;
-    })
-    .finally(() => {
-      inflight = null;
-    });
-  if (!signal) inflight = req;
-  return req;
-}
-
-export async function createSavedSearch(name: string, query: string): Promise<SavedSearch[]> {
-  return adopt(await createVaultSavedSearch({ name, query }));
-}
-
-/** Replace a saved search's name and query. The id and kind do not change. */
-export async function updateSavedSearch(
-  id: number,
-  name: string,
-  query: string,
-): Promise<SavedSearch[]> {
-  return adopt(await updateVaultSavedSearch(id, { name, query }));
-}
-
-/**
- * Delete a saved search.
- *
- * An import's saved search is only a shortcut to that run's messages. Removing
- * it leaves the import itself recorded in the vault, where Import History
- * still shows it.
- */
-export async function deleteSavedSearch(id: number): Promise<SavedSearch[]> {
-  return adopt(await deleteVaultSavedSearch(id));
-}
-
-/** Drop the module cache, so the next read goes to the vault. */
-export function invalidateSavedSearches(): void {
-  cached = null;
-  notifyChanged();
-}
-
-/** Live list of the signed-in account's saved searches. */
+/** The account's saved searches, A–Z as the vault orders them. */
 export function useSavedSearches(): {
   savedSearches: SavedSearch[];
   loading: boolean;
-  refresh: () => Promise<void>;
 } {
-  const { isAuthenticated, token } = useAuth();
-  const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data, isPending } = useVaultQuery(SAVED_SEARCHES_KEY, async (signal) =>
+    listFrom(await listSavedSearches({ signal })),
+  );
+  return { savedSearches: data ?? [], loading: isPending };
+}
 
-  const refresh = useCallback(async () => {
-    try {
-      setSavedSearches(await fetchSavedSearches());
-    } catch {
-      /* Keep the last good list. A failed refresh must not hide existing rows. */
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!isAuthenticated || !token) return;
-    void refresh();
-    const onChange = () => {
-      void refresh();
+/**
+ * Create, rename, and delete saved searches.
+ *
+ * Every mutation answers with the refreshed list, so each writes that straight
+ * into the cache and the sidebar updates without a second round trip.
+ */
+export function useSavedSearchActions(): {
+  create: (name: string, query: string) => Promise<void>;
+  update: (id: number, name: string, query: string) => Promise<void>;
+  remove: (id: number) => Promise<void>;
+} {
+  const setCached = useVaultSetCached();
+  // One stable object, for the same reason as the name collections.
+  return useMemo(() => {
+    const adopt = (res: ListResponse) => {
+      setCached(SAVED_SEARCHES_KEY, listFrom(res));
     };
-    globalThis.addEventListener(SAVED_SEARCHES_CHANGED_EVENT, onChange);
-    return () => {
-      globalThis.removeEventListener(SAVED_SEARCHES_CHANGED_EVENT, onChange);
+    return {
+      async create(name: string, query: string) {
+        adopt(await createVaultSavedSearch({ name, query }));
+      },
+      async update(id: number, name: string, query: string) {
+        adopt(await updateVaultSavedSearch(id, { name, query }));
+      },
+      async remove(id: number) {
+        adopt(await deleteVaultSavedSearch(id));
+      },
     };
-  }, [isAuthenticated, refresh, token]);
-
-  return { savedSearches, loading, refresh };
+  }, [setCached]);
 }
