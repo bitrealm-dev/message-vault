@@ -80,6 +80,7 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(crate::contacts_api::contact_detail_handler))
         .routes(routes!(crate::contacts_api::contact_mutate_handler))
         .routes(routes!(crate::contacts_api::contact_match_handler))
+        .routes(routes!(crate::contacts_api::address_book_load_handler))
         .routes(routes!(
             crate::contact_groups_api::contact_groups_list_handler
         ))
@@ -136,6 +137,7 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(crate::import::imports_create_handler))
         .routes(routes!(crate::import::imports_active_handler))
         .routes(routes!(crate::import::imports_get_handler))
+        .routes(routes!(crate::import::import_contacts_handler))
         .routes(routes!(crate::import::imports_complete_handler))
         .routes(routes!(crate::import::imports_stage_handler))
         .routes(routes!(crate::import::imports_discard_handler))

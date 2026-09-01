@@ -8,6 +8,11 @@ const COPY: NavEntityCopy = {
   routeBase: "/group",
   emptyRoute: "/no-group",
   emptyLabel: "No group",
+  // Unknown is a permanent group the server computes from contact state: a
+  // contact with no identity, or with identities and no preferred name. It
+  // empties as the person names or links what is in it.
+  permanentRoute: "/unknown",
+  permanentLabel: "Unknown",
   fallbackRoute: "/contacts",
   addLabel: "Create contact group",
   createTitle: "Create contact group",

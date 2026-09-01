@@ -14,6 +14,7 @@ import {
   groupListQuery,
   hasGroupFilterToken,
   setContactGroupMembership,
+  UNKNOWN_GROUP,
 } from "../lib/contactGroups";
 import {
   type ContactNameSortState,
@@ -486,9 +487,11 @@ export default function ContactList({
               ? "No contacts match this filter"
               : groupFilter === "none"
                 ? "Every contact has a group"
-                : groupFilter
-                  ? "No contacts in this group"
-                  : "No contacts"}
+                : groupFilter === UNKNOWN_GROUP
+                  ? "Every contact has a name and a way to reach them"
+                  : groupFilter
+                    ? "No contacts in this group"
+                    : "No contacts"}
           </div>
         ) : null
       }

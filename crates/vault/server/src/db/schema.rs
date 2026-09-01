@@ -1055,7 +1055,7 @@ mod tests {
         );
         assert_eq!(
             column_names(&mut *conn, "contact_groups").await,
-            ["id", "account_id", "name"]
+            ["id", "account_id", "name", "kind"]
         );
         assert_eq!(
             column_names(&mut *conn, "contact_group_members").await,

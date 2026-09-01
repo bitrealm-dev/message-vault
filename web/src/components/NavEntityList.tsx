@@ -28,6 +28,14 @@ export type NavEntityCopy = {
   routeBase: string;
   /** Route for the "none of these" page, e.g. "/no-group". */
   emptyRoute: string;
+  /**
+   * A permanent row rendered above the list, for a collection the server
+   * computes rather than the person curating. It cannot be renamed or
+   * deleted, so it carries no options menu.
+   */
+  permanentRoute?: string;
+  /** Label of the permanent row, e.g. "Unknown". */
+  permanentLabel?: string;
   /** Label of the "none of these" row, e.g. "No group". */
   emptyLabel: string;
   /** Where a delete sends the user when they were on the deleted page. */
@@ -134,6 +142,18 @@ export default function NavEntityList({
           setCreateOpen(true);
         }}
       >
+        {copy.permanentRoute && copy.permanentLabel ? (
+          <button
+            type="button"
+            onClick={() => navigate(copy.permanentRoute as string)}
+            className={`${navGlyphRowClass(location.pathname === copy.permanentRoute)} cursor-pointer`}
+          >
+            <span className={NAV_NESTED_ROW_CLASS}>
+              <span className={NAV_LEADING_GLYPH_CLASS}>{emptyIcon}</span>
+              <span className="truncate">{copy.permanentLabel}</span>
+            </span>
+          </button>
+        ) : null}
         {names.map((name) => {
           const href = `${copy.routeBase}/${slug(name)}`;
           const active = location.pathname === href;

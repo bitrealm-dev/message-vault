@@ -2281,6 +2281,73 @@
         ]
       }
     },
+    "/v1/contacts/address-book": {
+      "post": {
+        "tags": [
+          "Contacts"
+        ],
+        "summary": "Load a VCF or vCard CSV address book into this account.",
+        "description": "This is a standalone act against the vault, never part of an import run:\ncontacts are vault state, and a person may load them before or after\nbringing messages in. Only the rows the address book owns are replaced, so\nContact Groups, names the person typed, and identities an import discovered\nall survive.",
+        "operationId": "address_book_load_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddressBookBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddressBookLoadResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/contacts/groups": {
       "post": {
         "tags": [
@@ -3642,6 +3709,75 @@
         ]
       }
     },
+    "/v1/imports/{id}/contacts": {
+      "get": {
+        "tags": [
+          "Import"
+        ],
+        "summary": "List the contacts one import run created or changed.",
+        "description": "New and changed are told apart by comparing each contact's `created_at`\nagainst the moment the run started: a contact first recorded during the run\nis new, one merely touched is changed.",
+        "operationId": "import_contacts_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Import session id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportContactsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/imports/{id}/discard": {
       "post": {
         "tags": [
@@ -4641,6 +4777,53 @@
           },
           "summary": {
             "description": "What the user approved at the last gate they passed, or null.\n\nSame column `POST /v1/imports/{id}/stage` writes with its `summary`\nfield — read back here so a reload between an approval and\ncompletion doesn't lose the plan the eventual outcome is diffed\nagainst."
+          }
+        }
+      },
+      "AddressBookBody": {
+        "type": "object",
+        "description": "Body for `POST /v1/contacts/address-book`.",
+        "required": [
+          "filename",
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "The file's text."
+          },
+          "filename": {
+            "type": "string",
+            "description": "File name, used only to tell VCF from vCard CSV."
+          }
+        }
+      },
+      "AddressBookLoadResponse": {
+        "type": "object",
+        "description": "What loading an address book changed.",
+        "required": [
+          "contacts",
+          "phones",
+          "phones_needing_review"
+        ],
+        "properties": {
+          "contacts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Contacts written from the file.",
+            "minimum": 0
+          },
+          "phones": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Phone identities linked to those contacts.",
+            "minimum": 0
+          },
+          "phones_needing_review": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Identities written with a review note (an ambiguous number).",
+            "minimum": 0
           }
         }
       },
@@ -6610,6 +6793,60 @@
               "null"
             ],
             "description": "Reactor handle for incoming reactions."
+          }
+        }
+      },
+      "ImportContactRow": {
+        "type": "object",
+        "description": "One contact an import run touched, and whether the run created it.",
+        "required": [
+          "id",
+          "name",
+          "is_new"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Contact id."
+          },
+          "is_new": {
+            "type": "boolean",
+            "description": "True when this run created the contact, false when it only changed one\nthat already existed."
+          },
+          "name": {
+            "type": "string",
+            "description": "Preferred name; empty when the run learned an address and no name."
+          }
+        }
+      },
+      "ImportContactsResponse": {
+        "type": "object",
+        "description": "Response for `GET /v1/imports/{id}/contacts`.",
+        "required": [
+          "contacts",
+          "new_count",
+          "changed_count"
+        ],
+        "properties": {
+          "changed_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many it only changed.",
+            "minimum": 0
+          },
+          "contacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportContactRow"
+            },
+            "description": "Contacts the run created or changed, newest first."
+          },
+          "new_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many of them the run created.",
+            "minimum": 0
           }
         }
       },

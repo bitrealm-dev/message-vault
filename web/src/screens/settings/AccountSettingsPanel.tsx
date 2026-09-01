@@ -3,6 +3,7 @@ import Button from "../../components/Button";
 import { apiClient } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { useAccountProfile } from "../../lib/useAccountProfile";
+import { AddressBookSection } from "./AddressBookSection";
 import { ApiTokensSection } from "./ApiTokensSection";
 import { ProfileDangerZone } from "./ProfileDangerZone";
 import { inputClassName, sectionTitleClass } from "./profileStyles";
@@ -118,6 +119,8 @@ export function AccountSettingsPanel() {
           </div>
         )}
       </div>
+
+      <AddressBookSection />
 
       <ApiTokensSection
         accountCanImport={profile.can_import ?? true}

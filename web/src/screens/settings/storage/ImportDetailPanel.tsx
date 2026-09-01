@@ -1,6 +1,7 @@
 import ImportSummaryPanel, {
   type ImportSummaryView,
 } from "../../../components/import/ImportSummaryPanel";
+import ImportContactsPanel from "./ImportContactsPanel";
 import type { ImportDetailResponse } from "./storageUtils";
 import {
   formatBytes,
@@ -94,6 +95,10 @@ export default function ImportDetailPanel({
             </div>
           </dl>
           <ImportSummaryPanel summary={selectedImportSummary} />
+          <div className="mt-4">
+            <h4 className="mb-1 font-medium text-[0.813rem]">Contacts</h4>
+            <ImportContactsPanel importId={selectedImport.id} />
+          </div>
         </>
       ) : null}
     </div>
