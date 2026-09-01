@@ -1,5 +1,3 @@
-import { buildAssetPath } from "./assetUrl";
-
 let baseUrl = "";
 let authToken: string | null = null;
 
@@ -95,29 +93,6 @@ async function request<T>(
   }
 
   return res.json() as Promise<T>;
-}
-
-/**
- * Download an attachment by its content hash and return a temporary blob URL.
- * The caller must call `URL.revokeObjectURL` when the URL is no longer needed.
- */
-export async function fetchAssetObjectUrl(
-  sha256: string,
-  source: string,
-  signal?: AbortSignal,
-): Promise<string> {
-  const path = buildAssetPath(sha256, source);
-  const headers: Record<string, string> = {};
-  if (authToken) {
-    headers.Authorization = `Bearer ${authToken}`;
-  }
-  const res = await fetch(`${baseUrl}${path}`, { method: "GET", headers, signal });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new VaultApiError(res.status, errorMessageFromBody(res.status, text));
-  }
-  const blob = await res.blob();
-  return URL.createObjectURL(blob);
 }
 
 export type ApiRequestOptions = {

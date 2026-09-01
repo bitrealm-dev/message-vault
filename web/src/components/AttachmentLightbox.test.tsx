@@ -4,7 +4,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import AttachmentLightbox, { type LightboxItem } from "./AttachmentLightbox";
 
-vi.mock("../lib/api", () => ({
+vi.mock("../lib/vaultApi", () => ({
   fetchAssetObjectUrl: vi.fn().mockResolvedValue("blob:mock-url"),
 }));
 

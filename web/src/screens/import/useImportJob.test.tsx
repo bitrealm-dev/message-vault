@@ -25,9 +25,10 @@ import type {
 import type { AttachmentMediaMode, ImportIssueEvent, ImportProgressEvent } from "../../lib/types";
 import { gateDelta } from "./gateDelta";
 
+const createImportMock = vi.fn();
+const completeImportMock = vi.fn();
 const runMock = vi.fn<(fn: () => Promise<unknown>) => Promise<TauriJobResult>>();
 const cancelMock = vi.fn();
-const postMock = vi.fn();
 const resolveImportStagingDirMock = vi.fn();
 const invokePathStatMock = vi.fn();
 const invokePushMock = vi.fn();
@@ -86,10 +87,15 @@ vi.mock("../../hooks/useTauriJob", () => ({
 }));
 
 vi.mock("../../lib/api", () => ({
-  apiClient: {
-    post: (...args: unknown[]) => postMock(...args),
-  },
   getBaseUrl: () => "http://127.0.0.1:8080",
+}));
+
+// The two vault calls this hook makes. Everything else in vaultApi stays real,
+// since other modules in this graph import from it.
+vi.mock("../../lib/vaultApi", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/vaultApi")>()),
+  createImport: (...args: unknown[]) => createImportMock(...args),
+  completeImport: (...args: unknown[]) => completeImportMock(...args),
 }));
 
 vi.mock("../../lib/auth", () => ({
@@ -252,7 +258,10 @@ describe("useImportJob wiring", () => {
     // the push on top of this one.
     runMock.mockImplementationOnce(runResult(EXTRACT_RESULT));
     cancelMock.mockReset();
-    postMock.mockReset();
+    createImportMock.mockReset();
+    createImportMock.mockResolvedValue({ id: 1 });
+    completeImportMock.mockReset();
+    completeImportMock.mockResolvedValue({});
     resolveImportStagingDirMock.mockReset();
     resolveImportStagingDirMock.mockResolvedValue("/home/sam/message-vault/staging-iphone");
     invokePathStatMock.mockReset();
@@ -277,10 +286,10 @@ describe("useImportJob wiring", () => {
     invokeImessageBackupIdentitiesMock.mockResolvedValue([]);
     loadAccountProfileMock.mockReset();
     loadAccountProfileMock.mockResolvedValue({ phones: [], emails: [] });
-    postMock.mockImplementation(async (path: string) => {
-      if (path === "/v1/imports") return { id: 1 };
-      return {};
-    });
+    createImportMock.mockReset();
+    createImportMock.mockResolvedValue({ id: 1 });
+    completeImportMock.mockReset();
+    completeImportMock.mockResolvedValue({});
   });
 
   it("stops at the first gate instead of uploading", async () => {
@@ -523,7 +532,7 @@ describe("useImportJob wiring", () => {
     await act(() => result.current.approveGate());
 
     expect(result.current.summaryView?.status).toBe("canceled");
-    expect(postMock.mock.calls.some(([path]) => path === "/v1/imports/1/complete")).toBe(false);
+    expect(completeImportMock.mock.calls.some(([id]) => id === 1)).toBe(false);
   });
 
   it("still completes the session as failed when the media pass genuinely fails", async () => {
@@ -536,7 +545,7 @@ describe("useImportJob wiring", () => {
     await act(() => result.current.approveGate());
 
     expect(result.current.summaryView?.status).toBe("failed");
-    const completeCall = postMock.mock.calls.find(([path]) => path === "/v1/imports/1/complete");
+    const completeCall = completeImportMock.mock.calls.find(([id]) => id === 1);
     expect(completeCall).toBeDefined();
     const [, body] = completeCall as [string, Record<string, unknown>];
     expect(body.status).toBe("failed");
@@ -556,7 +565,7 @@ describe("useImportJob wiring", () => {
     await act(() => result.current.startImport(form({ attachmentMedia: "convert" })));
 
     expect(result.current.summaryView?.status).toBe("canceled");
-    expect(postMock.mock.calls.some(([path]) => path === "/v1/imports/1/complete")).toBe(false);
+    expect(completeImportMock.mock.calls.some(([id]) => id === 1)).toBe(false);
   });
 
   it("still completes the session as failed when the extract genuinely fails", async () => {
@@ -570,7 +579,7 @@ describe("useImportJob wiring", () => {
     const { result } = renderHook(() => useImportJob());
     await act(() => result.current.startImport(form({ attachmentMedia: "convert" })));
 
-    const completeCall = postMock.mock.calls.find(([path]) => path === "/v1/imports/1/complete");
+    const completeCall = completeImportMock.mock.calls.find(([id]) => id === 1);
     expect(completeCall).toBeDefined();
     const [, body] = completeCall as [string, Record<string, unknown>];
     expect(body.status).toBe("failed");
@@ -591,7 +600,7 @@ describe("useImportJob wiring", () => {
 
     expect(result.current.phase).toBe("form");
     expect(result.current.resumeError).toBe("disk full");
-    const completeCall = postMock.mock.calls.find(([path]) => path === "/v1/imports/1/complete");
+    const completeCall = completeImportMock.mock.calls.find(([id]) => id === 1);
     expect(completeCall).toBeUndefined();
     // The stage write that already happened before the failing summarize
     // call stands -- nothing here regresses or overwrites it.
@@ -608,7 +617,7 @@ describe("useImportJob wiring", () => {
 
     expect(result.current.phase).toBe("done");
     expect(result.current.summaryView?.status).toBe("failed");
-    const completeCall = postMock.mock.calls.find(([path]) => path === "/v1/imports/1/complete");
+    const completeCall = completeImportMock.mock.calls.find(([id]) => id === 1);
     expect(completeCall).toBeDefined();
   });
 
@@ -690,7 +699,7 @@ describe("useImportJob wiring", () => {
     expect(result.current.summaryView?.status).toBe("failed");
     expect(result.current.phase).toBe("done");
 
-    const completeCall = postMock.mock.calls.find(([path]) => path === "/v1/imports/1/complete");
+    const completeCall = completeImportMock.mock.calls.find(([id]) => id === 1);
     expect(completeCall).toBeDefined();
     const [, body] = completeCall as [string, Record<string, unknown>];
     expect(body.status).toBe("failed");
@@ -710,9 +719,9 @@ describe("useImportJob wiring", () => {
     const { result } = renderHook(() => useImportJob());
     await act(() => result.current.startImport(baseForm));
 
-    const createCall = postMock.mock.calls.find(([path]) => path === "/v1/imports");
+    const createCall = createImportMock.mock.calls[0];
     expect(createCall).toBeDefined();
-    const body = createCall?.[1] as Record<string, unknown>;
+    const body = createCall?.[0] as Record<string, unknown>;
     expect(body.stage).toBe("parse");
     expect(body.device_id).toEqual(expect.any(String));
     expect(body.staging_dir).toBe("/home/u/message-vault/staging-260830");
@@ -724,10 +733,7 @@ describe("useImportJob wiring", () => {
     const { result } = renderHook(() => useImportJob());
     await act(() => result.current.startImport({ ...baseForm, backupPassword: "hunter2" }));
 
-    const body = postMock.mock.calls.find(([path]) => path === "/v1/imports")?.[1] as Record<
-      string,
-      unknown
-    >;
+    const body = createImportMock.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(JSON.stringify(body.form)).not.toContain("hunter2");
   });
 
@@ -834,7 +840,7 @@ describe("useImportJob wiring", () => {
       expect(result.current.phase).toBe("identity_stop");
       expect(result.current.sourceIdentities).toEqual(["+15550001111"]);
       // Nothing was created: no session POST, no extract.
-      expect(postMock).not.toHaveBeenCalled();
+      expect(createImportMock).not.toHaveBeenCalled();
       expect(invokeExtractMock).not.toHaveBeenCalled();
     });
 
@@ -848,8 +854,7 @@ describe("useImportJob wiring", () => {
       await act(async () => {
         await result.current.continueAfterIdentityStop();
       });
-      expect(postMock).toHaveBeenCalledWith(
-        "/v1/imports",
+      expect(createImportMock).toHaveBeenCalledWith(
         expect.objectContaining({ source_identities: ["+15550001111"] }),
       );
     });
@@ -865,7 +870,7 @@ describe("useImportJob wiring", () => {
         result.current.cancelIdentityStop();
       });
       expect(result.current.phase).toBe("form");
-      expect(postMock).not.toHaveBeenCalled();
+      expect(createImportMock).not.toHaveBeenCalled();
     });
 
     it("proceeds without a stop when an identity matches, sending the list", async () => {
@@ -876,8 +881,7 @@ describe("useImportJob wiring", () => {
         await result.current.startImport(imessageForm());
       });
       expect(result.current.phase).not.toBe("identity_stop");
-      expect(postMock).toHaveBeenCalledWith(
-        "/v1/imports",
+      expect(createImportMock).toHaveBeenCalledWith(
         expect.objectContaining({ source_identities: ["+15550001111"] }),
       );
     });
@@ -923,7 +927,7 @@ describe("useImportJob wiring", () => {
         ]);
       });
       expect(invokeImessageBackupIdentitiesMock).toHaveBeenCalledTimes(1);
-      expect(postMock.mock.calls.filter(([path]) => path === "/v1/imports")).toHaveLength(1);
+      expect(createImportMock.mock.calls).toHaveLength(1);
     });
   });
 });
@@ -936,7 +940,10 @@ describe("useImportJob resume path", () => {
     // invokePush's args can be inspected.
     runMock.mockImplementation(runResult({ summary: "Push finished.", report: failedReport() }));
     cancelMock.mockReset();
-    postMock.mockReset();
+    createImportMock.mockReset();
+    createImportMock.mockResolvedValue({ id: 1 });
+    completeImportMock.mockReset();
+    completeImportMock.mockResolvedValue({});
     resolveImportStagingDirMock.mockReset();
     invokePathStatMock.mockReset();
     invokePathStatMock.mockResolvedValue(null);
@@ -944,7 +951,6 @@ describe("useImportJob resume path", () => {
     setImportStageMock.mockReset();
     setImportStageMock.mockResolvedValue(undefined);
     discardImportSessionMock.mockReset();
-    postMock.mockImplementation(async () => ({}));
   });
 
   it("passes the resumed session id and staging dir through to invokePush", async () => {
@@ -977,7 +983,7 @@ describe("useImportJob resume path", () => {
 
     expect(resolveImportStagingDirMock).not.toHaveBeenCalled();
     expect(invokePathStatMock).not.toHaveBeenCalled();
-    expect(postMock.mock.calls.some(([path]) => path === "/v1/imports")).toBe(false);
+    expect(createImportMock.mock.calls.length > 0).toBe(false);
     expect(runMock).toHaveBeenCalledTimes(1); // push only, no extract
     expect(result.current.stagingDir).toBe("/home/u/message-vault/staging-260830");
     expect(result.current.importSessionId).toBe(99);
@@ -1079,7 +1085,7 @@ describe("useImportJob resume path", () => {
     });
 
     expect(result.current.phase).toBe("done");
-    const completeCall = postMock.mock.calls.find(([path]) => path === "/v1/imports/99/complete");
+    const completeCall = completeImportMock.mock.calls.find(([id]) => id === 99);
     expect(completeCall).toBeDefined();
   });
 });
@@ -1149,8 +1155,10 @@ describe("useImportJob resumeAtGate", () => {
   beforeEach(() => {
     runMock.mockReset();
     cancelMock.mockReset();
-    postMock.mockReset();
-    postMock.mockImplementation(async () => ({}));
+    createImportMock.mockReset();
+    createImportMock.mockResolvedValue({ id: 1 });
+    completeImportMock.mockReset();
+    completeImportMock.mockResolvedValue({});
     resolveImportStagingDirMock.mockReset();
     invokePathStatMock.mockReset();
     invokeExtractMock.mockReset();
@@ -1422,7 +1430,7 @@ describe("useImportJob resumeAtGate", () => {
       // Decision 37: only an explicit discard ends a waiting session. A
       // transient read failure must not complete it (freeing the slot) or
       // move it to a stage the folder never actually reached.
-      expect(postMock.mock.calls.some(([path]) => String(path).endsWith("/complete"))).toBe(false);
+      expect(completeImportMock).not.toHaveBeenCalled();
       expect(setImportStageMock).not.toHaveBeenCalled();
       expect(result.current.phase).toBe("form");
       expect(result.current.resumeError).toContain("disk unavailable");

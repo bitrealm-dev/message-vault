@@ -3,21 +3,20 @@
 import { cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AccountProfile } from "./account";
-import { apiClient } from "./api";
 import {
   clearAccountProfile,
   loadAccountProfile,
   setAccountProfile,
   useAccountProfile,
 } from "./useAccountProfile";
+import { getAccountProfile } from "./vaultApi";
 
-vi.mock("./api", () => ({
-  apiClient: {
-    get: vi.fn(),
-  },
+vi.mock("./vaultApi", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./vaultApi")>()),
+  getAccountProfile: vi.fn(),
 }));
 
-const get = vi.mocked(apiClient.get);
+const get = vi.mocked(getAccountProfile);
 
 function profile(name: string): AccountProfile {
   return {

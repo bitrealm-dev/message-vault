@@ -2,18 +2,18 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { apiClient } from "../../lib/api";
+import { loadAddressBook } from "../../lib/vaultApi";
 import { AddressBookSection } from "./AddressBookSection";
 
-vi.mock("../../lib/api", () => ({
-  apiClient: { post: vi.fn() },
+vi.mock("../../lib/vaultApi", () => ({
+  loadAddressBook: vi.fn(),
 }));
 
 vi.mock("../../lib/contactGroups", () => ({
   invalidateContactGroups: vi.fn(),
 }));
 
-const post = vi.mocked(apiClient.post);
+const post = vi.mocked(loadAddressBook);
 
 function chooseFile(name: string, body: string) {
   const input = screen.getByLabelText("Address book file") as HTMLInputElement;
@@ -37,7 +37,7 @@ describe("AddressBookSection", () => {
     chooseFile("Contacts.vcf", "BEGIN:VCARD\nEND:VCARD\n");
 
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
-    expect(post).toHaveBeenCalledWith("/v1/contacts/address-book", {
+    expect(post).toHaveBeenCalledWith({
       filename: "Contacts.vcf",
       content: "BEGIN:VCARD\nEND:VCARD\n",
     });

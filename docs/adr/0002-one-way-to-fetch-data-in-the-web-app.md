@@ -105,12 +105,15 @@ passing, because the comparison stops matching rather than failing.
 
 Running the real route functions against a fake HTTP server, such as MSW, would
 have caught that. It was rejected because the fake server is a second
-description of the API to keep in step with the vault, and the thing it verifies
-— that a route function builds the right URL — is already covered from both
-ends: generated types on the web side, and the server's own route tests on the
-vault side. Tests fake the named route functions instead, so no test mentions a
-URL. The URLs that the route functions build are asserted in tests over
-`vaultApi.ts` itself, which is one file to keep honest rather than eleven.
+description of the API to keep in step with the vault. Tests fake the named
+route functions instead, and the URLs those functions build are asserted in
+`vaultApi.test.ts` — one file to keep honest rather than eleven.
+
+Two tests keep naming URLs on purpose. `api.test.ts` and `assetUrl.test.ts`
+have the URL as their subject. `AdminUsersPanel.test.tsx` stubs `fetch` and
+throws on an address it does not recognise, so it exercises the real route
+functions end to end and fails loudly on a rename rather than quietly matching
+nothing — the opposite of the pattern this decision removes.
 
 ## Consequences
 

@@ -1,0 +1,170 @@
+/**
+ * The only place in the suite that names vault URLs.
+ *
+ * Every other test fakes these functions by name, so nothing else notices when
+ * a route is renamed. That makes this file the one thing standing between a
+ * server-side rename and a screen that silently asks for the wrong address —
+ * which is exactly the failure the old URL-matching tests could not catch,
+ * because a renamed route made their comparisons stop matching rather than
+ * fail.
+ */
+
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { apiClient } from "./api";
+import {
+  countExportMessages,
+  deleteApiToken,
+  discardImport,
+  exportMessages,
+  getContact,
+  getConversationSources,
+  getImport,
+  listContacts,
+  listConversations,
+  listSavedSearches,
+  setImportStage,
+  updateContact,
+  updateSavedSearch,
+} from "./vaultApi";
+
+vi.mock("./api", () => ({
+  apiClient: {
+    get: vi.fn().mockResolvedValue({}),
+    post: vi.fn().mockResolvedValue({}),
+    put: vi.fn().mockResolvedValue({}),
+    patch: vi.fn().mockResolvedValue({}),
+    delete: vi.fn().mockResolvedValue({}),
+  },
+}));
+
+const get = vi.mocked(apiClient.get);
+const post = vi.mocked(apiClient.post);
+const patch = vi.mocked(apiClient.patch);
+const del = vi.mocked(apiClient.delete);
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+/** The path the last call was made with, without its query string. */
+function lastPath(mock: { mock: { calls: unknown[][] } }): string {
+  return String(mock.mock.calls.at(-1)?.[0]).split("?")[0];
+}
+
+/** The query of the last call, as a plain object. */
+function lastQuery(mock: { mock: { calls: unknown[][] } }): Record<string, string> {
+  const url = String(mock.mock.calls.at(-1)?.[0]);
+  const qs = url.includes("?") ? url.slice(url.indexOf("?") + 1) : "";
+  return Object.fromEntries(new URLSearchParams(qs));
+}
+
+describe("browse routes", () => {
+  it("reads conversations from /v1/conversations, not from an export path", async () => {
+    await listConversations({ q: "is:trash", limit: 40, offset: 0 });
+    expect(lastPath(get)).toBe("/v1/conversations");
+  });
+
+  it("reads contacts from /v1/contacts", async () => {
+    await listContacts({ q: "" });
+    expect(lastPath(get)).toBe("/v1/contacts");
+  });
+
+  it("addresses one contact by id", async () => {
+    await getContact(42);
+    expect(lastPath(get)).toBe("/v1/contacts/42");
+  });
+
+  it("addresses a conversation's sources by id", async () => {
+    await getConversationSources("abc");
+    expect(lastPath(get)).toBe("/v1/conversations/abc/sources");
+  });
+});
+
+describe("query building", () => {
+  it("leaves absent, null, and empty values off the query string", async () => {
+    await listConversations({ q: "", limit: 40, offset: 0, sort: undefined });
+    expect(lastQuery(get)).toEqual({ limit: "40", offset: "0" });
+  });
+
+  it("keeps offset zero, which is a real page and not an absent value", async () => {
+    await listContacts({ q: "ada", offset: 0, limit: 10 });
+    expect(lastQuery(get)).toEqual({ q: "ada", offset: "0", limit: "10" });
+  });
+
+  it("emits no question mark when every value is absent", async () => {
+    await listContacts({});
+    expect(get.mock.calls.at(-1)?.[0]).toBe("/v1/contacts");
+  });
+
+  it("encodes a query that contains spaces and colons", async () => {
+    await exportMessages({ q: "in:A has:attachment" });
+    expect(lastQuery(get)).toEqual({ q: "in:A has:attachment" });
+  });
+});
+
+describe("export routes keep the export prefix", () => {
+  it("reads messages from /v1/export/messages", async () => {
+    await exportMessages({ q: "in:1" });
+    expect(lastPath(get)).toBe("/v1/export/messages");
+  });
+
+  it("counts messages from /v1/export/messages/count", async () => {
+    await countExportMessages({ q: "in:1" });
+    expect(lastPath(get)).toBe("/v1/export/messages/count");
+  });
+});
+
+describe("verbs", () => {
+  it("edits a contact with PATCH, since it changes one that already exists", async () => {
+    await updateContact(7, { name: "Ada" });
+    expect(patch).toHaveBeenCalledWith("/v1/contacts/7", { name: "Ada" });
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("updates a saved search with PATCH at its own id", async () => {
+    await updateSavedSearch(3, { name: "Family", query: "is:group" });
+    expect(patch).toHaveBeenCalledWith("/v1/saved-searches/3", {
+      name: "Family",
+      query: "is:group",
+    });
+  });
+
+  it("deletes an API token at its own id", async () => {
+    await deleteApiToken("tok_1");
+    expect(del).toHaveBeenCalledWith("/v1/account/api-tokens/tok_1");
+  });
+
+  it("reads saved searches with GET", async () => {
+    await listSavedSearches();
+    expect(lastPath(get)).toBe("/v1/saved-searches");
+  });
+});
+
+describe("import session routes", () => {
+  it("addresses a stage change by session id", async () => {
+    await setImportStage(9, { stage: "parse" });
+    expect(post).toHaveBeenCalledWith("/v1/imports/9/stage", { stage: "parse" });
+  });
+
+  it("addresses a discard by session id", async () => {
+    await discardImport(9);
+    expect(post).toHaveBeenCalledWith("/v1/imports/9/discard", {});
+  });
+
+  it("addresses one past run by id", async () => {
+    await getImport(12);
+    expect(lastPath(get)).toBe("/v1/imports/12");
+  });
+});
+
+describe("path parameters are escaped", () => {
+  it("escapes an id containing a slash rather than building a deeper path", async () => {
+    await deleteApiToken("a/b");
+    expect(del).toHaveBeenCalledWith("/v1/account/api-tokens/a%2Fb");
+  });
+
+  it("escapes a conversation id containing a space", async () => {
+    await getConversationSources("a b");
+    expect(lastPath(get)).toBe("/v1/conversations/a%20b/sources");
+  });
+});

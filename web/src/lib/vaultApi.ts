@@ -20,7 +20,15 @@
  * calls them.
  */
 
-import { type ApiRequestOptions, apiClient } from "./api";
+import {
+  type ApiRequestOptions,
+  apiClient,
+  errorMessageFromBody,
+  getBaseUrl,
+  getToken,
+  VaultApiError,
+} from "./api";
+import { buildAssetPath } from "./assetUrl";
 import type { components } from "./vaultApi.types";
 
 type Schema = components["schemas"];
@@ -162,6 +170,34 @@ export function deleteUser(accountId: string): Promise<unknown> {
 
 export function deleteUserMessages(accountId: string): Promise<unknown> {
   return apiClient.delete<unknown>(`/v1/admin/users/${encodeURIComponent(accountId)}/messages`);
+}
+
+// ── Assets ──────────────────────────────────────────────────────────────────
+
+/**
+ * Download an attachment by its content hash and return a temporary blob URL.
+ * The caller must call `URL.revokeObjectURL` when the URL is no longer needed.
+ */
+export async function fetchAssetObjectUrl(
+  sha256: string,
+  source: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const path = buildAssetPath(sha256, source);
+  const headers: Record<string, string> = {};
+  const token = getToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  // Attachment bytes are a blob, not JSON, so this is the one route that goes
+  // around `apiClient` and calls `fetch` itself.
+  const res = await fetch(`${getBaseUrl()}${path}`, { method: "GET", headers, signal });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new VaultApiError(res.status, errorMessageFromBody(res.status, text));
+  }
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
 }
 
 // ── Conversations ───────────────────────────────────────────────────────────
