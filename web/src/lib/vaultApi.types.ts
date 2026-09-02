@@ -425,34 +425,51 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List the account's contact groups (A–Z, reserved names hidden). */
-        get: operations["contact_groups_list_handler"];
+        /** The account's Contact Groups, A–Z. */
+        get: operations["contact_groups_list"];
         put?: never;
-        /** Create a contact group and return the updated list. */
-        post: operations["contact_groups_create_handler"];
-        /** Delete a contact group and return the updated list. */
-        delete: operations["contact_groups_delete_handler"];
+        /** Create a Contact Group. */
+        post: operations["contact_groups_create"];
+        delete?: never;
         options?: never;
         head?: never;
-        /** Rename a contact group and return the updated list. */
-        patch: operations["contact_groups_rename_handler"];
+        patch?: never;
         trace?: never;
     };
-    "/v1/contact-groups/members": {
+    "/v1/contact-groups/{id}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Contact ids that belong to a named group. */
-        get: operations["contact_groups_members_handler"];
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a Contact Group and its memberships. */
+        delete: operations["contact_groups_delete"];
+        options?: never;
+        head?: never;
+        /** Rename a Contact Group. */
+        patch: operations["contact_groups_update"];
+        trace?: never;
+    };
+    "/v1/contact-groups/{id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Contact ids in one Contact Group. */
+        get: operations["contact_group_members_list"];
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** Put contacts in and take contacts out of one Contact Group. */
+        patch: operations["contact_group_members_update"];
         trace?: never;
     };
     "/v1/contacts": {
@@ -490,23 +507,6 @@ export interface paths {
          *     all survive.
          */
         post: operations["address_book_load_handler"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/contacts/groups": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Add or remove contacts in a group. */
-        post: operations["contact_groups_membership_handler"];
         delete?: never;
         options?: never;
         head?: never;
@@ -582,23 +582,6 @@ export interface paths {
         get: operations["conversations_list_handler"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/conversations/tags": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Add or remove a tag on conversations. */
-        post: operations["message_tags_membership_handler"];
         delete?: never;
         options?: never;
         head?: never;
@@ -811,34 +794,51 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List the account's message tags (A–Z, reserved names hidden). */
-        get: operations["message_tags_list_handler"];
+        /** The account's Message Tags, A–Z. */
+        get: operations["message_tags_list"];
         put?: never;
-        /** Create a message tag and return the updated list. */
-        post: operations["message_tags_create_handler"];
-        /** Delete a message tag and return the updated list. */
-        delete: operations["message_tags_delete_handler"];
+        /** Create a Message Tag. */
+        post: operations["message_tags_create"];
+        delete?: never;
         options?: never;
         head?: never;
-        /** Rename a message tag and return the updated list. */
-        patch: operations["message_tags_rename_handler"];
+        patch?: never;
         trace?: never;
     };
-    "/v1/message-tags/members": {
+    "/v1/message-tags/{id}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Conversation ids that carry a named tag. */
-        get: operations["message_tags_members_handler"];
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a Message Tag and its memberships. */
+        delete: operations["message_tags_delete"];
+        options?: never;
+        head?: never;
+        /** Rename a Message Tag. */
+        patch: operations["message_tags_update"];
+        trace?: never;
+    };
+    "/v1/message-tags/{id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Conversation ids in one Message Tag. */
+        get: operations["message_tag_members_list"];
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** Put conversations in and take conversations out of one Message Tag. */
+        patch: operations["message_tag_members_update"];
         trace?: never;
     };
     "/v1/saved-searches": {
@@ -1176,40 +1176,6 @@ export interface components {
              * @description Messages across all of the contact's conversations.
              */
             total_messages: number;
-        };
-        /** @description The updated list after deletion. */
-        ContactGroupDeleteResponse: {
-            groups: string[];
-            ok: boolean;
-        };
-        /** @description Contact ids in the named group. */
-        ContactGroupMembersResponse: {
-            memberContactIds: number[];
-            name: string;
-        };
-        /** @description Contact ids, group name, and enable flag. */
-        ContactGroupMembershipBody: {
-            enable: boolean;
-            ids: number[];
-            name: string;
-        };
-        /** @description A group name. */
-        ContactGroupNameBody: {
-            name: string;
-        };
-        /** @description The affected group plus the updated list. */
-        ContactGroupNamedListResponse: {
-            groups: string[];
-            name: string;
-        };
-        /** @description Old and new group names. */
-        ContactGroupRenameBody: {
-            from: string;
-            to: string;
-        };
-        /** @description The account's group names. */
-        ContactGroupsListResponse: {
-            groups: string[];
         };
         /** @description One handle on a contact with service and message stats. */
         ContactHandleInfo: {
@@ -1973,44 +1939,35 @@ export interface components {
             /** @description Always true when a response is returned. */
             ok: boolean;
         };
-        /** @description Number of memberships changed. */
-        MembershipChangedResponse: {
+        /** @description Member ids of one set, ascending. */
+        MemberIdList: {
+            items: number[];
+        };
+        /** @description How many memberships a patch created and how many it removed. */
+        MembersChanged: {
             /** Format: int64 */
-            changed: number;
+            added: number;
+            /** Format: int64 */
+            removed: number;
         };
-        /** @description The updated list after deletion. */
-        MessageTagDeleteResponse: {
-            ok: boolean;
-            tags: string[];
+        /** @description Members to put in and take out of one set, in one request. */
+        MembersPatch: {
+            add?: number[];
+            remove?: number[];
         };
-        /** @description Conversation ids carrying the named tag. */
-        MessageTagMembersResponse: {
-            memberConversationIds: number[];
+        /** @description One Contact Group or Message Tag: its id and name. */
+        NamedSet: {
+            /** Format: int64 */
+            id: number;
             name: string;
         };
-        /** @description Conversation ids, tag name, and enable flag. */
-        MessageTagMembershipBody: {
-            enable: boolean;
-            ids: number[];
+        /** @description A name to create, or the new name for an existing set. */
+        NamedSetBody: {
             name: string;
         };
-        /** @description A tag name. */
-        MessageTagNameBody: {
-            name: string;
-        };
-        /** @description The affected tag plus the updated list. */
-        MessageTagNamedListResponse: {
-            name: string;
-            tags: string[];
-        };
-        /** @description Old and new tag names. */
-        MessageTagRenameBody: {
-            from: string;
-            to: string;
-        };
-        /** @description The account's tag names. */
-        MessageTagsListResponse: {
-            tags: string[];
+        /** @description The account's sets of one kind, A–Z. */
+        NamedSetList: {
+            items: components["schemas"]["NamedSet"][];
         };
         /** @description Body for changing an account's flags. Omitted fields are left alone. */
         PatchUserRequest: {
@@ -3457,7 +3414,7 @@ export interface operations {
             };
         };
     };
-    contact_groups_list_handler: {
+    contact_groups_list: {
         parameters: {
             query?: never;
             header?: never;
@@ -3471,7 +3428,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ContactGroupsListResponse"];
+                    "application/json": components["schemas"]["NamedSetList"];
                 };
             };
             401: {
@@ -3492,7 +3449,7 @@ export interface operations {
             };
         };
     };
-    contact_groups_create_handler: {
+    contact_groups_create: {
         parameters: {
             query?: never;
             header?: never;
@@ -3501,7 +3458,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ContactGroupNameBody"];
+                "application/json": components["schemas"]["NamedSetBody"];
             };
         };
         responses: {
@@ -3510,7 +3467,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ContactGroupNamedListResponse"];
+                    "application/json": components["schemas"]["NamedSet"];
                 };
             };
             400: {
@@ -3547,34 +3504,23 @@ export interface operations {
             };
         };
     };
-    contact_groups_delete_handler: {
+    contact_groups_delete: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Contact Group id */
+                id: number;
+            };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ContactGroupNameBody"];
-            };
-        };
+        requestBody?: never;
         responses: {
-            200: {
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["ContactGroupDeleteResponse"];
-                };
-            };
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
+                content?: never;
             };
             401: {
                 headers: {
@@ -3602,16 +3548,19 @@ export interface operations {
             };
         };
     };
-    contact_groups_rename_handler: {
+    contact_groups_update: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Contact Group id */
+                id: number;
+            };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ContactGroupRenameBody"];
+                "application/json": components["schemas"]["NamedSetBody"];
             };
         };
         responses: {
@@ -3620,7 +3569,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ContactGroupNamedListResponse"];
+                    "application/json": components["schemas"]["NamedSet"];
                 };
             };
             400: {
@@ -3665,14 +3614,14 @@ export interface operations {
             };
         };
     };
-    contact_groups_members_handler: {
+    contact_group_members_list: {
         parameters: {
-            query: {
-                /** @description Group name */
-                name: string;
-            };
+            query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Contact Group id */
+                id: number;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -3682,7 +3631,57 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ContactGroupMembersResponse"];
+                    "application/json": components["schemas"]["MemberIdList"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    contact_group_members_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Contact Group id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MembersPatch"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MembersChanged"];
                 };
             };
             400: {
@@ -3702,6 +3701,14 @@ export interface operations {
                 };
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3799,61 +3806,6 @@ export interface operations {
                 };
             };
             403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-        };
-    };
-    contact_groups_membership_handler: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ContactGroupMembershipBody"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MembershipChangedResponse"];
-                };
-            };
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4106,61 +4058,6 @@ export interface operations {
                 };
             };
             403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-        };
-    };
-    message_tags_membership_handler: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["MessageTagMembershipBody"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MembershipChangedResponse"];
-                };
-            };
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4783,7 +4680,7 @@ export interface operations {
             };
         };
     };
-    message_tags_list_handler: {
+    message_tags_list: {
         parameters: {
             query?: never;
             header?: never;
@@ -4797,7 +4694,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MessageTagsListResponse"];
+                    "application/json": components["schemas"]["NamedSetList"];
                 };
             };
             401: {
@@ -4818,7 +4715,7 @@ export interface operations {
             };
         };
     };
-    message_tags_create_handler: {
+    message_tags_create: {
         parameters: {
             query?: never;
             header?: never;
@@ -4827,7 +4724,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["MessageTagNameBody"];
+                "application/json": components["schemas"]["NamedSetBody"];
             };
         };
         responses: {
@@ -4836,7 +4733,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MessageTagNamedListResponse"];
+                    "application/json": components["schemas"]["NamedSet"];
                 };
             };
             400: {
@@ -4873,34 +4770,23 @@ export interface operations {
             };
         };
     };
-    message_tags_delete_handler: {
+    message_tags_delete: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Message Tag id */
+                id: number;
+            };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["MessageTagNameBody"];
-            };
-        };
+        requestBody?: never;
         responses: {
-            200: {
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["MessageTagDeleteResponse"];
-                };
-            };
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
+                content?: never;
             };
             401: {
                 headers: {
@@ -4928,16 +4814,19 @@ export interface operations {
             };
         };
     };
-    message_tags_rename_handler: {
+    message_tags_update: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Message Tag id */
+                id: number;
+            };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["MessageTagRenameBody"];
+                "application/json": components["schemas"]["NamedSetBody"];
             };
         };
         responses: {
@@ -4946,7 +4835,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MessageTagNamedListResponse"];
+                    "application/json": components["schemas"]["NamedSet"];
                 };
             };
             400: {
@@ -4991,14 +4880,14 @@ export interface operations {
             };
         };
     };
-    message_tags_members_handler: {
+    message_tag_members_list: {
         parameters: {
-            query: {
-                /** @description Tag name */
-                name: string;
-            };
+            query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Message Tag id */
+                id: number;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -5008,7 +4897,57 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MessageTagMembersResponse"];
+                    "application/json": components["schemas"]["MemberIdList"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    message_tag_members_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Message Tag id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MembersPatch"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MembersChanged"];
                 };
             };
             400: {
@@ -5028,6 +4967,14 @@ export interface operations {
                 };
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

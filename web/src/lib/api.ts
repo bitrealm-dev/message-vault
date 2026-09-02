@@ -92,6 +92,11 @@ async function request<T>(
     throw new VaultApiError(res.status, errorMessageFromBody(res.status, text));
   }
 
+  // A 204 has no body by definition; asking for JSON would throw.
+  if (res.status === 204) {
+    return undefined as T;
+  }
+
   return res.json() as Promise<T>;
 }
 

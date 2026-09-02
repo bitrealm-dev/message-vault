@@ -309,67 +309,86 @@ export function loadAddressBook(
 }
 
 // ── Contact Groups ──────────────────────────────────────────────────────────
+//
+// A Contact Group is addressed by its id. Screens hold names; the lookup from
+// a name to an id lives in `nameCollection.ts`, not here.
 
-export function listContactGroups(
-  opts?: VaultRequestOptions,
-): Promise<Schema["ContactGroupsListResponse"]> {
-  return apiClient.get<Schema["ContactGroupsListResponse"]>("/v1/contact-groups", opts);
+export function listContactGroups(opts?: VaultRequestOptions): Promise<Schema["NamedSetList"]> {
+  return apiClient.get<Schema["NamedSetList"]>("/v1/contact-groups", opts);
 }
 
 export function createContactGroup(
-  body: Schema["ContactGroupNameBody"],
-): Promise<Schema["ContactGroupNamedListResponse"]> {
-  return apiClient.post<Schema["ContactGroupNamedListResponse"]>("/v1/contact-groups", body);
+  body: Schema["NamedSetBody"],
+  opts?: VaultRequestOptions,
+): Promise<Schema["NamedSet"]> {
+  return apiClient.post<Schema["NamedSet"]>("/v1/contact-groups", body, opts);
 }
 
-export function renameContactGroup(
-  body: Schema["ContactGroupRenameBody"],
-): Promise<Schema["ContactGroupNamedListResponse"]> {
-  return apiClient.patch<Schema["ContactGroupNamedListResponse"]>("/v1/contact-groups", body);
+export function updateContactGroup(
+  id: number,
+  body: Schema["NamedSetBody"],
+  opts?: VaultRequestOptions,
+): Promise<Schema["NamedSet"]> {
+  return apiClient.patch<Schema["NamedSet"]>(`/v1/contact-groups/${id}`, body, opts);
 }
 
-export function deleteContactGroup(
-  body: Schema["ContactGroupNameBody"],
-): Promise<Schema["ContactGroupDeleteResponse"]> {
-  return apiClient.delete<Schema["ContactGroupDeleteResponse"]>("/v1/contact-groups", body);
+export function deleteContactGroup(id: number, opts?: VaultRequestOptions): Promise<void> {
+  return apiClient.delete<void>(`/v1/contact-groups/${id}`, undefined, opts);
 }
 
-export function setContactGroupMembership(
-  body: Schema["ContactGroupMembershipBody"],
-): Promise<Schema["MembershipChangedResponse"]> {
-  return apiClient.post<Schema["MembershipChangedResponse"]>("/v1/contacts/groups", body);
+export function listContactGroupMembers(
+  id: number,
+  opts?: VaultRequestOptions,
+): Promise<Schema["MemberIdList"]> {
+  return apiClient.get<Schema["MemberIdList"]>(`/v1/contact-groups/${id}/members`, opts);
+}
+
+export function updateContactGroupMembers(
+  id: number,
+  body: Schema["MembersPatch"],
+  opts?: VaultRequestOptions,
+): Promise<Schema["MembersChanged"]> {
+  return apiClient.patch<Schema["MembersChanged"]>(`/v1/contact-groups/${id}/members`, body, opts);
 }
 
 // ── Message Tags ────────────────────────────────────────────────────────────
 
-export function listMessageTags(
-  opts?: VaultRequestOptions,
-): Promise<Schema["MessageTagsListResponse"]> {
-  return apiClient.get<Schema["MessageTagsListResponse"]>("/v1/message-tags", opts);
+export function listMessageTags(opts?: VaultRequestOptions): Promise<Schema["NamedSetList"]> {
+  return apiClient.get<Schema["NamedSetList"]>("/v1/message-tags", opts);
 }
 
 export function createMessageTag(
-  body: Schema["MessageTagNameBody"],
-): Promise<Schema["MessageTagNamedListResponse"]> {
-  return apiClient.post<Schema["MessageTagNamedListResponse"]>("/v1/message-tags", body);
+  body: Schema["NamedSetBody"],
+  opts?: VaultRequestOptions,
+): Promise<Schema["NamedSet"]> {
+  return apiClient.post<Schema["NamedSet"]>("/v1/message-tags", body, opts);
 }
 
-export function renameMessageTag(
-  body: Schema["MessageTagRenameBody"],
-): Promise<Schema["MessageTagNamedListResponse"]> {
-  return apiClient.patch<Schema["MessageTagNamedListResponse"]>("/v1/message-tags", body);
+export function updateMessageTag(
+  id: number,
+  body: Schema["NamedSetBody"],
+  opts?: VaultRequestOptions,
+): Promise<Schema["NamedSet"]> {
+  return apiClient.patch<Schema["NamedSet"]>(`/v1/message-tags/${id}`, body, opts);
 }
 
-export function deleteMessageTag(
-  body: Schema["MessageTagNameBody"],
-): Promise<Schema["MessageTagDeleteResponse"]> {
-  return apiClient.delete<Schema["MessageTagDeleteResponse"]>("/v1/message-tags", body);
+export function deleteMessageTag(id: number, opts?: VaultRequestOptions): Promise<void> {
+  return apiClient.delete<void>(`/v1/message-tags/${id}`, undefined, opts);
 }
 
-export function setMessageTagMembership(
-  body: Schema["MessageTagMembershipBody"],
-): Promise<Schema["MembershipChangedResponse"]> {
-  return apiClient.post<Schema["MembershipChangedResponse"]>("/v1/conversations/tags", body);
+export function listMessageTagMembers(
+  id: number,
+  opts?: VaultRequestOptions,
+): Promise<Schema["MemberIdList"]> {
+  return apiClient.get<Schema["MemberIdList"]>(`/v1/message-tags/${id}/members`, opts);
+}
+
+export function updateMessageTagMembers(
+  id: number,
+  body: Schema["MembersPatch"],
+  opts?: VaultRequestOptions,
+): Promise<Schema["MembersChanged"]> {
+  return apiClient.patch<Schema["MembersChanged"]>(`/v1/message-tags/${id}/members`, body, opts);
 }
 
 // ── Saved Searches ──────────────────────────────────────────────────────────

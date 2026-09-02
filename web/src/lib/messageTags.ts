@@ -1,11 +1,11 @@
 import { groupFromSlug, groupSlug } from "./contactGroups";
 import { createNameCollection, useNameCollectionActions } from "./nameCollection";
 import {
-  createMessageTag as vaultCreateMessageTag,
-  deleteMessageTag as vaultDeleteMessageTag,
-  listMessageTags as vaultListMessageTags,
-  renameMessageTag as vaultRenameMessageTag,
-  setMessageTagMembership as vaultSetMessageTagMembership,
+  createMessageTag,
+  deleteMessageTag,
+  listMessageTags,
+  updateMessageTag,
+  updateMessageTagMembers,
 } from "./vaultApi";
 
 /** Names that must not be created as message tags. */
@@ -36,14 +36,16 @@ export function reservedTagError(name: string): string {
 
 export const messageTags = createNameCollection({
   routes: {
-    list: vaultListMessageTags,
-    create: vaultCreateMessageTag,
-    rename: vaultRenameMessageTag,
-    remove: vaultDeleteMessageTag,
-    setMembership: vaultSetMessageTagMembership,
+    list: listMessageTags,
+    create: createMessageTag,
+    update: updateMessageTag,
+    remove: deleteMessageTag,
+    updateMembers: updateMessageTagMembers,
   },
   cacheKey: "message-tags",
-  responseKey: "tags",
+  // Conversation rows and the Trash count show tag names as chips.
+  invalidates: [["conversations"], ["trash-count"]],
+  label: "tag",
   queryToken: "tag",
   reservedNames: RESERVED_TAG_NAMES,
   reservedError: reservedTagError,

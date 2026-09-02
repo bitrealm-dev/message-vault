@@ -757,12 +757,6 @@ pub(crate) struct ListPageQuery {
     pub(crate) offset: Option<usize>,
 }
 
-/// Number of memberships changed.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct MembershipChangedResponse {
-    pub(crate) changed: u64,
-}
-
 pub(crate) async fn read_body_limited(
     body: axum::body::Body,
     max_bytes: usize,
@@ -1687,13 +1681,13 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
     }
 
-    /// `/v1/contacts/{id}` takes an `i64`, and four literal routes now sit
-    /// beside it: `summaries`, `match`, `address-book`, and the contact-group
-    /// membership route `groups`. All four are `POST`, and editing a contact is
-    /// now a `PATCH`, so if the `{id}` route ever swallowed one of them the
-    /// request would come back 405 (no `POST` on `/v1/contacts/{id}`) instead
-    /// of reaching its own handler. Each assertion below distinguishes
-    /// "matched my route and rejected my body" from "matched the wrong route".
+    /// `/v1/contacts/{id}` takes an `i64`, and three literal routes sit beside
+    /// it: `summaries`, `match`, and `address-book`. All three are `POST`, and
+    /// editing a contact is now a `PATCH`, so if the `{id}` route ever
+    /// swallowed one of them the request would come back 405 (no `POST` on
+    /// `/v1/contacts/{id}`) instead of reaching its own handler. Each
+    /// assertion below distinguishes "matched my route and rejected my body"
+    /// from "matched the wrong route".
     #[tokio::test]
     async fn literal_contact_routes_are_not_captured_by_the_id_route() {
         let vault = crate::test_support::test_vault().await;
@@ -1717,7 +1711,6 @@ mod tests {
             "/v1/contacts/summaries",
             "/v1/contacts/match",
             "/v1/contacts/address-book",
-            "/v1/contacts/groups",
         ] {
             let status =
                 crate::test_support::post_status(&state, path, &user.token, serde_json::json!({}))

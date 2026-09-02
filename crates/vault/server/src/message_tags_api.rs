@@ -1,387 +1,149 @@
-//! Message tags stored in `message_tags` / `message_tag_members`.
-//!
-//! CRUD and membership live in [`crate::named_membership`] behind
-//! [`tag_spec`]; this module owns the HTTP surface (routes, DTOs, OpenAPI).
+//! Message Tags over HTTP: one handler per route, each a call into
+//! [`crate::named_set_api`] with [`tag_spec`].
 
 use axum::Json;
-use axum::extract::{Query, State};
-use serde::{Deserialize, Serialize};
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
 
-use crate::named_membership::{self, tag_spec};
-use crate::server::{ApiError, AppState, FullAccess, MembershipChangedResponse};
+use crate::named_membership::tag_spec;
+use crate::named_set_api::{
+    self, MemberIdList, MembersChanged, MembersPatch, NamedSet, NamedSetBody, NamedSetList,
+};
+use crate::server::{ApiError, AppState, ErrorBody, FullAccess};
 
-/// A tag name.
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub(crate) struct MessageTagNameBody {
-    name: String,
-}
-
-/// Old and new tag names.
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub(crate) struct MessageTagRenameBody {
-    from: String,
-    to: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct MessageTagMembersQuery {
-    name: String,
-}
-
-/// Conversation ids, tag name, and enable flag.
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub(crate) struct MessageTagMembershipBody {
-    ids: Vec<i64>,
-    name: String,
-    enable: bool,
-}
-
-/// The account's tag names.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct MessageTagsListResponse {
-    tags: Vec<String>,
-}
-
-/// The affected tag plus the updated list.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct MessageTagNamedListResponse {
-    name: String,
-    tags: Vec<String>,
-}
-
-/// The updated list after deletion.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct MessageTagDeleteResponse {
-    ok: bool,
-    tags: Vec<String>,
-}
-
-/// Conversation ids carrying the named tag.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct MessageTagMembersResponse {
-    name: String,
-    #[serde(rename = "memberConversationIds")]
-    member_conversation_ids: Vec<i64>,
-}
-
-/// List the account's message tags (A–Z, reserved names hidden).
+/// The account's Message Tags, A–Z.
 #[utoipa::path(
     get,
     path = "/v1/message-tags",
     tag = "Message tags",
     security(("bearer" = [])),
     responses(
-        (status = 200, body = MessageTagsListResponse),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
+        (status = 200, body = NamedSetList),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody)
     )
 )]
-pub(crate) async fn message_tags_list_handler(
+pub(crate) async fn message_tags_list(
     State(state): State<AppState>,
     FullAccess(auth): FullAccess,
-) -> Result<Json<MessageTagsListResponse>, ApiError> {
-    let mut conn = state.db.acquire().await?;
-    let tags = named_membership::list_names(tag_spec(), &mut conn, &auth.account_id).await?;
-    Ok(Json(MessageTagsListResponse { tags }))
+) -> Result<Json<NamedSetList>, ApiError> {
+    named_set_api::list(tag_spec(), &state, &auth.account_id).await
 }
 
-/// Create a message tag and return the updated list.
+/// Create a Message Tag.
 #[utoipa::path(
     post,
     path = "/v1/message-tags",
     tag = "Message tags",
     security(("bearer" = [])),
-    request_body = MessageTagNameBody,
+    request_body = NamedSetBody,
     responses(
-        (status = 200, body = MessageTagNamedListResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 409, body = crate::server::ErrorBody)
+        (status = 200, body = NamedSet),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 409, body = ErrorBody)
     )
 )]
-pub(crate) async fn message_tags_create_handler(
+pub(crate) async fn message_tags_create(
     State(state): State<AppState>,
     FullAccess(auth): FullAccess,
-    Json(body): Json<MessageTagNameBody>,
-) -> Result<Json<MessageTagNamedListResponse>, ApiError> {
-    let mut conn = state.db.acquire().await?;
-    let name = body.name;
-    let created =
-        named_membership::create_name(tag_spec(), &mut conn, &auth.account_id, &name).await?;
-    let tags = named_membership::list_names(tag_spec(), &mut conn, &auth.account_id).await?;
-    Ok(Json(MessageTagNamedListResponse {
-        name: created,
-        tags,
-    }))
+    Json(body): Json<NamedSetBody>,
+) -> Result<Json<NamedSet>, ApiError> {
+    named_set_api::create(tag_spec(), &state, &auth.account_id, body).await
 }
 
-/// Rename a message tag and return the updated list.
+/// Rename a Message Tag.
 #[utoipa::path(
     patch,
-    path = "/v1/message-tags",
+    path = "/v1/message-tags/{id}",
     tag = "Message tags",
     security(("bearer" = [])),
-    request_body = MessageTagRenameBody,
+    params(("id" = i64, Path, description = "Message Tag id")),
+    request_body = NamedSetBody,
     responses(
-        (status = 200, body = MessageTagNamedListResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody),
-        (status = 409, body = crate::server::ErrorBody)
+        (status = 200, body = NamedSet),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+        (status = 409, body = ErrorBody)
     )
 )]
-pub(crate) async fn message_tags_rename_handler(
+pub(crate) async fn message_tags_update(
     State(state): State<AppState>,
     FullAccess(auth): FullAccess,
-    Json(body): Json<MessageTagRenameBody>,
-) -> Result<Json<MessageTagNamedListResponse>, ApiError> {
-    let mut conn = state.db.acquire().await?;
-    let name = named_membership::rename_name(
-        tag_spec(),
-        &mut conn,
-        &auth.account_id,
-        &body.from,
-        &body.to,
-    )
-    .await?;
-    let tags = named_membership::list_names(tag_spec(), &mut conn, &auth.account_id).await?;
-    Ok(Json(MessageTagNamedListResponse { name, tags }))
+    Path(id): Path<i64>,
+    Json(body): Json<NamedSetBody>,
+) -> Result<Json<NamedSet>, ApiError> {
+    named_set_api::update(tag_spec(), &state, &auth.account_id, id, body).await
 }
 
-/// Delete a message tag and return the updated list.
+/// Delete a Message Tag and its memberships.
 #[utoipa::path(
     delete,
-    path = "/v1/message-tags",
+    path = "/v1/message-tags/{id}",
     tag = "Message tags",
     security(("bearer" = [])),
-    request_body = MessageTagNameBody,
+    params(("id" = i64, Path, description = "Message Tag id")),
     responses(
-        (status = 200, body = MessageTagDeleteResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody)
+        (status = 204),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody)
     )
 )]
-pub(crate) async fn message_tags_delete_handler(
+pub(crate) async fn message_tags_delete(
     State(state): State<AppState>,
     FullAccess(auth): FullAccess,
-    Json(body): Json<MessageTagNameBody>,
-) -> Result<Json<MessageTagDeleteResponse>, ApiError> {
-    let mut conn = state.db.acquire().await?;
-    named_membership::delete_name(tag_spec(), &mut conn, &auth.account_id, &body.name).await?;
-    let tags = named_membership::list_names(tag_spec(), &mut conn, &auth.account_id).await?;
-    Ok(Json(MessageTagDeleteResponse { ok: true, tags }))
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    named_set_api::delete(tag_spec(), &state, &auth.account_id, id).await
 }
 
-/// Conversation ids that carry a named tag.
+/// Conversation ids in one Message Tag.
 #[utoipa::path(
     get,
-    path = "/v1/message-tags/members",
+    path = "/v1/message-tags/{id}/members",
     tag = "Message tags",
     security(("bearer" = [])),
-    params(("name" = String, Query, description = "Tag name")),
+    params(("id" = i64, Path, description = "Message Tag id")),
     responses(
-        (status = 200, body = MessageTagMembersResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
+        (status = 200, body = MemberIdList),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody)
     )
 )]
-pub(crate) async fn message_tags_members_handler(
+pub(crate) async fn message_tag_members_list(
     State(state): State<AppState>,
     FullAccess(auth): FullAccess,
-    Query(query): Query<MessageTagMembersQuery>,
-) -> Result<Json<MessageTagMembersResponse>, ApiError> {
-    let mut conn = state.db.acquire().await?;
-    let member_conversation_ids =
-        named_membership::list_member_ids(tag_spec(), &mut conn, &auth.account_id, &query.name)
-            .await?;
-    Ok(Json(MessageTagMembersResponse {
-        name: query.name,
-        member_conversation_ids,
-    }))
+    Path(id): Path<i64>,
+) -> Result<Json<MemberIdList>, ApiError> {
+    named_set_api::members_list(tag_spec(), &state, &auth.account_id, id).await
 }
 
-/// Add or remove a tag on conversations.
+/// Put conversations in and take conversations out of one Message Tag.
 #[utoipa::path(
-    post,
-    path = "/v1/conversations/tags",
+    patch,
+    path = "/v1/message-tags/{id}/members",
     tag = "Message tags",
     security(("bearer" = [])),
-    request_body = MessageTagMembershipBody,
+    params(("id" = i64, Path, description = "Message Tag id")),
+    request_body = MembersPatch,
     responses(
-        (status = 200, body = MembershipChangedResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody)
+        (status = 200, body = MembersChanged),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody)
     )
 )]
-pub(crate) async fn message_tags_membership_handler(
+pub(crate) async fn message_tag_members_update(
     State(state): State<AppState>,
     FullAccess(auth): FullAccess,
-    Json(body): Json<MessageTagMembershipBody>,
-) -> Result<Json<MembershipChangedResponse>, ApiError> {
-    let mut conn = state.db.acquire().await?;
-    let changed = named_membership::set_membership(
-        tag_spec(),
-        &mut conn,
-        &auth.account_id,
-        &body.ids,
-        &body.name,
-        body.enable,
-    )
-    .await?;
-    Ok(Json(MembershipChangedResponse { changed }))
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::db::engine;
-    use crate::db::schema;
-    use crate::named_membership::{
-        self, MembershipError, create_name, delete_name, list_member_ids, list_names, rename_name,
-        set_membership, tag_spec,
-    };
-
-    async fn setup() -> (sqlx::AnyPool, tempfile::TempDir, String, i64, i64) {
-        let (pool, dir) = engine::test_pool().await;
-        schema::ensure_vault_schema(&mut pool.acquire().await.unwrap())
-            .await
-            .unwrap();
-        let account = "00000000-0000-4000-8000-0000000000d1".to_string();
-        let mut conn = pool.acquire().await.unwrap();
-        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'alice')")
-            .bind(&account)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        let h1: i64 = sqlx::query_scalar(
-            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-             VALUES ($1, '+15555550100', '+15555550100', 'phone', 'phone') RETURNING id",
-        )
-        .bind(&account)
-        .fetch_one(&mut *conn)
-        .await
-        .unwrap();
-        let h2: i64 = sqlx::query_scalar(
-            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-             VALUES ($1, '+15555550200', '+15555550200', 'phone', 'phone') RETURNING id",
-        )
-        .bind(&account)
-        .fetch_one(&mut *conn)
-        .await
-        .unwrap();
-        let a: i64 = sqlx::query_scalar(
-            r#"
-            INSERT INTO conversations (
-                account_id, chat_handle_id, conversation_type, group_title, source_file
-            ) VALUES ($1, $2, 'individual', NULL, 't.json') RETURNING id
-            "#,
-        )
-        .bind(&account)
-        .bind(h1)
-        .fetch_one(&mut *conn)
-        .await
-        .unwrap();
-        let b: i64 = sqlx::query_scalar(
-            r#"
-            INSERT INTO conversations (
-                account_id, chat_handle_id, conversation_type, group_title, source_file
-            ) VALUES ($1, $2, 'individual', NULL, 't.json') RETURNING id
-            "#,
-        )
-        .bind(&account)
-        .bind(h2)
-        .fetch_one(&mut *conn)
-        .await
-        .unwrap();
-        (pool, dir, account, a, b)
-    }
-
-    #[tokio::test]
-    async fn create_list_rename_delete_tag() {
-        let (pool, _dir, account, _, _) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
-        assert_eq!(
-            create_name(tag_spec(), &mut conn, &account, " Holiday ")
-                .await
-                .unwrap(),
-            "Holiday"
-        );
-        assert_eq!(
-            list_names(tag_spec(), &mut conn, &account).await.unwrap(),
-            vec!["Holiday"]
-        );
-
-        let err = create_name(tag_spec(), &mut conn, &account, "holiday")
-            .await
-            .unwrap_err();
-        assert!(matches!(err, MembershipError::Conflict(_)));
-
-        let err = create_name(tag_spec(), &mut conn, &account, "Trash")
-            .await
-            .unwrap_err();
-        assert!(matches!(err, MembershipError::BadRequest(_)));
-
-        assert_eq!(
-            rename_name(tag_spec(), &mut conn, &account, "holiday", "Trip")
-                .await
-                .unwrap(),
-            "Trip"
-        );
-        assert_eq!(
-            list_names(tag_spec(), &mut conn, &account).await.unwrap(),
-            vec!["Trip"]
-        );
-
-        delete_name(tag_spec(), &mut conn, &account, "trip")
-            .await
-            .unwrap();
-        assert!(
-            list_names(tag_spec(), &mut conn, &account)
-                .await
-                .unwrap()
-                .is_empty()
-        );
-    }
-
-    #[tokio::test]
-    async fn membership_add_and_remove() {
-        let (pool, _dir, account, a, b) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
-        assert_eq!(
-            set_membership(tag_spec(), &mut conn, &account, &[a, b], "Holiday", true)
-                .await
-                .unwrap(),
-            2
-        );
-        assert_eq!(
-            list_member_ids(tag_spec(), &mut conn, &account, "holiday")
-                .await
-                .unwrap(),
-            vec![a, b]
-        );
-        assert_eq!(
-            named_membership::names_for_item(tag_spec(), &mut conn, &account, a)
-                .await
-                .unwrap(),
-            vec!["Holiday"]
-        );
-        assert_eq!(
-            set_membership(tag_spec(), &mut conn, &account, &[a], "Holiday", false)
-                .await
-                .unwrap(),
-            1
-        );
-        assert_eq!(
-            list_member_ids(tag_spec(), &mut conn, &account, "Holiday")
-                .await
-                .unwrap(),
-            vec![b]
-        );
-    }
+    Path(id): Path<i64>,
+    Json(body): Json<MembersPatch>,
+) -> Result<Json<MembersChanged>, ApiError> {
+    named_set_api::members_update(tag_spec(), &state, &auth.account_id, id, body).await
 }

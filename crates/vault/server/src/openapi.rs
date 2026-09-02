@@ -81,37 +81,22 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(crate::contacts_api::contact_mutate_handler))
         .routes(routes!(crate::contacts_api::contact_match_handler))
         .routes(routes!(crate::contacts_api::address_book_load_handler))
+        .routes(routes!(crate::contact_groups_api::contact_groups_list))
+        .routes(routes!(crate::contact_groups_api::contact_groups_create))
+        .routes(routes!(crate::contact_groups_api::contact_groups_update))
+        .routes(routes!(crate::contact_groups_api::contact_groups_delete))
         .routes(routes!(
-            crate::contact_groups_api::contact_groups_list_handler
+            crate::contact_groups_api::contact_group_members_list
         ))
         .routes(routes!(
-            crate::contact_groups_api::contact_groups_create_handler
+            crate::contact_groups_api::contact_group_members_update
         ))
-        .routes(routes!(
-            crate::contact_groups_api::contact_groups_rename_handler
-        ))
-        .routes(routes!(
-            crate::contact_groups_api::contact_groups_delete_handler
-        ))
-        .routes(routes!(
-            crate::contact_groups_api::contact_groups_members_handler
-        ))
-        .routes(routes!(
-            crate::contact_groups_api::contact_groups_membership_handler
-        ))
-        .routes(routes!(crate::message_tags_api::message_tags_list_handler))
-        .routes(routes!(
-            crate::message_tags_api::message_tags_create_handler
-        ))
-        .routes(routes!(
-            crate::message_tags_api::message_tags_rename_handler
-        ))
-        .routes(routes!(
-            crate::message_tags_api::message_tags_delete_handler
-        ))
-        .routes(routes!(
-            crate::message_tags_api::message_tags_members_handler
-        ))
+        .routes(routes!(crate::message_tags_api::message_tags_list))
+        .routes(routes!(crate::message_tags_api::message_tags_create))
+        .routes(routes!(crate::message_tags_api::message_tags_update))
+        .routes(routes!(crate::message_tags_api::message_tags_delete))
+        .routes(routes!(crate::message_tags_api::message_tag_members_list))
+        .routes(routes!(crate::message_tags_api::message_tag_members_update))
         .routes(routes!(
             crate::saved_searches_api::saved_searches_list_handler
         ))
@@ -123,9 +108,6 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         ))
         .routes(routes!(
             crate::saved_searches_api::saved_searches_delete_handler
-        ))
-        .routes(routes!(
-            crate::message_tags_api::message_tags_membership_handler
         ))
         .routes(routes!(
             crate::conversations_api::conversations_list_handler
@@ -262,13 +244,13 @@ mod tests {
             "/v1/contacts/{id}",
             "/v1/contacts/match",
             "/v1/contact-groups",
-            "/v1/contact-groups/members",
-            "/v1/contacts/groups",
+            "/v1/contact-groups/{id}",
+            "/v1/contact-groups/{id}/members",
             "/v1/message-tags",
-            "/v1/message-tags/members",
+            "/v1/message-tags/{id}",
+            "/v1/message-tags/{id}/members",
             "/v1/saved-searches",
             "/v1/saved-searches/{id}",
-            "/v1/conversations/tags",
             "/v1/conversations",
             "/v1/conversations/{id}/sources",
         ] {

@@ -24,6 +24,7 @@ pub(crate) mod media_tools;
 pub(crate) mod message_tags_api;
 pub(crate) mod models;
 pub(crate) mod named_membership;
+pub(crate) mod named_set_api;
 pub(crate) mod openapi;
 pub(crate) mod operation_lock;
 pub(crate) mod page_limits;
