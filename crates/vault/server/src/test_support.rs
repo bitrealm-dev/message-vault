@@ -193,6 +193,22 @@ pub async fn patch_status(
         .status()
 }
 
+/// PATCH a JSON body with a Bearer token and decode the JSON response.
+pub async fn patch_json<T: DeserializeOwned>(
+    state: &AppState,
+    path: &str,
+    token: &str,
+    body: serde_json::Value,
+) -> T {
+    let response = request(state, reqwest::Method::PATCH, path, Some(token), Some(body)).await;
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "PATCH {path} must succeed"
+    );
+    response.json().await.unwrap()
+}
+
 /// DELETE a path with a Bearer token, returning only the status.
 pub async fn delete_status(state: &AppState, path: &str, token: &str) -> StatusCode {
     request(state, reqwest::Method::DELETE, path, Some(token), None)

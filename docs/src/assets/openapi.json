@@ -1941,15 +1941,15 @@
         "tags": [
           "Contacts"
         ],
-        "summary": "List the account's contact groups (A–Z, reserved names hidden).",
-        "operationId": "contact_groups_list_handler",
+        "summary": "The account's Contact Groups, A–Z.",
+        "operationId": "contact_groups_list",
         "responses": {
           "200": {
             "description": "",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ContactGroupsListResponse"
+                  "$ref": "#/components/schemas/NamedSetList"
                 }
               }
             }
@@ -1985,13 +1985,13 @@
         "tags": [
           "Contacts"
         ],
-        "summary": "Create a contact group and return the updated list.",
-        "operationId": "contact_groups_create_handler",
+        "summary": "Create a Contact Group.",
+        "operationId": "contact_groups_create",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ContactGroupNameBody"
+                "$ref": "#/components/schemas/NamedSetBody"
               }
             }
           },
@@ -2003,7 +2003,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ContactGroupNamedListResponse"
+                  "$ref": "#/components/schemas/NamedSet"
                 }
               }
             }
@@ -2054,43 +2054,30 @@
             "bearer": []
           }
         ]
-      },
+      }
+    },
+    "/v1/contact-groups/{id}": {
       "delete": {
         "tags": [
           "Contacts"
         ],
-        "summary": "Delete a contact group and return the updated list.",
-        "operationId": "contact_groups_delete_handler",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ContactGroupNameBody"
-              }
+        "summary": "Delete a Contact Group and its memberships.",
+        "operationId": "contact_groups_delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Contact Group id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
             }
-          },
-          "required": true
-        },
+          }
+        ],
         "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ContactGroupDeleteResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
+          "204": {
+            "description": ""
           },
           "401": {
             "description": "",
@@ -2133,13 +2120,25 @@
         "tags": [
           "Contacts"
         ],
-        "summary": "Rename a contact group and return the updated list.",
-        "operationId": "contact_groups_rename_handler",
+        "summary": "Rename a Contact Group.",
+        "operationId": "contact_groups_update",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Contact Group id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ContactGroupRenameBody"
+                "$ref": "#/components/schemas/NamedSetBody"
               }
             }
           },
@@ -2151,7 +2150,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ContactGroupNamedListResponse"
+                  "$ref": "#/components/schemas/NamedSet"
                 }
               }
             }
@@ -2214,21 +2213,22 @@
         ]
       }
     },
-    "/v1/contact-groups/members": {
+    "/v1/contact-groups/{id}/members": {
       "get": {
         "tags": [
           "Contacts"
         ],
-        "summary": "Contact ids that belong to a named group.",
-        "operationId": "contact_groups_members_handler",
+        "summary": "Contact ids in one Contact Group.",
+        "operationId": "contact_group_members_list",
         "parameters": [
           {
-            "name": "name",
-            "in": "query",
-            "description": "Group name",
+            "name": "id",
+            "in": "path",
+            "description": "Contact Group id",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "integer",
+              "format": "int64"
             }
           }
         ],
@@ -2238,7 +2238,83 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ContactGroupMembersResponse"
+                  "$ref": "#/components/schemas/MemberIdList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "Contacts"
+        ],
+        "summary": "Put contacts in and take contacts out of one Contact Group.",
+        "operationId": "contact_group_members_update",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Contact Group id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembersPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembersChanged"
                 }
               }
             }
@@ -2264,6 +2340,16 @@
             }
           },
           "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
             "description": "",
             "content": {
               "application/json": {
@@ -2418,82 +2504,6 @@
             }
           },
           "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/v1/contacts/groups": {
-      "post": {
-        "tags": [
-          "Contacts"
-        ],
-        "summary": "Add or remove contacts in a group.",
-        "operationId": "contact_groups_membership_handler",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ContactGroupMembershipBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MembershipChangedResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "404": {
             "description": "",
             "content": {
               "application/json": {
@@ -2885,82 +2895,6 @@
             }
           },
           "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/v1/conversations/tags": {
-      "post": {
-        "tags": [
-          "Message tags"
-        ],
-        "summary": "Add or remove a tag on conversations.",
-        "operationId": "message_tags_membership_handler",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MessageTagMembershipBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MembershipChangedResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "404": {
             "description": "",
             "content": {
               "application/json": {
@@ -3949,15 +3883,15 @@
         "tags": [
           "Message tags"
         ],
-        "summary": "List the account's message tags (A–Z, reserved names hidden).",
-        "operationId": "message_tags_list_handler",
+        "summary": "The account's Message Tags, A–Z.",
+        "operationId": "message_tags_list",
         "responses": {
           "200": {
             "description": "",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MessageTagsListResponse"
+                  "$ref": "#/components/schemas/NamedSetList"
                 }
               }
             }
@@ -3993,13 +3927,13 @@
         "tags": [
           "Message tags"
         ],
-        "summary": "Create a message tag and return the updated list.",
-        "operationId": "message_tags_create_handler",
+        "summary": "Create a Message Tag.",
+        "operationId": "message_tags_create",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/MessageTagNameBody"
+                "$ref": "#/components/schemas/NamedSetBody"
               }
             }
           },
@@ -4011,7 +3945,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MessageTagNamedListResponse"
+                  "$ref": "#/components/schemas/NamedSet"
                 }
               }
             }
@@ -4062,43 +3996,30 @@
             "bearer": []
           }
         ]
-      },
+      }
+    },
+    "/v1/message-tags/{id}": {
       "delete": {
         "tags": [
           "Message tags"
         ],
-        "summary": "Delete a message tag and return the updated list.",
-        "operationId": "message_tags_delete_handler",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MessageTagNameBody"
-              }
+        "summary": "Delete a Message Tag and its memberships.",
+        "operationId": "message_tags_delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Message Tag id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
             }
-          },
-          "required": true
-        },
+          }
+        ],
         "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MessageTagDeleteResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
+          "204": {
+            "description": ""
           },
           "401": {
             "description": "",
@@ -4141,13 +4062,25 @@
         "tags": [
           "Message tags"
         ],
-        "summary": "Rename a message tag and return the updated list.",
-        "operationId": "message_tags_rename_handler",
+        "summary": "Rename a Message Tag.",
+        "operationId": "message_tags_update",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Message Tag id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/MessageTagRenameBody"
+                "$ref": "#/components/schemas/NamedSetBody"
               }
             }
           },
@@ -4159,7 +4092,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MessageTagNamedListResponse"
+                  "$ref": "#/components/schemas/NamedSet"
                 }
               }
             }
@@ -4222,21 +4155,22 @@
         ]
       }
     },
-    "/v1/message-tags/members": {
+    "/v1/message-tags/{id}/members": {
       "get": {
         "tags": [
           "Message tags"
         ],
-        "summary": "Conversation ids that carry a named tag.",
-        "operationId": "message_tags_members_handler",
+        "summary": "Conversation ids in one Message Tag.",
+        "operationId": "message_tag_members_list",
         "parameters": [
           {
-            "name": "name",
-            "in": "query",
-            "description": "Tag name",
+            "name": "id",
+            "in": "path",
+            "description": "Message Tag id",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "integer",
+              "format": "int64"
             }
           }
         ],
@@ -4246,7 +4180,83 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MessageTagMembersResponse"
+                  "$ref": "#/components/schemas/MemberIdList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "Message tags"
+        ],
+        "summary": "Put conversations in and take conversations out of one Message Tag.",
+        "operationId": "message_tag_members_update",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Message Tag id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembersPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembersChanged"
                 }
               }
             }
@@ -4272,6 +4282,16 @@
             }
           },
           "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
             "description": "",
             "content": {
               "application/json": {
@@ -5362,131 +5382,6 @@
             "format": "int64",
             "description": "Messages across all of the contact's conversations.",
             "minimum": 0
-          }
-        }
-      },
-      "ContactGroupDeleteResponse": {
-        "type": "object",
-        "description": "The updated list after deletion.",
-        "required": [
-          "ok",
-          "groups"
-        ],
-        "properties": {
-          "groups": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "ok": {
-            "type": "boolean"
-          }
-        }
-      },
-      "ContactGroupMembersResponse": {
-        "type": "object",
-        "description": "Contact ids in the named group.",
-        "required": [
-          "name",
-          "memberContactIds"
-        ],
-        "properties": {
-          "memberContactIds": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "format": "int64"
-            }
-          },
-          "name": {
-            "type": "string"
-          }
-        }
-      },
-      "ContactGroupMembershipBody": {
-        "type": "object",
-        "description": "Contact ids, group name, and enable flag.",
-        "required": [
-          "ids",
-          "name",
-          "enable"
-        ],
-        "properties": {
-          "enable": {
-            "type": "boolean"
-          },
-          "ids": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "format": "int64"
-            }
-          },
-          "name": {
-            "type": "string"
-          }
-        }
-      },
-      "ContactGroupNameBody": {
-        "type": "object",
-        "description": "A group name.",
-        "required": [
-          "name"
-        ],
-        "properties": {
-          "name": {
-            "type": "string"
-          }
-        }
-      },
-      "ContactGroupNamedListResponse": {
-        "type": "object",
-        "description": "The affected group plus the updated list.",
-        "required": [
-          "name",
-          "groups"
-        ],
-        "properties": {
-          "groups": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "name": {
-            "type": "string"
-          }
-        }
-      },
-      "ContactGroupRenameBody": {
-        "type": "object",
-        "description": "Old and new group names.",
-        "required": [
-          "from",
-          "to"
-        ],
-        "properties": {
-          "from": {
-            "type": "string"
-          },
-          "to": {
-            "type": "string"
-          }
-        }
-      },
-      "ContactGroupsListResponse": {
-        "type": "object",
-        "description": "The account's group names.",
-        "required": [
-          "groups"
-        ],
-        "properties": {
-          "groups": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
           }
         }
       },
@@ -7293,86 +7188,82 @@
           }
         }
       },
-      "MembershipChangedResponse": {
+      "MemberIdList": {
         "type": "object",
-        "description": "Number of memberships changed.",
+        "description": "Member ids of one set, ascending.",
         "required": [
-          "changed"
+          "items"
         ],
         "properties": {
-          "changed": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        }
+      },
+      "MembersChanged": {
+        "type": "object",
+        "description": "How many memberships a patch created and how many it removed.",
+        "required": [
+          "added",
+          "removed"
+        ],
+        "properties": {
+          "added": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "removed": {
             "type": "integer",
             "format": "int64",
             "minimum": 0
           }
         }
       },
-      "MessageTagDeleteResponse": {
+      "MembersPatch": {
         "type": "object",
-        "description": "The updated list after deletion.",
-        "required": [
-          "ok",
-          "tags"
-        ],
+        "description": "Members to put in and take out of one set, in one request.",
         "properties": {
-          "ok": {
-            "type": "boolean"
-          },
-          "tags": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        }
-      },
-      "MessageTagMembersResponse": {
-        "type": "object",
-        "description": "Conversation ids carrying the named tag.",
-        "required": [
-          "name",
-          "memberConversationIds"
-        ],
-        "properties": {
-          "memberConversationIds": {
+          "add": {
             "type": "array",
             "items": {
               "type": "integer",
               "format": "int64"
             }
           },
-          "name": {
-            "type": "string"
-          }
-        }
-      },
-      "MessageTagMembershipBody": {
-        "type": "object",
-        "description": "Conversation ids, tag name, and enable flag.",
-        "required": [
-          "ids",
-          "name",
-          "enable"
-        ],
-        "properties": {
-          "enable": {
-            "type": "boolean"
-          },
-          "ids": {
+          "remove": {
             "type": "array",
             "items": {
               "type": "integer",
               "format": "int64"
             }
+          }
+        }
+      },
+      "NamedSet": {
+        "type": "object",
+        "description": "One Contact Group or Message Tag: its id and name.",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
           },
           "name": {
             "type": "string"
           }
         }
       },
-      "MessageTagNameBody": {
+      "NamedSetBody": {
         "type": "object",
-        "description": "A tag name.",
+        "description": "A name to create, or the new name for an existing set.",
         "required": [
           "name"
         ],
@@ -7382,52 +7273,17 @@
           }
         }
       },
-      "MessageTagNamedListResponse": {
+      "NamedSetList": {
         "type": "object",
-        "description": "The affected tag plus the updated list.",
+        "description": "The account's sets of one kind, A–Z.",
         "required": [
-          "name",
-          "tags"
+          "items"
         ],
         "properties": {
-          "name": {
-            "type": "string"
-          },
-          "tags": {
+          "items": {
             "type": "array",
             "items": {
-              "type": "string"
-            }
-          }
-        }
-      },
-      "MessageTagRenameBody": {
-        "type": "object",
-        "description": "Old and new tag names.",
-        "required": [
-          "from",
-          "to"
-        ],
-        "properties": {
-          "from": {
-            "type": "string"
-          },
-          "to": {
-            "type": "string"
-          }
-        }
-      },
-      "MessageTagsListResponse": {
-        "type": "object",
-        "description": "The account's tag names.",
-        "required": [
-          "tags"
-        ],
-        "properties": {
-          "tags": {
-            "type": "array",
-            "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/NamedSet"
             }
           }
         }
