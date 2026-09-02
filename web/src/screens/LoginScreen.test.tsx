@@ -36,6 +36,14 @@ function renderScreen() {
   );
 }
 
+// user-event's default per-keystroke delay is a real setTimeout(0). Under a
+// loaded machine that delay is scheduled, not skipped, so an address typed a
+// character at a time can take much longer than the card's own 400ms health
+// re-probe debounce — long enough for the background probe to race the
+// explicit reconnect this screen triggers. `delay: null` fires every
+// keystroke synchronously, closing that window regardless of machine load.
+const setupUser = () => userEvent.setup({ delay: null });
+
 describe("LoginScreen", () => {
   beforeEach(() => {
     login.mockReset();
@@ -100,7 +108,7 @@ describe("LoginScreen", () => {
 
   it("still asks for the password twice on Create Account", async () => {
     stubVault();
-    const user = userEvent.setup();
+    const user = setupUser();
     renderScreen();
 
     await screen.findByRole("tab", { name: "Create Account" });
@@ -113,7 +121,7 @@ describe("LoginScreen", () => {
 
   it("drops the password-length claim the server does not enforce", async () => {
     stubVault();
-    const user = userEvent.setup();
+    const user = setupUser();
     renderScreen();
 
     await screen.findByRole("tab", { name: "Create Account" });
@@ -124,7 +132,7 @@ describe("LoginScreen", () => {
 
   it("rejects a new account when the two passwords disagree", async () => {
     stubVault();
-    const user = userEvent.setup();
+    const user = setupUser();
     renderScreen();
 
     await screen.findByRole("tab", { name: "Create Account" });
@@ -155,7 +163,7 @@ describe("LoginScreen", () => {
       "fetch",
       vi.fn(() => new Promise(() => {})),
     );
-    const user = userEvent.setup();
+    const user = setupUser();
     renderScreen();
 
     expect(await screen.findByText("Connecting")).toBeInTheDocument();
@@ -176,7 +184,7 @@ describe("LoginScreen", () => {
 
   it("disables Log in while the vault is unreachable", async () => {
     stubVault();
-    const user = userEvent.setup();
+    const user = setupUser();
     renderScreen();
 
     await screen.findByText("Connected");
@@ -195,7 +203,7 @@ describe("LoginScreen", () => {
 
   it("opens Message Vault Settings from the link and comes back on Cancel", async () => {
     stubVault();
-    const user = userEvent.setup();
+    const user = setupUser();
     renderScreen();
 
     await screen.findByRole("tab", { name: "Login" });
@@ -213,7 +221,7 @@ describe("LoginScreen", () => {
 
   it("reports what Test found for the typed address", async () => {
     stubVault();
-    const user = userEvent.setup();
+    const user = setupUser();
     renderScreen();
 
     await screen.findByRole("tab", { name: "Login" });
@@ -232,7 +240,7 @@ describe("LoginScreen", () => {
 
   it("does not credit an edited address with the connection it never earned", async () => {
     stubVault();
-    const user = userEvent.setup();
+    const user = setupUser();
     renderScreen();
 
     await screen.findByRole("tab", { name: "Login" });
@@ -259,13 +267,35 @@ describe("LoginScreen", () => {
 
   it("applies a typed address and reconnects", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
-    const user = userEvent.setup();
+    const user = setupUser();
     renderScreen();
 
     await screen.findByText("Disconnected");
     await user.click(screen.getByRole("button", { name: "Change vault settings" }));
 
-    stubVault();
+    // Only the address being typed answers healthy — the disconnected card's
+    // own background self-heal probe (`useVaultHealth`) keeps polling the
+    // blank address it was last on, a different host from the one typed
+    // below. A single always-ok mock would answer that stale background
+    // probe too, and under load it can win the race and reconnect with its
+    // own (blank) address before this explicit submit does — this is a real
+    // race in the screen's `connect()`, which unconditionally overwrites the
+    // draft address on any successful probe, not just its own. Keeping the
+    // stale address unreachable here is what this test is actually about:
+    // applying the address that was typed, not that race.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async (
+          url: string,
+        ): Promise<{ ok: boolean; status?: number; text: () => Promise<string> }> => {
+          if (String(url).startsWith("http://127.0.0.1:8080")) {
+            return { ok: true, text: async () => "" };
+          }
+          return { ok: false, status: 503, text: async () => "" };
+        },
+      ),
+    );
     const field = screen.getByRole("textbox", { name: "Address" });
     await user.clear(field);
     await user.type(field, "http://127.0.0.1:8080");
@@ -338,7 +368,7 @@ describe("LoginScreen", () => {
 
   it("calls the new-account action Continue, since profile setup finishes it", async () => {
     stubVault();
-    const user = userEvent.setup();
+    const user = setupUser();
     renderScreen();
 
     await screen.findByRole("tab", { name: "Create Account" });
@@ -350,7 +380,7 @@ describe("LoginScreen", () => {
 
   it("keeps the action under the fields and the error down by the or-rule", async () => {
     stubVault();
-    const user = userEvent.setup();
+    const user = setupUser();
     renderScreen();
 
     await screen.findByRole("tab", { name: "Create Account" });

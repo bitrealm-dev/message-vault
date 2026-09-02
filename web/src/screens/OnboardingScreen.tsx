@@ -32,8 +32,11 @@ const MAX_ACCOUNT_ROWS = 5;
  * How long the error line stays blank before the same message is put back.
  * Long enough that the line is visibly empty for a moment, short enough that
  * the answer still feels like a reply to what was just done.
+ *
+ * Exported so the test that exercises this blink documents what it is
+ * actually waiting on, rather than a bare number.
  */
-const REPEATED_ERROR_BLINK_MS = 250;
+export const REPEATED_ERROR_BLINK_MS = 250;
 
 /**
  * Checks this close together are one gesture rather than a second look.
@@ -41,8 +44,11 @@ const REPEATED_ERROR_BLINK_MS = 250;
  * the button, so the row is checked twice within a few milliseconds; without
  * this the message would blink on the very first time it appeared. A person
  * clicking a second time is far slower than this.
+ *
+ * Exported so the test that exercises this gap can advance a fake clock past
+ * it deterministically, rather than waiting on the wall clock.
  */
-const SAME_GESTURE_MS = 150;
+export const SAME_GESTURE_MS = 150;
 
 interface HandleInput {
   id: string;
