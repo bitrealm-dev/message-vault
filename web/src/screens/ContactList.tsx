@@ -6,7 +6,6 @@ import GroupsMenu from "../components/GroupsMenu";
 import InfiniteOffsetList from "../components/InfiniteOffsetList";
 import { useSetRightToolbar } from "../components/useRightToolbar";
 import { apiErrorMessage } from "../lib/apiErrorMessage";
-import { useContactDetailCache } from "../lib/contactDetail";
 import {
   contactBelongsToGroup,
   GROUP_FILTER_TOKEN_RE,
@@ -14,6 +13,7 @@ import {
   hasGroupFilterToken,
   UNKNOWN_GROUP,
   useContactGroupActions,
+  useSetContactGroupMembers,
 } from "../lib/contactGroups";
 import {
   type ContactNameSortState,
@@ -128,23 +128,6 @@ function normalizeContacts(rows: ContactsPage["contacts"] | undefined): Contact[
   }));
 }
 
-/** Prefer a local override, then the open-drawer cache, then the list row. */
-function groupsForContact(
-  c: Contact,
-  overrides: Record<string, string[]>,
-  readCached: (id: string) => { groups?: string[] } | null,
-): string[] {
-  return overrides[c.id] ?? readCached(c.id)?.groups ?? c.groups ?? [];
-}
-
-/** Add or remove one group name, matching letter case the same way the list does. */
-function withGroupMembership(groups: string[], name: string, enable: boolean): string[] {
-  if (enable) {
-    return groups.some((g) => g.toLowerCase() === name.toLowerCase()) ? groups : [...groups, name];
-  }
-  return groups.filter((g) => g.toLowerCase() !== name.toLowerCase());
-}
-
 export default function ContactList({
   filter = "",
   groupFilter = null,
@@ -164,14 +147,11 @@ export default function ContactList({
   clearCheckedRev?: number;
 }) {
   const [serverQ, setServerQ] = useState("");
-  const [groupOverrides, setGroupOverrides] = useState<Record<string, string[]>>({});
   const [nameSort, setNameSort] = useState<ContactNameSortState>(() => loadContactNameSort());
   const [checkedIds, setCheckedIds] = useState<Set<string>>(() => new Set());
   const [groupsMenuOpen, setGroupsMenuOpen] = useState(false);
   /** Last contacts the Groups menu assigned to, so a list filter change does not disable an open menu. */
   const assignTargetsRef = useRef<Contact[]>([]);
-  const groupOverridesRef = useRef(groupOverrides);
-  groupOverridesRef.current = groupOverrides;
   /** Ignores the row click that follows a checkbox press (nested control). */
   const skipRowSelectRef = useRef(false);
   const catalogCompleteRef = useRef(false);
@@ -179,7 +159,7 @@ export default function ContactList({
   const fullCatalogRef = useRef<Contact[] | null>(null);
   const { groups: allGroups } = useContactGroups();
   const groupActions = useContactGroupActions();
-  const detailCache = useContactDetailCache();
+  const setGroupMembers = useSetContactGroupMembers();
   const setRightToolbar = useSetRightToolbar();
 
   const onNameSortChange = (next: ContactNameSortState) => {
@@ -234,7 +214,6 @@ export default function ContactList({
 
   useEffect(() => {
     void catalogComplete;
-    setGroupOverrides({});
     const combined = groupListQuery(groupFilter, filter);
     // Empty filter: load the full catalog.
     if (!combined.trim()) {
@@ -279,10 +258,9 @@ export default function ContactList({
   const displayContacts = useMemo(
     () =>
       [...filteredContacts]
-        .map((c) => (groupOverrides[c.id] ? { ...c, groups: groupOverrides[c.id] } : c))
         .filter((c) => contactBelongsToGroup(c.groups, groupFilter))
         .sort((a, b) => compareContactsByName(a.name, b.name, nameSort.sort, nameSort.order)),
-    [filteredContacts, nameSort, groupOverrides, groupFilter],
+    [filteredContacts, nameSort, groupFilter],
   );
 
   const selectedContact = displayContacts.find((c) => c.id === selectedId) ?? null;
@@ -323,82 +301,43 @@ export default function ContactList({
     () =>
       checksFromMembers(
         allGroups,
-        assignTargets.map((c) => groupsForContact(c, groupOverrides, detailCache.read)),
+        assignTargets.map((c) => c.groups ?? []),
       ),
-    [allGroups, assignTargets, groupOverrides, detailCache.read],
+    [allGroups, assignTargets],
   );
 
   const applyMembership = useCallback(
-    async (name: string, enable: boolean) => {
-      const targets = assignTargetsRef.current;
-      const ids = targets.map((c) => Number(c.id)).filter((id) => Number.isFinite(id) && id > 0);
-      if (ids.length === 0) return;
-      const nextOverrides = { ...groupOverridesRef.current };
-      for (const c of targets) {
-        const groups = withGroupMembership(
-          groupsForContact(c, nextOverrides, detailCache.read),
-          name,
-          enable,
+    (name: string, enable: boolean) => {
+      const ids = assignTargetsRef.current
+        .map((c) => Number(c.id))
+        .filter((id) => Number.isFinite(id) && id > 0);
+      if (ids.length === 0) return Promise.resolve();
+      // A refused write puts the chips back in the mutation's onError, and the
+      // chips going back is the report, so there is nothing to handle here.
+      return setGroupMembers
+        .mutateAsync({ name, patch: enable ? { add: ids } : { remove: ids } })
+        .then(
+          () => undefined,
+          () => undefined,
         );
-        nextOverrides[c.id] = groups;
-        detailCache.setGroups(c.id, groups);
-      }
-      groupOverridesRef.current = nextOverrides;
-      setGroupOverrides(nextOverrides);
-      try {
-        await groupActions.setMembers(name, enable ? { add: ids } : { remove: ids });
-      } catch {
-        const reverted = { ...groupOverridesRef.current };
-        for (const c of targets) {
-          const groups = withGroupMembership(
-            groupsForContact(c, reverted, detailCache.read),
-            name,
-            !enable,
-          );
-          reverted[c.id] = groups;
-          detailCache.setGroups(c.id, groups);
-        }
-        groupOverridesRef.current = reverted;
-        setGroupOverrides(reverted);
-      }
     },
-    [groupActions.setMembers, detailCache.read, detailCache.setGroups],
+    [setGroupMembers.mutateAsync],
   );
 
-  /** Drop every group on the selected contacts in one paint, then tell the server in parallel. */
+  /** Drop every group on the selected contacts: one write per name, each with its own rollback. */
   const clearAllMembership = useCallback(async () => {
     const targets = assignTargetsRef.current;
     const ids = targets.map((c) => Number(c.id)).filter((id) => Number.isFinite(id) && id > 0);
     if (ids.length === 0) return;
-    const priorById: Record<string, string[]> = {};
     const names = new Set<string>();
-    const nextOverrides = { ...groupOverridesRef.current };
     for (const c of targets) {
-      const current = groupsForContact(c, nextOverrides, detailCache.read);
-      priorById[c.id] = current;
-      for (const g of current) names.add(g);
-      nextOverrides[c.id] = [];
-      detailCache.setGroups(c.id, []);
+      for (const g of c.groups ?? []) names.add(g);
     }
     if (names.size === 0) return;
-    groupOverridesRef.current = nextOverrides;
-    setGroupOverrides(nextOverrides);
-    const results = await Promise.allSettled(
-      [...names].map((name) => groupActions.setMembers(name, { remove: ids })),
+    await Promise.allSettled(
+      [...names].map((name) => setGroupMembers.mutateAsync({ name, patch: { remove: ids } })),
     );
-    const failed = [...names].filter((_, i) => results[i].status === "rejected");
-    if (failed.length === 0) return;
-    const reverted = { ...groupOverridesRef.current };
-    for (const c of targets) {
-      const groups = priorById[c.id].filter((g) =>
-        failed.some((name) => name.toLowerCase() === g.toLowerCase()),
-      );
-      reverted[c.id] = groups;
-      detailCache.setGroups(c.id, groups);
-    }
-    groupOverridesRef.current = reverted;
-    setGroupOverrides(reverted);
-  }, [groupActions.setMembers, detailCache.setGroups, detailCache.read]);
+  }, [setGroupMembers.mutateAsync]);
 
   const menuDisabled = assignTargets.length === 0 && !groupsMenuOpen;
 
