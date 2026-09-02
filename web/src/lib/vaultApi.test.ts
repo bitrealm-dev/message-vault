@@ -13,17 +13,29 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiClient } from "./api";
 import {
   countExportMessages,
+  createContactGroup,
+  createMessageTag,
   deleteApiToken,
+  deleteContactGroup,
+  deleteMessageTag,
   discardImport,
   exportMessages,
   getContact,
   getConversationSources,
   getImport,
+  listContactGroupMembers,
+  listContactGroups,
   listContacts,
   listConversations,
+  listMessageTagMembers,
+  listMessageTags,
   listSavedSearches,
   setImportStage,
   updateContact,
+  updateContactGroup,
+  updateContactGroupMembers,
+  updateMessageTag,
+  updateMessageTagMembers,
   updateSavedSearch,
 } from "./vaultApi";
 
@@ -166,5 +178,40 @@ describe("path parameters are escaped", () => {
   it("escapes a conversation id containing a space", async () => {
     await getConversationSources("a b");
     expect(lastPath(get)).toBe("/v1/conversations/a%20b/sources");
+  });
+});
+
+describe("Contact Groups and Message Tags are addressed by id", () => {
+  it("lists and creates on the collection", async () => {
+    await listContactGroups();
+    expect(lastPath(get)).toBe("/v1/contact-groups");
+    await createMessageTag({ name: "Holiday" });
+    expect(post).toHaveBeenCalledWith("/v1/message-tags", { name: "Holiday" }, undefined);
+  });
+
+  it("renames with PATCH on the id and deletes with DELETE on the id", async () => {
+    await updateContactGroup(12, { name: "Fam" });
+    expect(patch).toHaveBeenCalledWith("/v1/contact-groups/12", { name: "Fam" }, undefined);
+    await deleteMessageTag(7);
+    expect(del).toHaveBeenCalledWith("/v1/message-tags/7", undefined, undefined);
+  });
+
+  it("reads and patches membership under the set", async () => {
+    await listMessageTagMembers(7);
+    expect(lastPath(get)).toBe("/v1/message-tags/7/members");
+    await updateContactGroupMembers(12, { add: [1, 2], remove: [3] });
+    expect(patch).toHaveBeenCalledWith(
+      "/v1/contact-groups/12/members",
+      { add: [1, 2], remove: [3] },
+      undefined,
+    );
+  });
+
+  it("passes the abort options through on a write", async () => {
+    const controller = new AbortController();
+    await deleteContactGroup(12, { signal: controller.signal });
+    expect(del).toHaveBeenCalledWith("/v1/contact-groups/12", undefined, {
+      signal: controller.signal,
+    });
   });
 });
