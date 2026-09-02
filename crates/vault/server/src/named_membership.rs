@@ -715,7 +715,6 @@ pub async fn names_for_items(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::AnyConnection;
 
     use crate::db::engine;
     use crate::db::schema;
