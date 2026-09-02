@@ -27,6 +27,7 @@ import { PAGE_SIZE_CONTACTS_FIRST, PAGE_SIZE_FIRST } from "../lib/listPaging";
 import { checksFromMembers } from "../lib/membershipChecks";
 import { useContactGroups } from "../lib/useContactGroups";
 import { listContacts } from "../lib/vaultApi";
+import { keys } from "../lib/vaultKeys";
 import { type PagedFetchPage, useVaultPagedList } from "../lib/vaultQuery";
 
 const FILTER_DEBOUNCE_MS = 300;
@@ -206,7 +207,7 @@ export default function ContactList({
     error,
     hasMore,
     loadMore: requestMore,
-  } = useVaultPagedList(["contacts", serverQ], fetchPage, {
+  } = useVaultPagedList(keys.contacts.list(serverQ), fetchPage, {
     firstPageSize: serverQ.trim() ? PAGE_SIZE_FIRST : PAGE_SIZE_CONTACTS_FIRST,
   });
 

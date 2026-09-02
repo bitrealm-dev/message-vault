@@ -5,6 +5,7 @@ import { getContact } from "./vaultApi";
 import type { components } from "./vaultApi.types";
 import { useVaultQuery } from "./vaultQuery";
 import { ANONYMOUS_ACCOUNT, vaultQueryKey } from "./vaultQueryKey";
+import { keys } from "./vaultKeys";
 
 /**
  * One contact in full, as the contact drawer shows it.
@@ -20,18 +21,13 @@ import { ANONYMOUS_ACCOUNT, vaultQueryKey } from "./vaultQueryKey";
 export type ContactDetail = components["schemas"]["ContactDetail"];
 export type ContactHandle = components["schemas"]["ContactHandleInfo"];
 
-/** Cache key parts for one contact, before the account is put in front. */
-export function contactDetailKey(id: string | number): readonly unknown[] {
-  return ["contact-detail", String(id)];
-}
-
 /** The contact behind an open drawer. Skipped entirely when no contact is open. */
 export function useContactDetail(contactId: string | null): {
   detail: ContactDetail | null;
   loading: boolean;
 } {
   const { data, isPending } = useVaultQuery(
-    contactDetailKey(contactId ?? ""),
+    keys.contacts.detail(contactId ?? ""),
     (signal) => getContact(contactId ?? "", { signal }),
     { enabled: contactId !== null },
   );
@@ -56,14 +52,15 @@ export function useContactDetailCache(): {
 
   const read = useCallback(
     (id: string | number) =>
-      client.getQueryData<ContactDetail>(vaultQueryKey(account, contactDetailKey(id))) ?? null,
+      client.getQueryData<ContactDetail>(vaultQueryKey(account, keys.contacts.detail(id))) ?? null,
     [client, account],
   );
 
   const setGroups = useCallback(
     (id: string | number, groups: string[]) => {
-      client.setQueryData<ContactDetail>(vaultQueryKey(account, contactDetailKey(id)), (current) =>
-        current ? { ...current, groups } : current,
+      client.setQueryData<ContactDetail>(
+        vaultQueryKey(account, keys.contacts.detail(id)),
+        (current) => (current ? { ...current, groups } : current),
       );
     },
     [client, account],
@@ -71,7 +68,7 @@ export function useContactDetailCache(): {
 
   const invalidate = useCallback(
     (id: string | number) => {
-      void client.invalidateQueries({ queryKey: vaultQueryKey(account, contactDetailKey(id)) });
+      void client.invalidateQueries({ queryKey: vaultQueryKey(account, keys.contacts.detail(id)) });
     },
     [client, account],
   );

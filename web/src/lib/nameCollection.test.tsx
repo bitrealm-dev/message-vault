@@ -19,6 +19,7 @@ import {
   useNameCollection,
   useNameCollectionActions,
 } from "./nameCollection";
+import { keys } from "./vaultKeys";
 
 vi.mock("./auth", () => ({
   useAuth: () => ({ accountId: "account-1" }),
@@ -43,8 +44,8 @@ function fakeRoutes(): { [K in keyof NameCollectionRoutes]: Mock<NameCollectionR
 function groupsOver(routes: NameCollectionRoutes) {
   return createNameCollection({
     routes,
-    cacheKey: "contact-groups",
-    invalidates: [["contacts"], ["contact-detail"]],
+    key: keys.contactGroups.all,
+    invalidates: [keys.contacts.all],
     label: "group",
     queryToken: "group",
     reservedNames: new Set(["trash"]),
@@ -87,12 +88,11 @@ describe("useNameCollectionActions", () => {
 
     expect(routes.update).toHaveBeenCalledWith(12, { name: "Fam" });
     expect(routes.list).not.toHaveBeenCalled();
-    const keys = invalidate.mock.calls.map((call) => call[0]?.queryKey);
-    expect(keys).toEqual(
+    const invalidated = invalidate.mock.calls.map((call) => call[0]?.queryKey);
+    expect(invalidated).toEqual(
       expect.arrayContaining([
         ["vault", "account-1", "contact-groups"],
         ["vault", "account-1", "contacts"],
-        ["vault", "account-1", "contact-detail"],
       ]),
     );
   });

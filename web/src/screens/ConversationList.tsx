@@ -21,6 +21,7 @@ import { useMessageTagActions } from "../lib/messageTags";
 import type { Conversation } from "../lib/types";
 import { useMessageTags } from "../lib/useMessageTags";
 import { listConversations } from "../lib/vaultApi";
+import { keys } from "../lib/vaultKeys";
 import { type PagedFetchPage, useVaultPagedList } from "../lib/vaultQuery";
 
 const QUERY_DEBOUNCE_MS = 300;
@@ -94,7 +95,12 @@ export default function ConversationList({
     hasMore,
     loadMore,
   } = useVaultPagedList(
-    ["conversations", debouncedQ, membershipRev, sortState.sort, sortState.order],
+    // `membershipRev` is a counter this screen bumps to force a refetch; it
+    // goes away with the override map in a later task.
+    [
+      ...keys.conversations.list({ q: debouncedQ, sort: sortState.sort, order: sortState.order }),
+      membershipRev,
+    ],
     fetchPage,
   );
 

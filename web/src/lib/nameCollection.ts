@@ -40,14 +40,14 @@ export type NameCollectionRoutes = {
 
 export type NameCollectionConfig = {
   routes: NameCollectionRoutes;
-  /** Name of this collection in a cache key, e.g. `contact-groups`. */
-  cacheKey: string;
+  /** This collection's cache prefix, from `vaultKeys`. */
+  key: VaultQueryKey;
   /**
    * Cache keys of the lists that show these names as chips, invalidated after
-   * every write. Matched by prefix, so `["contacts"]` covers every page and
-   * every search of the contact list.
+   * every write. Matched by prefix, so `keys.contacts.all` covers every page
+   * and every search of the contact list.
    */
-  invalidates: readonly (readonly [string])[];
+  invalidates: readonly VaultQueryKey[];
   /** What one of these is called in an error, e.g. `group`. */
   label: string;
   /** Search token used in list queries, e.g. `group` for `group:Family`. */
@@ -58,9 +58,9 @@ export type NameCollectionConfig = {
 
 export type NameCollection = {
   /** Cache key parts, before the account is put in front of them. */
-  key: readonly [string];
+  key: VaultQueryKey;
   routes: NameCollectionRoutes;
-  invalidates: readonly (readonly [string])[];
+  invalidates: readonly VaultQueryKey[];
   label: string;
   isReserved: (name: string) => boolean;
   reservedError: (name: string) => string;
@@ -86,7 +86,7 @@ export function createNameCollection(config: NameCollectionConfig): NameCollecti
   }
 
   return {
-    key: [config.cacheKey] as const,
+    key: config.key,
     routes: config.routes,
     invalidates: config.invalidates,
     label: config.label,

@@ -6,6 +6,7 @@ import {
   updateContactGroup,
   updateContactGroupMembers,
 } from "./vaultApi";
+import { keys } from "./vaultKeys";
 
 /** Names that must not be created as user groups. */
 export const RESERVED_GROUP_NAMES = new Set(
@@ -72,9 +73,10 @@ export const contactGroups = createNameCollection({
     remove: deleteContactGroup,
     updateMembers: updateContactGroupMembers,
   },
-  cacheKey: "contact-groups",
-  // Contact rows and the contact drawer show group names as chips.
-  invalidates: [["contacts"], ["contact-detail"]],
+  key: keys.contactGroups.all,
+  // Contact rows and the contact drawer show group names as chips; one prefix
+  // covers both.
+  invalidates: [keys.contacts.all],
   label: "group",
   queryToken: "group",
   reservedNames: RESERVED_GROUP_NAMES,

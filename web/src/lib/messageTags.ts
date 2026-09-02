@@ -7,6 +7,7 @@ import {
   updateMessageTag,
   updateMessageTagMembers,
 } from "./vaultApi";
+import { keys } from "./vaultKeys";
 
 /** Names that must not be created as message tags. */
 export const RESERVED_TAG_NAMES = new Set(
@@ -42,9 +43,9 @@ export const messageTags = createNameCollection({
     remove: deleteMessageTag,
     updateMembers: updateMessageTagMembers,
   },
-  cacheKey: "message-tags",
-  // Conversation rows and the Trash count show tag names as chips.
-  invalidates: [["conversations"], ["trash-count"]],
+  key: keys.messageTags.all,
+  // Conversation rows and the Trash count show tag names.
+  invalidates: [keys.conversations.all, keys.trash.all],
   label: "tag",
   queryToken: "tag",
   reservedNames: RESERVED_TAG_NAMES,

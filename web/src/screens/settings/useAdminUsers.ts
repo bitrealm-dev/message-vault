@@ -9,6 +9,7 @@ import {
   setUserPassword as setVaultUserPassword,
   updateUser,
 } from "../../lib/vaultApi";
+import { keys } from "../../lib/vaultKeys";
 import { useVaultQuery } from "../../lib/vaultQuery";
 
 /** One account as an administrator sees it — mirrors `AdminUser` in `admin_api.rs`. */
@@ -33,7 +34,7 @@ export function useAdminUsers() {
     isPending: loading,
     error: loadError,
     refetch: reload,
-  } = useVaultQuery(["admin-users"], fetchUsers);
+  } = useVaultQuery(keys.adminUsers.all, fetchUsers);
   const { busy, error: actionError, run, clearError } = useAsyncAction();
 
   const [composing, setComposing] = useState(false);

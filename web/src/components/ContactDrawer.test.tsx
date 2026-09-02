@@ -5,7 +5,8 @@ import { cleanup, render as rtlRender, screen, waitFor } from "@testing-library/
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type ContactDetail, contactDetailKey } from "../lib/contactDetail";
+import type { ContactDetail } from "../lib/contactDetail";
+import { keys } from "../lib/vaultKeys";
 import { vaultQueryKey } from "../lib/vaultQueryKey";
 import ContactDrawer from "./ContactDrawer";
 
@@ -24,7 +25,7 @@ function render(ui: ReactElement) {
 
 /** Put a contact in the cache, as an earlier open of the drawer would have. */
 function seed(detail: ContactDetail): void {
-  client.setQueryData(vaultQueryKey("test-account", contactDetailKey(detail.id)), detail);
+  client.setQueryData(vaultQueryKey("test-account", keys.contacts.detail(detail.id)), detail);
 }
 
 const get = vi.fn();

@@ -5,6 +5,7 @@ import { useAuth } from "./auth";
 import { getAccountProfile } from "./vaultApi";
 import { useVaultQuery, useVaultSetCached } from "./vaultQuery";
 import { ANONYMOUS_ACCOUNT, vaultQueryKey } from "./vaultQueryKey";
+import { keys } from "./vaultKeys";
 
 /**
  * The signed-in account's profile.
@@ -16,9 +17,6 @@ import { ANONYMOUS_ACCOUNT, vaultQueryKey } from "./vaultQueryKey";
  * one account to stop seeing another's profile.
  */
 
-/** Cache key parts, before the account is put in front of them. */
-export const ACCOUNT_PROFILE_KEY = ["account-profile"] as const;
-
 export function useAccountProfile(): {
   profile: AccountProfile | null;
   setProfile: (profile: AccountProfile | null) => void;
@@ -27,13 +25,13 @@ export function useAccountProfile(): {
   reload: () => void;
 } {
   const setCached = useVaultSetCached();
-  const { data, isPending, error, refetch } = useVaultQuery(ACCOUNT_PROFILE_KEY, (signal) =>
+  const { data, isPending, error, refetch } = useVaultQuery(keys.accountProfile.all, (signal) =>
     getAccountProfile({ signal }),
   );
 
   const setProfile = useCallback(
     (profile: AccountProfile | null) => {
-      setCached(ACCOUNT_PROFILE_KEY, profile);
+      setCached(keys.accountProfile.all, profile);
     },
     [setCached],
   );
@@ -64,7 +62,7 @@ export function fetchAccountProfileFor(
   accountId: string | null,
   force = false,
 ): Promise<AccountProfile | null> {
-  const key = vaultQueryKey(accountId ?? ANONYMOUS_ACCOUNT, ACCOUNT_PROFILE_KEY);
+  const key = vaultQueryKey(accountId ?? ANONYMOUS_ACCOUNT, keys.accountProfile.all);
   if (force) client.removeQueries({ queryKey: key });
   return client.fetchQuery({ queryKey: key, queryFn: () => getAccountProfile() }).catch(() => null);
 }

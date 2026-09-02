@@ -6,6 +6,7 @@ import {
   updateSavedSearch as updateVaultSavedSearch,
 } from "./vaultApi";
 import { useVaultQuery, useVaultSetCached } from "./vaultQuery";
+import { keys } from "./vaultKeys";
 
 /**
  * Saved searches live in the vault, not in the browser. They belong to an
@@ -33,8 +34,6 @@ export interface SavedSearch {
 
 type ListResponse = { savedSearches?: SavedSearch[] };
 
-const SAVED_SEARCHES_KEY = ["saved-searches"] as const;
-
 function listFrom(res: ListResponse): SavedSearch[] {
   return Array.isArray(res.savedSearches) ? res.savedSearches : [];
 }
@@ -44,7 +43,7 @@ export function useSavedSearches(): {
   savedSearches: SavedSearch[];
   loading: boolean;
 } {
-  const { data, isPending } = useVaultQuery(SAVED_SEARCHES_KEY, async (signal) =>
+  const { data, isPending } = useVaultQuery(keys.savedSearches.all, async (signal) =>
     listFrom(await listSavedSearches({ signal })),
   );
   return { savedSearches: data ?? [], loading: isPending };
@@ -65,7 +64,7 @@ export function useSavedSearchActions(): {
   // One stable object, for the same reason as the name collections.
   return useMemo(() => {
     const adopt = (res: ListResponse) => {
-      setCached(SAVED_SEARCHES_KEY, listFrom(res));
+      setCached(keys.savedSearches.all, listFrom(res));
     };
     return {
       async create(name: string, query: string) {

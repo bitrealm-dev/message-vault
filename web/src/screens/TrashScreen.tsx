@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { apiErrorMessage } from "../lib/apiErrorMessage";
 import { listConversations } from "../lib/vaultApi";
+import { keys } from "../lib/vaultKeys";
 import { useVaultQuery } from "../lib/vaultQuery";
 
 /** Only `total` is read; the rows themselves are rendered by the list column. */
@@ -30,7 +31,7 @@ export default function TrashScreen() {
     [query],
   );
 
-  const { data, isPending: loading, error } = useVaultQuery(["trash-count", query], fetchCount);
+  const { data, isPending: loading, error } = useVaultQuery(keys.trash.count(query), fetchCount);
 
   if (loading) return <div className="p-6 text-[0.875rem] text-muted">Loading…</div>;
 

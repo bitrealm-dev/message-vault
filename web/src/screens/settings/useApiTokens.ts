@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { apiErrorMessage } from "../../lib/apiErrorMessage";
 import { useAsyncAction } from "../../lib/useAsyncAction";
 import { createApiToken, deleteApiToken, listApiTokens, renameApiToken } from "../../lib/vaultApi";
+import { keys } from "../../lib/vaultKeys";
 import { useVaultQuery } from "../../lib/vaultQuery";
 import type { ApiTokenItem } from "./apiTokensUtils";
 
@@ -30,7 +31,7 @@ export function useApiTokens() {
     isPending: loading,
     error: loadError,
     refetch: reload,
-  } = useVaultQuery(["api-tokens"], fetchTokens);
+  } = useVaultQuery(keys.apiTokens.all, fetchTokens);
   const { busy, error: actionError, run, clearError } = useAsyncAction();
 
   const cancelCompose = useCallback(() => {
