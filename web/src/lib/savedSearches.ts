@@ -6,8 +6,8 @@ import {
   listSavedSearches,
   updateSavedSearch as updateVaultSavedSearch,
 } from "./vaultApi";
-import { useVaultCache, useVaultQuery } from "./vaultQuery";
 import { keys } from "./vaultKeys";
+import { useVaultCache, useVaultQuery } from "./vaultQuery";
 
 /**
  * Saved searches live in the vault, not in the browser. They belong to an

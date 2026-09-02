@@ -3,8 +3,8 @@ import { useCallback, useMemo } from "react";
 import {
   type OffsetPage,
   useVaultCache,
-  type VaultCacheEntries,
   useVaultQuery,
+  type VaultCacheEntries,
   type VaultQueryKey,
 } from "./vaultQuery";
 

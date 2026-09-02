@@ -279,7 +279,26 @@ export default function ContactList({
   if (targetContacts.length > 0) {
     assignTargetsRef.current = targetContacts;
   }
-  const assignTargets = targetContacts.length > 0 ? targetContacts : assignTargetsRef.current;
+  // The ref holds rows from the last time the Groups menu was opened, so a
+  // filter change that empties `targetContacts` doesn't yank the menu out
+  // from under the user. Resolve those rows against the live `contacts` list
+  // rather than the stale rows themselves, so a group toggle on one of them
+  // (which patches `contacts`, not the ref) is reflected immediately instead
+  // of the menu showing a membership that was just unchecked. Memoized on
+  // `targetContacts` and `contacts` — both are themselves stable across a
+  // render that changes neither — so this does not hand the effect below a
+  // fresh array (and therefore a fresh `groupChecks`) on every render, which
+  // would otherwise put it in the same re-render loop issue #295 fixed for
+  // the tag menu.
+  const assignTargets = useMemo(
+    () =>
+      targetContacts.length > 0
+        ? targetContacts
+        : assignTargetsRef.current
+            .map((c) => contacts.find((x) => x.id === c.id) ?? null)
+            .filter((c): c is Contact => c !== null),
+    [targetContacts, contacts],
+  );
 
   useEffect(() => {
     onCheckedChange?.(checkedContacts);

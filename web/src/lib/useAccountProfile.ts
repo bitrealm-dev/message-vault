@@ -3,9 +3,9 @@ import { useCallback } from "react";
 import type { AccountProfile } from "./account";
 import { useAuth } from "./auth";
 import { getAccountProfile, updateAccountProfile } from "./vaultApi";
+import { keys } from "./vaultKeys";
 import { useVaultCache, useVaultQuery } from "./vaultQuery";
 import { ANONYMOUS_ACCOUNT, vaultQueryKey } from "./vaultQueryKey";
-import { keys } from "./vaultKeys";
 
 /**
  * The signed-in account's profile.

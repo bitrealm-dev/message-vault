@@ -244,9 +244,9 @@ export function useVaultCache(): VaultCache {
         for (const [key, data] of entries) client.setQueryData(key, data);
       },
       invalidate: async (...prefixes: VaultQueryKey[]) => {
-        for (const prefix of prefixes) {
-          await client.invalidateQueries({ queryKey: at(prefix) });
-        }
+        await Promise.all(
+          prefixes.map((prefix) => client.invalidateQueries({ queryKey: at(prefix) })),
+        );
       },
     };
   }, [client, account]);
