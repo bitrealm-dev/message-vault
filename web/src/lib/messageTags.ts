@@ -1,5 +1,9 @@
 import { groupFromSlug, groupSlug } from "./contactGroups";
-import { createNameCollection, useNameCollectionActions } from "./nameCollection";
+import {
+  createNameCollection,
+  useNameCollectionActions,
+  useSetNamedSetMembers,
+} from "./nameCollection";
 import {
   createMessageTag,
   deleteMessageTag,
@@ -46,6 +50,7 @@ export const messageTags = createNameCollection({
   key: keys.messageTags.all,
   // Conversation rows and the Trash count show tag names.
   invalidates: [keys.conversations.all, keys.trash.all],
+  chips: [{ key: keys.conversations.lists, field: "tags", shape: "pages" }],
   label: "tag",
   queryToken: "tag",
   reservedNames: RESERVED_TAG_NAMES,
@@ -66,4 +71,9 @@ export const tagListQuery = messageTags.listQuery;
 /** Create, rename, delete, and set membership on Message Tags. */
 export function useMessageTagActions() {
   return useNameCollectionActions(messageTags);
+}
+
+/** Put conversations in or out of one Message Tag, drawn before the vault answers. */
+export function useSetMessageTagMembers() {
+  return useSetNamedSetMembers(messageTags);
 }

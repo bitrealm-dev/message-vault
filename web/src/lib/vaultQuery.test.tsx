@@ -13,13 +13,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OffsetPage } from "./vaultQuery";
-import {
-  useVaultCache,
-  useVaultCached,
-  useVaultFetchFresh,
-  useVaultPagedList,
-  useVaultQuery,
-} from "./vaultQuery";
+import { useVaultCache, useVaultPagedList, useVaultQuery } from "./vaultQuery";
 
 const account = { current: "account-1" };
 vi.mock("./auth", () => ({
@@ -204,32 +198,6 @@ describe("useVaultPagedList", () => {
     expect(fetchPage).toHaveBeenCalledTimes(2);
     act(() => release?.());
     await waitFor(() => expect(result.current.filling).toBe(false));
-  });
-});
-
-describe("useVaultCached and useVaultFetchFresh", () => {
-  it("reads what the cache holds for the signed-in account, and nothing for another", () => {
-    client.setQueryData(["vault", "account-1", "contact-groups"], [{ id: 1, name: "Family" }]);
-    const { result } = renderHook(() => useVaultCached(), { wrapper });
-    expect(result.current<{ id: number; name: string }[]>(["contact-groups"])).toEqual([
-      { id: 1, name: "Family" },
-    ]);
-    account.current = "account-2";
-    const other = renderHook(() => useVaultCached(), { wrapper });
-    expect(other.result.current(["contact-groups"])).toBeUndefined();
-  });
-
-  it("always asks the vault and stores the answer under the account's key", async () => {
-    client.setQueryData(["vault", "account-1", "contact-groups"], [{ id: 1, name: "Old" }]);
-    const fetchGroups = vi.fn(async () => [{ id: 1, name: "New" }]);
-    const { result } = renderHook(() => useVaultFetchFresh(), { wrapper });
-    await expect(result.current(["contact-groups"], fetchGroups)).resolves.toEqual([
-      { id: 1, name: "New" },
-    ]);
-    expect(fetchGroups).toHaveBeenCalledTimes(1);
-    expect(client.getQueryData(["vault", "account-1", "contact-groups"])).toEqual([
-      { id: 1, name: "New" },
-    ]);
   });
 });
 

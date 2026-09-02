@@ -87,23 +87,6 @@ export function useVaultQuery<TData>(
 }
 
 /**
- * Mark something stale, so whatever is showing it refetches.
- *
- * This replaces the browser events the caches used to dispatch: instead of
- * naming an event and having every interested component subscribe and
- * unsubscribe, a mutation names what changed and the library refreshes whoever
- * is reading it.
- */
-export function useVaultInvalidate(): (key: VaultQueryKey) => Promise<void> {
-  const client = useQueryClient();
-  const account = useAccountScope();
-  return useCallback(
-    (key: VaultQueryKey) => client.invalidateQueries({ queryKey: vaultQueryKey(account, key) }),
-    [client, account],
-  );
-}
-
-/**
  * Write a value straight into the cache, so a change shows without a round
  * trip.
  *
@@ -117,46 +100,6 @@ export function useVaultSetCached(): <T>(key: VaultQueryKey, value: T) => void {
     <T>(key: VaultQueryKey, value: T) => {
       client.setQueryData(vaultQueryKey(account, key), value);
     },
-    [client, account],
-  );
-}
-
-/**
- * What the cache holds for a key, or `undefined`, without fetching.
- *
- * For a lookup that a write needs before it can be sent — a Contact Group's
- * id behind the name a screen holds — where the list is almost always in the
- * cache already.
- */
-export function useVaultCached(): <T>(key: VaultQueryKey) => T | undefined {
-  const client = useQueryClient();
-  const account = useAccountScope();
-  return useCallback(
-    <T>(key: VaultQueryKey) => client.getQueryData<T>(vaultQueryKey(account, key)),
-    [client, account],
-  );
-}
-
-/**
- * Ask the vault now, store the answer under the key, and resolve it.
- *
- * The one case `useVaultCached` cannot cover: the cache has no entry, or has
- * one that does not hold what the caller is looking for. `staleTime: 0` makes
- * the library fetch rather than hand back the entry it already has.
- */
-export function useVaultFetchFresh(): <T>(
-  key: VaultQueryKey,
-  queryFn: (signal: AbortSignal) => Promise<T>,
-) => Promise<T> {
-  const client = useQueryClient();
-  const account = useAccountScope();
-  return useCallback(
-    <T>(key: VaultQueryKey, queryFn: (signal: AbortSignal) => Promise<T>) =>
-      client.fetchQuery<T>({
-        queryKey: vaultQueryKey(account, key),
-        queryFn: ({ signal }) => queryFn(signal),
-        staleTime: 0,
-      }),
     [client, account],
   );
 }

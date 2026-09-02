@@ -1,4 +1,8 @@
-import { createNameCollection, useNameCollectionActions } from "./nameCollection";
+import {
+  createNameCollection,
+  useNameCollectionActions,
+  useSetNamedSetMembers,
+} from "./nameCollection";
 import {
   createContactGroup,
   deleteContactGroup,
@@ -77,6 +81,11 @@ export const contactGroups = createNameCollection({
   // Contact rows and the contact drawer show group names as chips; one prefix
   // covers both.
   invalidates: [keys.contacts.all],
+  // A ticked box shows on the contact rows and on the open contact at once.
+  chips: [
+    { key: keys.contacts.lists, field: "groups", shape: "pages" },
+    { key: keys.contacts.details, field: "groups", shape: "row" },
+  ],
   label: "group",
   queryToken: "group",
   reservedNames: RESERVED_GROUP_NAMES,
@@ -146,4 +155,9 @@ export const groupListQuery = contactGroups.listQuery;
 /** Create, rename, delete, and set membership on Contact Groups. */
 export function useContactGroupActions() {
   return useNameCollectionActions(contactGroups);
+}
+
+/** Put contacts in or out of one Contact Group, drawn before the vault answers. */
+export function useSetContactGroupMembers() {
+  return useSetNamedSetMembers(contactGroups);
 }

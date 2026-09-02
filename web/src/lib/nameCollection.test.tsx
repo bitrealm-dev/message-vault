@@ -10,14 +10,16 @@
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import {
   createNameCollection,
+  type MembersChanged,
   type NameCollectionRoutes,
   useNameCollection,
   useNameCollectionActions,
+  useSetNamedSetMembers,
 } from "./nameCollection";
 import { keys } from "./vaultKeys";
 
@@ -46,6 +48,10 @@ function groupsOver(routes: NameCollectionRoutes) {
     routes,
     key: keys.contactGroups.all,
     invalidates: [keys.contacts.all],
+    chips: [
+      { key: keys.contacts.lists, field: "groups", shape: "pages" },
+      { key: keys.contacts.details, field: "groups", shape: "row" },
+    ],
     label: "group",
     queryToken: "group",
     reservedNames: new Set(["trash"]),
@@ -54,10 +60,58 @@ function groupsOver(routes: NameCollectionRoutes) {
 }
 
 const KEY = ["vault", "account-1", "contact-groups"];
+const PAGE_KEY = ["vault", "account-1", "contacts", "list", ""];
+const DETAIL_KEY = ["vault", "account-1", "contacts", "detail", "1"];
+
+/** A contact list page and an open contact, as the two queries would hold them. */
+function seedContacts(): void {
+  client.setQueryData(PAGE_KEY, {
+    pages: [
+      {
+        items: [
+          { id: "1", name: "Ada", groups: [] },
+          { id: "2", name: "Ben", groups: ["Work"] },
+        ],
+        total: 2,
+      },
+    ],
+    pageParams: [0],
+  });
+  client.setQueryData(DETAIL_KEY, { id: 1, name: "Ada", groups: [] });
+}
+
+/** Group chips on one row of the seeded page. */
+function pageGroups(id: string): string[] | undefined {
+  const entry = client.getQueryData<{ pages: { items: { id: string; groups: string[] }[] }[] }>(
+    PAGE_KEY,
+  );
+  return entry?.pages[0].items.find((row) => row.id === id)?.groups;
+}
+
+/** Group chips on the open contact. */
+function detailGroups(): string[] | undefined {
+  return client.getQueryData<{ groups: string[] }>(DETAIL_KEY)?.groups;
+}
+
+/** A promise this test resolves when it chooses, so it can look mid-write. */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve: (value: T) => void = () => {};
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
 
 beforeEach(() => {
   client = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
+    // Not 0: the chip targets below are patched but never observed by a
+    // `useQuery` in this file, and with `gcTime: 0` the library's own
+    // garbage collector removes an unobserved entry on a real timer shortly
+    // after it is created — a race that can fire while `waitFor` is still
+    // polling for the optimistic chip, independent of anything the mutation
+    // does. A hook that does observe (rendered elsewhere) is unaffected by
+    // this either way.
+    defaultOptions: { queries: { retry: false, gcTime: Infinity, staleTime: 0 } },
   });
 });
 
@@ -143,5 +197,93 @@ describe("useNameCollectionActions", () => {
     await expect(result.current.create(" Work ")).resolves.toBe("Work");
     expect(routes.create).toHaveBeenCalledWith({ name: "Work" });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: KEY });
+  });
+
+  it("reports a write in flight, so a screen needs no busy flag of its own", async () => {
+    const routes = fakeRoutes();
+    const answer = deferred<{ id: number; name: string }>();
+    routes.create.mockReturnValue(answer.promise);
+
+    const { result } = renderHook(() => useNameCollectionActions(groupsOver(routes)), { wrapper });
+    expect(result.current.pending).toBe(false);
+
+    let write: Promise<string> = Promise.resolve("");
+    act(() => {
+      write = result.current.create("Work");
+    });
+    await waitFor(() => expect(result.current.pending).toBe(true));
+
+    answer.resolve({ id: 3, name: "Work" });
+    await write;
+    await waitFor(() => expect(result.current.pending).toBe(false));
+  });
+
+  it("reports the failure a write ended in", async () => {
+    const routes = fakeRoutes();
+    routes.create.mockRejectedValue(new Error("vault said no"));
+    const { result } = renderHook(() => useNameCollectionActions(groupsOver(routes)), { wrapper });
+    await expect(result.current.create("Work")).rejects.toThrow("vault said no");
+    await waitFor(() => expect(result.current.error?.message).toBe("vault said no"));
+  });
+});
+
+describe("useSetNamedSetMembers", () => {
+  it("draws the chips on the list and the open contact before the vault answers", async () => {
+    const routes = fakeRoutes();
+    client.setQueryData(KEY, [{ id: 12, name: "Family" }]);
+    seedContacts();
+    const answer = deferred<MembersChanged>();
+    routes.updateMembers.mockReturnValue(answer.promise);
+
+    const { result } = renderHook(() => useSetNamedSetMembers(groupsOver(routes)), { wrapper });
+    let write: Promise<MembersChanged> = Promise.resolve({ added: 0, removed: 0 });
+    act(() => {
+      write = result.current.mutateAsync({ name: "Family", patch: { add: [1] } });
+    });
+
+    await waitFor(() => expect(pageGroups("1")).toEqual(["Family"]));
+    expect(detailGroups()).toEqual(["Family"]);
+    expect(pageGroups("2")).toEqual(["Work"]);
+
+    answer.resolve({ added: 1, removed: 0 });
+    await write;
+    expect(routes.updateMembers).toHaveBeenCalledWith(12, { add: [1], remove: [] });
+  });
+
+  it("takes a name off the rows it was removed from", async () => {
+    const routes = fakeRoutes();
+    client.setQueryData(KEY, [{ id: 5, name: "Work" }]);
+    seedContacts();
+    const { result } = renderHook(() => useSetNamedSetMembers(groupsOver(routes)), { wrapper });
+    await result.current.mutateAsync({ name: "Work", patch: { remove: [2] } });
+    expect(pageGroups("2")).toEqual([]);
+    expect(routes.updateMembers).toHaveBeenCalledWith(5, { add: [], remove: [2] });
+  });
+
+  it("puts every row back when the vault refuses", async () => {
+    const routes = fakeRoutes();
+    client.setQueryData(KEY, [{ id: 12, name: "Family" }]);
+    seedContacts();
+    routes.updateMembers.mockRejectedValue(new Error("nope"));
+
+    const { result } = renderHook(() => useSetNamedSetMembers(groupsOver(routes)), { wrapper });
+    await expect(
+      result.current.mutateAsync({ name: "Family", patch: { add: [1] } }),
+    ).rejects.toThrow("nope");
+
+    expect(pageGroups("1")).toEqual([]);
+    expect(detailGroups()).toEqual([]);
+  });
+
+  it("marks the group list and every contact stale once it settles", async () => {
+    const routes = fakeRoutes();
+    client.setQueryData(KEY, [{ id: 12, name: "Family" }]);
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    const { result } = renderHook(() => useSetNamedSetMembers(groupsOver(routes)), { wrapper });
+    await result.current.mutateAsync({ name: "Family", patch: { add: [1] } });
+    expect(invalidate.mock.calls.map((call) => call[0]?.queryKey)).toEqual([
+      ["vault", "account-1", "contact-groups"],
+      ["vault", "account-1", "contacts"],
+    ]);
   });
 });
