@@ -27,7 +27,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { useAuth } from "./auth";
 import { PAGE_SIZE_FILL, PAGE_SIZE_FIRST } from "./listPaging";
 import { ANONYMOUS_ACCOUNT, type VaultQueryKey, vaultQueryKey } from "./vaultQueryKey";
@@ -167,6 +167,16 @@ export type OffsetPage<T> = {
   total: number;
 };
 
+/**
+ * Stands in for `pages` before the first page has arrived.
+ *
+ * `query.data?.pages ?? []` looks harmless, but that `[]` is a fresh array on
+ * every call — pending or not — so a consumer that memoizes off `pages` never
+ * sees two equal renders while the query is still loading. One shared
+ * constant, cast per call site, keeps that fallback a single reference.
+ */
+const NO_PAGES: readonly unknown[] = [];
+
 /** How a screen loads one page. */
 export type PagedFetchPage<T> = (args: {
   limit: number;
@@ -231,8 +241,11 @@ export function useVaultPagedList<T>(
     },
   });
 
-  const pages = query.data?.pages ?? [];
-  const items = pages.flatMap((page) => page.items);
+  const pages = query.data?.pages ?? (NO_PAGES as OffsetPage<T>[]);
+  // A new array every render defeats every memo downstream (the tag menu and
+  // its effect included), so this is the one place that must not recompute
+  // unless the query actually produced new pages.
+  const items = useMemo(() => pages.flatMap((page) => page.items), [pages]);
 
   return {
     items,
