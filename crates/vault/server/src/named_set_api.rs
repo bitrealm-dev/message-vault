@@ -440,6 +440,16 @@ mod tests {
                 get_status(state, &format!("{base}/{id}/members"), &user.token).await,
                 StatusCode::NOT_FOUND
             );
+            assert_eq!(
+                patch_status(
+                    state,
+                    &format!("{base}/{id}/members"),
+                    &user.token,
+                    json!({ "add": [1] })
+                )
+                .await,
+                StatusCode::NOT_FOUND
+            );
             assert_eq!(names(state, kind, &bob.token).await, vec!["Holiday"]);
         }
     }

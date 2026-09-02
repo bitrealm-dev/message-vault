@@ -13,6 +13,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiClient } from "./api";
 import {
   countExportMessages,
+  createContactGroup,
   createMessageTag,
   deleteApiToken,
   deleteContactGroup,
@@ -22,15 +23,19 @@ import {
   getContact,
   getConversationSources,
   getImport,
+  listContactGroupMembers,
   listContactGroups,
   listContacts,
   listConversations,
   listMessageTagMembers,
+  listMessageTags,
   listSavedSearches,
   setImportStage,
   updateContact,
   updateContactGroup,
   updateContactGroupMembers,
+  updateMessageTag,
+  updateMessageTagMembers,
   updateSavedSearch,
 } from "./vaultApi";
 
@@ -208,5 +213,22 @@ describe("Contact Groups and Message Tags are addressed by id", () => {
     expect(del).toHaveBeenCalledWith("/v1/contact-groups/12", undefined, {
       signal: controller.signal,
     });
+  });
+
+  it("covers the other five of the twelve, so every URL is named here", async () => {
+    await createContactGroup({ name: "Family" });
+    expect(post).toHaveBeenCalledWith("/v1/contact-groups", { name: "Family" }, undefined);
+    await listContactGroupMembers(12);
+    expect(lastPath(get)).toBe("/v1/contact-groups/12/members");
+    await listMessageTags();
+    expect(lastPath(get)).toBe("/v1/message-tags");
+    await updateMessageTag(7, { name: "Hot" });
+    expect(patch).toHaveBeenCalledWith("/v1/message-tags/7", { name: "Hot" }, undefined);
+    await updateMessageTagMembers(7, { add: [1], remove: [] });
+    expect(patch).toHaveBeenCalledWith(
+      "/v1/message-tags/7/members",
+      { add: [1], remove: [] },
+      undefined,
+    );
   });
 });
