@@ -257,15 +257,18 @@ export function useDeleteNamedSet(
 }
 
 /** The rows as they were before an optimistic membership write touched them. */
-type ChipSnapshot = { entries: VaultCacheEntries };
+export type ChipSnapshot = { entries: VaultCacheEntries };
 
 /**
  * Put rows in or out of one set, drawn before the vault answers.
  *
- * The chips change on the list and on the open contact at once, the old rows
- * come back if the vault refuses, and every list showing the name is marked
- * stale afterwards. Two of these can be in flight together — the Clear all
- * button fires one per name — and each rolls back only its own change.
+ * The chips change on the list and on the open contact at once, and every
+ * list showing the name is marked stale once it settles. Two of these can be
+ * in flight together — the Clear all button fires one per name — but the
+ * rollback is a whole-entry snapshot: if the earlier of two overlapping
+ * writes fails, restoring its snapshot overwrites the later one's optimistic
+ * chips too, until the `onSettled` invalidation refetches and the two
+ * converge on what the vault actually has.
  */
 export function useSetNamedSetMembers(
   collection: NameCollection,
@@ -307,7 +310,7 @@ export type NameCollectionActions = {
   invalidate: () => Promise<void>;
   /** Any of the four in flight, so a screen needs no busy flag of its own. */
   pending: boolean;
-  /** The most recent failure, or null. */
+  /** The newest of the four to fail, or null once a later one succeeds. */
   error: Error | null;
 };
 
@@ -330,18 +333,31 @@ export function useNameCollectionActions(collection: NameCollection): NameCollec
   const setMembers = members.mutateAsync;
   const pending =
     createSet.isPending || renameSet.isPending || deleteSet.isPending || members.isPending;
-  const error = createSet.error ?? renameSet.error ?? deleteSet.error ?? members.error;
 
-  return useMemo(
+  // Each mutate call resets that mutation's own error and stamps a fresh
+  // `submittedAt`, so whichever of the four last started is also whichever
+  // last settled; its error (or lack of one) is the collection's error. A
+  // fixed create-then-rename-then-remove-then-setMembers order would instead
+  // let an old create failure outlive every write that came after it.
+  const latest = [createSet, renameSet, deleteSet, members].reduce((newest, next) =>
+    next.submittedAt > newest.submittedAt ? next : newest,
+  );
+  const error = latest.error;
+
+  // Memoised on the mutation objects' own stable `mutateAsync` identities
+  // only: `pending` and `error` change on every keystroke of a write, and a
+  // caller that lists this object's methods in a `useEffect` dependency
+  // array (as `ContactList.tsx` does) must not see a new function each time.
+  const callbacks = useMemo(
     () => ({
       create: async (name: string) => (await create(name)).name,
       rename: async (from: string, to: string) => (await rename({ from, to })).name,
       remove: (name: string) => remove(name),
       setMembers: (name: string, patch: MembersPatch) => setMembers({ name, patch }),
       invalidate: () => cache.invalidate(collection.key),
-      pending,
-      error,
     }),
-    [create, rename, remove, setMembers, cache, collection.key, pending, error],
+    [create, rename, remove, setMembers, cache, collection.key],
   );
+
+  return { ...callbacks, pending, error };
 }

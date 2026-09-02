@@ -14,12 +14,15 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import {
+  type ChipTarget,
   createNameCollection,
   type MembersChanged,
   type NameCollectionRoutes,
+  patchChips,
   useNameCollection,
   useNameCollectionActions,
   useSetNamedSetMembers,
+  withName,
 } from "./nameCollection";
 import { keys } from "./vaultKeys";
 
@@ -225,6 +228,34 @@ describe("useNameCollectionActions", () => {
     await expect(result.current.create("Work")).rejects.toThrow("vault said no");
     await waitFor(() => expect(result.current.error?.message).toBe("vault said no"));
   });
+
+  it("clears an earlier failure once a later write succeeds", async () => {
+    const routes = fakeRoutes();
+    routes.create.mockRejectedValue(new Error("create failed"));
+    routes.update.mockResolvedValue({ id: 12, name: "Fam" });
+    client.setQueryData(KEY, [{ id: 12, name: "Family" }]);
+
+    const { result } = renderHook(() => useNameCollectionActions(groupsOver(routes)), { wrapper });
+    await expect(result.current.create("Work")).rejects.toThrow("create failed");
+    await waitFor(() => expect(result.current.error?.message).toBe("create failed"));
+
+    await expect(result.current.rename("Family", "Fam")).resolves.toBe("Fam");
+    await waitFor(() => expect(result.current.error).toBeNull());
+  });
+
+  it("reports the newer of two failures, not the first one to happen", async () => {
+    const routes = fakeRoutes();
+    routes.create.mockRejectedValue(new Error("create failed"));
+    routes.update.mockRejectedValue(new Error("rename failed"));
+    client.setQueryData(KEY, [{ id: 12, name: "Family" }]);
+
+    const { result } = renderHook(() => useNameCollectionActions(groupsOver(routes)), { wrapper });
+    await expect(result.current.create("Work")).rejects.toThrow("create failed");
+    await waitFor(() => expect(result.current.error?.message).toBe("create failed"));
+
+    await expect(result.current.rename("Family", "Fam")).rejects.toThrow("rename failed");
+    await waitFor(() => expect(result.current.error?.message).toBe("rename failed"));
+  });
 });
 
 describe("useSetNamedSetMembers", () => {
@@ -285,5 +316,62 @@ describe("useSetNamedSetMembers", () => {
       ["vault", "account-1", "contact-groups"],
       ["vault", "account-1", "contacts"],
     ]);
+  });
+
+  it("cancels in-flight fetches before it patches, so no answer lands on top of the chip", async () => {
+    const routes = fakeRoutes();
+    client.setQueryData(KEY, [{ id: 12, name: "Family" }]);
+    seedContacts();
+    const order: string[] = [];
+    const originalCancel = client.cancelQueries.bind(client);
+    const originalSetQueriesData = client.setQueriesData.bind(client);
+    vi.spyOn(client, "cancelQueries").mockImplementation((...args) => {
+      order.push("cancel");
+      return originalCancel(...args);
+    });
+    vi.spyOn(client, "setQueriesData").mockImplementation((...args) => {
+      order.push("patch");
+      return originalSetQueriesData(...args);
+    });
+
+    const { result } = renderHook(() => useSetNamedSetMembers(groupsOver(routes)), { wrapper });
+    await result.current.mutateAsync({ name: "Family", patch: { add: [1] } });
+
+    expect(order[0]).toBe("cancel");
+    expect(order).toContain("patch");
+    expect(order.indexOf("cancel")).toBeLessThan(order.indexOf("patch"));
+  });
+});
+
+describe("withName", () => {
+  it("adds a name that is not there under any spelling", () => {
+    expect(withName(["Work"], "Family", true)).toEqual(["Work", "Family"]);
+  });
+
+  it("does nothing when the name is already there under another spelling", () => {
+    expect(withName(["family"], "Family", true)).toEqual(["family"]);
+  });
+
+  it("removes a name regardless of letter case", () => {
+    expect(withName(["Family", "Work"], "family", false)).toEqual(["Work"]);
+  });
+});
+
+describe("patchChips", () => {
+  const rowTarget: ChipTarget = { key: ["contacts", "detail"], field: "groups", shape: "row" };
+  const pagesTarget: ChipTarget = { key: ["contacts", "list"], field: "groups", shape: "pages" };
+
+  it("leaves a non-pages entry alone when the target expects pages", () => {
+    const entry = { id: "1", groups: [] };
+    expect(patchChips(entry, pagesTarget, new Set(["1"]), "Family", true)).toBe(entry);
+  });
+
+  it("treats a row with no groups field as starting from empty", () => {
+    const entry = { id: "1", name: "Ada" };
+    expect(patchChips(entry, rowTarget, new Set(["1"]), "Family", true)).toEqual({
+      id: "1",
+      name: "Ada",
+      groups: ["Family"],
+    });
   });
 });
