@@ -345,7 +345,7 @@ export default function ContactList({
       groupOverridesRef.current = nextOverrides;
       setGroupOverrides(nextOverrides);
       try {
-        await groupActions.setMembership(ids, name, enable);
+        await groupActions.setMembers(name, enable ? { add: ids } : { remove: ids });
       } catch {
         const reverted = { ...groupOverridesRef.current };
         for (const c of targets) {
@@ -361,7 +361,7 @@ export default function ContactList({
         setGroupOverrides(reverted);
       }
     },
-    [groupActions.setMembership, detailCache.read, detailCache.setGroups],
+    [groupActions.setMembers, detailCache.read, detailCache.setGroups],
   );
 
   /** Drop every group on the selected contacts in one paint, then tell the server in parallel. */
@@ -383,7 +383,7 @@ export default function ContactList({
     groupOverridesRef.current = nextOverrides;
     setGroupOverrides(nextOverrides);
     const results = await Promise.allSettled(
-      [...names].map((name) => groupActions.setMembership(ids, name, false)),
+      [...names].map((name) => groupActions.setMembers(name, { remove: ids })),
     );
     const failed = [...names].filter((_, i) => results[i].status === "rejected");
     if (failed.length === 0) return;
@@ -397,7 +397,7 @@ export default function ContactList({
     }
     groupOverridesRef.current = reverted;
     setGroupOverrides(reverted);
-  }, [groupActions.setMembership, detailCache.setGroups, detailCache.read]);
+  }, [groupActions.setMembers, detailCache.setGroups, detailCache.read]);
 
   const menuDisabled = assignTargets.length === 0 && !groupsMenuOpen;
 

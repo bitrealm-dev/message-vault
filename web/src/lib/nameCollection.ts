@@ -1,39 +1,55 @@
 import { useMemo } from "react";
-import { useVaultInvalidate, useVaultQuery, useVaultSetCached } from "./vaultQuery";
+import {
+  useVaultCached,
+  useVaultFetchFresh,
+  useVaultInvalidate,
+  useVaultQuery,
+  type VaultQueryKey,
+} from "./vaultQuery";
 
 /**
  * Contact Groups and Message Tags are the same feature over different nouns: a
- * named set the account owns, and a membership call that puts rows in or out of
- * it. This builds one from a description of the nouns so the two do not drift
+ * named set the account owns, and a membership that puts rows in or out of it.
+ * This builds one from a description of the nouns so the two do not drift
  * apart.
  *
- * What used to live here as well — a module-level cache, an in-flight guard,
- * and a browser event telling the open interface to refetch — is TanStack
- * Query's now. A mutation says what changed and whoever is showing it
- * refreshes; nothing subscribes to an event, and nothing has to be cleared when
- * the account changes.
+ * The vault addresses a set by its id; screens, the sidebar, and the router
+ * hold names. The lookup from one to the other lives here and nowhere else:
+ * the id comes from the cached list, or from the vault once when the cached
+ * list does not hold the name, and a name the vault does not know is an error
+ * before any request is sent. See `docs/adr/0003`.
  */
 
-/** The four vault calls one of these collections is built from. */
+/** One set as the vault answers it. */
+export type NamedSet = { id: number; name: string };
+
+/** Members to put in and take out of a set, in one request. Either side may be left off. */
+export type MembersPatch = { add?: number[]; remove?: number[] };
+
+/** The vault calls one of these collections is built from. */
 export type NameCollectionRoutes = {
-  list: (opts?: { signal?: AbortSignal }) => Promise<Record<string, unknown>>;
-  create: (body: { name: string }) => Promise<Record<string, unknown>>;
-  rename: (body: { from: string; to: string }) => Promise<Record<string, unknown>>;
-  remove: (body: { name: string }) => Promise<Record<string, unknown>>;
-  setMembership: (body: {
-    ids: number[];
-    name: string;
-    enable: boolean;
-  }) => Promise<{ changed: number }>;
+  list: (opts?: { signal?: AbortSignal }) => Promise<{ items: NamedSet[] }>;
+  create: (body: { name: string }) => Promise<NamedSet>;
+  update: (id: number, body: { name: string }) => Promise<NamedSet>;
+  remove: (id: number) => Promise<void>;
+  updateMembers: (
+    id: number,
+    body: { add: number[]; remove: number[] },
+  ) => Promise<{ added: number; removed: number }>;
 };
 
 export type NameCollectionConfig = {
-  /** The vault calls this collection is made of. */
   routes: NameCollectionRoutes;
   /** Name of this collection in a cache key, e.g. `contact-groups`. */
   cacheKey: string;
-  /** Key holding the name array in every list or mutation response. */
-  responseKey: string;
+  /**
+   * Cache keys of the lists that show these names as chips, invalidated after
+   * every write. Matched by prefix, so `["contacts"]` covers every page and
+   * every search of the contact list.
+   */
+  invalidates: readonly (readonly [string])[];
+  /** What one of these is called in an error, e.g. `group`. */
+  label: string;
   /** Search token used in list queries, e.g. `group` for `group:Family`. */
   queryToken: string;
   reservedNames: ReadonlySet<string>;
@@ -44,20 +60,15 @@ export type NameCollection = {
   /** Cache key parts, before the account is put in front of them. */
   key: readonly [string];
   routes: NameCollectionRoutes;
-  responseKey: string;
+  invalidates: readonly (readonly [string])[];
+  label: string;
   isReserved: (name: string) => boolean;
   reservedError: (name: string) => string;
-  namesFrom: (res: Record<string, unknown>) => string[];
   /** Build the list query for one page of this collection plus a typed search. */
   listQuery: (name: string | "none" | null, search: string) => string;
 };
 
 export function createNameCollection(config: NameCollectionConfig): NameCollection {
-  const namesFrom = (res: Record<string, unknown>): string[] => {
-    const value = res[config.responseKey];
-    return Array.isArray(value) ? (value as string[]) : [];
-  };
-
   const isReserved = (name: string) => config.reservedNames.has(name.trim().toLowerCase());
 
   function listQuery(name: string | "none" | null, search: string): string {
@@ -77,12 +88,17 @@ export function createNameCollection(config: NameCollectionConfig): NameCollecti
   return {
     key: [config.cacheKey] as const,
     routes: config.routes,
-    responseKey: config.responseKey,
+    invalidates: config.invalidates,
+    label: config.label,
     isReserved,
     reservedError: config.reservedError,
-    namesFrom,
     listQuery,
   };
+}
+
+/** The cache holds the vault's list as it came, ids included. */
+async function fetchSets(collection: NameCollection, signal: AbortSignal): Promise<NamedSet[]> {
+  return (await collection.routes.list({ signal })).items;
 }
 
 /** Live list of one collection's names for the signed-in account. */
@@ -90,57 +106,96 @@ export function useNameCollection(collection: NameCollection): {
   names: string[];
   loading: boolean;
 } {
-  const { data, isPending } = useVaultQuery(collection.key, async (signal) =>
-    collection.namesFrom(await collection.routes.list({ signal })),
+  const { data, isPending } = useVaultQuery(collection.key, (signal) =>
+    fetchSets(collection, signal),
   );
-  return { names: data ?? [], loading: isPending };
+  const names = useMemo(() => (data ?? []).map((set) => set.name), [data]);
+  return { names, loading: isPending };
 }
 
 /**
  * The four things a person can do to one of these collections.
  *
- * Each mutation writes the list the vault answered with straight into the
- * cache, so the sidebar updates without a second round trip, and membership
- * changes invalidate instead, since they change rows rather than names.
+ * Every write invalidates the collection's own list and the lists that show
+ * its names as chips, so a renamed or deleted group disappears from contact
+ * rows without anyone reloading.
  */
 export function useNameCollectionActions(collection: NameCollection): {
   create: (name: string) => Promise<string>;
   rename: (from: string, to: string) => Promise<string>;
   remove: (name: string) => Promise<void>;
-  setMembership: (ids: number[], name: string, enable: boolean) => Promise<number>;
+  setMembers: (name: string, patch: MembersPatch) => Promise<{ added: number; removed: number }>;
   invalidate: () => Promise<void>;
 } {
-  const setCached = useVaultSetCached();
+  const cached = useVaultCached();
+  const fetchFresh = useVaultFetchFresh();
   const invalidate = useVaultInvalidate();
 
   // One stable object, so a caller can list it as a dependency without
   // rebuilding every callback that uses it on each render.
-  return useMemo(
-    () => ({
+  return useMemo(() => {
+    const findId = (sets: NamedSet[] | undefined, name: string): number | undefined => {
+      const wanted = name.trim().toLowerCase();
+      return sets?.find((set) => set.name.toLowerCase() === wanted)?.id;
+    };
+
+    /**
+     * The id behind a name: from the cache, else from the vault once, else an
+     * error and no request. The vault-once path covers creating a set and
+     * adding to it before the invalidated list has come back.
+     */
+    async function idOf(name: string): Promise<number> {
+      const hit = findId(cached<NamedSet[]>(collection.key), name);
+      if (hit !== undefined) return hit;
+      const fresh = findId(
+        await fetchFresh(collection.key, (signal) => fetchSets(collection, signal)),
+        name,
+      );
+      if (fresh !== undefined) return fresh;
+      throw new Error(`${collection.label} not found`);
+    }
+
+    const staleKeys: readonly VaultQueryKey[] = [collection.key, ...collection.invalidates];
+    const changed = async () => {
+      await Promise.all(staleKeys.map((key) => invalidate(key)));
+    };
+
+    const checkName = (name: string): string => {
+      const trimmed = name.trim();
+      if (!trimmed) throw new Error("name required");
+      if (collection.isReserved(trimmed)) throw new Error(collection.reservedError(trimmed));
+      return trimmed;
+    };
+
+    return {
       async create(name: string) {
-        const trimmed = name.trim();
-        if (!trimmed) throw new Error("name required");
-        if (collection.isReserved(trimmed)) throw new Error(collection.reservedError(trimmed));
-        const res = await collection.routes.create({ name: trimmed });
-        setCached(collection.key, collection.namesFrom(res));
-        return String(res.name);
+        const trimmed = checkName(name);
+        const created = await collection.routes.create({ name: trimmed });
+        await changed();
+        return created.name;
       },
       async rename(from: string, to: string) {
-        const res = await collection.routes.rename({ from, to });
-        setCached(collection.key, collection.namesFrom(res));
-        return String(res.name);
+        const trimmed = checkName(to);
+        const id = await idOf(from);
+        const updated = await collection.routes.update(id, { name: trimmed });
+        await changed();
+        return updated.name;
       },
       async remove(name: string) {
-        const res = await collection.routes.remove({ name });
-        setCached(collection.key, collection.namesFrom(res));
+        const id = await idOf(name);
+        await collection.routes.remove(id);
+        await changed();
       },
-      async setMembership(ids: number[], name: string, enable: boolean) {
-        const res = await collection.routes.setMembership({ ids, name, enable });
-        await invalidate(collection.key);
-        return res.changed;
+      async setMembers(name: string, patch: MembersPatch) {
+        const id = await idOf(name);
+        const result = await collection.routes.updateMembers(id, {
+          add: patch.add ?? [],
+          remove: patch.remove ?? [],
+        });
+        await changed();
+        return result;
       },
       invalidate: () => invalidate(collection.key),
-    }),
-    [collection, setCached, invalidate],
-  );
+    };
+  }, [collection, cached, fetchFresh, invalidate]);
 }

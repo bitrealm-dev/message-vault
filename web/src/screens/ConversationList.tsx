@@ -125,7 +125,7 @@ export default function ConversationList({
         .map((c) => Number(c.id))
         .filter((id) => Number.isFinite(id) && id > 0);
       if (ids.length === 0) return;
-      await tagActions.setMembership(ids, name, enable);
+      await tagActions.setMembers(name, enable ? { add: ids } : { remove: ids });
       setTagOverrides((prev) => {
         const next = { ...prev };
         for (const c of targetConversations) {
@@ -142,7 +142,7 @@ export default function ConversationList({
         setMembershipRev((n) => n + 1);
       }
     },
-    [query, targetConversations, tagActions.setMembership],
+    [query, targetConversations, tagActions.setMembers],
   );
 
   useEffect(() => {

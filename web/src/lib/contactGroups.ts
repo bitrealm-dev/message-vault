@@ -1,10 +1,10 @@
 import { createNameCollection, useNameCollectionActions } from "./nameCollection";
 import {
-  createContactGroup as vaultCreateContactGroup,
-  deleteContactGroup as vaultDeleteContactGroup,
-  listContactGroups as vaultListContactGroups,
-  renameContactGroup as vaultRenameContactGroup,
-  setContactGroupMembership as vaultSetContactGroupMembership,
+  createContactGroup,
+  deleteContactGroup,
+  listContactGroups,
+  updateContactGroup,
+  updateContactGroupMembers,
 } from "./vaultApi";
 
 /** Names that must not be created as user groups. */
@@ -66,14 +66,16 @@ export function reservedGroupError(name: string): string {
 
 export const contactGroups = createNameCollection({
   routes: {
-    list: vaultListContactGroups,
-    create: vaultCreateContactGroup,
-    rename: vaultRenameContactGroup,
-    remove: vaultDeleteContactGroup,
-    setMembership: vaultSetContactGroupMembership,
+    list: listContactGroups,
+    create: createContactGroup,
+    update: updateContactGroup,
+    remove: deleteContactGroup,
+    updateMembers: updateContactGroupMembers,
   },
   cacheKey: "contact-groups",
-  responseKey: "groups",
+  // Contact rows and the contact drawer show group names as chips.
+  invalidates: [["contacts"], ["contact-detail"]],
+  label: "group",
   queryToken: "group",
   reservedNames: RESERVED_GROUP_NAMES,
   reservedError: reservedGroupError,
