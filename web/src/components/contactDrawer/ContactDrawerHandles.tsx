@@ -123,7 +123,6 @@ export function ContactDrawerHandles({
   contactId,
   handleRows,
   loading,
-  onHandlesChanged,
   onBrowse,
   title = "Contact Identity",
   intro,
@@ -132,7 +131,6 @@ export function ContactDrawerHandles({
   contactId: string;
   handleRows: ContactDetail["handles"];
   loading: boolean;
-  onHandlesChanged: () => void;
   onBrowse?: BrowseFn;
   title?: ReactNode;
   intro?: ReactNode;
@@ -149,7 +147,7 @@ export function ContactDrawerHandles({
     requestRemoveHandle,
     confirmRemoveHandle,
     confirmAdd,
-  } = useHandleMutations({ contactId, onHandlesChanged });
+  } = useHandleMutations({ contactId });
 
   const totals = sumHandleTotals(handleRows);
 

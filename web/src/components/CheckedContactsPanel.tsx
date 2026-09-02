@@ -8,8 +8,10 @@ import {
   TableBody,
   TableHeader,
 } from "react-aria-components";
-import { useContactDetailCache } from "../lib/contactDetail";
+import type { ContactDetail } from "../lib/contactDetail";
 import { getContactSummaries } from "../lib/vaultApi";
+import { keys } from "../lib/vaultKeys";
+import { useVaultCache } from "../lib/vaultQuery";
 import Button from "./Button";
 import { type ContactPreview, sumHandleTotals } from "./contactDrawer/contactDrawerTypes";
 import { CountCell, SortableColumn } from "./contactDrawer/handleTableHelpers";
@@ -104,7 +106,7 @@ export default function CheckedContactsPanel({
   contacts: ContactPreview[];
   onClear: () => void;
 }) {
-  const detailCache = useContactDetailCache();
+  const cache = useVaultCache();
   const heading =
     contacts.length === 1 ? "1 contact selected" : `${contacts.length} contacts selected`;
   const [metrics, setMetrics] = useState<Record<string, RowMetrics>>({});
@@ -120,7 +122,7 @@ export default function CheckedContactsPanel({
     const seeded: Record<string, RowMetrics> = {};
     const missing: string[] = [];
     for (const c of selected) {
-      const cached = detailCache.read(c.id);
+      const cached = cache.read<ContactDetail>(keys.contacts.detail(c.id));
       if (cached) {
         seeded[c.id] = {
           name: cached.name,
@@ -157,7 +159,7 @@ export default function CheckedContactsPanel({
         /* aborted or failed — uncached rows stay on em dash until a later load */
       });
     return () => ac.abort();
-  }, [contactKey, detailCache.read]);
+  }, [contactKey, cache.read]);
 
   const rows = useMemo<ContactRow[]>(() => {
     const built = contacts.map((c) => {
