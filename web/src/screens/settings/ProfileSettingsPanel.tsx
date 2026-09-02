@@ -10,13 +10,13 @@ import {
 } from "../../lib/handleService";
 import { phonesMatch } from "../../lib/phoneTokens";
 import { parseSelectKey } from "../../lib/selectKey";
-import { useAccountProfile } from "../../lib/useAccountProfile";
-import { updateAccountProfile } from "../../lib/vaultApi";
+import { useAccountProfile, useUpdateAccountProfile } from "../../lib/useAccountProfile";
 import { inputClassName, sectionTitleClass } from "./profileStyles";
 
 /** Profile settings: display name and phone/email/WhatsApp handles. */
 export function ProfileSettingsPanel() {
-  const { profile, setProfile, loading, error: loadError } = useAccountProfile();
+  const { profile, loading, error: loadError } = useAccountProfile();
+  const updateProfile = useUpdateAccountProfile();
   const [name, setName] = useState("");
   const [nameSaved, setNameSaved] = useState(false);
   const [nameError, setNameError] = useState("");
@@ -24,7 +24,7 @@ export function ProfileSettingsPanel() {
   const [newHandle, setNewHandle] = useState("");
   const [newHandleService, setNewHandleService] = useState<HandleService>("phone");
   const [handleError, setHandleError] = useState("");
-  const [handleBusy, setHandleBusy] = useState(false);
+  const handleBusy = updateProfile.isPending;
 
   useEffect(() => {
     if (profile) setName(profile.preferred_name ?? "");
@@ -41,10 +41,9 @@ export function ProfileSettingsPanel() {
   const handleSaveName = async () => {
     setNameError("");
     try {
-      const updated = await updateAccountProfile({
+      const updated = await updateProfile.mutateAsync({
         preferred_name: name.trim() || null,
       });
-      setProfile(updated);
       setName(updated.preferred_name ?? "");
       setNameSaved(true);
       setTimeout(() => setNameSaved(false), 2000);
@@ -66,38 +65,30 @@ export function ProfileSettingsPanel() {
     const value = newHandle.trim();
     if (!value) return;
     setHandleError("");
-    setHandleBusy(true);
     try {
-      const updated = await updateAccountProfile({
+      const updated = await updateProfile.mutateAsync({
         handles: [{ handle: value, service: newHandleService }],
       });
-      setProfile(updated);
       if (!handleListIncludes(updated, value, newHandleService)) {
         throw new Error("The vault did not add that handle.");
       }
       setNewHandle("");
     } catch (e) {
       setHandleError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setHandleBusy(false);
     }
   };
 
   const handleRemoveHandle = async (handle: string, service: string) => {
     setHandleError("");
-    setHandleBusy(true);
     try {
-      const updated = await updateAccountProfile({
+      const updated = await updateProfile.mutateAsync({
         remove_handles: [{ handle, service }],
       });
-      setProfile(updated);
       if (handleListIncludes(updated, handle, service)) {
         throw new Error("The vault did not remove that handle.");
       }
     } catch (e) {
       setHandleError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setHandleBusy(false);
     }
   };
 

@@ -1,9 +1,9 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { type UseMutationResult, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 import type { AccountProfile } from "./account";
 import { useAuth } from "./auth";
-import { getAccountProfile } from "./vaultApi";
-import { useVaultQuery, useVaultSetCached } from "./vaultQuery";
+import { getAccountProfile, updateAccountProfile } from "./vaultApi";
+import { useVaultCache, useVaultQuery } from "./vaultQuery";
 import { ANONYMOUS_ACCOUNT, vaultQueryKey } from "./vaultQueryKey";
 import { keys } from "./vaultKeys";
 
@@ -19,34 +19,37 @@ import { keys } from "./vaultKeys";
 
 export function useAccountProfile(): {
   profile: AccountProfile | null;
-  setProfile: (profile: AccountProfile | null) => void;
   loading: boolean;
   error: string;
-  reload: () => void;
 } {
-  const setCached = useVaultSetCached();
-  const { data, isPending, error, refetch } = useVaultQuery(keys.accountProfile.all, (signal) =>
+  const { data, isPending, error } = useVaultQuery(keys.accountProfile.all, (signal) =>
     getAccountProfile({ signal }),
   );
+  return { profile: data ?? null, loading: isPending, error: error ? error.message : "" };
+}
 
-  const setProfile = useCallback(
-    (profile: AccountProfile | null) => {
-      setCached(keys.accountProfile.all, profile);
+/** What a change to the profile can carry: a name, handles to add, handles to drop. */
+export type AccountProfileChange = Parameters<typeof updateAccountProfile>[0];
+
+/**
+ * Change the account's own name or handles.
+ *
+ * The vault answers with the profile as it now stands, so that answer goes
+ * into the entry every screen reads. Nothing is marked stale: there is nothing
+ * left to refresh.
+ */
+export function useUpdateAccountProfile(): UseMutationResult<
+  AccountProfile,
+  Error,
+  AccountProfileChange
+> {
+  const cache = useVaultCache();
+  return useMutation<AccountProfile, Error, AccountProfileChange>({
+    mutationFn: (body) => updateAccountProfile(body),
+    onSuccess: (profile) => {
+      cache.set(keys.accountProfile.all, profile);
     },
-    [setCached],
-  );
-
-  const reload = useCallback(() => {
-    void refetch();
-  }, [refetch]);
-
-  return {
-    profile: data ?? null,
-    setProfile,
-    loading: isPending,
-    error: error ? error.message : "",
-    reload,
-  };
+  });
 }
 
 /**

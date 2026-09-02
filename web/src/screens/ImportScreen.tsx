@@ -32,8 +32,12 @@ import {
 } from "../lib/tauri";
 import { isTauri } from "../lib/tauri-check";
 import type { AttachmentMediaMode, ContactNameMode } from "../lib/types";
-import { useAccountProfile, useFetchAccountProfile } from "../lib/useAccountProfile";
-import { matchContacts, updateAccountProfile } from "../lib/vaultApi";
+import {
+  useAccountProfile,
+  useFetchAccountProfile,
+  useUpdateAccountProfile,
+} from "../lib/useAccountProfile";
+import { matchContacts } from "../lib/vaultApi";
 import {
   emptyWhatsappPathStats,
   isWhatsappMethod,
@@ -119,9 +123,10 @@ export default function ImportScreen() {
   /** Null while the lookup hasn't finished (or failed) for the summary currently shown. */
   const [unknownContacts, setUnknownContacts] = useState<number | null>(null);
 
-  const { profile, setProfile } = useAccountProfile();
+  const { profile } = useAccountProfile();
+  const updateProfile = useUpdateAccountProfile();
   const identityProfile = profile ? { phones: profile.phones, emails: profile.emails } : null;
-  const [identityAddBusy, setIdentityAddBusy] = useState(false);
+  const identityAddBusy = updateProfile.isPending;
   const [identityAddError, setIdentityAddError] = useState<string | null>(null);
 
   /** Link one backup address onto the profile; the marks re-derive from the
@@ -132,19 +137,15 @@ export default function ImportScreen() {
    * BackupIdentityList/BackupIdentityStopScreen. */
   const addIdentityToProfile = async (value: string, service: IdentityService): Promise<void> => {
     setIdentityAddError(null);
-    setIdentityAddBusy(true);
     try {
-      const updated = await updateAccountProfile({
+      const updated = await updateProfile.mutateAsync({
         handles: [{ handle: value, service }],
       });
-      setProfile(updated);
       if (!identityOnProfile(value, updated)) {
         throw new Error("no-op add");
       }
     } catch {
       setIdentityAddError("The vault didn't add that address.");
-    } finally {
-      setIdentityAddBusy(false);
     }
   };
 

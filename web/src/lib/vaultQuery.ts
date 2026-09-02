@@ -27,7 +27,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useCallback, useMemo } from "react";
+import { useMemo } from "react";
 import { useAuth } from "./auth";
 import { PAGE_SIZE_FILL, PAGE_SIZE_FIRST } from "./listPaging";
 import { ANONYMOUS_ACCOUNT, type VaultQueryKey, vaultQueryKey } from "./vaultQueryKey";
@@ -84,24 +84,6 @@ export function useVaultQuery<TData>(
     queryFn: ({ signal }) => queryFn(signal),
     ...options,
   });
-}
-
-/**
- * Write a value straight into the cache, so a change shows without a round
- * trip.
- *
- * The vault's mutations answer with the updated value, so there is usually no
- * reason to ask for it again.
- */
-export function useVaultSetCached(): <T>(key: VaultQueryKey, value: T) => void {
-  const client = useQueryClient();
-  const account = useAccountScope();
-  return useCallback(
-    <T>(key: VaultQueryKey, value: T) => {
-      client.setQueryData(vaultQueryKey(account, key), value);
-    },
-    [client, account],
-  );
 }
 
 /** One page of an offset-paged list, with the total the vault reported. */
