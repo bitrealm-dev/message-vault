@@ -54,6 +54,8 @@ pub(crate) struct MembersChanged {
     pub(crate) removed: u64,
 }
 
+/// The account's sets of this kind, A–Z. Never fails on its own; errors here
+/// come from the database connection (500).
 pub(crate) async fn list(
     spec: &'static MembershipSpec,
     state: &AppState,
@@ -68,6 +70,9 @@ pub(crate) async fn list(
     Ok(Json(NamedSetList { items }))
 }
 
+/// Create a set and answer its id and trimmed name. A blank or over-long
+/// name, or a reserved name, answers 400; a name already taken (ignoring
+/// case) answers 409.
 pub(crate) async fn create(
     spec: &'static MembershipSpec,
     state: &AppState,
@@ -79,6 +84,9 @@ pub(crate) async fn create(
     Ok(Json(NamedSet { id, name }))
 }
 
+/// Rename a set by id, answering its id and the new name. An unknown or
+/// another account's id answers 404; a blank, over-long, or reserved name
+/// answers 400; another set's name (ignoring case) answers 409.
 pub(crate) async fn update(
     spec: &'static MembershipSpec,
     state: &AppState,
@@ -91,6 +99,8 @@ pub(crate) async fn update(
     Ok(Json(NamedSet { id, name }))
 }
 
+/// Delete a set by id and its memberships, answering 204. An unknown or
+/// another account's id answers 404.
 pub(crate) async fn delete(
     spec: &'static MembershipSpec,
     state: &AppState,
@@ -102,6 +112,8 @@ pub(crate) async fn delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Member ids of one set, ascending. An unknown or another account's id
+/// answers 404.
 pub(crate) async fn members_list(
     spec: &'static MembershipSpec,
     state: &AppState,
@@ -113,6 +125,9 @@ pub(crate) async fn members_list(
     Ok(Json(MemberIdList { items }))
 }
 
+/// Add and remove members of one set in one call, answering how many
+/// changed. An unknown or another account's set id, or an unknown member id
+/// in `add` or `remove`, answers 404; an empty patch answers 400.
 pub(crate) async fn members_update(
     spec: &'static MembershipSpec,
     state: &AppState,
