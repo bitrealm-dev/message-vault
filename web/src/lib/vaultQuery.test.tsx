@@ -13,7 +13,13 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OffsetPage } from "./vaultQuery";
-import { useVaultCached, useVaultFetchFresh, useVaultPagedList, useVaultQuery } from "./vaultQuery";
+import {
+  useVaultCache,
+  useVaultCached,
+  useVaultFetchFresh,
+  useVaultPagedList,
+  useVaultQuery,
+} from "./vaultQuery";
 
 const account = { current: "account-1" };
 vi.mock("./auth", () => ({
@@ -223,6 +229,77 @@ describe("useVaultCached and useVaultFetchFresh", () => {
     expect(fetchGroups).toHaveBeenCalledTimes(1);
     expect(client.getQueryData(["vault", "account-1", "contact-groups"])).toEqual([
       { id: 1, name: "New" },
+    ]);
+  });
+});
+
+describe("useVaultCache", () => {
+  it("reads and writes under the signed-in account's name", () => {
+    const { result } = renderHook(() => useVaultCache(), { wrapper });
+    act(() => {
+      result.current.set(["contact-groups"], [{ id: 1, name: "Family" }]);
+    });
+    expect(client.getQueryData(["vault", "account-1", "contact-groups"])).toEqual([
+      { id: 1, name: "Family" },
+    ]);
+    expect(result.current.read(["contact-groups"])).toEqual([{ id: 1, name: "Family" }]);
+
+    // Another account's entry is not this account's to read.
+    client.setQueryData(["vault", "account-2", "contact-groups"], [{ id: 9, name: "Work" }]);
+    expect(result.current.read(["contact-groups"])).toEqual([{ id: 1, name: "Family" }]);
+  });
+
+  it("asks the vault and stores the answer under the account's key", async () => {
+    const { result } = renderHook(() => useVaultCache(), { wrapper });
+    await expect(result.current.fetch(["contact-groups"], async () => ["Family"])).resolves.toEqual(
+      ["Family"],
+    );
+    expect(client.getQueryData(["vault", "account-1", "contact-groups"])).toEqual(["Family"]);
+  });
+
+  it("patches every entry under one prefix and puts them all back from a snapshot", () => {
+    client.setQueryData(["vault", "account-1", "contacts", "list", ""], { total: 1 });
+    client.setQueryData(["vault", "account-1", "contacts", "list", "ada"], { total: 2 });
+    client.setQueryData(["vault", "account-1", "conversations", "list", ""], { total: 3 });
+    const { result } = renderHook(() => useVaultCache(), { wrapper });
+
+    const taken = result.current.snapshot(["contacts"]);
+    expect(taken).toHaveLength(2);
+
+    act(() => {
+      result.current.patch<{ total: number }>(["contacts"], (entry) =>
+        entry ? { total: entry.total + 10 } : entry,
+      );
+    });
+    expect(client.getQueryData(["vault", "account-1", "contacts", "list", ""])).toEqual({
+      total: 11,
+    });
+    expect(client.getQueryData(["vault", "account-1", "contacts", "list", "ada"])).toEqual({
+      total: 12,
+    });
+    // A different resource under a different prefix is untouched.
+    expect(client.getQueryData(["vault", "account-1", "conversations", "list", ""])).toEqual({
+      total: 3,
+    });
+
+    act(() => {
+      result.current.restore(taken);
+    });
+    expect(client.getQueryData(["vault", "account-1", "contacts", "list", ""])).toEqual({
+      total: 1,
+    });
+    expect(client.getQueryData(["vault", "account-1", "contacts", "list", "ada"])).toEqual({
+      total: 2,
+    });
+  });
+
+  it("marks several prefixes stale in one call", async () => {
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    const { result } = renderHook(() => useVaultCache(), { wrapper });
+    await result.current.invalidate(["message-tags"], ["conversations"]);
+    expect(invalidate.mock.calls.map((call) => call[0]?.queryKey)).toEqual([
+      ["vault", "account-1", "message-tags"],
+      ["vault", "account-1", "conversations"],
     ]);
   });
 });
