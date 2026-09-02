@@ -103,4 +103,26 @@ describe("useAdminUsers", () => {
     expect(answered).toBe(true);
     expect(result.current.actionError).toBe("");
   });
+
+  it("reports a write in flight while a delete is unanswered", async () => {
+    let finish: () => void = () => {};
+    removeUser.mockReturnValue(
+      new Promise((resolve) => {
+        finish = () => resolve(undefined as never);
+      }),
+    );
+    const { result } = renderHook(() => useAdminUsers(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => {
+      result.current.deleteUser("a1");
+    });
+
+    await waitFor(() => expect(result.current.busy).toBe(true));
+    act(() => {
+      finish();
+    });
+    await waitFor(() => expect(result.current.busy).toBe(false));
+    expect(removeUser).toHaveBeenCalledWith("a1");
+  });
 });
