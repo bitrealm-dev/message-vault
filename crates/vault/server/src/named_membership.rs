@@ -795,6 +795,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_set_refuses_an_empty_name() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let err = create_set(group_spec(), &mut conn, &account, "   ")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, MembershipError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn rename_set_refuses_an_empty_or_over_long_name() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let (id, _) = create_set(group_spec(), &mut conn, &account, "Family")
+            .await
+            .unwrap();
+
+        let err = rename_set(group_spec(), &mut conn, &account, id, "   ")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, MembershipError::BadRequest(_)));
+
+        let long = "x".repeat(MAX_NAME_LEN + 1);
+        let err = rename_set(group_spec(), &mut conn, &account, id, &long)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, MembershipError::BadRequest(_)));
+    }
+
+    #[tokio::test]
     async fn on_change_hook_runs_on_membership_change() {
         let (pool, _dir, account) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
