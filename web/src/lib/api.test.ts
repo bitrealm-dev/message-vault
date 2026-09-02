@@ -74,3 +74,15 @@ describe("apiClient errors", () => {
     expect(caught).toBeInstanceOf(VaultApiError);
   });
 });
+
+describe("apiClient no-content", () => {
+  it("resolves undefined for a 204 rather than parsing an empty body", async () => {
+    const json = vi.fn().mockRejectedValue(new SyntaxError("Unexpected end of JSON input"));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, status: 204, json, text: async () => "" }),
+    );
+    await expect(apiClient.delete("/v1/contact-groups/7")).resolves.toBeUndefined();
+    expect(json).not.toHaveBeenCalled();
+  });
+});
