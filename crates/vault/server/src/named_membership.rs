@@ -422,12 +422,22 @@ pub async fn get_set(
         "SELECT id, name FROM {table} WHERE id = $1 AND account_id = $2",
         table = spec.table
     );
-    sqlx::query_as::<_, (i64, String)>(&sql)
+    let row = sqlx::query_as::<_, (i64, String)>(&sql)
         .bind(id)
         .bind(account_id)
         .fetch_optional(&mut *conn)
         .await?
-        .ok_or_else(|| MembershipError::NotFound(format!("{} not found", spec.label)))
+        .ok_or_else(|| MembershipError::NotFound(format!("{} not found", spec.label)))?;
+    // A reserved-name row can only be a leftover (create_set and rename_set
+    // both refuse reserved names): list_sets never shows it, so its id must
+    // not work either.
+    if is_reserved(spec, &row.1) {
+        return Err(MembershipError::NotFound(format!(
+            "{} not found",
+            spec.label
+        )));
+    }
+    Ok(row)
 }
 
 /// Create a set and answer its id and trimmed name. Fails when the name is
@@ -1014,6 +1024,26 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn get_set_does_not_find_a_reserved_name_leftover() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        // create_set and rename_set both refuse reserved names, so the only
+        // way a reserved-name row exists is a leftover from before that
+        // check existed (or a direct insert, as here).
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO contact_groups (account_id, name) VALUES ($1, 'Trash') RETURNING id",
+        )
+        .bind(&account)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let err = get_set(group_spec(), &mut conn, &account, id)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, MembershipError::NotFound(_)));
     }
 
     #[tokio::test]
