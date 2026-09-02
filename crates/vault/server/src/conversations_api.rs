@@ -1882,27 +1882,83 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_conversations_participants_eq_on_demo_fixture_db() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../data/vault.db");
-        if !path.is_file() {
-            eprintln!("skip — missing {}", path.display());
-            return;
-        }
-        let pool = engine::open_pool_for_path(&path).await.unwrap();
+    async fn list_conversations_participants_eq_three_on_built_fixture() {
+        let (pool, _dir, account) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
-        let account = "00000000-0000-0000-0000-00000000d001";
-        let page = list_conversations(&mut conn, account, "participants:=3", 50, 0)
+        // setup() already owns conversation 1 with 1 participant, which the
+        // `=3` filter below must exclude.
+
+        let p2 = account_profile::link_account_handle(
+            &mut conn,
+            &account,
+            "+15555550401",
+            HandleType::Phone,
+        )
+        .await
+        .unwrap();
+        let p3 = account_profile::link_account_handle(
+            &mut conn,
+            &account,
+            "+15555550402",
+            HandleType::Phone,
+        )
+        .await
+        .unwrap();
+        let p4 = account_profile::link_account_handle(
+            &mut conn,
+            &account,
+            "+15555550403",
+            HandleType::Phone,
+        )
+        .await
+        .unwrap();
+        let group_chat = account_profile::link_account_handle(
+            &mut conn,
+            &account,
+            "chat-trio",
+            HandleType::Other,
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO conversations (
+                id, account_id, chat_handle_id, conversation_type, group_title, source_file
+             ) VALUES (20, $1, $2, 'group', 'Trio', 't2.jsonl')",
+        )
+        .bind(&account)
+        .bind(group_chat)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO participants (conversation_id, handle_id, name_alias) VALUES
+             (20, $1, 'A'), (20, $2, 'B'), (20, $3, 'C')",
+        )
+        .bind(p2)
+        .bind(p3)
+        .bind(p4)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
+             ) VALUES (20, $1, 'imessage', '2024-11-01T12:00:00Z', 0, 0, 'hi trio')",
+        )
+        .bind(&account)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        let page = list_conversations(&mut conn, &account, "participants:=3", 50, 0)
             .await
             .unwrap();
-        assert!(
-            page.total >= 1,
-            "demo db should have conversations with 3 participants; total={}",
-            page.total
+        assert_eq!(
+            page.total, 1,
+            "only the trio conversation has exactly 3 participants"
         );
-        assert!(
-            page.conversations.iter().all(|c| c.participants.len() == 3),
-            "every returned conversation should have 3 participants"
-        );
+        assert_eq!(page.conversations[0].id, "20");
+        assert_eq!(page.conversations[0].participants.len(), 3);
     }
 
     #[tokio::test]
