@@ -1,5 +1,7 @@
 # Saved searches in the vault — 2026-08-30
 
+> Superseded in part by PR #294: Contact Groups and Message Tags are addressed by id; `POST /v1/contacts/groups` no longer exists.
+
 Move saved searches out of browser storage and into the vault database, so
 that a saved search belongs to an account rather than to a browser profile
 on one machine.

@@ -422,12 +422,22 @@ pub async fn get_set(
         "SELECT id, name FROM {table} WHERE id = $1 AND account_id = $2",
         table = spec.table
     );
-    sqlx::query_as::<_, (i64, String)>(&sql)
+    let row = sqlx::query_as::<_, (i64, String)>(&sql)
         .bind(id)
         .bind(account_id)
         .fetch_optional(&mut *conn)
         .await?
-        .ok_or_else(|| MembershipError::NotFound(format!("{} not found", spec.label)))
+        .ok_or_else(|| MembershipError::NotFound(format!("{} not found", spec.label)))?;
+    // A reserved-name row can only be a leftover (create_set and rename_set
+    // both refuse reserved names): list_sets never shows it, so its id must
+    // not work either.
+    if is_reserved(spec, &row.1) {
+        return Err(MembershipError::NotFound(format!(
+            "{} not found",
+            spec.label
+        )));
+    }
+    Ok(row)
 }
 
 /// Create a set and answer its id and trimmed name. Fails when the name is
@@ -544,7 +554,10 @@ pub async fn list_member_ids_of(
 
 /// Add and remove members of one set in one call, answering
 /// `(added, removed)`. Every id is checked before anything is written, so a
-/// foreign or unknown member id leaves the set as it was.
+/// foreign or unknown member id leaves the set as it was. An id present in
+/// both `add` and `remove` nets to "removed": it is dropped from `add` so it
+/// is deleted, not inserted then deleted, and the `on_change` hook fires
+/// once for it rather than twice.
 pub async fn patch_members(
     spec: &MembershipSpec,
     conn: &mut AnyConnection,
@@ -554,8 +567,11 @@ pub async fn patch_members(
     remove: &[i64],
 ) -> Result<(u64, u64), MembershipError> {
     get_set(spec, conn, account_id, id).await?;
-    let add = clean_ids(add);
     let remove = clean_ids(remove);
+    let add: Vec<i64> = clean_ids(add)
+        .into_iter()
+        .filter(|id| !remove.contains(id))
+        .collect();
     if add.is_empty() && remove.is_empty() {
         return Err(MembershipError::BadRequest(format!(
             "{} ids required",
@@ -699,7 +715,6 @@ pub async fn names_for_items(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::AnyConnection;
 
     use crate::db::engine;
     use crate::db::schema;
@@ -776,6 +791,36 @@ mod tests {
             }
             other => panic!("expected BadRequest, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn create_set_refuses_an_empty_name() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let err = create_set(group_spec(), &mut conn, &account, "   ")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, MembershipError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn rename_set_refuses_an_empty_or_over_long_name() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let (id, _) = create_set(group_spec(), &mut conn, &account, "Family")
+            .await
+            .unwrap();
+
+        let err = rename_set(group_spec(), &mut conn, &account, id, "   ")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, MembershipError::BadRequest(_)));
+
+        let long = "x".repeat(MAX_NAME_LEN + 1);
+        let err = rename_set(group_spec(), &mut conn, &account, id, &long)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, MembershipError::BadRequest(_)));
     }
 
     #[tokio::test]
@@ -1004,6 +1049,69 @@ mod tests {
         assert!(matches!(err, MembershipError::NotFound(_)));
         assert!(
             list_sets(tag_spec(), &mut conn, &account)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn get_set_does_not_find_a_reserved_name_leftover() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        // create_set and rename_set both refuse reserved names, so the only
+        // way a reserved-name row exists is a leftover from before that
+        // check existed (or a direct insert, as here).
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO contact_groups (account_id, name) VALUES ($1, 'Trash') RETURNING id",
+        )
+        .bind(&account)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let err = get_set(group_spec(), &mut conn, &account, id)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, MembershipError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn patch_members_an_id_in_both_add_and_remove_nets_to_removed() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let a = insert_contact(&mut conn, &account, "Ada").await;
+        let (id, _) = create_set(group_spec(), &mut conn, &account, "Family")
+            .await
+            .unwrap();
+
+        // Already a member: add and remove the same id nets to "removed",
+        // and the change hook fires once, not twice.
+        patch_members(group_spec(), &mut conn, &account, id, &[a], &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            patch_members(group_spec(), &mut conn, &account, id, &[a], &[a])
+                .await
+                .unwrap(),
+            (0, 1)
+        );
+        assert!(
+            list_member_ids_of(group_spec(), &mut conn, &account, id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        // Never a member: add and remove the same id changes nothing.
+        let b = insert_contact(&mut conn, &account, "Ben").await;
+        assert_eq!(
+            patch_members(group_spec(), &mut conn, &account, id, &[b], &[b])
+                .await
+                .unwrap(),
+            (0, 0)
+        );
+        assert!(
+            list_member_ids_of(group_spec(), &mut conn, &account, id)
                 .await
                 .unwrap()
                 .is_empty()
