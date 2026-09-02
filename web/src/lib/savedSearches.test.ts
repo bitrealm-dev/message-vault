@@ -154,4 +154,23 @@ describe("useSavedSearchActions", () => {
     );
     expect(list).toHaveBeenCalledTimes(1);
   });
+
+  it("reports a write in flight and the failure it ended in", async () => {
+    let refuse: (reason: Error) => void = () => {};
+    create.mockReturnValue(
+      new Promise((_resolve, reject) => {
+        refuse = reject;
+      }),
+    );
+    const { result } = renderHook(() => useSavedSearchActions(), { wrapper });
+    expect(result.current.pending).toBe(false);
+
+    const write = result.current.create("Family", "is:group");
+    await waitFor(() => expect(result.current.pending).toBe(true));
+
+    refuse(new Error("vault said no"));
+    await expect(write).rejects.toThrow("vault said no");
+    await waitFor(() => expect(result.current.error?.message).toBe("vault said no"));
+    expect(result.current.pending).toBe(false);
+  });
 });
