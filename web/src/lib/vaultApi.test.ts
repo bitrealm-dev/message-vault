@@ -13,7 +13,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiClient } from "./api";
 import {
   countExportMessages,
-  createContactGroup,
   createMessageTag,
   deleteApiToken,
   deleteContactGroup,
@@ -23,19 +22,15 @@ import {
   getContact,
   getConversationSources,
   getImport,
-  listContactGroupMembers,
   listContactGroups,
   listContacts,
   listConversations,
   listMessageTagMembers,
-  listMessageTags,
   listSavedSearches,
   setImportStage,
   updateContact,
   updateContactGroup,
   updateContactGroupMembers,
-  updateMessageTag,
-  updateMessageTagMembers,
   updateSavedSearch,
 } from "./vaultApi";
 
