@@ -173,4 +173,15 @@ describe("useSavedSearchActions", () => {
     await waitFor(() => expect(result.current.error?.message).toBe("vault said no"));
     expect(result.current.pending).toBe(false);
   });
+
+  it("keeps the same create function across a write, so an effect watching it does not re-run", async () => {
+    create.mockResolvedValue({ savedSearches: [search(1, "Family")] });
+    const { result } = renderHook(() => useSavedSearchActions(), { wrapper });
+    const before = result.current.create;
+
+    await result.current.create("Family", "is:group");
+    await waitFor(() => expect(result.current.pending).toBe(false));
+
+    expect(result.current.create).toBe(before);
+  });
 });

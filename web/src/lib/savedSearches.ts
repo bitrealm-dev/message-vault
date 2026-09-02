@@ -117,7 +117,11 @@ export function useSavedSearchActions(): SavedSearchActions {
   );
   const error = latest.error;
 
-  return useMemo(
+  // Memoised on the mutations' own stable `mutateAsync` identities only:
+  // `pending` and `error` change on every keystroke of a write, and a caller
+  // that lists these methods in a `useEffect` dependency array must not see a
+  // new function each time.
+  const callbacks = useMemo(
     () => ({
       create: async (name: string, query: string) => {
         await create({ name, query });
@@ -128,9 +132,9 @@ export function useSavedSearchActions(): SavedSearchActions {
       remove: async (id: number) => {
         await remove(id);
       },
-      pending,
-      error,
     }),
-    [create, update, remove, pending, error],
+    [create, update, remove],
   );
+
+  return { ...callbacks, pending, error };
 }
