@@ -544,7 +544,10 @@ pub async fn list_member_ids_of(
 
 /// Add and remove members of one set in one call, answering
 /// `(added, removed)`. Every id is checked before anything is written, so a
-/// foreign or unknown member id leaves the set as it was.
+/// foreign or unknown member id leaves the set as it was. An id present in
+/// both `add` and `remove` nets to "removed": it is dropped from `add` so it
+/// is deleted, not inserted then deleted, and the `on_change` hook fires
+/// once for it rather than twice.
 pub async fn patch_members(
     spec: &MembershipSpec,
     conn: &mut AnyConnection,
@@ -554,8 +557,11 @@ pub async fn patch_members(
     remove: &[i64],
 ) -> Result<(u64, u64), MembershipError> {
     get_set(spec, conn, account_id, id).await?;
-    let add = clean_ids(add);
     let remove = clean_ids(remove);
+    let add: Vec<i64> = clean_ids(add)
+        .into_iter()
+        .filter(|id| !remove.contains(id))
+        .collect();
     if add.is_empty() && remove.is_empty() {
         return Err(MembershipError::BadRequest(format!(
             "{} ids required",
@@ -1004,6 +1010,49 @@ mod tests {
         assert!(matches!(err, MembershipError::NotFound(_)));
         assert!(
             list_sets(tag_spec(), &mut conn, &account)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn patch_members_an_id_in_both_add_and_remove_nets_to_removed() {
+        let (pool, _dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let a = insert_contact(&mut conn, &account, "Ada").await;
+        let (id, _) = create_set(group_spec(), &mut conn, &account, "Family")
+            .await
+            .unwrap();
+
+        // Already a member: add and remove the same id nets to "removed",
+        // and the change hook fires once, not twice.
+        patch_members(group_spec(), &mut conn, &account, id, &[a], &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            patch_members(group_spec(), &mut conn, &account, id, &[a], &[a])
+                .await
+                .unwrap(),
+            (0, 1)
+        );
+        assert!(
+            list_member_ids_of(group_spec(), &mut conn, &account, id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        // Never a member: add and remove the same id changes nothing.
+        let b = insert_contact(&mut conn, &account, "Ben").await;
+        assert_eq!(
+            patch_members(group_spec(), &mut conn, &account, id, &[b], &[b])
+                .await
+                .unwrap(),
+            (0, 0)
+        );
+        assert!(
+            list_member_ids_of(group_spec(), &mut conn, &account, id)
                 .await
                 .unwrap()
                 .is_empty()
