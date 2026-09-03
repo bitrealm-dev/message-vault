@@ -1,0 +1,34 @@
+---
+/**
+ * Three small tiles, C V M, showing which lists a search word applies to:
+ * Contacts, Conversations, Messages. A filled tile applies.
+ *
+ *   <ListTiles on="CM" />   → C and M filled, V empty
+ *   <ListTiles on="C V M" />
+ */
+interface Props {
+  /** The letters of the lists this word applies to, in any order. */
+  on: string;
+}
+
+const { on } = Astro.props;
+const letters = new Set(on.toUpperCase().replace(/[^CVM]/g, ''));
+
+const tiles = [
+  { letter: 'C', name: 'Contacts' },
+  { letter: 'V', name: 'Conversations' },
+  { letter: 'M', name: 'Messages' },
+];
+
+const applies = tiles.filter((t) => letters.has(t.letter)).map((t) => t.name);
+const label =
+  applies.length === 0 ? 'Applies to no list' : `Applies to ${applies.join(', ')}`;
+---
+
+<span class="mv-lists" role="img" aria-label={label}>
+  {tiles.map((t) => (
+    <span class:list={{ 'mv-on': letters.has(t.letter) }} aria-hidden="true">
+      {t.letter}
+    </span>
+  ))}
+</span>

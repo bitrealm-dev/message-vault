@@ -2,6 +2,19 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightSidebarTopics from 'starlight-sidebar-topics';
 import mermaid from 'astro-mermaid';
+import { satteri } from '@astrojs/markdown-satteri';
+import { wrapTables } from './src/lib/satteri-wrap-tables.mjs';
+
+// Guidebook type: a display face for headings, a text face for body copy,
+// and a mono face for every typed token. See src/styles/custom.css.
+const fontsHref =
+  'https://fonts.googleapis.com/css2' +
+  '?family=Bricolage+Grotesque:opsz,wght@12..96,500..700' +
+  '&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400' +
+  '&family=IBM+Plex+Mono:wght@400;500' +
+  '&display=swap';
+
+const dark = (theme) => theme.type === 'dark';
 
 const limitedBadge = {
   text: 'Limited',
@@ -132,6 +145,9 @@ export default defineConfig({
     // exist, so a 404 is the honest answer. See docs/adr/0001.
     '/vault/user/how-to/convert-formats/': '/vault/developer/reference/export-formats/',
   },
+  markdown: {
+    processor: satteri({ hastPlugins: [wrapTables] }),
+  },
   integrations: [
     mermaid({
       autoTheme: true,
@@ -152,7 +168,51 @@ export default defineConfig({
           href: 'https://github.com/bitrealm-io/message-vault',
         },
       ],
+      head: [
+        {
+          tag: 'link',
+          attrs: { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
+        },
+        {
+          tag: 'link',
+          attrs: {
+            rel: 'preconnect',
+            href: 'https://fonts.gstatic.com',
+            crossorigin: true,
+          },
+        },
+        { tag: 'link', attrs: { rel: 'stylesheet', href: fontsHref } },
+      ],
       customCss: ['./src/styles/custom.css'],
+      expressiveCode: {
+        // Code blocks: soft border, 6px radius, 13.5px mono, 1.55 line
+        // height, on the code-block ground from custom.css.
+        styleOverrides: {
+          borderRadius: '6px',
+          borderWidth: '1px',
+          borderColor: (ctx) => (dark(ctx.theme) ? '#232b2f' : '#e6eaec'),
+          codeBackground: (ctx) => (dark(ctx.theme) ? '#10161a' : '#eef1f0'),
+          codeFontFamily:
+            '"IBM Plex Mono", SFMono-Regular, Menlo, Consolas, monospace',
+          codeFontSize: '0.84375rem',
+          codeLineHeight: '1.55',
+          codePaddingBlock: '0.875rem',
+          codePaddingInline: '1rem',
+          uiFontFamily: '"IBM Plex Sans", "Segoe UI", Roboto, sans-serif',
+          // The editor, terminal, and active-tab backgrounds are set in
+          // custom.css: Starlight's own theme pins them and wins here.
+          frames: {
+            editorTabBarBackground: (ctx) =>
+              dark(ctx.theme) ? '#1b2124' : '#f6f7f5',
+            terminalTitlebarBackground: (ctx) =>
+              dark(ctx.theme) ? '#1b2124' : '#f6f7f5',
+            editorActiveTabIndicatorTopColor: (ctx) =>
+              dark(ctx.theme) ? '#63c7ce' : '#0e6b73',
+            editorActiveTabIndicatorBottomColor: 'transparent',
+            frameBoxShadowCssValue: 'none',
+          },
+        },
+      },
       plugins: [
         starlightSidebarTopics(
           [
