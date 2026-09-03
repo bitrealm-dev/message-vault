@@ -8,9 +8,7 @@ import { useSetRightToolbar } from "../components/useRightToolbar";
 import { apiErrorMessage } from "../lib/apiErrorMessage";
 import {
   contactBelongsToGroup,
-  GROUP_FILTER_TOKEN_RE,
   groupListQuery,
-  hasGroupFilterToken,
   UNKNOWN_GROUP,
   useContactGroupActions,
   useSetContactGroupMembers,
@@ -25,6 +23,7 @@ import {
 import { highlightText } from "../lib/highlightText";
 import { PAGE_SIZE_CONTACTS_FIRST, PAGE_SIZE_FIRST } from "../lib/listPaging";
 import { checksFromMembers } from "../lib/membershipChecks";
+import { hasFieldToken, stripFieldTokens } from "../lib/searchFields";
 import { useContactGroups } from "../lib/useContactGroups";
 import { listContacts } from "../lib/vaultApi";
 import { keys } from "../lib/vaultKeys";
@@ -51,39 +50,16 @@ type ContactsPage = {
 
 type FilterNeedles = { text: string; handle: string | null };
 
-/** Search words that the client cannot apply locally; those go to the server. */
-const ADVANCED_TOKEN_RE =
-  /\b(search:contacts|has:(?:messages|no-messages|no-name|no-label|no-group)|(?:first-contact|last-contact|message-count|group-count|service):\S+)\b/gi;
-
-/** True when the filter uses search words the client cannot apply on its own. */
-function hasAdvancedContactTokens(raw: string): boolean {
-  ADVANCED_TOKEN_RE.lastIndex = 0;
-  return ADVANCED_TOKEN_RE.test(raw);
-}
-
 /** Pull plain name text and a handle:"…" value out of the filter for local matching. */
 function filterNeedles(raw: string): FilterNeedles {
-  let q = raw.trim();
+  const q = raw.trim();
   if (!q) return { text: "", handle: null };
 
   let handle: string | null = null;
-  const quoted = q.match(/\bhandle:"([^"]+)"/i);
-  const bare = q.match(/\bhandle:(\S+)/i);
-  if (quoted) {
-    handle = quoted[1];
-    q = q.replace(quoted[0], " ");
-  } else if (bare) {
-    handle = bare[1].replace(/^"|"$/g, "");
-    q = q.replace(bare[0], " ");
-  }
+  const found = q.match(/(^|\s)handle:("([^"]+)"|(\S+))/i);
+  if (found) handle = found[3] ?? found[4].replace(/^"|"$/g, "");
 
-  q = q
-    .replace(ADVANCED_TOKEN_RE, " ")
-    .replace(GROUP_FILTER_TOKEN_RE, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  return { text: q, handle };
+  return { text: stripFieldTokens(q), handle };
 }
 
 /** True when this handle contains the search text. */
@@ -199,7 +175,7 @@ export default function ContactList({
   }
 
   const groupActive = Boolean(groupFilter);
-  const advancedActive = hasAdvancedContactTokens(filter) || hasGroupFilterToken(filter);
+  const advancedActive = hasFieldToken(filter);
 
   useEffect(() => {
     void filter;

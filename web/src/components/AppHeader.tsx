@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { SearchScope } from "../lib/recentSearches";
+import type { SearchList } from "../lib/searchFields";
 import type { AdvancedSearchMode } from "./AdvancedSearchForm";
 import AppAccountMenu from "./AppAccountMenu";
 import { loadWidth } from "./columnResize";
@@ -16,17 +17,32 @@ import SearchBar from "./SearchBar";
 export type HeaderSearchTarget = "contacts" | "messages" | "trash";
 
 /**
- * Every target uses the same bar; only the wording, the recents bucket, and the
- * advanced form differ. Trash searches conversations, so it takes the messages
- * form and its operator autocomplete.
+ * Every target uses the same bar; only the wording, the recents bucket, the
+ * advanced form, and the list whose words it suggests differ. Trash searches
+ * conversations, so it takes the messages form and the conversation words.
  */
 const SEARCH_TARGETS: Record<
   HeaderSearchTarget,
-  { scope: SearchScope; placeholder: string; advancedMode: AdvancedSearchMode }
+  { scope: SearchScope; list: SearchList; placeholder: string; advancedMode: AdvancedSearchMode }
 > = {
-  contacts: { scope: "contact", placeholder: "Search contacts", advancedMode: "contacts" },
-  messages: { scope: "message", placeholder: "Search messages", advancedMode: "messages" },
-  trash: { scope: "trash", placeholder: "Search Trash", advancedMode: "messages" },
+  contacts: {
+    scope: "contact",
+    list: "contacts",
+    placeholder: "Search contacts",
+    advancedMode: "contacts",
+  },
+  messages: {
+    scope: "message",
+    list: "conversations",
+    placeholder: "Search messages",
+    advancedMode: "messages",
+  },
+  trash: {
+    scope: "trash",
+    list: "conversations",
+    placeholder: "Search Trash",
+    advancedMode: "messages",
+  },
 };
 
 /** Full-width bar: app name on the left, search in the remaining space. */
@@ -39,7 +55,7 @@ export default function AppHeader({
   searchQuery: string;
   searchTarget: HeaderSearchTarget;
   onSearchChange: (v: string) => void;
-  onSearch: (q: string) => void;
+  onSearch: (q: string, mode: AdvancedSearchMode) => void;
 }) {
   const target = SEARCH_TARGETS[searchTarget];
   // Same key as LeftPanel so a stored width does not flash at the default.
@@ -66,6 +82,7 @@ export default function AppHeader({
             key={searchTarget}
             value={searchQuery}
             scope={target.scope}
+            list={target.list}
             placeholder={target.placeholder}
             advancedMode={target.advancedMode}
             onChange={onSearchChange}

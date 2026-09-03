@@ -38,6 +38,10 @@ export const keys = {
   contactGroups: { all: ["contact-groups"] as const },
   messageTags: { all: ["message-tags"] as const },
   savedSearches: { all: ["saved-searches"] as const },
+  searchFields: {
+    all: ["search-fields"] as const,
+    list: (list: string) => ["search-fields", list] as const,
+  },
   accountProfile: { all: ["account-profile"] as const },
   apiTokens: { all: ["api-tokens"] as const },
   adminUsers: { all: ["admin-users"] as const },

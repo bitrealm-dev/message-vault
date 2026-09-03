@@ -49,7 +49,7 @@ export default function SavedSearchForm({ onSave, onCancel, initial }: SavedSear
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleSave()}
-          placeholder="e.g. service:whatsapp is:group"
+          placeholder="e.g. service:whatsapp kind:group"
           className="box-border w-full rounded border border-border bg-elevated px-2 py-1.5 text-[0.875rem] text-text"
         />
       </label>

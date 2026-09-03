@@ -7,7 +7,7 @@ describe("the Unknown contact group", () => {
   });
 
   it("keeps a typed search alongside it", () => {
-    expect(groupListQuery(UNKNOWN_GROUP, "has:messages")).toBe("group:unknown has:messages");
+    expect(groupListQuery(UNKNOWN_GROUP, "messages:>0")).toBe("group:unknown messages:>0");
   });
 
   it("does not re-filter rows the server already chose", () => {

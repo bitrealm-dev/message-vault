@@ -5,6 +5,7 @@ import {
   pushRecentSearch,
   type SearchScope,
 } from "../lib/recentSearches";
+import type { SearchList } from "../lib/searchFields";
 import { popupShadow } from "../lib/uiStyles";
 import { useDismissable } from "../lib/useDismissable";
 import {
@@ -86,26 +87,30 @@ function SlidersIcon() {
 /**
  * The one search bar every list screen uses: magnifying glass, a popdown of
  * recent searches with an Advanced search row, and the advanced form inline
- * below the bar. Conversation-style bars additionally autocomplete operators
- * (`handle:`, `contact:`) in the same popdown while a token is being typed.
+ * below the bar. While a token is being typed the same popdown autocompletes
+ * the words the vault says this list accepts, and their values.
  */
 export default function SearchBar({
   value,
   onChange,
   onSubmit,
   scope,
+  list,
   placeholder,
   advancedMode,
   onOpenChange,
 }: {
   value: string;
   onChange: (v: string) => void;
-  onSubmit: (q: string) => void;
+  /** Runs the search. The mode says which list the typed query is meant for. */
+  onSubmit: (q: string, mode: AdvancedSearchMode) => void;
   /** Which bar this is: picks the recents bucket and the DOM id namespace. */
   scope: SearchScope;
+  /** Which list the vault should describe the search words of. */
+  list: SearchList;
   /** Placeholder and accessible name, e.g. "Search contacts". */
   placeholder: string;
-  /** Which advanced form to show, and whether operator autocomplete applies. */
+  /** Which advanced form to show. */
   advancedMode: AdvancedSearchMode;
   /** True while the popdown or advanced panel is open (for list-column stacking). */
   onOpenChange?: (open: boolean) => void;
@@ -118,7 +123,8 @@ export default function SearchBar({
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const suggestions = useSearchSuggestions(value, advancedMode === "messages");
+  // Every list has words of its own now, so every bar offers them.
+  const suggestions = useSearchSuggestions(value, list, true);
 
   const notifyOpen = useEffectEvent((open: boolean) => {
     onOpenChange?.(open);
@@ -136,7 +142,7 @@ export default function SearchBar({
 
   const applyQuery = (q: string, { save }: { save: boolean }) => {
     onChange(q);
-    onSubmit(q);
+    onSubmit(q, advancedMode);
     if (save && q.trim()) {
       pushRecentSearch(scope, q);
       setRecents(loadRecentSearches(scope));
@@ -258,7 +264,7 @@ export default function SearchBar({
             aria-label="Clear search"
             onClick={() => {
               onChange("");
-              onSubmit("");
+              onSubmit("", advancedMode);
               inputRef.current?.focus();
             }}
             className="mr-2 cursor-pointer border-none bg-transparent px-1 text-[1rem] leading-none text-muted hover:text-text"

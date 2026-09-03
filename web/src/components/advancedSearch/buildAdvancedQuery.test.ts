@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildContactsQuery,
   buildMessagesQuery,
+  type ContactsQueryInput,
   canSubmitContacts,
   canSubmitMessages,
   composeCountComparison,
@@ -9,6 +10,18 @@ import {
   EMPTY_DATE_BOUND,
   pushDateBoundTokens,
 } from "./buildAdvancedQuery.ts";
+
+/** Every Contacts field left blank, so a test can fill in only what it is about. */
+const emptyContacts: ContactsQueryInput = {
+  contactName: "",
+  handle: "",
+  firstMsgBound: EMPTY_DATE_BOUND,
+  lastMsgBound: EMPTY_DATE_BOUND,
+  activity: "any",
+  noPreferredName: false,
+  noHandle: false,
+  services: [],
+};
 
 describe("composeCountComparison", () => {
   it("returns null for any or non-numeric", () => {
@@ -26,34 +39,52 @@ describe("composeCountComparison", () => {
 describe("pushDateBoundTokens", () => {
   it("emits nothing for any", () => {
     const parts: string[] = [];
-    pushDateBoundTokens((s) => parts.push(s), "first-contact", EMPTY_DATE_BOUND);
+    pushDateBoundTokens((s) => parts.push(s), "first-message", EMPTY_DATE_BOUND);
     expect(parts).toEqual([]);
   });
 
   it("emits after/before/between tokens", () => {
-    const after: string[] = [];
-    pushDateBoundTokens((s) => after.push(s), "first-contact", {
+    const onOrAfter: string[] = [];
+    pushDateBoundTokens((s) => onOrAfter.push(s), "first-message", {
       op: "after",
       start: "2020-01-01",
       end: "",
     });
-    expect(after).toEqual(["first-contact:>=2020-01-01"]);
+    expect(onOrAfter).toEqual(["first-message:>=2020-01-01"]);
 
-    const before: string[] = [];
-    pushDateBoundTokens((s) => before.push(s), "last-contact", {
+    const upTo: string[] = [];
+    pushDateBoundTokens((s) => upTo.push(s), "last-message", {
       op: "before",
       start: "2021-06-01",
       end: "",
     });
-    expect(before).toEqual(["last-contact:<2021-06-01"]);
+    expect(upTo).toEqual(["last-message:<2021-06-01"]);
 
     const between: string[] = [];
-    pushDateBoundTokens((s) => between.push(s), "first-contact", {
+    pushDateBoundTokens((s) => between.push(s), "first-message", {
       op: "between",
       start: "2020-01-01",
       end: "2021-01-01",
     });
-    expect(between).toEqual(["first-contact:>=2020-01-01", "first-contact:<2021-01-01"]);
+    expect(between).toEqual(["first-message:2020-01-01..2021-01-01"]);
+  });
+
+  it("falls back to one open end when a between is half filled in", () => {
+    const startOnly: string[] = [];
+    pushDateBoundTokens((s) => startOnly.push(s), "first-message", {
+      op: "between",
+      start: "2020-01-01",
+      end: "",
+    });
+    expect(startOnly).toEqual(["first-message:>=2020-01-01"]);
+
+    const endOnly: string[] = [];
+    pushDateBoundTokens((s) => endOnly.push(s), "last-message", {
+      op: "between",
+      start: "",
+      end: "2021-01-01",
+    });
+    expect(endOnly).toEqual(["last-message:<2021-01-01"]);
   });
 });
 
@@ -80,57 +111,49 @@ describe("buildMessagesQuery", () => {
   it("assembles name, handle, type, and participants tokens", () => {
     expect(
       buildMessagesQuery({
-        nameOrHandle: " Pat ",
-        handle: " +1555 ",
+        nameOrHandle: "jane",
+        handle: "",
+        msgType: "direct",
+        participants: EMPTY_COUNT,
+      }),
+    ).toBe("jane kind:direct");
+    expect(
+      buildMessagesQuery({
+        nameOrHandle: "",
+        handle: "+1555",
         msgType: "group",
         participants: { comparator: ">", value: "3" },
       }),
-    ).toBe("Pat handle:+1555 is:group participants:>3");
+    ).toBe("handle:+1555 kind:group participants:>3");
   });
 });
 
 describe("buildContactsQuery", () => {
-  it("always includes search:contacts even when other fields empty", () => {
-    expect(
-      buildContactsQuery({
-        contactName: "",
-        handle: "",
-        firstMsgBound: EMPTY_DATE_BOUND,
-        lastMsgBound: EMPTY_DATE_BOUND,
-        activity: "any",
-        noPreferredName: false,
-        noHandle: false,
-        services: [],
-      }),
-    ).toBe("search:contacts");
-    expect(
-      canSubmitContacts({
-        contactName: "",
-        handle: "",
-        firstMsgBound: EMPTY_DATE_BOUND,
-        lastMsgBound: EMPTY_DATE_BOUND,
-        activity: "any",
-        noPreferredName: false,
-        noHandle: false,
-        services: [],
-      }),
-    ).toBe(false);
+  it("returns empty when nothing is filled in", () => {
+    expect(buildContactsQuery(emptyContacts)).toBe("");
+    expect(canSubmitContacts(emptyContacts)).toBe(false);
   });
 
   it("assembles contact tokens", () => {
     expect(
       buildContactsQuery({
-        contactName: "Lee",
-        handle: "+1",
-        firstMsgBound: { op: "after", start: "2020-01-01", end: "" },
-        lastMsgBound: EMPTY_DATE_BOUND,
+        contactName: "ana",
+        handle: "+1 555",
+        firstMsgBound: { op: "after", start: "2019-01-01", end: "" },
+        lastMsgBound: { op: "between", start: "2022-01-01", end: "2023-01-01" },
         activity: "messages",
         noPreferredName: true,
         noHandle: false,
-        services: ["phone"],
+        services: ["whatsapp"],
       }),
     ).toBe(
-      'Lee handle:"+1" first-contact:>=2020-01-01 has:messages has:no-name service:phone search:contacts',
+      'ana handle:"+1 555" first-message:>=2019-01-01 last-message:2022-01-01..2023-01-01 messages:>0 name:none service:whatsapp',
+    );
+  });
+
+  it("asks for contacts with no messages and no identity", () => {
+    expect(buildContactsQuery({ ...emptyContacts, activity: "no-messages", noHandle: true })).toBe(
+      "messages:0 handle:none",
     );
   });
 });
