@@ -92,8 +92,8 @@ fn value_hint(spec: &FieldSpec) -> String {
 
 /// One value for `spec`, restricted to the shapes that word's meaning
 /// allows: `import:` (the only Name word without a name fallback) takes only
-/// `#id` or its `last` keyword, and only `filename:` (the only Text word
-/// with a prefix form) takes a trailing `*`.
+/// `#id` or its `last` keyword. Any `Text` word takes a trailing `*` as a
+/// prefix, unquoted and non-empty before the star.
 fn parse_one_value(spec: &FieldSpec, raw: &str, quoted: bool, today: NaiveDate) -> Option<Value> {
     let lower = raw.trim().to_ascii_lowercase();
     if let Some(kw) = spec.values.iter().find(|v| **v == lower) {
@@ -104,7 +104,7 @@ fn parse_one_value(spec: &FieldSpec, raw: &str, quoted: bool, today: NaiveDate) 
     }
     match spec.value_type {
         ValueType::Choice | ValueType::Flag => None,
-        ValueType::Text if spec.word == "filename" => {
+        ValueType::Text => {
             if !quoted
                 && let Some(p) = raw.strip_suffix('*')
                 && !p.is_empty()
@@ -114,7 +114,6 @@ fn parse_one_value(spec: &FieldSpec, raw: &str, quoted: bool, today: NaiveDate) 
                 Some(Value::Text(raw.trim().to_string()))
             }
         }
-        ValueType::Text => Some(Value::Text(raw.trim().to_string())),
         ValueType::Name if spec.word == "import" => value::parse_id(raw).map(Value::Id),
         ValueType::Name | ValueType::Person => {
             if !quoted && let Some(id) = value::parse_id(raw) {
@@ -130,13 +129,17 @@ fn parse_one_value(spec: &FieldSpec, raw: &str, quoted: bool, today: NaiveDate) 
 }
 
 /// `word:` with nothing usable after the colon: a missing value, or a value
-/// list that was empty once commas were split out (`tag:,`).
+/// list that was empty once commas were split out (`tag:,`). Names a second,
+/// different example from `spec.values` when one exists, so a word whose
+/// `example` already spells its only keyword (`import:last`) is not told to
+/// try `import:last` twice.
 fn empty_value_error(spec: &FieldSpec, word: &str, span: Range<usize>) -> QueryError {
-    let also = if spec.values.is_empty() {
-        String::new()
-    } else {
-        format!(" or {word}:{}", spec.values[0])
-    };
+    let also = spec
+        .values
+        .iter()
+        .find(|v| format!("{word}:{v}") != spec.example)
+        .map(|v| format!(" or {word}:{v}"))
+        .unwrap_or_default();
     let mut err = QueryError::new(
         QueryErrorKind::EmptyValue,
         span,
@@ -494,6 +497,17 @@ mod tests {
     }
 
     #[test]
+    fn any_text_word_understands_an_unquoted_trailing_star_as_a_prefix() {
+        let e = parse_ok(ListKind::Messages, "body:avo*");
+        let Expr::Field(term) = e else { panic!() };
+        assert_eq!(term.values, vec![Value::Prefix("avo".into())]);
+        // Quoting keeps the star literal.
+        let e = parse_ok(ListKind::Messages, r#"body:"avo*""#);
+        let Expr::Field(term) = e else { panic!() };
+        assert_eq!(term.values, vec![Value::Text("avo*".into())]);
+    }
+
+    #[test]
     fn unknown_word_is_refused_without_naming_anything_else() {
         let err = parse_err(ListKind::Messages, "people:Family");
         assert_eq!(err.kind, QueryErrorKind::UnknownWord);
@@ -544,6 +558,26 @@ mod tests {
         assert_eq!(
             err.message,
             "kind: does not understand big. Write one of: direct, group."
+        );
+    }
+
+    #[test]
+    fn an_empty_value_names_a_second_example_when_the_word_has_one() {
+        // kind:'s own example already spells "direct"; the "or" clause must
+        // name a different keyword ("group"), not repeat "direct".
+        let err = parse_err(ListKind::Messages, "kind:");
+        assert_eq!(err.kind, QueryErrorKind::EmptyValue);
+        assert_eq!(
+            err.message,
+            "kind: needs a value, for example kind:direct or kind:group."
+        );
+        // import:'s only keyword ("last") is already its example, so there
+        // is no second example to offer.
+        let err = parse_err(ListKind::Messages, "import:");
+        assert_eq!(err.kind, QueryErrorKind::EmptyValue);
+        assert_eq!(
+            err.message,
+            "import: needs a value, for example import:last."
         );
     }
 
