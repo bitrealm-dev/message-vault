@@ -57,7 +57,7 @@ RESP="$(curl -sS -X POST \
   -H "Content-Type: application/jsonl" \
   --data-binary @"$SAMPLE")"
 
-echo "$RESP" | grep -q '"ok":true'
+echo "$RESP" | grep -q '"messages_appended"'
 echo "$RESP" | grep -q '"messages":1'
 echo "smoke-import-api: ok"
 echo "$RESP"

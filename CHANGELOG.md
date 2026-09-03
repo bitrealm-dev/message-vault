@@ -14,6 +14,7 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 ### Removed
 
 - 2026-08-31: The legacy Slint desktop GUI (`crates/message-vault-io-gui`) is gone. The Tauri desktop app is the product path. Its screens are recorded, one image per exporter, in `docs/superpowers/reference/legacy-slint-gui.md`.
+- 2026-09-03: The export cursor, the `source=` parameter on `GET /v1/export/messages` and `/count` (write `source:imessage` in the query instead), the `savedSearches` and `savedSearch` fields, the `ok` and `account_ok` flags, and `vault-pull`'s unused `compose_query`.
 
 ### Fixed
 
@@ -38,6 +39,8 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 - 2026-08-26: Import lists one **iMessage** source with methods Mac Messages, iPhone backup, and Jailbroken iPhone. Mac and jailbreak can set an attachment folder and an Apple Contacts file. Encrypted iPhone backups require the password in the form; the app does not prompt in a terminal. Extract errors for missing paths, leftover password, and missing ffmpeg use the locked Import-language sentences.
 - 2026-08-26: iMessage Import labels the method list **Platform** (Mac Messages and iPhone backup). Required paths use a red asterisk; empty optional paths say (Optional). The User Guide Import pages match that form and no longer describe a jailbreak method.
 - 2026-08-26: Import lists one **WhatsApp** source with Platform Android or iPhone. Android can decrypt a crypt12/14/15 file in the backup folder with a key; iPhone forwards the Finder backup as `-b`. Optional contacts, media, and message-database paths stay empty when those files already sit in the folder.
+- 2026-09-03: Every list on the HTTP interface answers `{items, total, limit, offset}` and takes `offset` and `limit`; a `limit` above 500 or an `offset` above 50 000 is a 400 instead of a silent clamp. Conversation ids are integers. Every failure is `{error}` with the status, including a malformed query parameter, path, or JSON body, an unknown `/v1` path, and a wrong method. No response carries an `ok` flag; acknowledgements with nothing else to say are 204. Saved searches list as `items`, and creating or renaming one answers the row. (ADR-0005)
+- 2026-09-03: `GET /v1/export/messages` pages by `offset` and `limit`, reports `total`, and has no offset cap. The desktop Export walks it in pages of 500.
 
 ## [0.8.3] - 2026-08-25
 

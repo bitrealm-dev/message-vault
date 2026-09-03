@@ -67,32 +67,32 @@ curl -sf "http://${BIND}/health" >/dev/null
 
 # Auth check
 AUTH="$(curl -sS "http://${BIND}/v1/auth/check" -H "Authorization: Bearer ${TOKEN}")"
-echo "$AUTH" | grep -q '"ok":true'
+echo "$AUTH" | grep -q '"account_id"'
 
 # Upload asset then import message that references it
 curl -sS -X PUT \
   "http://${BIND}/v1/assets/${SHA}?source=sms-backup-restore&account=${ACCOUNT}" \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Content-Type: image/jpeg" \
-  --data-binary @"$TMP/media/photo.jpg" | grep -q '"ok":true'
+  --data-binary @"$TMP/media/photo.jpg" | grep -q '"sha256"'
 
 curl -sS -X POST \
   "http://${BIND}/v1/import?source=sms-backup-restore&account=${ACCOUNT}&mode=replace" \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Content-Type: application/jsonl" \
-  --data-binary @"$TMP/att.jsonl" | grep -q '"ok":true'
+  --data-binary @"$TMP/att.jsonl" | grep -q '"messages_appended"'
 
 # Also import a plain text conversation from the fixture (append)
 curl -sS -X POST \
   "http://${BIND}/v1/import?source=imessage&account=${ACCOUNT}&mode=append" \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Content-Type: application/jsonl" \
-  --data-binary @"$SAMPLE" | grep -q '"ok":true'
+  --data-binary @"$SAMPLE" | grep -q '"messages_appended"'
 
 # Export all messages
 EXPORT="$(curl -sS "http://${BIND}/v1/export/messages?limit=50" \
   -H "Authorization: Bearer ${TOKEN}")"
-echo "$EXPORT" | grep -q '"ok":true'
+echo "$EXPORT" | grep -q '"items"'
 echo "$EXPORT" | grep -q 'smoke-export-att-1'
 echo "$EXPORT" | grep -q "$SHA"
 

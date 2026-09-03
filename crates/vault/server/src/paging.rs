@@ -70,12 +70,12 @@ pub fn page_params(
         )));
     }
     let offset = offset.unwrap_or(0);
-    if let Some(max) = max_offset {
-        if offset > max {
-            return Err(ApiError::BadRequest(format!(
-                "offset exceeds maximum of {max}"
-            )));
-        }
+    if let Some(max) = max_offset
+        && offset > max
+    {
+        return Err(ApiError::BadRequest(format!(
+            "offset exceeds maximum of {max}"
+        )));
     }
     Ok(PageParams { limit, offset })
 }

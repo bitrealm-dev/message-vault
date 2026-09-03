@@ -64,7 +64,7 @@ test "$code" = "401"
 AUTH="$(curl -sS \
   -H "Authorization: Bearer ${USER_TOKEN}" \
   "http://${BIND}/v1/auth/check")"
-echo "$AUTH" | grep -q '"ok":true'
+echo "$AUTH" | grep -q '"account_id"'
 echo "$AUTH" | grep -q "\"account_id\":\"${ACCOUNT}\""
 
 # Multipart import chat-a (jsonl + attachment file)
@@ -73,7 +73,7 @@ RESP_A="$(curl -sS -X POST \
   -H "Authorization: Bearer ${USER_TOKEN}" \
   -F "jsonl=@${TMP}/client/chat-a.jsonl;type=application/jsonl" \
   -F "file=@${TMP}/client/media/photo.jpg;filename=media/photo.jpg")"
-echo "$RESP_A" | grep -q '"ok":true'
+echo "$RESP_A" | grep -q '"messages_appended"'
 echo "$RESP_A" | grep -q '"messages":1'
 
 # Multipart import chat-b (jsonl only)
@@ -81,13 +81,13 @@ RESP_B="$(curl -sS -X POST \
   "http://${BIND}/v1/import?source=imessage&account=${ACCOUNT}&mode=append" \
   -H "Authorization: Bearer ${USER_TOKEN}" \
   -F "jsonl=@${TMP}/client/chat-b.jsonl;type=application/jsonl")"
-echo "$RESP_B" | grep -q '"ok":true'
+echo "$RESP_B" | grep -q '"messages_appended"'
 echo "$RESP_B" | grep -q '"messages":1'
 
 AUTH2="$(curl -sS \
   -H "Authorization: Bearer ${USER_TOKEN}" \
   "http://${BIND}/v1/auth/check?account=${ACCOUNT}")"
-echo "$AUTH2" | grep -q '"account_ok":true'
+echo "$AUTH2" | grep -q "\"account_id\":\"${ACCOUNT}\""
 echo "$AUTH2" | grep -q 'imessage'
 
 # User token cannot target another account
@@ -101,7 +101,7 @@ RESP_USER="$(curl -sS -X POST \
   "http://${BIND}/v1/import?source=imessage&mode=append" \
   -H "Authorization: Bearer ${USER_TOKEN}" \
   -F "jsonl=@${TMP}/client/chat-b.jsonl;type=application/jsonl")"
-echo "$RESP_USER" | grep -q '"ok":true'
+echo "$RESP_USER" | grep -q '"messages_appended"'
 echo "$RESP_USER" | grep -q "\"account\":\"${ACCOUNT}\""
 
 echo "smoke-vault-push: ok"
