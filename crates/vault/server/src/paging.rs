@@ -34,7 +34,8 @@ pub struct Page<T> {
     pub offset: usize,
 }
 
-/// The query string every plain list route takes.
+/// The `q`/`limit`/`offset` query string of a plain list route; lists with
+/// extra parameters declare their own struct and call `page_params` directly.
 #[derive(Debug, Deserialize)]
 pub struct PageQuery {
     #[serde(default)]

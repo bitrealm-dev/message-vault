@@ -236,9 +236,9 @@ fn reuses_supplied_import_session_without_starting_or_completing_one() {
 
     assert!(report.ok);
     assert_eq!(report.conversations_ok, 1);
-    assert_eq!(start.hits(), 0, "push must not start a new session");
+    assert_eq!(start.calls(), 0, "push must not start a new session");
     assert_eq!(
-        complete.hits(),
+        complete.calls(),
         0,
         "push must not complete a reused session"
     );
@@ -287,7 +287,7 @@ fn aggregates_multiple_conversations_into_one_import_request() {
         report.messages_attempted,
         report.messages_inserted + report.messages_deduped + report.messages_failed
     );
-    assert_eq!(import.hits(), 1);
+    assert_eq!(import.calls(), 1);
     let log = fs::read_to_string(dir.path().join("vault-push.log")).unwrap();
     assert!(log.contains("IMPORT_REQUEST ok"));
     assert!(log.contains("conversations=2 messages=2"));
@@ -339,8 +339,8 @@ fn flushes_at_message_limit_and_replaces_only_first_request() {
 
     assert!(report.ok);
     assert_eq!(report.conversations_ok, 3);
-    assert_eq!(replace.hits(), 1);
-    assert_eq!(append.hits(), 1);
+    assert_eq!(replace.calls(), 1);
+    assert_eq!(append.calls(), 1);
 }
 
 #[test]
@@ -393,8 +393,8 @@ fn failed_combined_request_only_fails_its_files() {
         report.messages_attempted,
         report.messages_inserted + report.messages_deduped + report.messages_failed
     );
-    assert_eq!(failed.hits(), 1);
-    assert_eq!(succeeded.hits(), 1);
+    assert_eq!(failed.calls(), 1);
+    assert_eq!(succeeded.calls(), 1);
     assert_eq!(
         report
             .results
@@ -428,7 +428,7 @@ fn resumes_message_batches_from_compacted_journal() {
     write_jsonl(dir.path(), &sample_doc());
     let cfg = text_only_config(dir.path(), server.base_url());
     run(&cfg, None).unwrap();
-    assert_eq!(import.hits(), 1);
+    assert_eq!(import.calls(), 1);
 
     let journal_path = dir.path().join(".vault-import-state.jsonl");
     let compacted = fs::read_to_string(&journal_path).unwrap();
@@ -444,7 +444,7 @@ fn resumes_message_batches_from_compacted_journal() {
     assert!(resumed.ok);
     assert_eq!(resumed.conversations_ok, 1);
     assert_eq!(resumed.messages, 0);
-    assert_eq!(import.hits(), 1);
+    assert_eq!(import.calls(), 1);
 }
 
 #[test]
@@ -539,7 +539,7 @@ fn profiles_attachment_upload_phases() {
     };
 
     assert!(
-        head.hits() >= 1,
+        head.calls() >= 1,
         "first upload pays one preflight HEAD of the queued digest"
     );
     asset.assert();
@@ -662,12 +662,12 @@ fn puts_two_new_assets_without_head() {
         &head_a
     };
     assert!(
-        head_first.hits() >= 1,
+        head_first.calls() >= 1,
         "first import pays one preflight HEAD"
     );
-    assert_eq!(head_second.hits(), 0);
-    assert_eq!(put_a.hits(), 1);
-    assert_eq!(put_b.hits(), 1);
+    assert_eq!(head_second.calls(), 0);
+    assert_eq!(put_a.calls(), 1);
+    assert_eq!(put_b.calls(), 1);
     assert_eq!(report.assets_uploaded, 2);
 }
 
@@ -733,10 +733,13 @@ fn heads_later_assets_after_put_reports_already_present() {
     cfg.asset_upload_workers = 1;
     let report = run(&cfg, None).unwrap();
 
-    assert!(head_first.hits() >= 1, "preflight HEAD of the first digest");
-    assert_eq!(put_first.hits(), 1);
-    assert!(head_second.hits() >= 1);
-    assert_eq!(put_second.hits(), 0);
+    assert!(
+        head_first.calls() >= 1,
+        "preflight HEAD of the first digest"
+    );
+    assert_eq!(put_first.calls(), 1);
+    assert!(head_second.calls() >= 1);
+    assert_eq!(put_second.calls(), 0);
     assert_eq!(report.assets_skipped, 2);
 }
 
@@ -792,9 +795,9 @@ fn preflight_head_skips_puts_when_first_asset_already_present() {
     cfg.asset_upload_workers = 2;
     let report = run(&cfg, None).unwrap();
 
-    assert_eq!(put_a.hits(), 0, "preflight HEAD must skip PUT for A");
-    assert_eq!(put_b.hits(), 0, "preflight HEAD must skip PUT for B");
-    assert!(head_a.hits() + head_b.hits() >= 1);
+    assert_eq!(put_a.calls(), 0, "preflight HEAD must skip PUT for A");
+    assert_eq!(put_b.calls(), 0, "preflight HEAD must skip PUT for B");
+    assert!(head_a.calls() + head_b.calls() >= 1);
     assert_eq!(report.assets_skipped, 2);
 }
 
@@ -892,7 +895,7 @@ fn multipart_upload_when_over_proxy_threshold() {
     let report = run(&cfg, None).unwrap();
 
     assert!(
-        head.hits() >= 1,
+        head.calls() >= 1,
         "first upload pays one preflight HEAD of the queued digest"
     );
     start.assert();
@@ -901,7 +904,7 @@ fn multipart_upload_when_over_proxy_threshold() {
     part3.assert();
     complete.assert();
     assert_eq!(
-        single_put.hits(),
+        single_put.calls(),
         0,
         "single PUT must not be used for multipart path"
     );
@@ -1073,7 +1076,7 @@ fn verify_digests_fails_on_mismatch() {
     let report = run(&cfg, None).unwrap();
     assert!(!report.ok);
     assert_eq!(report.conversations_failed, 1);
-    assert_eq!(put.hits(), 0, "mismatch must fail before upload");
+    assert_eq!(put.calls(), 0, "mismatch must fail before upload");
 }
 
 #[test]
@@ -1146,9 +1149,9 @@ fn shared_attachment_uploaded_once_across_conversations() {
     let report = run(&cfg, None).unwrap();
     assert!(report.ok);
     assert_eq!(report.conversations_ok, 2);
-    assert_eq!(put.hits(), 1, "shared digest must upload once");
+    assert_eq!(put.calls(), 1, "shared digest must upload once");
     assert!(
-        head.hits() >= 1,
+        head.calls() >= 1,
         "first upload pays one preflight HEAD of the queued digest"
     );
     import.assert();
@@ -1259,8 +1262,8 @@ fn skips_oversized_attachment_keeps_conversation_ok() {
     assert_eq!(report.conversations_ok, 1);
     assert_eq!(report.conversations_failed, 0);
     assert_eq!(report.messages_attempted, 1);
-    assert_eq!(small_put.hits(), 1, "normal attachment must still upload");
-    assert_eq!(big_put.hits(), 0, "oversized attachment must not be PUT");
+    assert_eq!(small_put.calls(), 1, "normal attachment must still upload");
+    assert_eq!(big_put.calls(), 0, "oversized attachment must not be PUT");
     import.assert();
     assert!(
         issues.iter().any(|(kind, item, reason)| {
@@ -1362,7 +1365,7 @@ fn skips_missing_attachment_file_keeps_conversation_ok() {
 
     assert!(report.ok);
     assert_eq!(report.conversations_ok, 1);
-    assert_eq!(small_put.hits(), 1);
+    assert_eq!(small_put.calls(), 1);
     import.assert();
     assert!(
         issues.iter().any(|(kind, item, reason)| {

@@ -65,7 +65,10 @@ where
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         match axum::Json::<T>::from_request(req, state).await {
             Ok(axum::Json(value)) => Ok(Json(value)),
-            Err(rejection) => Err(ApiError::BadRequest(rejection.body_text())),
+            // Axum already picked the right status (413 over the body limit,
+            // 415 for a missing/wrong Content-Type, 400 for malformed JSON);
+            // keep it rather than flattening everything to 400.
+            Err(rejection) => Err(ApiError::Status(rejection.status(), rejection.body_text())),
         }
     }
 }
@@ -116,7 +119,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_json_body_missing_a_field_is_a_json_400() {
+    async fn a_json_body_missing_a_field_is_a_json_422() {
         let vault = test_vault().await;
         let state = vault.state.clone();
         let user = register_via_api(&state, "alice", "hunter2hunter2").await;
@@ -128,9 +131,55 @@ mod tests {
             r#"{"name": "only a name"}"#,
         )
         .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        // Well-formed JSON that fails to deserialize into the target type is
+        // Axum's `JsonDataError`, which carries `422` — a different rejection
+        // from malformed JSON syntax (`400`). Since `Status` now keeps
+        // whatever status Axum picked, this answers 422, not 400.
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         let body: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert!(body["error"].as_str().unwrap().contains("query"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_json_body_with_the_wrong_content_type_is_a_json_415() {
+        let vault = test_vault().await;
+        let state = vault.state.clone();
+        let user = register_via_api(&state, "alice", "hunter2hunter2").await;
+        let (status, text) = crate::test_support::post_raw(
+            &state,
+            "/v1/saved-searches",
+            &user.token,
+            "text/plain",
+            r#"{"name": "only a name", "query": "hi"}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        let body: serde_json::Value =
+            serde_json::from_str(&text).unwrap_or_else(|_| panic!("non-JSON body: {text}"));
+        assert!(body["error"].is_string(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_json_body_over_the_auth_router_body_limit_is_a_json_413() {
+        let vault = test_vault().await;
+        let state = vault.state.clone();
+        // The auth router caps request bodies at 32 KiB (server.rs,
+        // `limited_auth_router`); pad well past it with a valid JSON string.
+        let padding = "a".repeat(64 * 1024);
+        let body =
+            serde_json::json!({ "username": padding, "password": "hunter2hunter2" }).to_string();
+        let (status, text) = crate::test_support::post_raw(
+            &state,
+            "/v1/auth/login",
+            "unused-token",
+            "application/json",
+            body,
+        )
+        .await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        let body: serde_json::Value =
+            serde_json::from_str(&text).unwrap_or_else(|_| panic!("non-JSON body: {text}"));
+        assert!(body["error"].is_string(), "{body}");
     }
 
     #[tokio::test]
@@ -142,8 +191,23 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(body["error"], "no route at /v1/no-such-thing");
 
-        let status =
-            crate::test_support::delete_status(&state, "/v1/conversations", &user.token).await;
+        let (status, text) =
+            crate::test_support::delete_raw(&state, "/v1/conversations", &user.token).await;
         assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+        let body: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(body["error"], "DELETE is not allowed at /v1/conversations");
+    }
+
+    #[tokio::test]
+    async fn bare_v1_and_v1_slash_are_a_json_404() {
+        let vault = test_vault().await;
+        let state = vault.state.clone();
+        for path in ["/v1", "/v1/"] {
+            let (status, text) = crate::test_support::get_raw(&state, path, "unused-token").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+            let body: serde_json::Value = serde_json::from_str(&text)
+                .unwrap_or_else(|_| panic!("{path} answered non-JSON: {text}"));
+            assert!(body["error"].is_string(), "{path}: {body}");
+        }
     }
 }

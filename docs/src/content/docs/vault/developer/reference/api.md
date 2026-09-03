@@ -9,9 +9,10 @@ Route schemas, status codes, and JSON fields live in the generated [HTTP API ref
 
 ## One shape for every route
 
-- A list takes `?offset=&limit=` and answers `{items, total, limit, offset}`. `limit` is at most 500; `offset` is at most 50 000 on the Contacts and Conversations lists and unlimited on Export.
-- A failure answers `{"error": "<sentence>"}` with the HTTP status. There is no `ok` field on any response.
-- Every id is an integer.
+- A list takes `?offset=&limit=` and answers `{items, total, limit, offset}`. `limit` is at most 500 and at least 1; `offset` is at most 50 000 on the Contacts and Conversations lists and unlimited on Export.
+- A failure answers `{"error": "<sentence>"}` with the HTTP status. That includes a malformed query parameter, path, or JSON body, an unknown `/v1` path (404), and a wrong method (405). There is no `ok` field on any response.
+- A route with nothing to say on success answers `204 No Content`.
+- Every id is an integer, except API token ids and account ids, which are opaque strings.
 
 Why: [ADR-0005](https://github.com/bitrealm-io/message-vault/blob/main/docs/adr/0005-one-shape-for-every-route-on-the-http-interface.md).
 

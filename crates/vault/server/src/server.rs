@@ -287,6 +287,11 @@ pub enum ApiError {
     ServiceUnavailable(String),
     /// `500` — unexpected failure.
     Internal(String),
+    /// An explicit status the caller already picked, such as Axum's own
+    /// answer to a rejected `Json` extraction (413 over the body limit, 415
+    /// for the wrong `Content-Type`). ADR-0005 says the status carries the
+    /// meaning, so these must not be flattened to 400.
+    Status(StatusCode, String),
 }
 
 impl IntoResponse for ApiError {
@@ -308,6 +313,7 @@ impl IntoResponse for ApiError {
                     "internal server error".into(),
                 )
             }
+            Self::Status(status, m) => (status, m),
         };
         (status, Json(ErrorBody { error: message })).into_response()
     }
@@ -431,6 +437,41 @@ async fn api_method_not_allowed(method: axum::http::Method, uri: axum::http::Uri
     ApiError::MethodNotAllowed(format!("{method} is not allowed at {}", uri.path()))
 }
 
+/// tower_http's `RequestBodyLimitLayer` answers a plain-text `413` itself,
+/// bypassing every extractor, the moment a `Content-Length` header already
+/// announces a payload over the limit — `extract::Json`'s own 413 handling
+/// only ever sees a body that had to be read to discover it was too long.
+/// Rewrite that one plain-text response into the vault's `{error}` envelope
+/// so a body over the limit answers the same way however the client
+/// declares its size.
+async fn json_body_limit_response(mut response: Response) -> Response {
+    if response.status() != StatusCode::PAYLOAD_TOO_LARGE {
+        return response;
+    }
+    let already_json = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("application/json"));
+    if already_json {
+        return response;
+    }
+    let bytes = serde_json::to_vec(&ErrorBody {
+        error: "the request body is too large".to_string(),
+    })
+    .expect("ErrorBody always serializes");
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    response.headers_mut().insert(
+        header::CONTENT_LENGTH,
+        HeaderValue::from_str(&bytes.len().to_string()).expect("digits are a valid header value"),
+    );
+    *response.body_mut() = axum::body::Body::from(bytes);
+    response
+}
+
 pub(crate) fn http_app(state: AppState) -> Router {
     let openapi_ui = state
         .cfg
@@ -451,11 +492,18 @@ pub(crate) fn http_app(state: AppState) -> Router {
     let mut api = Router::new()
         .merge(doc_router)
         .merge(auth_small)
+        // `/v1/{*rest}` needs at least one character after the slash, so the
+        // bare prefix (with or without a trailing slash) needs its own
+        // routes to answer the same JSON 404 instead of falling through to
+        // the static file server.
+        .route("/v1", axum::routing::any(api_not_found))
+        .route("/v1/", axum::routing::any(api_not_found))
         .route("/v1/{*rest}", axum::routing::any(api_not_found))
         .method_not_allowed_fallback(api_method_not_allowed)
         .fallback_service(ServeDir::new("static"))
         .layer(build_cors_layer(&cors_origins))
-        .layer(RequestBodyLimitLayer::new(state.max_body_bytes));
+        .layer(RequestBodyLimitLayer::new(state.max_body_bytes))
+        .layer(axum::middleware::map_response(json_body_limit_response));
 
     if openapi_ui {
         api = api.merge(utoipa_swagger_ui::SwaggerUi::new("/docs").url("/openapi.json", spec));
