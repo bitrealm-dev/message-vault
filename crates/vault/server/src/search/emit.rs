@@ -5,11 +5,11 @@ use crate::db::contacts::UNKNOWN_CONTACT_SQL;
 use crate::db::dialect::name_eq_ci;
 use crate::db::engine::DbEngine;
 
-use super::bridge::{ListCtx, Sql};
+use super::bridge::{ListCtx, Sql, contact_conversations_link};
 use super::error::{QueryError, QueryErrorKind};
 use super::fts;
 use super::parse::{Expr, FieldTerm, TextTerm};
-use super::value::{Cmp, Value};
+use super::value::{Cmp, DateCmp, Value, ymd};
 use super::{Filter, ListKind};
 
 /// Contact `ct` is not in the trash.
@@ -185,8 +185,9 @@ fn emit_text(ctx: &ListCtx<'_>, out: &mut Sql, term: &TextTerm) {
 }
 
 /// One `word:values`. The values are OR-ed, so `body:avocado,guac` is
-/// either. Task 8 adds the remaining words; until a word has an arm in
-/// `emit_one`, the query is refused by name rather than quietly matching.
+/// either. Every word in the registry has an arm in `emit_one`; a word that
+/// somehow reaches it without one is refused by name rather than quietly
+/// matching.
 fn emit_field(ctx: &ListCtx<'_>, out: &mut Sql, term: &FieldTerm) -> Result<(), QueryError> {
     out.push("(");
     for (i, value) in term.values.iter().enumerate() {
@@ -216,10 +217,12 @@ fn emit_one(
         "kind" | "service" | "source" | "attachment" | "size" | "trashed" => {
             emit_kind_word(ctx, out, term, v)
         }
-        _ => Err(QueryError::new(
+        "date" | "first-message" | "last-message" | "messages" | "conversations" | "groups"
+        | "participants" | "attachments" => emit_measure_word(ctx, out, term, v),
+        other => Err(QueryError::new(
             QueryErrorKind::BadValue,
             term.span.clone(),
-            format!("{}: is not built yet.", term.spec.word),
+            format!("{other}: has no emitter; add one in emit.rs"),
         )),
     }
 }
@@ -861,6 +864,109 @@ fn emit_kind_word(
                 // itself means "show every row regardless of trash state".
                 _ => out.push("1=1"),
             }
+            Ok(())
+        }
+        _ => Err(bad_value(term, "needs a value this word accepts.")),
+    }
+}
+
+/// `expr` (an RFC 3339 text timestamp) falls where `cmp` says. Text
+/// comparison against `YYYY-MM-DD` works because the date is a prefix of the
+/// timestamp.
+fn date_sql(out: &mut Sql, expr: &str, cmp: &DateCmp) {
+    match cmp {
+        DateCmp::In(span) => {
+            out.push(&format!("({expr} >= "));
+            out.bind_text(ymd(span.start));
+            out.push(&format!(" AND {expr} < "));
+            out.bind_text(ymd(span.end));
+            out.push(")");
+        }
+        DateCmp::Gte(d) | DateCmp::Gt(d) => {
+            out.push(&format!("{expr} >= "));
+            out.bind_text(ymd(*d));
+        }
+        DateCmp::Lt(d) | DateCmp::Lte(d) => {
+            out.push(&format!("{expr} < "));
+            out.bind_text(ymd(*d));
+        }
+    }
+}
+
+/// The eight date-and-count words: `date`, `first-message`, `last-message`,
+/// `messages`, `conversations`, `groups`, `participants`, `attachments`.
+/// `first-message:` and `last-message:` compare through a correlated MIN or
+/// MAX rather than building a list of ids first; the five plural words are
+/// correlated counts. `groups:` and `conversations:` are registered for
+/// Contacts only, so they read `ct.` directly; `attachments:` is registered
+/// for Messages only, so it reads `m.` directly.
+fn emit_measure_word(
+    ctx: &ListCtx<'_>,
+    out: &mut Sql,
+    term: &FieldTerm,
+    v: &Value,
+) -> Result<(), QueryError> {
+    match (term.spec.word, v) {
+        ("date", Value::Date(cmp)) => {
+            ctx.message(out, |o| date_sql(o, "m.timestamp", cmp));
+            Ok(())
+        }
+        ("first-message", Value::Date(cmp)) => {
+            let expr = format!(
+                "(SELECT MIN(m2.timestamp) FROM messages m2 WHERE {})",
+                ctx.messages_link("m2")
+            );
+            date_sql(out, &expr, cmp);
+            Ok(())
+        }
+        ("last-message", Value::Date(cmp)) => {
+            let expr = format!(
+                "(SELECT MAX(m2.timestamp) FROM messages m2 WHERE {})",
+                ctx.messages_link("m2")
+            );
+            date_sql(out, &expr, cmp);
+            Ok(())
+        }
+        ("messages", Value::Count(cmp)) => {
+            let expr = format!(
+                "(SELECT COUNT(*) FROM messages m2 WHERE {})",
+                ctx.messages_link("m2")
+            );
+            cmp_sql(out, &expr, cmp);
+            Ok(())
+        }
+        ("conversations", Value::Count(cmp)) => {
+            let expr = format!(
+                "(SELECT COUNT(*) FROM conversations c2 WHERE {})",
+                contact_conversations_link("c2")
+            );
+            cmp_sql(out, &expr, cmp);
+            Ok(())
+        }
+        ("groups", Value::Count(cmp)) => {
+            cmp_sql(
+                out,
+                "(SELECT COUNT(*) FROM contact_group_members cgm JOIN contact_groups cg ON cg.id = cgm.group_id WHERE cgm.contact_id = ct.id AND cg.account_id = ct.account_id)",
+                cmp,
+            );
+            Ok(())
+        }
+        ("participants", Value::Count(cmp)) => {
+            ctx.conversation(out, |o| {
+                cmp_sql(
+                    o,
+                    "(SELECT COUNT(*) FROM participants p WHERE p.conversation_id = c.id)",
+                    cmp,
+                );
+            });
+            Ok(())
+        }
+        ("attachments", Value::Count(cmp)) => {
+            cmp_sql(
+                out,
+                "(SELECT COUNT(*) FROM attachments a WHERE a.message_id = m.id)",
+                cmp,
+            );
             Ok(())
         }
         _ => Err(bad_value(term, "needs a value this word accepts.")),

@@ -1318,3 +1318,147 @@ mod kind_words {
         assert!(!run(&mut conn, ListKind::Contacts, "").await.contains(&f.cy));
     }
 }
+
+mod measure_words {
+    use super::*;
+
+    #[tokio::test]
+    async fn dates_on_every_list() {
+        let (pool, _dir, f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        // Spec case 2.
+        assert_eq!(
+            run(
+                &mut conn,
+                ListKind::Messages,
+                "date:2024-01..2024-03 attachment:image size:>500k"
+            )
+            .await,
+            vec![f.feb_big_jpeg]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "date:2018").await,
+            sorted(vec![f.ana_2018, f.jane_2018])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "date:>=2024-05").await,
+            vec![f.may_big_jpeg]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "date:<2019").await.len(),
+            2
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "date:2024-02-12").await,
+            vec![f.jane_avocado_to_me]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "date:2023").await,
+            vec![f.bo]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "date:2019").await,
+            vec![f.archive_group]
+        );
+        // A relative span resolves against the request's today, 2026-09-02.
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "date:1y").await,
+            Vec::<i64>::new()
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "date:<1y").await.len(),
+            14
+        );
+    }
+
+    #[tokio::test]
+    async fn first_and_last_message() {
+        let (pool, _dir, f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        // Spec case 5.
+        assert_eq!(
+            run(
+                &mut conn,
+                ListKind::Contacts,
+                "first-message:<2020 last-message:>=2024-01-01 handle:@gmail.com"
+            )
+            .await,
+            vec![f.jane]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "first-message:<2019").await,
+            sorted(vec![f.ana, f.jane])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "last-message:<2024-03").await,
+            Vec::<i64>::new()
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "last-message:<2022").await,
+            sorted(vec![f.ana_direct, f.archive_group])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "first-message:2018 body:hi").await,
+            vec![f.ana_2021]
+        );
+    }
+
+    #[tokio::test]
+    async fn counts() {
+        let (pool, _dir, f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        // Spec case 1: Ana is in Family, Cy has no messages.
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "group:none messages:>0").await,
+            sorted(vec![f.bo, f.jane, f.sam])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "messages:0").await,
+            sorted(vec![f.cy, f.nameless])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "conversations:0").await,
+            sorted(vec![f.cy, f.nameless])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "conversations:>=3").await,
+            sorted(vec![f.ana, f.bo, f.sam])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "groups:>0").await,
+            vec![f.ana]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "messages:>=2").await,
+            sorted(vec![f.ana_direct, f.jane_direct])
+        );
+        // Spec case 3.
+        assert_eq!(
+            run(
+                &mut conn,
+                ListKind::Conversations,
+                "participants:>2 -tag:Archive"
+            )
+            .await,
+            vec![f.big_group]
+        );
+        // The archive group now carries a fourth, name-only participant
+        // (Robin), so it clears the bar too, alongside the book club.
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "participants:>3").await,
+            sorted(vec![f.archive_msg, f.big_group_msg])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "attachments:>0")
+                .await
+                .len(),
+            4
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "attachments:0 date:2024-02")
+                .await
+                .len(),
+            4
+        );
+    }
+}
