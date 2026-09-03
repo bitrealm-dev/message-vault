@@ -2387,7 +2387,7 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Page size",
+            "description": "Page size, default 40, max 500",
             "required": false,
             "schema": {
               "type": "integer",
@@ -2397,7 +2397,7 @@
           {
             "name": "offset",
             "in": "query",
-            "description": "Page offset",
+            "description": "Page offset, max 50000",
             "required": false,
             "schema": {
               "type": "integer",
@@ -2411,7 +2411,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ContactListPage"
+                  "$ref": "#/components/schemas/Page_ContactSummary"
                 }
               }
             }
@@ -2827,7 +2827,7 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Page size",
+            "description": "Page size, default 40, max 500",
             "required": false,
             "schema": {
               "type": "integer",
@@ -2837,7 +2837,7 @@
           {
             "name": "offset",
             "in": "query",
-            "description": "Page offset",
+            "description": "Page offset, max 50000",
             "required": false,
             "schema": {
               "type": "integer",
@@ -2869,7 +2869,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ConversationListPage"
+                  "$ref": "#/components/schemas/Page_ConversationSummary"
                 }
               }
             }
@@ -5543,41 +5543,6 @@
           }
         }
       },
-      "ContactListPage": {
-        "type": "object",
-        "description": "One page of the contact list.",
-        "required": [
-          "contacts",
-          "total",
-          "limit",
-          "offset"
-        ],
-        "properties": {
-          "contacts": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ContactSummary"
-            },
-            "description": "Contacts on this page."
-          },
-          "limit": {
-            "type": "integer",
-            "description": "Page size used.",
-            "minimum": 0
-          },
-          "offset": {
-            "type": "integer",
-            "description": "Page offset used.",
-            "minimum": 0
-          },
-          "total": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Total contacts matching the query.",
-            "minimum": 0
-          }
-        }
-      },
       "ContactMatchBody": {
         "type": "object",
         "description": "Body for `POST /v1/contacts/match`.",
@@ -5755,10 +5720,10 @@
         "type": "object",
         "description": "Response for `POST /v1/contacts/summaries`.",
         "required": [
-          "contacts"
+          "items"
         ],
         "properties": {
-          "contacts": {
+          "items": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ContactSelectionSummary"
@@ -5834,41 +5799,6 @@
               "null"
             ],
             "description": "Platform service for the new handle."
-          }
-        }
-      },
-      "ConversationListPage": {
-        "type": "object",
-        "description": "One page of the conversation list.",
-        "required": [
-          "conversations",
-          "total",
-          "limit",
-          "offset"
-        ],
-        "properties": {
-          "conversations": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ConversationSummary"
-            },
-            "description": "Conversations on this page."
-          },
-          "limit": {
-            "type": "integer",
-            "description": "Page size used.",
-            "minimum": 0
-          },
-          "offset": {
-            "type": "integer",
-            "description": "Page offset used.",
-            "minimum": 0
-          },
-          "total": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Total conversations matching the query.",
-            "minimum": 0
           }
         }
       },
@@ -5949,10 +5879,10 @@
         "type": "object",
         "description": "Per-source counts for one conversation.",
         "required": [
-          "sources"
+          "items"
         ],
         "properties": {
-          "sources": {
+          "items": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ConversationSourceInfo"
@@ -5989,8 +5919,9 @@
             "description": "Timestamp of the conversation's first message."
           },
           "id": {
-            "type": "string",
-            "description": "Numeric `conversations.id`, serialized as a string; search for it as `in:#<id>`."
+            "type": "integer",
+            "format": "int64",
+            "description": "The conversation's id; search for it as `in:#<id>`."
           },
           "is_group": {
             "type": "boolean",
@@ -7399,6 +7330,188 @@
             "items": {
               "$ref": "#/components/schemas/NamedSet"
             }
+          }
+        }
+      },
+      "Page_ContactSummary": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Contact row for the list: name, handles, groups.",
+              "required": [
+                "id",
+                "name",
+                "handle_count",
+                "last_modified"
+              ],
+              "properties": {
+                "groups": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Group names on this contact (A–Z)."
+                },
+                "handle_count": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Number of handles linked to the contact.",
+                  "minimum": 0
+                },
+                "handles": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Normalized (and raw when distinct) handle values for client-side filter."
+                },
+                "id": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Contact id."
+                },
+                "last_modified": {
+                  "type": "string",
+                  "description": "When the contact’s address-book shape last changed (`datetime('now')`)."
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Contact display name."
+                }
+              }
+            },
+            "description": "The rows on this page."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Page size used.",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Page offset used.",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows matching the query across every page.",
+            "minimum": 0
+          }
+        }
+      },
+      "Page_ConversationSummary": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Conversation row for the list: participants, counts, tags.",
+              "required": [
+                "id",
+                "participants",
+                "message_count",
+                "last_message_at",
+                "service",
+                "is_group",
+                "tags"
+              ],
+              "properties": {
+                "date_range_end": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Timestamp of the conversation's last message."
+                },
+                "date_range_start": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Timestamp of the conversation's first message."
+                },
+                "id": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "The conversation's id; search for it as `in:#<id>`."
+                },
+                "is_group": {
+                  "type": "boolean",
+                  "description": "True for group conversations."
+                },
+                "label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Group label from the export, when present."
+                },
+                "last_message_at": {
+                  "type": "string",
+                  "description": "Timestamp of the last message."
+                },
+                "message_count": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Messages in the conversation (excluding hidden duplicates).",
+                  "minimum": 0
+                },
+                "participants": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ConversationParticipant"
+                  },
+                  "description": "Participants with names and handles."
+                },
+                "service": {
+                  "type": "string",
+                  "description": "Platform service of the conversation, e.g. `imessage`."
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Message tags on this conversation."
+                }
+              }
+            },
+            "description": "The rows on this page."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Page size used.",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Page offset used.",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows matching the query across every page.",
+            "minimum": 0
           }
         }
       },

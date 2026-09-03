@@ -13,11 +13,8 @@ use crate::db::sql::{
     SqlParam, bind_args, fold_in_id_chunks, group_rows_by_id, in_placeholders,
     renumber_placeholders,
 };
+use crate::paging::{DEFAULT_LIST_LIMIT, MAX_LIST_OFFSET, Page, page_params};
 use crate::server::{ApiError, AppState, FullAccess};
-
-pub use crate::paging::{
-    DEFAULT_LIST_LIMIT, MAX_CONVERSATION_LIST_LIMIT as MAX_LIST_LIMIT, MAX_LIST_OFFSET,
-};
 
 /// Column the conversation list is ordered by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -99,19 +96,6 @@ impl ConversationOrder {
     }
 }
 
-/// One page of the conversation list.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct ConversationListPage {
-    /// Conversations on this page.
-    pub conversations: Vec<ConversationSummary>,
-    /// Total conversations matching the query.
-    pub total: u64,
-    /// Page size used.
-    pub limit: usize,
-    /// Page offset used.
-    pub offset: usize,
-}
-
 /// One participant with display name and handle.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ConversationParticipant {
@@ -134,8 +118,8 @@ pub struct ConversationParticipant {
 /// Conversation row for the list: participants, counts, tags.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ConversationSummary {
-    /// Numeric `conversations.id`, serialized as a string; search for it as `in:#<id>`.
-    pub id: String,
+    /// The conversation's id; search for it as `in:#<id>`.
+    pub id: i64,
     /// Participants with names and handles.
     pub participants: Vec<ConversationParticipant>,
     /// Messages in the conversation (excluding hidden duplicates).
@@ -193,13 +177,7 @@ pub async fn list_conversations_sorted(
     limit: usize,
     offset: usize,
     today: chrono::NaiveDate,
-) -> Result<ConversationListPage, ApiError> {
-    let limit = limit.clamp(1, MAX_LIST_LIMIT);
-    if offset > MAX_LIST_OFFSET {
-        return Err(ApiError::BadRequest(format!(
-            "offset exceeds maximum of {MAX_LIST_OFFSET}"
-        )));
-    }
+) -> Result<Page<ConversationSummary>, ApiError> {
     let engine = engine_of(conn);
     let filter = crate::search::compile(crate::search::CompileRequest {
         list: crate::search::ListKind::Conversations,
@@ -297,7 +275,7 @@ pub async fn list_conversations_sorted(
             parts
         };
         out.push(ConversationSummary {
-            id: row.id.to_string(),
+            id: row.id,
             participants: parts,
             message_count: row.message_count.max(0) as u64,
             last_message_at: last,
@@ -312,8 +290,8 @@ pub async fn list_conversations_sorted(
             tags: tag_sets.remove(&row.id).unwrap_or_default(),
         });
     }
-    Ok(ConversationListPage {
-        conversations: out,
+    Ok(Page {
+        items: out,
         total,
         limit,
         offset,
@@ -478,7 +456,7 @@ pub struct ConversationSourceInfo {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ConversationSourcesPage {
     /// One entry per source that contributed messages.
-    pub sources: Vec<ConversationSourceInfo>,
+    pub items: Vec<ConversationSourceInfo>,
 }
 
 /// Per-source message counts for the Sources panel.
@@ -531,12 +509,12 @@ pub async fn list_conversation_source_stats(
             }
         })
         .collect();
-    Ok(Some(ConversationSourcesPage { sources }))
+    Ok(Some(ConversationSourcesPage { items: sources }))
 }
 
 /// Query string for the conversation list.
 ///
-/// Its own type rather than [`crate::server::ListPageQuery`] because `sort` and
+/// Its own type rather than [`crate::paging::PageQuery`] because `sort` and
 /// `order` are meaningful here and nowhere else.
 #[derive(Debug, Deserialize)]
 pub(crate) struct ConversationsPageQuery {
@@ -564,13 +542,13 @@ pub(crate) struct ConversationsPageQuery {
     security(("bearer" = [])),
     params(
         ("q" = Option<String>, Query, description = "Conversation search; empty lists all non-trashed"),
-        ("limit" = Option<usize>, Query, description = "Page size"),
-        ("offset" = Option<usize>, Query, description = "Page offset"),
+        ("limit" = Option<usize>, Query, description = "Page size, default 40, max 500"),
+        ("offset" = Option<usize>, Query, description = "Page offset, max 50000"),
         ("sort" = Option<String>, Query, description = "Order by `date` (last message, default) or `messages` (message count)"),
         ("order" = Option<String>, Query, description = "`asc` or `desc` (default)")
     ),
     responses(
-        (status = 200, body = crate::conversations_api::ConversationListPage),
+        (status = 200, body = crate::paging::Page<crate::conversations_api::ConversationSummary>),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody)
@@ -580,11 +558,15 @@ pub(crate) async fn conversations_list_handler(
     State(state): State<AppState>,
     FullAccess(auth): FullAccess,
     Query(query): Query<ConversationsPageQuery>,
-) -> Result<Json<ConversationListPage>, ApiError> {
+) -> Result<Json<Page<ConversationSummary>>, ApiError> {
     let mut conn = state.db.acquire().await?;
     let q = query.q.unwrap_or_default();
-    let limit = query.limit.unwrap_or(DEFAULT_LIST_LIMIT);
-    let offset = query.offset.unwrap_or(0);
+    let page = page_params(
+        query.limit,
+        query.offset,
+        DEFAULT_LIST_LIMIT,
+        Some(MAX_LIST_OFFSET),
+    )?;
     let order = ConversationOrder {
         sort: query
             .sort
@@ -595,17 +577,17 @@ pub(crate) async fn conversations_list_handler(
             .as_deref()
             .map_or_else(SortOrder::default, SortOrder::from_param),
     };
-    let page = list_conversations_sorted(
+    let result = list_conversations_sorted(
         &mut conn,
         &auth.account_id,
         &q,
         order,
-        limit,
-        offset,
+        page.limit,
+        page.offset,
         chrono::Local::now().date_naive(),
     )
     .await?;
-    Ok(Json(page))
+    Ok(Json(result))
 }
 
 /// Per-backup message counts for one conversation (the Sources panel).
@@ -651,7 +633,7 @@ mod tests {
         q: &str,
         limit: usize,
         offset: usize,
-    ) -> Result<ConversationListPage, ApiError> {
+    ) -> Result<Page<ConversationSummary>, ApiError> {
         list_conversations_sorted(
             conn,
             account_id,
@@ -754,12 +736,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(page.total, 1);
-        assert_eq!(page.conversations.len(), 1);
-        assert_eq!(page.conversations[0].id, "1");
-        assert_eq!(page.conversations[0].message_count, 1);
-        assert!(!page.conversations[0].is_group);
-        assert_eq!(page.conversations[0].participants.len(), 1);
-        assert_eq!(page.conversations[0].participants[0].handle, "+15555550200");
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].id, 1);
+        assert_eq!(page.items[0].message_count, 1);
+        assert!(!page.items[0].is_group);
+        assert_eq!(page.items[0].participants.len(), 1);
+        assert_eq!(page.items[0].participants[0].handle, "+15555550200");
     }
 
     #[tokio::test]
@@ -790,7 +772,7 @@ mod tests {
             trash.total, 1,
             "trashed:yes should include handle-trashed threads"
         );
-        assert_eq!(trash.conversations[0].id, "1");
+        assert_eq!(trash.items[0].id, 1);
     }
 
     #[tokio::test]
@@ -807,7 +789,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(hit.total, 1);
-        assert_eq!(hit.conversations.len(), 1);
+        assert_eq!(hit.items.len(), 1);
         let miss = list_conversations(
             &mut conn,
             &account,
@@ -818,7 +800,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(miss.total, 0);
-        assert!(miss.conversations.is_empty());
+        assert!(miss.items.is_empty());
     }
 
     #[tokio::test]
@@ -934,7 +916,7 @@ mod tests {
             account: &str,
             sort: ConversationSort,
             order: SortOrder,
-        ) -> Vec<String> {
+        ) -> Vec<i64> {
             let mut conn = pool.acquire().await.unwrap();
             list_conversations_sorted(
                 &mut conn,
@@ -947,31 +929,31 @@ mod tests {
             )
             .await
             .unwrap()
-            .conversations
+            .items
             .iter()
-            .map(|c| c.id.clone())
+            .map(|c| c.id)
             .collect()
         }
 
         // 3 messages ending 2024-06-01 (id 1) vs 1 message on 2024-07-01 (id 2).
         assert_eq!(
             ids_for(&pool, &account, ConversationSort::Date, SortOrder::Desc).await,
-            ["2", "1"],
+            [2, 1],
             "newest activity first"
         );
         assert_eq!(
             ids_for(&pool, &account, ConversationSort::Date, SortOrder::Asc).await,
-            ["1", "2"],
+            [1, 2],
             "oldest activity first"
         );
         assert_eq!(
             ids_for(&pool, &account, ConversationSort::Messages, SortOrder::Desc).await,
-            ["1", "2"],
+            [1, 2],
             "busiest thread first"
         );
         assert_eq!(
             ids_for(&pool, &account, ConversationSort::Messages, SortOrder::Asc).await,
-            ["2", "1"],
+            [2, 1],
             "quietest thread first"
         );
     }
@@ -1015,28 +997,22 @@ mod tests {
         assert_eq!(page0.total, 2);
         assert_eq!(page0.limit, 1);
         assert_eq!(page0.offset, 0);
-        assert_eq!(page0.conversations.len(), 1);
-        assert_eq!(page0.conversations[0].id, "2"); // newer first
+        assert_eq!(page0.items.len(), 1);
+        assert_eq!(page0.items[0].id, 2); // newer first
 
         let page1 = list_conversations(&mut conn, &account, "", 1, 1)
             .await
             .unwrap();
         assert_eq!(page1.total, 2);
         assert_eq!(page1.offset, 1);
-        assert_eq!(page1.conversations.len(), 1);
-        assert_eq!(page1.conversations[0].id, "1");
+        assert_eq!(page1.items.len(), 1);
+        assert_eq!(page1.items[0].id, 1);
 
         let by_text = list_conversations(&mut conn, &account, "5555550300", 10, 0)
             .await
             .unwrap();
         assert_eq!(by_text.total, 1);
-        assert_eq!(by_text.conversations[0].id, "2");
-
-        let clamped = list_conversations(&mut conn, &account, "", MAX_LIST_LIMIT + 50, 0)
-            .await
-            .unwrap();
-        assert_eq!(clamped.limit, MAX_LIST_LIMIT);
-        assert_eq!(clamped.total, 2);
+        assert_eq!(by_text.items[0].id, 2);
     }
 
     #[tokio::test]
@@ -1055,7 +1031,7 @@ mod tests {
                 &mut conn,
                 &account,
                 query,
-                crate::contacts_api::DEFAULT_LIST_LIMIT,
+                DEFAULT_LIST_LIMIT,
                 0,
                 chrono::Local::now().date_naive(),
             )
@@ -1206,9 +1182,9 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(all.total, 2);
-        let ids: Vec<&str> = all.conversations.iter().map(|c| c.id.as_str()).collect();
-        assert!(ids.contains(&"1"));
-        assert!(ids.contains(&"3"));
+        let ids: Vec<i64> = all.items.iter().map(|c| c.id).collect();
+        assert!(ids.contains(&1));
+        assert!(ids.contains(&3));
 
         let direct = list_conversations(
             &mut conn,
@@ -1220,8 +1196,8 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(direct.total, 1);
-        assert_eq!(direct.conversations[0].id, "1");
-        assert!(!direct.conversations[0].is_group);
+        assert_eq!(direct.items[0].id, 1);
+        assert!(!direct.items[0].is_group);
 
         let groups = list_conversations(
             &mut conn,
@@ -1233,8 +1209,8 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(groups.total, 1);
-        assert_eq!(groups.conversations[0].id, "3");
-        assert!(groups.conversations[0].is_group);
+        assert_eq!(groups.items[0].id, 3);
+        assert!(groups.items[0].is_group);
     }
 
     #[tokio::test]
@@ -1283,8 +1259,8 @@ mod tests {
         let page = list_conversations(&mut conn, &account, "", 10, 0)
             .await
             .unwrap();
-        assert_eq!(page.conversations.len(), 1);
-        let p = &page.conversations[0].participants[0];
+        assert_eq!(page.items.len(), 1);
+        let p = &page.items[0].participants[0];
         assert_eq!(p.handle, "+15555550200");
         assert_eq!(p.name.as_deref(), Some("Sam Preferred"));
         assert_eq!(p.name_alias.as_deref(), Some("Sammy"));
@@ -1298,7 +1274,7 @@ mod tests {
         let page = list_conversations(&mut conn, &account, "", 10, 0)
             .await
             .unwrap();
-        let p = &page.conversations[0].participants[0];
+        let p = &page.items[0].participants[0];
         // No contact_id → residue `participants.name_alias` is exposed as `name`.
         assert_eq!(p.name.as_deref(), Some("Sam"));
         assert_eq!(p.name_alias, None);
@@ -1348,7 +1324,7 @@ mod tests {
         let page = list_conversations(&mut conn, &account, "", 10, 0)
             .await
             .unwrap();
-        let p = &page.conversations[0].participants[0];
+        let p = &page.items[0].participants[0];
         assert_eq!(p.name.as_deref(), Some("Sam"));
         assert_eq!(p.name_alias.as_deref(), Some("Sammy"));
     }
@@ -1390,7 +1366,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(by_name.total, 1);
-        assert_eq!(by_name.conversations[0].id, "1");
+        assert_eq!(by_name.items[0].id, 1);
     }
 
     #[tokio::test]
@@ -1456,19 +1432,19 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(eq2.total, 1);
-        assert_eq!(eq2.conversations[0].id, "10");
+        assert_eq!(eq2.items[0].id, 10);
 
         let gt1 = list_conversations(&mut conn, &account, "participants:>1", 50, 0)
             .await
             .unwrap();
         assert_eq!(gt1.total, 1);
-        assert_eq!(gt1.conversations[0].id, "10");
+        assert_eq!(gt1.items[0].id, 10);
 
         let eq1 = list_conversations(&mut conn, &account, "participants:1", 50, 0)
             .await
             .unwrap();
         assert_eq!(eq1.total, 1);
-        assert_eq!(eq1.conversations[0].id, "1");
+        assert_eq!(eq1.items[0].id, 1);
 
         let lt2 = list_conversations(&mut conn, &account, "kind:group participants:<2", 50, 0)
             .await
@@ -1552,8 +1528,8 @@ mod tests {
             page.total, 1,
             "only the trio conversation has exactly 3 participants"
         );
-        assert_eq!(page.conversations[0].id, "20");
-        assert_eq!(page.conversations[0].participants.len(), 3);
+        assert_eq!(page.items[0].id, 20);
+        assert_eq!(page.items[0].participants.len(), 3);
     }
 
     #[tokio::test]
@@ -1703,7 +1679,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(a.total, 1);
-        assert_eq!(a.conversations[0].id, "1");
+        assert_eq!(a.items[0].id, 1);
 
         let b = list_conversations(
             &mut conn,
@@ -1715,7 +1691,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(b.total, 1);
-        assert_eq!(b.conversations[0].id, "2");
+        assert_eq!(b.items[0].id, 2);
 
         let missing =
             list_conversations(&mut conn, &account, "import:#999999", DEFAULT_LIST_LIMIT, 0)
@@ -1854,7 +1830,7 @@ mod tests {
             account: &str,
             q: &str,
             order: SortOrder,
-        ) -> Vec<String> {
+        ) -> Vec<i64> {
             let mut conn = pool.acquire().await.unwrap();
             list_conversations_sorted(
                 &mut conn,
@@ -1870,21 +1846,21 @@ mod tests {
             )
             .await
             .unwrap()
-            .conversations
+            .items
             .iter()
-            .map(|c| c.id.clone())
+            .map(|c| c.id)
             .collect()
         }
 
         let q = format!("import:#{import_a}");
         assert_eq!(
             ids_for(&pool, &account, &q, SortOrder::Desc).await,
-            ["4", "3"],
+            [4, 3],
             "a thread with no surviving message sorts last, not first"
         );
         assert_eq!(
             ids_for(&pool, &account, &q, SortOrder::Asc).await,
-            ["4", "3"],
+            [4, 3],
             "and stays last when the direction flips"
         );
     }
@@ -2011,7 +1987,7 @@ mod tests {
             by_import.total, 1,
             "import filter should match duplicate-only thread"
         );
-        assert_eq!(by_import.conversations[0].id, "3");
+        assert_eq!(by_import.items[0].id, 3);
 
         let all = list_conversations(&mut conn, &account, "", DEFAULT_LIST_LIMIT, 0)
             .await
@@ -2020,7 +1996,7 @@ mod tests {
             all.total, 1,
             "default list still requires a non-duplicate message"
         );
-        assert_eq!(all.conversations[0].id, "4");
+        assert_eq!(all.items[0].id, 4);
     }
 
     #[test]
@@ -2056,7 +2032,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(tagged.total, 1);
-        assert_eq!(tagged.conversations[0].tags, vec!["Holiday".to_string()]);
+        assert_eq!(tagged.items[0].tags, vec!["Holiday".to_string()]);
         let hidden = list_conversations(&mut conn, &account, "-tag:Holiday", DEFAULT_LIST_LIMIT, 0)
             .await
             .unwrap();
@@ -2106,5 +2082,41 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(not_family.total, 0);
+    }
+
+    #[tokio::test]
+    async fn the_conversation_list_is_a_page_with_integer_ids() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let user = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+        crate::test_support::seed_one_message(&state, &user.account_id).await;
+
+        let page: serde_json::Value =
+            crate::test_support::get_json(&state, "/v1/conversations?limit=10", &user.token).await;
+        assert_eq!(page["total"], 1);
+        assert_eq!(page["limit"], 10);
+        assert_eq!(page["offset"], 0);
+        assert!(
+            page["items"][0]["id"].is_i64(),
+            "id must be an integer: {page}"
+        );
+        assert!(page.get("conversations").is_none());
+        assert!(page.get("ok").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_limit_past_the_cap_or_an_offset_past_the_cap_is_a_400() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let user = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+
+        for path in [
+            "/v1/conversations?limit=501",
+            "/v1/conversations?limit=0",
+            "/v1/conversations?offset=50001",
+        ] {
+            let status = crate::test_support::get_status(&state, path, &user.token).await;
+            assert_eq!(status, axum::http::StatusCode::BAD_REQUEST, "{path}");
+        }
     }
 }

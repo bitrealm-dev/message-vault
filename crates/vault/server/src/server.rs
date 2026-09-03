@@ -16,7 +16,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use futures_util::StreamExt;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sqlx::AnyConnection;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
@@ -740,16 +740,6 @@ pub(crate) fn is_multipart_content_type(base: &str) -> bool {
 /// Reject path traversal; allow only relative Normal/CurDir components.
 pub(crate) fn safe_rel_path(name: &str) -> Result<PathBuf, ApiError> {
     crate::config::safe_rel_path(name).map_err(|e| ApiError::BadRequest(e.to_string()))
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct ListPageQuery {
-    #[serde(default)]
-    pub(crate) q: Option<String>,
-    #[serde(default)]
-    pub(crate) limit: Option<usize>,
-    #[serde(default)]
-    pub(crate) offset: Option<usize>,
 }
 
 pub(crate) async fn read_body_limited(

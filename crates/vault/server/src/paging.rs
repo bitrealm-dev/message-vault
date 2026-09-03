@@ -21,8 +21,7 @@ pub const MAX_LIST_OFFSET: usize = 50_000;
 /// `IN` list stays under SQLite's variable cap.
 pub const MAX_CONTACT_SUMMARY_IDS: usize = 500;
 
-// Kept only until Task 2 (conversations) and Task 3 (export) land.
-pub const MAX_CONVERSATION_LIST_LIMIT: usize = 100;
+// Kept only until Task 3 (export) lands.
 pub const MAX_EXPORT_LIMIT: usize = 500;
 pub const MAX_EXPORT_OFFSET: usize = 50_000;
 
