@@ -43,22 +43,29 @@ impl ContactNameMode {
 
 /// The contact that owns `handle_id`, creating one when nothing owns it yet.
 ///
-/// Every participant an import meets becomes a contact. A contact created here
-/// carries no preferred name — the vault knows how to reach this person and
-/// not who they are — which is what puts it in Unknown until someone names it.
-/// The display name the source supplied stays on the identity as residue
-/// rather than being promoted to a preferred name, because the same number
-/// arrives spelled differently across backups.
+/// Every participant an import meets becomes a contact. ADR-0006: a backup is
+/// an address book the person already curated, so the name it supplies goes on
+/// the contact — on creation, or later if an earlier backup left the contact
+/// nameless. A contact that already has a name is untouched, because the same
+/// number arrives spelled differently across backups and the first spelling is
+/// as good as the second. A contact the person made or an address book loaded
+/// is never renamed by an import.
 pub(super) async fn ensure_contact_for_handle(
     tx: &mut AnyConnection,
     account_id: &str,
     handle_id: i64,
+    backup_name: Option<&str>,
     stats: &mut ImportStats,
 ) -> Result<i64> {
+    let name = nonempty_str(backup_name).unwrap_or("");
     if let Some(existing) = ensure_sibling_contact_link(tx, account_id, handle_id).await? {
+        if !name.is_empty() {
+            name_nameless_import_contact(tx, account_id, existing, name).await?;
+        }
         return Ok(existing);
     }
-    let contact_id = contacts::create_contact(tx, account_id, "", contacts::Origin::Import).await?;
+    let contact_id =
+        contacts::create_contact(tx, account_id, name, contacts::Origin::Import).await?;
     contacts::link_handle_to_contact(
         tx,
         account_id,
@@ -69,6 +76,35 @@ pub(super) async fn ensure_contact_for_handle(
     .await?;
     stats.contacts_created += 1;
     Ok(contact_id)
+}
+
+/// Put the backup's name on a contact an earlier import left nameless.
+///
+/// The `origin = 'import'` clause is what keeps a typed or address-book name
+/// safe, and the empty-name clause is what makes the first backup win.
+async fn name_nameless_import_contact(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    contact_id: i64,
+    name: &str,
+) -> Result<()> {
+    let updated = sqlx::query(
+        "UPDATE contacts
+         SET preferred_name = $1
+         WHERE account_id = $2 AND id = $3
+           AND origin = 'import'
+           AND trim(preferred_name) = ''",
+    )
+    .bind(name)
+    .bind(account_id)
+    .bind(contact_id)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    if updated > 0 {
+        contacts::touch_contact(conn, account_id, contact_id).await?;
+    }
+    Ok(())
 }
 
 /// Bind a participant the source named without recording any address.
@@ -341,6 +377,168 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(alias.as_deref(), Some("First"));
+    }
+
+    #[tokio::test]
+    async fn an_import_creates_the_contact_with_the_backup_name() {
+        let (pool, _dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        schema::ensure_vault_schema(&mut conn).await.unwrap();
+        crate::db::account_profile::ensure_account_row(&mut conn, TEST_ACCOUNT)
+            .await
+            .unwrap();
+        let handle_id: i64 = sqlx::query_scalar(
+            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+             VALUES ($1, '+15555550700', '+15555550700', 'phone', 'imessage') RETURNING id",
+        )
+        .bind(TEST_ACCOUNT)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+
+        let mut stats = ImportStats::default();
+        let contact_id =
+            ensure_contact_for_handle(&mut conn, TEST_ACCOUNT, handle_id, Some("Ada"), &mut stats)
+                .await
+                .unwrap();
+
+        let (name, origin): (String, String) =
+            sqlx::query_as("SELECT preferred_name, origin FROM contacts WHERE id = $1")
+                .bind(contact_id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!(name, "Ada");
+        assert_eq!(origin, "import");
+    }
+
+    #[tokio::test]
+    async fn a_later_backup_names_a_contact_an_earlier_one_left_nameless() {
+        let (pool, _dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        schema::ensure_vault_schema(&mut conn).await.unwrap();
+        crate::db::account_profile::ensure_account_row(&mut conn, TEST_ACCOUNT)
+            .await
+            .unwrap();
+        let handle_id: i64 = sqlx::query_scalar(
+            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+             VALUES ($1, '+15555550800', '+15555550800', 'phone', 'imessage') RETURNING id",
+        )
+        .bind(TEST_ACCOUNT)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+
+        let mut stats = ImportStats::default();
+        let first = ensure_contact_for_handle(&mut conn, TEST_ACCOUNT, handle_id, None, &mut stats)
+            .await
+            .unwrap();
+        let second =
+            ensure_contact_for_handle(&mut conn, TEST_ACCOUNT, handle_id, Some("Ada"), &mut stats)
+                .await
+                .unwrap();
+        assert_eq!(first, second, "the same handle keeps the same contact");
+
+        let name: String = sqlx::query_scalar("SELECT preferred_name FROM contacts WHERE id = $1")
+            .bind(first)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(name, "Ada");
+    }
+
+    #[tokio::test]
+    async fn a_second_spelling_does_not_rename_anyone() {
+        let (pool, _dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        schema::ensure_vault_schema(&mut conn).await.unwrap();
+        crate::db::account_profile::ensure_account_row(&mut conn, TEST_ACCOUNT)
+            .await
+            .unwrap();
+        let handle_id: i64 = sqlx::query_scalar(
+            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+             VALUES ($1, '+15555550900', '+15555550900', 'phone', 'imessage') RETURNING id",
+        )
+        .bind(TEST_ACCOUNT)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+
+        let mut stats = ImportStats::default();
+        let contact_id = ensure_contact_for_handle(
+            &mut conn,
+            TEST_ACCOUNT,
+            handle_id,
+            Some("Ada Lovelace"),
+            &mut stats,
+        )
+        .await
+        .unwrap();
+        ensure_contact_for_handle(
+            &mut conn,
+            TEST_ACCOUNT,
+            handle_id,
+            Some("ada l"),
+            &mut stats,
+        )
+        .await
+        .unwrap();
+
+        let name: String = sqlx::query_scalar("SELECT preferred_name FROM contacts WHERE id = $1")
+            .bind(contact_id)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(name, "Ada Lovelace", "first backup wins");
+    }
+
+    /// A name the person typed carries `origin = 'user'` and outranks any
+    /// backup, however many imports later run.
+    #[tokio::test]
+    async fn an_import_does_not_overwrite_a_name_the_person_typed() {
+        let (pool, _dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        schema::ensure_vault_schema(&mut conn).await.unwrap();
+        crate::db::account_profile::ensure_account_row(&mut conn, TEST_ACCOUNT)
+            .await
+            .unwrap();
+        let handle_id: i64 = sqlx::query_scalar(
+            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+             VALUES ($1, '+15555551000', '+15555551000', 'phone', 'imessage') RETURNING id",
+        )
+        .bind(TEST_ACCOUNT)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let contact_id = crate::db::contacts::create_contact(
+            &mut conn,
+            TEST_ACCOUNT,
+            "",
+            crate::db::contacts::Origin::User,
+        )
+        .await
+        .unwrap();
+        crate::db::contacts::link_handle_to_contact(
+            &mut conn,
+            TEST_ACCOUNT,
+            handle_id,
+            contact_id,
+            crate::db::contacts::Origin::User,
+        )
+        .await
+        .unwrap();
+
+        let mut stats = ImportStats::default();
+        ensure_contact_for_handle(&mut conn, TEST_ACCOUNT, handle_id, Some("Ada"), &mut stats)
+            .await
+            .unwrap();
+
+        let name: String = sqlx::query_scalar("SELECT preferred_name FROM contacts WHERE id = $1")
+            .bind(contact_id)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(name, "", "the person's contact is not the import's to name");
     }
 
     #[tokio::test]
