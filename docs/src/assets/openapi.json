@@ -7347,7 +7347,7 @@
       },
       "Participant": {
         "type": "object",
-        "description": "One participant of a conversation, named by the rule above.",
+        "description": "One participant of a conversation, carrying the name to show for them:\nthe Contact's name, else what that backup called them in that\nconversation, else the handle.",
         "required": [
           "name",
           "handle",

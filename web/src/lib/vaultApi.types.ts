@@ -2031,7 +2031,11 @@ export interface components {
              */
             total: number;
         };
-        /** @description One participant of a conversation, named by the rule above. */
+        /**
+         * @description One participant of a conversation, carrying the name to show for them:
+         *     the Contact's name, else what that backup called them in that
+         *     conversation, else the handle.
+         */
         Participant: {
             /**
              * Format: int64

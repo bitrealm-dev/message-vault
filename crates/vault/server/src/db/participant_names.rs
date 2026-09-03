@@ -20,7 +20,9 @@ use sqlx::{AnyConnection, Row};
 
 use crate::db::sql::group_rows_by_id;
 
-/// One participant of a conversation, named by the rule above.
+/// One participant of a conversation, carrying the name to show for them:
+/// the Contact's name, else what that backup called them in that
+/// conversation, else the handle.
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct Participant {
     /// What to show for this person. Never empty: the rule ends at the handle.

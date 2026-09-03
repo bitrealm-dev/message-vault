@@ -211,7 +211,8 @@ pub async fn contact_id_for_handle(
 /// Counts from loading an address book into the vault.
 #[derive(Debug, Default)]
 pub struct ContactLoadStats {
-    /// Contacts written.
+    /// Contacts the book supplied: one per card, whether the card joined a
+    /// contact the vault already had or created a new one.
     pub contacts: u64,
     /// Phone handles linked to contacts.
     pub phones: u64,
