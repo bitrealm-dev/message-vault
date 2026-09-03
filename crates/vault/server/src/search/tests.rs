@@ -1189,3 +1189,132 @@ mod people_words {
         );
     }
 }
+
+mod kind_words {
+    use super::*;
+
+    #[tokio::test]
+    async fn kind_service_and_source() {
+        let (pool, _dir, f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "kind:direct").await,
+            sorted(vec![f.ana_direct, f.bo_direct, f.jane_direct, f.sam_direct])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "kind:group").await,
+            sorted(vec![f.ana, f.bo, f.jane, f.sam])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "service:sms").await,
+            vec![f.bo_2023]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "service:sms,whatsapp").await,
+            sorted(vec![f.bo_2023, f.archive_msg])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "service:sms").await,
+            vec![f.bo]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "source:whatsapp").await,
+            vec![f.archive_msg]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "source:imessage")
+                .await
+                .len(),
+            5
+        );
+    }
+
+    #[tokio::test]
+    async fn attachments_by_kind_and_size() {
+        let (pool, _dir, f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "attachment:image").await,
+            sorted(vec![f.feb_big_jpeg, f.feb_small_jpeg, f.may_big_jpeg])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "attachment:pdf").await,
+            vec![f.feb_pdf]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "attachment:document").await,
+            vec![f.feb_pdf]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "attachment:video").await,
+            Vec::<i64>::new()
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "attachment:any")
+                .await
+                .len(),
+            4
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "attachment:none")
+                .await
+                .len(),
+            10
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "attachment:image").await,
+            vec![f.jane_direct]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "size:>500k").await,
+            sorted(vec![f.feb_big_jpeg, f.feb_pdf, f.may_big_jpeg])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "size:<500k").await,
+            vec![f.feb_small_jpeg]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "size:100k..2M")
+                .await
+                .len(),
+            4
+        );
+    }
+
+    #[tokio::test]
+    async fn trash_is_a_word() {
+        let (pool, _dir, f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "trashed:yes").await,
+            vec![f.trashed_conv]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "trashed:no")
+                .await
+                .len(),
+            6
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "trashed:any")
+                .await
+                .len(),
+            7
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "trashed:yes gone").await,
+            vec![f.trashed_conv]
+        );
+        sqlx::query("INSERT INTO trashed_contacts (account_id, contact_id) VALUES ($1, $2)")
+            .bind(ACCOUNT)
+            .bind(f.cy)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "trashed:yes").await,
+            vec![f.cy]
+        );
+        assert!(!run(&mut conn, ListKind::Contacts, "").await.contains(&f.cy));
+    }
+}

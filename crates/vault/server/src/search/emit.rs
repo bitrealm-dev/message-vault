@@ -9,7 +9,7 @@ use super::bridge::{ListCtx, Sql};
 use super::error::{QueryError, QueryErrorKind};
 use super::fts;
 use super::parse::{Expr, FieldTerm, TextTerm};
-use super::value::Value;
+use super::value::{Cmp, Value};
 use super::{Filter, ListKind};
 
 /// Contact `ct` is not in the trash.
@@ -185,7 +185,7 @@ fn emit_text(ctx: &ListCtx<'_>, out: &mut Sql, term: &TextTerm) {
 }
 
 /// One `word:values`. The values are OR-ed, so `body:avocado,guac` is
-/// either. Tasks 6 to 8 add the remaining words; until a word has an arm in
+/// either. Task 8 adds the remaining words; until a word has an arm in
 /// `emit_one`, the query is refused by name rather than quietly matching.
 fn emit_field(ctx: &ListCtx<'_>, out: &mut Sql, term: &FieldTerm) -> Result<(), QueryError> {
     out.push("(");
@@ -212,6 +212,9 @@ fn emit_one(
         }
         "with" | "from" | "to" | "in" | "group" | "tag" | "import" => {
             emit_people_word(ctx, out, term, v)
+        }
+        "kind" | "service" | "source" | "attachment" | "size" | "trashed" => {
+            emit_kind_word(ctx, out, term, v)
         }
         _ => Err(QueryError::new(
             QueryErrorKind::BadValue,
@@ -715,5 +718,151 @@ fn emit_people_word(
             _ => Err(bad_value(term, "needs #id or last.")),
         },
         _ => Err(bad_value(term, "is not built yet.")),
+    }
+}
+
+/// `expr <op> ?` for a size comparison; a range is two bounds, both bound in
+/// textual order.
+fn cmp_sql(out: &mut Sql, expr: &str, cmp: &Cmp<i64>) {
+    let (op, val) = match cmp {
+        Cmp::Eq(v) => ("=", *v),
+        Cmp::Gt(v) => (">", *v),
+        Cmp::Gte(v) => (">=", *v),
+        Cmp::Lt(v) => ("<", *v),
+        Cmp::Lte(v) => ("<=", *v),
+        Cmp::Range(a, b) => {
+            out.push(&format!("({expr} >= "));
+            out.bind_int(*a);
+            out.push(&format!(" AND {expr} <= "));
+            out.bind_int(*b);
+            out.push(")");
+            return;
+        }
+    };
+    out.push(&format!("{expr} {op} "));
+    out.bind_int(val);
+}
+
+/// Attachment `a` is of this kind, by MIME type.
+fn attachment_kind_sql(kind: &str) -> String {
+    const MIME: &str = "lower(coalesce(a.mime_type, ''))";
+    let image = format!("{MIME} LIKE 'image/%'");
+    let video = format!("{MIME} LIKE 'video/%'");
+    let audio = format!("{MIME} LIKE 'audio/%'");
+    let pdf = format!("{MIME} = 'application/pdf'");
+    let contact = format!("{MIME} IN ('text/vcard', 'text/x-vcard')");
+    let document = format!(
+        "({pdf} OR {MIME} LIKE 'text/%' OR {MIME} LIKE 'application/vnd.%' OR {MIME} IN ('application/msword', 'application/rtf'))"
+    );
+    match kind {
+        "image" => image,
+        "video" => video,
+        "audio" => audio,
+        "pdf" => pdf,
+        "contact" => contact,
+        "document" => format!("({document} AND NOT {contact})"),
+        _ => format!("NOT ({image} OR {video} OR {audio} OR {document} OR {contact})"),
+    }
+}
+
+/// The `source` word's values, mapped to the id an importer writes onto the
+/// message row it wrote.
+fn source_id(choice: &str) -> &'static str {
+    match choice {
+        "imessage" => "imessage",
+        "whatsapp" => "whatsapp",
+        _ => "sms-backup-restore",
+    }
+}
+
+/// The six kind-and-attachment words: `kind`, `service`, `source`,
+/// `attachment`, `size`, `trashed`. `kind:`, `service:`, and `source:` bind
+/// their mapped value with `bind_text` rather than interpolating it, even
+/// though the value is one the code chose, not user text, so no value ever
+/// reaches the SQL text directly. `trashed:` is registered for Contacts and
+/// Conversations only, so it reads `ct.`/`c.` directly rather than through a
+/// bridge, reusing the same "not trashed" constants the per-list defaults do.
+fn emit_kind_word(
+    ctx: &ListCtx<'_>,
+    out: &mut Sql,
+    term: &FieldTerm,
+    v: &Value,
+) -> Result<(), QueryError> {
+    match (term.spec.word, v) {
+        ("kind", Value::Choice(k)) => {
+            let ty = if *k == "direct" {
+                "individual"
+            } else {
+                "group"
+            };
+            ctx.conversation(out, |o| {
+                o.push("c.conversation_type = ");
+                o.bind_text(ty);
+            });
+            Ok(())
+        }
+        ("service", Value::Choice(s)) => {
+            let s = s.to_string();
+            ctx.message(out, |o| {
+                o.push("lower(coalesce(m.service, '')) = ");
+                o.bind_text(s);
+            });
+            Ok(())
+        }
+        ("source", Value::Choice(s)) => {
+            let id = source_id(s);
+            ctx.message(out, |o| {
+                o.push("m.source = ");
+                o.bind_text(id);
+            });
+            Ok(())
+        }
+        ("attachment", Value::Choice("any")) => {
+            ctx.message(out, |o| {
+                o.push("EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id)");
+            });
+            Ok(())
+        }
+        ("attachment", Value::Choice("none")) => {
+            ctx.message(out, |o| {
+                o.push("NOT EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id)");
+            });
+            Ok(())
+        }
+        ("attachment", Value::Choice(k)) => {
+            let pred = attachment_kind_sql(k);
+            ctx.message(out, |o| {
+                o.push(&format!(
+                    "EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id AND {pred})"
+                ));
+            });
+            Ok(())
+        }
+        ("size", Value::Size(cmp)) => {
+            ctx.message(out, |o| {
+                o.push(
+                    "EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id AND a.size_bytes IS NOT NULL AND ",
+                );
+                cmp_sql(o, "a.size_bytes", cmp);
+                o.push(")");
+            });
+            Ok(())
+        }
+        ("trashed", Value::Choice(flag)) => {
+            let not_trashed = match ctx.list {
+                ListKind::Contacts => NOT_TRASHED_CONTACT,
+                _ => NOT_TRASHED_CONVERSATION,
+            };
+            match *flag {
+                "no" => out.push(not_trashed),
+                "yes" => out.push(&format!("NOT ({not_trashed})")),
+                // "any" lifts the default and filters nothing: the one place
+                // an always-true predicate is legitimate, since the word
+                // itself means "show every row regardless of trash state".
+                _ => out.push("1=1"),
+            }
+            Ok(())
+        }
+        _ => Err(bad_value(term, "needs a value this word accepts.")),
     }
 }
