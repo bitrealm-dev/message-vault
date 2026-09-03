@@ -936,12 +936,19 @@ pub async fn mutate_contact(
         if name.is_empty() {
             bail!("name must not be empty");
         }
-        sqlx::query("UPDATE contacts SET preferred_name = $1 WHERE id = $2 AND account_id = $3")
-            .bind(name)
-            .bind(contact_id)
-            .bind(account_id)
-            .execute(&mut *conn)
-            .await?;
+        // Typing a name in the drawer is the most deliberate naming act in the
+        // product, so the row stops being the import's and becomes the
+        // person's. That is what keeps a later address book from replacing
+        // this name: an address book renames only `origin = 'import'` rows.
+        sqlx::query(
+            "UPDATE contacts SET preferred_name = $1, origin = 'user'
+             WHERE id = $2 AND account_id = $3",
+        )
+        .bind(name)
+        .bind(contact_id)
+        .bind(account_id)
+        .execute(&mut *conn)
+        .await?;
         return touch_ok(conn, account_id, contact_id).await;
     }
 
@@ -2510,15 +2517,49 @@ mod tests {
         let (pool, dir, account) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
 
-        // A name the person typed themselves, holding the phone the book is
-        // about to load a card for.
+        // An import discovered this person and gave them the name that backup
+        // used, holding the phone the book is about to load a card for.
         let hand_typed =
-            insert_contact_with_handle(&mut conn, &account, "My Friend Bob", "+15551234567").await;
-        sqlx::query("UPDATE contacts SET origin = 'user' WHERE id = $1")
+            insert_contact_with_handle(&mut conn, &account, "Bobby", "+15551234567").await;
+        sqlx::query("UPDATE contacts SET origin = 'import' WHERE id = $1")
             .bind(hand_typed)
             .execute(&mut *conn)
             .await
             .unwrap();
+        // The person is in a Contact Group they built by hand.
+        crate::named_membership::set_membership(
+            crate::named_membership::group_spec(),
+            &mut conn,
+            &account,
+            &[hand_typed],
+            "Family",
+            true,
+        )
+        .await
+        .unwrap();
+
+        // Then the person renamed them in the drawer, the way a person does —
+        // through the same route the web app calls. That, not raw SQL, is what
+        // makes the row theirs.
+        mutate_contact(
+            &mut conn,
+            &account,
+            hand_typed,
+            &ContactMutationBody {
+                name: Some("My Friend Bob".to_string()),
+                add_handle: None,
+                update_handle: None,
+                remove_handle: None,
+            },
+        )
+        .await
+        .unwrap();
+        let origin: String = sqlx::query_scalar("SELECT origin FROM contacts WHERE id = $1")
+            .bind(hand_typed)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(origin, "user", "naming someone makes the row the person's");
 
         let book = dir.path().join("book.vcf");
         std::fs::write(
@@ -2539,20 +2580,46 @@ mod tests {
                 .unwrap();
         assert_eq!(hand_typed_name, "My Friend Bob");
 
-        // The book's card gets its own, separate contact instead of adopting
-        // the one the person named themselves.
-        let names: Vec<String> = sqlx::query_scalar(
-            "SELECT preferred_name FROM contacts WHERE account_id = $1 ORDER BY preferred_name",
+        // The card joins that person instead of standing a second contact
+        // beside them. A second row would be the worse outcome: the phone is
+        // already linked, so the new row would end up with no identity at all
+        // and anything the card carried would land on it instead of on the
+        // person.
+        let ids: Vec<i64> =
+            sqlx::query_scalar("SELECT id FROM contacts WHERE account_id = $1 ORDER BY id")
+                .bind(&account)
+                .fetch_all(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!(
+            ids,
+            vec![hand_typed],
+            "the card joins the person the vault already has: {ids:?}"
+        );
+
+        // They keep the identity that made them findable.
+        let handles: Vec<String> = sqlx::query_scalar(
+            "SELECT h.raw FROM contact_handles ch JOIN handles h ON h.id = ch.handle_id
+             WHERE ch.account_id = $1 AND ch.contact_id = $2",
+        )
+        .bind(&account)
+        .bind(hand_typed)
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(handles, vec!["+15551234567".to_string()]);
+
+        // And the Contact Group still points at them, not at a stranded row.
+        let members: Vec<i64> = sqlx::query_scalar(
+            "SELECT gm.contact_id FROM contact_group_members gm
+             JOIN contact_groups g ON g.id = gm.group_id
+             WHERE g.account_id = $1 AND g.name = 'Family'",
         )
         .bind(&account)
         .fetch_all(&mut *conn)
         .await
         .unwrap();
-        assert_eq!(
-            names,
-            vec!["My Friend Bob".to_string(), "Robert Smith".to_string()],
-            "the book creates its own contact rather than renaming the user's: {names:?}"
-        );
+        assert_eq!(members, vec![hand_typed]);
     }
 
     #[tokio::test]
