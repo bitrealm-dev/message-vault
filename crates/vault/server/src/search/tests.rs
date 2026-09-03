@@ -1,10 +1,5 @@
 //! Tests at the module's interface: seed a SQLite vault, compile a query
 //! for a list, run it, and assert which ids come back.
-//!
-//! Every helper and every `Fixture` field is part of the shared fixture the
-//! later tasks' test modules read, so the whole module opts out of the
-//! dead-code lint rather than growing an attribute per unused name.
-#![allow(dead_code)]
 
 use chrono::NaiveDate;
 use sqlx::AnyConnection;
@@ -1460,5 +1455,172 @@ mod measure_words {
                 .len(),
             4
         );
+    }
+}
+
+mod coverage {
+    use super::*;
+    use crate::search::fields::{FIELDS, ValueType};
+
+    /// One representative value per shape, plus every keyword a word lists.
+    ///
+    /// `import:` is documented (`parse.rs`) as the one Name word with no
+    /// plain-name fallback — it takes only `#id` or `last` — so it is the
+    /// one word this function special-cases rather than offering the plain
+    /// text and quoted-name samples every other Name/Person word accepts.
+    fn sample_values(word: &str, vt: ValueType, keywords: &[&str]) -> Vec<String> {
+        let mut out: Vec<String> = keywords.iter().map(|k| k.to_string()).collect();
+        match vt {
+            ValueType::Text => out.extend(["x".into(), "pre*".into(), "\"two words\"".into()]),
+            ValueType::Name | ValueType::Person if word == "import" => out.push("#7".into()),
+            ValueType::Name | ValueType::Person => {
+                out.extend(["x".into(), "#7".into(), "\"Two Words\"".into()]);
+            }
+            ValueType::Date => out.extend([
+                "2019".into(),
+                ">=2024-05".into(),
+                "<7d".into(),
+                "2019..2021".into(),
+            ]),
+            ValueType::Count => out.extend(["0".into(), ">1".into(), "1..3".into()]),
+            ValueType::Size => out.extend(["1M".into(), "<500k".into(), "100k..2M".into()]),
+            ValueType::Choice | ValueType::Flag => {}
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn every_word_compiles_and_runs_on_every_list_it_claims() {
+        let (pool, _dir, _f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        for spec in FIELDS {
+            for list in spec.lists {
+                for value in sample_values(spec.word, spec.value_type, spec.values) {
+                    for q in [
+                        format!("{}:{value}", spec.word),
+                        format!("-{}:{value}", spec.word),
+                        format!("{}:{value} or x", spec.word),
+                    ] {
+                        run(&mut conn, *list, &q).await;
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_word_compiles_for_postgres_too() {
+        for spec in FIELDS {
+            for list in spec.lists {
+                for value in sample_values(spec.word, spec.value_type, spec.values) {
+                    let q = format!("{}:{value}", spec.word);
+                    let f = compile(CompileRequest {
+                        list: *list,
+                        query: &q,
+                        account_id: ACCOUNT,
+                        engine: DbEngine::Postgres,
+                        today: today(),
+                    })
+                    .unwrap_or_else(|e| panic!("{q} on {list:?}: {}", e.message));
+                    assert_eq!(
+                        f.where_sql().matches('?').count(),
+                        f.params().len(),
+                        "{q} on {list:?}"
+                    );
+                    assert!(
+                        !f.where_sql().contains("COLLATE NOCASE"),
+                        "{q}: SQLite collation leaked into Postgres SQL"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_word_is_described_on_every_list_it_claims() {
+        for spec in FIELDS {
+            for list in spec.lists {
+                let docs = crate::search::describe(*list);
+                let doc = docs
+                    .iter()
+                    .find(|d| d.word == spec.word)
+                    .unwrap_or_else(|| panic!("{} missing from describe({list:?})", spec.word));
+                assert_eq!(doc.value_type, spec.value_type, "{} on {list:?}", spec.word);
+                assert!(
+                    !doc.help.is_empty() && !doc.example.is_empty(),
+                    "{} on {list:?}",
+                    spec.word
+                );
+            }
+        }
+    }
+}
+
+mod refusals {
+    use super::*;
+    use crate::search::QueryErrorKind;
+
+    #[test]
+    fn a_refusal_never_queries_and_names_the_word() {
+        let e = err(ListKind::Contacts, "from:me");
+        assert_eq!(e.kind, QueryErrorKind::WrongList);
+        assert_eq!(e.span, 0..7);
+        assert_eq!(e.field, Some("from"));
+        // Not a search word on any list, and not within two edits of one, so
+        // no "Did you mean" is attached.
+        let e = err(ListKind::Messages, "wombat:Family");
+        assert_eq!(e.kind, QueryErrorKind::UnknownWord);
+        assert_eq!(e.did_you_mean, None);
+        let e = err(ListKind::Conversations, "paticipants:>2");
+        assert_eq!(e.did_you_mean, Some("participants"));
+        assert_eq!(
+            err(ListKind::Messages, "tag:").kind,
+            QueryErrorKind::EmptyValue
+        );
+        assert_eq!(
+            err(ListKind::Messages, "(a or b").kind,
+            QueryErrorKind::Unbalanced
+        );
+        assert_eq!(
+            err(ListKind::Messages, "date:2019-13").kind,
+            QueryErrorKind::BadValue
+        );
+        assert_eq!(
+            err(ListKind::Messages, &"a ".repeat(40)).kind,
+            QueryErrorKind::TooComplex
+        );
+        assert_eq!(
+            err(ListKind::Messages, &"x".repeat(3000)).kind,
+            QueryErrorKind::TooLong
+        );
+    }
+
+    /// An unknown word's message is the plain "word: is not a search word."
+    /// sentence, full stop; any "Did you mean" suffix comes only from a word
+    /// that is actually in today's word list, never from a spelling the
+    /// language used to have. These nine are invented, made-up spellings
+    /// with no history in this language at all.
+    #[test]
+    fn an_unknown_word_answers_plainly_and_any_suggestion_comes_from_the_current_words() {
+        for made_up in [
+            "postmark:2020",
+            "afterglow:2020",
+            "carries:attachment",
+            "resembles:direct",
+            "biggerthan:1M",
+            "amongst:Family",
+            "caption:x",
+            "wording:hi",
+            "mediakind:image",
+        ] {
+            let e = err(ListKind::Messages, made_up);
+            assert_eq!(e.kind, QueryErrorKind::UnknownWord, "{made_up}");
+            let word = made_up.split(':').next().unwrap();
+            assert_eq!(
+                e.message.trim_end_matches(|c: char| c != '.'),
+                format!("{word}: is not a search word."),
+                "{made_up}"
+            );
+        }
     }
 }
