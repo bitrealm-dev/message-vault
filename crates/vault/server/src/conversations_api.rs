@@ -167,8 +167,8 @@ type RawConversationRow = (
 ///
 /// # Errors
 ///
-/// `BadRequest` for a query the language refuses or an offset past the cap;
-/// `Internal` when a statement fails.
+/// `BadRequest` for a query the language refuses; `Internal` when a
+/// statement fails.
 pub async fn list_conversations_sorted(
     conn: &mut AnyConnection,
     account_id: &str,

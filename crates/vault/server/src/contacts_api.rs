@@ -224,8 +224,8 @@ const NOT_TRASHED_CONTACT_SQL: &str = "NOT EXISTS (
 ///
 /// # Errors
 ///
-/// `BadRequest` for a query the language refuses or an offset past the cap;
-/// `Internal` when a statement fails.
+/// `BadRequest` for a query the language refuses; `Internal` when a
+/// statement fails.
 pub async fn list_contacts(
     conn: &mut AnyConnection,
     account_id: &str,
