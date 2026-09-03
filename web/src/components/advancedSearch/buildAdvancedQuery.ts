@@ -37,10 +37,10 @@ export function dateBoundHasValue(bound: DateBoundFilter): boolean {
   return Boolean(bound.start || (bound.op === "between" && bound.end));
 }
 
-/** Emit `prefix:>=D` / `prefix:<D` tokens (Between = half-open pair). */
+/** Emit one `prefix:` date token: `>=D`, `<D`, or an inclusive `D..D` range. */
 export function pushDateBoundTokens(
   push: (s: string) => void,
-  prefix: "first-contact" | "last-contact",
+  prefix: "first-message" | "last-message",
   bound: DateBoundFilter,
 ): void {
   switch (bound.op) {
@@ -53,8 +53,9 @@ export function pushDateBoundTokens(
       if (bound.start) push(`${prefix}:<${bound.start}`);
       return;
     case "between":
-      if (bound.start) push(`${prefix}:>=${bound.start}`);
-      if (bound.end) push(`${prefix}:<${bound.end}`);
+      if (bound.start && bound.end) push(`${prefix}:${bound.start}..${bound.end}`);
+      else if (bound.start) push(`${prefix}:>=${bound.start}`);
+      else if (bound.end) push(`${prefix}:<${bound.end}`);
       return;
   }
 }
@@ -84,8 +85,8 @@ export function buildMessagesQuery(input: MessagesQueryInput): string {
   };
   if (input.nameOrHandle.trim()) push(input.nameOrHandle.trim());
   if (input.handle.trim()) push(`handle:${input.handle.trim()}`);
-  if (input.msgType === "direct") push("is:direct");
-  if (input.msgType === "group") push("is:group");
+  if (input.msgType === "direct") push("kind:direct");
+  if (input.msgType === "group") push("kind:group");
   const participantCmp = composeCountComparison(input.participants);
   if (participantCmp) push(`participants:${participantCmp}`);
   return parts.join(" ");
@@ -98,16 +99,16 @@ export function buildContactsQuery(input: ContactsQueryInput): string {
   };
   if (input.contactName.trim()) push(input.contactName.trim());
   if (input.handle.trim()) push(`handle:"${input.handle.trim()}"`);
-  pushDateBoundTokens(push, "first-contact", input.firstMsgBound);
-  pushDateBoundTokens(push, "last-contact", input.lastMsgBound);
-  if (input.activity === "messages") push("has:messages");
-  if (input.activity === "no-messages") push("has:no-messages");
-  if (input.noPreferredName) push("has:no-name");
-  if (input.noHandle) push("has:no-handle");
-  for (const id of input.services) {
-    push(`service:${String(id)}`);
-  }
-  push("search:contacts");
+  pushDateBoundTokens(push, "first-message", input.firstMsgBound);
+  pushDateBoundTokens(push, "last-message", input.lastMsgBound);
+  if (input.activity === "messages") push("messages:>0");
+  if (input.activity === "no-messages") push("messages:0");
+  if (input.noPreferredName) push("name:none");
+  if (input.noHandle) push("handle:none");
+  // Several ticked transports go in one word, comma separated, which the
+  // language reads as "any of these".
+  const services = input.services.map((id) => String(id).trim()).filter(Boolean);
+  if (services.length > 0) push(`service:${services.join(",")}`);
   return parts.join(" ");
 }
 

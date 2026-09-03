@@ -102,13 +102,7 @@ function browseLinkClass(active: boolean): string {
   }`;
 }
 
-export default function LeftPanel({
-  onSearchChange,
-  onSearch: _onSearch,
-}: {
-  onSearchChange: (v: string) => void;
-  onSearch: (q: string) => void;
-}) {
+export default function LeftPanel({ onSearchChange }: { onSearchChange: (v: string) => void }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { profile } = useAccountProfile();

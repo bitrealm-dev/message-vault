@@ -64,7 +64,7 @@ function deferred<T>() {
 function routeGets(slow: Promise<{ messages: Message[] }>) {
   getCount.mockResolvedValue({ messages: 1 } as never);
   getMessages.mockImplementation(((params: { q: string }) =>
-    params.q.includes("in:A")
+    params.q.includes("in:#A")
       ? slow
       : Promise.resolve({ messages: [message(2)] })) as unknown as typeof exportMessages);
 }

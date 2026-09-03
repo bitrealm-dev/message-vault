@@ -8,14 +8,11 @@ use serde::{Deserialize, Serialize};
 use sqlx::AnyConnection;
 use sqlx::Row;
 
-use crate::db::dialect::{engine_of, like_ci, name_eq_ci};
-use crate::db::engine::DbEngine;
+use crate::db::dialect::engine_of;
 use crate::db::sql::{
     SqlParam, bind_args, fold_in_id_chunks, group_rows_by_id, in_placeholders,
     renumber_placeholders,
 };
-use crate::export_api::{ExportQueryError, has_message_tag_sql};
-use crate::search_query::{CountComparison, extract_keyed_ops, parse_count_comparison};
 use crate::server::{ApiError, AppState, FullAccess};
 
 pub use crate::page_limits::{
@@ -182,179 +179,12 @@ type RawConversationRow = (
     Option<String>,
 );
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ConversationTypeFilter {
-    Direct,
-    Group,
-}
-
-#[derive(Debug, Default)]
-struct ConversationListQuery {
-    trash_only: bool,
-    handle: Option<String>,
-    /// Platform identity on `handles.service` (`phone` | `whatsapp`). Applied only with `handle:`.
-    service: Option<String>,
-    contact_id: Option<i64>,
-    type_filter: Option<ConversationTypeFilter>,
-    /// Filter by number of rows in `participants` (`participants:=5`, `:>3`, `:<10`).
-    participants: Option<CountComparison>,
-    /// Filter to conversations with at least one message from this import session.
-    import_id: Option<i64>,
-    /// Contact-group name (`people:` / `within:` / `label:`).
-    people: Option<String>,
-    /// Hide threads that involve that contact group (`-people:`).
-    exclude_people: Option<String>,
-    /// Message tag name (`tag:`).
-    tag: Option<String>,
-    /// Hide threads that have that tag (`-tag:`).
-    exclude_tag: Option<String>,
-    /// Threads with no message tags (`tag:none`).
-    no_tag: bool,
-    text: Option<String>,
-}
-
-/// Parse `participants:` values: `=5`, `>3`, `<10`, `>=2`, `<=8`, or bare `5` (=).
-fn parse_participants_comparison(raw: &str) -> Option<CountComparison> {
-    let t = raw.trim();
-    if t.is_empty() {
-        return None;
-    }
-    if t.bytes().all(|b| b.is_ascii_digit()) {
-        return parse_count_comparison(&format!("={t}"));
-    }
-    parse_count_comparison(t)
-}
-
-fn involves_people_group_sql(engine: DbEngine, exclude: bool) -> String {
-    let exists = if exclude { "NOT EXISTS" } else { "EXISTS" };
-    format!(
-        "{exists} (
-           SELECT 1 FROM contact_group_members cgm
-           JOIN contact_groups cg ON cg.id = cgm.group_id
-           JOIN contact_handles ch ON ch.contact_id = cgm.contact_id
-             AND ch.account_id = c.account_id
-           WHERE cg.account_id = c.account_id
-             AND {name_eq}
-             AND (
-               ch.handle_id = c.chat_handle_id
-               OR EXISTS (
-                 SELECT 1 FROM participants p
-                 WHERE p.conversation_id = c.id AND p.handle_id = ch.handle_id
-               )
-             )
-         )",
-        name_eq = name_eq_ci(engine, "cg.name", "?")
-    )
-}
-
-/// Parse space-separated tokens from `q`.
-///
-/// Recognized tokens: `is:trash`, `is:direct`, `is:group`, `handle:<raw>`,
-/// `service:phone` / `service:whatsapp` (only combined with `handle:`),
-/// `contact:<id>`, `import:<id>`, `participants:=N` / `:>N` / `:<N`,
-/// `people:` / `-people:`, `tag:` / `-tag:`. Remaining tokens become
-/// a free-text filter.
-fn parse_conversation_list_query(q: &str) -> ConversationListQuery {
-    let mut out = ConversationListQuery::default();
-    let mut text_parts: Vec<&str> = Vec::new();
-    // Every occurrence is pulled, in order (`first_only` off), so a repeated
-    // key keeps its last-writer-wins behaviour below; `-key:` negates.
-    let (remainder, named) =
-        extract_keyed_ops(q, &["people", "tag", "within", "label"], true, false);
-    for op in named {
-        let (key, value, negated) = (op.key, op.value, op.negated);
-        match key.as_str() {
-            "tag" => {
-                if value.eq_ignore_ascii_case("none") {
-                    out.no_tag = true;
-                } else if negated {
-                    out.exclude_tag = Some(value);
-                } else {
-                    out.tag = Some(value);
-                }
-            }
-            "people" | "within" | "label" => {
-                if negated {
-                    out.exclude_people = Some(value);
-                } else {
-                    out.people = Some(value);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    for token in remainder.split_whitespace() {
-        let lower = token.to_ascii_lowercase();
-        if lower == "is:trash" {
-            out.trash_only = true;
-        } else if lower == "is:direct" {
-            out.type_filter = Some(ConversationTypeFilter::Direct);
-        } else if lower == "is:group" {
-            out.type_filter = Some(ConversationTypeFilter::Group);
-        } else if let Some(rest) = token
-            .strip_prefix("handle:")
-            .or_else(|| token.strip_prefix("HANDLE:"))
-        {
-            let rest = rest.trim().trim_matches('"');
-            if !rest.is_empty() {
-                out.handle = Some(rest.to_string());
-            }
-        } else if let Some(rest) = lower.strip_prefix("service:") {
-            let rest = rest.trim().trim_matches('"');
-            if rest == "phone" || rest == "whatsapp" {
-                out.service = Some(rest.to_string());
-            }
-        } else if lower.starts_with("participants:") {
-            if let Some((_, value)) = token.split_once(':')
-                && let Some(cmp) = parse_participants_comparison(value)
-            {
-                out.participants = Some(cmp);
-            }
-        } else if let Some(rest) = lower.strip_prefix("import:") {
-            if let Ok(id) = rest.trim().parse::<i64>()
-                && id > 0
-            {
-                out.import_id = Some(id);
-            }
-        } else if let Some((_, id_part)) = token.split_once(':') {
-            if lower.starts_with("contact:") {
-                if let Ok(id) = id_part.trim().parse::<i64>() {
-                    out.contact_id = Some(id);
-                }
-            } else {
-                text_parts.push(token);
-            }
-        } else {
-            text_parts.push(token);
-        }
-    }
-
-    let text = text_parts.join(" ");
-    if !text.is_empty() {
-        out.text = Some(text);
-    }
-    out
-}
-
-/// List conversations for the account in a chosen order (paged).
-///
-/// Supported `q` tokens (combinable except free text with structured filters):
-/// - empty / whitespace: all non-trashed conversations with at least one message
-/// - `is:trash`: only trashed conversations
-/// - `handle:<raw>`: conversations involving that handle (chat or participant)
-/// - `service:phone` / `service:whatsapp`: with `handle:`, restrict to that platform
-/// - `contact:<id>`: conversations involving any handle of that contact
-/// - `import:<id>`: conversations with at least one message from that import session
-/// - `people:<name>` / `-people:<name>`: involve (or hide) a contact group
-/// - `tag:<name>` / `-tag:<name>`: have (or hide) a message tag
-/// - `is:direct` / `is:group`: restrict by conversation type
-/// - other text: case-insensitive match on group title or participant handle/name
+/// One page of the conversation list for `q`, a query in the search language.
 ///
 /// # Errors
 ///
-/// Returns a bad-request error for an invalid query, or an internal error when
-/// a database statement fails.
+/// `BadRequest` for a query the language refuses or an offset past the cap;
+/// `Internal` when a statement fails.
 pub async fn list_conversations_sorted(
     conn: &mut AnyConnection,
     account_id: &str,
@@ -362,181 +192,28 @@ pub async fn list_conversations_sorted(
     order: ConversationOrder,
     limit: usize,
     offset: usize,
-) -> Result<ConversationListPage, ExportQueryError> {
+    today: chrono::NaiveDate,
+) -> Result<ConversationListPage, ApiError> {
     let limit = limit.clamp(1, MAX_LIST_LIMIT);
     if offset > MAX_LIST_OFFSET {
-        return Err(ExportQueryError::bad(format!(
+        return Err(ApiError::BadRequest(format!(
             "offset exceeds maximum of {MAX_LIST_OFFSET}"
         )));
     }
-
-    crate::search_query::validate_list_search_query(q)?;
-    let parsed = parse_conversation_list_query(q.trim());
     let engine = engine_of(conn);
-
-    // Placeholder convention: every fragment writes `?`; the statement is
-    // renumbered to `$1..$N` once, so textual placeholder order must equal
-    // `params` push order (fragments are appended and bound in the same
-    // sequence, for both engines).
-    let mut where_parts = vec!["c.account_id = ?".to_string()];
-    let mut params: Vec<SqlParam> = vec![SqlParam::Text(account_id.to_string())];
-
-    if parsed.trash_only {
-        // Match normal-list exclusion: conversation trash OR chat-handle trash.
-        where_parts.push(
-            "(EXISTS (
-               SELECT 1 FROM trashed_conversations tc
-               WHERE tc.account_id = c.account_id AND tc.conversation_id = c.id
-             )
-             OR EXISTS (
-               SELECT 1 FROM trashed_handles th
-               WHERE th.account_id = c.account_id AND th.handle_id = c.chat_handle_id
-             ))"
-            .into(),
-        );
-    } else {
-        where_parts.push(crate::contacts_api::NOT_TRASHED_CONVERSATION_SQL.into());
-        where_parts.push(crate::contacts_api::NOT_TRASHED_CHAT_HANDLE_SQL.into());
-    }
-
-    // Only show threads that have at least one non-duplicate message, except when
-    // filtering by import session (duplicate-only threads may still belong to that import).
-    if parsed.import_id.is_none() {
-        where_parts.push(
-            "EXISTS (
-               SELECT 1 FROM messages m0
-               WHERE m0.conversation_id = c.id AND m0.duplicate_of IS NULL
-             )"
-            .into(),
-        );
-    }
-
-    if let Some(ref handle) = parsed.handle {
-        if let Some(ref service) = parsed.service {
-            where_parts.push(
-                "(
-                    (hc.raw = ? AND lower(hc.service) = lower(?))
-                    OR EXISTS (
-                        SELECT 1 FROM participants p
-                        JOIN handles ph ON ph.id = p.handle_id
-                        WHERE p.conversation_id = c.id
-                          AND ph.raw = ?
-                          AND lower(ph.service) = lower(?)
-                    )
-                  )"
-                .into(),
-            );
-            params.push(SqlParam::Text(handle.clone()));
-            params.push(SqlParam::Text(service.clone()));
-            params.push(SqlParam::Text(handle.clone()));
-            params.push(SqlParam::Text(service.clone()));
-        } else {
-            where_parts.push(
-                "(hc.raw = ? OR EXISTS (
-                    SELECT 1 FROM participants p
-                    JOIN handles ph ON ph.id = p.handle_id
-                    WHERE p.conversation_id = c.id AND ph.raw = ?
-                  ))"
-                .into(),
-            );
-            params.push(SqlParam::Text(handle.clone()));
-            params.push(SqlParam::Text(handle.clone()));
-        }
-    }
-
-    if let Some(contact_id) = parsed.contact_id {
-        where_parts.push(crate::contacts_api::involves_contact_expr("?"));
-        params.push(SqlParam::Int(contact_id));
-    }
-
-    match parsed.type_filter {
-        Some(ConversationTypeFilter::Direct) => {
-            where_parts.push("c.conversation_type = 'individual'".into());
-        }
-        Some(ConversationTypeFilter::Group) => {
-            where_parts.push("c.conversation_type = 'group'".into());
-        }
-        None => {}
-    }
-
-    if let Some(ref cmp) = parsed.participants {
-        where_parts.push(format!(
-            "(SELECT COUNT(*) FROM participants pcnt WHERE pcnt.conversation_id = c.id) {} ?",
-            cmp.comparator.as_str()
-        ));
-        params.push(SqlParam::Int(cmp.value as i64));
-    }
-
-    if let Some(ref people) = parsed.people {
-        where_parts.push(involves_people_group_sql(engine, false));
-        params.push(SqlParam::Text(people.clone()));
-    }
-    if let Some(ref people) = parsed.exclude_people {
-        where_parts.push(involves_people_group_sql(engine, true));
-        params.push(SqlParam::Text(people.clone()));
-    }
-    if let Some(ref tag) = parsed.tag {
-        where_parts.push(has_message_tag_sql(engine, false));
-        params.push(SqlParam::Text(tag.clone()));
-    }
-    if let Some(ref tag) = parsed.exclude_tag {
-        where_parts.push(has_message_tag_sql(engine, true));
-        params.push(SqlParam::Text(tag.clone()));
-    }
-    if parsed.no_tag {
-        where_parts.push(
-            "NOT EXISTS (
-               SELECT 1 FROM message_tag_members ctm
-               JOIN message_tags ct ON ct.id = ctm.tag_id
-               WHERE ctm.conversation_id = c.id AND ct.account_id = c.account_id
-             )"
-            .into(),
-        );
-    }
-
-    if let Some(import_id) = parsed.import_id {
-        where_parts.push(
-            "EXISTS (
-               SELECT 1 FROM messages m
-               WHERE m.conversation_id = c.id
-                 AND m.account_id = c.account_id
-                 AND m.import_id = ?
-             )"
-            .into(),
-        );
-        params.push(SqlParam::Int(import_id));
-    }
-
-    if let Some(ref text) = parsed.text {
-        where_parts.push(format!(
-            "(c.group_title {like} OR hc.raw {like} OR EXISTS (
-                SELECT 1 FROM participants p
-                JOIN handles ph ON ph.id = p.handle_id
-                LEFT JOIN contacts ct ON ct.id = p.contact_id
-                WHERE p.conversation_id = c.id
-                  AND (
-                    ph.raw {like}
-                    OR coalesce(p.name_alias, '') {like}
-                    OR coalesce(ct.preferred_name, '') {like}
-                  )
-              ))",
-            like = like_ci(engine),
-        ));
-        let like = format!("%{text}%");
-        for _ in 0..5 {
-            params.push(SqlParam::Text(like.clone()));
-        }
-    }
-
-    let where_sql = where_parts.join(" AND ");
+    let filter = crate::search::compile(crate::search::CompileRequest {
+        list: crate::search::ListKind::Conversations,
+        query: q,
+        account_id,
+        engine,
+        today,
+    })?;
+    let where_sql = filter.where_sql();
 
     let count_sql = renumber_placeholders(&format!(
-        "SELECT COUNT(*)
-         FROM conversations c
-         JOIN handles hc ON hc.id = c.chat_handle_id
-         WHERE {where_sql}"
+        "SELECT COUNT(*) FROM conversations c WHERE {where_sql}"
     ));
-    let total: i64 = sqlx::query_scalar_with(&count_sql, bind_args(&params))
+    let total: i64 = sqlx::query_scalar_with(&count_sql, bind_args(filter.params()))
         .fetch_one(&mut *conn)
         .await?;
     let total = total.max(0) as u64;
@@ -554,12 +231,12 @@ pub async fn list_conversations_sorted(
                 (SELECT MAX(m.timestamp) FROM messages m
                  WHERE m.conversation_id = c.id AND m.duplicate_of IS NULL) AS date_range_end
          FROM conversations c
-         JOIN handles hc ON hc.id = c.chat_handle_id
          WHERE {where_sql}
          ORDER BY {order_by}
          LIMIT ? OFFSET ?",
         order_by = order.order_by_sql(),
     ));
+    let mut params = filter.params().to_vec();
     params.push(SqlParam::Int(limit as i64));
     params.push(SqlParam::Int(offset as i64));
     let rows: Vec<RawConversationRow> = sqlx::query_as_with(&sql, bind_args(&params))
@@ -598,7 +275,7 @@ pub async fn list_conversations_sorted(
         &ids,
     )
     .await
-    .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
@@ -646,7 +323,7 @@ pub async fn list_conversations_sorted(
 async fn chat_handle_as_participant(
     conn: &mut AnyConnection,
     conversation_id: i64,
-) -> Result<Vec<ConversationParticipant>, ExportQueryError> {
+) -> Result<Vec<ConversationParticipant>, ApiError> {
     let row: Option<(String, String, String)> = sqlx::query_as(
         "SELECT h.raw,
                 h.service,
@@ -677,7 +354,7 @@ async fn chat_handle_as_participant(
 async fn load_participants(
     conn: &mut AnyConnection,
     conversation_ids: &[i64],
-) -> Result<HashMap<i64, Vec<ConversationParticipant>>, ExportQueryError> {
+) -> Result<HashMap<i64, Vec<ConversationParticipant>>, ApiError> {
     // Join contact preferred_name / name_alias here so the list path does not
     // issue one follow-up SELECT per participant. Contact fields apply only when
     // `p.contact_id` links the same handle; otherwise residue `p.name_alias` is
@@ -754,7 +431,7 @@ pub fn display_service_label(sources: &[String]) -> String {
 async fn load_conversation_sources(
     conn: &mut AnyConnection,
     conversation_ids: &[i64],
-) -> Result<HashMap<i64, Vec<String>>, ExportQueryError> {
+) -> Result<HashMap<i64, Vec<String>>, ApiError> {
     fold_in_id_chunks(conn, conversation_ids, |conn, chunk| {
         Box::pin(async move {
             let placeholders = in_placeholders(1, chunk.len());
@@ -813,7 +490,7 @@ pub async fn list_conversation_source_stats(
     conn: &mut AnyConnection,
     account_id: &str,
     conversation_id: i64,
-) -> Result<Option<ConversationSourcesPage>, ExportQueryError> {
+) -> Result<Option<ConversationSourcesPage>, ApiError> {
     let owned: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM conversations WHERE id = $1 AND account_id = $2")
             .bind(conversation_id)
@@ -918,8 +595,16 @@ pub(crate) async fn conversations_list_handler(
             .as_deref()
             .map_or_else(SortOrder::default, SortOrder::from_param),
     };
-    let page =
-        list_conversations_sorted(&mut conn, &auth.account_id, &q, order, limit, offset).await?;
+    let page = list_conversations_sorted(
+        &mut conn,
+        &auth.account_id,
+        &q,
+        order,
+        limit,
+        offset,
+        chrono::Local::now().date_naive(),
+    )
+    .await?;
     Ok(Json(page))
 }
 
@@ -954,7 +639,9 @@ mod tests {
     use message_ir::HandleType;
 
     use crate::db::{account_profile, engine, schema, vault_imports};
-    use crate::search_query::CountComparator;
+    use crate::test_support::{
+        RegisteredAccount, TestVault, register_via_api, seed_one_message, test_vault,
+    };
 
     /// A newest-first page — the default ordering, which is what most of these
     /// tests care about. Ordering itself is covered by its own tests below.
@@ -964,7 +651,7 @@ mod tests {
         q: &str,
         limit: usize,
         offset: usize,
-    ) -> Result<ConversationListPage, ExportQueryError> {
+    ) -> Result<ConversationListPage, ApiError> {
         list_conversations_sorted(
             conn,
             account_id,
@@ -972,8 +659,41 @@ mod tests {
             ConversationOrder::default(),
             limit,
             offset,
+            crate::search::tests::today(),
         )
         .await
+    }
+
+    /// A vault, a signed-in account, and one conversation holding one message.
+    async fn conversations_fixture() -> (TestVault, String, RegisteredAccount) {
+        let vault = test_vault().await;
+        let account = register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+        seed_one_message(&vault.state, &account.account_id).await;
+        let token = account.token.clone();
+        (vault, token, account)
+    }
+
+    #[tokio::test]
+    async fn conversation_list_takes_the_search_language() {
+        let (vault, token, _account) = conversations_fixture().await;
+        let page: serde_json::Value =
+            crate::test_support::get_json(&vault.state, "/v1/conversations?q=kind:direct", &token)
+                .await;
+        assert!(page["total"].as_u64().unwrap() >= 1);
+        let status = crate::test_support::get_status(
+            &vault.state,
+            "/v1/conversations?q=wibble:direct",
+            &token,
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+        let status = crate::test_support::get_status(
+            &vault.state,
+            "/v1/conversations?q=trashed:yes",
+            &token,
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::OK);
     }
 
     async fn setup() -> (sqlx::AnyPool, tempfile::TempDir, String) {
@@ -1063,12 +783,12 @@ mod tests {
             .unwrap();
         assert_eq!(normal.total, 0, "handle-trashed threads leave the inbox");
 
-        let trash = list_conversations(&mut conn, &account, "is:trash", DEFAULT_LIST_LIMIT, 0)
+        let trash = list_conversations(&mut conn, &account, "trashed:yes", DEFAULT_LIST_LIMIT, 0)
             .await
             .unwrap();
         assert_eq!(
             trash.total, 1,
-            "is:trash should include handle-trashed threads"
+            "trashed:yes should include handle-trashed threads"
         );
         assert_eq!(trash.conversations[0].id, "1");
     }
@@ -1102,7 +822,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_conversations_filters_by_handle_and_service() {
+    async fn list_conversations_finds_a_handle_across_platforms() {
         let (pool, _dir, account) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
         // setup() already has phone:+15555550200 as conversation 1.
@@ -1143,6 +863,11 @@ mod tests {
         .await
         .unwrap();
 
+        // `handle:` matches the raw value on any platform; it does not
+        // distinguish which platform a handle belongs to (there is no search
+        // word for that in the current language — `service:` filters by a
+        // message's own transport, imessage/sms/mms/rcs/whatsapp, which is a
+        // different thing and is covered by the search module's own tests).
         let any_platform = list_conversations(
             &mut conn,
             &account,
@@ -1153,44 +878,6 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(any_platform.total, 2);
-
-        let phone_only = list_conversations(
-            &mut conn,
-            &account,
-            "handle:+15555550200 service:phone",
-            DEFAULT_LIST_LIMIT,
-            0,
-        )
-        .await
-        .unwrap();
-        assert_eq!(phone_only.total, 1);
-        assert_eq!(phone_only.conversations[0].id, "1");
-
-        let wa_only = list_conversations(
-            &mut conn,
-            &account,
-            "handle:+15555550200 service:whatsapp",
-            DEFAULT_LIST_LIMIT,
-            0,
-        )
-        .await
-        .unwrap();
-        assert_eq!(wa_only.total, 1);
-        assert_eq!(wa_only.conversations[0].id, "10");
-
-        let lone_service = list_conversations(
-            &mut conn,
-            &account,
-            "service:whatsapp",
-            DEFAULT_LIST_LIMIT,
-            0,
-        )
-        .await
-        .unwrap();
-        let all = list_conversations(&mut conn, &account, "", DEFAULT_LIST_LIMIT, 0)
-            .await
-            .unwrap();
-        assert_eq!(lone_service.total, all.total);
     }
 
     #[tokio::test]
@@ -1256,6 +943,7 @@ mod tests {
                 ConversationOrder { sort, order },
                 DEFAULT_LIST_LIMIT,
                 0,
+                crate::search::tests::today(),
             )
             .await
             .unwrap()
@@ -1369,11 +1057,12 @@ mod tests {
                 query,
                 crate::contacts_api::DEFAULT_LIST_LIMIT,
                 0,
+                chrono::Local::now().date_naive(),
             )
             .await
             .unwrap_err();
             assert!(
-                matches!(contact_error, ExportQueryError::BadRequest(_)),
+                matches!(contact_error, ApiError::BadRequest(_)),
                 "contact query should be rejected: {query}"
             );
 
@@ -1382,33 +1071,9 @@ mod tests {
                     .await
                     .unwrap_err();
             assert!(
-                matches!(conversation_error, ExportQueryError::BadRequest(_)),
+                matches!(conversation_error, ApiError::BadRequest(_)),
                 "conversation query should be rejected: {query}"
             );
-        }
-    }
-
-    #[tokio::test]
-    async fn list_queries_accept_literal_boolean_words_and_parentheses() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
-
-        for query in [
-            "OR", "AND", "NOT", "foo OR", "foo AND", "foo NOT", "(", ")", "(foo", "foo)",
-        ] {
-            crate::contacts_api::list_contacts(
-                &mut conn,
-                &account,
-                query,
-                crate::contacts_api::DEFAULT_LIST_LIMIT,
-                0,
-            )
-            .await
-            .unwrap();
-
-            list_conversations(&mut conn, &account, query, DEFAULT_LIST_LIMIT, 0)
-                .await
-                .unwrap();
         }
     }
 
@@ -1423,12 +1088,12 @@ mod tests {
                 crate::export_api::ExportCountOpts {
                     account_id: &account,
                     query,
-                    source_override: None,
+                    today: chrono::Local::now().date_naive(),
                 },
             )
             .await
             .unwrap_err();
-            assert!(matches!(export_error, ExportQueryError::BadRequest(_)));
+            assert!(matches!(export_error, ApiError::BadRequest(_)));
         }
     }
 
@@ -1534,7 +1199,7 @@ mod tests {
         let all = list_conversations(
             &mut conn,
             &account,
-            &format!("contact:{contact_id}"),
+            &format!("with:#{contact_id}"),
             DEFAULT_LIST_LIMIT,
             0,
         )
@@ -1548,7 +1213,7 @@ mod tests {
         let direct = list_conversations(
             &mut conn,
             &account,
-            &format!("contact:{contact_id} is:direct"),
+            &format!("with:#{contact_id} kind:direct"),
             DEFAULT_LIST_LIMIT,
             0,
         )
@@ -1561,7 +1226,7 @@ mod tests {
         let groups = list_conversations(
             &mut conn,
             &account,
-            &format!("contact:{contact_id} is:group"),
+            &format!("with:#{contact_id} kind:group"),
             DEFAULT_LIST_LIMIT,
             0,
         )
@@ -1570,62 +1235,6 @@ mod tests {
         assert_eq!(groups.total, 1);
         assert_eq!(groups.conversations[0].id, "3");
         assert!(groups.conversations[0].is_group);
-    }
-
-    #[test]
-    fn parse_conversation_list_query_tokens() {
-        let q = parse_conversation_list_query(
-            "contact:42 is:direct handle:+15555550100 service:whatsapp",
-        );
-        assert_eq!(q.contact_id, Some(42));
-        assert_eq!(q.type_filter, Some(ConversationTypeFilter::Direct));
-        assert_eq!(q.handle.as_deref(), Some("+15555550100"));
-        assert_eq!(q.service.as_deref(), Some("whatsapp"));
-        assert!(q.text.is_none());
-        assert!(!q.trash_only);
-
-        let trash = parse_conversation_list_query("is:trash");
-        assert!(trash.trash_only);
-
-        let parts = parse_conversation_list_query("is:group participants:>3");
-        assert_eq!(parts.type_filter, Some(ConversationTypeFilter::Group));
-        assert_eq!(
-            parts.participants,
-            Some(CountComparison {
-                comparator: CountComparator::Gt,
-                value: 3,
-            })
-        );
-
-        let eq_bare = parse_conversation_list_query("participants:5");
-        assert_eq!(
-            eq_bare.participants,
-            Some(CountComparison {
-                comparator: CountComparator::Eq,
-                value: 5,
-            })
-        );
-
-        let eq_prefix = parse_conversation_list_query("participants:=8");
-        assert_eq!(
-            eq_prefix.participants,
-            Some(CountComparison {
-                comparator: CountComparator::Eq,
-                value: 8,
-            })
-        );
-
-        let lt = parse_conversation_list_query("participants:<10");
-        assert_eq!(
-            lt.participants,
-            Some(CountComparison {
-                comparator: CountComparator::Lt,
-                value: 10,
-            })
-        );
-
-        let quoted_handle = parse_conversation_list_query(r#"handle:"+15555550100""#);
-        assert_eq!(quoted_handle.handle.as_deref(), Some("+15555550100"));
     }
 
     #[tokio::test]
@@ -1784,20 +1393,6 @@ mod tests {
         assert_eq!(by_name.conversations[0].id, "1");
     }
 
-    #[test]
-    fn parse_participants_comparison_values() {
-        assert_eq!(
-            parse_participants_comparison(">=2").unwrap(),
-            CountComparison {
-                comparator: CountComparator::Gte,
-                value: 2,
-            }
-        );
-        assert!(parse_participants_comparison("").is_none());
-        assert!(parse_participants_comparison("abc").is_none());
-        assert!(parse_participants_comparison(">").is_none());
-    }
-
     #[tokio::test]
     async fn list_conversations_filters_by_participant_count() {
         let (pool, _dir, account) = setup().await;
@@ -1875,7 +1470,7 @@ mod tests {
         assert_eq!(eq1.total, 1);
         assert_eq!(eq1.conversations[0].id, "1");
 
-        let lt2 = list_conversations(&mut conn, &account, "is:group participants:<2", 50, 0)
+        let lt2 = list_conversations(&mut conn, &account, "kind:group participants:<2", 50, 0)
             .await
             .unwrap();
         assert_eq!(lt2.total, 0);
@@ -2101,7 +1696,7 @@ mod tests {
         let a = list_conversations(
             &mut conn,
             &account,
-            &format!("import:{import_a}"),
+            &format!("import:#{import_a}"),
             DEFAULT_LIST_LIMIT,
             0,
         )
@@ -2113,7 +1708,7 @@ mod tests {
         let b = list_conversations(
             &mut conn,
             &account,
-            &format!("import:{import_b}"),
+            &format!("import:#{import_b}"),
             DEFAULT_LIST_LIMIT,
             0,
         )
@@ -2123,11 +1718,12 @@ mod tests {
         assert_eq!(b.conversations[0].id, "2");
 
         let missing =
-            list_conversations(&mut conn, &account, "import:999999", DEFAULT_LIST_LIMIT, 0)
+            list_conversations(&mut conn, &account, "import:#999999", DEFAULT_LIST_LIMIT, 0)
                 .await
                 .unwrap();
         assert_eq!(missing.total, 0);
 
+        // The language refuses a value it cannot parse instead of ignoring it.
         let junk = list_conversations(
             &mut conn,
             &account,
@@ -2136,11 +1732,8 @@ mod tests {
             0,
         )
         .await
-        .unwrap();
-        let all = list_conversations(&mut conn, &account, "", DEFAULT_LIST_LIMIT, 0)
-            .await
-            .unwrap();
-        assert_eq!(junk.total, all.total);
+        .unwrap_err();
+        assert!(matches!(junk, ApiError::BadRequest(_)));
     }
 
     #[test]
@@ -2273,6 +1866,7 @@ mod tests {
                 },
                 DEFAULT_LIST_LIMIT,
                 0,
+                crate::search::tests::today(),
             )
             .await
             .unwrap()
@@ -2282,7 +1876,7 @@ mod tests {
             .collect()
         }
 
-        let q = format!("import:{import_a}");
+        let q = format!("import:#{import_a}");
         assert_eq!(
             ids_for(&pool, &account, &q, SortOrder::Desc).await,
             ["4", "3"],
@@ -2407,7 +2001,7 @@ mod tests {
         let by_import = list_conversations(
             &mut conn,
             &account,
-            &format!("import:{import_a}"),
+            &format!("import:#{import_a}"),
             DEFAULT_LIST_LIMIT,
             0,
         )
@@ -2503,13 +2097,12 @@ mod tests {
         )
         .await
         .unwrap();
-        let family =
-            list_conversations(&mut conn, &account, "people:Family", DEFAULT_LIST_LIMIT, 0)
-                .await
-                .unwrap();
+        let family = list_conversations(&mut conn, &account, "group:Family", DEFAULT_LIST_LIMIT, 0)
+            .await
+            .unwrap();
         assert_eq!(family.total, 1);
         let not_family =
-            list_conversations(&mut conn, &account, "-people:Family", DEFAULT_LIST_LIMIT, 0)
+            list_conversations(&mut conn, &account, "-group:Family", DEFAULT_LIST_LIMIT, 0)
                 .await
                 .unwrap();
         assert_eq!(not_family.total, 0);

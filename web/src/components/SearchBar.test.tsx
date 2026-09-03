@@ -40,6 +40,7 @@ function renderSearch(props: Partial<ComponentProps<typeof SearchBar>> = {}) {
       onChange={onChange}
       onSubmit={onSubmit}
       scope={props.scope ?? "contact"}
+      list={props.list ?? "contacts"}
       placeholder={placeholder}
       advancedMode={props.advancedMode ?? "contacts"}
     />,
@@ -81,7 +82,7 @@ describe("SearchBar", () => {
     await user.click(input);
     await user.keyboard("{ArrowDown}{Enter}");
 
-    expect(onSubmit).toHaveBeenCalledWith("ada");
+    expect(onSubmit).toHaveBeenCalledWith("ada", "contacts");
   });
 
   it("submits the typed text when no row is highlighted", async () => {
@@ -91,7 +92,7 @@ describe("SearchBar", () => {
     await user.click(input);
     await user.keyboard("{Enter}");
 
-    expect(onSubmit).toHaveBeenCalledWith("typed");
+    expect(onSubmit).toHaveBeenCalledWith("typed", "contacts");
   });
 
   it("reaches the advanced-search row by keyboard", async () => {
@@ -143,7 +144,7 @@ describe("SearchBar", () => {
     }
   });
 
-  it("shows operator autocomplete instead of recents while a token is being typed", async () => {
+  it("shows word autocomplete instead of recents while a token is being typed", async () => {
     suggestionsMock.current = [{ id: "handle:", label: "handle:", insert: "handle: " }];
     const user = userEvent.setup();
     const { input } = renderSearch({

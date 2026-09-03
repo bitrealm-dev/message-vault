@@ -41,7 +41,7 @@ const update = vi.mocked(updateVaultSavedSearch);
 const remove = vi.mocked(deleteVaultSavedSearch);
 
 function search(id: number, name: string, kind = "manual"): SavedSearch {
-  return { id, name, query: `is:group ${name}`, kind };
+  return { id, name, query: `kind:group ${name}`, kind };
 }
 
 let client: QueryClient;
@@ -124,8 +124,8 @@ describe("useSavedSearchActions", () => {
   it("addresses an update by id, sending both fields", async () => {
     update.mockResolvedValue({ savedSearches: [search(3, "Renamed")] });
     const { result } = renderHook(() => useSavedSearchActions(), { wrapper });
-    await result.current.update(3, "Renamed", "is:direct");
-    expect(update).toHaveBeenCalledWith(3, { name: "Renamed", query: "is:direct" });
+    await result.current.update(3, "Renamed", "kind:direct");
+    expect(update).toHaveBeenCalledWith(3, { name: "Renamed", query: "kind:direct" });
   });
 
   it("addresses a delete by id", async () => {
@@ -145,7 +145,7 @@ describe("useSavedSearchActions", () => {
     expect(list).toHaveBeenCalledTimes(1);
 
     create.mockResolvedValue({ savedSearches: [search(1, "Family")] });
-    await both.result.current.actions.create("Family", "is:group");
+    await both.result.current.actions.create("Family", "kind:group");
 
     // The list a mutation answered with is what the sidebar shows, with no
     // second request.
@@ -165,7 +165,7 @@ describe("useSavedSearchActions", () => {
     const { result } = renderHook(() => useSavedSearchActions(), { wrapper });
     expect(result.current.pending).toBe(false);
 
-    const write = result.current.create("Family", "is:group");
+    const write = result.current.create("Family", "kind:group");
     await waitFor(() => expect(result.current.pending).toBe(true));
 
     refuse(new Error("vault said no"));
@@ -179,7 +179,7 @@ describe("useSavedSearchActions", () => {
     const { result } = renderHook(() => useSavedSearchActions(), { wrapper });
     const before = result.current.create;
 
-    await result.current.create("Family", "is:group");
+    await result.current.create("Family", "kind:group");
     await waitFor(() => expect(result.current.pending).toBe(false));
 
     expect(result.current.create).toBe(before);

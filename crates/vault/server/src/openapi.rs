@@ -22,6 +22,7 @@ use crate::server::AppState;
         version = env!("CARGO_PKG_VERSION")
     ),
     modifiers(&BearerAddon),
+    components(schemas(crate::search::ListKind)),
     tags(
         (name = "Health", description = "Process liveness"),
         (name = "Auth", description = "Sign-in, session, and token check"),
@@ -32,6 +33,7 @@ use crate::server::AppState;
         (name = "Contacts", description = "Address book and contact groups"),
         (name = "Conversations", description = "Conversation list and sources"),
         (name = "Message tags", description = "Tags on conversations"),
+        (name = "Search", description = "The words the search language accepts"),
         (name = "Admin", description = "User management for administrators")
     )
 )]
@@ -109,6 +111,7 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(
             crate::saved_searches_api::saved_searches_delete_handler
         ))
+        .routes(routes!(crate::search_api::search_fields_list))
         .routes(routes!(
             crate::conversations_api::conversations_list_handler
         ))
@@ -251,6 +254,7 @@ mod tests {
             "/v1/message-tags/{id}/members",
             "/v1/saved-searches",
             "/v1/saved-searches/{id}",
+            "/v1/search/fields",
             "/v1/conversations",
             "/v1/conversations/{id}/sources",
         ] {

@@ -18,6 +18,7 @@ import {
 import { formatVisibleRange } from "../lib/listPaging";
 import { checksFromMembers } from "../lib/membershipChecks";
 import { useMessageTagActions, useSetMessageTagMembers } from "../lib/messageTags";
+import { hasFieldToken } from "../lib/searchFields";
 import type { Conversation } from "../lib/types";
 import { useMessageTags } from "../lib/useMessageTags";
 import { listConversations } from "../lib/vaultApi";
@@ -50,12 +51,8 @@ export default function ConversationList({
   }, [query]);
 
   useEffect(() => {
-    // Filters like contact: and handle: apply immediately so the list does not flash empty.
-    if (
-      /\b(contact:|handle:|import:|is:direct|is:group|is:trash|participants:|tag:|people:|within:|label:)\b/i.test(
-        query,
-      )
-    ) {
+    // A query that names a word applies at once, so the list does not flash empty.
+    if (hasFieldToken(query)) {
       setDebouncedQ(query);
       return;
     }

@@ -612,7 +612,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Export messages matching a search query (message mode; cursor paging). */
+        /** Export messages matching a query in the search language (cursor paging). */
         get: operations["export_messages_handler"];
         put?: never;
         post?: never;
@@ -880,6 +880,23 @@ export interface paths {
         head?: never;
         /** Replace a saved search's name and query, and return the updated list. */
         patch: operations["saved_searches_update_handler"];
+        trace?: never;
+    };
+    "/v1/search/fields": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The search words one list accepts. */
+        get: operations["search_fields_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
 }
@@ -1713,6 +1730,19 @@ export interface components {
             /** @description Reactor handle for incoming reactions. */
             sender?: string | null;
         };
+        /** @description One word as the web and the docs see it. */
+        FieldDoc: {
+            /** @description One example, ready to type. */
+            example: string;
+            /** @description One line of help. */
+            help: string;
+            /** @description What shape of value it takes. */
+            value_type: components["schemas"]["ValueType"];
+            /** @description Keyword or fixed values the word accepts. */
+            values: string[];
+            /** @description The spelling, without the colon. */
+            word: string;
+        };
         /** @description One contact an import run touched, and whether the run created it. */
         ImportContactRow: {
             /**
@@ -1922,6 +1952,12 @@ export interface components {
             /** @description The account's tokens. */
             items: components["schemas"]["ApiTokenItem"][];
         };
+        /**
+         * @description Which list a query is compiled for. Each list accepts its own subset of
+         *     the words, and every filter is expressed against that list's base row.
+         * @enum {string}
+         */
+        ListKind: "contacts" | "conversations" | "messages";
         /** @description Every account in the vault. */
         ListUsersResponse: {
             /** @description One row per account. */
@@ -2047,6 +2083,10 @@ export interface components {
         SavedSearchesListResponse: {
             savedSearches: components["schemas"]["SavedSearch"][];
         };
+        /** @description The words for one list, in the order the docs table shows them. */
+        SearchFieldsResponse: {
+            items: components["schemas"]["FieldDoc"][];
+        };
         /** @description New stage for a live session. */
         SetImportStageBody: {
             stage: string;
@@ -2098,6 +2138,11 @@ export interface components {
              */
             size_bytes: number;
         };
+        /**
+         * @description What shape of value a word takes.
+         * @enum {string}
+         */
+        ValueType: "text" | "name" | "person" | "choice" | "date" | "count" | "size" | "flag";
     };
     responses: never;
     parameters: never;
@@ -4116,7 +4161,7 @@ export interface operations {
     export_messages_handler: {
         parameters: {
             query: {
-                /** @description Metadata search subset; empty is all non-trashed */
+                /** @description Query in the search language; empty is every non-trashed message */
                 q: string;
                 /** @description Page size, default 100, max 500 */
                 limit?: number;
@@ -4125,6 +4170,7 @@ export interface operations {
                 /** @description Opaque next_cursor from a previous page */
                 cursor?: string;
                 account?: string;
+                /** @description Narrow to one backup: imessage, whatsapp, or sms-backup-restore */
                 source?: string;
             };
             header?: never;
@@ -4170,9 +4216,10 @@ export interface operations {
     export_messages_count_handler: {
         parameters: {
             query: {
-                /** @description Metadata search subset; empty is all non-trashed */
+                /** @description Query in the search language; empty is every non-trashed message */
                 q: string;
                 account?: string;
+                /** @description Narrow to one backup: imessage, whatsapp, or sms-backup-restore */
                 source?: string;
             };
             header?: never;
@@ -5177,6 +5224,52 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    search_fields_list: {
+        parameters: {
+            query: {
+                /** @description `contacts`, `conversations`, or `messages`. */
+                list: components["schemas"]["ListKind"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchFieldsResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

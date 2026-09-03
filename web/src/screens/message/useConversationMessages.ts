@@ -25,7 +25,7 @@ export function conversationYears(
 
 /** Search query that loads every message in one calendar year. */
 function yearQuery(conversationId: string, year: number): string {
-  return `in:${conversationId} after:${year} before:${year + 1}`;
+  return `in:#${conversationId} date:${year}`;
 }
 
 /** Short label for a backup source shown in the message footer. */
@@ -107,7 +107,7 @@ export function useConversationMessages(conversationId: string) {
       const signal = startRequest();
       setLoading(true);
       try {
-        const q = `in:${conversationId}`;
+        const q = `in:#${conversationId}`;
         const [msgRes, countRes] = await Promise.all([
           exportMessages({ q, offset: newOffset, limit: PAGE_SIZE }, { signal }),
           countExportMessages({ q }, { signal }),

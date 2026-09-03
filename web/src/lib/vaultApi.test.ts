@@ -30,6 +30,7 @@ import {
   listMessageTagMembers,
   listMessageTags,
   listSavedSearches,
+  listSearchFields,
   setImportStage,
   updateContact,
   updateContactGroup,
@@ -72,7 +73,7 @@ function lastQuery(mock: { mock: { calls: unknown[][] } }): Record<string, strin
 
 describe("browse routes", () => {
   it("reads conversations from /v1/conversations, not from an export path", async () => {
-    await listConversations({ q: "is:trash", limit: 40, offset: 0 });
+    await listConversations({ q: "trashed:yes", limit: 40, offset: 0 });
     expect(lastPath(get)).toBe("/v1/conversations");
   });
 
@@ -89,6 +90,11 @@ describe("browse routes", () => {
   it("addresses a conversation's sources by id", async () => {
     await getConversationSources("abc");
     expect(lastPath(get)).toBe("/v1/conversations/abc/sources");
+  });
+
+  it("listSearchFields asks for one list's words", async () => {
+    await listSearchFields("contacts");
+    expect(get).toHaveBeenCalledWith("/v1/search/fields?list=contacts", undefined);
   });
 });
 
@@ -109,19 +115,19 @@ describe("query building", () => {
   });
 
   it("encodes a query that contains spaces and colons", async () => {
-    await exportMessages({ q: "in:A has:attachment" });
-    expect(lastQuery(get)).toEqual({ q: "in:A has:attachment" });
+    await exportMessages({ q: "in:#A attachment:any" });
+    expect(lastQuery(get)).toEqual({ q: "in:#A attachment:any" });
   });
 });
 
 describe("export routes keep the export prefix", () => {
   it("reads messages from /v1/export/messages", async () => {
-    await exportMessages({ q: "in:1" });
+    await exportMessages({ q: "in:#1" });
     expect(lastPath(get)).toBe("/v1/export/messages");
   });
 
   it("counts messages from /v1/export/messages/count", async () => {
-    await countExportMessages({ q: "in:1" });
+    await countExportMessages({ q: "in:#1" });
     expect(lastPath(get)).toBe("/v1/export/messages/count");
   });
 });
@@ -134,10 +140,10 @@ describe("verbs", () => {
   });
 
   it("updates a saved search with PATCH at its own id", async () => {
-    await updateSavedSearch(3, { name: "Family", query: "is:group" });
+    await updateSavedSearch(3, { name: "Family", query: "kind:group" });
     expect(patch).toHaveBeenCalledWith("/v1/saved-searches/3", {
       name: "Family",
-      query: "is:group",
+      query: "kind:group",
     });
   });
 
