@@ -1603,7 +1603,7 @@ mod docs {
 
 mod refusals {
     use super::*;
-    use crate::search::QueryErrorKind;
+    use crate::search::error::QueryErrorKind;
 
     #[test]
     fn a_refusal_never_queries_and_names_the_word() {

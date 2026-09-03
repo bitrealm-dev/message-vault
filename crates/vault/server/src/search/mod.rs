@@ -13,8 +13,8 @@ pub(crate) mod parse;
 pub(crate) mod tests;
 pub(crate) mod value;
 
-pub use error::{QueryError, QueryErrorKind};
-pub use fields::{FieldDoc, ValueType};
+pub use error::QueryError;
+pub use fields::FieldDoc;
 
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
@@ -45,7 +45,9 @@ impl ListKind {
         }
     }
 
-    /// The one table alias a compiled fragment may mention.
+    /// The one table alias a compiled fragment may mention. The tests run
+    /// every fragment against a bare `FROM <table> <alias>` to prove it.
+    #[cfg(test)]
     pub(crate) fn base_alias(self) -> &'static str {
         match self {
             Self::Contacts => "ct",
