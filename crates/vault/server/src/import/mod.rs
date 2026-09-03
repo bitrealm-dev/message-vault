@@ -33,10 +33,12 @@ use crate::db::vault_imports::{self, CompleteImportArgs};
 use crate::import_media::MediaMode;
 
 pub mod contact_name;
+pub mod failure;
 pub mod promote;
 pub mod staging;
 
 pub use contact_name::ContactNameMode;
+pub use failure::ImportFailure;
 pub use staging::is_orphaned_export;
 
 use staging::StagingInserts;
