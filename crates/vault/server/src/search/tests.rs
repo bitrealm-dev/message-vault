@@ -849,3 +849,101 @@ mod free_text {
         assert_eq!(f.where_sql().matches('?').count(), f.params().len());
     }
 }
+
+mod text_words {
+    use super::*;
+
+    #[tokio::test]
+    async fn name_and_handle_on_contacts() {
+        let (pool, _dir, f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "name:jane").await,
+            vec![f.jane]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "name:none").await,
+            vec![f.nameless]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "name:any").await,
+            sorted(vec![f.ana, f.bo, f.cy, f.jane, f.sam])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "handle:gmail").await,
+            vec![f.jane]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "handle:+1555*")
+                .await
+                .len(),
+            4
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "handle:none").await,
+            Vec::<i64>::new()
+        );
+    }
+
+    #[tokio::test]
+    async fn name_handle_and_title_on_conversations() {
+        let (pool, _dir, f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "name:jane").await,
+            sorted(vec![f.jane_direct, f.big_group])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "handle:icloud").await,
+            sorted(vec![f.sam_direct, f.archive_group, f.big_group])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "title:book").await,
+            vec![f.big_group]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "title:none").await,
+            sorted(vec![f.ana_direct, f.bo_direct, f.jane_direct, f.sam_direct])
+        );
+    }
+
+    #[tokio::test]
+    async fn body_subject_and_filename() {
+        let (pool, _dir, f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "body:toast").await,
+            vec![f.jane_avocado_to_me]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "body:toast").await,
+            vec![f.jane_direct]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "subject:dinner").await,
+            vec![f.big_group_msg]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "subject:any").await,
+            vec![f.big_group_msg]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "filename:beach*").await,
+            vec![f.feb_big_jpeg]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "filename:.jpg").await,
+            sorted(vec![f.feb_big_jpeg, f.feb_small_jpeg, f.may_big_jpeg])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "filename:notes").await,
+            vec![f.jane_direct]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "-body:avocado body:any")
+                .await
+                .len(),
+            11
+        );
+    }
+}
