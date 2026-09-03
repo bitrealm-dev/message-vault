@@ -4290,7 +4290,6 @@ export interface operations {
                 mode?: string;
                 dedupe?: boolean;
                 import_id?: number;
-                contact_name_mode?: string;
             };
             header?: never;
             path?: never;

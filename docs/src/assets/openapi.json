@@ -3161,14 +3161,6 @@
               "type": "integer",
               "format": "int64"
             }
-          },
-          {
-            "name": "contact_name_mode",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
           }
         ],
         "requestBody": {

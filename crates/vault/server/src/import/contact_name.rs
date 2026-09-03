@@ -1,6 +1,6 @@
 //! Contact linking and display-name merging during import.
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use message_ir::HandleType;
 use sqlx::AnyConnection;
 
@@ -10,36 +10,6 @@ use crate::db::contacts;
 use crate::db::handles::{
     HandleIdCache, infer_handle_type_from_shape as infer_handle_type, upsert_handle_row_cached,
 };
-
-/// How account contacts supply participant display names during import.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ContactNameMode {
-    /// Use the vault contact name only when the import name is empty.
-    #[default]
-    FillMissing,
-    /// Prefer the vault contact name whenever one exists for the handle.
-    Overwrite,
-    /// Keep the import display name unchanged (including empty / unknown).
-    AsIs,
-}
-
-impl ContactNameMode {
-    /// Parse `fill_missing`, `overwrite`, or `as_is` (including hyphenated spellings).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `s` is not one of those values.
-    pub fn parse(s: &str) -> Result<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "" | "fill_missing" | "fill-missing" => Ok(Self::FillMissing),
-            "overwrite" => Ok(Self::Overwrite),
-            "as_is" | "as-is" | "leave" | "keep_import" | "keep-import" => Ok(Self::AsIs),
-            other => bail!(
-                "invalid contact_name_mode '{other}' (expected fill_missing, overwrite, or as_is)"
-            ),
-        }
-    }
-}
 
 /// The contact that owns `handle_id`, creating one when nothing owns it yet.
 ///
@@ -236,20 +206,6 @@ pub(super) async fn seed_contact_handle_alias(
     Ok(())
 }
 
-pub(super) async fn contact_preferred_name(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    contact_id: i64,
-) -> Result<Option<String>> {
-    let name: Option<String> =
-        sqlx::query_scalar("SELECT preferred_name FROM contacts WHERE account_id = $1 AND id = $2")
-            .bind(account_id)
-            .bind(contact_id)
-            .fetch_optional(&mut *conn)
-            .await?;
-    Ok(trim_nonempty(name))
-}
-
 pub(super) fn trim_nonempty(value: Option<String>) -> Option<String> {
     let raw = value?;
     let trimmed = raw.trim();
@@ -260,75 +216,12 @@ pub(super) fn trim_nonempty(value: Option<String>) -> Option<String> {
     }
 }
 
-/// Merge an import display name with a vault contact name per [`ContactNameMode`].
-pub fn apply_contact_name_mode(
-    mode: ContactNameMode,
-    import_name: Option<String>,
-    vault_name: Option<String>,
-) -> Option<String> {
-    let import_empty = match import_name.as_deref() {
-        Some(s) => s.trim().is_empty(),
-        None => true,
-    };
-    match mode {
-        ContactNameMode::FillMissing => {
-            if import_empty {
-                vault_name.or(import_name)
-            } else {
-                import_name
-            }
-        }
-        ContactNameMode::Overwrite => vault_name.or(import_name),
-        ContactNameMode::AsIs => import_name,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::schema;
 
     const TEST_ACCOUNT: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-
-    #[test]
-    fn apply_contact_name_mode_unit() {
-        assert_eq!(
-            apply_contact_name_mode(ContactNameMode::FillMissing, None, Some("Vault".into())),
-            Some("Vault".into())
-        );
-        assert_eq!(
-            apply_contact_name_mode(
-                ContactNameMode::FillMissing,
-                Some("Import".into()),
-                Some("Vault".into())
-            ),
-            Some("Import".into())
-        );
-        assert_eq!(
-            apply_contact_name_mode(
-                ContactNameMode::Overwrite,
-                Some("Import".into()),
-                Some("Vault".into())
-            ),
-            Some("Vault".into())
-        );
-        assert_eq!(
-            apply_contact_name_mode(ContactNameMode::Overwrite, Some("Import".into()), None),
-            Some("Import".into())
-        );
-        assert_eq!(
-            apply_contact_name_mode(ContactNameMode::AsIs, None, Some("Vault".into())),
-            None
-        );
-        assert_eq!(
-            apply_contact_name_mode(
-                ContactNameMode::AsIs,
-                Some("Import".into()),
-                Some("Vault".into())
-            ),
-            Some("Import".into())
-        );
-    }
 
     #[tokio::test]
     async fn seed_contact_handle_alias_unit_first_wins() {

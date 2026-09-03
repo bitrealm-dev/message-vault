@@ -171,7 +171,6 @@ pub async fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats
         paths: source_from_jsonl.then_some(&cfg.paths),
         media: opts.media,
         wipe_sources: wipe_sources.clone(),
-        contact_name_mode: import::ContactNameMode::default(),
     };
 
     let result = import::import_jsonl_files_on_conn(

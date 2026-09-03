@@ -20,7 +20,7 @@ import {
 } from "../../lib/imessageImport";
 import { ownerPhonesNeedMismatchAck } from "../../lib/phoneTokens";
 import { parseSelectKey } from "../../lib/selectKey";
-import type { AttachmentMediaMode, ContactNameMode } from "../../lib/types";
+import type { AttachmentMediaMode } from "../../lib/types";
 import { accentLink } from "../../lib/uiStyles";
 import {
   isWhatsappMethod,
@@ -80,8 +80,6 @@ export type ImportFormFieldsProps = {
   onMaxFpsChange: (value: string) => void;
   minSizeMb: string;
   onMinSizeMbChange: (value: string) => void;
-  contactNameMode: ContactNameMode;
-  onContactNameModeChange: (mode: ContactNameMode) => void;
   ownerPhones: string[];
   onOwnerPhonesChange: (phones: string[]) => void;
   /** Vault account phones for SBR mismatch checks (empty until loaded). */
@@ -213,35 +211,6 @@ function AttachmentFields(props: {
         </div>
       )}
     </>
-  );
-}
-
-function ContactsField(props: {
-  contactNameMode: ContactNameMode;
-  onContactNameModeChange: (mode: ContactNameMode) => void;
-}) {
-  return (
-    <StackedField label="Contacts">
-      <Select
-        selectedKey={props.contactNameMode}
-        onSelectionChange={(k) => {
-          const mode = parseSelectKey(k, ["fill_missing", "overwrite", "as_is"] as const);
-          if (mode) props.onContactNameModeChange(mode);
-        }}
-        aria-label="Contacts"
-        triggerClassName="!bg-bg"
-      >
-        <ListBoxItem id="fill_missing" className={selectItemClassName}>
-          Fill in missing names using vault contacts
-        </ListBoxItem>
-        <ListBoxItem id="overwrite" className={selectItemClassName}>
-          Overwrite all import names with vault contacts
-        </ListBoxItem>
-        <ListBoxItem id="as_is" className={selectItemClassName}>
-          Leave unknown names as is
-        </ListBoxItem>
-      </Select>
-    </StackedField>
   );
 }
 
@@ -497,11 +466,6 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
               minSizeMb={props.minSizeMb}
               onMinSizeMbChange={props.onMinSizeMbChange}
             />
-
-            <ContactsField
-              contactNameMode={props.contactNameMode}
-              onContactNameModeChange={props.onContactNameModeChange}
-            />
           </>
         ) : whatsappMethod ? (
           <>
@@ -595,11 +559,6 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
               minSizeMb={props.minSizeMb}
               onMinSizeMbChange={props.onMinSizeMbChange}
             />
-
-            <ContactsField
-              contactNameMode={props.contactNameMode}
-              onContactNameModeChange={props.onContactNameModeChange}
-            />
           </>
         ) : isSbr ? (
           <>
@@ -626,11 +585,6 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
               onMaxFpsChange={props.onMaxFpsChange}
               minSizeMb={props.minSizeMb}
               onMinSizeMbChange={props.onMinSizeMbChange}
-            />
-
-            <ContactsField
-              contactNameMode={props.contactNameMode}
-              onContactNameModeChange={props.onContactNameModeChange}
             />
 
             <StackedField label="Backup Device Phone Numbers">

@@ -67,7 +67,6 @@ pub(crate) struct PostImportArgs<'a> {
     pub source: &'a str,
     pub mode: &'a str,
     pub import_id: Option<i64>,
-    pub contact_name_mode: &'a str,
     pub ndjson: Vec<u8>,
 }
 
@@ -423,7 +422,6 @@ pub fn post_import(http: &HttpSession, args: PostImportArgs<'_>) -> Result<Impor
         source,
         mode,
         import_id,
-        contact_name_mode,
         ndjson,
     } = args;
     let body_len = ndjson.len();
@@ -436,7 +434,6 @@ pub fn post_import(http: &HttpSession, args: PostImportArgs<'_>) -> Result<Impor
         ("source", source.to_string()),
         ("account", username.to_string()),
         ("mode", mode.to_string()),
-        ("contact_name_mode", contact_name_mode.to_string()),
     ];
     if let Some(id) = import_id {
         query.push(("import_id", id.to_string()));

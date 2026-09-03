@@ -75,9 +75,6 @@ export type Message = Schema["ExportMessage"] & {
 
 export type AttachmentMediaMode = "copy" | "convert" | "compress" | "skip";
 
-/** How vault contacts fill in display names during import. */
-export type ContactNameMode = "fill_missing" | "overwrite" | "as_is";
-
 export interface ExtractConfig {
   source: string;
   path: string;

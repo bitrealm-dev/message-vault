@@ -64,8 +64,6 @@ function renderForm(override: Partial<ImportFormFieldsProps> = {}) {
     onMaxFpsChange: vi.fn(),
     minSizeMb: "20",
     onMinSizeMbChange: vi.fn(),
-    contactNameMode: "fill_missing",
-    onContactNameModeChange: vi.fn(),
     ownerPhones: [],
     onOwnerPhonesChange: vi.fn(),
     profilePhones: [],

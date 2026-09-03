@@ -89,9 +89,6 @@ pub struct PushArgs {
     /// size_bytes matches the file size on disk. Without this flag every
     /// attachment is re-hashed.
     pub trust_export: bool,
-    /// Server-side import option that controls how missing contact names
-    /// are filled in, for example `fill_missing`.
-    pub contact_name_mode: Option<String>,
     /// Import id of an earlier import to resume, when set.
     pub import_id: Option<i64>,
 }
@@ -114,9 +111,6 @@ pub async fn push(
     let cancel = reset_and_clone_cancel(&state)?;
 
     let app_handle = app.clone();
-    let contact_name_mode = args
-        .contact_name_mode
-        .unwrap_or_else(|| "fill_missing".into());
 
     spawn_job(app, move || {
         let cfg = VaultPushConfig {
@@ -150,7 +144,6 @@ pub async fn push(
             // Relies on one preflight HEAD per run instead of a persisted journal.
             journal_path: None,
             cancel: Some(cancel),
-            contact_name_mode,
             import_id: args.import_id,
         };
 

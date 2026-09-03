@@ -31,7 +31,7 @@ import {
   invokePathStat,
 } from "../lib/tauri";
 import { isTauri } from "../lib/tauri-check";
-import type { AttachmentMediaMode, ContactNameMode } from "../lib/types";
+import type { AttachmentMediaMode } from "../lib/types";
 import {
   useAccountProfile,
   useFetchAccountProfile,
@@ -169,7 +169,6 @@ export default function ImportScreen() {
   const [maxResolution, setMaxResolution] = useState("720p");
   const [maxFps, setMaxFps] = useState("30");
   const [minSizeMb, setMinSizeMb] = useState("20");
-  const [contactNameMode, setContactNameMode] = useState<ContactNameMode>("fill_missing");
   const [ownerPhones, setOwnerPhones] = useState<string[]>([]);
   const [formatOpen, setFormatOpen] = useState(true);
   const [processingOpen, setProcessingOpen] = useState(false);
@@ -290,7 +289,6 @@ export default function ImportScreen() {
     setMaxResolution(restored.maxResolution);
     setMaxFps(restored.maxFps);
     setMinSizeMb(restored.minSizeMb);
-    setContactNameMode(restored.contactNameMode);
     // Restoring settings counts as seeding: the SBR profile-phones effect
     // must not overwrite what was just restored.
     ownerPhonesSeededRef.current = true;
@@ -676,8 +674,6 @@ export default function ImportScreen() {
           onMaxFpsChange={setMaxFps}
           minSizeMb={minSizeMb}
           onMinSizeMbChange={setMinSizeMb}
-          contactNameMode={contactNameMode}
-          onContactNameModeChange={setContactNameMode}
           ownerPhones={ownerPhones}
           onOwnerPhonesChange={(phones) => {
             ownerPhonesSeededRef.current = true;
@@ -707,7 +703,6 @@ export default function ImportScreen() {
               maxResolution,
               maxFps,
               minSizeMb,
-              contactNameMode,
               ownerPhones: flushedPhones ?? ownerPhones,
               force,
               obfuscate,

@@ -40,12 +40,7 @@ import {
   type TranscodeFinishedReport,
 } from "../../lib/tauri";
 import { isTauri } from "../../lib/tauri-check";
-import type {
-  AttachmentMediaMode,
-  ContactNameMode,
-  ImportIssueEvent,
-  ImportProgressEvent,
-} from "../../lib/types";
+import type { AttachmentMediaMode, ImportIssueEvent, ImportProgressEvent } from "../../lib/types";
 import { useFetchAccountProfile } from "../../lib/useAccountProfile";
 import { completeImport, createImport } from "../../lib/vaultApi";
 import { importSessionCreateBody } from "../../lib/vaultSource";
@@ -229,7 +224,6 @@ export type ImportJobFormValues = {
   maxResolution: string;
   maxFps: string;
   minSizeMb: string;
-  contactNameMode: ContactNameMode;
   ownerPhones: string[];
   force: boolean;
   obfuscate: boolean;
@@ -273,8 +267,6 @@ const ATTACHMENT_MEDIA_MODES: readonly AttachmentMediaMode[] = [
   "compress",
   "skip",
 ];
-const CONTACT_NAME_MODES: readonly ContactNameMode[] = ["fill_missing", "overwrite", "as_is"];
-
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
@@ -284,8 +276,7 @@ function isStringArray(value: unknown): value is string[] {
  *
  * The snapshot omits `backupPassword` and `whatsappKey`, defaulted to ""
  * here: the resume path never re-runs extract, and the push only reads
- * `force`, `contactNameMode`, and `attachmentMedia`, all present in the
- * snapshot.
+ * `force` and `attachmentMedia`, both present in the snapshot.
  *
  * The snapshot came from the database, not from this session's own state,
  * so its shape is checked field by field rather than trusted. Returns
@@ -305,12 +296,6 @@ export function restoreFormFromSnapshot(raw: unknown): ImportJobFormValues | nul
   if (typeof r.maxResolution !== "string") return null;
   if (typeof r.maxFps !== "string") return null;
   if (typeof r.minSizeMb !== "string") return null;
-  if (
-    typeof r.contactNameMode !== "string" ||
-    !CONTACT_NAME_MODES.includes(r.contactNameMode as ContactNameMode)
-  ) {
-    return null;
-  }
   if (!isStringArray(r.ownerPhones)) return null;
   if (typeof r.force !== "boolean") return null;
   if (typeof r.obfuscate !== "boolean") return null;
@@ -330,7 +315,6 @@ export function restoreFormFromSnapshot(raw: unknown): ImportJobFormValues | nul
     maxResolution: r.maxResolution,
     maxFps: r.maxFps,
     minSizeMb: r.minSizeMb,
-    contactNameMode: r.contactNameMode as ContactNameMode,
     ownerPhones: r.ownerPhones,
     force: r.force,
     obfuscate: r.obfuscate,
@@ -768,7 +752,6 @@ export function useImportJob() {
             // Extract (or the media pass) just wrote these files. Matching
             // size_bytes lets vault-push skip a second full-file hash.
             trust_export: true,
-            contact_name_mode: form.contactNameMode,
             import_id: sessionId,
           }),
         { onProgress: applyProgress, onIssue: recordIssue },
