@@ -124,7 +124,7 @@ struct ExportUrl<'a> {
     base_url: &'a str,
     /// Route path starting with a slash, for example `/v1/export/messages`.
     path: &'a str,
-    /// Fastmail-style search query. Sent even when empty.
+    /// A query in the vault's search language. Sent even when empty.
     q: &'a str,
     /// Page size. Only the paging route accepts it.
     limit: Option<usize>,

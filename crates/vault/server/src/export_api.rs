@@ -247,6 +247,10 @@ pub(crate) fn source_word(raw: &str) -> Option<&'static str> {
 /// `q` with the route's `source` parameter written in front of it as a
 /// `source:` word, so the parameter means exactly what the word means.
 ///
+/// `q` is wrapped in parentheses because `or` binds loosest: without them
+/// `?source=whatsapp&q=a or b` would ask for "a from WhatsApp, or b from
+/// anywhere", and the parameter is meant to narrow the whole query.
+///
 /// # Errors
 ///
 /// `BadRequest` naming the value when `source` is not one of the stored ids.
@@ -260,7 +264,11 @@ fn with_source_word(q: &str, source: Option<&str>) -> Result<String, ApiError> {
             raw.trim()
         ))
     })?;
-    Ok(format!("source:{word} {q}"))
+    let q = q.trim();
+    if q.is_empty() {
+        return Ok(format!("source:{word}"));
+    }
+    Ok(format!("source:{word} ({q})"))
 }
 
 /// Compile `query` into a WHERE fragment over the messages alias `m`.
@@ -542,8 +550,10 @@ struct RawRow {
     group_title: Option<String>,
 }
 
-/// FROM clause for message queries: wires the handles joins the filter SQL
-/// references (`hc` = conversation chat handle, `hs` = message sender handle).
+/// FROM clause for message queries. The compiled filter mentions only `m`;
+/// these joins are here for the SELECT list, which reports the conversation
+/// and the two handles' raw text. The count statements carry the same joins
+/// so they count exactly the rows the page can return.
 fn messages_from_sql() -> String {
     format!("FROM messages m\n{}", conversation_join_sql())
 }
@@ -860,13 +870,42 @@ mod tests {
         assert_eq!(with_source_word("avocado", Some("  ")).unwrap(), "avocado");
         assert_eq!(
             with_source_word("avocado", Some("sms-backup-restore")).unwrap(),
-            "source:sms avocado"
+            "source:sms (avocado)"
+        );
+        assert_eq!(
+            with_source_word("  ", Some("whatsapp")).unwrap(),
+            "source:whatsapp"
         );
         let err = with_source_word("avocado", Some("mystery")).unwrap_err();
         assert!(
             matches!(&err, ApiError::BadRequest(m) if m.contains("mystery")),
             "{err:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn the_source_param_narrows_the_whole_query_not_just_its_first_branch() {
+        let (pool, _dir, f) = crate::search::tests::seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        // "old" is the WhatsApp message; "avocado" is only ever iMessage.
+        // Asking for WhatsApp must drop the avocado messages, which it does
+        // not if the source word only binds to the query's first branch.
+        let q = with_source_word("old or avocado", Some("whatsapp")).unwrap();
+        let page = export_messages(
+            &mut conn,
+            ExportPageOpts {
+                account_id: crate::search::tests::ACCOUNT,
+                query: &q,
+                limit: 50,
+                offset: None,
+                cursor: None,
+                today: crate::search::tests::today(),
+            },
+        )
+        .await
+        .unwrap();
+        let ids: Vec<i64> = page.messages.iter().map(|m| m.id).collect();
+        assert_eq!(ids, vec![f.archive_msg]);
     }
 
     async fn setup() -> (sqlx::AnyPool, tempfile::TempDir) {
