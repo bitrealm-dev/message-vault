@@ -56,7 +56,6 @@ pub async fn pull(
             username: args.username,
             key: args.key,
             query: args.query,
-            source: None,
             skip_attachments: args.skip_attachments,
             page_limit: DEFAULT_PAGE_LIMIT,
             cancel: Some(cancel),
