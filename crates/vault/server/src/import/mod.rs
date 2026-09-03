@@ -33,10 +33,12 @@ use crate::db::vault_imports::{self, CompleteImportArgs};
 use crate::import_media::MediaMode;
 
 pub mod contact_name;
+pub mod failure;
 pub mod promote;
 pub mod staging;
 
 pub use contact_name::ContactNameMode;
+pub use failure::ImportFailure;
 pub use staging::is_orphaned_export;
 
 use staging::StagingInserts;
@@ -537,6 +539,9 @@ pub async fn import_jsonl_files_on_conn(
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ImportQuery {
+    /// Source slug the import registers its data under. Required; checked in
+    /// the handler so a missing value is the JSON 400 every other failure is.
+    #[serde(default)]
     source: String,
     /// Username or UUID. Optional; when set must match the Bearer token's account.
     #[serde(default)]
@@ -1561,6 +1566,21 @@ fn import_semaphore() -> &'static tokio::sync::Semaphore {
     SEMAPHORE.get_or_init(|| tokio::sync::Semaphore::new(MAX_CONCURRENT_IMPORTS))
 }
 
+/// Turn an import's error into the HTTP failure a caller should see.
+///
+/// The two failures a sender can fix by changing the file travel up the
+/// pipeline as `ImportFailure` and become a 400 with their own sentence.
+/// Everything else (a disk or database error, a bug) is a 500: the message
+/// goes to stderr and the client sees "internal server error".
+fn classify_import_error(err: anyhow::Error) -> ApiError {
+    match ImportFailure::in_error(&err) {
+        Some(failure) => ApiError::BadRequest(failure.to_string()),
+        None => ApiError::Internal(format!("{err:#}")),
+    }
+}
+
+/// Callers validate `query.source`; `import_handler` is the only entry point,
+/// and `source` names an on-disk directory.
 async fn run_import_path(
     state: AppState,
     query: ImportQuery,
@@ -1576,7 +1596,6 @@ async fn run_import_path(
         .await
         .map_err(|_| ApiError::Internal("vault is shutting down".into()))?;
     let mode = ImportMode::parse(&query.mode).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    validate_source_id(&query.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
     let contact_name_mode = import::ContactNameMode::parse(&query.contact_name_mode)
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
@@ -1675,7 +1694,7 @@ async fn run_import_path(
         crate::db::vault_imports::complete_import_or_warn(&mut conn, &account, id, &complete_args)
             .await;
     }
-    let stats = import_result?;
+    let stats = import_result.map_err(classify_import_error)?;
     let dedupe_stats = if do_dedupe {
         Some(dedupe::dedupe_cross_source(&mut conn, &account, None, 2).await?)
     } else {
@@ -3157,5 +3176,81 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(n, 1);
+    }
+
+    /// A registered account may import with its session token: `can_import`
+    /// is on by default, which `server.rs`'s `can_import = 0` test relies on
+    /// to prove the opposite case.
+    async fn importer() -> (
+        crate::server::AppState,
+        crate::test_support::TestVault,
+        String,
+    ) {
+        let vault = crate::test_support::test_vault().await;
+        let account =
+            crate::test_support::register_via_api(&vault.state, "importer", "hunter2hunter2").await;
+        let state = vault.state.clone();
+        (state, vault, account.token)
+    }
+
+    #[tokio::test]
+    async fn http_import_of_a_schema_3_file_is_a_400_naming_both_versions() {
+        let (state, _vault, token) = importer().await;
+        let body = concat!(
+            r#"{"schema_version":3,"export":{"source":"whatsapp","tool":"t","owner_handle":"+15550000001","owner_display_name":"Me"},"#,
+            r#""conversation":{"chat_identifier":"+15550000002","conversation_type":"individual","participants":[{"handle":"+15550000002","display_name":"Sam"}]}}"#,
+            "\n",
+        );
+        let (status, text) = crate::test_support::post_raw(
+            &state,
+            "/v1/import?source=whatsapp",
+            &token,
+            "application/jsonl",
+            body,
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST, "{text}");
+        let err: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            err["error"],
+            "This file is schema version 3; the vault reads version 4 (line 1)."
+        );
+    }
+
+    #[tokio::test]
+    async fn http_import_of_a_line_that_is_not_json_is_a_400_naming_the_line() {
+        let (state, _vault, token) = importer().await;
+        let (status, text) = crate::test_support::post_raw(
+            &state,
+            "/v1/import?source=whatsapp",
+            &token,
+            "application/jsonl",
+            "this is not json\n",
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST, "{text}");
+        let err: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let message = err["error"].as_str().unwrap();
+        assert!(
+            message.starts_with("Could not read line 1 of the file:"),
+            "{message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_import_without_source_is_a_json_400() {
+        let (state, _vault, token) = importer().await;
+        let (status, text) = crate::test_support::post_raw(
+            &state,
+            "/v1/import",
+            &token,
+            "application/jsonl",
+            "{}\n",
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST, "{text}");
+        let err: serde_json::Value = serde_json::from_str(&text)
+            .unwrap_or_else(|_| panic!("expected a JSON error body, got: {text}"));
+        assert_eq!(err["error"], "query param source is required");
     }
 }

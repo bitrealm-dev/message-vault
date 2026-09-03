@@ -10,7 +10,7 @@ Releasing is a maintainer task. One product version ([Semantic Versioning](https
 
 Nothing is published to npm or PyPI. Pushing the git tag `v<version>` is what runs the release jobs. A merge to `main` does not ship.
 
-The JSONL schema version 3 is independent of the product version. Leave other `Cargo.toml` files at `0.1.0`, and don't bump `web-next/` for a product release.
+The JSONL schema version 4 is independent of the product version. Version 3 is refused, never upgraded. Leave other `Cargo.toml` files at `0.1.0`, and don't bump `web-next/` for a product release.
 
 ## Before tagging
 

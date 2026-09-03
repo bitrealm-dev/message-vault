@@ -44,6 +44,6 @@ The release that introduces import sessions changes the schema. Upgrading to it 
 
 ## Compatibility
 
-The vault and the desktop app share JSONL schema version 3. New versions may add fields but will not remove or rename existing ones.
+The vault reads one JSONL schema version at a time, currently version 4. If you import a file written by an older desktop app, the vault refuses it and tells you which version it expected — re-export from the current desktop app and import again.
 
 The Docker tag `latest` points at the most recent release. For a specific version, use `bitrealm/message-vault:0.8.3` (no `v` prefix) or a tag from [Releases](https://github.com/bitrealm-io/message-vault/releases).

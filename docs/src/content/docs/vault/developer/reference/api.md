@@ -40,6 +40,8 @@ Request body limit matches `[server] asset_max_bytes` (default 512 MiB).
 
 HTTP `mode` defaults to `append` (CLI `import` defaults to `replace`). HTTP `dedupe` defaults to false (CLI runs dedupe unless `--skip-dedupe`). HTTP `source` is a required query parameter. `account` is optional when the Bearer token already identifies the tenant.
 
+A file the vault cannot read comes back as a 400 whose `error` names the line, or the schema version the file has and the version the vault reads.
+
 ## Search operators (`q`)
 
 Export uses a **metadata** search subset (sender, participants, contact `preferred_name`, attachment names/MIME, dates, source, group/direct, labels). It does **not** run the website full-text `messages_fts` path.

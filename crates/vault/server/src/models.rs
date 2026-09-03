@@ -1,6 +1,6 @@
 //! Import-side records mapped from message-ir JSONL.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use chrono::{Local, TimeZone, Utc};
 use message_ir::{
     ConversationHeader, HandleService, HandleType, IrAttachment, IrDirection, IrImessage,
@@ -140,6 +140,8 @@ pub fn clean_body(text: Option<&str>) -> Option<String> {
 pub fn parse_ir_lines(
     lines: impl IntoIterator<Item = impl AsRef<str>>,
 ) -> Result<Vec<ExportRecord>> {
+    use crate::import::ImportFailure;
+
     let mut out = Vec::new();
     let mut saw_header = false;
     for (i, line) in lines.into_iter().enumerate() {
@@ -148,34 +150,60 @@ pub fn parse_ir_lines(
             continue;
         }
         let line_no = i + 1;
-        let value: Value = serde_json::from_str(line)
-            .with_context(|| format!("parse JSON on message-ir line {line_no}"))?;
+        let value: Value = serde_json::from_str(line).map_err(|e| ImportFailure::Parse {
+            line: line_no,
+            detail: e.to_string(),
+        })?;
         if is_ir_header(&value) {
-            let header: ConversationHeader = serde_json::from_value(value).with_context(|| {
-                format!("parse message-ir conversation header on line {line_no}")
-            })?;
-            if header.schema_version != SCHEMA_VERSION {
-                bail!(
-                    "unsupported schema_version {} (expected {}) on line {line_no}",
-                    header.schema_version,
-                    SCHEMA_VERSION
-                );
+            // Check the version straight off the raw JSON before trying to
+            // deserialize into the current header shape: a file from a
+            // different schema version is not expected to match the current
+            // struct's required fields, and we want the version mismatch
+            // reported rather than a field-shape parse error.
+            if let Some(found) = value.get("schema_version").and_then(Value::as_u64) {
+                let found = found as u32;
+                if found != SCHEMA_VERSION {
+                    return Err(ImportFailure::SchemaVersion {
+                        found,
+                        expected: SCHEMA_VERSION,
+                        line: line_no,
+                    }
+                    .into());
+                }
             }
+            let header: ConversationHeader =
+                serde_json::from_value(value).map_err(|e| ImportFailure::Parse {
+                    line: line_no,
+                    detail: format!("the conversation header is not valid: {e}"),
+                })?;
             out.push(ExportRecord::Conversation(conversation_from_ir(&header)));
             saw_header = true;
         } else {
             if !saw_header {
-                bail!(
-                    "message-ir JSONL missing conversation header before message on line {line_no}"
-                );
+                return Err(ImportFailure::Parse {
+                    line: line_no,
+                    detail: "a message appears before the conversation header".into(),
+                }
+                .into());
             }
-            let msg: IrMessage = serde_json::from_value(value)
-                .with_context(|| format!("parse message-ir message on line {line_no}"))?;
-            out.push(ExportRecord::Message(message_from_ir(&msg)?));
+            let msg: IrMessage =
+                serde_json::from_value(value).map_err(|e| ImportFailure::Parse {
+                    line: line_no,
+                    detail: format!("the message is not valid: {e}"),
+                })?;
+            let record = message_from_ir(&msg).map_err(|e| ImportFailure::Parse {
+                line: line_no,
+                detail: format!("{e:#}"),
+            })?;
+            out.push(ExportRecord::Message(record));
         }
     }
     if out.is_empty() {
-        bail!("empty message-ir JSONL (missing conversation header)");
+        return Err(ImportFailure::Parse {
+            line: 1,
+            detail: "the file has no conversation header".into(),
+        }
+        .into());
     }
     Ok(out)
 }
@@ -464,5 +492,58 @@ mod tests {
             Some(HandleType::Other)
         );
         assert_eq!(infer_sender_handle_type(None, IrService::Sms), None);
+    }
+
+    #[test]
+    fn parse_ir_lines_refuses_schema_3_as_a_failure() {
+        let header = r#"{"schema_version":3,"export":{"source":"whatsapp","tool":"t","owner_handle":"+1","owner_display_name":"Me"},"conversation":{"chat_identifier":"+2","conversation_type":"individual","participants":[]}}"#;
+        let err = parse_ir_lines([header]).unwrap_err();
+        let failure = crate::import::ImportFailure::in_error(&err).expect("typed failure");
+        assert_eq!(
+            *failure,
+            crate::import::ImportFailure::SchemaVersion {
+                found: 3,
+                expected: message_ir::SCHEMA_VERSION,
+                line: 1
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ir_lines_reports_a_non_json_line_as_a_failure() {
+        let err = parse_ir_lines(["this is not json"]).unwrap_err();
+        let failure = crate::import::ImportFailure::in_error(&err).expect("typed failure");
+        match failure {
+            crate::import::ImportFailure::Parse { line, .. } => assert_eq!(*line, 1),
+            other => panic!("expected Parse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_ir_lines_reports_a_message_before_any_header_as_a_failure() {
+        let err = parse_ir_lines([r#"{"guid":"m1"}"#]).unwrap_err();
+        let failure = crate::import::ImportFailure::in_error(&err).expect("typed failure");
+        match failure {
+            crate::import::ImportFailure::Parse { line, detail } => {
+                assert_eq!(*line, 1);
+                assert!(
+                    detail.contains("before the conversation header"),
+                    "{detail}"
+                );
+            }
+            other => panic!("expected Parse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_ir_lines_reports_a_message_with_an_impossible_timestamp_as_a_failure() {
+        let header = r#"{"schema_version":4,"export":{"source":"sms-backup-restore","tool":"t","tool_version":"1","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550101","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550101","display_name":"Sam"}],"stats":{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1400773261000,"last_timestamp_unix_ms":1400773261000}}}"#;
+        let msg = r#"{"guid":"g1","timestamp_unix_ms":9223372036854775807,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550101","sender_display_name":"Sam","subject":null,"text":"hello","attachments":[],"imessage":null,"source":null}"#;
+        let err = parse_ir_lines([header, msg]).unwrap_err();
+        let failure = crate::import::ImportFailure::in_error(&err).expect("typed failure");
+        match failure {
+            crate::import::ImportFailure::Parse { line, .. } => assert_eq!(*line, 2),
+            other => panic!("expected Parse, got {other:?}"),
+        }
     }
 }

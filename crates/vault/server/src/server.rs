@@ -545,11 +545,16 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     eprintln!("  PUT  /v1/assets/{{sha256}}/uploads/{{id}}/parts/{{n}}  (part body)");
     eprintln!("  POST /v1/assets/{{sha256}}/uploads/{{id}}/complete");
     eprintln!("  DELETE /v1/assets/{{sha256}}/uploads/{{id}}  (abort)");
-    eprintln!("  POST /v1/import?source=&account=&mode=append|replace&dedupe=false&import_id=");
+    eprintln!(
+        "  POST /v1/import?source=<slug>&mode=append|replace&dedupe=false&import_id=&account="
+    );
+    eprintln!("       source= required: a short name such as whatsapp or imessage");
     eprintln!("       account= optional (must match token); derived from Bearer when omitted");
     eprintln!("       Content-Type: application/jsonl  (body only; assets by sha256)");
     eprintln!("       Content-Type: multipart/form-data   (field jsonl + file parts; remote push)");
-    eprintln!("       Export routes are read-only (no delete); same Bearer token as import");
+    eprintln!(
+        "       A file the vault cannot read is a 400 that names the line; export routes are read-only"
+    );
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;

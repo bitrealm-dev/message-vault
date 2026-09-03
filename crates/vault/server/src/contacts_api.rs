@@ -1198,6 +1198,20 @@ pub(crate) async fn contact_detail_handler(
         .ok_or_else(|| ApiError::NotFound("contact not found".into()))
 }
 
+/// Turn a contact edit's error into the HTTP failure a caller should see.
+///
+/// `mutate_contact` returns `anyhow` so that its validation messages ("handle
+/// already linked to another contact") reach the person. A database error
+/// is not something the person can fix by changing the request, so it is a
+/// 500 with the cause on stderr rather than a 400 wearing sqlx's words.
+fn classify_mutation_error(err: anyhow::Error) -> ApiError {
+    if err.downcast_ref::<sqlx::Error>().is_some() {
+        ApiError::Internal(format!("{err:#}"))
+    } else {
+        ApiError::BadRequest(err.to_string())
+    }
+}
+
 /// Rename a contact or change its linked handles.
 #[utoipa::path(
     patch,
@@ -1223,7 +1237,7 @@ pub(crate) async fn contact_mutate_handler(
     let mut conn = state.db.acquire().await?;
     match mutate_contact(&mut conn, &auth.account_id, contact_id, &body).await {
         Ok(false) => Err(ApiError::NotFound("contact not found".into())),
-        Err(e) => Err(ApiError::BadRequest(e.to_string())),
+        Err(e) => Err(classify_mutation_error(e)),
         Ok(true) => get_contact_detail(&mut conn, &auth.account_id, contact_id)
             .await?
             .ok_or_else(|| ApiError::Internal("contact missing after mutate".into()))
@@ -2666,5 +2680,25 @@ mod tests {
         let status =
             crate::test_support::get_status(&vault.state, "/v1/contacts?q=from:me", &token).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn a_database_error_while_editing_a_contact_is_internal() {
+        let err = anyhow::Error::from(sqlx::Error::PoolClosed).context("update contact");
+        match super::classify_mutation_error(err) {
+            crate::server::ApiError::Internal(_) => {}
+            other => panic!("expected Internal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_validation_error_while_editing_a_contact_is_bad_request() {
+        let err = anyhow::anyhow!("handle already linked to another contact");
+        match super::classify_mutation_error(err) {
+            crate::server::ApiError::BadRequest(m) => {
+                assert_eq!(m, "handle already linked to another contact");
+            }
+            other => panic!("expected BadRequest, got {other:?}"),
+        }
     }
 }

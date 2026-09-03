@@ -4,8 +4,8 @@
 //! Distinct from `server.rs`'s `test_state()`, which returns a four-tuple
 //! `(TempDir, AppState, String, i64)` for handler-level tests that call a
 //! handler function directly. This module drives the whole stack over real
-//! HTTP, for tests in `auth.rs`, and (per the authorization-model plan)
-//! `accounts_api.rs` and related modules.
+//! HTTP, for tests in `auth.rs`, `admin_api.rs`, `api_tokens_api.rs`, and
+//! any route whose contract is worth checking end to end.
 
 use axum::http::StatusCode;
 use serde::de::DeserializeOwned;
@@ -225,6 +225,37 @@ pub async fn delete_json<T: DeserializeOwned>(state: &AppState, path: &str, toke
         "DELETE {path} must succeed"
     );
     response.json().await.unwrap()
+}
+
+/// POST a body that is not JSON (JSONL, plain text, an empty body) with a
+/// Bearer token and an explicit Content-Type, returning the status and the
+/// response text. For routes whose contract is the raw body, such as
+/// `POST /v1/import`.
+pub async fn post_raw(
+    state: &AppState,
+    path: &str,
+    token: &str,
+    content_type: &str,
+    body: impl Into<reqwest::Body>,
+) -> (StatusCode, String) {
+    let app = http_app(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let response = reqwest::Client::new()
+        .post(format!("http://{address}{path}"))
+        .bearer_auth(token)
+        .header(reqwest::header::CONTENT_TYPE, content_type)
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    server.abort();
+    let status = response.status();
+    let text = response.text().await.unwrap();
+    (status, text)
 }
 
 /// Give an account one conversation holding one message, so counts are non-zero.
