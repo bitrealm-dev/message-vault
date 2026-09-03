@@ -69,7 +69,7 @@ describe("columnInitialWidth", () => {
   });
 
   it("grows when a cell is wider than the header", () => {
-    const headerMin = headerLabelMinWidth("Alias");
+    const headerMin = headerLabelMinWidth("Identity");
     const wide = columnInitialWidth(headerMin, ["Mary Elizabeth Katherine Thompson"]);
     expect(wide).toBeGreaterThan(headerMin);
   });

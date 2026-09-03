@@ -44,7 +44,6 @@ function detail(id: number, overrides: Partial<ContactDetail> = {}): ContactDeta
       {
         handle: `+1555000${id}`,
         service: "phone",
-        name_alias: null,
         start_date: "2020-01-01T00:00:00Z",
         end_date: "2024-01-01T00:00:00Z",
         individual_conversations: 3,
@@ -154,7 +153,6 @@ describe("ContactDrawer", () => {
         {
           handle: "+15551212",
           service: "phone",
-          name_alias: null,
           start_date: "2021-06-01T00:00:00Z",
           end_date: "2025-01-01T00:00:00Z",
           individual_conversations: 5,
@@ -267,7 +265,6 @@ describe("ContactDrawer", () => {
           {
             handle: "+1555000b",
             service: "phone",
-            name_alias: null,
             start_date: "2020-01-01T00:00:00Z",
             end_date: "2024-01-01T00:00:00Z",
             individual_conversations: 3,
@@ -319,7 +316,6 @@ describe("ContactDrawer", () => {
           {
             handle: "+1555000b",
             service: "phone",
-            name_alias: null,
             start_date: "2020-01-01T00:00:00Z",
             end_date: "2024-01-01T00:00:00Z",
             individual_conversations: 3,
@@ -406,7 +402,6 @@ describe("ContactDrawer", () => {
           {
             handle: "+15550001",
             service: "phone",
-            name_alias: null,
             start_date: "2020-01-01T00:00:00Z",
             end_date: "2024-01-01T00:00:00Z",
             individual_conversations: 1,
@@ -417,7 +412,6 @@ describe("ContactDrawer", () => {
           {
             handle: "+15550002",
             service: "phone",
-            name_alias: null,
             start_date: "2020-01-01T00:00:00Z",
             end_date: "2024-01-01T00:00:00Z",
             individual_conversations: 2,
@@ -598,7 +592,7 @@ describe("ContactDrawer", () => {
     expect(group.className).not.toMatch(/text-right/);
 
     const table = screen.getByRole("grid", { name: "Contact handles" });
-    expect(table.querySelectorAll(".cursor-col-resize").length).toBeGreaterThanOrEqual(8);
+    expect(table.querySelectorAll(".cursor-col-resize").length).toBeGreaterThanOrEqual(7);
 
     const headers = screen.getAllByRole("columnheader");
     const groupIndex = headers.findIndex((h) => /Group Messages/i.test(h.textContent ?? ""));

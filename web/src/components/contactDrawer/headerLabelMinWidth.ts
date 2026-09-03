@@ -6,7 +6,7 @@ export const HANDLE_TABLE_THREADS_MAX = "9,999";
 export const HANDLE_TABLE_MESSAGES_MAX = "999,999";
 export const HANDLE_TABLE_DATE_SAMPLE = "2020-12-31";
 
-/** Body cell horizontal padding (`px-1` both sides) for Service / Identity / Alias. */
+/** Body cell horizontal padding (`px-1` both sides) for Service / Identity. */
 const CELL_PADDING_PX = 8;
 
 /** Date and count cells use DataCard `px-3` (12px each side). */

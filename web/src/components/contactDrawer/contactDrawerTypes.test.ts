@@ -109,27 +109,6 @@ describe("contactPreviewFromThreadParticipants", () => {
     ).toBe("+15550001");
   });
 
-  it("uses name_alias when preferred name is missing (thread chip fallback)", () => {
-    expect(
-      contactPreviewFromThreadParticipants("c1", [
-        { contact_id: "c1", handle: "+15550001", name: null, name_alias: "Mom" },
-      ])?.name,
-    ).toBe("Mom");
-  });
-
-  it("prefers preferred name over name_alias so the stub heading matches the drawer", () => {
-    expect(
-      contactPreviewFromThreadParticipants("c1", [
-        {
-          contact_id: "c1",
-          handle: "+15550001",
-          name: "Ada",
-          name_alias: "Mom",
-        },
-      ])?.name,
-    ).toBe("Ada");
-  });
-
   it("stubs at least one identity when matched handles are empty", () => {
     expect(
       contactPreviewFromThreadParticipants("c1", [{ contact_id: "c1", handle: "", name: "Ada" }]),
