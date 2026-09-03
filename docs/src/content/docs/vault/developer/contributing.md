@@ -132,7 +132,7 @@ Install the frontend packages once, then start the Vite UI. Vite is the local we
 cd web && npm ci && npm run dev
 ```
 
-Open **http://localhost:5173**. Sign in as username `demo` with an empty password. That account is read-only; create a separate account to test import or other writes.
+Open **http://localhost:5173**. Sign in as username `demo` with an empty password. That account holds invented messages and can do everything a real account can, so import and other writes are testable on it; `./scripts/run-vault-dev.sh --reset-demo` puts it back.
 
 Later sessions, skip `npm ci` unless `web/package-lock.json` changed.
 

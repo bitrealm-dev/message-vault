@@ -54,7 +54,7 @@ Edit the Compose file to change the published port, set `DEMO_DATA=false` to ski
 
 Open **http://localhost:8080**. Sign in with username `demo` and an empty password.
 
-`demo` is a read-only sample account on this vault. Browse **Conversations**, open a thread, try [search](/vault/user/how-to/search/).
+`demo` is a sample account filled with invented messages, so you can try the vault without making an account of your own. Everything works: browse **Conversations**, open a thread, try [search](/vault/user/how-to/search/), import, export. Only the demo account itself cannot be deleted; `reset-demo` puts it back the way it was.
 
 ## After you have looked around
 
