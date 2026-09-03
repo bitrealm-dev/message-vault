@@ -156,6 +156,20 @@ pub(crate) async fn conversation(
     id
 }
 
+/// A participant the source named but gave no address for: `handle_id` is
+/// NULL and `name_alias` carries who they are.
+pub(crate) async fn named_participant(conn: &mut AnyConnection, conversation: i64, alias: &str) {
+    sqlx::query(
+        "INSERT INTO participants (conversation_id, handle_id, contact_id, name_alias)
+         VALUES ($1, NULL, NULL, $2)",
+    )
+    .bind(conversation)
+    .bind(alias)
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+}
+
 pub(crate) struct Msg<'a> {
     pub conversation: i64,
     pub timestamp: &'a str,
@@ -363,6 +377,8 @@ pub(crate) async fn seeded() -> (sqlx::AnyPool, tempfile::TempDir, Fixture) {
         &[f.ana_handle, f.bo_handle, f.sam_handle],
     )
     .await;
+    // The source named this one and gave no address for them.
+    named_participant(&mut conn, f.archive_group, "Robin").await;
     let big_chat = handle(&mut conn, a, "chat200", "imessage").await;
     f.big_group = conversation(
         &mut conn,
@@ -774,6 +790,33 @@ mod free_text {
             )
             .await,
             vec![f.jane_avocado_to_me]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_participant_the_source_only_named_is_still_searchable() {
+        let (pool, _dir, f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        // "Robin" is in Old Times with no address of their own.
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "robin").await,
+            vec![f.archive_group]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_prefix_matches_any_word_that_starts_with_it() {
+        let (pool, _dir, f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        // The prefix starts Jane Doe's second word, not her first.
+        let by_prefix = run(&mut conn, ListKind::Contacts, "doe*").await;
+        assert_eq!(by_prefix, vec![f.jane]);
+        // A prefix never loses a row the bare term found.
+        assert_eq!(run(&mut conn, ListKind::Contacts, "doe").await, by_prefix);
+        // And the same on a conversation, through the participant's name.
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "doe*").await,
+            sorted(vec![f.jane_direct, f.big_group])
         );
     }
 

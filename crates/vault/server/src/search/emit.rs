@@ -31,7 +31,7 @@ pub(crate) fn compile(
     out.push("(");
     out.push(ctx.account_col());
     out.push(" = ");
-    out.bind_text(account_id);
+    out.bind_text(ctx.account_id);
     let uses = |word: &str| expr.is_some_and(|e| e.uses(word));
     match list {
         ListKind::Contacts => {
@@ -104,51 +104,65 @@ fn emit_expr(ctx: &ListCtx<'_>, out: &mut Sql, expr: &Expr) -> Result<(), QueryE
     Ok(())
 }
 
-/// `%text%`, or `text%` for a prefix. A phrase is matched as one string.
-fn contains_pattern(term: &TextTerm) -> String {
+/// One text test on `column`, for the lists matched with LIKE.
+///
+/// A prefix term means "a word starts with this", so it matches at the start
+/// of the column or just after a space — never only at the very start, which
+/// would make `avoc*` find less than `avoc`. Anything else, a phrase
+/// included, is an ordinary substring.
+fn text_match(out: &mut Sql, engine: DbEngine, column: &str, term: &TextTerm) {
     match term {
-        TextTerm::Term { text, prefix: true } => format!("{text}%"),
+        TextTerm::Term { text, prefix: true } => {
+            out.push("(");
+            out.like(engine, column, &format!("{text}%"));
+            out.push(" OR ");
+            out.like(engine, column, &format!("% {text}%"));
+            out.push(")");
+        }
         TextTerm::Term {
             text,
             prefix: false,
         }
-        | TextTerm::Phrase(text) => format!("%{text}%"),
+        | TextTerm::Phrase(text) => out.like(engine, column, &format!("%{text}%")),
     }
 }
 
 /// Free text: the row's own text, one meaning applied per row type.
 fn emit_text(ctx: &ListCtx<'_>, out: &mut Sql, term: &TextTerm) {
     let e = ctx.engine;
-    let pat = contains_pattern(term);
     match ctx.list {
         ListKind::Contacts => {
             out.push("(");
-            out.like(
+            text_match(
+                out,
                 e,
                 "COALESCE(NULLIF(trim(ct.preferred_name), ''), '(unknown)')",
-                &pat,
+                term,
             );
             out.push(
                 " OR EXISTS (SELECT 1 FROM contact_handles ch JOIN handles h ON h.id = ch.handle_id WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id AND (",
             );
-            out.like(e, "h.raw", &pat);
+            text_match(out, e, "h.raw", term);
             out.push(" OR ");
-            out.like(e, "coalesce(h.normalized, '')", &pat);
+            text_match(out, e, "coalesce(h.normalized, '')", term);
             out.push(")))");
         }
         ListKind::Conversations => {
             out.push("(");
-            out.like(e, "coalesce(c.group_title, '')", &pat);
+            text_match(out, e, "coalesce(c.group_title, '')", term);
             out.push(" OR EXISTS (SELECT 1 FROM handles hc WHERE hc.id = c.chat_handle_id AND ");
-            out.like(e, "hc.raw", &pat);
+            text_match(out, e, "hc.raw", term);
+            // The handle join is a LEFT join: a source may name a participant
+            // and record no address for them, and that person is searchable by
+            // the name the source gave.
             out.push(
-                ") OR EXISTS (SELECT 1 FROM participants p JOIN handles ph ON ph.id = p.handle_id LEFT JOIN contacts pct ON pct.id = p.contact_id WHERE p.conversation_id = c.id AND (",
+                ") OR EXISTS (SELECT 1 FROM participants p LEFT JOIN handles ph ON ph.id = p.handle_id LEFT JOIN contacts pct ON pct.id = p.contact_id WHERE p.conversation_id = c.id AND (",
             );
-            out.like(e, "ph.raw", &pat);
+            text_match(out, e, "coalesce(ph.raw, '')", term);
             out.push(" OR ");
-            out.like(e, "coalesce(p.name_alias, '')", &pat);
+            text_match(out, e, "coalesce(p.name_alias, '')", term);
             out.push(" OR ");
-            out.like(e, "coalesce(pct.preferred_name, '')", &pat);
+            text_match(out, e, "coalesce(pct.preferred_name, '')", term);
             out.push(")))");
         }
         ListKind::Messages => fts::leaf(out, e, term),

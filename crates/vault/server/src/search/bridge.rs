@@ -74,6 +74,10 @@ impl ListCtx<'_> {
     /// Wrap `inner`, written against conversation alias `c`, so it is true of
     /// the base row: the conversation itself, the message's conversation, or
     /// some conversation the contact is in.
+    ///
+    /// Never nest one wrapper inside another on the same list: two of them
+    /// each open their own `FROM conversations c`, and the inner one would
+    /// shadow the outer alias.
     pub fn conversation(&self, out: &mut Sql, inner: impl FnOnce(&mut Sql)) {
         match self.list {
             ListKind::Conversations => {
@@ -102,6 +106,10 @@ impl ListCtx<'_> {
     /// Wrap `inner`, written against message alias `m` (a non-duplicate
     /// message; conversation alias `c` is also in scope), so it is true of the
     /// base row.
+    ///
+    /// Never nest one wrapper inside another on the same list: two of them
+    /// each open their own `FROM conversations c`, and the inner one would
+    /// shadow the outer alias.
     pub fn message(&self, out: &mut Sql, inner: impl FnOnce(&mut Sql)) {
         match self.list {
             ListKind::Messages => {
@@ -132,6 +140,10 @@ impl ListCtx<'_> {
 
     /// Wrap `inner`, written against contact alias `ct`, so it is true of the
     /// base row: the contact itself, or some contact linked to a participant.
+    ///
+    /// Never nest one wrapper inside another on the same list: two of them
+    /// each open their own `FROM conversations c`, and the inner one would
+    /// shadow the outer alias.
     pub fn contact(&self, out: &mut Sql, inner: impl FnOnce(&mut Sql)) {
         match self.list {
             ListKind::Contacts => {
@@ -175,13 +187,16 @@ impl ListCtx<'_> {
             ),
         }
     }
+}
 
-    /// A WHERE fragment tying conversations alias `c2` to the base contact.
-    /// Only meaningful on Contacts.
-    pub fn conversations_link(&self, c2: &str) -> String {
-        format!(
-            "{c2}.account_id = ct.account_id AND {}",
-            conversation_involves(c2, "ct.id")
-        )
-    }
+/// A WHERE fragment tying conversations alias `c2` to the base contact `ct`.
+///
+/// A free function rather than a [`ListCtx`] method on purpose: it is only
+/// meaningful when the base row is a contact, and a method would let a call
+/// site on another list emit `ct`, an alias that is not in scope there.
+pub(crate) fn contact_conversations_link(c2: &str) -> String {
+    format!(
+        "{c2}.account_id = ct.account_id AND {}",
+        conversation_involves(c2, "ct.id")
+    )
 }
