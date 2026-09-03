@@ -1024,12 +1024,16 @@ async fn seed_demo_account_on_conn(
 ) -> Result<()> {
     account_profile::ensure_account_row(conn, account_id).await?;
 
+    // The demo account exists so someone can try the whole vault without
+    // making an account of their own, so it may import, export, and delete
+    // like any other account. Reading a conversation goes through the export
+    // route, so a demo account without export cannot open a single thread.
     sqlx::query(
         r#"
         INSERT INTO accounts (
             id, username, password_hash, preferred_name, can_import, can_export, can_delete
         )
-        VALUES ($1, $2, NULL, $3, 0, 0, 0)
+        VALUES ($1, $2, NULL, $3, 1, 1, 1)
         ON CONFLICT(id) DO UPDATE SET
             username = excluded.username,
             preferred_name = excluded.preferred_name,
@@ -1376,6 +1380,41 @@ username = "demo"
         assert_eq!(*handle_type, HandleType::Phone);
         assert_eq!(seed.owner.emails, vec!["demo.ingest@example.com"]);
         assert_eq!(seed.account.username, "demo");
+    }
+
+    #[tokio::test]
+    async fn the_demo_account_may_import_export_and_delete() {
+        let temp = tempfile::tempdir().expect("create test directory");
+        let db = temp.path().join("vault.db");
+        let (pool, mut conn) = test_db(&db).await;
+        let seed = DemoSeed {
+            owner: DemoOwner {
+                display_name: "Demo User".into(),
+                handle_specs: Vec::new(),
+                emails: Vec::new(),
+            },
+            account: DemoAccount {
+                username: "demo".into(),
+            },
+        };
+
+        seed_demo_account_on_conn(&mut conn, DEMO_ACCOUNT_ID, &seed)
+            .await
+            .expect("seed the demo account");
+
+        let (import, export, delete): (i64, i64, i64) =
+            sqlx::query_as("SELECT can_import, can_export, can_delete FROM accounts WHERE id = $1")
+                .bind(DEMO_ACCOUNT_ID)
+                .fetch_one(&mut *conn)
+                .await
+                .expect("read the demo account");
+        assert_eq!(
+            (import, export, delete),
+            (1, 1, 1),
+            "the demo account is there to try the whole vault, so it may import, export, and delete"
+        );
+
+        close_test_db(pool, conn).await;
     }
 
     #[tokio::test]
