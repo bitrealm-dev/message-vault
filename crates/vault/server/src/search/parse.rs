@@ -509,9 +509,9 @@ mod tests {
 
     #[test]
     fn unknown_word_is_refused_without_naming_anything_else() {
-        let err = parse_err(ListKind::Messages, "people:Family");
+        let err = parse_err(ListKind::Messages, "wombat:Family");
         assert_eq!(err.kind, QueryErrorKind::UnknownWord);
-        assert_eq!(err.message, "people: is not a search word.");
+        assert_eq!(err.message, "wombat: is not a search word.");
         assert_eq!(err.span, 0..13);
         assert_eq!(err.did_you_mean, None);
     }
