@@ -1,6 +1,6 @@
 ---
 title: Contacts and labels
-description: Browse contacts in the vault and choose how Import fills names.
+description: Browse contacts in the vault and see where their names come from.
 ---
 
 ## Browse contacts
@@ -13,13 +13,9 @@ Open **Contacts** in the sidebar to see people and handles discovered from impor
 
 The vault keeps display names, handles (E.164 phone numbers where possible), and labels. It is not a full address-book manager (no synced VCF photos or notes).
 
-## Names during Import
+## Where a contact's name comes from
 
-On the desktop **Import** screen, choose how vault contact names apply to incoming messages:
-
-- **Fill in missing names using vault contacts** — keep names already on the backup; fill blanks from the vault
-- **Overwrite all import names with vault contacts** — prefer vault contact names for matching handles
-- **Leave unknown names as is** — keep backup display names unchanged
+A backup is an address book you already curated, so the vault takes it at its word. When a backup knows someone's name and the contact the vault has for them has none, that name goes on the contact. The first backup wins: a later one that spells the name differently does not change it. A name you type yourself, or one you load from an address book file, replaces the name an import gave.
 
 Some backup types also accept a contacts file (VCF or contacts CSV) on the Import form.
 

@@ -30,8 +30,7 @@ JSONL (JSON Lines) folders on disk are a command-line task: [Extract to files](/
    Rescue sources (GO SMS Pro, iMazing, OpenExtract, SMS Backup+) are documented under [rescue imports](/vault/user/how-to/rescue-imports/).
 
 4. Fill in paths, passwords, keys, or owner phone numbers for that source. A red asterisk marks a field that has no default and must be filled. **(Optional)** marks an empty field you can leave blank. Dropdowns that already have a value (Platform, Attachments, Contacts) have no extra mark.
-5. Optionally set how contact names should be filled from vault contacts ([Contacts and labels](/vault/user/how-to/contacts-and-labels/))
-6. Start the run and watch the on-screen progress and log
+5. Start the run and watch the on-screen progress and log
 
 ### iMessage fields
 
