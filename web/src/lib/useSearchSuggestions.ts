@@ -64,11 +64,7 @@ export function applySuggestionToQuery(value: string, suggestion: Suggestion): s
  * word the list has; a choice word offers its values; a person word fetches
  * matching contacts and inserts `word:#id`.
  */
-export function useSearchSuggestions(
-  value: string,
-  list: SearchList,
-  enabled: boolean,
-): Suggestion[] {
+export function useSearchSuggestions(value: string, list: SearchList): Suggestion[] {
   const { fields } = useSearchFields(list);
   const [contacts, setContacts] = useState<ContactName[]>([]);
 
@@ -80,7 +76,7 @@ export function useSearchSuggestions(
   const personOp = completingValue && isPersonWord(fields.find((f) => f.word === word));
 
   useEffect(() => {
-    if (!enabled || !personOp) {
+    if (!personOp) {
       setContacts([]);
       return;
     }
@@ -98,8 +94,7 @@ export function useSearchSuggestions(
       window.clearTimeout(t);
       ac.abort();
     };
-  }, [enabled, personOp, valuePart]);
+  }, [personOp, valuePart]);
 
-  if (!enabled) return [];
   return buildSearchSuggestions({ completingValue, personOp, lastToken, fields, contacts });
 }

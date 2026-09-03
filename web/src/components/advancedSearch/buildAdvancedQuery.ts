@@ -105,9 +105,10 @@ export function buildContactsQuery(input: ContactsQueryInput): string {
   if (input.activity === "no-messages") push("messages:0");
   if (input.noPreferredName) push("name:none");
   if (input.noHandle) push("handle:none");
-  for (const id of input.services) {
-    push(`service:${String(id)}`);
-  }
+  // Several ticked transports go in one word, comma separated, which the
+  // language reads as "any of these".
+  const services = input.services.map((id) => String(id).trim()).filter(Boolean);
+  if (services.length > 0) push(`service:${services.join(",")}`);
   return parts.join(" ");
 }
 

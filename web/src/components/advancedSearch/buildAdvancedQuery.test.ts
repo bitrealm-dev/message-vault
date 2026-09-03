@@ -156,4 +156,13 @@ describe("buildContactsQuery", () => {
       "messages:0 handle:none",
     );
   });
+
+  it("puts several ticked transports in one word, so any of them matches", () => {
+    expect(buildContactsQuery({ ...emptyContacts, services: ["whatsapp"] })).toBe(
+      "service:whatsapp",
+    );
+    expect(buildContactsQuery({ ...emptyContacts, services: ["sms", "mms", "rcs"] })).toBe(
+      "service:sms,mms,rcs",
+    );
+  });
 });

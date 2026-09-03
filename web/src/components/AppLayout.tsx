@@ -128,7 +128,7 @@ export default function AppLayout() {
     setSearchParams(next, { replace: true });
   }
 
-  const handleSearch = (q: string, mode: AdvancedSearchMode = "messages") => {
+  const handleSearch = (q: string, mode: AdvancedSearchMode) => {
     if (trashMode) {
       navigate(`/trash${q ? `?tq=${encodeURIComponent(q)}` : ""}`);
     } else if (mode === "contacts" || contactsMode) {
@@ -204,8 +204,6 @@ export default function AppLayout() {
     contactId: string;
     kind: ContactBrowseKind;
     handle?: string;
-    service?: string;
-    handles?: string[];
   }) => {
     const query = contactBrowseQuery(contactId, kind, handle);
     setSelectedContact(null);
@@ -225,7 +223,7 @@ export default function AppLayout() {
         />
         <ColumnResizeProvider>
           <div className="flex min-h-0 flex-1 overflow-hidden">
-            <LeftPanel onSearchChange={handleSearchChange} onSearch={handleSearch} />
+            <LeftPanel onSearchChange={handleSearchChange} />
 
             {/* Conversations: render list component directly with props */}
             {mode === "conversations" && !isMessageRoute && (

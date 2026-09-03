@@ -21,11 +21,12 @@ export type SearchList = Schema["ListKind"];
 
 /**
  * A `word:` token: a field name followed by a colon, at the start or after a
- * space, with or without a leading minus. Quoted phrases are removed first so
- * a colon inside one does not count.
+ * space or an opening bracket, with or without a leading minus. Quoted phrases
+ * are removed first so a colon inside one does not count.
  */
+// The bracket matters because `(kind:group or kind:direct)` is a real query.
 // The value must not start with `/`, so a pasted URL like `http://x` is a word.
-const FIELD_TOKEN_RE = /(^|\s)-?[a-z][a-z-]*:(?!\/)/i;
+const FIELD_TOKEN_RE = /(^|[\s(])-?[a-z][a-z-]*:(?!\/)/i;
 const PHRASE_RE = /"(?:[^"]|"")*"/g;
 
 /** True when the query has a `word:` token, which only the vault can apply. */
@@ -36,7 +37,7 @@ export function hasFieldToken(q: string): boolean {
 /** The free-text words of a query, with every `word:value` token removed. */
 export function stripFieldTokens(q: string): string {
   return q
-    .replace(/(^|\s)-?[a-z][a-z-]*:(?!\/)("(?:[^"]|"")*"|\S*)/gi, " ")
+    .replace(/(^|[\s(])-?[a-z][a-z-]*:(?!\/)("(?:[^"]|"")*"|\S*)/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 }

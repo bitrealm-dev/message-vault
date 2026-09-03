@@ -123,8 +123,7 @@ export default function SearchBar({
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Every list has words of its own now, so every bar offers them.
-  const suggestions = useSearchSuggestions(value, list, true);
+  const suggestions = useSearchSuggestions(value, list);
 
   const notifyOpen = useEffectEvent((open: boolean) => {
     onOpenChange?.(open);
