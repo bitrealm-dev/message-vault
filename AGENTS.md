@@ -295,7 +295,7 @@ Three version numbers are easy to mix up:
 |-----------------|---------------------|----------------------------------------------------------------------------------------|
 | Product version | `0.8.3`             | Desktop app + vault image. Git tag is `v0.8.3`.                                        |
 | Docker Hub tag  | `0.8.3` (no `v`)    | `bitrealm/message-vault:0.8.3`. Also `0.8`, `latest`, and `sha-…`.                     |
-| JSONL schema    | `schema_version: 3` | Shared chat file format. Independent of the product version. Do not invent v2 readers. |
+| JSONL schema    | `schema_version: 4` | Shared chat file format. Independent of the product version. Version 3 is refused, never upgraded. |
 
 **Product version files** (keep these in lockstep; current value is `0.8.3`):
 

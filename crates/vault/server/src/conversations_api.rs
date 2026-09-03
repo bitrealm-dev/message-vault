@@ -134,7 +134,7 @@ pub struct ConversationParticipant {
 /// Conversation row for the list: participants, counts, tags.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ConversationSummary {
-    /// Numeric `conversations.id`, serialized as a string for `in:<id>` queries.
+    /// Numeric `conversations.id`, serialized as a string; search for it as `in:#<id>`.
     pub id: String,
     /// Participants with names and handles.
     pub participants: Vec<ConversationParticipant>,

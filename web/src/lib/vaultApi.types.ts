@@ -1414,7 +1414,7 @@ export interface components {
             date_range_end?: string | null;
             /** @description Timestamp of the conversation's first message. */
             date_range_start?: string | null;
-            /** @description Numeric `conversations.id`, serialized as a string for `in:<id>` queries. */
+            /** @description Numeric `conversations.id`, serialized as a string; search for it as `in:#<id>`. */
             id: string;
             /** @description True for group conversations. */
             is_group: boolean;

@@ -17,12 +17,12 @@ Message Vault pulls conversations out of chat apps (iMessage, WhatsApp, SMS back
 ```
 vendor backup (chat.db, SMS XML, WhatsApp crypt15, …)
   → exporter crate (crates/exporters/*) parses it into message-ir types
-  → ConversationDocument (schema_version 3) written as JSONL
+  → ConversationDocument (schema_version 4) written as JSONL
   → Tauri push command (vault-push library) → POST /v1/... → SQLite
   → web/ SPA reads threads back through the /v1/ API
 ```
 
-- **`crates/libs/ir`** (`message-ir`) is the shared conversation model every exporter writes: `ConversationDocument` holds export metadata, participants, and messages. `schema_version` is `3` and independent of the product version.
+- **`crates/libs/ir`** (`message-ir`) is the shared conversation model every exporter writes: `ConversationDocument` holds export metadata, participants, and messages. `schema_version` is `4` and independent of the product version. A version-3 file is refused by name, never upgraded.
 - **`crates/libs/ir-format`** reads/writes on-disk formats (JSON, CSV, EML, SBR XML) to/from IR; **`crates/libs/reexport`** converts between existing export formats, which is how Export writes anything other than JSONL.
 - **No command line except the vault server.** Every exporter, `message-reexport`, `vault-push`, and `vault-pull` are library crates with no binary; the desktop app calls them in process. Only `message-vault-server` and `demo-seed` build binaries. Why: `docs/adr/0001-no-command-line-except-the-vault-server.md`.
 - **One way to fetch data in `web/`** — TanStack Query over route functions in `web/src/lib/vaultApi.ts`, with response types generated from `docs/src/assets/openapi.json`. Do not write a new cache, change-notification event, or fetching hook for a screen. This is **built** (PRs #290–#293): `useResource`, `usePagedList`, and `contactDetailCache` are gone, the `mv-*-changed` browser events with them; `nameCollection`, `savedSearches`, and `useAccountProfile` remain only as thin wrappers over TanStack Query, not as mechanisms of their own. Every cache entry is named with the signed-in account, so nothing has to be cleared when the account changes. Why, and what replaces what: `docs/adr/0002-one-way-to-fetch-data-in-the-web-app.md`.

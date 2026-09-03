@@ -1,9 +1,9 @@
 ---
 title: Export structure
-description: The JSONL format the vault imports — schema version 3, one file per conversation.
+description: The JSONL format the vault imports — schema version 4, one file per conversation.
 ---
 
-The vault imports JSONL (JSON Lines) exports at schema version 3. This page describes the format for CLI users and tool authors.
+The vault imports JSONL (JSON Lines) exports at schema version 4. Version 3 is refused, never upgraded. This page describes the format for CLI users and tool authors.
 
 ## Happy path
 
@@ -29,7 +29,7 @@ Attachment records may include `digest_sha256` so clients can upload by hash (`P
 
 ## Schema compatibility
 
-Schema version 3 only. New versions may add fields but will not remove or rename existing ones. Exports made with an older version of the desktop app import into a newer vault without changes.
+Schema version 4 only. Version 3 is refused, never upgraded. New versions may add fields but will not remove or rename existing ones. Exports made with an older version of the desktop app import into a newer vault without changes.
 
 ## Related
 

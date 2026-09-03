@@ -5990,7 +5990,7 @@
           },
           "id": {
             "type": "string",
-            "description": "Numeric `conversations.id`, serialized as a string for `in:<id>` queries."
+            "description": "Numeric `conversations.id`, serialized as a string; search for it as `in:#<id>`."
           },
           "is_group": {
             "type": "boolean",
