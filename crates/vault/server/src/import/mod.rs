@@ -539,6 +539,9 @@ pub async fn import_jsonl_files_on_conn(
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ImportQuery {
+    /// Source slug the import registers its data under. Required; checked in
+    /// the handler so a missing value is the JSON 400 every other failure is.
+    #[serde(default)]
     source: String,
     /// Username or UUID. Optional; when set must match the Bearer token's account.
     #[serde(default)]
@@ -1591,7 +1594,6 @@ async fn run_import_path(
         .await
         .map_err(|_| ApiError::Internal("vault is shutting down".into()))?;
     let mode = ImportMode::parse(&query.mode).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    validate_source_id(&query.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
     let contact_name_mode = import::ContactNameMode::parse(&query.contact_name_mode)
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
@@ -3231,5 +3233,22 @@ mod tests {
             message.starts_with("Could not read line 1 of the file:"),
             "{message}"
         );
+    }
+
+    #[tokio::test]
+    async fn http_import_without_source_is_a_json_400() {
+        let (state, _vault, token) = importer().await;
+        let (status, text) = crate::test_support::post_raw(
+            &state,
+            "/v1/import",
+            &token,
+            "application/jsonl",
+            "{}\n",
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST, "{text}");
+        let err: serde_json::Value = serde_json::from_str(&text)
+            .unwrap_or_else(|_| panic!("expected a JSON error body, got: {text}"));
+        assert_eq!(err["error"], "query param source is required");
     }
 }
