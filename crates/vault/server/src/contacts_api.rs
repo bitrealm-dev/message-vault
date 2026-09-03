@@ -47,9 +47,6 @@ pub struct ContactHandleInfo {
     /// Platform service, e.g. `whatsapp`, when the handle is linked with one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service: Option<String>,
-    /// Per-service alias from the address book, when linked.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name_alias: Option<String>,
     /// Date of the first message involving this handle.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_date: Option<String>,
@@ -369,7 +366,6 @@ pub async fn get_contact_detail(
     let rows: Vec<ContactHandleRow> = sqlx::query_as(&format!(
         "SELECT h.raw,
                     NULLIF(trim(h.service), '') AS service,
-                    NULLIF(trim(ch.name_alias), '') AS name_alias,
                     MIN(m.timestamp) AS first_ts,
                     MAX(m.timestamp) AS last_ts,
                     COUNT(DISTINCT CASE WHEN c.conversation_type = 'individual' THEN c.id END),
@@ -388,7 +384,7 @@ pub async fn get_contact_detail(
                AND {not_trashed_handle}
              LEFT JOIN messages m ON m.conversation_id = c.id AND m.duplicate_of IS NULL
              WHERE ch.account_id = $1 AND ch.contact_id = $2
-             GROUP BY ch.handle_id, h.raw, h.service, ch.name_alias
+             GROUP BY ch.handle_id, h.raw, h.service
              ORDER BY h.raw",
         not_trashed_conversation = NOT_TRASHED_CONVERSATION_SQL,
         not_trashed_handle = NOT_TRASHED_CHAT_HANDLE_SQL,
@@ -403,7 +399,6 @@ pub async fn get_contact_detail(
             |(
                 handle,
                 service,
-                name_alias,
                 start_date,
                 end_date,
                 individual_conversations,
@@ -413,7 +408,6 @@ pub async fn get_contact_detail(
             )| ContactHandleInfo {
                 handle,
                 service,
-                name_alias,
                 start_date,
                 end_date,
                 individual_conversations: individual_conversations.max(0) as u64,
@@ -472,7 +466,6 @@ pub async fn get_contact_detail(
 
 type ContactHandleRow = (
     String,
-    Option<String>,
     Option<String>,
     Option<String>,
     Option<String>,

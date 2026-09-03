@@ -22,7 +22,6 @@ use crate::models::{AttachmentRecord, ExportRecord, MessageRecord, clean_body};
 
 use super::contact_name::{
     ensure_contact_for_handle, resolve_incoming_sender_handle, resolve_name_only_participant,
-    seed_contact_handle_alias,
 };
 use super::{ImportOptions, ImportStats};
 

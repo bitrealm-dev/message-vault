@@ -5369,13 +5369,6 @@
             "description": "Messages in 1:1 conversations involving this handle.",
             "minimum": 0
           },
-          "name_alias": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Per-service alias from the address book, when linked."
-          },
           "service": {
             "type": [
               "string",

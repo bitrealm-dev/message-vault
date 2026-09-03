@@ -180,97 +180,12 @@ pub(super) async fn ensure_sibling_contact_link(
     Ok(Some(contact_id))
 }
 
-/// First-wins seed of `contact_handles.name_alias` from an import display name.
-/// Only fills when the linked row exists and `name_alias` is empty.
-pub(super) async fn seed_contact_handle_alias(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    handle_id: i64,
-    import_display: Option<&str>,
-) -> Result<()> {
-    let Some(alias) = nonempty_str(import_display) else {
-        return Ok(());
-    };
-    sqlx::query(
-        "UPDATE contact_handles
-         SET name_alias = $1
-         WHERE account_id = $2
-           AND handle_id = $3
-           AND (name_alias IS NULL OR trim(name_alias) = '')",
-    )
-    .bind(alias)
-    .bind(account_id)
-    .bind(handle_id)
-    .execute(&mut *conn)
-    .await?;
-    Ok(())
-}
-
-pub(super) fn trim_nonempty(value: Option<String>) -> Option<String> {
-    let raw = value?;
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::schema;
 
     const TEST_ACCOUNT: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-
-    #[tokio::test]
-    async fn seed_contact_handle_alias_unit_first_wins() {
-        let (pool, _dir) = crate::db::engine::test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        schema::ensure_vault_schema(&mut conn).await.unwrap();
-        crate::db::account_profile::ensure_account_row(&mut conn, TEST_ACCOUNT)
-            .await
-            .unwrap();
-        let contact_id: i64 = sqlx::query_scalar(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Pat') RETURNING id",
-        )
-        .bind(TEST_ACCOUNT)
-        .fetch_one(&mut *conn)
-        .await
-        .unwrap();
-        let handle_id: i64 = sqlx::query_scalar(
-            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-             VALUES ($1, '+15555550999', '+15555550999', 'phone', 'phone') RETURNING id",
-        )
-        .bind(TEST_ACCOUNT)
-        .fetch_one(&mut *conn)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO contact_handles (account_id, handle_id, contact_id)
-             VALUES ($1, $2, $3)",
-        )
-        .bind(TEST_ACCOUNT)
-        .bind(handle_id)
-        .bind(contact_id)
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-
-        seed_contact_handle_alias(&mut conn, TEST_ACCOUNT, handle_id, Some("First"))
-            .await
-            .unwrap();
-        seed_contact_handle_alias(&mut conn, TEST_ACCOUNT, handle_id, Some("Second"))
-            .await
-            .unwrap();
-        let alias: Option<String> =
-            sqlx::query_scalar("SELECT name_alias FROM contact_handles WHERE handle_id = $1")
-                .bind(handle_id)
-                .fetch_one(&mut *conn)
-                .await
-                .unwrap();
-        assert_eq!(alias.as_deref(), Some("First"));
-    }
 
     #[tokio::test]
     async fn an_import_creates_the_contact_with_the_backup_name() {

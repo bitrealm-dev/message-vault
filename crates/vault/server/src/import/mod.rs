@@ -1691,7 +1691,6 @@ async fn run_import_path(
 
 #[cfg(test)]
 mod tests {
-    use super::contact_name::trim_nonempty;
     use super::*;
     use crate::assets;
     use crate::test_support::{TestVault, get_json, post_json, register_via_api, test_vault};
@@ -2634,52 +2633,6 @@ mod tests {
         assert_eq!(stats.assets_copied, 0);
     }
 
-    async fn seed_contact(db: &Path, handle: &str, preferred_name: &str) {
-        let (_pool, mut conn) = open_verify(db).await;
-        schema::ensure_vault_schema(&mut conn).await.unwrap();
-        crate::db::account_profile::ensure_account_row(&mut conn, TEST_ACCOUNT)
-            .await
-            .unwrap();
-        let contact_id: i64 = sqlx::query_scalar(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, $2) RETURNING id",
-        )
-        .bind(TEST_ACCOUNT)
-        .bind(preferred_name)
-        .fetch_one(&mut *conn)
-        .await
-        .unwrap();
-        let handle_id: i64 = sqlx::query_scalar(
-            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-             VALUES ($1, $2, $2, 'phone', 'phone') RETURNING id",
-        )
-        .bind(TEST_ACCOUNT)
-        .bind(handle)
-        .fetch_one(&mut *conn)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO contact_handles (account_id, handle_id, contact_id)
-             VALUES ($1, $2, $3)",
-        )
-        .bind(TEST_ACCOUNT)
-        .bind(handle_id)
-        .bind(contact_id)
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-    }
-
-    async fn contact_handle_name_alias(db: &Path) -> Option<String> {
-        let (_pool, mut conn) = open_verify(db).await;
-        let raw: Option<String> =
-            sqlx::query_scalar("SELECT name_alias FROM contact_handles LIMIT 1")
-                .fetch_optional(&mut *conn)
-                .await
-                .unwrap()
-                .flatten();
-        trim_nonempty(raw)
-    }
-
     #[tokio::test]
     async fn name_only_participant_becomes_a_contact_with_no_identity() {
         sqlx::any::install_default_drivers();
@@ -2745,52 +2698,6 @@ mod tests {
         assert!(
             rows.iter().any(|(h, c)| h.is_none() && c.is_some()),
             "expected a participant with a contact and no identity, got {rows:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn contact_handle_alias_seeds_first_wins() {
-        let tmp = TempDir::new().unwrap();
-        let db = tmp.path().join("vault.db");
-        let assets = tmp.path().join("assets");
-        seed_contact(&db, "+15555550123", "Vault Alice").await;
-        assert!(contact_handle_name_alias(&db).await.is_none());
-
-        let path1 = write_jsonl(
-            tmp.path(),
-            "alias1.jsonl",
-            r#"{"schema_version":4,"export":{"source":"imessage","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550123","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550123","display_name":"Backup Bob"}],"stats":{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}
-{"guid":"g-alias1","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"hi","attachments":[],"imessage":null,"source":null}
-"#,
-        );
-        let opts = ImportOptions::fixed(FixedImportArgs {
-            assets_dir: &assets,
-            asset_root: tmp.path(),
-            contacts: None,
-            overwrite_contacts: false,
-            mode: ImportMode::Append,
-            source: "imessage",
-            account_id: TEST_ACCOUNT,
-            fill_content_keys: false,
-            import_id: None,
-        });
-        import_jsonl_files(&db, &[path1], &opts).await.unwrap();
-        assert_eq!(
-            contact_handle_name_alias(&db).await.as_deref(),
-            Some("Backup Bob")
-        );
-
-        let path2 = write_jsonl(
-            tmp.path(),
-            "alias2.jsonl",
-            r#"{"schema_version":4,"export":{"source":"imessage","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550123","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550123","display_name":"Other Name"}],"stats":{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1426183463000,"last_timestamp_unix_ms":1426183463000}}}
-{"guid":"g-alias2","timestamp_unix_ms":1426183463000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"yo","attachments":[],"imessage":null,"source":null}
-"#,
-        );
-        import_jsonl_files(&db, &[path2], &opts).await.unwrap();
-        assert_eq!(
-            contact_handle_name_alias(&db).await.as_deref(),
-            Some("Backup Bob")
         );
     }
 

@@ -385,8 +385,7 @@ fn emit_text_word(
 }
 
 /// The handle with id `handle_id_expr` belongs to the person `v`: by contact
-/// id, or by a contains-or-prefix match on the handle, the contact's name,
-/// or the participant alias recorded for that handle.
+/// id, or by a contains-or-prefix match on the handle or the contact's name.
 fn person_matches(
     out: &mut Sql,
     engine: DbEngine,
@@ -413,8 +412,6 @@ fn person_matches(
             like_contains(out, engine, "coalesce(hp.normalized, '')", t, prefix);
             out.push(" OR ");
             like_contains(out, engine, "coalesce(ctp.preferred_name, '')", t, prefix);
-            out.push(" OR ");
-            like_contains(out, engine, "coalesce(chp.name_alias, '')", t, prefix);
             out.push("))");
             Ok(())
         }

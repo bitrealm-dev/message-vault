@@ -1207,8 +1207,6 @@ export interface components {
              * @description Messages in 1:1 conversations involving this handle.
              */
             individual_message_count: number;
-            /** @description Per-service alias from the address book, when linked. */
-            name_alias?: string | null;
             /** @description Platform service, e.g. `whatsapp`, when the handle is linked with one. */
             service?: string | null;
             /** @description Date of the first message involving this handle. */
