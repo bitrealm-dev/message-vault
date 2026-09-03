@@ -33,6 +33,14 @@ impl Sql {
         self.params.push(SqlParam::Int(v));
     }
 
+    /// Bind a text value for a `?` a dialect helper already wrote into
+    /// `text` (for example `db::dialect::name_eq_ci`'s own placeholder).
+    /// Unlike `bind_text`, this does not write the `?` itself — the helper
+    /// already did — so call it immediately after pushing that helper's SQL.
+    pub fn param_text(&mut self, v: impl Into<String>) {
+        self.params.push(SqlParam::Text(v.into()));
+    }
+
     /// `column LIKE ?` case-insensitively, binding `pattern`.
     pub fn like(&mut self, engine: DbEngine, column: &str, pattern: &str) {
         self.text.push_str(column);

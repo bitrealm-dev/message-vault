@@ -1,6 +1,8 @@
 //! Defaults plus one emitter per word. Every emitter writes SQL against the
 //! innermost alias it needs and lets `ListCtx` wrap it for the base row.
 
+use crate::db::contacts::UNKNOWN_CONTACT_SQL;
+use crate::db::dialect::name_eq_ci;
 use crate::db::engine::DbEngine;
 
 use super::bridge::{ListCtx, Sql};
@@ -206,12 +208,26 @@ fn emit_one(
         "body" | "subject" | "name" | "title" | "handle" | "filename" => {
             emit_text_word(ctx, out, term, v)
         }
+        "with" | "from" | "to" | "in" | "group" | "tag" | "import" => {
+            emit_people_word(ctx, out, term, v)
+        }
         _ => Err(QueryError::new(
             QueryErrorKind::BadValue,
             term.span.clone(),
             format!("{}: is not built yet.", term.spec.word),
         )),
     }
+}
+
+/// A refusal naming `term`'s word, for a value shape the word does not
+/// accept. `what` is the tail of the sentence: `"needs text, a prefix, or
+/// none/any."`, `"needs a name or #id."`, and so on.
+fn bad_value(term: &FieldTerm, what: &str) -> QueryError {
+    QueryError::new(
+        QueryErrorKind::BadValue,
+        term.span.clone(),
+        format!("{}: {what}", term.spec.word),
+    )
 }
 
 /// `column` contains `v` (a text value), starts with it (a prefix value),
@@ -248,11 +264,7 @@ fn text_match(
             out.push(&format!("NULLIF(trim({column}), '') IS NOT NULL"));
             Ok(())
         }
-        _ => Err(QueryError::new(
-            QueryErrorKind::BadValue,
-            term.span.clone(),
-            format!("{}: needs text, a prefix, or none/any.", term.spec.word),
-        )),
+        _ => Err(bad_value(term, "needs text, a prefix, or none/any.")),
     }
 }
 
@@ -308,11 +320,7 @@ fn emit_text_word(
                 out.push("))");
             }
             _ => {
-                result = Err(QueryError::new(
-                    QueryErrorKind::BadValue,
-                    term.span.clone(),
-                    format!("{}: needs text, a prefix, or none/any.", term.spec.word),
-                ));
+                result = Err(bad_value(term, "needs text, a prefix, or none/any."));
             }
         },
         ("handle", _) => ctx.conversation(out, |o| match v {
@@ -338,11 +346,7 @@ fn emit_text_word(
                 o.push("))");
             }
             _ => {
-                result = Err(QueryError::new(
-                    QueryErrorKind::BadValue,
-                    term.span.clone(),
-                    format!("{}: needs text, a prefix, or none/any.", term.spec.word),
-                ));
+                result = Err(bad_value(term, "needs text, a prefix, or none/any."));
             }
         }),
         ("filename", _) => ctx.message(out, |o| {
@@ -359,4 +363,298 @@ fn emit_text_word(
         }
     }
     result
+}
+
+/// The handle with id `handle_id_expr` belongs to the person `v`: by contact
+/// id, or by a contains-or-prefix match on the handle, the contact's name,
+/// or the participant alias recorded for that handle.
+fn person_matches(
+    out: &mut Sql,
+    engine: DbEngine,
+    handle_id_expr: &str,
+    term: &FieldTerm,
+    v: &Value,
+) -> Result<(), QueryError> {
+    match v {
+        Value::Id(id) => {
+            out.push(&format!(
+                "EXISTS (SELECT 1 FROM contact_handles chp WHERE chp.handle_id = {handle_id_expr} AND chp.contact_id = "
+            ));
+            out.bind_int(*id);
+            out.push(")");
+            Ok(())
+        }
+        Value::Text(t) | Value::Prefix(t) => {
+            let prefix = matches!(v, Value::Prefix(_));
+            out.push(&format!(
+                "EXISTS (SELECT 1 FROM handles hp LEFT JOIN contact_handles chp ON chp.handle_id = hp.id AND chp.account_id = hp.account_id LEFT JOIN contacts ctp ON ctp.id = chp.contact_id WHERE hp.id = {handle_id_expr} AND ("
+            ));
+            like_contains(out, engine, "hp.raw", t, prefix);
+            out.push(" OR ");
+            like_contains(out, engine, "coalesce(hp.normalized, '')", t, prefix);
+            out.push(" OR ");
+            like_contains(out, engine, "coalesce(ctp.preferred_name, '')", t, prefix);
+            out.push(" OR ");
+            like_contains(out, engine, "coalesce(chp.name_alias, '')", t, prefix);
+            out.push("))");
+            Ok(())
+        }
+        _ => Err(bad_value(term, "needs a name, a handle, or #id.")),
+    }
+}
+
+/// Some party to conversation `c` (its chat handle, or a participant) is `v`.
+fn with_person(
+    ctx: &ListCtx<'_>,
+    out: &mut Sql,
+    term: &FieldTerm,
+    v: &Value,
+) -> Result<(), QueryError> {
+    let e = ctx.engine;
+    let mut result = Ok(());
+    ctx.conversation(out, |o| {
+        o.push("(");
+        result = person_matches(o, e, "c.chat_handle_id", term, v);
+        o.push(" OR EXISTS (SELECT 1 FROM participants p WHERE p.conversation_id = c.id AND ");
+        if result.is_ok() {
+            result = person_matches(o, e, "p.handle_id", term, v);
+        }
+        o.push("))");
+    });
+    result
+}
+
+/// `row_expr` is a member of the named set `v` in `table` (via `members`,
+/// whose `member_col` names the row). Handles `#id` and a case-insensitive
+/// name; a prefix means "a name that starts with this".
+#[allow(clippy::too_many_arguments)]
+fn named_set(
+    out: &mut Sql,
+    engine: DbEngine,
+    table: &str,
+    members: &str,
+    member_col: &str,
+    row_expr: &str,
+    account_expr: &str,
+    term: &FieldTerm,
+    v: &Value,
+) -> Result<(), QueryError> {
+    let group_col = if table == "contact_groups" {
+        "group_id"
+    } else {
+        "tag_id"
+    };
+    out.push(&format!(
+        "EXISTS (SELECT 1 FROM {members} nm JOIN {table} ns ON ns.id = nm.{group_col} WHERE nm.{member_col} = {row_expr} AND ns.account_id = {account_expr} AND "
+    ));
+    let result = match v {
+        Value::Id(id) => {
+            out.push("ns.id = ");
+            out.bind_int(*id);
+            Ok(())
+        }
+        Value::Text(t) => {
+            out.push(&name_eq_ci(engine, "ns.name", "?"));
+            out.param_text(t.clone());
+            Ok(())
+        }
+        Value::Prefix(t) => {
+            like_contains(out, engine, "ns.name", t, true);
+            Ok(())
+        }
+        _ => Err(bad_value(term, "needs a name or #id.")),
+    };
+    out.push(")");
+    result
+}
+
+/// No member of `table` (via `members`) names `row_expr`.
+fn no_named_set(
+    out: &mut Sql,
+    table: &str,
+    members: &str,
+    member_col: &str,
+    row_expr: &str,
+    account_expr: &str,
+) {
+    let group_col = if table == "contact_groups" {
+        "group_id"
+    } else {
+        "tag_id"
+    };
+    out.push(&format!(
+        "NOT EXISTS (SELECT 1 FROM {members} nm JOIN {table} ns ON ns.id = nm.{group_col} WHERE nm.{member_col} = {row_expr} AND ns.account_id = {account_expr})"
+    ));
+}
+
+/// The seven people-and-places words: `with`, `from`, `to`, `in`, `group`,
+/// `tag`, `import`. `from:` and `to:` are Messages-only in the registry, so
+/// they read `m.` directly; `with:`, `group:`, `tag:`, and `import:` go
+/// through the bridges so they work on every list the registry allows.
+fn emit_people_word(
+    ctx: &ListCtx<'_>,
+    out: &mut Sql,
+    term: &FieldTerm,
+    v: &Value,
+) -> Result<(), QueryError> {
+    let e = ctx.engine;
+    match term.spec.word {
+        "with" => with_person(ctx, out, term, v),
+        "from" => match v {
+            Value::Keyword("me") => {
+                out.push("m.is_from_me = 1");
+                Ok(())
+            }
+            _ => {
+                out.push("(m.is_from_me = 0 AND m.sender_handle_id IS NOT NULL AND ");
+                let result = person_matches(out, e, "m.sender_handle_id", term, v);
+                out.push(")");
+                result
+            }
+        },
+        "to" => match v {
+            Value::Keyword("me") => {
+                out.push("m.is_from_me = 0");
+                Ok(())
+            }
+            _ => {
+                out.push("(");
+                let mut result = with_person(ctx, out, term, v);
+                out.push(" AND (m.is_from_me = 1 OR m.sender_handle_id IS NULL OR NOT ");
+                if result.is_ok() {
+                    result = person_matches(out, e, "m.sender_handle_id", term, v);
+                }
+                out.push("))");
+                result
+            }
+        },
+        "in" => {
+            match v {
+                Value::Id(id) => {
+                    out.push("m.conversation_id = ");
+                    out.bind_int(*id);
+                    Ok(())
+                }
+                Value::Text(t) | Value::Prefix(t) => {
+                    let prefix = matches!(v, Value::Prefix(_));
+                    ctx.conversation(out, |o| {
+                    o.push("(");
+                    like_contains(o, e, "coalesce(c.group_title, '')", t, prefix);
+                    o.push(" OR EXISTS (SELECT 1 FROM handles hc WHERE hc.id = c.chat_handle_id AND ");
+                    like_contains(o, e, "hc.raw", t, prefix);
+                    o.push("))");
+                });
+                    Ok(())
+                }
+                _ => Err(bad_value(term, "needs a name or #id.")),
+            }
+        }
+        "group" => match v {
+            Value::Keyword("none") => {
+                match ctx.list {
+                    ListKind::Contacts => no_named_set(
+                        out,
+                        "contact_groups",
+                        "contact_group_members",
+                        "contact_id",
+                        "ct.id",
+                        "ct.account_id",
+                    ),
+                    // "No participant contact is in any Contact Group": the
+                    // double negation wraps the bridge's EXISTS so it reads
+                    // "there is no linked contact with a group".
+                    _ => {
+                        out.push("NOT ");
+                        ctx.contact(out, |o| {
+                            o.push("NOT ");
+                            no_named_set(
+                                o,
+                                "contact_groups",
+                                "contact_group_members",
+                                "contact_id",
+                                "ct.id",
+                                "ct.account_id",
+                            );
+                        });
+                    }
+                }
+                Ok(())
+            }
+            Value::Keyword("unknown") => {
+                ctx.contact(out, |o| o.push(UNKNOWN_CONTACT_SQL));
+                Ok(())
+            }
+            _ => {
+                let mut result = Ok(());
+                ctx.contact(out, |o| {
+                    result = named_set(
+                        o,
+                        e,
+                        "contact_groups",
+                        "contact_group_members",
+                        "contact_id",
+                        "ct.id",
+                        "ct.account_id",
+                        term,
+                        v,
+                    );
+                });
+                result
+            }
+        },
+        "tag" => match v {
+            Value::Keyword("none") => {
+                ctx.conversation(out, |o| {
+                    no_named_set(
+                        o,
+                        "message_tags",
+                        "message_tag_members",
+                        "conversation_id",
+                        "c.id",
+                        "c.account_id",
+                    );
+                });
+                Ok(())
+            }
+            _ => {
+                let mut result = Ok(());
+                ctx.conversation(out, |o| {
+                    result = named_set(
+                        o,
+                        e,
+                        "message_tags",
+                        "message_tag_members",
+                        "conversation_id",
+                        "c.id",
+                        "c.account_id",
+                        term,
+                        v,
+                    );
+                });
+                result
+            }
+        },
+        "import" => match v {
+            Value::Keyword("last") => {
+                let account = ctx.account_id.to_string();
+                ctx.message(out, |o| {
+                    o.push(
+                        "m.import_id = (SELECT MAX(vi.id) FROM vault_imports vi WHERE vi.account_id = ",
+                    );
+                    o.bind_text(account);
+                    o.push(")");
+                });
+                Ok(())
+            }
+            Value::Id(id) => {
+                ctx.message(out, |o| {
+                    o.push("m.import_id = ");
+                    o.bind_int(*id);
+                });
+                Ok(())
+            }
+            _ => Err(bad_value(term, "needs #id or last.")),
+        },
+        _ => Err(bad_value(term, "is not built yet.")),
+    }
 }

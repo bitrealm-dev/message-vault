@@ -947,3 +947,187 @@ mod text_words {
         );
     }
 }
+
+mod people_words {
+    use super::*;
+
+    #[tokio::test]
+    async fn from_to_and_with() {
+        let (pool, _dir, f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        // Spec case 4.
+        assert_eq!(
+            run(
+                &mut conn,
+                ListKind::Messages,
+                r#"from:me to:"Jane Doe" (avocado or "guacamole night")"#
+            )
+            .await,
+            sorted(vec![f.jane_avocado_from_me, f.jane_guac_from_me])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "from:jane").await,
+            sorted(vec![
+                f.jane_avocado_to_me,
+                f.jane_2018,
+                f.feb_big_jpeg,
+                f.feb_small_jpeg,
+                f.feb_pdf,
+                f.may_big_jpeg
+            ])
+        );
+        assert_eq!(run(&mut conn, ListKind::Messages, "from:me").await.len(), 4);
+        assert_eq!(run(&mut conn, ListKind::Messages, "to:me").await.len(), 10);
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "from:gmail.com")
+                .await
+                .len(),
+            6
+        );
+        assert_eq!(
+            run(
+                &mut conn,
+                ListKind::Conversations,
+                &format!("with:#{}", f.jane)
+            )
+            .await,
+            sorted(vec![f.jane_direct, f.big_group])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "with:sam").await,
+            sorted(vec![f.sam_direct, f.archive_group, f.big_group])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "with:bo body:old").await,
+            vec![f.archive_msg]
+        );
+    }
+
+    #[tokio::test]
+    async fn in_one_conversation() {
+        let (pool, _dir, f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        assert_eq!(
+            run(
+                &mut conn,
+                ListKind::Messages,
+                &format!("in:#{}", f.jane_direct)
+            )
+            .await
+            .len(),
+            8
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "in:club").await,
+            vec![f.big_group_msg]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "in:+15550002").await,
+            vec![f.bo_2023]
+        );
+    }
+
+    #[tokio::test]
+    async fn contact_groups_on_every_list() {
+        let (pool, _dir, f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "group:Family").await,
+            vec![f.ana]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "group:family").await,
+            vec![f.ana]
+        );
+        assert_eq!(
+            run(
+                &mut conn,
+                ListKind::Contacts,
+                &format!("group:#{}", f.family)
+            )
+            .await,
+            vec![f.ana]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "group:none").await,
+            sorted(vec![f.bo, f.cy, f.jane, f.sam, f.nameless])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "group:unknown").await,
+            vec![f.nameless]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "group:Family").await,
+            sorted(vec![f.ana_direct, f.archive_group, f.big_group])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "-group:Family").await,
+            sorted(vec![f.bo_direct, f.jane_direct, f.sam_direct])
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "group:Family body:hello").await,
+            vec![f.ana_2018]
+        );
+    }
+
+    #[tokio::test]
+    async fn message_tags_on_every_list() {
+        let (pool, _dir, f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "tag:Archive").await,
+            vec![f.archive_group]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "tag:none")
+                .await
+                .len(),
+            5
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "tag:Archive").await,
+            sorted(vec![f.ana, f.bo, f.sam])
+        );
+        assert_eq!(
+            run(
+                &mut conn,
+                ListKind::Messages,
+                &format!("tag:#{}", f.archive)
+            )
+            .await,
+            vec![f.archive_msg]
+        );
+    }
+
+    #[tokio::test]
+    async fn import_runs() {
+        let (pool, _dir, f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let run_id: i64 = sqlx::query_scalar(
+            "INSERT INTO vault_imports (account_id, source, mode, status, started_at)
+             VALUES ($1, 'imessage', 'push', 'completed', '2024-01-01T00:00:00Z') RETURNING id",
+        )
+        .bind(ACCOUNT)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE messages SET import_id = $1 WHERE id = $2")
+            .bind(run_id)
+            .bind(f.bo_2023)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "import:last").await,
+            vec![f.bo_2023]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, &format!("import:#{run_id}")).await,
+            vec![f.bo_2023]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "import:last").await,
+            vec![f.bo_direct]
+        );
+    }
+}
