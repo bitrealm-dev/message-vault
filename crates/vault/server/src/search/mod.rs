@@ -4,6 +4,7 @@
 
 pub mod error;
 pub(crate) mod lex;
+pub(crate) mod value;
 
 pub use error::{QueryError, QueryErrorKind};
 
