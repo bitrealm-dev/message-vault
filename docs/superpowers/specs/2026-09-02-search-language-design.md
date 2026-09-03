@@ -67,7 +67,9 @@ The language below follows design B ("the search language as a field
 registry") from the design-it-twice round on 2 September 2026, with three
 changes: `sent:` is spelled `date:`, the participant count is spelled
 `participants:` rather than `people:` so that a person-shaped word never means
-a number, and the module interface is trimmed to three entry points.
+a number, and the module interface is trimmed to two entry points, compile
+and describe. A validate call was considered and dropped: the web shows the
+list request's own 400 under the search box, so nothing would call it.
 
 ## The language
 
@@ -185,15 +187,15 @@ Notes on meaning:
 Any token that is not a word for the requested list answers 400 with a
 message that names the word and the list. The message is user-facing and
 appears under the search box. There are two cases. A word that exists but not
-on this list says where it does work and offers the nearest word that does.
-A word that does not exist at all is an unknown word, and the only help
-offered is a "did you mean" computed by similarity against the current word
-list for that list. The module carries no memory of spellings that came
-before it. Examples of the wording:
+on this list says where it does work. A word that does not exist at all is an
+unknown word. In both cases the only help offered is a "did you mean",
+computed by edit distance against the current word list for the requested
+list, and only when a word is within two edits. The module carries no memory
+of spellings that came before it. Examples of the wording:
 
 | Typed | On | Message |
 |---|---|---|
-| `from:jane` | Contacts | `from: is not a Contacts word. It works on Messages. Did you mean name:?` |
+| `from:jane` | Contacts | `from: is not a Contacts word. It works on Messages.` |
 | `people:Family` | any | `people: is not a search word.` |
 | `paticipants:>2` | Conversations | `paticipants: is not a search word. Did you mean participants:?` |
 | `tag:` | any | `tag: needs a value, for example tag:Holiday or tag:none.` |
@@ -202,25 +204,25 @@ before it. Examples of the wording:
 The "did you mean" uses a small edit distance against the words of the
 requested list, and is omitted when nothing is close.
 
-### Presentation parameters
+### Presentation is not in the language
 
-These leave the query string and become request parameters, because none of
-them narrows a result set and a Saved Search should mean "what I want", not
-"how the screen looked":
+None of these narrows a result set, and a Saved Search should mean "what I
+want", not "how the screen looked", so none of them is a word:
 
-| Was in the string | Becomes | On |
+| Was in the string | Now | On |
 |---|---|---|
-| `sort:date-asc`, `sort:relevance` | `sort`, `order` query parameters (Conversations already has them) | Conversations, Messages |
-| `group:none` (one row per message) | `rows=message` or `rows=conversation` (default) | Messages |
-| `context:2` | `context=2` | Messages |
-| `search:contacts` | nothing; the web switches its own screen | web only |
-| `is:trash` | `trashed:yes` in the language, since it narrows rows | Contacts, Conversations |
+| `sort:date-asc`, `sort:relevance` | Conversations already takes `sort` and `order` query parameters. Messages export always answers oldest first, as it does today. | Conversations, Messages |
+| `group:none` (one row per message) | Nothing. The old parser accepted it, but no server code ever read it and no client sent it. If row grouping is wanted later it is a request parameter. | Messages |
+| `context:2` | Nothing, for the same reason. | Messages |
+| `search:contacts` | Nothing; the web switches its own screen. | web only |
+| `is:trash` | `trashed:yes` in the language, since it narrows rows. | Contacts, Conversations |
+| `?source=` on the export routes | Stays as a request parameter for the desktop pull client. The handler prepends `source:<value>` to the query before compiling, so it means exactly what the word means. | Messages |
 
 ## The module
 
 ### Interface
 
-`crates/vault/server/src/search/mod.rs` is the whole seam. Three entry points.
+`crates/vault/server/src/search/mod.rs` is the whole seam. Two entry points.
 
 ```rust
 pub enum ListKind { Contacts, Conversations, Messages }
@@ -243,23 +245,17 @@ impl Filter {
     pub fn where_sql(&self) -> &str;
     /// The values to bind, in the textual order of `where_sql`.
     pub fn params(&self) -> &[SqlParam];
-    /// Free text was present, so sorting by relevance means something.
-    pub fn wants_rank(&self) -> bool;
 }
 
 /// Parse `query` and compile it for `list`. Pure: no database, no clock.
 pub fn compile(req: CompileRequest<'_>) -> Result<Filter, QueryError>;
 
-/// Parse and check applicability only. No engine, no account, no SQL.
-/// For the search box, before a request is sent.
-pub fn validate(list: ListKind, query: &str, today: NaiveDate) -> Result<(), QueryError>;
-
 /// The words for one list: spelling, value type, keyword values, one line
 /// of help, an example. Served as JSON so the web and the docs read it.
-pub fn describe(list: ListKind) -> &'static [FieldDoc];
+pub fn describe(list: ListKind) -> Vec<FieldDoc>;
 
 pub struct QueryError {
-    pub kind: QueryErrorKind,        // UnknownWord | WrongList | BadValue | EmptyValue | Unbalanced
+    pub kind: QueryErrorKind,        // UnknownWord | WrongList | BadValue | EmptyValue | Unbalanced | TooLong
     pub message: String,             // the 400 body; user-facing
     pub span: std::ops::Range<usize>,// byte range in the input
     pub field: Option<&'static str>,
@@ -298,7 +294,7 @@ params.push(limit.into()); params.push(offset.into());
 // conversations_api::list_conversations_sorted
 let f = search::compile(CompileRequest { list: Conversations, .. })?;
 let sql = format!("SELECT c.id, c.group_title FROM conversations c WHERE {} ORDER BY {order} LIMIT ? OFFSET ?", f.where_sql());
-// `sort` and `order` stay function arguments; relevance is allowed only when f.wants_rank()
+// `sort` and `order` stay function arguments
 
 // export_api::export_messages and export_message_count share one filter
 let f = search::compile(CompileRequest { list: Messages, .. })?;
@@ -325,17 +321,18 @@ T or N word accepts. The route sits in a new `search_api.rs`, following the
 one-file-per-route-group rule, and is added to `openapi.rs` with the OpenAPI
 document and TypeScript types regenerated.
 
-Two new query parameters on `GET /v1/export/messages`: `rows` (`message` or
-`conversation`, default `conversation`) and `context` (an integer, default
-0). They replace `group:none` and `context:N` in the string.
+No other route changes. The export routes keep their `source` parameter;
+the handler turns it into a leading `source:` word.
 
 ### Behind the seam
 
 **The registry.** One `&'static [FieldSpec]`, each entry a spelling, a value
-type, a `ListSet`, one line of help, an example, and an emitter
-`fn(&Value, &ListCtx, &mut Sql)`. `describe`, `validate`, and `compile` all
-read this one table, so a word cannot exist for one and not the others, and
-adding a filter later is one entry and one emitter with no grammar change.
+type, the lists it applies to, one line of help, and an example; and one
+emitter per word that writes its SQL. `describe` and `compile` read the same
+table, so a word cannot exist for one and not the other, and adding a filter
+later is one entry and one emitter with no grammar change. A test compiles
+every word on every list it claims, so an entry without an emitter cannot
+ship.
 
 **Bridges, not per-list copies.** A `ListCtx` gives every emitter three
 phrases written once per list: *this contact*, *this conversation*, *this
@@ -365,6 +362,8 @@ dedupe and trash defaults, and the wording of every 400.
 **Module layout.** `search/mod.rs` (the interface), `lex.rs`, `parse.rs`,
 `value.rs` (dates, sizes, counts), `fields.rs` (the registry), `bridge.rs`,
 `emit.rs`, `fts.rs`, `error.rs`, `tests.rs`. `search_query.rs` is deleted.
+The desktop pull client and the search-parity integration test keep calling
+`export_messages`; only the old parser's re-export goes.
 
 ### Tests at the interface
 
@@ -392,7 +391,8 @@ interface is the test surface. Cases the fixture must cover:
 7. Every list, `trashed:yes` and the default: a trashed conversation appears
    only with `trashed:yes` or `trashed:any`.
 8. Rejection: `from:me` on Contacts fails with `WrongList`, a span over
-   `from:`, and `did_you_mean` set. `people:Family` fails on every list with
+   `from:`, `field` set to `from`, and no suggestion, since no Contacts word
+   is within two edits. `people:Family` fails on every list with
    `UnknownWord` and no suggestion. `paticipants:>2` on Conversations fails
    with `UnknownWord` and `did_you_mean: Some("participants")`. `tag:` fails
    with `EmptyValue`. `(a or b` fails with `Unbalanced`. No rows are queried
@@ -426,9 +426,9 @@ when it is available, not by CI.
   `first-message:`, `last-message:`, and it stops pushing `search:contacts`.
 - `TrashScreen.tsx:18` and `AppLayout.tsx:183` send `trashed:yes` instead of
   `is:trash`.
-- Message search and Export send `rows` and `context` as query parameters.
-- The search box calls `validate` on the debounced query and shows the
-  message and span under the box before sending anything.
+- The thread view builds `in:#<id>` and `in:#<id> date:<year>`, and the
+  contact drawer builds `with:#<id>` or `handle:"…"` plus `kind:`.
+- A 400 from a list request is shown under the search box, as today.
 
 ## The docs
 
@@ -449,9 +449,11 @@ keeps it honest.
 
 ## Not built now
 
-- Cursor-aware suggestions and plain-sentence explanations from the server.
-  The web builds suggestions from `describe`. If a second caller appears,
-  either is one function over the registry.
+- Cursor-aware suggestions, plain-sentence explanations, and a validate-only
+  call from the server. The web builds suggestions from `describe`. If a
+  second caller appears, each is one function over the registry.
+- Row grouping and context lines for message search. Nothing implements them
+  today. If wanted, they are request parameters, not words.
 - A rewriter for stored Saved Search text, or any other memory of earlier
   spellings. Stored text the language does not understand fails as an
   unknown word, and the person edits once.
