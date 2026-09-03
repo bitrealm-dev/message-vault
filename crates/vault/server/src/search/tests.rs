@@ -1556,6 +1556,51 @@ mod coverage {
     }
 }
 
+mod docs {
+    use crate::search::fields::FIELDS;
+
+    const PAGE: &str =
+        include_str!("../../../../../docs/src/content/docs/vault/user/how-to/search.md");
+
+    /// The words the page's table lists: the first backticked `word:` in
+    /// each table row.
+    fn documented_words() -> Vec<String> {
+        PAGE.lines()
+            .filter(|l| l.starts_with("| `"))
+            .filter_map(|l| {
+                let cell = l.trim_start_matches("| `");
+                let token = cell.split('`').next()?;
+                let word = token
+                    .strip_suffix(':')
+                    .or_else(|| token.split(':').next())?;
+                if word.chars().all(|c| c.is_ascii_lowercase() || c == '-') && !word.is_empty() {
+                    Some(word.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_page_lists_every_word_and_nothing_else() {
+        let documented = documented_words();
+        for spec in FIELDS {
+            assert!(
+                documented.contains(&spec.word.to_string()),
+                "docs page is missing {}:",
+                spec.word
+            );
+        }
+        for word in &documented {
+            assert!(
+                FIELDS.iter().any(|f| f.word == word),
+                "docs page lists {word}:, which the language does not have"
+            );
+        }
+    }
+}
+
 mod refusals {
     use super::*;
     use crate::search::QueryErrorKind;
