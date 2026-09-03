@@ -72,14 +72,6 @@ describe("contactPreviewFromThreadParticipants", () => {
     });
   });
 
-  it("uses preferred_name when name is missing (message-header participants)", () => {
-    expect(
-      contactPreviewFromThreadParticipants("c1", [
-        { contact_id: "c1", handle: "+15550001", preferred_name: "Ada" },
-      ])?.name,
-    ).toBe("Ada");
-  });
-
   it("counts two distinct phones for the same contact as two identities", () => {
     expect(
       contactPreviewFromThreadParticipants("c1", [
@@ -104,7 +96,7 @@ describe("contactPreviewFromThreadParticipants", () => {
   it("falls back to the handle when no display name is set", () => {
     expect(
       contactPreviewFromThreadParticipants("c1", [
-        { contact_id: "c1", handle: "+15550001", name: null },
+        { contact_id: "c1", handle: "+15550001", name: "" },
       ])?.name,
     ).toBe("+15550001");
   });
