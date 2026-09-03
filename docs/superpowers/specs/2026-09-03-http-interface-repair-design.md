@@ -186,13 +186,15 @@ rows it owns and overwrites an `origin = import` name with the book's name.
 | --- | --- | --- |
 | `SchemaVersion {found, expected}` | 400 | "This file is schema version 3; the vault reads version 4." |
 | `Parse {file, line, cause}` | 400 | "Could not read line 12 of p123.jsonl: …" |
-| `MissingSource` / `BadSource` | 400 | "source must be a short name like whatsapp" |
-| `AccountMismatch` | 403 | "account does not match the signed-in account" |
-| `MissingAsset {sha256}` | 409 | "attachment … was not uploaded" |
-| `Db(sqlx::Error)` / `Io` | 500 | "internal server error" (logged) |
+| anything else (disk, database, a bug) | 500 | "internal server error" (cause on stderr) |
 
-`ImportQuery.source` becomes `Option<String>` so the missing case reaches the
-handler. `validate_source_id` is called once. `contact_mutate_handler` maps
+A missing attachment is not a failure: the import counts it in
+`assets_missing` and succeeds, as today. An account that does not match the
+token is already a 403 from `resolve_import_account`. A missing or bad
+`source` stays the handler's own 400 sentence.
+
+`ImportQuery.source` gets `#[serde(default)]` so the missing case reaches the
+handler instead of the query deserializer. `validate_source_id` is called once. `contact_mutate_handler` maps
 `sqlx` errors to 500 and validation to 400. The startup banner prints the
 real contract. CLAUDE.md, AGENTS.md, and the transfer doc say 4;
 `test_support.rs:7` stops naming `accounts_api.rs`;
