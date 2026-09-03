@@ -180,13 +180,15 @@ rows it owns and overwrites an `origin = import` name with the book's name.
 
 ### Import failures
 
-`run_import_path` and its callees return `ImportError`, an enum:
+`run_import_path` and its callees return `ImportFailure`, an enum:
 
 | variant | status | sentence |
 | --- | --- | --- |
-| `SchemaVersion {found, expected}` | 400 | "This file is schema version 3; the vault reads version 4." |
-| `Parse {file, line, cause}` | 400 | "Could not read line 12 of p123.jsonl: …" |
+| `SchemaVersion {found, expected, line}` | 400 | "This file is schema version 3; the vault reads version 4 (line 1)." |
+| `Parse {line, detail}` | 400 | "Could not read line 12 of the file: …" |
 | anything else (disk, database, a bug) | 500 | "internal server error" (cause on stderr) |
+
+A message whose fields parse but cannot be represented (an out-of-range timestamp) is also `Parse`.
 
 A missing attachment is not a failure: the import counts it in
 `assets_missing` and succeeds, as today. An account that does not match the
