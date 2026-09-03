@@ -180,9 +180,11 @@ Notes on meaning:
 - `import:last` is the account's most recent Import Run.
 - Trashed conversations and trashed contacts are excluded unless `trashed:`
   says otherwise. `messages.duplicate_of IS NULL` is applied on Messages
-  unless the query uses `source:`: a query about one backup wants that
-  backup's copies, duplicates included, which is what the export routes
-  did before.
+  unless the query uses `source:` or `import:`: a query about one backup
+  or one Import Run wants that backup's copies, duplicates included, which
+  is what the export routes did before, and a re-imported run is often
+  nothing but duplicates. On Conversations, `import:` likewise looks at
+  every message of the run, duplicates included.
 
 ### Rejection
 
