@@ -51,6 +51,32 @@ One installation's store of accounts and their messages. A vault holds
 many accounts, and each account's data is isolated from the others.
 _Avoid_: Database, Instance, Server
 
+### People
+
+**Contact**:
+One person the vault knows: a name, and the handles that reach them. A
+contact is made for every person an import meets, and named from the backup
+when the backup knew the name; a name the person types or loads from an
+address book replaces one an import supplied.
+_Avoid_: Card, Identity, Person record
+
+**Handle**:
+One address a person can be reached at: a phone number, an email address,
+or a username on a service. A handle belongs to at most one contact.
+_Avoid_: Identity, Address, Number
+
+**Unknown**:
+The Contact Group the vault computes from contacts that have no name or no
+handle. It has no members of its own and empties as a person names people.
+_Avoid_: Unnamed, Unresolved, Uncategorised
+
+**Trash**:
+Where a person sets aside conversations and contacts they do not want to
+see. Membership is explicit, nothing in it is deleted, and a trashed
+conversation can still be opened and read. Lists leave the trash out unless
+asked to show it.
+_Avoid_: Deleted, Archive, Hidden, Bin
+
 ### Moving messages in and out
 
 **Export**:
