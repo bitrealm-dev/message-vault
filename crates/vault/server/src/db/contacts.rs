@@ -485,6 +485,41 @@ fn collapse_inner_whitespace(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// The contact an import already built for one of this card's phones, if any.
+///
+/// A card and an imported contact that share a phone are the same person, so
+/// the book renames that contact rather than standing a second one beside it.
+/// The identity stays the import's — `origin` is left alone — because the
+/// messages are what proved the person exists, and a later book that drops the
+/// card must not take them with it.
+async fn imported_contact_for_draft(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    phones: &[(String, Option<String>)],
+) -> Result<Option<i64>> {
+    for (phone, _note) in phones {
+        let found: Option<i64> = sqlx::query_scalar(
+            "SELECT ch.contact_id
+             FROM contact_handles ch
+             JOIN handles h ON h.id = ch.handle_id
+             JOIN contacts c ON c.id = ch.contact_id
+             WHERE ch.account_id = $1
+               AND h.normalized = $2
+               AND h.handle_type = 'phone'
+               AND c.origin = 'import'
+             LIMIT 1",
+        )
+        .bind(account_id)
+        .bind(phone)
+        .fetch_optional(&mut *conn)
+        .await?;
+        if found.is_some() {
+            return Ok(found);
+        }
+    }
+    Ok(None)
+}
+
 async fn insert_contact_drafts(
     conn: &mut AnyConnection,
     account_id: &str,
@@ -499,14 +534,32 @@ async fn insert_contact_drafts(
         // storing the literal word "Unknown" as someone's name; the contact is
         // then Unknown by the computed rule, which is the same thing said once.
         let preferred_name = draft.preferred_name.as_deref().unwrap_or("");
-        let contact_id: i64 = sqlx::query_scalar(
-            "INSERT INTO contacts (account_id, preferred_name, origin)
-             VALUES ($1, $2, 'address_book') RETURNING id",
-        )
-        .bind(account_id)
-        .bind(preferred_name)
-        .fetch_one(&mut *tx)
-        .await?;
+        let contact_id =
+            match imported_contact_for_draft(&mut *tx, account_id, &draft.phones).await? {
+                Some(existing) => {
+                    sqlx::query(
+                        "UPDATE contacts SET preferred_name = $1 WHERE account_id = $2 AND id = $3",
+                    )
+                    .bind(preferred_name)
+                    .bind(account_id)
+                    .bind(existing)
+                    .execute(&mut *tx)
+                    .await?;
+                    touch_contact(&mut *tx, account_id, existing).await?;
+                    existing
+                }
+                None => {
+                    let created: i64 = sqlx::query_scalar(
+                        "INSERT INTO contacts (account_id, preferred_name, origin)
+                     VALUES ($1, $2, 'address_book') RETURNING id",
+                    )
+                    .bind(account_id)
+                    .bind(preferred_name)
+                    .fetch_one(&mut *tx)
+                    .await?;
+                    created
+                }
+            };
         stats.contacts += 1;
 
         for (phone, note) in &draft.phones {

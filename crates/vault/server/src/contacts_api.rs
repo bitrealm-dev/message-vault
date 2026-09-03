@@ -2409,6 +2409,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_address_book_renames_a_contact_an_import_named() {
+        let (pool, dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        // What an import leaves behind: a contact named by the backup, holding
+        // the phone, marked as the import's.
+        let discovered =
+            insert_contact_with_handle(&mut conn, &account, "Bobby", "+15551234567").await;
+        sqlx::query("UPDATE contacts SET origin = 'import' WHERE id = $1")
+            .bind(discovered)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let book = dir.path().join("book.vcf");
+        std::fs::write(
+            &book,
+            "BEGIN:VCARD\nVERSION:3.0\nFN:Robert Smith\nN:Smith;Robert;;;\nTEL:+15551234567\nEND:VCARD\n",
+        )
+        .unwrap();
+        contacts::load_contacts_if_needed(&mut conn, Some(&book), true, &account)
+            .await
+            .unwrap();
+
+        let names: Vec<String> = sqlx::query_scalar(
+            "SELECT preferred_name FROM contacts WHERE account_id = $1 ORDER BY preferred_name",
+        )
+        .bind(&account)
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(
+            names,
+            vec!["Robert Smith".to_string()],
+            "the book renames the imported contact instead of making a second one: {names:?}"
+        );
+
+        let name: String = sqlx::query_scalar("SELECT preferred_name FROM contacts WHERE id = $1")
+            .bind(discovered)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(name, "Robert Smith");
+
+        // The identity stays the import's, so a later book that drops the card
+        // does not take the person's messages' contact with it.
+        let origin: String = sqlx::query_scalar("SELECT origin FROM contacts WHERE id = $1")
+            .bind(discovered)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(origin, "import");
+    }
+
+    #[tokio::test]
     async fn loading_an_address_book_replaces_only_its_own_rows() {
         let (pool, dir, account) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
