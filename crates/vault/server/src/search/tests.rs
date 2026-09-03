@@ -62,6 +62,10 @@ pub(crate) struct Fixture {
     pub big_group_msg: i64,
     pub archive_msg: i64,
     pub trashed_msg: i64,
+    // a conversation whose only message a later import marked as a
+    // duplicate: invisible to an ordinary query, findable only by `import:`.
+    pub dup_only_conv: i64,
+    pub dup_only_msg: i64,
     // named sets
     pub family: i64,
     pub archive: i64,
@@ -623,6 +627,38 @@ pub(crate) async fn seeded() -> (sqlx::AnyPool, tempfile::TempDir, Fixture) {
     )
     .await;
 
+    // A conversation whose only message a later import superseded: marked a
+    // duplicate, with no other kept copy in its conversation. The handle
+    // links to no contact, so this adds no contact-level count.
+    let dup_only_handle = handle(&mut conn, a, "+15550098", "sms").await;
+    f.dup_only_conv = conversation(
+        &mut conn,
+        a,
+        dup_only_handle,
+        "individual",
+        None,
+        &[dup_only_handle],
+    )
+    .await;
+    f.dup_only_msg = message(
+        &mut conn,
+        a,
+        msg(
+            f.dup_only_conv,
+            "2025-01-01T10:00:00Z",
+            false,
+            Some(dup_only_handle),
+            "resent copy",
+        ),
+    )
+    .await;
+    sqlx::query("UPDATE messages SET duplicate_of = $1 WHERE id = $2")
+        .bind(f.dup_only_msg)
+        .bind(f.dup_only_msg)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
     f.family = group(&mut conn, a, "Family", &[f.ana]).await;
     f.archive = tag(&mut conn, a, "Archive", &[f.archive_group]).await;
 
@@ -1001,6 +1037,12 @@ mod people_words {
             run(&mut conn, ListKind::Messages, "with:bo body:old").await,
             vec![f.archive_msg]
         );
+        // "Robin" is a participant the source only named: no handle of their
+        // own, so only the participant-row leg of `with:` can find them.
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "with:robin").await,
+            vec![f.archive_group]
+        );
     }
 
     #[tokio::test]
@@ -1117,17 +1159,33 @@ mod people_words {
             .execute(&mut *conn)
             .await
             .unwrap();
+        // The duplicate-only message is part of this run too: a search about
+        // one Import Run looks at every message it touched, duplicates
+        // included, since a re-import is often nothing but duplicates.
+        sqlx::query("UPDATE messages SET import_id = $1 WHERE id = $2")
+            .bind(run_id)
+            .bind(f.dup_only_msg)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
         assert_eq!(
             run(&mut conn, ListKind::Messages, "import:last").await,
-            vec![f.bo_2023]
+            sorted(vec![f.bo_2023, f.dup_only_msg])
         );
         assert_eq!(
             run(&mut conn, ListKind::Messages, &format!("import:#{run_id}")).await,
-            vec![f.bo_2023]
+            sorted(vec![f.bo_2023, f.dup_only_msg])
         );
         assert_eq!(
             run(&mut conn, ListKind::Conversations, "import:last").await,
-            vec![f.bo_direct]
+            sorted(vec![f.bo_direct, f.dup_only_conv])
+        );
+        // Without `import:`, the duplicate-only conversation stays hidden:
+        // only a search about the run itself looks at it.
+        assert!(
+            !run(&mut conn, ListKind::Conversations, "")
+                .await
+                .contains(&f.dup_only_conv)
         );
     }
 }

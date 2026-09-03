@@ -57,8 +57,10 @@ pub(crate) fn compile(
             }
         }
         ListKind::Messages => {
-            // A query about one source wants that source's copies, duplicates included.
-            if !uses("source") {
+            // A query about one source or one Import Run wants that backup's
+            // or that run's copies, duplicates included: a re-imported run is
+            // often nothing but duplicates.
+            if !uses("source") && !uses("import") {
                 out.push(" AND m.duplicate_of IS NULL");
             }
             out.push(
@@ -403,7 +405,34 @@ fn person_matches(
     }
 }
 
-/// Some party to conversation `c` (its chat handle, or a participant) is `v`.
+/// The participant row `p` (with `pct` its linked contact, when any, in
+/// scope via `LEFT JOIN contacts pct ON pct.id = p.contact_id`) is itself
+/// the person `v`: by contact id, or by a contains-or-prefix match on their
+/// display name. This is how `with:` reaches a participant the source only
+/// named — `handle_id` NULL, so `person_matches` on it never sees them.
+fn participant_matches(
+    out: &mut Sql,
+    engine: DbEngine,
+    term: &FieldTerm,
+    v: &Value,
+) -> Result<(), QueryError> {
+    match v {
+        Value::Id(id) => {
+            out.push("p.contact_id = ");
+            out.bind_int(*id);
+            Ok(())
+        }
+        Value::Text(t) | Value::Prefix(t) => {
+            let prefix = matches!(v, Value::Prefix(_));
+            like_contains(out, engine, PARTICIPANT_NAME, t, prefix);
+            Ok(())
+        }
+        _ => Err(bad_value(term, "needs a name, a handle, or #id.")),
+    }
+}
+
+/// Some party to conversation `c` is `v`: its chat handle, a participant's
+/// handle, or a participant the source only named (see `participant_matches`).
 fn with_person(
     ctx: &ListCtx<'_>,
     out: &mut Sql,
@@ -415,11 +444,17 @@ fn with_person(
     ctx.conversation(out, |o| {
         o.push("(");
         result = person_matches(o, e, "c.chat_handle_id", term, v);
-        o.push(" OR EXISTS (SELECT 1 FROM participants p WHERE p.conversation_id = c.id AND ");
+        o.push(
+            " OR EXISTS (SELECT 1 FROM participants p LEFT JOIN contacts pct ON pct.id = p.contact_id WHERE p.conversation_id = c.id AND (",
+        );
         if result.is_ok() {
             result = person_matches(o, e, "p.handle_id", term, v);
         }
-        o.push("))");
+        o.push(" OR ");
+        if result.is_ok() {
+            result = participant_matches(o, e, term, v);
+        }
+        o.push(")))");
     });
     result
 }
@@ -634,23 +669,47 @@ fn emit_people_word(
                 result
             }
         },
+        // Never through `ctx.message`: that bridge's Conversations shape
+        // requires a non-duplicate message, and an Import Run's whole point
+        // is to find rows a later run marked as duplicates. `import:` writes
+        // its own EXISTS on Conversations, and compares `m.import_id`
+        // directly on Messages (whose own duplicate default is already
+        // skipped for `import:` in `compile`).
         "import" => match v {
             Value::Keyword("last") => {
                 let account = ctx.account_id.to_string();
-                ctx.message(out, |o| {
-                    o.push(
-                        "m.import_id = (SELECT MAX(vi.id) FROM vault_imports vi WHERE vi.account_id = ",
-                    );
-                    o.bind_text(account);
-                    o.push(")");
-                });
+                match ctx.list {
+                    ListKind::Messages => {
+                        out.push(
+                            "m.import_id = (SELECT MAX(vi.id) FROM vault_imports vi WHERE vi.account_id = ",
+                        );
+                        out.bind_text(account);
+                        out.push(")");
+                    }
+                    _ => {
+                        out.push(
+                            "EXISTS (SELECT 1 FROM messages mi WHERE mi.conversation_id = c.id AND mi.import_id = (SELECT MAX(vi.id) FROM vault_imports vi WHERE vi.account_id = ",
+                        );
+                        out.bind_text(account);
+                        out.push("))");
+                    }
+                }
                 Ok(())
             }
             Value::Id(id) => {
-                ctx.message(out, |o| {
-                    o.push("m.import_id = ");
-                    o.bind_int(*id);
-                });
+                match ctx.list {
+                    ListKind::Messages => {
+                        out.push("m.import_id = ");
+                        out.bind_int(*id);
+                    }
+                    _ => {
+                        out.push(
+                            "EXISTS (SELECT 1 FROM messages mi WHERE mi.conversation_id = c.id AND mi.import_id = ",
+                        );
+                        out.bind_int(*id);
+                        out.push(")");
+                    }
+                }
                 Ok(())
             }
             _ => Err(bad_value(term, "needs #id or last.")),

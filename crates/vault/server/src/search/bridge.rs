@@ -51,13 +51,16 @@ impl Sql {
 }
 
 /// Conversation `conv` involves the contact `contact_expr`: one of the
-/// contact's handles is the chat handle or a participant.
+/// contact's handles is the chat handle or a participant's handle, or the
+/// contact is linked directly to a participant row that has no handle of
+/// its own (the source named that person and recorded no address for them).
 pub(crate) fn conversation_involves(conv: &str, contact_expr: &str) -> String {
     format!(
-        "EXISTS (SELECT 1 FROM contact_handles chi \
+        "(EXISTS (SELECT 1 FROM contact_handles chi \
            WHERE chi.account_id = {conv}.account_id AND chi.contact_id = {contact_expr} \
              AND (chi.handle_id = {conv}.chat_handle_id \
-                  OR EXISTS (SELECT 1 FROM participants pi WHERE pi.conversation_id = {conv}.id AND pi.handle_id = chi.handle_id)))"
+                  OR EXISTS (SELECT 1 FROM participants pi WHERE pi.conversation_id = {conv}.id AND pi.handle_id = chi.handle_id))) \
+         OR EXISTS (SELECT 1 FROM participants pi2 WHERE pi2.conversation_id = {conv}.id AND pi2.contact_id = {contact_expr}))"
     )
 }
 
