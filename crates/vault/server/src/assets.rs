@@ -612,7 +612,6 @@ pub(crate) struct AssetPutQuery {
 /// Stored asset fingerprint and path.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct AssetPutResponse {
-    ok: bool,
     sha256: String,
     assets_path: String,
     already_present: bool,
@@ -621,7 +620,6 @@ pub(crate) struct AssetPutResponse {
 impl AssetPutResponse {
     fn stored(asset: StoredAsset, already_present: bool) -> Json<Self> {
         Json(Self {
-            ok: true,
             sha256: asset.sha256,
             assets_path: asset.assets_path,
             already_present,
@@ -895,7 +893,6 @@ pub(crate) struct AssetUploadStartBody {
 /// Upload id and part size, or the already-stored asset.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct AssetUploadStartResponse {
-    ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     upload_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -911,15 +908,8 @@ pub(crate) struct AssetUploadStartResponse {
 /// Bytes written for one part.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct AssetUploadPartResponse {
-    ok: bool,
     part: u32,
     bytes: u64,
-}
-
-/// Abort acknowledgement.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct AssetUploadAbortResponse {
-    ok: bool,
 }
 
 /// Start a chunked (multipart) asset upload and get the part size.
@@ -964,7 +954,6 @@ pub(crate) async fn asset_upload_start_handler(
 
     match result {
         (Some(stored), None) => Ok(Json(AssetUploadStartResponse {
-            ok: true,
             upload_id: None,
             part_size: None,
             sha256: Some(stored.sha256),
@@ -972,7 +961,6 @@ pub(crate) async fn asset_upload_start_handler(
             already_present: true,
         })),
         (None, Some(start)) => Ok(Json(AssetUploadStartResponse {
-            ok: true,
             upload_id: Some(start.upload_id),
             part_size: Some(start.part_size),
             sha256: None,
@@ -1029,7 +1017,6 @@ pub(crate) async fn asset_upload_part_handler(
     .map_err(|e| ApiError::Internal(format!("upload part task: {e}")))?
     .map_err(|e| ApiError::BadRequest(e.to_string()))?;
     Ok(Json(AssetUploadPartResponse {
-        ok: true,
         part,
         bytes: written,
     }))
@@ -1111,7 +1098,7 @@ pub(crate) async fn asset_upload_complete_handler(
         ("account" = Option<String>, Query)
     ),
     responses(
-        (status = 200, body = AssetUploadAbortResponse),
+        (status = 204, description = "Upload aborted"),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody)
@@ -1122,7 +1109,7 @@ pub(crate) async fn asset_upload_abort_handler(
     ImportAccess(auth): ImportAccess,
     AxumPath((sha256, upload_id)): AxumPath<(String, String)>,
     Query(query): Query<AssetPutQuery>,
-) -> Result<Json<AssetUploadAbortResponse>, ApiError> {
+) -> Result<axum::http::StatusCode, ApiError> {
     let (account, source_id, _existing) =
         resolve_asset_lookup(&state, &auth, &sha256, &query, AssetAccess::Write).await?;
     let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
@@ -1132,7 +1119,7 @@ pub(crate) async fn asset_upload_abort_handler(
         .await
         .map_err(|e| ApiError::Internal(format!("upload abort task: {e}")))?
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    Ok(Json(AssetUploadAbortResponse { ok: true }))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 #[cfg(test)]

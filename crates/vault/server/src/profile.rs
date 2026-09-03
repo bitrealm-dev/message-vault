@@ -312,8 +312,6 @@ pub struct DeleteMessagesRequest {
 /// Counts of deleted conversations and attachment rows.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DeleteMessagesResponse {
-    /// Always true when a response is returned.
-    pub ok: bool,
     /// Conversations deleted.
     pub conversations: u64,
     /// Attachment rows deleted (on-disk files are removed too).
@@ -385,7 +383,6 @@ pub async fn delete_messages_handler(
     remove_account_asset_trees(&data_dir, &account_id, &assets_name, &converted_name)?;
 
     Ok(Json(DeleteMessagesResponse {
-        ok: true,
         conversations: stats.conversations,
         attachments: stats.attachments,
     }))

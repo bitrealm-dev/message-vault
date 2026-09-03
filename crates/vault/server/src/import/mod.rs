@@ -570,7 +570,6 @@ fn default_import_mode() -> String {
 /// Import result: stats plus optional dedupe counts.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct ImportResponse {
-    ok: bool,
     source: String,
     account: String,
     #[serde(flatten)]
@@ -624,7 +623,6 @@ pub(crate) struct CreateImportBody {
 /// The new import session id.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct CreateImportResponse {
-    ok: bool,
     pub(crate) id: i64,
 }
 
@@ -732,7 +730,6 @@ fn optional_json_string(
 /// Stored session status after completion.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct CompleteImportResponse {
-    ok: bool,
     id: i64,
     pub(crate) status: String,
     pub(crate) message_count: i64,
@@ -749,7 +746,7 @@ pub(crate) struct ListImportsQuery {
 /// Past import sessions.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct ImportsListResponse {
-    imports: Vec<crate::db::vault_imports::ImportSummary>,
+    items: Vec<crate::db::vault_imports::ImportSummary>,
 }
 
 /// One stored import issue.
@@ -804,9 +801,9 @@ pub(crate) async fn imports_list_handler(
     let account = resolve_import_account(&auth, query.account.as_deref(), &state.db).await?;
 
     let mut conn = state.db.acquire().await?;
-    let imports = crate::db::vault_imports::list_imports(&mut conn, &account).await?;
+    let items = crate::db::vault_imports::list_imports(&mut conn, &account).await?;
 
-    Ok(Json(ImportsListResponse { imports }))
+    Ok(Json(ImportsListResponse { items }))
 }
 
 /// Status, timings, and issues for one import session.
@@ -900,7 +897,7 @@ pub(crate) async fn imports_create_handler(
     };
     let id = crate::db::vault_imports::start_import(&mut conn, &args).await?;
 
-    Ok(Json(CreateImportResponse { ok: true, id }))
+    Ok(Json(CreateImportResponse { id }))
 }
 
 /// Record the outcome of an import session started with POST /v1/imports.
@@ -972,7 +969,6 @@ pub(crate) async fn imports_complete_handler(
     create_import_contact_group(&mut conn, &account, &row).await;
 
     Ok(Json(CompleteImportResponse {
-        ok: true,
         id: row.id,
         status: row.status,
         message_count: row.message_count,
@@ -1247,7 +1243,6 @@ pub(crate) struct ActiveImportSession {
 /// The account's live session, or null when there is none.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct ActiveImportResponse {
-    ok: bool,
     pub(crate) session: Option<ActiveImportSession>,
 }
 
@@ -1271,7 +1266,6 @@ pub(crate) async fn imports_active_handler(
     let mut conn = state.db.acquire().await?;
     let row = crate::db::vault_imports::get_active_import(&mut conn, &account).await?;
     Ok(Json(ActiveImportResponse {
-        ok: true,
         session: row.map(|row| ActiveImportSession {
             id: row.id,
             source: row.source,
@@ -1308,7 +1302,6 @@ pub(crate) struct SetImportStageBody {
 /// Confirmation that the stage moved.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct SetImportStageResponse {
-    ok: bool,
     pub(crate) stage: String,
 }
 
@@ -1352,7 +1345,6 @@ pub(crate) async fn imports_stage_handler(
     )
     .await?;
     Ok(Json(SetImportStageResponse {
-        ok: true,
         stage: stage.as_str().to_string(),
     }))
 }
@@ -1360,7 +1352,6 @@ pub(crate) async fn imports_stage_handler(
 /// Confirmation that a session was discarded.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct DiscardImportResponse {
-    ok: bool,
     pub(crate) id: i64,
     pub(crate) status: String,
 }
@@ -1389,7 +1380,6 @@ pub(crate) async fn imports_discard_handler(
     let mut conn = state.db.acquire().await?;
     crate::db::vault_imports::discard_import(&mut conn, &account, import_id).await?;
     Ok(Json(DiscardImportResponse {
-        ok: true,
         id: import_id,
         status: "cancelled".into(),
     }))
@@ -1702,7 +1692,6 @@ async fn run_import_path(
     };
 
     Ok(Json(ImportResponse {
-        ok: true,
         source: source_id,
         account,
         stats,
