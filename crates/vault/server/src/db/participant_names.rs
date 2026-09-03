@@ -69,9 +69,7 @@ pub async fn load_for_conversations(
                 Participant {
                     name: row.try_get(1)?,
                     handle: row.try_get(2)?,
-                    service: row
-                        .try_get::<String, _>(3)
-                        .unwrap_or_else(|_| "unknown".into()),
+                    service: row.try_get(3)?,
                     contact_id: row.try_get(4)?,
                 },
             ))
