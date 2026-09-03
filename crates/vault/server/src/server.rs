@@ -528,11 +528,13 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     eprintln!("message-vault-server serve listening on http://{bind}");
     eprintln!("  GET  /health");
     eprintln!("  GET  /v1/auth/check   (Bearer session token or API token)");
-    eprintln!("  GET  /v1/export/messages?q=&limit=&cursor=&account=  (read-only export)");
+    eprintln!(
+        "  GET  /v1/export/messages?q=&limit=&offset=&account=  (download messages, a page at a time)"
+    );
     eprintln!("  GET  /v1/conversations?q=&limit=&offset=  (browse conversations)");
     eprintln!("  GET  /v1/contacts?q=&limit=&offset=     (browse contacts)");
     eprintln!("  PATCH /v1/contacts/{{id}}                  (edit a contact)");
-    eprintln!("  GET  /v1/export/messages/count?q=&account=&source=  (export match counts)");
+    eprintln!("  GET  /v1/export/messages/count?q=&account=  (export match counts)");
     eprintln!("  GET  /v1/assets/{{sha256}}?source=&account=  (download content-addressed media)");
     eprintln!("  GET  /v1/imports       (list past import sessions with stats)");
     eprintln!("  GET  /v1/account/storage  (usage + top attachments)");

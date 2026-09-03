@@ -2985,7 +2985,7 @@
         "tags": [
           "Export"
         ],
-        "summary": "Export messages matching a query in the search language (cursor paging).",
+        "summary": "Export messages matching a query in the search language, a page at a time.",
         "operationId": "export_messages_handler",
         "parameters": [
           {
@@ -3010,7 +3010,7 @@
           {
             "name": "offset",
             "in": "query",
-            "description": "Legacy offset; prefer cursor",
+            "description": "Page offset; no cap, an offset past the end is an empty page",
             "required": false,
             "schema": {
               "type": "integer",
@@ -3018,26 +3018,8 @@
             }
           },
           {
-            "name": "cursor",
-            "in": "query",
-            "description": "Opaque next_cursor from a previous page",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
             "name": "account",
             "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "source",
-            "in": "query",
-            "description": "Narrow to one backup: imessage, whatsapp, or sms-backup-restore",
             "required": false,
             "schema": {
               "type": "string"
@@ -3050,7 +3032,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ExportMessagesResponse"
+                  "$ref": "#/components/schemas/Page_ExportMessage"
                 }
               }
             }
@@ -3113,15 +3095,6 @@
           {
             "name": "account",
             "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "source",
-            "in": "query",
-            "description": "Narrow to one backup: imessage, whatsapp, or sms-backup-restore",
             "required": false,
             "schema": {
               "type": "string"
@@ -6401,8 +6374,6 @@
         "type": "object",
         "description": "Match counts for an export query.",
         "required": [
-          "ok",
-          "query",
           "messages",
           "conversations",
           "attachments",
@@ -6426,14 +6397,6 @@
             "format": "int64",
             "description": "Matching messages.",
             "minimum": 0
-          },
-          "ok": {
-            "type": "boolean",
-            "description": "Always true when a response is returned."
-          },
-          "query": {
-            "type": "string",
-            "description": "Query echoed back."
           },
           "total_bytes": {
             "type": "integer",
@@ -6569,46 +6532,6 @@
               "null"
             ],
             "description": "UTC timestamp, when known."
-          }
-        }
-      },
-      "ExportMessagesResponse": {
-        "type": "object",
-        "description": "One page of exported messages.",
-        "required": [
-          "ok",
-          "query",
-          "messages"
-        ],
-        "properties": {
-          "messages": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ExportMessage"
-            },
-            "description": "Messages on this page."
-          },
-          "next_cursor": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Cursor for the next page; absent on the last page."
-          },
-          "ok": {
-            "type": "boolean",
-            "description": "Always true when a response is returned."
-          },
-          "query": {
-            "type": "string",
-            "description": "Query echoed back."
-          },
-          "truncated": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "True when more rows matched than the page limit."
           }
         }
       },
@@ -7492,6 +7415,167 @@
                     "type": "string"
                   },
                   "description": "Message tags on this conversation."
+                }
+              }
+            },
+            "description": "The rows on this page."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Page size used.",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Page offset used.",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows matching the query across every page.",
+            "minimum": 0
+          }
+        }
+      },
+      "Page_ExportMessage": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One exported message.",
+              "required": [
+                "id",
+                "source",
+                "timestamp",
+                "sort_order",
+                "is_from_me",
+                "is_announcement",
+                "is_reply",
+                "num_replies",
+                "conversation",
+                "attachments",
+                "tapbacks"
+              ],
+              "properties": {
+                "attachments": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ExportAttachment"
+                  },
+                  "description": "Attachments on this message."
+                },
+                "conversation": {
+                  "$ref": "#/components/schemas/ExportConversation",
+                  "description": "The conversation this message belongs to."
+                },
+                "guid": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Export GUID for replies and grouping."
+                },
+                "id": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Message row id."
+                },
+                "is_announcement": {
+                  "type": "boolean",
+                  "description": "True for group announcements."
+                },
+                "is_from_me": {
+                  "type": "boolean",
+                  "description": "True for messages sent by the account owner."
+                },
+                "is_reply": {
+                  "type": "boolean",
+                  "description": "True when part of a reply thread."
+                },
+                "num_replies": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Replies in this thread."
+                },
+                "sender": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Sender handle for incoming messages."
+                },
+                "service": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Platform service, e.g. `imessage`, when known."
+                },
+                "sort_order": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Ordering key within the conversation."
+                },
+                "source": {
+                  "type": "string",
+                  "description": "Import source id."
+                },
+                "subject": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Subject line, when set."
+                },
+                "tapbacks": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ExportTapback"
+                  },
+                  "description": "Reactions on this message."
+                },
+                "text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Body text, when present."
+                },
+                "thread_originator_guid": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "GUID of the message this replies to."
+                },
+                "thread_originator_part": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int64",
+                  "description": "Part index of the originator (for tapbacks)."
+                },
+                "timestamp": {
+                  "type": "string",
+                  "description": "Message timestamp (local)."
+                },
+                "timestamp_utc": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "UTC timestamp, when known."
                 }
               }
             },

@@ -21,10 +21,6 @@ pub const MAX_LIST_OFFSET: usize = 50_000;
 /// `IN` list stays under SQLite's variable cap.
 pub const MAX_CONTACT_SUMMARY_IDS: usize = 500;
 
-// Kept only until Task 3 (export) lands.
-pub const MAX_EXPORT_LIMIT: usize = 500;
-pub const MAX_EXPORT_OFFSET: usize = 50_000;
-
 /// One page of a list.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct Page<T> {
