@@ -993,6 +993,50 @@ mod text_words {
         );
     }
 
+    /// A handle put on a Contact after the messages were imported.
+    /// `participants.contact_id` is written once at import and never updated,
+    /// so it still says nothing about this person while `contact_handles`
+    /// says who they are. Search has to reach the Contact the same way the
+    /// naming query does, or the conversation list shows "Robert Smith" and
+    /// `name:"Robert Smith"` finds nothing.
+    #[tokio::test]
+    async fn name_finds_a_contact_linked_after_the_import() {
+        let (pool, _dir, _f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let late_handle = handle(&mut conn, ACCOUNT, "+15550777", "imessage").await;
+        let conv = conversation(
+            &mut conn,
+            ACCOUNT,
+            late_handle,
+            "individual",
+            None,
+            &[late_handle],
+        )
+        .await;
+        message(
+            &mut conn,
+            ACCOUNT,
+            msg(conv, "2024-01-01T00:00:00Z", false, Some(late_handle), "hi"),
+        )
+        .await;
+        // Only now does the handle go onto a Contact, the way linking a
+        // handle, merging two contacts, or an address book adopting one does.
+        contact(&mut conn, ACCOUNT, "Robert Smith", &[late_handle]).await;
+
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "name:\"Robert Smith\"").await,
+            vec![conv]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "\"Robert Smith\"").await,
+            vec![conv]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "with:\"Robert Smith\"").await,
+            vec![conv]
+        );
+    }
+
     #[tokio::test]
     async fn body_subject_and_filename() {
         let (pool, _dir, f) = seeded().await;
