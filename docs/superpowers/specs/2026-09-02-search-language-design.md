@@ -179,8 +179,10 @@ Notes on meaning:
   `contact` is a vCard. `other` is anything not in the other categories.
 - `import:last` is the account's most recent Import Run.
 - Trashed conversations and trashed contacts are excluded unless `trashed:`
-  says otherwise. `messages.duplicate_of IS NULL` is always applied on
-  Messages.
+  says otherwise. `messages.duplicate_of IS NULL` is applied on Messages
+  unless the query uses `source:`: a query about one backup wants that
+  backup's copies, duplicates included, which is what the export routes
+  did before.
 
 ### Rejection
 
@@ -199,7 +201,7 @@ of spellings that came before it. Examples of the wording:
 | `people:Family` | any | `people: is not a search word.` |
 | `paticipants:>2` | Conversations | `paticipants: is not a search word. Did you mean participants:?` |
 | `tag:` | any | `tag: needs a value, for example tag:Holiday or tag:none.` |
-| `date:2019-13` | any | `date: does not understand 2019-13. Write a year, a month like 2024-05, a day, or a span like 7d.` |
+| `date:2019-13` | any | `date: does not understand 2019-13. Write a year, a month like 2024-05, a day, or a span like 7d, with >, >=, <, <=, or a..b.` |
 
 The "did you mean" uses a small edit distance against the words of the
 requested list, and is omitted when nothing is close.
@@ -216,7 +218,7 @@ want", not "how the screen looked", so none of them is a word:
 | `context:2` | Nothing, for the same reason. | Messages |
 | `search:contacts` | Nothing; the web switches its own screen. | web only |
 | `is:trash` | `trashed:yes` in the language, since it narrows rows. | Contacts, Conversations |
-| `?source=` on the export routes | Stays as a request parameter for the desktop pull client. The handler prepends `source:<value>` to the query before compiling, so it means exactly what the word means. | Messages |
+| `?source=` on the export routes | Stays as a request parameter for the desktop pull client. It keeps taking the stored source ids (`imessage`, `whatsapp`, `sms-backup-restore`); the handler maps the id to the word and prepends `source:<word>` to the query before compiling, so it means exactly what the word means. Any other value is a 400. | Messages |
 
 ## The module
 
@@ -255,7 +257,7 @@ pub fn compile(req: CompileRequest<'_>) -> Result<Filter, QueryError>;
 pub fn describe(list: ListKind) -> Vec<FieldDoc>;
 
 pub struct QueryError {
-    pub kind: QueryErrorKind,        // UnknownWord | WrongList | BadValue | EmptyValue | Unbalanced | TooLong
+    pub kind: QueryErrorKind,        // UnknownWord | WrongList | BadValue | EmptyValue | Unbalanced | TooLong | TooComplex
     pub message: String,             // the 400 body; user-facing
     pub span: std::ops::Range<usize>,// byte range in the input
     pub field: Option<&'static str>,
@@ -265,8 +267,10 @@ pub struct QueryError {
 
 Invariants a caller relies on:
 
-1. The fragment mentions exactly one alias, fixed per list: `ct` for
-   `contacts`, `c` for `conversations`, `m` for `messages`. Everything else is
+1. The fragment refers to exactly one base alias, fixed per list: `ct` for
+   `contacts`, `c` for `conversations`, `m` for `messages`. Subqueries name
+   their own aliases (a Messages fragment reaches its conversation as `c`
+   inside its own `EXISTS`), and never reach the caller's. Everything else is
    a correlated subquery naming its own tables. So the caller adds no joins
    and no `DISTINCT`; the fragment can never multiply the caller's rows.
 2. Account scope, the dedupe rule, and the trash default sit inside the
