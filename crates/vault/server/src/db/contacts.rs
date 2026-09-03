@@ -537,21 +537,28 @@ async fn insert_contact_drafts(
         let contact_id =
             match imported_contact_for_draft(&mut *tx, account_id, &draft.phones).await? {
                 Some(existing) => {
-                    sqlx::query(
-                        "UPDATE contacts SET preferred_name = $1 WHERE account_id = $2 AND id = $3",
-                    )
-                    .bind(preferred_name)
-                    .bind(account_id)
-                    .bind(existing)
-                    .execute(&mut *tx)
-                    .await?;
-                    touch_contact(&mut *tx, account_id, existing).await?;
+                    // A card that lists a number without a name has nothing to
+                    // say about who that person is, so it does not get to
+                    // unname them: only overwrite the imported name when the
+                    // book actually supplied one.
+                    if !preferred_name.is_empty() {
+                        sqlx::query(
+                            "UPDATE contacts SET preferred_name = $1
+                             WHERE account_id = $2 AND id = $3",
+                        )
+                        .bind(preferred_name)
+                        .bind(account_id)
+                        .bind(existing)
+                        .execute(&mut *tx)
+                        .await?;
+                        touch_contact(&mut *tx, account_id, existing).await?;
+                    }
                     existing
                 }
                 None => {
                     let created: i64 = sqlx::query_scalar(
                         "INSERT INTO contacts (account_id, preferred_name, origin)
-                     VALUES ($1, $2, 'address_book') RETURNING id",
+                         VALUES ($1, $2, 'address_book') RETURNING id",
                     )
                     .bind(account_id)
                     .bind(preferred_name)

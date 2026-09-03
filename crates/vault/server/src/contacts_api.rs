@@ -2464,6 +2464,98 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_nameless_card_does_not_blank_an_imported_name() {
+        let (pool, dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        // An import already named this person; the book only lists their
+        // number, nothing more.
+        let discovered =
+            insert_contact_with_handle(&mut conn, &account, "Bobby", "+15551234567").await;
+        sqlx::query("UPDATE contacts SET origin = 'import' WHERE id = $1")
+            .bind(discovered)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let book = dir.path().join("book.vcf");
+        std::fs::write(
+            &book,
+            "BEGIN:VCARD\nVERSION:3.0\nTEL:+15551234567\nEND:VCARD\n",
+        )
+        .unwrap();
+        contacts::load_contacts_if_needed(&mut conn, Some(&book), true, &account)
+            .await
+            .unwrap();
+
+        // A card with no name has nothing to say about who this person is,
+        // so it does not get to unname them.
+        let name: String = sqlx::query_scalar("SELECT preferred_name FROM contacts WHERE id = $1")
+            .bind(discovered)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(name, "Bobby");
+
+        let origin: String = sqlx::query_scalar("SELECT origin FROM contacts WHERE id = $1")
+            .bind(discovered)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(origin, "import");
+    }
+
+    #[tokio::test]
+    async fn an_address_book_does_not_rename_a_contact_the_person_typed() {
+        let (pool, dir, account) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        // A name the person typed themselves, holding the phone the book is
+        // about to load a card for.
+        let hand_typed =
+            insert_contact_with_handle(&mut conn, &account, "My Friend Bob", "+15551234567").await;
+        sqlx::query("UPDATE contacts SET origin = 'user' WHERE id = $1")
+            .bind(hand_typed)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let book = dir.path().join("book.vcf");
+        std::fs::write(
+            &book,
+            "BEGIN:VCARD\nVERSION:3.0\nFN:Robert Smith\nN:Smith;Robert;;;\nTEL:+15551234567\nEND:VCARD\n",
+        )
+        .unwrap();
+        contacts::load_contacts_if_needed(&mut conn, Some(&book), true, &account)
+            .await
+            .unwrap();
+
+        // The name the person typed survives untouched.
+        let hand_typed_name: String =
+            sqlx::query_scalar("SELECT preferred_name FROM contacts WHERE id = $1")
+                .bind(hand_typed)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!(hand_typed_name, "My Friend Bob");
+
+        // The book's card gets its own, separate contact instead of adopting
+        // the one the person named themselves.
+        let names: Vec<String> = sqlx::query_scalar(
+            "SELECT preferred_name FROM contacts WHERE account_id = $1 ORDER BY preferred_name",
+        )
+        .bind(&account)
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(
+            names,
+            vec!["My Friend Bob".to_string(), "Robert Smith".to_string()],
+            "the book creates its own contact rather than renaming the user's: {names:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn loading_an_address_book_replaces_only_its_own_rows() {
         let (pool, dir, account) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
