@@ -32,6 +32,7 @@ pub(crate) mod process_assets;
 pub(crate) mod profile;
 pub(crate) mod reset_demo;
 pub(crate) mod saved_searches_api;
+pub(crate) mod search;
 pub(crate) mod search_query;
 pub(crate) mod server;
 #[cfg(test)]
