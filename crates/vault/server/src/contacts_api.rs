@@ -12,13 +12,10 @@ use serde::{Deserialize, Serialize};
 use sqlx::AnyConnection;
 
 use crate::db::contacts::{self, contact_id_for_handle};
-use crate::db::dialect::{
-    engine_of, group_concat_unit_separator, like_ci, name_eq_ci, order_by_name_ci,
-};
+use crate::db::dialect::{engine_of, group_concat_unit_separator, order_by_name_ci};
 use crate::db::handles::{infer_handle_type_from_shape, normalize_handle};
 use crate::db::sql::{SqlParam, bind_args, in_placeholders, renumber_placeholders};
 use crate::export_api::ExportQueryError;
-use crate::search_query::extract_keyed_ops;
 use crate::server::{ApiError, AppState, FullAccess};
 
 pub use crate::page_limits::{DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, MAX_LIST_OFFSET};
@@ -236,441 +233,40 @@ pub(crate) const NOT_TRASHED_CONTACT_SQL: &str = "NOT EXISTS (
                WHERE tct.account_id = ct.account_id AND tct.contact_id = ct.id
              )";
 
-/// Correlated: conversation `c` involves contact row `ct` (no bind params).
-fn involves_ct_sql() -> String {
-    involves_contact_expr("ct.id")
-}
-
-/// Contact has at least one non-duplicate message in an involved conversation.
-fn contact_has_messages_sql() -> String {
-    format!(
-        "EXISTS (
-           SELECT 1
-           FROM conversations c
-           JOIN messages m ON m.conversation_id = c.id AND m.duplicate_of IS NULL
-           WHERE c.account_id = ct.account_id
-             AND {involves}
-         )",
-        involves = involves_ct_sql()
-    )
-}
-
-/// Comparison for a first-/last-contact date bound.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DateBoundOp {
-    /// Calendar day on or after (`>=` or bare `first-contact:`).
-    OnOrAfter,
-    /// Strictly before that calendar day (`<`).
-    Before,
-    /// Calendar day on or before (bare `last-contact:` back-compat).
-    OnOrBefore,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DateBound {
-    op: DateBoundOp,
-    ymd: String,
-}
-
-fn date_bound_cmp(op: DateBoundOp) -> &'static str {
-    match op {
-        DateBoundOp::OnOrAfter => ">=",
-        DateBoundOp::Before => "<",
-        DateBoundOp::OnOrBefore => "<=",
-    }
-}
-
-fn involved_message_date_agg(involves: &str, min_or_max: &str) -> String {
-    format!(
-        "date((
-           SELECT {min_or_max}(m.timestamp)
-           FROM conversations c
-           JOIN messages m ON m.conversation_id = c.id AND m.duplicate_of IS NULL
-           WHERE c.account_id = ct.account_id
-             AND {involves}
-         ))"
-    )
-}
-
-fn push_contact_date_bounds(
-    where_parts: &mut Vec<String>,
-    params: &mut Vec<SqlParam>,
-    bounds: &[DateBound],
-    agg: &str,
-) {
-    for bound in bounds {
-        where_parts.push(format!("{agg} {} date(?)", date_bound_cmp(bound.op)));
-        params.push(SqlParam::Text(bound.ymd.clone()));
-    }
-}
-
-#[derive(Debug, Default)]
-struct ContactListFilters {
-    handle: Option<String>,
-    text: String,
-    /// Bounds on earliest message day (AND’d).
-    first_contact: Vec<DateBound>,
-    /// Bounds on latest message day (AND’d).
-    last_contact: Vec<DateBound>,
-    /// `Some(true)` = has messages; `Some(false)` = never messaged.
-    has_messages: Option<bool>,
-    no_name: bool,
-    /// Contacts with no rows in `contact_handles`.
-    no_handle: bool,
-    /// Lowercased service ids (`imessage`, `sms`, `mms`, `whatsapp`); OR match.
-    /// UI may send `service:phone` (Text message), which expands to imessage/sms/mms.
-    services: Vec<String>,
-    /// Contacts that belong to this group (case-insensitive).
-    group: Option<String>,
-    /// Contacts with no group memberships (`group:none` / `has:no-group`).
-    no_group: bool,
-    /// The Unknown Contact Group (`group:unknown`): a contact with no identity
-    /// at all, or with identities but no preferred name. Membership is computed
-    /// from contact state, not stored, so it empties as the person works
-    /// through it.
-    unknown: bool,
-}
-
-fn normalize_ymd(raw: &str) -> Option<String> {
-    let t = raw.trim();
-    if t.len() >= 10 && t.as_bytes().get(4) == Some(&b'-') && t.as_bytes().get(7) == Some(&b'-') {
-        let ymd = &t[..10];
-        if ymd.bytes().all(|b| b.is_ascii_digit() || b == b'-') {
-            return Some(ymd.to_string());
-        }
-    }
-    None
-}
-
-/// Parse `>=YYYY-MM-DD`, `<YYYY-MM-DD`, or bare `YYYY-MM-DD`.
-/// Bare dates use `bare` (OnOrAfter for first-contact, OnOrBefore for last-contact).
-fn parse_date_bound_value(raw: &str, bare: DateBoundOp) -> Option<DateBound> {
-    let t = raw.trim();
-    if let Some(rest) = t.strip_prefix(">=") {
-        return normalize_ymd(rest).map(|ymd| DateBound {
-            op: DateBoundOp::OnOrAfter,
-            ymd,
-        });
-    }
-    // Prefer `<` over bare; do not treat `<=` as Before.
-    if let Some(rest) = t.strip_prefix('<') {
-        if rest.starts_with('=') {
-            return None;
-        }
-        return normalize_ymd(rest).map(|ymd| DateBound {
-            op: DateBoundOp::Before,
-            ymd,
-        });
-    }
-    normalize_ymd(t).map(|ymd| DateBound { op: bare, ymd })
-}
-
-fn expand_service_token(value: &str) -> Vec<String> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        // UI "Text message" / drawer phone bucket: any non-WhatsApp messaging service.
-        "phone" | "text" | "text-message" | "textmessage" => {
-            vec!["imessage".into(), "sms".into(), "mms".into()]
-        }
-        "sms" | "mms" | "sms/mms" | "sms-mms" => vec!["sms".into(), "mms".into()],
-        "imessage" => vec!["imessage".into()],
-        "whatsapp" => vec!["whatsapp".into()],
-        other if !other.is_empty() => vec![other.to_string()],
-        _ => Vec::new(),
-    }
-}
-
-/// Pull the first `prefix:"quoted value"` or `prefix:bare` token from `q`.
-/// Returns (value, remainder); a repeated `prefix:` stays in the remainder
-/// (and later falls through to the free-text filter). `prefix` includes the
-/// trailing `:`.
-fn take_prefixed_quoted_or_bare(q: &str, prefix: &str) -> (Option<String>, String) {
-    let key = prefix.trim_end_matches(':');
-    let (rest, mut found) = extract_keyed_ops(q, &[key], false, true);
-    let value = found
-        .pop()
-        .map(|op| op.value.trim_matches('"').to_string())
-        .filter(|s| !s.is_empty());
-    (value, rest)
-}
-
-fn apply_group_token(out: &mut ContactListFilters, raw: &str) {
-    let value = raw.trim();
-    if value.is_empty() {
-        return;
-    }
-    let lower = value.to_ascii_lowercase();
-    if lower == "none" || lower == "no-group" || lower == "no-label" {
-        out.no_group = true;
-        out.group = None;
-        return;
-    }
-    // Unknown is a permanent Contact Group whose membership is computed from
-    // contact state rather than stored in `contact_group_members`, so it never
-    // reaches the stored-group branch.
-    if lower == "unknown" {
-        out.unknown = true;
-        out.no_group = false;
-        out.group = None;
-        return;
-    }
-    out.no_group = false;
-    out.group = Some(value.to_string());
-}
-
-/// Parse `q` into structured list filters (handle, free text, advanced tokens).
-fn parse_contact_list_filters(q: &str) -> ContactListFilters {
-    let (handle, rest) = parse_contact_list_query(q);
-    let (group_raw, rest) = take_prefixed_quoted_or_bare(&rest, "group:");
-    let (label_raw, rest) = if group_raw.is_none() {
-        take_prefixed_quoted_or_bare(&rest, "label:")
-    } else {
-        (None, rest)
-    };
-    let (within, rest) = if group_raw.is_none() && label_raw.is_none() {
-        take_prefixed_quoted_or_bare(&rest, "within:")
-    } else {
-        (None, rest)
-    };
-    let mut out = ContactListFilters {
-        handle,
-        ..Default::default()
-    };
-    if let Some(ref raw) = group_raw.or(label_raw).or(within) {
-        apply_group_token(&mut out, raw);
-    }
-    let mut text_parts = Vec::new();
-    for tok in rest.split_whitespace() {
-        let lower = tok.to_ascii_lowercase();
-        if lower == "search:contacts" {
-            continue;
-        }
-        if let Some(rest) = lower.strip_prefix("first-contact:") {
-            if let Some(b) = parse_date_bound_value(rest, DateBoundOp::OnOrAfter) {
-                out.first_contact.push(b);
-            }
-            continue;
-        }
-        if let Some(rest) = lower.strip_prefix("last-contact:") {
-            if let Some(b) = parse_date_bound_value(rest, DateBoundOp::OnOrBefore) {
-                out.last_contact.push(b);
-            }
-            continue;
-        }
-        if lower == "has:messages" {
-            out.has_messages = Some(true);
-            continue;
-        }
-        if lower == "has:no-messages" {
-            out.has_messages = Some(false);
-            continue;
-        }
-        if lower == "has:no-name" {
-            out.no_name = true;
-            continue;
-        }
-        if lower == "has:no-handle" {
-            out.no_handle = true;
-            continue;
-        }
-        if lower == "has:no-label" || lower == "has:no-group" {
-            out.no_group = true;
-            out.group = None;
-            continue;
-        }
-        if let Some(rest) = lower.strip_prefix("service:") {
-            for s in expand_service_token(rest) {
-                if !out.services.iter().any(|x| x == &s) {
-                    out.services.push(s);
-                }
-            }
-            continue;
-        }
-        // Legacy / unsupported tokens — ignore.
-        if lower.starts_with("message-count:")
-            || lower.starts_with("group-count:")
-            || lower.starts_with("handle:")
-        {
-            continue;
-        }
-        text_parts.push(tok);
-    }
-    out.text = text_parts.join(" ");
-    out
-}
-
-/// Flat list of contacts: id, display name, handle count, and handle values (paged).
-///
-/// `q` matches preferred name or any linked handle (raw/normalized), case-insensitive.
-/// `handle:<raw>` restricts to contacts that have that handle substring.
-/// Advanced tokens: `first-contact:` / `last-contact:` (optional `>=` / `<` prefix;
-/// bare first = on or after, bare last = on or before; repeated tokens AND),
-/// `has:messages`, `has:no-messages`, `has:no-name`, `has:no-handle`, `has:no-group`,
-/// `group:` / `label:` / `within:` (one group, or `group:none`), `service:` (OR across services).
+/// One page of the contact list for `q`, a query in the search language.
 ///
 /// # Errors
 ///
-/// Returns a bad-request error for an invalid query, or an internal error when
-/// a database statement fails.
+/// `BadRequest` for a query the language refuses or an offset past the cap;
+/// `Internal` when a statement fails.
 pub async fn list_contacts(
     conn: &mut AnyConnection,
     account_id: &str,
     q: &str,
     limit: usize,
     offset: usize,
-) -> Result<ContactListPage, ExportQueryError> {
+    today: chrono::NaiveDate,
+) -> Result<ContactListPage, ApiError> {
     let limit = limit.clamp(1, MAX_LIST_LIMIT);
     if offset > MAX_LIST_OFFSET {
-        return Err(ExportQueryError::bad(format!(
+        return Err(ApiError::BadRequest(format!(
             "offset exceeds maximum of {MAX_LIST_OFFSET}"
         )));
     }
-
-    crate::search_query::validate_list_search_query(q)?;
-    let filters = parse_contact_list_filters(q);
     let engine = engine_of(conn);
-    let involves = involves_ct_sql();
-    let has_messages_sql = contact_has_messages_sql();
+    let filter = crate::search::compile(crate::search::CompileRequest {
+        list: crate::search::ListKind::Contacts,
+        query: q,
+        account_id,
+        engine,
+        today,
+    })?;
+    let where_sql = filter.where_sql();
 
-    // Placeholder convention: every fragment writes `?`; the statement is
-    // renumbered to `$1..$N` once, so textual placeholder order must equal
-    // `params` push order (fragments are appended and bound in the same
-    // sequence, for both engines).
-    let mut where_parts = vec![
-        "ct.account_id = ?".to_string(),
-        NOT_TRASHED_CONTACT_SQL.to_string(),
-    ];
-    let mut params: Vec<SqlParam> = vec![SqlParam::Text(account_id.to_string())];
-
-    if let Some(ref handle) = filters.handle {
-        where_parts.push(format!(
-            "EXISTS (
-               SELECT 1 FROM contact_handles ch
-               JOIN handles h ON h.id = ch.handle_id
-               WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id
-                 AND (h.raw {like} OR coalesce(h.normalized, '') {like})
-             )",
-            like = like_ci(engine),
-        ));
-        let like = format!("%{handle}%");
-        params.push(SqlParam::Text(like.clone()));
-        params.push(SqlParam::Text(like));
-    }
-
-    if !filters.text.is_empty() {
-        where_parts.push(format!(
-            "(COALESCE(NULLIF(trim(ct.preferred_name), ''), '(unknown)') {like}
-              OR EXISTS (
-                SELECT 1 FROM contact_handles ch
-                JOIN handles h ON h.id = ch.handle_id
-                WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id
-                  AND (h.raw {like} OR coalesce(h.normalized, '') {like})
-              ))",
-            like = like_ci(engine),
-        ));
-        let like = format!("%{}%", filters.text);
-        params.push(SqlParam::Text(like.clone()));
-        params.push(SqlParam::Text(like.clone()));
-        params.push(SqlParam::Text(like));
-    }
-
-    match filters.has_messages {
-        Some(true) => where_parts.push(has_messages_sql.clone()),
-        Some(false) => where_parts.push(format!("NOT {has_messages_sql}")),
-        None => {}
-    }
-
-    if filters.no_name {
-        where_parts.push(
-            "(NULLIF(trim(ct.preferred_name), '') IS NULL
-              OR EXISTS (
-                SELECT 1 FROM contact_handles ch
-                JOIN handles h ON h.id = ch.handle_id
-                WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id
-                  AND (
-                    lower(trim(ct.preferred_name)) = lower(trim(h.raw))
-                    OR (
-                      h.normalized IS NOT NULL
-                      AND trim(h.normalized) != ''
-                      AND lower(trim(ct.preferred_name)) = lower(trim(h.normalized))
-                    )
-                  )
-              ))"
-            .into(),
-        );
-    }
-
-    if filters.no_handle {
-        where_parts.push(
-            "NOT EXISTS (
-               SELECT 1 FROM contact_handles ch
-               WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id
-             )"
-            .into(),
-        );
-    }
-
-    if filters.unknown {
-        where_parts.push(crate::db::contacts::UNKNOWN_CONTACT_SQL.to_string());
-    }
-
-    if let Some(ref label) = filters.group {
-        where_parts.push(format!(
-            "EXISTS (
-               SELECT 1 FROM contact_group_members clm
-               JOIN contact_groups cl ON cl.id = clm.group_id
-               WHERE clm.contact_id = ct.id
-                 AND cl.account_id = ct.account_id
-                 AND {}
-             )",
-            name_eq_ci(engine, "cl.name", "?"),
-        ));
-        params.push(SqlParam::Text(label.clone()));
-    } else if filters.no_group {
-        where_parts.push(
-            "NOT EXISTS (
-               SELECT 1 FROM contact_group_members clm
-               JOIN contact_groups cl ON cl.id = clm.group_id
-               WHERE clm.contact_id = ct.id
-                 AND cl.account_id = ct.account_id
-             )"
-            .into(),
-        );
-    }
-
-    if !filters.services.is_empty() {
-        let placeholders = vec!["?"; filters.services.len()].join(",");
-        where_parts.push(format!(
-            "EXISTS (
-               SELECT 1 FROM conversations c
-               JOIN messages m ON m.conversation_id = c.id AND m.duplicate_of IS NULL
-               WHERE c.account_id = ct.account_id
-                 AND lower(m.service) IN ({placeholders})
-                 AND {involves}
-             )"
-        ));
-        for s in &filters.services {
-            params.push(SqlParam::Text(s.clone()));
-        }
-    }
-
-    push_contact_date_bounds(
-        &mut where_parts,
-        &mut params,
-        &filters.first_contact,
-        &involved_message_date_agg(&involves, "MIN"),
-    );
-    push_contact_date_bounds(
-        &mut where_parts,
-        &mut params,
-        &filters.last_contact,
-        &involved_message_date_agg(&involves, "MAX"),
-    );
-
-    let where_sql = where_parts.join(" AND ");
     let count_sql = renumber_placeholders(&format!(
         "SELECT COUNT(*) FROM contacts ct WHERE {where_sql}"
     ));
-    let total: i64 = sqlx::query_scalar_with(&count_sql, bind_args(&params))
+    let total: i64 = sqlx::query_scalar_with(&count_sql, bind_args(filter.params()))
         .fetch_one(&mut *conn)
         .await?;
     let total = total.max(0) as u64;
@@ -708,6 +304,7 @@ pub async fn list_contacts(
         handles_agg = group_concat_unit_separator(engine, "val"),
         groups_agg = group_concat_unit_separator(engine, "cl.name"),
     ));
+    let mut params = filter.params().to_vec();
     params.push(SqlParam::Int(limit as i64));
     params.push(SqlParam::Int(offset as i64));
     let rows: Vec<ContactRow> = sqlx::query_as_with(&sql, bind_args(&params))
@@ -758,11 +355,6 @@ pub async fn list_contacts(
 }
 
 type ContactRow = (i64, String, i64, Option<String>, String, Option<String>);
-
-/// Parse `q` into optional handle filter + free-text remainder.
-fn parse_contact_list_query(q: &str) -> (Option<String>, String) {
-    take_prefixed_quoted_or_bare(q, "handle:")
-}
 
 /// Full contact view: per-handle service + date range + direct message count,
 /// plus conversation and total-message stats across all the contact's handles.
@@ -1536,7 +1128,15 @@ pub(crate) async fn contacts_list_handler(
     let q = query.q.unwrap_or_default();
     let limit = query.limit.unwrap_or(DEFAULT_LIST_LIMIT);
     let offset = query.offset.unwrap_or(0);
-    let page = list_contacts(&mut conn, &auth.account_id, &q, limit, offset).await?;
+    let page = list_contacts(
+        &mut conn,
+        &auth.account_id,
+        &q,
+        limit,
+        offset,
+        chrono::Local::now().date_naive(),
+    )
+    .await?;
     Ok(Json(page))
 }
 
@@ -1843,9 +1443,16 @@ mod tests {
         .await
         .unwrap();
 
-        let page = list_contacts(&mut conn, &account, "", DEFAULT_LIST_LIMIT, 0)
-            .await
-            .unwrap();
+        let page = list_contacts(
+            &mut conn,
+            &account,
+            "",
+            DEFAULT_LIST_LIMIT,
+            0,
+            crate::search::tests::today(),
+        )
+        .await
+        .unwrap();
         assert_eq!(page.total, 1);
         assert_eq!(page.contacts.len(), 1);
         assert_eq!(page.contacts[0].name, "Pat");
@@ -1893,9 +1500,16 @@ mod tests {
             .unwrap();
         }
 
-        let by_name = list_contacts(&mut conn, &account, "sam", DEFAULT_LIST_LIMIT, 0)
-            .await
-            .unwrap();
+        let by_name = list_contacts(
+            &mut conn,
+            &account,
+            "sam",
+            DEFAULT_LIST_LIMIT,
+            0,
+            crate::search::tests::today(),
+        )
+        .await
+        .unwrap();
         assert_eq!(by_name.total, 1);
         assert_eq!(by_name.contacts[0].name, "Sam");
 
@@ -1905,25 +1519,37 @@ mod tests {
             "handle:5555550200",
             DEFAULT_LIST_LIMIT,
             0,
+            crate::search::tests::today(),
         )
         .await
         .unwrap();
         assert_eq!(by_handle.total, 1);
         assert_eq!(by_handle.contacts[0].name, "Sam");
 
-        let page0 = list_contacts(&mut conn, &account, "", 2, 0).await.unwrap();
+        let page0 = list_contacts(&mut conn, &account, "", 2, 0, crate::search::tests::today())
+            .await
+            .unwrap();
         assert_eq!(page0.total, 3);
         assert_eq!(page0.limit, 2);
         assert_eq!(page0.offset, 0);
         assert_eq!(page0.contacts.len(), 2);
-        let page1 = list_contacts(&mut conn, &account, "", 2, 2).await.unwrap();
+        let page1 = list_contacts(&mut conn, &account, "", 2, 2, crate::search::tests::today())
+            .await
+            .unwrap();
         assert_eq!(page1.total, 3);
         assert_eq!(page1.offset, 2);
         assert_eq!(page1.contacts.len(), 1);
 
-        let clamped = list_contacts(&mut conn, &account, "", MAX_LIST_LIMIT + 50, 0)
-            .await
-            .unwrap();
+        let clamped = list_contacts(
+            &mut conn,
+            &account,
+            "",
+            MAX_LIST_LIMIT + 50,
+            0,
+            crate::search::tests::today(),
+        )
+        .await
+        .unwrap();
         assert_eq!(clamped.limit, MAX_LIST_LIMIT);
         assert_eq!(clamped.total, 3);
     }
@@ -2464,9 +2090,16 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(!detail.last_modified.is_empty());
-        let page = list_contacts(&mut conn, &account, "", DEFAULT_LIST_LIMIT, 0)
-            .await
-            .unwrap();
+        let page = list_contacts(
+            &mut conn,
+            &account,
+            "",
+            DEFAULT_LIST_LIMIT,
+            0,
+            crate::search::tests::today(),
+        )
+        .await
+        .unwrap();
         assert_eq!(page.contacts[0].last_modified, detail.last_modified);
 
         const OLD: &str = "2000-01-01 00:00:00";
@@ -2673,9 +2306,10 @@ mod tests {
         let with_msg = list_contacts(
             &mut conn,
             &account,
-            "has:messages search:contacts",
+            "messages:>0",
             DEFAULT_LIST_LIMIT,
             0,
+            crate::search::tests::today(),
         )
         .await
         .unwrap();
@@ -2685,37 +2319,15 @@ mod tests {
         let never = list_contacts(
             &mut conn,
             &account,
-            "has:no-messages search:contacts",
+            "messages:0",
             DEFAULT_LIST_LIMIT,
             0,
+            crate::search::tests::today(),
         )
         .await
         .unwrap();
         assert_eq!(never.total, 1);
         assert_eq!(never.contacts[0].name, "Silent");
-    }
-
-    #[tokio::test]
-    async fn list_contacts_filters_no_preferred_name() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
-        insert_contact_with_handle(&mut conn, &account, "Pat", "+15555550100").await;
-        insert_contact_with_handle(&mut conn, &account, "", "+15555550200").await;
-        insert_contact_with_handle(&mut conn, &account, "+15555550300", "+15555550300").await;
-
-        let page = list_contacts(
-            &mut conn,
-            &account,
-            "has:no-name search:contacts",
-            DEFAULT_LIST_LIMIT,
-            0,
-        )
-        .await
-        .unwrap();
-        assert_eq!(page.total, 2);
-        let names: Vec<_> = page.contacts.iter().map(|c| c.name.as_str()).collect();
-        assert!(names.contains(&"(unknown)"));
-        assert!(names.iter().any(|n| n.contains("5555550300")));
     }
 
     #[tokio::test]
@@ -2733,9 +2345,10 @@ mod tests {
         let page = list_contacts(
             &mut conn,
             &account,
-            "has:no-handle search:contacts",
+            "handle:none",
             DEFAULT_LIST_LIMIT,
             0,
+            crate::search::tests::today(),
         )
         .await
         .unwrap();
@@ -2782,9 +2395,10 @@ mod tests {
         let page = list_contacts(
             &mut conn,
             &account,
-            "service:phone search:contacts",
+            "service:imessage,sms",
             DEFAULT_LIST_LIMIT,
             0,
+            crate::search::tests::today(),
         )
         .await
         .unwrap();
@@ -2792,149 +2406,6 @@ mod tests {
         let names: Vec<_> = page.contacts.iter().map(|c| c.name.as_str()).collect();
         assert!(names.contains(&"IMsg"));
         assert!(names.contains(&"Sms"));
-    }
-
-    #[tokio::test]
-    async fn list_contacts_filters_first_and_last_contact_dates() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
-        insert_contact_with_handle(&mut conn, &account, "Early", "+15555550100").await;
-        insert_contact_with_handle(&mut conn, &account, "Late", "+15555550200").await;
-        insert_direct_conversation(
-            &mut conn,
-            &account,
-            1,
-            "+15555550100",
-            "imessage",
-            &["2020-01-15T12:00:00Z", "2020-02-01T12:00:00Z"],
-        )
-        .await;
-        insert_direct_conversation(
-            &mut conn,
-            &account,
-            2,
-            "+15555550200",
-            "imessage",
-            &["2024-06-01T12:00:00Z", "2024-08-01T12:00:00Z"],
-        )
-        .await;
-
-        // Bare first-contact = on or after (back-compat).
-        let first = list_contacts(
-            &mut conn,
-            &account,
-            "first-contact:2024-01-01 search:contacts",
-            DEFAULT_LIST_LIMIT,
-            0,
-        )
-        .await
-        .unwrap();
-        assert_eq!(first.total, 1);
-        assert_eq!(first.contacts[0].name, "Late");
-
-        // Prefixed >= matches bare first semantics.
-        let first_ge = list_contacts(
-            &mut conn,
-            &account,
-            "first-contact:>=2024-01-01 search:contacts",
-            DEFAULT_LIST_LIMIT,
-            0,
-        )
-        .await
-        .unwrap();
-        assert_eq!(first_ge.total, 1);
-        assert_eq!(first_ge.contacts[0].name, "Late");
-
-        // Bare last-contact = on or before (back-compat).
-        let last = list_contacts(
-            &mut conn,
-            &account,
-            "last-contact:2020-12-31 search:contacts",
-            DEFAULT_LIST_LIMIT,
-            0,
-        )
-        .await
-        .unwrap();
-        assert_eq!(last.total, 1);
-        assert_eq!(last.contacts[0].name, "Early");
-
-        // Before: earliest message strictly before 2024-01-01 → Early only.
-        let first_before = list_contacts(
-            &mut conn,
-            &account,
-            "first-contact:<2024-01-01 search:contacts",
-            DEFAULT_LIST_LIMIT,
-            0,
-        )
-        .await
-        .unwrap();
-        assert_eq!(first_before.total, 1);
-        assert_eq!(first_before.contacts[0].name, "Early");
-
-        // Between on first message: >=2024-01-01 and <2025-01-01 → Late.
-        let between = list_contacts(
-            &mut conn,
-            &account,
-            "first-contact:>=2024-01-01 first-contact:<2025-01-01 search:contacts",
-            DEFAULT_LIST_LIMIT,
-            0,
-        )
-        .await
-        .unwrap();
-        assert_eq!(between.total, 1);
-        assert_eq!(between.contacts[0].name, "Late");
-
-        // Last message on or after mid-2024 → Late (MAX 2024-08-01).
-        let last_ge = list_contacts(
-            &mut conn,
-            &account,
-            "last-contact:>=2024-07-01 search:contacts",
-            DEFAULT_LIST_LIMIT,
-            0,
-        )
-        .await
-        .unwrap();
-        assert_eq!(last_ge.total, 1);
-        assert_eq!(last_ge.contacts[0].name, "Late");
-
-        // Last message before 2024-01-01 → Early.
-        let last_before = list_contacts(
-            &mut conn,
-            &account,
-            "last-contact:<2024-01-01 search:contacts",
-            DEFAULT_LIST_LIMIT,
-            0,
-        )
-        .await
-        .unwrap();
-        assert_eq!(last_before.total, 1);
-        assert_eq!(last_before.contacts[0].name, "Early");
-    }
-
-    #[test]
-    fn parse_date_bound_value_prefixes() {
-        assert_eq!(
-            parse_date_bound_value(">=2024-01-15", DateBoundOp::OnOrAfter),
-            Some(DateBound {
-                op: DateBoundOp::OnOrAfter,
-                ymd: "2024-01-15".into(),
-            })
-        );
-        assert_eq!(
-            parse_date_bound_value("<2024-01-15", DateBoundOp::OnOrBefore),
-            Some(DateBound {
-                op: DateBoundOp::Before,
-                ymd: "2024-01-15".into(),
-            })
-        );
-        assert_eq!(
-            parse_date_bound_value("2024-01-15", DateBoundOp::OnOrBefore),
-            Some(DateBound {
-                op: DateBoundOp::OnOrBefore,
-                ymd: "2024-01-15".into(),
-            })
-        );
-        assert!(parse_date_bound_value("<=2024-01-15", DateBoundOp::OnOrAfter).is_none());
     }
 
     #[test]
@@ -3058,9 +2529,16 @@ mod tests {
         .await
         .unwrap();
 
-        let unknown = list_contacts(&mut conn, &account, "group:unknown", DEFAULT_LIST_LIMIT, 0)
-            .await
-            .unwrap();
+        let unknown = list_contacts(
+            &mut conn,
+            &account,
+            "group:unknown",
+            DEFAULT_LIST_LIMIT,
+            0,
+            crate::search::tests::today(),
+        )
+        .await
+        .unwrap();
         assert_eq!(unknown.total, 2);
         let mut names: Vec<String> = unknown.contacts.iter().map(|c| c.name.clone()).collect();
         names.sort();
@@ -3074,9 +2552,16 @@ mod tests {
             .execute(&mut *conn)
             .await
             .unwrap();
-        let after = list_contacts(&mut conn, &account, "group:unknown", DEFAULT_LIST_LIMIT, 0)
-            .await
-            .unwrap();
+        let after = list_contacts(
+            &mut conn,
+            &account,
+            "group:unknown",
+            DEFAULT_LIST_LIMIT,
+            0,
+            crate::search::tests::today(),
+        )
+        .await
+        .unwrap();
         assert_eq!(after.total, 1);
         assert_eq!(after.contacts[0].name, "Sarah");
     }
@@ -3098,9 +2583,16 @@ mod tests {
         .await
         .unwrap();
 
-        let grouped = list_contacts(&mut conn, &account, "group:Family", DEFAULT_LIST_LIMIT, 0)
-            .await
-            .unwrap();
+        let grouped = list_contacts(
+            &mut conn,
+            &account,
+            "group:Family",
+            DEFAULT_LIST_LIMIT,
+            0,
+            crate::search::tests::today(),
+        )
+        .await
+        .unwrap();
         assert_eq!(grouped.total, 1);
         assert_eq!(grouped.contacts[0].name, "Ada");
         assert_eq!(grouped.contacts[0].groups, vec!["Family".to_string()]);
@@ -3111,16 +2603,69 @@ mod tests {
             r#"group:"Family""#,
             DEFAULT_LIST_LIMIT,
             0,
+            crate::search::tests::today(),
         )
         .await
         .unwrap();
         assert_eq!(quoted.total, 1);
 
-        let none = list_contacts(&mut conn, &account, "group:none", DEFAULT_LIST_LIMIT, 0)
-            .await
-            .unwrap();
+        let none = list_contacts(
+            &mut conn,
+            &account,
+            "group:none",
+            DEFAULT_LIST_LIMIT,
+            0,
+            crate::search::tests::today(),
+        )
+        .await
+        .unwrap();
         assert_eq!(none.total, 1);
         assert_eq!(none.contacts[0].name, "Ben");
         assert!(none.contacts[0].groups.is_empty());
+    }
+
+    #[tokio::test]
+    async fn contact_list_takes_the_search_language() {
+        let (vault, token, account) =
+            contacts_fixture_with_handles(&["+15550100", "+15550101"]).await;
+        {
+            let mut conn = vault.state.db.acquire().await.unwrap();
+            let group_id: i64 = sqlx::query_scalar(
+                "INSERT INTO contact_groups (account_id, name) VALUES ($1, 'Family') RETURNING id",
+            )
+            .bind(&account.account_id)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+            let first: i64 =
+                sqlx::query_scalar("SELECT MIN(id) FROM contacts WHERE account_id = $1")
+                    .bind(&account.account_id)
+                    .fetch_one(&mut *conn)
+                    .await
+                    .unwrap();
+            sqlx::query("INSERT INTO contact_group_members (contact_id, group_id) VALUES ($1, $2)")
+                .bind(first)
+                .bind(group_id)
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+        }
+        let page: serde_json::Value =
+            crate::test_support::get_json(&vault.state, "/v1/contacts?q=group:Family", &token)
+                .await;
+        assert_eq!(page["total"], 1);
+        assert_eq!(page["contacts"][0]["name"], "Contact 0");
+        let page: serde_json::Value =
+            crate::test_support::get_json(&vault.state, "/v1/contacts?q=group:none", &token).await;
+        assert_eq!(page["total"], 1);
+        assert_eq!(page["contacts"][0]["name"], "Contact 1");
+    }
+
+    #[tokio::test]
+    async fn contact_list_refuses_a_word_from_another_list() {
+        let (vault, token, _account) = contacts_fixture_with_handles(&["+15550100"]).await;
+        let status =
+            crate::test_support::get_status(&vault.state, "/v1/contacts?q=from:me", &token).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 }

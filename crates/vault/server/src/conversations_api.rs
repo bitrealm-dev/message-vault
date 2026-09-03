@@ -1369,11 +1369,12 @@ mod tests {
                 query,
                 crate::contacts_api::DEFAULT_LIST_LIMIT,
                 0,
+                chrono::Local::now().date_naive(),
             )
             .await
             .unwrap_err();
             assert!(
-                matches!(contact_error, ExportQueryError::BadRequest(_)),
+                matches!(contact_error, ApiError::BadRequest(_)),
                 "contact query should be rejected: {query}"
             );
 
@@ -1390,22 +1391,18 @@ mod tests {
 
     #[tokio::test]
     async fn list_queries_accept_literal_boolean_words_and_parentheses() {
+        // The conversation list's own parser (not yet moved to the search
+        // language) still treats a dangling boolean word or an unmatched
+        // parenthesis as literal text. The contacts list moved to the search
+        // language in this task, which refuses these instead (see
+        // `search::tests::a_refusal_never_queries_and_names_the_word` for the
+        // `Unbalanced` and `TooComplex` cases).
         let (pool, _dir, account) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
 
         for query in [
             "OR", "AND", "NOT", "foo OR", "foo AND", "foo NOT", "(", ")", "(foo", "foo)",
         ] {
-            crate::contacts_api::list_contacts(
-                &mut conn,
-                &account,
-                query,
-                crate::contacts_api::DEFAULT_LIST_LIMIT,
-                0,
-            )
-            .await
-            .unwrap();
-
             list_conversations(&mut conn, &account, query, DEFAULT_LIST_LIMIT, 0)
                 .await
                 .unwrap();
