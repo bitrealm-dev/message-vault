@@ -1579,6 +1579,8 @@ fn classify_import_error(err: anyhow::Error) -> ApiError {
     }
 }
 
+/// Callers validate `query.source`; `import_handler` is the only entry point,
+/// and `source` names an on-disk directory.
 async fn run_import_path(
     state: AppState,
     query: ImportQuery,

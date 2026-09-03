@@ -191,7 +191,11 @@ pub fn parse_ir_lines(
                     line: line_no,
                     detail: format!("the message is not valid: {e}"),
                 })?;
-            out.push(ExportRecord::Message(message_from_ir(&msg)?));
+            let record = message_from_ir(&msg).map_err(|e| ImportFailure::Parse {
+                line: line_no,
+                detail: format!("{e:#}"),
+            })?;
+            out.push(ExportRecord::Message(record));
         }
     }
     if out.is_empty() {
@@ -527,6 +531,18 @@ mod tests {
                     "{detail}"
                 );
             }
+            other => panic!("expected Parse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_ir_lines_reports_a_message_with_an_impossible_timestamp_as_a_failure() {
+        let header = r#"{"schema_version":4,"export":{"source":"sms-backup-restore","tool":"t","tool_version":"1","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550101","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550101","display_name":"Sam"}],"stats":{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1400773261000,"last_timestamp_unix_ms":1400773261000}}}"#;
+        let msg = r#"{"guid":"g1","timestamp_unix_ms":9223372036854775807,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550101","sender_display_name":"Sam","subject":null,"text":"hello","attachments":[],"imessage":null,"source":null}"#;
+        let err = parse_ir_lines([header, msg]).unwrap_err();
+        let failure = crate::import::ImportFailure::in_error(&err).expect("typed failure");
+        match failure {
+            crate::import::ImportFailure::Parse { line, .. } => assert_eq!(*line, 2),
             other => panic!("expected Parse, got {other:?}"),
         }
     }

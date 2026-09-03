@@ -1201,7 +1201,7 @@ pub(crate) async fn contact_detail_handler(
 /// Turn a contact edit's error into the HTTP failure a caller should see.
 ///
 /// `mutate_contact` returns `anyhow` so that its validation messages ("handle
-/// already belongs to another contact") reach the person. A database error
+/// already linked to another contact") reach the person. A database error
 /// is not something the person can fix by changing the request, so it is a
 /// 500 with the cause on stderr rather than a 400 wearing sqlx's words.
 fn classify_mutation_error(err: anyhow::Error) -> ApiError {
@@ -2693,10 +2693,10 @@ mod tests {
 
     #[test]
     fn a_validation_error_while_editing_a_contact_is_bad_request() {
-        let err = anyhow::anyhow!("handle already belongs to another contact");
+        let err = anyhow::anyhow!("handle already linked to another contact");
         match super::classify_mutation_error(err) {
             crate::server::ApiError::BadRequest(m) => {
-                assert_eq!(m, "handle already belongs to another contact");
+                assert_eq!(m, "handle already linked to another contact");
             }
             other => panic!("expected BadRequest, got {other:?}"),
         }
