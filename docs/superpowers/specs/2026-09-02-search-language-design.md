@@ -58,8 +58,10 @@ Recorded in `docs/adr/0004-one-search-language-compiled-in-one-module.md`:
 5. Presentation leaves the language. Sort order, context lines, one row per
    message versus per conversation, and the Contacts mode switch are request
    parameters. A query string only ever narrows which rows come back.
-6. Stored Saved Search text that uses a retired spelling is not rewritten. It
-   fails with the same 400 as typed text, and the person edits it once.
+6. The module knows nothing about spellings that came before it. A word it
+   does not have is an unknown word, the same as a typo. Stored Saved Search
+   text is not rewritten; it fails the same way typed text does, and the
+   person edits it once.
 
 The language below follows design B ("the search language as a field
 registry") from the design-it-twice round on 2 September 2026, with three
@@ -181,21 +183,24 @@ Notes on meaning:
 ### Rejection
 
 Any token that is not a word for the requested list answers 400 with a
-message that names the word, the list, and what to write instead. The message
-is user-facing and appears under the search box. Examples of the wording:
+message that names the word and the list. The message is user-facing and
+appears under the search box. There are two cases. A word that exists but not
+on this list says where it does work and offers the nearest word that does.
+A word that does not exist at all is an unknown word, and the only help
+offered is a "did you mean" computed by similarity against the current word
+list for that list. The module carries no memory of spellings that came
+before it. Examples of the wording:
 
 | Typed | On | Message |
 |---|---|---|
-| `from:jane` | Contacts | `from: is not a Contacts filter. Did you mean with: on Conversations, or name:?` |
-| `people:Family` | any | `people: was retired. Write group:Family for a Contact Group, or participants:>2 for a count.` |
-| `before:2020` | any | `before: was retired. Write date:<2020.` |
-| `has:attachment` | any | `has: was retired. Write attachment:any.` |
+| `from:jane` | Contacts | `from: is not a Contacts word. It works on Messages. Did you mean name:?` |
+| `people:Family` | any | `people: is not a search word.` |
+| `paticipants:>2` | Conversations | `paticipants: is not a search word. Did you mean participants:?` |
 | `tag:` | any | `tag: needs a value, for example tag:Holiday or tag:none.` |
 | `date:2019-13` | any | `date: does not understand 2019-13. Write a year, a month like 2024-05, a day, or a span like 7d.` |
 
-The retired-spelling messages come from a small table inside the module that
-maps each old word to its replacement text. That table exists only to write
-a helpful sentence. It never rewrites a query.
+The "did you mean" uses a small edit distance against the words of the
+requested list, and is omitted when nothing is close.
 
 ### Presentation parameters
 
@@ -355,8 +360,7 @@ metadata LIKE chain both engines use today. Nothing else branches on engine.
 
 **Also hidden.** Tokenizing, quoting, case folding, date and size arithmetic,
 comparison folding (`date:>=2024-01 date:<2024-06` becomes one BETWEEN), the
-dedupe and trash defaults, the wording of every 400, and the retired-spelling
-table.
+dedupe and trash defaults, and the wording of every 400.
 
 **Module layout.** `search/mod.rs` (the interface), `lex.rs`, `parse.rs`,
 `value.rs` (dates, sizes, counts), `fields.rs` (the registry), `bridge.rs`,
@@ -388,10 +392,11 @@ interface is the test surface. Cases the fixture must cover:
 7. Every list, `trashed:yes` and the default: a trashed conversation appears
    only with `trashed:yes` or `trashed:any`.
 8. Rejection: `from:me` on Contacts fails with `WrongList`, a span over
-   `from:`, and `did_you_mean` set. `people:Family`, `before:2020`, and
-   `has:attachment` fail on every list with the retired-spelling sentence.
-   `tag:` fails with `EmptyValue`. `(a or b` fails with `Unbalanced`. No rows
-   are queried in any of these.
+   `from:`, and `did_you_mean` set. `people:Family` fails on every list with
+   `UnknownWord` and no suggestion. `paticipants:>2` on Conversations fails
+   with `UnknownWord` and `did_you_mean: Some("participants")`. `tag:` fails
+   with `EmptyValue`. `(a or b` fails with `Unbalanced`. No rows are queried
+   in any of these.
 9. Determinism: compile the same request twice and assert identical SQL.
 10. Registry coverage: every `FieldSpec` appears in `describe()` for each list
     in its `ListSet`, and every word in the docs page's table is a registry
@@ -447,8 +452,9 @@ keeps it honest.
 - Cursor-aware suggestions and plain-sentence explanations from the server.
   The web builds suggestions from `describe`. If a second caller appears,
   either is one function over the registry.
-- A rewriter for stored Saved Search text. Old spellings fail with the
-  retired-spelling sentence, and the person edits once.
+- A rewriter for stored Saved Search text, or any other memory of earlier
+  spellings. Stored text the language does not understand fails as an
+  unknown word, and the person edits once.
 - "Sent by a member of this Contact Group" (Fastmail's `fromin:`). If wanted,
   it is a value form on `from:` and `to:`, not a new word.
 - The three route files moving out of `*_api.rs` into resource modules. That

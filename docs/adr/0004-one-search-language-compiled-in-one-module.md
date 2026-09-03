@@ -16,8 +16,10 @@ The rules of the language:
   Contact Group" wherever it is accepted. Each list says which words it
   accepts.
 - **A word that does not belong to the list is refused.** The answer is a
-  400 that names the word, the list, and what to write instead. Nothing is
-  silently searched as text or dropped.
+  400 that names the word and the list, with a "did you mean" only when the
+  current word list has something close. Nothing is silently searched as
+  text or dropped, and the module knows nothing about spellings that came
+  before it.
 - **A query only narrows.** Sort order, context lines, one row per message
   versus per conversation, and the Contacts mode switch are request
   parameters, not words in the string.
@@ -62,8 +64,8 @@ Rejected because each is two or three words for one concept, and `has:` and
 `is:` were exactly the two words whose values differed on every list. A
 language with one rule is easier to keep true across three lists than one
 with borrowed pairs, and ranges in one token are something email search
-cannot express. The refusal message for a retired spelling says what to
-write instead.
+cannot express. A Gmail habit like `before:2020` is an unknown word, the
+same as a typo.
 
 **Bare keywords and a catch-all** (`photos`, `2019`, `sent`, `direct` with
 no colon; a bare word matching text, names, handles, titles, group names,
@@ -71,10 +73,11 @@ and tag names at once). Rejected because it turns ordinary words into
 keywords that then need quoting, and because a bare word meaning "anything
 anywhere" is the fuzziness this decision exists to remove.
 
-**A one-time rewriter for stored Saved Search text.** Rejected. It keeps the
-old language alive inside the codebase for one moment of use. Stored text
-that no longer parses fails with the same message as typed text, and the
-person edits it once.
+**A one-time rewriter for stored Saved Search text, or any table of old
+spellings for error messages.** Rejected. Either keeps the old language alive
+inside the codebase, and the old language was a first pass that was always
+expected to change. Stored text that no longer parses fails as an unknown
+word, the same as typed text, and the person edits it once.
 
 ## Consequences
 
@@ -84,6 +87,7 @@ person edits it once.
 - The web sends `sort`, `order`, `rows`, and `context` as request parameters
   and no longer embeds them in the query string. Its operator-sniffing
   regexes are deleted in favour of `GET /v1/search/fields`.
-- Saved Searches written in the old spellings stop working and say why.
+- Saved Searches written in spellings the language does not have fail as
+  unknown words.
 - The three route files shrink to their handlers and their base queries. A
   later, mechanical change can move what remains out of `*_api.rs`.
