@@ -1324,24 +1324,6 @@ export interface components {
             /** @description Platform service for the new handle. */
             service?: string | null;
         };
-        /** @description One participant with display name and handle. */
-        ConversationParticipant: {
-            /**
-             * Format: int64
-             * @description Linked vault contact id, when the handle is linked. Matches the `id`
-             *     every other contact shape uses, so a caller can compare the two without
-             *     converting either.
-             */
-            contact_id?: number | null;
-            /** @description Raw handle value (phone, email, or username). */
-            handle: string;
-            /** @description Display name from the import or the vault contact. */
-            name?: string | null;
-            /** @description Per service+identity alias from `contact_handles` when linked. */
-            name_alias?: string | null;
-            /** @description Platform service, e.g. `imessage`. */
-            service: string;
-        };
         /** @description One backup source with message counts and share. */
         ConversationSourceInfo: {
             /** @description Backup source name. */
@@ -1390,7 +1372,7 @@ export interface components {
              */
             message_count: number;
             /** @description Participants with names and handles. */
-            participants: components["schemas"]["ConversationParticipant"][];
+            participants: components["schemas"]["Participant"][];
             /** @description Platform service of the conversation, e.g. `imessage`. */
             service: string;
             /** @description Message tags on this conversation. */
@@ -1549,7 +1531,7 @@ export interface components {
              */
             id: number;
             /** @description Participants of the conversation. */
-            participants: components["schemas"]["ExportParticipant"][];
+            participants: components["schemas"]["Participant"][];
         };
         /** @description Match counts for an export query. */
         ExportCountResponse: {
@@ -1626,22 +1608,6 @@ export interface components {
             timestamp: string;
             /** @description UTC timestamp, when known. */
             timestamp_utc?: string | null;
-        };
-        /** @description One participant of an exported conversation. */
-        ExportParticipant: {
-            /**
-             * Format: int64
-             * @description Linked contact id, when the handle is linked.
-             */
-            contact_id?: number | null;
-            /** @description Raw handle value. */
-            handle: string;
-            /** @description Handle type (`phone`, `email`, or username). */
-            handle_type?: string | null;
-            /** @description Per-service alias, when linked to a contact. */
-            name_alias?: string | null;
-            /** @description Vault contact display name, when linked. */
-            preferred_name?: string | null;
         };
         /** @description One tapback reaction on an exported message. */
         ExportTapback: {
@@ -1986,7 +1952,7 @@ export interface components {
                  */
                 message_count: number;
                 /** @description Participants with names and handles. */
-                participants: components["schemas"]["ConversationParticipant"][];
+                participants: components["schemas"]["Participant"][];
                 /** @description Platform service of the conversation, e.g. `imessage`. */
                 service: string;
                 /** @description Message tags on this conversation. */
@@ -2066,6 +2032,22 @@ export interface components {
              * @description Rows matching the query across every page.
              */
             total: number;
+        };
+        /** @description One participant of a conversation, named by the rule above. */
+        Participant: {
+            /**
+             * Format: int64
+             * @description Linked vault contact id, when the handle is on a Contact. Matches the
+             *     `id` every other contact shape uses, so a caller can compare the two
+             *     without converting either.
+             */
+            contact_id?: number | null;
+            /** @description Raw handle value (phone, email, or username). */
+            handle: string;
+            /** @description What to show for this person. Never empty: the rule ends at the handle. */
+            name: string;
+            /** @description Platform service, e.g. `imessage`. */
+            service: string;
         };
         /** @description Body for changing an account's flags. Omitted fields are left alone. */
         PatchUserRequest: {

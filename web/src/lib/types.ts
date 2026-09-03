@@ -10,13 +10,13 @@ type Schema = components["schemas"];
  */
 
 /** One participant in a conversation, as the conversation list returns them. */
-export type Participant = Schema["ConversationParticipant"];
+export type Participant = Schema["Participant"];
 
 /** One conversation in the browse list. */
 export type Conversation = Schema["ConversationSummary"];
 
 /** One participant on a message the Export routes return. */
-export type MessageParticipant = Schema["ExportParticipant"];
+export type MessageParticipant = Schema["Participant"];
 
 /** The conversation a message belongs to, as the Export routes return it. */
 export type MessageConversation = Schema["ExportConversation"];

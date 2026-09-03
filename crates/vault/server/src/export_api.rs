@@ -9,6 +9,7 @@ use sqlx::{Executor, Row};
 
 use crate::db::dialect::engine_of;
 use crate::db::engine::DbEngine;
+use crate::db::participant_names::{Participant, load_for_conversations};
 use crate::db::sql::{SqlParam, bind_all, group_rows_by_id, renumber_placeholders};
 // Required so the moved handlers' unqualified `export_api::…` paths resolve.
 use crate::export_api::{self};
@@ -111,25 +112,7 @@ pub struct ExportConversation {
     /// Group label, when set.
     pub group_title: Option<String>,
     /// Participants of the conversation.
-    pub participants: Vec<ExportParticipant>,
-}
-
-/// One participant of an exported conversation.
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
-pub struct ExportParticipant {
-    /// Raw handle value.
-    pub handle: String,
-    /// Per-service alias, when linked to a contact.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name_alias: Option<String>,
-    /// Vault contact display name, when linked.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub preferred_name: Option<String>,
-    /// Linked contact id, when the handle is linked.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub contact_id: Option<i64>,
-    /// Handle type (`phone`, `email`, or username).
-    pub handle_type: Option<String>,
+    pub participants: Vec<Participant>,
 }
 
 /// One attachment of an exported message.
@@ -280,7 +263,7 @@ pub async fn export_messages(
         .collect::<Result<Vec<RawRow>, ApiError>>()?;
 
     let conv_ids = unique_ids(page_rows.iter().map(|r| r.conversation_id));
-    let participants = load_participants(conn, &conv_ids).await?;
+    let participants = load_for_conversations(conn, &conv_ids).await?;
     let msg_ids: Vec<i64> = page_rows.iter().map(|r| r.id).collect();
     let attachments = load_attachments(conn, &msg_ids).await?;
     let tapbacks = load_tapbacks(conn, &msg_ids).await?;
@@ -428,54 +411,6 @@ fn conversation_join_sql() -> String {
      JOIN handles hc ON hc.id = c.chat_handle_id
      LEFT JOIN handles hs ON hs.id = m.sender_handle_id"
         .into()
-}
-
-async fn load_participants(
-    conn: &mut AnyConnection,
-    conversation_ids: &[i64],
-) -> Result<std::collections::HashMap<i64, Vec<ExportParticipant>>, ApiError> {
-    group_rows_by_id(
-        conn,
-        conversation_ids,
-        |placeholders| {
-            format!(
-                "SELECT p.conversation_id,
-                    h.raw AS handle,
-                    CASE
-                      WHEN ch.handle_id IS NOT NULL THEN NULLIF(trim(ch.name_alias), '')
-                      ELSE NULLIF(trim(p.name_alias), '')
-                    END AS name_alias,
-                    CASE
-                      WHEN ch.handle_id IS NOT NULL THEN NULLIF(trim(c.preferred_name), '')
-                      ELSE NULL
-                    END AS preferred_name,
-                    h.handle_type,
-                    p.contact_id
-             FROM participants p
-             JOIN handles h ON h.id = p.handle_id
-             JOIN conversations conv ON conv.id = p.conversation_id
-             LEFT JOIN contact_handles ch
-               ON ch.handle_id = p.handle_id AND ch.account_id = conv.account_id
-             LEFT JOIN contacts c
-               ON c.id = ch.contact_id AND c.account_id = conv.account_id
-             WHERE p.conversation_id IN ({placeholders})
-             ORDER BY p.conversation_id, p.id"
-            )
-        },
-        |row| {
-            Ok((
-                row.try_get::<i64, _>(0)?,
-                ExportParticipant {
-                    handle: row.try_get(1)?,
-                    name_alias: row.try_get(2)?,
-                    preferred_name: row.try_get(3)?,
-                    handle_type: row.try_get(4)?,
-                    contact_id: row.try_get(5)?,
-                },
-            ))
-        },
-    )
-    .await
 }
 
 async fn load_attachments(
