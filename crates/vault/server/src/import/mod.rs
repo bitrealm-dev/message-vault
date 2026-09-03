@@ -2669,16 +2669,6 @@ mod tests {
         .unwrap();
     }
 
-    async fn participant_name_alias(db: &Path) -> Option<String> {
-        let (_pool, mut conn) = open_verify(db).await;
-        let raw: Option<String> = sqlx::query_scalar("SELECT name_alias FROM participants LIMIT 1")
-            .fetch_optional(&mut *conn)
-            .await
-            .unwrap()
-            .flatten();
-        trim_nonempty(raw)
-    }
-
     async fn contact_handle_name_alias(db: &Path) -> Option<String> {
         let (_pool, mut conn) = open_verify(db).await;
         let raw: Option<String> =
