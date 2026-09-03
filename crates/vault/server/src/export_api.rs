@@ -7,14 +7,11 @@ use serde::{Deserialize, Serialize};
 use sqlx::AnyConnection;
 use sqlx::{Executor, Row};
 
-use crate::db::dialect::{engine_of, like_ci, name_eq_ci};
+use crate::db::dialect::engine_of;
 use crate::db::engine::DbEngine;
 use crate::db::sql::{SqlParam, bind_all, group_rows_by_id, renumber_placeholders};
 // Required so the moved handlers' unqualified `export_api::…` paths resolve.
 use crate::export_api::{self};
-#[cfg(test)]
-use crate::search_query::MAX_SEARCH_QUERY_BYTES;
-use crate::search_query::{FtsNode, ParsedSearchQuery, SearchMode, validate_search_query};
 use crate::server::{ApiError, AppState, ExportAccess, resolve_import_account};
 
 pub use crate::page_limits::{DEFAULT_EXPORT_LIMIT, MAX_EXPORT_LIMIT, MAX_EXPORT_OFFSET};
@@ -24,7 +21,7 @@ pub use crate::page_limits::{DEFAULT_EXPORT_LIMIT, MAX_EXPORT_LIMIT, MAX_EXPORT_
 pub struct ExportPageOpts<'a> {
     /// Vault account to export from.
     pub account_id: &'a str,
-    /// Search query string.
+    /// Search query string, in the search language.
     pub query: &'a str,
     /// Max messages on the page.
     pub limit: usize,
@@ -32,8 +29,8 @@ pub struct ExportPageOpts<'a> {
     pub offset: Option<usize>,
     /// Opaque cursor from a previous page.
     pub cursor: Option<&'a str>,
-    /// Force a single source (used by the web layer).
-    pub source_override: Option<&'a str>,
+    /// The day relative dates in `query` resolve against.
+    pub today: chrono::NaiveDate,
 }
 
 /// Options for one export count query.
@@ -41,10 +38,10 @@ pub struct ExportPageOpts<'a> {
 pub struct ExportCountOpts<'a> {
     /// Vault account to count from.
     pub account_id: &'a str,
-    /// Search query string.
+    /// Search query string, in the search language.
     pub query: &'a str,
-    /// Force a single source (used by the web layer).
-    pub source_override: Option<&'a str>,
+    /// The day relative dates in `query` resolve against.
+    pub today: chrono::NaiveDate,
 }
 
 /// One page of exported messages.
@@ -201,45 +198,6 @@ pub struct ExportTapback {
     pub sender: Option<String>,
 }
 
-/// Export query failure: caller error or server error.
-#[derive(Debug)]
-pub enum ExportQueryError {
-    /// Invalid or unsupported query.
-    BadRequest(String),
-    /// Query execution failed.
-    Internal(String),
-}
-
-impl std::fmt::Display for ExportQueryError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::BadRequest(msg) => write!(f, "bad request: {msg}"),
-            Self::Internal(msg) => write!(f, "internal error: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for ExportQueryError {}
-
-impl From<anyhow::Error> for ExportQueryError {
-    fn from(e: anyhow::Error) -> Self {
-        Self::Internal(e.to_string())
-    }
-}
-
-impl From<sqlx::Error> for ExportQueryError {
-    fn from(e: sqlx::Error) -> Self {
-        Self::Internal(e.to_string())
-    }
-}
-
-impl ExportQueryError {
-    /// Build a [`ExportQueryError::BadRequest`] from a message.
-    pub fn bad(msg: impl Into<String>) -> Self {
-        Self::BadRequest(msg.into())
-    }
-}
-
 #[derive(Debug, Clone)]
 struct PageCursor {
     timestamp: String,
@@ -268,12 +226,6 @@ impl PageCursor {
     }
 }
 
-struct BuiltFilters {
-    where_sql: String,
-    params: Vec<SqlParam>,
-    dedupe_sql: String,
-}
-
 fn unique_ids(ids: impl IntoIterator<Item = i64>) -> Vec<i64> {
     let mut ids: Vec<i64> = ids.into_iter().collect();
     ids.sort_unstable();
@@ -281,35 +233,63 @@ fn unique_ids(ids: impl IntoIterator<Item = i64>) -> Vec<i64> {
     ids
 }
 
-fn nonempty_source(source: Option<&str>) -> Option<&str> {
-    let raw = source?;
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed)
+/// The `source` query parameter as a word in the language, or `None` for a
+/// value the language does not have.
+pub(crate) fn source_word(raw: &str) -> Option<&'static str> {
+    match raw.trim() {
+        "imessage" => Some("imessage"),
+        "whatsapp" => Some("whatsapp"),
+        "sms-backup-restore" => Some("sms"),
+        _ => None,
     }
 }
 
-/// Build WHERE-clause SQL for a validated message-mode search.
-async fn prepare_message_export(
-    conn: &mut AnyConnection,
+/// `q` with the route's `source` parameter written in front of it as a
+/// `source:` word, so the parameter means exactly what the word means.
+///
+/// `q` is wrapped in parentheses because `or` binds loosest: without them
+/// `?source=whatsapp&q=a or b` would ask for "a from WhatsApp, or b from
+/// anywhere", and the parameter is meant to narrow the whole query.
+///
+/// # Errors
+///
+/// `BadRequest` naming the value when `source` is not one of the stored ids.
+fn with_source_word(q: &str, source: Option<&str>) -> Result<String, ApiError> {
+    let Some(raw) = source.filter(|s| !s.trim().is_empty()) else {
+        return Ok(q.to_string());
+    };
+    let word = source_word(raw).ok_or_else(|| {
+        ApiError::BadRequest(format!(
+            "source: does not understand {}. Write one of: imessage, whatsapp, sms-backup-restore.",
+            raw.trim()
+        ))
+    })?;
+    let q = q.trim();
+    if q.is_empty() {
+        return Ok(format!("source:{word}"));
+    }
+    Ok(format!("source:{word} ({q})"))
+}
+
+/// Compile `query` into a WHERE fragment over the messages alias `m`.
+fn message_filter(
+    engine: DbEngine,
     account_id: &str,
     query: &str,
-    source_override: Option<&str>,
-) -> Result<BuiltFilters, ExportQueryError> {
-    let parsed = validate_search_query(query)?;
-    if parsed.mode == SearchMode::Contacts {
-        return Err(ExportQueryError::bad(
-            "contacts search mode is not supported on /v1/export/messages; omit search:contacts",
-        ));
-    }
-    build_message_filters(conn, account_id, &parsed, source_override).await
+    today: chrono::NaiveDate,
+) -> Result<crate::search::Filter, ApiError> {
+    Ok(crate::search::compile(crate::search::CompileRequest {
+        list: crate::search::ListKind::Messages,
+        query,
+        account_id,
+        engine,
+        today,
+    })?)
 }
 
-/// Export messages matching a Fastmail-style query (message mode only).
+/// Export messages matching a query in the search language.
 ///
-/// Empty query (no criteria) returns all non-trashed, non-duplicate messages for the account.
+/// An empty query returns every non-trashed, non-duplicate message for the account.
 ///
 /// # Errors
 ///
@@ -318,18 +298,17 @@ async fn prepare_message_export(
 pub async fn export_messages(
     conn: &mut AnyConnection,
     opts: ExportPageOpts<'_>,
-) -> Result<ExportMessagesResponse, ExportQueryError> {
+) -> Result<ExportMessagesResponse, ApiError> {
     let limit = opts.limit.clamp(1, MAX_EXPORT_LIMIT);
     let cursor = match opts.cursor {
         Some(raw) if !raw.trim().is_empty() => Some(
             PageCursor::decode(raw.trim())
-                .ok_or_else(|| ExportQueryError::bad("invalid cursor"))?,
+                .ok_or_else(|| ApiError::BadRequest("invalid cursor".into()))?,
         ),
         _ => None,
     };
 
-    let filters =
-        prepare_message_export(conn, opts.account_id, opts.query, opts.source_override).await?;
+    let filter = message_filter(engine_of(conn), opts.account_id, opts.query, opts.today)?;
     let fetch_limit = limit + 1;
 
     let mut sql = format!(
@@ -339,13 +318,12 @@ pub async fn export_messages(
                 m.thread_originator_part, m.num_replies,
                 hc.raw AS chat_identifier, c.conversation_type, c.group_title
          {messages_from_sql}
-         WHERE {where_sql}{dedupe}",
+         WHERE {where_sql}",
         messages_from_sql = messages_from_sql(),
-        where_sql = filters.where_sql,
-        dedupe = filters.dedupe_sql,
+        where_sql = filter.where_sql(),
     );
 
-    let mut params = filters.params;
+    let mut params = filter.params().to_vec();
     if let Some(cur) = &cursor {
         sql.push_str(
             " AND (
@@ -364,7 +342,7 @@ pub async fn export_messages(
     sql.push_str(" ORDER BY m.timestamp ASC, m.sort_order ASC, m.id ASC");
     if let (Some(offset), None) = (opts.offset, &cursor) {
         if offset > MAX_EXPORT_OFFSET {
-            return Err(ExportQueryError::bad(format!(
+            return Err(ApiError::BadRequest(format!(
                 "offset exceeds maximum of {MAX_EXPORT_OFFSET}; use cursor pagination instead"
             )));
         }
@@ -404,7 +382,7 @@ pub async fn export_messages(
                 group_title: row.try_get(19)?,
             })
         })
-        .collect::<Result<Vec<RawRow>, ExportQueryError>>()?;
+        .collect::<Result<Vec<RawRow>, ApiError>>()?;
 
     let truncated = rows.len() > limit;
     let page_rows: Vec<RawRow> = if truncated {
@@ -478,7 +456,7 @@ pub async fn export_messages(
     })
 }
 
-/// Aggregate counts for messages matching a Fastmail-style query (no paging).
+/// Aggregate counts for messages matching a query in the search language (no paging).
 ///
 /// Attachment count is unique non-empty SHA-256 fingerprints (a short
 /// fingerprint of the file contents) on matching messages.
@@ -491,33 +469,31 @@ pub async fn export_messages(
 pub async fn export_message_count(
     conn: &mut AnyConnection,
     opts: ExportCountOpts<'_>,
-) -> Result<ExportCountResponse, ExportQueryError> {
-    let filters =
-        prepare_message_export(conn, opts.account_id, opts.query, opts.source_override).await?;
+) -> Result<ExportCountResponse, ApiError> {
+    let filter = message_filter(engine_of(conn), opts.account_id, opts.query, opts.today)?;
+    let params = filter.params();
 
     let msg_sql = format!(
         "SELECT COUNT(*)
          {messages_from_sql}
-         WHERE {where_sql}{dedupe}",
+         WHERE {where_sql}",
         messages_from_sql = messages_from_sql(),
-        where_sql = filters.where_sql,
-        dedupe = filters.dedupe_sql,
+        where_sql = filter.where_sql(),
     );
     let messages: i64 = (&mut *conn)
-        .fetch_one(bind_all(&renumber_placeholders(&msg_sql), &filters.params))
+        .fetch_one(bind_all(&renumber_placeholders(&msg_sql), params))
         .await?
         .try_get(0)?;
 
     let conv_sql = format!(
         "SELECT COUNT(DISTINCT c.id)
          {messages_from_sql}
-         WHERE {where_sql}{dedupe}",
+         WHERE {where_sql}",
         messages_from_sql = messages_from_sql(),
-        where_sql = filters.where_sql,
-        dedupe = filters.dedupe_sql,
+        where_sql = filter.where_sql(),
     );
     let conversations: i64 = (&mut *conn)
-        .fetch_one(bind_all(&renumber_placeholders(&conv_sql), &filters.params))
+        .fetch_one(bind_all(&renumber_placeholders(&conv_sql), params))
         .await?
         .try_get(0)?;
 
@@ -528,17 +504,16 @@ pub async fn export_message_count(
            FROM attachments a
            JOIN messages m ON m.id = a.message_id
            {conversation_join_sql}
-           WHERE {where_sql}{dedupe}
+           WHERE {where_sql}
              AND a.sha256 IS NOT NULL
              AND length(trim(a.sha256)) > 0
            GROUP BY lower(trim(a.sha256))
          )",
         conversation_join_sql = conversation_join_sql(),
-        where_sql = filters.where_sql,
-        dedupe = filters.dedupe_sql,
+        where_sql = filter.where_sql(),
     );
     let row = (&mut *conn)
-        .fetch_one(bind_all(&renumber_placeholders(&att_sql), &filters.params))
+        .fetch_one(bind_all(&renumber_placeholders(&att_sql), params))
         .await?;
     let (attachments, total_bytes): (i64, i64) = (row.try_get(0)?, row.try_get(1)?);
 
@@ -575,8 +550,10 @@ struct RawRow {
     group_title: Option<String>,
 }
 
-/// FROM clause for message queries: wires the handles joins the filter SQL
-/// references (`hc` = conversation chat handle, `hs` = message sender handle).
+/// FROM clause for message queries. The compiled filter mentions only `m`;
+/// these joins are here for the SELECT list, which reports the conversation
+/// and the two handles' raw text. The count statements carry the same joins
+/// so they count exactly the rows the page can return.
 fn messages_from_sql() -> String {
     format!("FROM messages m\n{}", conversation_join_sql())
 }
@@ -591,489 +568,10 @@ fn conversation_join_sql() -> String {
         .into()
 }
 
-fn push_participant_handle_or_alias_like(
-    where_parts: &mut Vec<String>,
-    params: &mut Vec<SqlParam>,
-    engine: DbEngine,
-    needle: &str,
-) {
-    let like = like_ci(engine);
-    where_parts.push(format!(
-        "EXISTS (
-                 SELECT 1 FROM participants p
-                 JOIN handles ph ON ph.id = p.handle_id
-                 WHERE p.conversation_id = c.id
-                   AND (ph.raw {like} OR coalesce(p.name_alias, '') {like})
-               )"
-    ));
-    let pattern = format!("%{needle}%");
-    params.push(SqlParam::Text(pattern.clone()));
-    params.push(SqlParam::Text(pattern));
-}
-
-fn reject_unimplemented_message_filters(
-    parsed: &ParsedSearchQuery,
-) -> Result<(), ExportQueryError> {
-    let mut unsupported = Vec::new();
-    if parsed.text.is_some() {
-        unsupported.push("text:");
-    }
-    if parsed.filename.is_some() {
-        unsupported.push("filename:");
-    }
-    if parsed.filetype.is_some() {
-        unsupported.push("filetype:");
-    }
-    if parsed.larger_bytes.is_some() {
-        unsupported.push("larger:");
-    }
-    if parsed.smaller_bytes.is_some() {
-        unsupported.push("smaller:");
-    }
-    if parsed.message_count.is_some() {
-        unsupported.push("message-count:");
-    }
-    if parsed.group_count.is_some() {
-        unsupported.push("group-count:");
-    }
-    if parsed.has_attachment == Some(false) {
-        unsupported.push("has:noattachment");
-    }
-    if unsupported.is_empty() {
-        return Ok(());
-    }
-    Err(ExportQueryError::BadRequest(format!(
-        "unsupported search operators (not implemented in SQL yet): {}",
-        unsupported.join(", ")
-    )))
-}
-
-async fn build_message_filters(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    parsed: &ParsedSearchQuery,
-    source_override: Option<&str>,
-) -> Result<BuiltFilters, ExportQueryError> {
-    reject_unimplemented_message_filters(parsed)?;
-    let engine = engine_of(conn);
-
-    let mut where_parts = vec!["c.account_id = ?".to_string()];
-    let mut params: Vec<SqlParam> = vec![SqlParam::Text(account_id.to_string())];
-
-    append_metadata_text_filters(parsed, engine, &mut where_parts, &mut params)?;
-
-    if let Some(conv) = &parsed.in_conversation {
-        match conv.parse::<i64>() {
-            Ok(id) => {
-                where_parts.push("c.id = ?".into());
-                params.push(SqlParam::Int(id));
-            }
-            Err(_) => {
-                where_parts.push("hc.raw = ?".into());
-                params.push(SqlParam::Text(conv.clone()));
-            }
-        }
-    }
-
-    if let Some(from) = &parsed.from {
-        let like = like_ci(engine);
-        where_parts.push(format!(
-            "(m.is_from_me = 0 AND (hs.raw {like} OR EXISTS (
-                 SELECT 1 FROM participants p
-                 JOIN handles ph ON ph.id = p.handle_id
-                 WHERE p.conversation_id = c.id
-                   AND (ph.raw {like} OR coalesce(p.name_alias, '') {like})
-               )))"
-        ));
-        let pattern = format!("%{from}%");
-        params.push(SqlParam::Text(pattern.clone()));
-        params.push(SqlParam::Text(pattern.clone()));
-        params.push(SqlParam::Text(pattern));
-    }
-
-    if let Some(to) = &parsed.to {
-        push_participant_handle_or_alias_like(&mut where_parts, &mut params, engine, to);
-    }
-    if let Some(with_person) = &parsed.with_person {
-        push_participant_handle_or_alias_like(&mut where_parts, &mut params, engine, with_person);
-    }
-
-    if let Some(subject) = &parsed.subject {
-        where_parts.push(format!("coalesce(m.subject, '') {}", like_ci(engine)));
-        params.push(SqlParam::Text(format!("%{subject}%")));
-    }
-
-    if let Some(after) = &parsed.after {
-        where_parts.push("m.timestamp >= ?".into());
-        params.push(SqlParam::Text(after.clone()));
-    }
-    if let Some(before) = &parsed.before {
-        where_parts.push("m.timestamp < ?".into());
-        let before_val = if before.len() == 10 {
-            format!("{before}T23:59:59.999Z")
-        } else {
-            before.clone()
-        };
-        params.push(SqlParam::Text(before_val));
-    }
-
-    let source_filter = nonempty_source(source_override).or(parsed.source.as_deref());
-    if let Some(source) = source_filter {
-        where_parts.push("m.source = ?".into());
-        params.push(SqlParam::Text(source.to_string()));
-    }
-
-    if let Some(ct) = parsed.conversation_type {
-        where_parts.push("c.conversation_type = ?".into());
-        params.push(SqlParam::Text(ct.to_string()));
-    }
-
-    if parsed.has_attachment == Some(true) {
-        where_parts.push("EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id)".into());
-    }
-
-    if let Some(within) = &parsed.within {
-        let ids = list_group_member_contact_ids(conn, account_id, within).await?;
-        where_parts.push(involves_contacts_sql(&ids));
-    }
-    if let Some(people) = &parsed.exclude_people {
-        let ids = list_group_member_contact_ids(conn, account_id, people).await?;
-        where_parts.push(format!("NOT {}", involves_contacts_sql(&ids)));
-    }
-    if let Some(tag) = &parsed.tag {
-        where_parts.push(has_message_tag_sql(engine, false));
-        params.push(SqlParam::Text(tag.clone()));
-    }
-    if let Some(tag) = &parsed.exclude_tag {
-        where_parts.push(has_message_tag_sql(engine, true));
-        params.push(SqlParam::Text(tag.clone()));
-    }
-
-    if !parsed.first_contact.is_empty() {
-        let ids =
-            contact_ids_within_day_bounds(conn, account_id, "first", &parsed.first_contact).await?;
-        where_parts.push(involves_contacts_sql(&ids));
-    }
-    if !parsed.last_contact.is_empty() {
-        let ids =
-            contact_ids_within_day_bounds(conn, account_id, "last", &parsed.last_contact).await?;
-        where_parts.push(involves_contacts_sql(&ids));
-    }
-
-    where_parts.push(crate::contacts_api::NOT_TRASHED_CONVERSATION_SQL.into());
-    where_parts.push(crate::contacts_api::NOT_TRASHED_CHAT_HANDLE_SQL.into());
-
-    let dedupe_sql = if source_filter.is_some() {
-        String::new()
-    } else {
-        " AND m.duplicate_of IS NULL".to_string()
-    };
-
-    Ok(BuiltFilters {
-        where_sql: where_parts.join(" AND "),
-        params,
-        dedupe_sql,
-    })
-}
-
-fn append_metadata_text_filters(
-    parsed: &ParsedSearchQuery,
-    engine: DbEngine,
-    where_parts: &mut Vec<String>,
-    params: &mut Vec<SqlParam>,
-) -> Result<(), ExportQueryError> {
-    if let Some(ast) = &parsed.fts_ast {
-        let mut sql = String::new();
-        compile_metadata_fts_expr(ast, engine, &mut sql, params)?;
-        where_parts.push(sql);
-    }
-    Ok(())
-}
-
-fn compile_metadata_fts_expr(
-    node: &FtsNode,
-    engine: DbEngine,
-    sql: &mut String,
-    params: &mut Vec<SqlParam>,
-) -> Result<(), ExportQueryError> {
-    match node {
-        FtsNode::Term { value, prefix } => {
-            push_metadata_like_chain(sql, params, engine, value);
-            // Full-text match on the message body index, per engine.
-            match engine {
-                DbEngine::Sqlite => {
-                    // Prefix: `"term"*` (star inside the quoted literal, matching
-                    // the current export_api.rs behavior); plain term: `"term"`.
-                    let fts_query = if *prefix == Some(true) {
-                        format!("{}*", fts5_literal_query(value))
-                    } else {
-                        fts5_literal_query(value)
-                    };
-                    sql.push_str(
-                        " OR EXISTS (SELECT 1 FROM messages_fts fts WHERE fts.rowid = m.id AND messages_fts MATCH ?",
-                    );
-                    params.push(SqlParam::Text(fts_query));
-                    sql.push(')');
-                }
-                DbEngine::Postgres => {
-                    // Prefix terms go through to_tsquery inside a quoted
-                    // literal; when the term has no queryable characters
-                    // (only quotes/backslashes), plainto_tsquery handles the
-                    // raw text instead of erroring on tsquery syntax.
-                    let (fn_name, arg) = if *prefix == Some(true) {
-                        match pg_prefix_tsquery(value) {
-                            Some(query) => ("to_tsquery", query),
-                            None => ("plainto_tsquery", value.clone()),
-                        }
-                    } else {
-                        ("plainto_tsquery", value.clone())
-                    };
-                    sql.push_str(&format!(
-                        " OR EXISTS (SELECT 1 FROM messages m_fts WHERE m_fts.id = m.id AND m_fts.search_tsv @@ {fn_name}('simple', ?"
-                    ));
-                    params.push(SqlParam::Text(arg));
-                    sql.push_str("))");
-                }
-            }
-            sql.push(')');
-            Ok(())
-        }
-        FtsNode::Phrase { value } => {
-            push_metadata_like_chain(sql, params, engine, value);
-            match engine {
-                DbEngine::Sqlite => {
-                    sql.push_str(
-                        " OR EXISTS (SELECT 1 FROM messages_fts fts WHERE fts.rowid = m.id AND messages_fts MATCH ?",
-                    );
-                    params.push(SqlParam::Text(fts5_literal_query(value)));
-                    sql.push(')');
-                }
-                DbEngine::Postgres => {
-                    sql.push_str(
-                        " OR EXISTS (SELECT 1 FROM messages m_fts WHERE m_fts.id = m.id AND m_fts.search_tsv @@ phraseto_tsquery('simple', ?",
-                    );
-                    params.push(SqlParam::Text(value.clone()));
-                    sql.push_str("))");
-                }
-            }
-            sql.push(')');
-            Ok(())
-        }
-        FtsNode::And { children } => {
-            compile_metadata_fts_children("AND", engine, children, sql, params)
-        }
-        FtsNode::Or { children } => {
-            compile_metadata_fts_children("OR", engine, children, sql, params)
-        }
-        FtsNode::Not { child } => {
-            sql.push_str("(NOT (");
-            compile_metadata_fts_expr(child, engine, sql, params)?;
-            sql.push_str("))");
-            Ok(())
-        }
-    }
-}
-
-fn compile_metadata_fts_children(
-    operator: &str,
-    engine: DbEngine,
-    children: &[FtsNode],
-    sql: &mut String,
-    params: &mut Vec<SqlParam>,
-) -> Result<(), ExportQueryError> {
-    if children.is_empty() {
-        return Err(ExportQueryError::bad(format!(
-            "{operator} search expression has no operands"
-        )));
-    }
-    sql.push('(');
-    for (i, child) in children.iter().enumerate() {
-        if i > 0 {
-            sql.push_str(&format!(" {operator} "));
-        }
-        compile_metadata_fts_expr(child, engine, sql, params)?;
-    }
-    sql.push(')');
-    Ok(())
-}
-
-/// The LIKE-based metadata chain shared by Term and Phrase leaves: handles,
-/// participant aliases, contacts, and attachment names, all `%term%`
-/// case-insensitive. Pushes 8 binds (one per LIKE clause); the caller then
-/// pushes the full-text match and closes the outer parenthesis.
-fn push_metadata_like_chain(
-    sql: &mut String,
-    params: &mut Vec<SqlParam>,
-    engine: DbEngine,
-    term: &str,
-) {
-    let pattern = format!("%{term}%");
-    sql.push_str("(coalesce(hs.raw, '') ");
-    sql.push_str(like_ci(engine));
-    sql.push_str(
-        " OR EXISTS (SELECT 1 FROM participants p_md JOIN handles hp ON hp.id = p_md.handle_id WHERE p_md.conversation_id = c.id AND (hp.raw ",
-    );
-    sql.push_str(like_ci(engine));
-    sql.push_str(" OR coalesce(p_md.name_alias, '') ");
-    sql.push_str(like_ci(engine));
-    sql.push_str(
-        ")) OR EXISTS (SELECT 1 FROM contact_handles ch_md JOIN contacts ct_md ON ct_md.id = ch_md.contact_id JOIN handles hm ON hm.id = ch_md.handle_id WHERE ch_md.account_id = c.account_id AND (hm.raw ",
-    );
-    sql.push_str(like_ci(engine));
-    sql.push_str(" OR coalesce(ct_md.preferred_name, '') ");
-    sql.push_str(like_ci(engine));
-    sql.push_str(
-        ") AND ((c.conversation_type = 'individual' AND hm.id = c.chat_handle_id) OR EXISTS (SELECT 1 FROM participants p_md2 WHERE p_md2.conversation_id = c.id AND p_md2.handle_id = ch_md.handle_id))) OR EXISTS (SELECT 1 FROM attachments a_md WHERE a_md.message_id = m.id AND (coalesce(a_md.original_name, '') ",
-    );
-    sql.push_str(like_ci(engine));
-    sql.push_str(" OR coalesce(a_md.mime_type, '') ");
-    sql.push_str(like_ci(engine));
-    sql.push_str(" OR coalesce(a_md.derived_mime_type, '') ");
-    sql.push_str(like_ci(engine));
-    sql.push_str("))");
-    for _ in 0..8 {
-        params.push(SqlParam::Text(pattern.clone()));
-    }
-}
-
-/// Quote a free-text token for full-text search so operators and punctuation are treated as literal text.
-fn fts5_literal_query(term: &str) -> String {
-    format!("\"{}\"", term.replace('"', "\"\""))
-}
-
-/// Quote a term for a Postgres prefix query under the 'simple' config:
-/// `'term':*`. Tsquery quoted literals cannot carry single quotes or
-/// backslashes (verified on Postgres 16: the lexer splits the token instead
-/// of honoring an escape), so terms containing either return `None`; the
-/// caller falls back to `plainto_tsquery`, which treats its input as raw
-/// text.
-fn pg_prefix_tsquery(term: &str) -> Option<String> {
-    if term.is_empty() || term.contains(['\\', '\'']) {
-        return None;
-    }
-    Some(format!("'{}':*", term))
-}
-
-/// Conversation `c` has (or, with `exclude`, does not have) a message tag
-/// with the bound name (`?` placeholder form; the renumber pass rewrites it).
-/// Shared by the export query and the conversation list.
-pub(crate) fn has_message_tag_sql(engine: DbEngine, exclude: bool) -> String {
-    let exists = if exclude { "NOT EXISTS" } else { "EXISTS" };
-    format!(
-        "{exists} (
-           SELECT 1 FROM message_tag_members ctm
-           JOIN message_tags ct ON ct.id = ctm.tag_id
-           WHERE ctm.conversation_id = c.id
-             AND ct.account_id = c.account_id
-             AND {name_eq}
-         )",
-        name_eq = name_eq_ci(engine, "ct.name", "?"),
-    )
-}
-
-fn involves_contacts_sql(contact_ids: &[i64]) -> String {
-    if contact_ids.is_empty() {
-        return "1=0".into();
-    }
-    let mut id_list = String::new();
-    for (i, id) in contact_ids.iter().enumerate() {
-        if i > 0 {
-            id_list.push(',');
-        }
-        id_list.push_str(&id.to_string());
-    }
-    format!(
-        "EXISTS (
-    SELECT 1 FROM contact_handles ch
-    WHERE ch.account_id = c.account_id
-      AND ch.contact_id IN ({id_list})
-      AND (
-        ch.handle_id = c.chat_handle_id
-        OR EXISTS (
-          SELECT 1 FROM participants p_link
-          WHERE p_link.conversation_id = c.id AND p_link.handle_id = ch.handle_id
-        )
-      )
-  )"
-    )
-}
-
-async fn list_group_member_contact_ids(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    name: &str,
-) -> Result<Vec<i64>, ExportQueryError> {
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
-        return Ok(Vec::new());
-    }
-    let engine = engine_of(conn);
-    let sql = format!(
-        "SELECT cgm.contact_id
-             FROM contact_group_members cgm
-             JOIN contact_groups cg ON cg.id = cgm.group_id
-             WHERE {name_eq} AND cg.account_id = $2
-             ORDER BY cgm.contact_id",
-        name_eq = name_eq_ci(engine, "cg.name", "$1"),
-    );
-    let rows = sqlx::query(&sql)
-        .bind(trimmed)
-        .bind(account_id)
-        .fetch_all(&mut *conn)
-        .await?;
-    rows.iter()
-        .map(|r| r.try_get::<i64, _>(0))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(Into::into)
-}
-
-async fn contact_ids_within_day_bounds(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    bound: &str,
-    bounds: &crate::search_query::DateBounds,
-) -> Result<Vec<i64>, ExportQueryError> {
-    let day = if bound == "first" { "MIN" } else { "MAX" };
-    let mut having = Vec::new();
-    let mut params: Vec<SqlParam> = vec![SqlParam::Text(account_id.to_string())];
-    let mut n = 1;
-    if let Some(from) = &bounds.from {
-        n += 1;
-        having.push(format!("{day}(substr(m.timestamp, 1, 10)) >= ${n}"));
-        params.push(SqlParam::Text(from.clone()));
-    }
-    if let Some(to) = &bounds.to {
-        n += 1;
-        having.push(format!("{day}(substr(m.timestamp, 1, 10)) < ${n}"));
-        params.push(SqlParam::Text(to.clone()));
-    }
-    if having.is_empty() {
-        return Ok(Vec::new());
-    }
-    let having_sql = having.join(" AND ");
-    let sql = format!(
-        "SELECT ch.contact_id
-         FROM contact_handles ch
-         JOIN conversations c
-           ON c.account_id = ch.account_id
-          AND c.conversation_type = 'individual'
-          AND c.chat_handle_id = ch.handle_id
-         JOIN messages m ON m.conversation_id = c.id
-         WHERE ch.account_id = $1 AND m.duplicate_of IS NULL
-         GROUP BY ch.contact_id
-         HAVING {having_sql}"
-    );
-    let rows = (&mut *conn).fetch_all(bind_all(&sql, &params)).await?;
-    rows.iter()
-        .map(|r| r.try_get::<i64, _>(0))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(Into::into)
-}
-
 async fn load_participants(
     conn: &mut AnyConnection,
     conversation_ids: &[i64],
-) -> Result<std::collections::HashMap<i64, Vec<ExportParticipant>>, ExportQueryError> {
+) -> Result<std::collections::HashMap<i64, Vec<ExportParticipant>>, ApiError> {
     group_rows_by_id(
         conn,
         conversation_ids,
@@ -1121,7 +619,7 @@ async fn load_participants(
 async fn load_attachments(
     conn: &mut AnyConnection,
     message_ids: &[i64],
-) -> Result<std::collections::HashMap<i64, Vec<ExportAttachment>>, ExportQueryError> {
+) -> Result<std::collections::HashMap<i64, Vec<ExportAttachment>>, ApiError> {
     group_rows_by_id(
         conn,
         message_ids,
@@ -1155,7 +653,7 @@ async fn load_attachments(
 async fn load_tapbacks(
     conn: &mut AnyConnection,
     message_ids: &[i64],
-) -> Result<std::collections::HashMap<i64, Vec<ExportTapback>>, ExportQueryError> {
+) -> Result<std::collections::HashMap<i64, Vec<ExportTapback>>, ApiError> {
     group_rows_by_id(
         conn,
         message_ids,
@@ -1219,9 +717,9 @@ pub(crate) struct ExportMessagesCountQuery {
     tag = "Export",
     security(("bearer" = [])),
     params(
-        ("q" = String, Query, description = "Metadata search subset; empty is all non-trashed"),
+        ("q" = String, Query, description = "Query in the search language; empty is every non-trashed message"),
         ("account" = Option<String>, Query),
-        ("source" = Option<String>, Query)
+        ("source" = Option<String>, Query, description = "Narrow to one backup: imessage, whatsapp, or sms-backup-restore")
     ),
     responses(
         (status = 200, body = crate::export_api::ExportCountResponse),
@@ -1236,8 +734,8 @@ pub(crate) async fn export_messages_count_handler(
     Query(query): Query<ExportMessagesCountQuery>,
 ) -> Result<Json<export_api::ExportCountResponse>, ApiError> {
     let account = resolve_import_account(&auth, query.account.as_deref(), &state.db).await?;
-    let q = query.q.clone();
-    let source = query.source.clone();
+    let q = with_source_word(&query.q, query.source.as_deref())?;
+    let today = chrono::Local::now().date_naive();
 
     let mut conn = state.db.acquire().await?;
     let body = export_api::export_message_count(
@@ -1245,26 +743,26 @@ pub(crate) async fn export_messages_count_handler(
         ExportCountOpts {
             account_id: &account,
             query: &q,
-            source_override: source.as_deref(),
+            today,
         },
     )
     .await?;
     Ok(Json(body))
 }
 
-/// Export messages matching a search query (message mode; cursor paging).
+/// Export messages matching a query in the search language (cursor paging).
 #[utoipa::path(
     get,
     path = "/v1/export/messages",
     tag = "Export",
     security(("bearer" = [])),
     params(
-        ("q" = String, Query, description = "Metadata search subset; empty is all non-trashed"),
+        ("q" = String, Query, description = "Query in the search language; empty is every non-trashed message"),
         ("limit" = Option<usize>, Query, description = "Page size, default 100, max 500"),
         ("offset" = Option<usize>, Query, description = "Legacy offset; prefer cursor"),
         ("cursor" = Option<String>, Query, description = "Opaque next_cursor from a previous page"),
         ("account" = Option<String>, Query),
-        ("source" = Option<String>, Query)
+        ("source" = Option<String>, Query, description = "Narrow to one backup: imessage, whatsapp, or sms-backup-restore")
     ),
     responses(
         (status = 200, body = crate::export_api::ExportMessagesResponse),
@@ -1281,9 +779,9 @@ pub(crate) async fn export_messages_handler(
     let account = resolve_import_account(&auth, query.account.as_deref(), &state.db).await?;
     let limit = query.limit.unwrap_or(DEFAULT_EXPORT_LIMIT);
     let offset = query.offset;
-    let q = query.q.clone();
+    let q = with_source_word(&query.q, query.source.as_deref())?;
     let cursor = query.cursor.clone();
-    let source = query.source.clone();
+    let today = chrono::Local::now().date_naive();
 
     let mut conn = state.db.acquire().await?;
     let body = export_api::export_messages(
@@ -1294,7 +792,7 @@ pub(crate) async fn export_messages_handler(
             limit,
             offset,
             cursor: cursor.as_deref(),
-            source_override: source.as_deref(),
+            today,
         },
     )
     .await?;
@@ -1306,14 +804,108 @@ mod tests {
     use super::*;
     use crate::db::{engine, schema};
 
+    #[tokio::test]
+    async fn export_takes_the_search_language_and_source_param() {
+        let (pool, _dir, f) = crate::search::tests::seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let today = crate::search::tests::today();
+        let page = export_messages(
+            &mut conn,
+            ExportPageOpts {
+                account_id: crate::search::tests::ACCOUNT,
+                query: "from:me avocado",
+                limit: 50,
+                offset: None,
+                cursor: None,
+                today,
+            },
+        )
+        .await
+        .unwrap();
+        let mut ids: Vec<i64> = page.messages.iter().map(|m| m.id).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec![f.jane_avocado_from_me, f.sam_avocado_from_me]);
+
+        let count = export_message_count(
+            &mut conn,
+            ExportCountOpts {
+                account_id: crate::search::tests::ACCOUNT,
+                query: "source:whatsapp",
+                today,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(count.messages, 1);
+
+        // A word the language does not have is a 400, not a text search.
+        let err = export_messages(
+            &mut conn,
+            ExportPageOpts {
+                account_id: crate::search::tests::ACCOUNT,
+                query: "sparkle:yes",
+                limit: 50,
+                offset: None,
+                cursor: None,
+                today,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
     #[test]
-    fn pg_prefix_tsquery_falls_back_on_unescapable_terms() {
-        assert_eq!(pg_prefix_tsquery("foo"), Some("'foo':*".to_string()));
-        // Quotes and backslashes cannot live inside a tsquery quoted
-        // literal; the caller falls back to plainto_tsquery for them.
-        assert_eq!(pg_prefix_tsquery("it's"), None);
-        assert_eq!(pg_prefix_tsquery(r"a\b"), None);
-        assert_eq!(pg_prefix_tsquery(""), None);
+    fn source_param_maps_to_the_source_word() {
+        assert_eq!(source_word("imessage"), Some("imessage"));
+        assert_eq!(source_word("sms-backup-restore"), Some("sms"));
+        assert_eq!(source_word("whatsapp"), Some("whatsapp"));
+        assert_eq!(source_word("mystery"), None);
+        assert_eq!(source_word("  "), None);
+    }
+
+    #[test]
+    fn the_source_param_becomes_a_leading_source_word() {
+        assert_eq!(with_source_word("avocado", None).unwrap(), "avocado");
+        assert_eq!(with_source_word("avocado", Some("  ")).unwrap(), "avocado");
+        assert_eq!(
+            with_source_word("avocado", Some("sms-backup-restore")).unwrap(),
+            "source:sms (avocado)"
+        );
+        assert_eq!(
+            with_source_word("  ", Some("whatsapp")).unwrap(),
+            "source:whatsapp"
+        );
+        let err = with_source_word("avocado", Some("mystery")).unwrap_err();
+        assert!(
+            matches!(&err, ApiError::BadRequest(m) if m.contains("mystery")),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_source_param_narrows_the_whole_query_not_just_its_first_branch() {
+        let (pool, _dir, f) = crate::search::tests::seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        // "old" is the WhatsApp message; "avocado" is only ever iMessage.
+        // Asking for WhatsApp must drop the avocado messages, which it does
+        // not if the source word only binds to the query's first branch.
+        let q = with_source_word("old or avocado", Some("whatsapp")).unwrap();
+        let page = export_messages(
+            &mut conn,
+            ExportPageOpts {
+                account_id: crate::search::tests::ACCOUNT,
+                query: &q,
+                limit: 50,
+                offset: None,
+                cursor: None,
+                today: crate::search::tests::today(),
+            },
+        )
+        .await
+        .unwrap();
+        let ids: Vec<i64> = page.messages.iter().map(|m| m.id).collect();
+        assert_eq!(ids, vec![f.archive_msg]);
     }
 
     async fn setup() -> (sqlx::AnyPool, tempfile::TempDir) {
@@ -1381,11 +973,11 @@ mod tests {
             &mut conn,
             ExportPageOpts {
                 account_id: "a1",
-                query: "in:1",
+                query: "in:#1",
                 limit: 100,
                 offset: None,
                 cursor: None,
-                source_override: None,
+                today: crate::search::tests::today(),
             },
         )
         .await
@@ -1408,11 +1000,11 @@ mod tests {
             &mut conn,
             ExportPageOpts {
                 account_id: "a1",
-                query: "in:1",
+                query: "in:#1",
                 limit: 100,
                 offset: None,
                 cursor: None,
-                source_override: None,
+                today: crate::search::tests::today(),
             },
         )
         .await
@@ -1425,11 +1017,11 @@ mod tests {
             &mut conn,
             ExportPageOpts {
                 account_id: "a1",
-                query: "conversation:2",
+                query: "in:#2",
                 limit: 100,
                 offset: None,
                 cursor: None,
-                source_override: None,
+                today: crate::search::tests::today(),
             },
         )
         .await
@@ -1445,7 +1037,7 @@ mod tests {
                 limit: 100,
                 offset: None,
                 cursor: None,
-                source_override: None,
+                today: crate::search::tests::today(),
             },
         )
         .await
@@ -1495,7 +1087,7 @@ mod tests {
                 ExportCountOpts {
                     account_id: "a1",
                     query,
-                    source_override: None,
+                    today: crate::search::tests::today(),
                 },
             )
             .await
@@ -1518,7 +1110,7 @@ mod tests {
                 limit: 100,
                 offset: None,
                 cursor: None,
-                source_override: None,
+                today: crate::search::tests::today(),
             },
         )
         .await
@@ -1567,7 +1159,7 @@ mod tests {
                 limit: 100,
                 offset: None,
                 cursor: None,
-                source_override: None,
+                today: crate::search::tests::today(),
             },
         )
         .await
@@ -1616,7 +1208,7 @@ mod tests {
                         limit: 100,
                         offset: None,
                         cursor: None,
-                        source_override: None,
+                        today: crate::search::tests::today(),
                     },
                 )
                 .await
@@ -1632,27 +1224,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn export_boolean_query_combines_metadata_body_phrases_prefixes_and_nesting() {
+    async fn export_boolean_query_combines_body_phrases_prefixes_and_nesting() {
         let (pool, _dir) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
-        sqlx::query(
-            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-             VALUES ('a1', 'blocked', 'blocked', 'other', 'other')",
-        )
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-        let blocked_sender: i64 = sqlx::query_scalar("SELECT last_insert_rowid()")
-            .fetch_one(&mut *conn)
+        sqlx::query("UPDATE messages SET body = 'alpha phrase at sunrise' WHERE id = 1")
+            .execute(&mut *conn)
             .await
             .unwrap();
-        sqlx::query(
-            "UPDATE messages SET body = 'alpha phrase', sender_handle_id = $1 WHERE id = 1",
-        )
-        .bind(blocked_sender)
-        .execute(&mut *conn)
-        .await
-        .unwrap();
         sqlx::query("UPDATE messages SET body = 'unrelated' WHERE id = 2")
             .execute(&mut *conn)
             .await
@@ -1684,7 +1262,7 @@ mod tests {
                         limit: 100,
                         offset: None,
                         cursor: None,
-                        source_override: None,
+                        today: crate::search::tests::today(),
                     },
                 )
                 .await
@@ -1701,7 +1279,7 @@ mod tests {
             vec![1, 2]
         );
         assert_eq!(
-            matching_ids(r#"blocked AND ("alpha phrase" OR report*)"#).await,
+            matching_ids(r#"sunrise AND ("alpha phrase" OR report*)"#).await,
             vec![1]
         );
         assert_eq!(matching_ids("NOT NOT report*").await, vec![2]);
@@ -1717,10 +1295,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_oversized_search_query_and_offset() {
+    async fn rejects_an_oversized_query_and_offset() {
         let (pool, _dir) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
-        let huge = "x".repeat(MAX_SEARCH_QUERY_BYTES + 1);
+        let huge = "x".repeat(crate::search::lex::MAX_QUERY_BYTES + 1);
         let err = export_messages(
             &mut conn,
             ExportPageOpts {
@@ -1729,12 +1307,15 @@ mod tests {
                 limit: 10,
                 offset: None,
                 cursor: None,
-                source_override: None,
+                today: crate::search::tests::today(),
             },
         )
         .await
         .unwrap_err();
-        assert!(err.to_string().contains("exceeds"), "{err}");
+        assert!(
+            matches!(&err, ApiError::BadRequest(m) if m.contains("longer than")),
+            "{err:?}"
+        );
 
         let err = export_messages(
             &mut conn,
@@ -1744,12 +1325,15 @@ mod tests {
                 limit: 10,
                 offset: Some(MAX_EXPORT_OFFSET + 1),
                 cursor: None,
-                source_override: None,
+                today: crate::search::tests::today(),
             },
         )
         .await
         .unwrap_err();
-        assert!(err.to_string().contains("offset"), "{err}");
+        assert!(
+            matches!(&err, ApiError::BadRequest(m) if m.contains("offset")),
+            "{err:?}"
+        );
     }
 
     #[tokio::test]
@@ -1795,7 +1379,7 @@ mod tests {
                 limit: 100,
                 offset: None,
                 cursor: None,
-                source_override: None,
+                today: crate::search::tests::today(),
             },
         )
         .await
@@ -1813,7 +1397,7 @@ mod tests {
                 limit: 100,
                 offset: None,
                 cursor: None,
-                source_override: None,
+                today: crate::search::tests::today(),
             },
         )
         .await
@@ -1855,7 +1439,7 @@ mod tests {
                         limit,
                         offset: None,
                         cursor: cursor.as_deref(),
-                        source_override: None,
+                        today: crate::search::tests::today(),
                     },
                 )
                 .await
@@ -1875,144 +1459,35 @@ mod tests {
         assert!(second.next_cursor.is_none());
     }
 
-    /// The compiled metadata search for a mixed Term/Phrase/And/Or/Not query
-    /// must place exactly one `?` per pushed bind, in push order: each leaf
-    /// pushes 8 LIKE patterns (`%term%`) then its full-text bind.
-    #[test]
-    fn compiled_fts_placeholders_match_bind_order() {
-        let parsed =
-            validate_search_query(r#"blocked AND ("alpha phrase" OR report*) AND NOT spam"#)
-                .unwrap();
-        let ast = parsed.fts_ast.as_ref().unwrap();
-        let mut sql = String::new();
-        let mut params = Vec::new();
-        compile_metadata_fts_expr(ast, DbEngine::Sqlite, &mut sql, &mut params).unwrap();
-
-        assert_eq!(params.len(), 36, "4 leaves × 9 binds each");
-        let renumbered = renumber_placeholders(&sql);
-        assert!(
-            !renumbered.contains('?'),
-            "no `?` may survive: {renumbered}"
-        );
-        assert_eq!(renumbered.matches('$').count(), params.len());
-
-        // Bind order: leaf 1 (blocked) 8 LIKE patterns, then its FTS bind;
-        // leaf 2 (alpha phrase) 8 + FTS; leaf 3 (report*) 8 + FTS; leaf 4 (spam).
-        for p in &params[0..8] {
-            assert_eq!(p, &SqlParam::Text("%blocked%".into()));
-        }
-        assert_eq!(params[8], SqlParam::Text("\"blocked\"".into()));
-        for p in &params[9..17] {
-            assert_eq!(p, &SqlParam::Text("%alpha phrase%".into()));
-        }
-        assert_eq!(params[17], SqlParam::Text("\"alpha phrase\"".into()));
-        for p in &params[18..26] {
-            assert_eq!(p, &SqlParam::Text("%report%".into()));
-        }
-        assert_eq!(params[26], SqlParam::Text("\"report\"*".into()));
-        for p in &params[27..35] {
-            assert_eq!(p, &SqlParam::Text("%spam%".into()));
-        }
-        assert_eq!(params[35], SqlParam::Text("\"spam\"".into()));
-
-        // The renumbered SQL numbers the same order: `$1..$9` for leaf 1, etc.
-        for n in 1..=36 {
-            assert!(
-                renumbered.contains(&format!("${n}")),
-                "missing ${n}: {renumbered}"
-            );
-        }
-    }
-
-    /// The Postgres branch emits the tsquery calls; prefix terms become
-    /// `to_tsquery` with a `'term':*` operand, phrases `phraseto_tsquery`.
-    #[test]
-    fn fts_compiler_emits_postgres_branch() {
-        let parsed = validate_search_query(r#"report* OR "alpha phrase""#).unwrap();
-        let ast = parsed.fts_ast.as_ref().unwrap();
-        let mut sql = String::new();
-        let mut params = Vec::new();
-        compile_metadata_fts_expr(ast, DbEngine::Postgres, &mut sql, &mut params).unwrap();
-
-        assert!(
-            sql.contains("search_tsv @@ to_tsquery('simple', ?)"),
-            "{sql}"
-        );
-        assert!(
-            sql.contains("search_tsv @@ phraseto_tsquery('simple', ?)"),
-            "{sql}"
-        );
-        assert!(!sql.contains("messages_fts"), "{sql}");
-        assert!(sql.contains("ILIKE ?"), "{sql}");
-        assert!(!sql.contains("COLLATE NOCASE"), "{sql}");
-        assert_eq!(params.len(), 18);
-        assert_eq!(params[8], SqlParam::Text("'report':*".into()));
-        assert_eq!(params[17], SqlParam::Text("alpha phrase".into()));
-        let renumbered = renumber_placeholders(&sql);
-        assert!(!renumbered.contains('?'));
-        assert_eq!(renumbered.matches('$').count(), params.len());
-    }
-
-    /// The case-insensitive equality fragments must keep the table alias
-    /// INSIDE `lower()` on Postgres — `ct.lower(...)` parses as a
-    /// schema-qualified function call — at both call sites: the message-tag
-    /// subquery (alias `ct`) and the contact-group lookup (alias `cg`). The
-    /// SQLite arms stay alias-outside COLLATE NOCASE, unchanged.
-    #[test]
-    fn pg_ci_eq_keeps_alias_inside_lower() {
-        let tag_sql = has_message_tag_sql(DbEngine::Postgres, false);
-        assert!(tag_sql.contains("lower(ct.name) = lower(?)"), "{tag_sql}");
-        assert!(!tag_sql.contains("ct.lower("), "{tag_sql}");
-
-        let group_eq = name_eq_ci(DbEngine::Postgres, "cg.name", "$1");
-        assert_eq!(group_eq, "lower(cg.name) = lower($1)");
-        assert!(!group_eq.contains("cg.lower("));
-
-        // SQLite arms are byte-identical in behavior to the pre-port form.
-        let tag_sqlite = has_message_tag_sql(DbEngine::Sqlite, false);
-        assert!(
-            tag_sqlite.contains("ct.name = ? COLLATE NOCASE"),
-            "{tag_sqlite}"
-        );
-        assert_eq!(
-            name_eq_ci(DbEngine::Sqlite, "cg.name", "$1"),
-            "cg.name = $1 COLLATE NOCASE"
-        );
-    }
-
     /// End-to-end placeholder discipline: the assembled export query's `$N`
     /// placeholders must be exactly `1..=params.len()` in bind order.
     #[tokio::test]
     async fn export_sql_placeholders_match_params_order() {
         let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let parsed = validate_search_query(
-            r#"from:alice to:bob subject:hello tag:work "alpha phrase" OR report*"#,
+        let conn = pool.acquire().await.unwrap();
+        let filter = message_filter(
+            engine_of(&conn),
+            "a1",
+            r#"from:alice to:bo subject:hello tag:work ("alpha phrase" OR report*)"#,
+            crate::search::tests::today(),
         )
         .unwrap();
-        let filters = build_message_filters(&mut conn, "a1", &parsed, None)
-            .await
-            .unwrap();
         let sql = format!(
-            "SELECT m.id {messages_from_sql} WHERE {where_sql}{dedupe}",
+            "SELECT m.id {messages_from_sql} WHERE {where_sql}",
             messages_from_sql = messages_from_sql(),
-            where_sql = filters.where_sql,
-            dedupe = filters.dedupe_sql,
+            where_sql = filter.where_sql(),
         );
         let renumbered = renumber_placeholders(&sql);
         assert!(
             !renumbered.contains('?'),
             "no `?` may survive: {renumbered}"
         );
-        assert_eq!(renumbered.matches('$').count(), filters.params.len());
-        for n in 1..=filters.params.len() {
+        assert_eq!(renumbered.matches('$').count(), filter.params().len());
+        for n in 1..=filter.params().len() {
             assert!(
                 renumbered.contains(&format!("${n}")),
                 "missing ${n}: {renumbered}"
             );
         }
-        // account 1, `from:alice` 3, `to:bob` 2, `subject:hello` 1,
-        // `tag:work` 1, then the two FTS leaves at 9 binds each = 26.
-        assert_eq!(filters.params.len(), 26);
     }
 }

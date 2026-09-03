@@ -57,7 +57,7 @@ function renderPanel(initialEntries?: string[]) {
   return render(
     <VaultProviders>
       <MemoryRouter initialEntries={initialEntries}>
-        <LeftPanel onSearchChange={() => {}} onSearch={() => {}} />
+        <LeftPanel onSearchChange={() => {}} />
       </MemoryRouter>
     </VaultProviders>,
   );

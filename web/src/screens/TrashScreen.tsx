@@ -15,7 +15,7 @@ import { useVaultQuery } from "../lib/vaultQuery";
  */
 function trashQuery(search: string): string {
   const term = search.trim();
-  return term ? `is:trash ${term}` : "is:trash";
+  return term ? `trashed:yes ${term}` : "trashed:yes";
 }
 
 export default function TrashScreen() {

@@ -1,8 +1,6 @@
 import { useEffect, useState } from "react";
+import { type SearchField, type SearchList, useSearchFields } from "./searchFields";
 import { listContacts } from "./vaultApi";
-
-/** Operators the conversation list API actually understands. */
-const OPERATORS = ["handle:", "contact:", "is:", "participants:"];
 
 interface ContactName {
   id: string;
@@ -16,29 +14,42 @@ export interface Suggestion {
   insert: string;
 }
 
-/** Autocomplete rows for a conversation search box. */
+/** Words whose value is a person, so contact names are offered. */
+function isPersonWord(field: SearchField | undefined): boolean {
+  return field?.value_type === "person";
+}
+
+/** Autocomplete rows for a search box on one list. */
 export function buildSearchSuggestions(args: {
   completingValue: boolean;
-  contactOps: boolean;
+  personOp: boolean;
   lastToken: string;
+  fields: SearchField[];
   contacts: ContactName[];
 }): Suggestion[] {
-  if (args.completingValue && args.contactOps) {
-    return args.contacts.slice(0, 6).map((c) => ({
-      id: c.id,
-      label: c.name,
-      // Use contact:<id> so names with spaces do not break the query.
-      insert: `contact:${c.id}`,
-    }));
+  const colon = args.lastToken.indexOf(":");
+  if (args.completingValue) {
+    const word = args.lastToken.slice(0, colon).replace(/^-/, "").toLowerCase();
+    const typed = args.lastToken.slice(colon + 1).toLowerCase();
+    if (args.personOp) {
+      return args.contacts.slice(0, 6).map((c) => ({
+        id: c.id,
+        label: c.name,
+        // #id survives names with spaces and renames.
+        insert: `${word}:#${c.id} `,
+      }));
+    }
+    const field = args.fields.find((f) => f.word === word);
+    if (!field) return [];
+    return field.values
+      .filter((v) => v.startsWith(typed))
+      .map((v) => ({ id: `${word}:${v}`, label: `${word}:${v}`, insert: `${word}:${v} ` }));
   }
-  if (!args.completingValue && args.lastToken.length > 0) {
-    return OPERATORS.filter((op) => op.startsWith(args.lastToken.toLowerCase())).map((op) => ({
-      id: op,
-      label: op,
-      insert: `${op} `,
-    }));
-  }
-  return [];
+  if (args.lastToken.length === 0) return [];
+  const typed = args.lastToken.replace(/^-/, "").toLowerCase();
+  return args.fields
+    .filter((f) => f.word.startsWith(typed))
+    .map((f) => ({ id: f.word, label: `${f.word}:`, insert: `${f.word}:` }));
 }
 
 /** Replace the token being typed with a suggestion's text. */
@@ -49,23 +60,23 @@ export function applySuggestionToQuery(value: string, suggestion: Suggestion): s
 }
 
 /**
- * Operator autocomplete for the conversation-style search bars. `handle:` and
- * `contact:` fetch matching contact names from the vault; a bare prefix
- * completes to the operator itself. Disabled bars (contacts search) get nothing.
+ * Word and value autocomplete for a search box. A bare prefix completes to a
+ * word the list has; a choice word offers its values; a person word fetches
+ * matching contacts and inserts `word:#id`.
  */
-export function useSearchSuggestions(value: string, enabled: boolean): Suggestion[] {
+export function useSearchSuggestions(value: string, list: SearchList): Suggestion[] {
+  const { fields } = useSearchFields(list);
   const [contacts, setContacts] = useState<ContactName[]>([]);
 
   const lastToken = value.split(/\s+/).pop() || "";
   const colonIdx = lastToken.indexOf(":");
   const completingValue = colonIdx !== -1;
-  const opLower = completingValue ? lastToken.slice(0, colonIdx + 1).toLowerCase() : "";
+  const word = completingValue ? lastToken.slice(0, colonIdx).replace(/^-/, "").toLowerCase() : "";
   const valuePart = completingValue ? lastToken.slice(colonIdx + 1).replace(/^"|"$/g, "") : "";
-  // Suggest contact names only for handle: and contact:, not for is: or participants:.
-  const contactOps = opLower === "handle:" || opLower === "contact:";
+  const personOp = completingValue && isPersonWord(fields.find((f) => f.word === word));
 
   useEffect(() => {
-    if (!enabled || !completingValue || !contactOps) {
+    if (!personOp) {
       setContacts([]);
       return;
     }
@@ -73,12 +84,7 @@ export function useSearchSuggestions(value: string, enabled: boolean): Suggestio
     const t = window.setTimeout(() => {
       listContacts({ q: valuePart, limit: 20, offset: 0 }, { signal: ac.signal })
         .then((res) =>
-          setContacts(
-            (res.contacts || []).map((c) => ({
-              ...c,
-              id: String(c.id),
-            })),
-          ),
+          setContacts((res.contacts || []).map((c) => ({ id: String(c.id), name: c.name }))),
         )
         .catch(() => {
           if (!ac.signal.aborted) setContacts([]);
@@ -88,10 +94,7 @@ export function useSearchSuggestions(value: string, enabled: boolean): Suggestio
       window.clearTimeout(t);
       ac.abort();
     };
-  }, [enabled, completingValue, contactOps, valuePart]);
+  }, [personOp, valuePart]);
 
-  if (!enabled) return [];
-  // An empty last token must not match every operator. That would insert an
-  // operator after a trailing space instead of running the search.
-  return buildSearchSuggestions({ completingValue, contactOps, lastToken, contacts });
+  return buildSearchSuggestions({ completingValue, personOp, lastToken, fields, contacts });
 }

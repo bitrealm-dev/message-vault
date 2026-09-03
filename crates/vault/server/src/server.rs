@@ -32,7 +32,6 @@ use crate::db::engine::{self, DbEngine};
 use crate::db::permissions::Permissions;
 use crate::db::schema;
 use crate::db::session_tokens;
-use crate::export_api::ExportQueryError;
 
 /// What a Bearer credential is allowed to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -317,15 +316,6 @@ impl IntoResponse for ApiError {
             }),
         )
             .into_response()
-    }
-}
-
-impl From<ExportQueryError> for ApiError {
-    fn from(e: ExportQueryError) -> Self {
-        match e {
-            ExportQueryError::BadRequest(m) => Self::BadRequest(m),
-            ExportQueryError::Internal(m) => Self::Internal(m),
-        }
     }
 }
 

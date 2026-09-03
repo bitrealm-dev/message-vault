@@ -8,6 +8,7 @@ import { useContactGroups } from "../lib/useContactGroups";
 import { useMessageTags } from "../lib/useMessageTags";
 import ContactList from "../screens/ContactList";
 import ConversationList from "../screens/ConversationList";
+import type { AdvancedSearchMode } from "./AdvancedSearchForm";
 import AppHeader from "./AppHeader";
 import CheckedContactsPanel from "./CheckedContactsPanel";
 import { ColumnResizeProvider } from "./ColumnResizeContext";
@@ -25,25 +26,16 @@ import RightPane from "./RightPane";
 import { RightToolbarProvider } from "./RightToolbarContext";
 
 /** Search query used when browsing a contact's conversations from the drawer. */
-function contactBrowseQuery(
-  contactId: string,
-  kind: ContactBrowseKind,
-  handle?: string,
-  service?: string,
-): string {
-  let typeSuffix = "";
-  if (kind === "direct") typeSuffix = " is:direct";
-  else if (kind === "group") typeSuffix = " is:group";
-
+function contactBrowseQuery(contactId: string, kind: ContactBrowseKind, handle?: string): string {
+  let kindSuffix = "";
+  if (kind === "direct") kindSuffix = " kind:direct";
+  else if (kind === "group") kindSuffix = " kind:group";
   const h = handle?.trim();
   if (h) {
     const quoted = /\s/.test(h) ? `"${h}"` : h;
-    const platform = service?.trim().toLowerCase();
-    const serviceSuffix =
-      platform === "phone" || platform === "whatsapp" ? ` service:${platform}` : "";
-    return `handle:${quoted}${serviceSuffix}${typeSuffix}`;
+    return `handle:${quoted}${kindSuffix}`;
   }
-  return `contact:${contactId}${typeSuffix}`;
+  return `with:#${contactId}${kindSuffix}`;
 }
 
 type ColumnMode = "conversations" | "contacts" | "trash" | "import" | "export" | "settings";
@@ -136,10 +128,10 @@ export default function AppLayout() {
     setSearchParams(next, { replace: true });
   }
 
-  const handleSearch = (q: string) => {
+  const handleSearch = (q: string, mode: AdvancedSearchMode) => {
     if (trashMode) {
       navigate(`/trash${q ? `?tq=${encodeURIComponent(q)}` : ""}`);
-    } else if (/\bsearch:contacts\b/i.test(q) || contactsMode) {
+    } else if (mode === "contacts" || contactsMode) {
       const params = q ? `?cq=${encodeURIComponent(q)}` : "";
       if (noGroupMode) {
         navigate(`/no-group${params}`);
@@ -180,8 +172,8 @@ export default function AppLayout() {
     updateSearchParams({ q: q, f: "" });
   };
 
-  /** Trash is always `is:trash`; the search box narrows within it. */
-  const trashListQuery = trashSearch.trim() ? `is:trash ${trashSearch.trim()}` : "is:trash";
+  /** Trash is always `trashed:yes`; the search box narrows within it. */
+  const trashListQuery = trashSearch.trim() ? `trashed:yes ${trashSearch.trim()}` : "trashed:yes";
 
   const threadListQuery = tagListQuery(tagFilter, conversationFilter || conversationSearch);
 
@@ -208,15 +200,12 @@ export default function AppLayout() {
     contactId,
     kind,
     handle,
-    service,
   }: {
     contactId: string;
     kind: ContactBrowseKind;
     handle?: string;
-    service?: string;
-    handles?: string[];
   }) => {
-    const query = contactBrowseQuery(contactId, kind, handle, service);
+    const query = contactBrowseQuery(contactId, kind, handle);
     setSelectedContact(null);
     navigate(`/?q=${encodeURIComponent(query)}&f=${encodeURIComponent(query)}`);
   };
@@ -234,7 +223,7 @@ export default function AppLayout() {
         />
         <ColumnResizeProvider>
           <div className="flex min-h-0 flex-1 overflow-hidden">
-            <LeftPanel onSearchChange={handleSearchChange} onSearch={handleSearch} />
+            <LeftPanel onSearchChange={handleSearchChange} />
 
             {/* Conversations: render list component directly with props */}
             {mode === "conversations" && !isMessageRoute && (

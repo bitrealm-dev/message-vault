@@ -118,15 +118,6 @@ export function groupFromSlug(slug: string, groups: readonly string[]): string |
   return null;
 }
 
-/** Search words the contact list must send to the server (cannot filter locally). */
-export const GROUP_FILTER_TOKEN_RE = /\b(?:group|label|within):(?:"[^"]*"|[^\s]+)/gi;
-
-/** True when the typed filter includes `group:`, `label:`, or `within:`. */
-export function hasGroupFilterToken(raw: string): boolean {
-  GROUP_FILTER_TOKEN_RE.lastIndex = 0;
-  return GROUP_FILTER_TOKEN_RE.test(raw);
-}
-
 /** True when this contact should appear on the given group page. */
 /**
  * The permanent Contact Group holding what the vault could not identify: a

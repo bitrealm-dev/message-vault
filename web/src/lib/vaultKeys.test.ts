@@ -49,6 +49,11 @@ describe("keys", () => {
     expect(keys.adminUsers.all).toEqual(["admin-users"]);
   });
 
+  it("puts each list's search words under one prefix", () => {
+    expect(keys.searchFields.list("contacts")).toEqual(["search-fields", "contacts"]);
+    expect(coveredBy(keys.searchFields.list("contacts"), keys.searchFields.all)).toBe(true);
+  });
+
   it("puts the storage overview and one import run under the storage prefix", () => {
     expect(keys.storage.overview).toEqual(["storage", "overview"]);
     expect(keys.storage.importDetail(4)).toEqual(["storage", "import", "4"]);
@@ -57,7 +62,7 @@ describe("keys", () => {
   });
 
   it("puts every trash count under one prefix, so a tag write can name them all", () => {
-    expect(keys.trash.count("is:trash")).toEqual(["trash", "count", "is:trash"]);
-    expect(coveredBy(keys.trash.count("is:trash"), keys.trash.all)).toBe(true);
+    expect(keys.trash.count("trashed:yes")).toEqual(["trash", "count", "trashed:yes"]);
+    expect(coveredBy(keys.trash.count("trashed:yes"), keys.trash.all)).toBe(true);
   });
 });

@@ -2985,13 +2985,13 @@
         "tags": [
           "Export"
         ],
-        "summary": "Export messages matching a search query (message mode; cursor paging).",
+        "summary": "Export messages matching a query in the search language (cursor paging).",
         "operationId": "export_messages_handler",
         "parameters": [
           {
             "name": "q",
             "in": "query",
-            "description": "Metadata search subset; empty is all non-trashed",
+            "description": "Query in the search language; empty is every non-trashed message",
             "required": true,
             "schema": {
               "type": "string"
@@ -3037,6 +3037,7 @@
           {
             "name": "source",
             "in": "query",
+            "description": "Narrow to one backup: imessage, whatsapp, or sms-backup-restore",
             "required": false,
             "schema": {
               "type": "string"
@@ -3103,7 +3104,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "Metadata search subset; empty is all non-trashed",
+            "description": "Query in the search language; empty is every non-trashed message",
             "required": true,
             "schema": {
               "type": "string"
@@ -3120,6 +3121,7 @@
           {
             "name": "source",
             "in": "query",
+            "description": "Narrow to one backup: imessage, whatsapp, or sms-backup-restore",
             "required": false,
             "schema": {
               "type": "string"
@@ -4577,6 +4579,73 @@
             }
           },
           "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/search/fields": {
+      "get": {
+        "tags": [
+          "Search"
+        ],
+        "summary": "The search words one list accepts.",
+        "operationId": "search_fields_list",
+        "parameters": [
+          {
+            "name": "list",
+            "in": "query",
+            "description": "`contacts`, `conversations`, or `messages`.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ListKind"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchFieldsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
             "description": "",
             "content": {
               "application/json": {
@@ -6692,6 +6761,42 @@
           }
         }
       },
+      "FieldDoc": {
+        "type": "object",
+        "description": "One word as the web and the docs see it.",
+        "required": [
+          "word",
+          "value_type",
+          "values",
+          "help",
+          "example"
+        ],
+        "properties": {
+          "example": {
+            "type": "string",
+            "description": "One example, ready to type."
+          },
+          "help": {
+            "type": "string",
+            "description": "One line of help."
+          },
+          "value_type": {
+            "$ref": "#/components/schemas/ValueType",
+            "description": "What shape of value it takes."
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Keyword or fixed values the word accepts."
+          },
+          "word": {
+            "type": "string",
+            "description": "The spelling, without the colon."
+          }
+        }
+      },
       "ImportContactRow": {
         "type": "object",
         "description": "One contact an import run touched, and whether the run created it.",
@@ -7142,6 +7247,15 @@
           }
         }
       },
+      "ListKind": {
+        "type": "string",
+        "description": "Which list a query is compiled for. Each list accepts its own subset of\nthe words, and every filter is expressed against that list's base row.",
+        "enum": [
+          "contacts",
+          "conversations",
+          "messages"
+        ]
+      },
       "ListUsersResponse": {
         "type": "object",
         "description": "Every account in the vault.",
@@ -7515,6 +7629,21 @@
           }
         }
       },
+      "SearchFieldsResponse": {
+        "type": "object",
+        "description": "The words for one list, in the order the docs table shows them.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FieldDoc"
+            }
+          }
+        }
+      },
       "SetImportStageBody": {
         "type": "object",
         "description": "New stage for a live session.",
@@ -7610,6 +7739,20 @@
             "description": "Attachment byte size."
           }
         }
+      },
+      "ValueType": {
+        "type": "string",
+        "description": "What shape of value a word takes.",
+        "enum": [
+          "text",
+          "name",
+          "person",
+          "choice",
+          "date",
+          "count",
+          "size",
+          "flag"
+        ]
       }
     },
     "securitySchemes": {
@@ -7655,6 +7798,10 @@
     {
       "name": "Message tags",
       "description": "Tags on conversations"
+    },
+    {
+      "name": "Search",
+      "description": "The words the search language accepts"
     },
     {
       "name": "Admin",

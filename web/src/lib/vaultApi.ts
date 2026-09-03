@@ -416,6 +416,19 @@ export function deleteSavedSearch(id: number): Promise<Schema["SavedSearchDelete
   return apiClient.delete<Schema["SavedSearchDeleteResponse"]>(`/v1/saved-searches/${id}`);
 }
 
+// ── Search ──────────────────────────────────────────────────────────────────
+
+/** The words the search language accepts on one list. */
+export function listSearchFields(
+  list: Schema["ListKind"],
+  opts?: VaultRequestOptions,
+): Promise<Schema["SearchFieldsResponse"]> {
+  return apiClient.get<Schema["SearchFieldsResponse"]>(
+    withQuery("/v1/search/fields", query({ list })),
+    opts,
+  );
+}
+
 // ── Import Runs ─────────────────────────────────────────────────────────────
 
 export function listImports(opts?: VaultRequestOptions): Promise<Schema["ImportsListResponse"]> {

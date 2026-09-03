@@ -2,16 +2,12 @@ import { Cell, Row } from "react-aria-components";
 import type { ContactHandle } from "../../lib/contactDetail";
 import Button from "../Button";
 import { TrashIcon } from "../icons";
-import {
-  type ContactBrowseKind,
-  formatHandleServiceLabel,
-  inferService,
-} from "./contactDrawerTypes";
+import { type ContactBrowseKind, formatHandleServiceLabel } from "./contactDrawerTypes";
 import { CountCell } from "./handleTableHelpers";
 import { conversationCount, handleDateCell } from "./handleTableLogic";
 import { rowActionsRevealClass, tdClass, tdLeftClass, tdRightClass } from "./handleTableStyles";
 
-type BrowseFn = (args: { kind: ContactBrowseKind; handle?: string; service?: string }) => void;
+type BrowseFn = (args: { kind: ContactBrowseKind; handle?: string }) => void;
 
 /** Last count column: room on the right for the hover trash control. */
 const tdGroupMessagesClass = `${tdRightClass} relative !pr-9`;
@@ -55,14 +51,7 @@ export function renderHandleTableRow(
           value={convos}
           loading={loading}
           onClick={
-            opts.onBrowse
-              ? () =>
-                  opts.onBrowse?.({
-                    kind: "all",
-                    handle: h.handle,
-                    service: inferService(h.handle, h.service),
-                  })
-              : undefined
+            opts.onBrowse ? () => opts.onBrowse?.({ kind: "all", handle: h.handle }) : undefined
           }
         />
       </Cell>

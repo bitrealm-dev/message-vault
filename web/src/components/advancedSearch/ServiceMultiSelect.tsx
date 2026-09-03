@@ -12,8 +12,12 @@ import { popupShadow } from "../../lib/uiStyles";
 import { Z_POPOVER } from "../../lib/zLayers";
 import { compactSelectItemClassName, labelClass } from "./advancedSearchStyles";
 
+/** The transports the search language knows, named the way people name them. */
 const SERVICE_ITEMS = [
-  { id: "phone", name: "Text message" },
+  { id: "imessage", name: "iMessage" },
+  { id: "sms", name: "SMS" },
+  { id: "mms", name: "MMS" },
+  { id: "rcs", name: "RCS" },
   { id: "whatsapp", name: "WhatsApp" },
 ] as const;
 

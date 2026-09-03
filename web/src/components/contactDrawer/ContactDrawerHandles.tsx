@@ -34,7 +34,7 @@ import {
 } from "./headerLabelMinWidth";
 import { useHandleMutations } from "./useHandleMutations";
 
-type BrowseFn = (args: { kind: ContactBrowseKind; handle?: string; service?: string }) => void;
+type BrowseFn = (args: { kind: ContactBrowseKind; handle?: string }) => void;
 
 const twoLineHeader = (line1: string, line2: string) => (
   <>

@@ -31,7 +31,7 @@ pub struct VaultPullConfig {
     pub base_url: String,
     pub username: String,
     pub key: String,
-    /// Free-form Fastmail-style query (may be empty).
+    /// A query in the vault's search language (may be empty).
     pub query: String,
     pub source: Option<String>,
     pub skip_attachments: bool,
