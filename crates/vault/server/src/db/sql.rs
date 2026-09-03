@@ -16,7 +16,7 @@ use super::engine::DbEngine;
 /// `Bool`/`Null` are part of the enum contract shared by every dynamic query
 /// builder; no current filter binds them, so silence the dead-code warning
 /// rather than drop the variants.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
 pub enum SqlParam {
     Text(String),

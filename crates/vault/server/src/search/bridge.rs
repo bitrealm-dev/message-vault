@@ -1,0 +1,187 @@
+//! `Sql`, a fragment plus the values it binds, and `ListCtx`, which says
+//! what "this contact", "this conversation", and "this message" mean from
+//! each list's base row. Every emitter is written once against the alias it
+//! needs and asks the context to wrap it.
+
+use crate::db::dialect::like_ci;
+use crate::db::engine::DbEngine;
+use crate::db::sql::SqlParam;
+
+use super::ListKind;
+
+/// A fragment under construction. `params` are in the textual order of `text`.
+#[derive(Debug, Default)]
+pub(crate) struct Sql {
+    pub text: String,
+    pub params: Vec<SqlParam>,
+}
+
+impl Sql {
+    pub fn push(&mut self, s: &str) {
+        self.text.push_str(s);
+    }
+
+    /// Write `?` and bind a text value.
+    pub fn bind_text(&mut self, v: impl Into<String>) {
+        self.text.push('?');
+        self.params.push(SqlParam::Text(v.into()));
+    }
+
+    /// Write `?` and bind an integer.
+    pub fn bind_int(&mut self, v: i64) {
+        self.text.push('?');
+        self.params.push(SqlParam::Int(v));
+    }
+
+    /// `column LIKE ?` case-insensitively, binding `pattern`.
+    pub fn like(&mut self, engine: DbEngine, column: &str, pattern: &str) {
+        self.text.push_str(column);
+        self.text.push(' ');
+        self.text.push_str(like_ci(engine));
+        self.params.push(SqlParam::Text(pattern.to_string()));
+    }
+}
+
+/// Conversation `conv` involves the contact `contact_expr`: one of the
+/// contact's handles is the chat handle or a participant.
+pub(crate) fn conversation_involves(conv: &str, contact_expr: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM contact_handles chi \
+           WHERE chi.account_id = {conv}.account_id AND chi.contact_id = {contact_expr} \
+             AND (chi.handle_id = {conv}.chat_handle_id \
+                  OR EXISTS (SELECT 1 FROM participants pi WHERE pi.conversation_id = {conv}.id AND pi.handle_id = chi.handle_id)))"
+    )
+}
+
+/// Which list a fragment is for, and what it needs from the request.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ListCtx<'a> {
+    pub list: ListKind,
+    pub engine: DbEngine,
+    pub account_id: &'a str,
+}
+
+impl ListCtx<'_> {
+    /// The base row's account column.
+    pub fn account_col(&self) -> &'static str {
+        match self.list {
+            ListKind::Contacts => "ct.account_id",
+            ListKind::Conversations => "c.account_id",
+            ListKind::Messages => "m.account_id",
+        }
+    }
+
+    /// Wrap `inner`, written against conversation alias `c`, so it is true of
+    /// the base row: the conversation itself, the message's conversation, or
+    /// some conversation the contact is in.
+    pub fn conversation(&self, out: &mut Sql, inner: impl FnOnce(&mut Sql)) {
+        match self.list {
+            ListKind::Conversations => {
+                out.push("(");
+                inner(out);
+                out.push(")");
+            }
+            ListKind::Messages => {
+                out.push(
+                    "EXISTS (SELECT 1 FROM conversations c WHERE c.id = m.conversation_id AND (",
+                );
+                inner(out);
+                out.push("))");
+            }
+            ListKind::Contacts => {
+                out.push(&format!(
+                    "EXISTS (SELECT 1 FROM conversations c WHERE c.account_id = ct.account_id AND {} AND (",
+                    conversation_involves("c", "ct.id")
+                ));
+                inner(out);
+                out.push("))");
+            }
+        }
+    }
+
+    /// Wrap `inner`, written against message alias `m` (a non-duplicate
+    /// message; conversation alias `c` is also in scope), so it is true of the
+    /// base row.
+    pub fn message(&self, out: &mut Sql, inner: impl FnOnce(&mut Sql)) {
+        match self.list {
+            ListKind::Messages => {
+                out.push(
+                    "EXISTS (SELECT 1 FROM conversations c WHERE c.id = m.conversation_id AND (",
+                );
+                inner(out);
+                out.push("))");
+            }
+            ListKind::Conversations => {
+                out.push(
+                    "EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.duplicate_of IS NULL AND (",
+                );
+                inner(out);
+                out.push("))");
+            }
+            ListKind::Contacts => {
+                out.push(&format!(
+                    "EXISTS (SELECT 1 FROM conversations c JOIN messages m ON m.conversation_id = c.id AND m.duplicate_of IS NULL \
+                       WHERE c.account_id = ct.account_id AND {} AND (",
+                    conversation_involves("c", "ct.id")
+                ));
+                inner(out);
+                out.push("))");
+            }
+        }
+    }
+
+    /// Wrap `inner`, written against contact alias `ct`, so it is true of the
+    /// base row: the contact itself, or some contact linked to a participant.
+    pub fn contact(&self, out: &mut Sql, inner: impl FnOnce(&mut Sql)) {
+        match self.list {
+            ListKind::Contacts => {
+                out.push("(");
+                inner(out);
+                out.push(")");
+            }
+            ListKind::Conversations => {
+                out.push(&format!(
+                    "EXISTS (SELECT 1 FROM contacts ct WHERE ct.account_id = c.account_id AND {} AND (",
+                    conversation_involves("c", "ct.id")
+                ));
+                inner(out);
+                out.push("))");
+            }
+            ListKind::Messages => {
+                out.push(&format!(
+                    "EXISTS (SELECT 1 FROM conversations c JOIN contacts ct ON ct.account_id = c.account_id \
+                       WHERE c.id = m.conversation_id AND {} AND (",
+                    conversation_involves("c", "ct.id")
+                ));
+                inner(out);
+                out.push("))");
+            }
+        }
+    }
+
+    /// A WHERE fragment tying messages alias `m2` to the base row, for
+    /// MIN, MAX, and COUNT subqueries. Excludes duplicates.
+    pub fn messages_link(&self, m2: &str) -> String {
+        match self.list {
+            ListKind::Messages => {
+                format!("{m2}.conversation_id = m.conversation_id AND {m2}.duplicate_of IS NULL")
+            }
+            ListKind::Conversations => {
+                format!("{m2}.conversation_id = c.id AND {m2}.duplicate_of IS NULL")
+            }
+            ListKind::Contacts => format!(
+                "{m2}.account_id = ct.account_id AND {m2}.duplicate_of IS NULL AND EXISTS (SELECT 1 FROM conversations c2 WHERE c2.id = {m2}.conversation_id AND {})",
+                conversation_involves("c2", "ct.id")
+            ),
+        }
+    }
+
+    /// A WHERE fragment tying conversations alias `c2` to the base contact.
+    /// Only meaningful on Contacts.
+    pub fn conversations_link(&self, c2: &str) -> String {
+        format!(
+            "{c2}.account_id = ct.account_id AND {}",
+            conversation_involves(c2, "ct.id")
+        )
+    }
+}
