@@ -8,7 +8,7 @@ afterEach(() => {
 
 describe("errorMessageFromBody", () => {
   it("pulls the sentence out of the vault's error envelope", () => {
-    expect(errorMessageFromBody(401, '{"ok":false,"error":"invalid username or password"}')).toBe(
+    expect(errorMessageFromBody(401, '{"error":"invalid username or password"}')).toBe(
       "invalid username or password",
     );
   });
@@ -22,9 +22,7 @@ describe("errorMessageFromBody", () => {
   });
 
   it("ignores an envelope whose error is blank", () => {
-    expect(errorMessageFromBody(400, '{"ok":false,"error":"  "}')).toBe(
-      '{"ok":false,"error":"  "}',
-    );
+    expect(errorMessageFromBody(400, '{"error":"  "}')).toBe('{"error":"  "}');
   });
 
   it("clamps an oversized raw-text fallback so it cannot overrun the fixed card", () => {
@@ -48,7 +46,7 @@ describe("apiClient errors", () => {
       vi.fn().mockResolvedValue({
         ok: false,
         status: 409,
-        text: async () => '{"ok":false,"error":"username already taken: matt"}',
+        text: async () => '{"error":"username already taken: matt"}',
       }),
     );
 
@@ -65,7 +63,7 @@ describe("apiClient errors", () => {
       vi.fn().mockResolvedValue({
         ok: false,
         status: 401,
-        text: async () => '{"ok":false,"error":"invalid username or password"}',
+        text: async () => '{"error":"invalid username or password"}',
       }),
     );
 

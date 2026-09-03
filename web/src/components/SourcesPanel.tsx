@@ -9,14 +9,14 @@ export default function SourcesPanel({
   conversationId,
   onClose,
 }: {
-  conversationId: string | null;
+  conversationId: number | null;
   onClose: () => void;
 }) {
   const fetchSources = useCallback(
     async (signal: AbortSignal) => {
       if (!conversationId) return [];
       const res = await getConversationSources(conversationId, { signal });
-      return res.sources;
+      return res.items;
     },
     [conversationId],
   );

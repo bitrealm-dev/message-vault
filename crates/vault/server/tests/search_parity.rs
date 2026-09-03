@@ -193,14 +193,13 @@ async fn run_against(conn: &mut AnyConnection) -> Vec<(&'static str, Vec<i64>)> 
                 account_id: ACCOUNT_ID,
                 query,
                 limit: 100,
-                offset: None,
-                cursor: None,
+                offset: 0,
                 today: chrono::NaiveDate::from_ymd_opt(2026, 9, 2).unwrap(),
             },
         )
         .await
         .expect("committed parity query executes");
-        let mut ids: Vec<i64> = resp.messages.iter().map(|m| m.id).collect();
+        let mut ids: Vec<i64> = resp.items.iter().map(|m| m.id).collect();
         ids.sort_unstable();
         ids.dedup();
         results.push((query, ids));
@@ -233,14 +232,13 @@ async fn assert_diacritics_exception(conn: &mut AnyConnection, engine: Engine) {
             account_id: ACCOUNT_ID,
             query: "cafe",
             limit: 100,
-            offset: None,
-            cursor: None,
+            offset: 0,
             today: chrono::NaiveDate::from_ymd_opt(2026, 9, 2).unwrap(),
         },
     )
     .await
     .expect("diacritics query executes");
-    let mut ids: Vec<i64> = resp.messages.iter().map(|m| m.id).collect();
+    let mut ids: Vec<i64> = resp.items.iter().map(|m| m.id).collect();
     ids.sort_unstable();
     assert_eq!(
         ids,

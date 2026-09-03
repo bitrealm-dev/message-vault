@@ -1,8 +1,8 @@
 //! Read-only message export query used by `GET /v1/export/messages`
 //! and `GET /v1/export/messages/count`.
 
-use axum::Json;
-use axum::extract::{Query, State};
+use crate::extract::{Json, Query};
+use axum::extract::State;
 use serde::{Deserialize, Serialize};
 use sqlx::AnyConnection;
 use sqlx::{Executor, Row};
@@ -14,7 +14,7 @@ use crate::db::sql::{SqlParam, bind_all, group_rows_by_id, renumber_placeholders
 use crate::export_api::{self};
 use crate::server::{ApiError, AppState, ExportAccess, resolve_import_account};
 
-pub use crate::page_limits::{DEFAULT_EXPORT_LIMIT, MAX_EXPORT_LIMIT, MAX_EXPORT_OFFSET};
+use crate::paging::{DEFAULT_EXPORT_LIMIT, Page, page_params};
 
 /// Options for one exported page of messages.
 #[derive(Debug, Clone)]
@@ -23,12 +23,10 @@ pub struct ExportPageOpts<'a> {
     pub account_id: &'a str,
     /// Search query string, in the search language.
     pub query: &'a str,
-    /// Max messages on the page.
+    /// Max messages on the page. Already validated by the handler: 1..=MAX_LIST_LIMIT.
     pub limit: usize,
-    /// Row offset; not combined with `cursor`.
-    pub offset: Option<usize>,
-    /// Opaque cursor from a previous page.
-    pub cursor: Option<&'a str>,
+    /// Row offset.
+    pub offset: usize,
     /// The day relative dates in `query` resolve against.
     pub today: chrono::NaiveDate,
 }
@@ -44,30 +42,9 @@ pub struct ExportCountOpts<'a> {
     pub today: chrono::NaiveDate,
 }
 
-/// One page of exported messages.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct ExportMessagesResponse {
-    /// Always true when a response is returned.
-    pub ok: bool,
-    /// Query echoed back.
-    pub query: String,
-    /// Messages on this page.
-    pub messages: Vec<ExportMessage>,
-    /// Cursor for the next page; absent on the last page.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<String>,
-    /// True when more rows matched than the page limit.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub truncated: Option<bool>,
-}
-
 /// Match counts for an export query.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ExportCountResponse {
-    /// Always true when a response is returned.
-    pub ok: bool,
-    /// Query echoed back.
-    pub query: String,
     /// Matching messages.
     pub messages: u64,
     /// Distinct conversations with at least one matching message.
@@ -198,77 +175,11 @@ pub struct ExportTapback {
     pub sender: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-struct PageCursor {
-    timestamp: String,
-    sort_order: i64,
-    id: i64,
-}
-
-impl PageCursor {
-    fn encode(&self) -> String {
-        format!("{}|{}|{}", self.timestamp, self.sort_order, self.id)
-    }
-
-    fn decode(raw: &str) -> Option<Self> {
-        let mut parts = raw.splitn(3, '|');
-        let timestamp = parts.next()?.to_string();
-        let sort_order: i64 = parts.next()?.parse().ok()?;
-        let id: i64 = parts.next()?.parse().ok()?;
-        if timestamp.is_empty() {
-            return None;
-        }
-        Some(Self {
-            timestamp,
-            sort_order,
-            id,
-        })
-    }
-}
-
 fn unique_ids(ids: impl IntoIterator<Item = i64>) -> Vec<i64> {
     let mut ids: Vec<i64> = ids.into_iter().collect();
     ids.sort_unstable();
     ids.dedup();
     ids
-}
-
-/// The `source` query parameter as a word in the language, or `None` for a
-/// value the language does not have.
-pub(crate) fn source_word(raw: &str) -> Option<&'static str> {
-    match raw.trim() {
-        "imessage" => Some("imessage"),
-        "whatsapp" => Some("whatsapp"),
-        "sms-backup-restore" => Some("sms"),
-        _ => None,
-    }
-}
-
-/// `q` with the route's `source` parameter written in front of it as a
-/// `source:` word, so the parameter means exactly what the word means.
-///
-/// `q` is wrapped in parentheses because `or` binds loosest: without them
-/// `?source=whatsapp&q=a or b` would ask for "a from WhatsApp, or b from
-/// anywhere", and the parameter is meant to narrow the whole query.
-///
-/// # Errors
-///
-/// `BadRequest` naming the value when `source` is not one of the stored ids.
-fn with_source_word(q: &str, source: Option<&str>) -> Result<String, ApiError> {
-    let Some(raw) = source.filter(|s| !s.trim().is_empty()) else {
-        return Ok(q.to_string());
-    };
-    let word = source_word(raw).ok_or_else(|| {
-        ApiError::BadRequest(format!(
-            "source: does not understand {}. Write one of: imessage, whatsapp, sms-backup-restore.",
-            raw.trim()
-        ))
-    })?;
-    let q = q.trim();
-    if q.is_empty() {
-        return Ok(format!("source:{word}"));
-    }
-    Ok(format!("source:{word} ({q})"))
 }
 
 /// Compile `query` into a WHERE fragment over the messages alias `m`.
@@ -287,29 +198,40 @@ fn message_filter(
     })?)
 }
 
-/// Export messages matching a query in the search language.
+/// `COUNT(*)` of the messages a compiled filter matches.
+async fn count_matching_messages(
+    conn: &mut AnyConnection,
+    filter: &crate::search::Filter,
+) -> Result<u64, ApiError> {
+    let sql = format!(
+        "SELECT COUNT(*)
+         {messages_from_sql}
+         WHERE {where_sql}",
+        messages_from_sql = messages_from_sql(),
+        where_sql = filter.where_sql(),
+    );
+    let n: i64 = (&mut *conn)
+        .fetch_one(bind_all(&renumber_placeholders(&sql), filter.params()))
+        .await?
+        .try_get(0)?;
+    Ok(n.max(0) as u64)
+}
+
+/// Export messages matching a query in the search language, a page at a time.
 ///
 /// An empty query returns every non-trashed, non-duplicate message for the account.
+/// An offset past the end returns an empty page carrying the true `total`.
 ///
 /// # Errors
 ///
-/// Returns a bad-request error for an invalid query or cursor, or an internal
+/// Returns a bad-request error for an invalid query, or an internal
 /// error when a database statement fails.
 pub async fn export_messages(
     conn: &mut AnyConnection,
     opts: ExportPageOpts<'_>,
-) -> Result<ExportMessagesResponse, ApiError> {
-    let limit = opts.limit.clamp(1, MAX_EXPORT_LIMIT);
-    let cursor = match opts.cursor {
-        Some(raw) if !raw.trim().is_empty() => Some(
-            PageCursor::decode(raw.trim())
-                .ok_or_else(|| ApiError::BadRequest("invalid cursor".into()))?,
-        ),
-        _ => None,
-    };
-
+) -> Result<Page<ExportMessage>, ApiError> {
     let filter = message_filter(engine_of(conn), opts.account_id, opts.query, opts.today)?;
-    let fetch_limit = limit + 1;
+    let total = count_matching_messages(conn, &filter).await?;
 
     let mut sql = format!(
         "SELECT m.id, m.conversation_id, m.source, m.service, m.guid, m.timestamp, m.timestamp_utc,
@@ -322,41 +244,14 @@ pub async fn export_messages(
         messages_from_sql = messages_from_sql(),
         where_sql = filter.where_sql(),
     );
-
     let mut params = filter.params().to_vec();
-    if let Some(cur) = &cursor {
-        sql.push_str(
-            " AND (
-                m.timestamp > ?
-                OR (m.timestamp = ? AND m.sort_order > ?)
-                OR (m.timestamp = ? AND m.sort_order = ? AND m.id > ?)
-              )",
-        );
-        params.push(SqlParam::Text(cur.timestamp.clone()));
-        params.push(SqlParam::Text(cur.timestamp.clone()));
-        params.push(SqlParam::Int(cur.sort_order));
-        params.push(SqlParam::Text(cur.timestamp.clone()));
-        params.push(SqlParam::Int(cur.sort_order));
-        params.push(SqlParam::Int(cur.id));
-    }
-    sql.push_str(" ORDER BY m.timestamp ASC, m.sort_order ASC, m.id ASC");
-    if let (Some(offset), None) = (opts.offset, &cursor) {
-        if offset > MAX_EXPORT_OFFSET {
-            return Err(ApiError::BadRequest(format!(
-                "offset exceeds maximum of {MAX_EXPORT_OFFSET}; use cursor pagination instead"
-            )));
-        }
-        sql.push_str(" LIMIT ? OFFSET ?");
-        params.push(SqlParam::Int(fetch_limit as i64));
-        params.push(SqlParam::Int(offset as i64));
-    } else {
-        sql.push_str(" LIMIT ?");
-        params.push(SqlParam::Int(fetch_limit as i64));
-    }
+    sql.push_str(" ORDER BY m.timestamp ASC, m.sort_order ASC, m.id ASC LIMIT ? OFFSET ?");
+    params.push(SqlParam::Int(opts.limit as i64));
+    params.push(SqlParam::Int(opts.offset as i64));
 
     let sql = renumber_placeholders(&sql);
     let rows = (&mut *conn).fetch_all(bind_all(&sql, &params)).await?;
-    let rows: Vec<RawRow> = rows
+    let page_rows: Vec<RawRow> = rows
         .iter()
         .map(|row| {
             Ok(RawRow {
@@ -383,26 +278,6 @@ pub async fn export_messages(
             })
         })
         .collect::<Result<Vec<RawRow>, ApiError>>()?;
-
-    let truncated = rows.len() > limit;
-    let page_rows: Vec<RawRow> = if truncated {
-        rows.into_iter().take(limit).collect()
-    } else {
-        rows
-    };
-
-    let next_cursor = if truncated {
-        page_rows.last().map(|r| {
-            PageCursor {
-                timestamp: r.timestamp.clone(),
-                sort_order: r.sort_order,
-                id: r.id,
-            }
-            .encode()
-        })
-    } else {
-        None
-    };
 
     let conv_ids = unique_ids(page_rows.iter().map(|r| r.conversation_id));
     let participants = load_participants(conn, &conv_ids).await?;
@@ -447,12 +322,11 @@ pub async fn export_messages(
         })
         .collect();
 
-    Ok(ExportMessagesResponse {
-        ok: true,
-        query: opts.query.to_string(),
-        messages,
-        next_cursor,
-        truncated: truncated.then_some(true),
+    Ok(Page {
+        items: messages,
+        total,
+        limit: opts.limit,
+        offset: opts.offset,
     })
 }
 
@@ -473,17 +347,7 @@ pub async fn export_message_count(
     let filter = message_filter(engine_of(conn), opts.account_id, opts.query, opts.today)?;
     let params = filter.params();
 
-    let msg_sql = format!(
-        "SELECT COUNT(*)
-         {messages_from_sql}
-         WHERE {where_sql}",
-        messages_from_sql = messages_from_sql(),
-        where_sql = filter.where_sql(),
-    );
-    let messages: i64 = (&mut *conn)
-        .fetch_one(bind_all(&renumber_placeholders(&msg_sql), params))
-        .await?
-        .try_get(0)?;
+    let messages = count_matching_messages(conn, &filter).await?;
 
     let conv_sql = format!(
         "SELECT COUNT(DISTINCT c.id)
@@ -518,9 +382,7 @@ pub async fn export_message_count(
     let (attachments, total_bytes): (i64, i64) = (row.try_get(0)?, row.try_get(1)?);
 
     Ok(ExportCountResponse {
-        ok: true,
-        query: opts.query.to_string(),
-        messages: messages.max(0) as u64,
+        messages,
         conversations: conversations.max(0) as u64,
         attachments: attachments.max(0) as u64,
         total_bytes: total_bytes.max(0) as u64,
@@ -692,11 +554,7 @@ pub(crate) struct ExportMessagesQuery {
     #[serde(default)]
     pub(crate) offset: Option<usize>,
     #[serde(default)]
-    pub(crate) cursor: Option<String>,
-    #[serde(default)]
     pub(crate) account: Option<String>,
-    #[serde(default)]
-    pub(crate) source: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -705,8 +563,6 @@ pub(crate) struct ExportMessagesCountQuery {
     q: String,
     #[serde(default)]
     account: Option<String>,
-    #[serde(default)]
-    source: Option<String>,
 }
 
 /// Count messages, conversations, and attachment fingerprints matching a
@@ -718,8 +574,7 @@ pub(crate) struct ExportMessagesCountQuery {
     security(("bearer" = [])),
     params(
         ("q" = String, Query, description = "Query in the search language; empty is every non-trashed message"),
-        ("account" = Option<String>, Query),
-        ("source" = Option<String>, Query, description = "Narrow to one backup: imessage, whatsapp, or sms-backup-restore")
+        ("account" = Option<String>, Query)
     ),
     responses(
         (status = 200, body = crate::export_api::ExportCountResponse),
@@ -734,7 +589,7 @@ pub(crate) async fn export_messages_count_handler(
     Query(query): Query<ExportMessagesCountQuery>,
 ) -> Result<Json<export_api::ExportCountResponse>, ApiError> {
     let account = resolve_import_account(&auth, query.account.as_deref(), &state.db).await?;
-    let q = with_source_word(&query.q, query.source.as_deref())?;
+    let q = query.q;
     let today = chrono::Local::now().date_naive();
 
     let mut conn = state.db.acquire().await?;
@@ -750,7 +605,7 @@ pub(crate) async fn export_messages_count_handler(
     Ok(Json(body))
 }
 
-/// Export messages matching a query in the search language (cursor paging).
+/// Export messages matching a query in the search language, a page at a time.
 #[utoipa::path(
     get,
     path = "/v1/export/messages",
@@ -759,13 +614,11 @@ pub(crate) async fn export_messages_count_handler(
     params(
         ("q" = String, Query, description = "Query in the search language; empty is every non-trashed message"),
         ("limit" = Option<usize>, Query, description = "Page size, default 100, max 500"),
-        ("offset" = Option<usize>, Query, description = "Legacy offset; prefer cursor"),
-        ("cursor" = Option<String>, Query, description = "Opaque next_cursor from a previous page"),
-        ("account" = Option<String>, Query),
-        ("source" = Option<String>, Query, description = "Narrow to one backup: imessage, whatsapp, or sms-backup-restore")
+        ("offset" = Option<usize>, Query, description = "Page offset; no cap, an offset past the end is an empty page"),
+        ("account" = Option<String>, Query)
     ),
     responses(
-        (status = 200, body = crate::export_api::ExportMessagesResponse),
+        (status = 200, body = crate::paging::Page<crate::export_api::ExportMessage>),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody)
@@ -775,12 +628,9 @@ pub(crate) async fn export_messages_handler(
     State(state): State<AppState>,
     ExportAccess(auth): ExportAccess,
     Query(query): Query<ExportMessagesQuery>,
-) -> Result<Json<export_api::ExportMessagesResponse>, ApiError> {
+) -> Result<Json<Page<export_api::ExportMessage>>, ApiError> {
     let account = resolve_import_account(&auth, query.account.as_deref(), &state.db).await?;
-    let limit = query.limit.unwrap_or(DEFAULT_EXPORT_LIMIT);
-    let offset = query.offset;
-    let q = with_source_word(&query.q, query.source.as_deref())?;
-    let cursor = query.cursor.clone();
+    let page = page_params(query.limit, query.offset, DEFAULT_EXPORT_LIMIT, None)?;
     let today = chrono::Local::now().date_naive();
 
     let mut conn = state.db.acquire().await?;
@@ -788,10 +638,9 @@ pub(crate) async fn export_messages_handler(
         &mut conn,
         ExportPageOpts {
             account_id: &account,
-            query: &q,
-            limit,
-            offset,
-            cursor: cursor.as_deref(),
+            query: &query.q,
+            limit: page.limit,
+            offset: page.offset,
             today,
         },
     )
@@ -805,7 +654,7 @@ mod tests {
     use crate::db::{engine, schema};
 
     #[tokio::test]
-    async fn export_takes_the_search_language_and_source_param() {
+    async fn export_takes_the_search_language() {
         let (pool, _dir, f) = crate::search::tests::seeded().await;
         let mut conn = pool.acquire().await.unwrap();
         let today = crate::search::tests::today();
@@ -815,14 +664,13 @@ mod tests {
                 account_id: crate::search::tests::ACCOUNT,
                 query: "from:me avocado",
                 limit: 50,
-                offset: None,
-                cursor: None,
+                offset: 0,
                 today,
             },
         )
         .await
         .unwrap();
-        let mut ids: Vec<i64> = page.messages.iter().map(|m| m.id).collect();
+        let mut ids: Vec<i64> = page.items.iter().map(|m| m.id).collect();
         ids.sort_unstable();
         assert_eq!(ids, vec![f.jane_avocado_from_me, f.sam_avocado_from_me]);
 
@@ -845,67 +693,13 @@ mod tests {
                 account_id: crate::search::tests::ACCOUNT,
                 query: "sparkle:yes",
                 limit: 50,
-                offset: None,
-                cursor: None,
+                offset: 0,
                 today,
             },
         )
         .await
         .unwrap_err();
         assert!(matches!(err, ApiError::BadRequest(_)));
-    }
-
-    #[test]
-    fn source_param_maps_to_the_source_word() {
-        assert_eq!(source_word("imessage"), Some("imessage"));
-        assert_eq!(source_word("sms-backup-restore"), Some("sms"));
-        assert_eq!(source_word("whatsapp"), Some("whatsapp"));
-        assert_eq!(source_word("mystery"), None);
-        assert_eq!(source_word("  "), None);
-    }
-
-    #[test]
-    fn the_source_param_becomes_a_leading_source_word() {
-        assert_eq!(with_source_word("avocado", None).unwrap(), "avocado");
-        assert_eq!(with_source_word("avocado", Some("  ")).unwrap(), "avocado");
-        assert_eq!(
-            with_source_word("avocado", Some("sms-backup-restore")).unwrap(),
-            "source:sms (avocado)"
-        );
-        assert_eq!(
-            with_source_word("  ", Some("whatsapp")).unwrap(),
-            "source:whatsapp"
-        );
-        let err = with_source_word("avocado", Some("mystery")).unwrap_err();
-        assert!(
-            matches!(&err, ApiError::BadRequest(m) if m.contains("mystery")),
-            "{err:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn the_source_param_narrows_the_whole_query_not_just_its_first_branch() {
-        let (pool, _dir, f) = crate::search::tests::seeded().await;
-        let mut conn = pool.acquire().await.unwrap();
-        // "old" is the WhatsApp message; "avocado" is only ever iMessage.
-        // Asking for WhatsApp must drop the avocado messages, which it does
-        // not if the source word only binds to the query's first branch.
-        let q = with_source_word("old or avocado", Some("whatsapp")).unwrap();
-        let page = export_messages(
-            &mut conn,
-            ExportPageOpts {
-                account_id: crate::search::tests::ACCOUNT,
-                query: &q,
-                limit: 50,
-                offset: None,
-                cursor: None,
-                today: crate::search::tests::today(),
-            },
-        )
-        .await
-        .unwrap();
-        let ids: Vec<i64> = page.messages.iter().map(|m| m.id).collect();
-        assert_eq!(ids, vec![f.archive_msg]);
     }
 
     async fn setup() -> (sqlx::AnyPool, tempfile::TempDir) {
@@ -975,16 +769,15 @@ mod tests {
                 account_id: "a1",
                 query: "in:#1",
                 limit: 100,
-                offset: None,
-                cursor: None,
+                offset: 0,
                 today: crate::search::tests::today(),
             },
         )
         .await
         .unwrap();
-        assert_eq!(res.messages.len(), 1);
-        assert_eq!(res.messages[0].attachments.len(), 1);
-        let att = &res.messages[0].attachments[0];
+        assert_eq!(res.items.len(), 1);
+        assert_eq!(res.items[0].attachments.len(), 1);
+        let att = &res.items[0].attachments[0];
         assert!(att.sha256.is_none());
         assert_eq!(att.missing_reason.as_deref(), Some("file_missing"));
         assert_eq!(att.original_name.as_deref(), Some("gone.bin"));
@@ -1002,16 +795,15 @@ mod tests {
                 account_id: "a1",
                 query: "in:#1",
                 limit: 100,
-                offset: None,
-                cursor: None,
+                offset: 0,
                 today: crate::search::tests::today(),
             },
         )
         .await
         .unwrap();
-        assert_eq!(res.messages.len(), 1);
-        assert_eq!(res.messages[0].id, 1);
-        assert_eq!(res.messages[0].service.as_deref(), Some("sms"));
+        assert_eq!(res.items.len(), 1);
+        assert_eq!(res.items[0].id, 1);
+        assert_eq!(res.items[0].service.as_deref(), Some("sms"));
 
         let res = export_messages(
             &mut conn,
@@ -1019,15 +811,14 @@ mod tests {
                 account_id: "a1",
                 query: "in:#2",
                 limit: 100,
-                offset: None,
-                cursor: None,
+                offset: 0,
                 today: crate::search::tests::today(),
             },
         )
         .await
         .unwrap();
-        assert_eq!(res.messages.len(), 1);
-        assert_eq!(res.messages[0].id, 2);
+        assert_eq!(res.items.len(), 1);
+        assert_eq!(res.items[0].id, 2);
 
         let res = export_messages(
             &mut conn,
@@ -1035,14 +826,13 @@ mod tests {
                 account_id: "a1",
                 query: "",
                 limit: 100,
-                offset: None,
-                cursor: None,
+                offset: 0,
                 today: crate::search::tests::today(),
             },
         )
         .await
         .unwrap();
-        assert_eq!(res.messages.len(), 2);
+        assert_eq!(res.items.len(), 2);
     }
 
     #[tokio::test]
@@ -1108,22 +898,15 @@ mod tests {
                 account_id: "a1",
                 query: "one",
                 limit: 100,
-                offset: None,
-                cursor: None,
+                offset: 0,
                 today: crate::search::tests::today(),
             },
         )
         .await
         .unwrap();
-        assert_eq!(res.messages.len(), 1);
-        assert_eq!(res.messages[0].id, 1);
-        assert!(
-            res.messages[0]
-                .text
-                .as_deref()
-                .unwrap_or("")
-                .contains("one")
-        );
+        assert_eq!(res.items.len(), 1);
+        assert_eq!(res.items[0].id, 1);
+        assert!(res.items[0].text.as_deref().unwrap_or("").contains("one"));
     }
 
     #[tokio::test]
@@ -1157,14 +940,13 @@ mod tests {
                 account_id: "a1",
                 query: "foo OR bar",
                 limit: 100,
-                offset: None,
-                cursor: None,
+                offset: 0,
                 today: crate::search::tests::today(),
             },
         )
         .await
         .unwrap();
-        let ids: Vec<i64> = result.messages.iter().map(|message| message.id).collect();
+        let ids: Vec<i64> = result.items.iter().map(|message| message.id).collect();
         assert_eq!(ids, vec![1, 2, 3]);
     }
 
@@ -1206,14 +988,13 @@ mod tests {
                         account_id: "a1",
                         query,
                         limit: 100,
-                        offset: None,
-                        cursor: None,
+                        offset: 0,
                         today: crate::search::tests::today(),
                     },
                 )
                 .await
                 .unwrap()
-                .messages
+                .items
                 .into_iter()
                 .map(|message| message.id)
                 .collect::<Vec<_>>()
@@ -1260,14 +1041,13 @@ mod tests {
                         account_id: "a1",
                         query,
                         limit: 100,
-                        offset: None,
-                        cursor: None,
+                        offset: 0,
                         today: crate::search::tests::today(),
                     },
                 )
                 .await
                 .unwrap()
-                .messages
+                .items
                 .into_iter()
                 .map(|message| message.id)
                 .collect::<Vec<_>>()
@@ -1295,7 +1075,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_an_oversized_query_and_offset() {
+    async fn rejects_an_oversized_query() {
         let (pool, _dir) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
         let huge = "x".repeat(crate::search::lex::MAX_QUERY_BYTES + 1);
@@ -1305,8 +1085,7 @@ mod tests {
                 account_id: "a1",
                 query: &huge,
                 limit: 10,
-                offset: None,
-                cursor: None,
+                offset: 0,
                 today: crate::search::tests::today(),
             },
         )
@@ -1314,24 +1093,6 @@ mod tests {
         .unwrap_err();
         assert!(
             matches!(&err, ApiError::BadRequest(m) if m.contains("longer than")),
-            "{err:?}"
-        );
-
-        let err = export_messages(
-            &mut conn,
-            ExportPageOpts {
-                account_id: "a1",
-                query: "",
-                limit: 10,
-                offset: Some(MAX_EXPORT_OFFSET + 1),
-                cursor: None,
-                today: crate::search::tests::today(),
-            },
-        )
-        .await
-        .unwrap_err();
-        assert!(
-            matches!(&err, ApiError::BadRequest(m) if m.contains("offset")),
             "{err:?}"
         );
     }
@@ -1377,17 +1138,13 @@ mod tests {
                 account_id: "a1",
                 query: "secret",
                 limit: 100,
-                offset: None,
-                cursor: None,
+                offset: 0,
                 today: crate::search::tests::today(),
             },
         )
         .await
         .unwrap();
-        assert!(
-            alice.messages.is_empty(),
-            "alice must not see bob's FTS hits"
-        );
+        assert!(alice.items.is_empty(), "alice must not see bob's FTS hits");
 
         let alice_all = export_messages(
             &mut conn,
@@ -1395,21 +1152,17 @@ mod tests {
                 account_id: "a1",
                 query: "",
                 limit: 100,
-                offset: None,
-                cursor: None,
+                offset: 0,
                 today: crate::search::tests::today(),
             },
         )
         .await
         .unwrap();
-        assert!(alice_all.messages.iter().all(|m| m.id != 99));
+        assert!(alice_all.items.iter().all(|m| m.id != 99));
     }
 
-    /// Cursor pagination end to end: the 6 cursor binds (`timestamp`, then the
-    /// `timestamp|sort_order|id` triple twice) must align with the assembled
-    /// SQL after renumbering, and `LIMIT ?` follows them.
     #[tokio::test]
-    async fn export_pages_with_cursor_and_limit() {
+    async fn export_pages_by_offset_and_reports_the_total() {
         let (pool, _dir) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
         sqlx::query(
@@ -1425,9 +1178,7 @@ mod tests {
         .await
         .unwrap();
 
-        // Owned cursor so the async closure borrows nothing borrowed by the
-        // caller (a `&str` capture would need a lifetime the closure cannot name).
-        let page = |limit: usize, cursor: Option<String>| {
+        let page = |limit: usize, offset: usize| {
             let pool = pool.clone();
             async move {
                 let mut conn = pool.acquire().await.unwrap();
@@ -1437,8 +1188,7 @@ mod tests {
                         account_id: "a1",
                         query: "",
                         limit,
-                        offset: None,
-                        cursor: cursor.as_deref(),
+                        offset,
                         today: crate::search::tests::today(),
                     },
                 )
@@ -1447,16 +1197,51 @@ mod tests {
             }
         };
 
-        let first = page(2, None).await;
-        assert_eq!(first.messages.len(), 2);
-        assert!(first.truncated == Some(true));
-        let cursor = first.next_cursor.expect("first page must carry a cursor");
+        let first = page(2, 0).await;
+        assert_eq!(first.items.len(), 2);
+        assert_eq!((first.total, first.limit, first.offset), (3, 2, 0));
 
-        let second = page(2, Some(cursor)).await;
-        assert_eq!(second.messages.len(), 1);
-        assert_eq!(second.messages[0].id, 3);
-        assert_eq!(second.truncated, None);
-        assert!(second.next_cursor.is_none());
+        let second = page(2, 2).await;
+        assert_eq!(second.items.len(), 1);
+        assert_eq!(second.items[0].id, 3);
+        assert_eq!(second.total, 3);
+
+        // Past the end is an empty page with the true total, not an error.
+        let past = page(2, 10).await;
+        assert!(past.items.is_empty());
+        assert_eq!(past.total, 3);
+    }
+
+    #[tokio::test]
+    async fn the_export_route_answers_a_page_and_refuses_a_bad_limit() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let user = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+        crate::test_support::seed_one_message(&state, &user.account_id).await;
+
+        let page: serde_json::Value =
+            crate::test_support::get_json(&state, "/v1/export/messages?q=&limit=10", &user.token)
+                .await;
+        assert_eq!(page["total"], 1);
+        assert_eq!(page["items"].as_array().unwrap().len(), 1);
+        for gone in ["ok", "query", "messages", "next_cursor", "truncated"] {
+            assert!(page.get(gone).is_none(), "{gone} must be gone: {page}");
+        }
+
+        let status = crate::test_support::get_status(
+            &state,
+            "/v1/export/messages?q=&limit=501",
+            &user.token,
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+
+        let count: serde_json::Value =
+            crate::test_support::get_json(&state, "/v1/export/messages/count?q=", &user.token)
+                .await;
+        assert_eq!(count["messages"], 1);
+        assert!(count.get("ok").is_none());
+        assert!(count.get("query").is_none());
     }
 
     /// End-to-end placeholder discipline: the assembled export query's `$N`

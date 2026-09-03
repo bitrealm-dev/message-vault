@@ -121,21 +121,18 @@ fn authenticate_and_push_text_only_conversation() {
     let _auth = server.mock(|when, then| {
         when.method(GET).path("/v1/auth/check");
         then.status(200).json_body(json!({
-            "ok": true,
             "account_id": "acct-1",
             "username": "alice",
-            "account_ok": true,
             "sources": ["sms-backup-restore"]
         }));
     });
     let _start_import = server.mock(|when, then| {
         when.method(POST).path("/v1/imports");
-        then.status(200).json_body(json!({ "ok": true, "id": 42 }));
+        then.status(200).json_body(json!({ "id": 42 }));
     });
     let _complete_import = server.mock(|when, then| {
         when.method(POST).path("/v1/imports/42/complete");
         then.status(200).json_body(json!({
-            "ok": true,
             "id": 42,
             "status": "completed",
             "message_count": 1,
@@ -148,7 +145,6 @@ fn authenticate_and_push_text_only_conversation() {
             .path("/v1/import")
             .query_param("import_id", "42");
         then.status(200).json_body(json!({
-            "ok": true,
             "source": "sms-backup-restore",
             "account": "acct-1",
             "messages": 1,
@@ -192,23 +188,19 @@ fn reuses_supplied_import_session_without_starting_or_completing_one() {
     let _auth = server.mock(|when, then| {
         when.method(GET).path("/v1/auth/check");
         then.status(200).json_body(json!({
-            "ok": true,
             "account_id": "acct-1",
             "username": "alice",
-            "account_ok": true
         }));
     });
     let start = server.mock(|when, then| {
         when.method(POST).path("/v1/imports");
         then.status(200).json_body(json!({
-            "ok": true,
             "id": 42
         }));
     });
     let complete = server.mock(|when, then| {
         when.method(POST).path("/v1/imports/99/complete");
         then.status(200).json_body(json!({
-            "ok": true,
             "id": 99,
             "status": "completed",
             "message_count": 1,
@@ -221,7 +213,6 @@ fn reuses_supplied_import_session_without_starting_or_completing_one() {
             .path("/v1/import")
             .query_param("import_id", "99");
         then.status(200).json_body(json!({
-            "ok": true,
             "source": "sms-backup-restore",
             "account": "acct-1",
             "messages": 1,
@@ -245,9 +236,9 @@ fn reuses_supplied_import_session_without_starting_or_completing_one() {
 
     assert!(report.ok);
     assert_eq!(report.conversations_ok, 1);
-    assert_eq!(start.hits(), 0, "push must not start a new session");
+    assert_eq!(start.calls(), 0, "push must not start a new session");
     assert_eq!(
-        complete.hits(),
+        complete.calls(),
         0,
         "push must not complete a reused session"
     );
@@ -260,10 +251,8 @@ fn aggregates_multiple_conversations_into_one_import_request() {
     let _auth = server.mock(|when, then| {
         when.method(GET).path("/v1/auth/check");
         then.status(200).json_body(json!({
-            "ok": true,
             "account_id": "acct-1",
             "username": "alice",
-            "account_ok": true
         }));
     });
     let import = server.mock(|when, then| {
@@ -272,7 +261,6 @@ fn aggregates_multiple_conversations_into_one_import_request() {
             .body_includes("+15555550101")
             .body_includes("+15555550102");
         then.status(200).json_body(json!({
-            "ok": true,
             "messages": 1,
             "messages_appended": 1,
             "messages_deduped": 1,
@@ -299,7 +287,7 @@ fn aggregates_multiple_conversations_into_one_import_request() {
         report.messages_attempted,
         report.messages_inserted + report.messages_deduped + report.messages_failed
     );
-    assert_eq!(import.hits(), 1);
+    assert_eq!(import.calls(), 1);
     let log = fs::read_to_string(dir.path().join("vault-push.log")).unwrap();
     assert!(log.contains("IMPORT_REQUEST ok"));
     assert!(log.contains("conversations=2 messages=2"));
@@ -311,10 +299,8 @@ fn flushes_at_message_limit_and_replaces_only_first_request() {
     let _auth = server.mock(|when, then| {
         when.method(GET).path("/v1/auth/check");
         then.status(200).json_body(json!({
-            "ok": true,
             "account_id": "acct-1",
             "username": "alice",
-            "account_ok": true
         }));
     });
     let replace = server.mock(|when, then| {
@@ -324,7 +310,6 @@ fn flushes_at_message_limit_and_replaces_only_first_request() {
             .body_includes("+15555550101")
             .body_includes("+15555550102");
         then.status(200).json_body(json!({
-            "ok": true,
             "messages": 2,
             "messages_appended": 2,
             "conversations": 2
@@ -336,7 +321,6 @@ fn flushes_at_message_limit_and_replaces_only_first_request() {
             .query_param("mode", "append")
             .body_includes("+15555550103");
         then.status(200).json_body(json!({
-            "ok": true,
             "messages": 1,
             "messages_appended": 1,
             "conversations": 1
@@ -355,8 +339,8 @@ fn flushes_at_message_limit_and_replaces_only_first_request() {
 
     assert!(report.ok);
     assert_eq!(report.conversations_ok, 3);
-    assert_eq!(replace.hits(), 1);
-    assert_eq!(append.hits(), 1);
+    assert_eq!(replace.calls(), 1);
+    assert_eq!(append.calls(), 1);
 }
 
 #[test]
@@ -365,10 +349,8 @@ fn failed_combined_request_only_fails_its_files() {
     let _auth = server.mock(|when, then| {
         when.method(GET).path("/v1/auth/check");
         then.status(200).json_body(json!({
-            "ok": true,
             "account_id": "acct-1",
             "username": "alice",
-            "account_ok": true
         }));
     });
     let failed = server.mock(|when, then| {
@@ -377,7 +359,6 @@ fn failed_combined_request_only_fails_its_files() {
             .body_includes("+15555550101")
             .body_includes("+15555550102");
         then.status(500).json_body(json!({
-            "ok": false,
             "error": "intentional batch failure"
         }));
     });
@@ -386,7 +367,6 @@ fn failed_combined_request_only_fails_its_files() {
             .path("/v1/import")
             .body_includes("+15555550103");
         then.status(200).json_body(json!({
-            "ok": true,
             "messages": 1,
             "messages_appended": 1,
             "conversations": 1
@@ -413,8 +393,8 @@ fn failed_combined_request_only_fails_its_files() {
         report.messages_attempted,
         report.messages_inserted + report.messages_deduped + report.messages_failed
     );
-    assert_eq!(failed.hits(), 1);
-    assert_eq!(succeeded.hits(), 1);
+    assert_eq!(failed.calls(), 1);
+    assert_eq!(succeeded.calls(), 1);
     assert_eq!(
         report
             .results
@@ -431,16 +411,13 @@ fn resumes_message_batches_from_compacted_journal() {
     let _auth = server.mock(|when, then| {
         when.method(GET).path("/v1/auth/check");
         then.status(200).json_body(json!({
-            "ok": true,
             "account_id": "acct-1",
             "username": "alice",
-            "account_ok": true
         }));
     });
     let import = server.mock(|when, then| {
         when.method(POST).path("/v1/import");
         then.status(200).json_body(json!({
-            "ok": true,
             "messages": 1,
             "messages_appended": 1,
             "conversations": 1
@@ -451,7 +428,7 @@ fn resumes_message_batches_from_compacted_journal() {
     write_jsonl(dir.path(), &sample_doc());
     let cfg = text_only_config(dir.path(), server.base_url());
     run(&cfg, None).unwrap();
-    assert_eq!(import.hits(), 1);
+    assert_eq!(import.calls(), 1);
 
     let journal_path = dir.path().join(".vault-import-state.jsonl");
     let compacted = fs::read_to_string(&journal_path).unwrap();
@@ -467,7 +444,7 @@ fn resumes_message_batches_from_compacted_journal() {
     assert!(resumed.ok);
     assert_eq!(resumed.conversations_ok, 1);
     assert_eq!(resumed.messages, 0);
-    assert_eq!(import.hits(), 1);
+    assert_eq!(import.calls(), 1);
 }
 
 #[test]
@@ -478,10 +455,8 @@ fn profiles_attachment_upload_phases() {
     let _auth = server.mock(|when, then| {
         when.method(GET).path("/v1/auth/check");
         then.status(200).json_body(json!({
-            "ok": true,
             "account_id": "acct-1",
             "username": "alice",
-            "account_ok": true,
             "sources": ["sms-backup-restore"]
         }));
     });
@@ -489,21 +464,18 @@ fn profiles_attachment_upload_phases() {
     let head = server.mock(|when, then| {
         when.method("HEAD").path(format!("/v1/assets/{digest}"));
         then.status(404).json_body(json!({
-            "ok": false,
             "error": "asset not found"
         }));
     });
     let asset = server.mock(|when, then| {
         when.method(PUT).path(format!("/v1/assets/{digest}"));
         then.status(200).json_body(json!({
-            "ok": true,
             "already_present": false
         }));
     });
     let import = server.mock(|when, then| {
         when.method(POST).path("/v1/import");
         then.status(200).json_body(json!({
-            "ok": true,
             "messages": 1,
             "messages_appended": 1
         }));
@@ -567,7 +539,7 @@ fn profiles_attachment_upload_phases() {
     };
 
     assert!(
-        head.hits() >= 1,
+        head.calls() >= 1,
         "first upload pays one preflight HEAD of the queued digest"
     );
     asset.assert();
@@ -639,10 +611,8 @@ fn puts_two_new_assets_without_head() {
     let _auth = server.mock(|when, then| {
         when.method(GET).path("/v1/auth/check");
         then.status(200).json_body(json!({
-            "ok": true,
             "account_id": "acct-1",
             "username": "alice",
-            "account_ok": true,
             "sources": ["sms-backup-restore"]
         }));
     });
@@ -659,17 +629,16 @@ fn puts_two_new_assets_without_head() {
     let put_a = server.mock(|when, then| {
         when.method(PUT).path(format!("/v1/assets/{digest_a}"));
         then.status(200)
-            .json_body(json!({ "ok": true, "already_present": false }));
+            .json_body(json!({ "already_present": false }));
     });
     let put_b = server.mock(|when, then| {
         when.method(PUT).path(format!("/v1/assets/{digest_b}"));
         then.status(200)
-            .json_body(json!({ "ok": true, "already_present": false }));
+            .json_body(json!({ "already_present": false }));
     });
     let _import = server.mock(|when, then| {
         when.method(POST).path("/v1/import");
         then.status(200).json_body(json!({
-            "ok": true,
             "messages": 1,
             "messages_appended": 1
         }));
@@ -693,12 +662,12 @@ fn puts_two_new_assets_without_head() {
         &head_a
     };
     assert!(
-        head_first.hits() >= 1,
+        head_first.calls() >= 1,
         "first import pays one preflight HEAD"
     );
-    assert_eq!(head_second.hits(), 0);
-    assert_eq!(put_a.hits(), 1);
-    assert_eq!(put_b.hits(), 1);
+    assert_eq!(head_second.calls(), 0);
+    assert_eq!(put_a.calls(), 1);
+    assert_eq!(put_b.calls(), 1);
     assert_eq!(report.assets_uploaded, 2);
 }
 
@@ -711,10 +680,8 @@ fn heads_later_assets_after_put_reports_already_present() {
     let _auth = server.mock(|when, then| {
         when.method(GET).path("/v1/auth/check");
         then.status(200).json_body(json!({
-            "ok": true,
             "account_id": "acct-1",
             "username": "alice",
-            "account_ok": true,
             "sources": ["sms-backup-restore"]
         }));
     });
@@ -739,25 +706,23 @@ fn heads_later_assets_after_put_reports_already_present() {
     let put_first = server.mock(|when, then| {
         when.method(PUT).path(format!("/v1/assets/{first_digest}"));
         then.status(200)
-            .json_body(json!({ "ok": true, "already_present": true }));
+            .json_body(json!({ "already_present": true }));
     });
     let head_second = server.mock(|when, then| {
         when.method("HEAD")
             .path(format!("/v1/assets/{second_digest}"));
         then.status(200).json_body(json!({
-            "ok": true,
             "already_present": true
         }));
     });
     let put_second = server.mock(|when, then| {
         when.method(PUT).path(format!("/v1/assets/{second_digest}"));
         then.status(200)
-            .json_body(json!({ "ok": true, "already_present": false }));
+            .json_body(json!({ "already_present": false }));
     });
     let _import = server.mock(|when, then| {
         when.method(POST).path("/v1/import");
         then.status(200).json_body(json!({
-            "ok": true,
             "messages": 1,
             "messages_appended": 1
         }));
@@ -768,10 +733,13 @@ fn heads_later_assets_after_put_reports_already_present() {
     cfg.asset_upload_workers = 1;
     let report = run(&cfg, None).unwrap();
 
-    assert!(head_first.hits() >= 1, "preflight HEAD of the first digest");
-    assert_eq!(put_first.hits(), 1);
-    assert!(head_second.hits() >= 1);
-    assert_eq!(put_second.hits(), 0);
+    assert!(
+        head_first.calls() >= 1,
+        "preflight HEAD of the first digest"
+    );
+    assert_eq!(put_first.calls(), 1);
+    assert!(head_second.calls() >= 1);
+    assert_eq!(put_second.calls(), 0);
     assert_eq!(report.assets_skipped, 2);
 }
 
@@ -784,10 +752,8 @@ fn preflight_head_skips_puts_when_first_asset_already_present() {
     let _auth = server.mock(|when, then| {
         when.method(GET).path("/v1/auth/check");
         then.status(200).json_body(json!({
-            "ok": true,
             "account_id": "acct-1",
             "username": "alice",
-            "account_ok": true,
             "sources": ["sms-backup-restore"]
         }));
     });
@@ -796,31 +762,28 @@ fn preflight_head_skips_puts_when_first_asset_already_present() {
     let head_a = server.mock(|when, then| {
         when.method("HEAD").path(format!("/v1/assets/{digest_a}"));
         then.status(200).json_body(json!({
-            "ok": true,
             "already_present": true
         }));
     });
     let head_b = server.mock(|when, then| {
         when.method("HEAD").path(format!("/v1/assets/{digest_b}"));
         then.status(200).json_body(json!({
-            "ok": true,
             "already_present": true
         }));
     });
     let put_a = server.mock(|when, then| {
         when.method(PUT).path(format!("/v1/assets/{digest_a}"));
         then.status(200)
-            .json_body(json!({ "ok": true, "already_present": false }));
+            .json_body(json!({ "already_present": false }));
     });
     let put_b = server.mock(|when, then| {
         when.method(PUT).path(format!("/v1/assets/{digest_b}"));
         then.status(200)
-            .json_body(json!({ "ok": true, "already_present": false }));
+            .json_body(json!({ "already_present": false }));
     });
     let _import = server.mock(|when, then| {
         when.method(POST).path("/v1/import");
         then.status(200).json_body(json!({
-            "ok": true,
             "messages": 1,
             "messages_appended": 1
         }));
@@ -832,9 +795,9 @@ fn preflight_head_skips_puts_when_first_asset_already_present() {
     cfg.asset_upload_workers = 2;
     let report = run(&cfg, None).unwrap();
 
-    assert_eq!(put_a.hits(), 0, "preflight HEAD must skip PUT for A");
-    assert_eq!(put_b.hits(), 0, "preflight HEAD must skip PUT for B");
-    assert!(head_a.hits() + head_b.hits() >= 1);
+    assert_eq!(put_a.calls(), 0, "preflight HEAD must skip PUT for A");
+    assert_eq!(put_b.calls(), 0, "preflight HEAD must skip PUT for B");
+    assert!(head_a.calls() + head_b.calls() >= 1);
     assert_eq!(report.assets_skipped, 2);
 }
 
@@ -847,10 +810,8 @@ fn multipart_upload_when_over_proxy_threshold() {
     let _auth = server.mock(|when, then| {
         when.method(GET).path("/v1/auth/check");
         then.status(200).json_body(json!({
-            "ok": true,
             "account_id": "acct-1",
             "username": "alice",
-            "account_ok": true,
             "sources": ["sms-backup-restore"]
         }));
     });
@@ -858,7 +819,6 @@ fn multipart_upload_when_over_proxy_threshold() {
     let head = server.mock(|when, then| {
         when.method("HEAD").path(format!("/v1/assets/{digest}"));
         then.status(404).json_body(json!({
-            "ok": false,
             "error": "asset not found"
         }));
     });
@@ -866,7 +826,6 @@ fn multipart_upload_when_over_proxy_threshold() {
         when.method(POST)
             .path(format!("/v1/assets/{digest}/uploads"));
         then.status(200).json_body(json!({
-            "ok": true,
             "upload_id": "up-1",
             "part_size": 16
         }));
@@ -875,25 +834,23 @@ fn multipart_upload_when_over_proxy_threshold() {
         when.method(PUT)
             .path(format!("/v1/assets/{digest}/uploads/up-1/parts/1"));
         then.status(200)
-            .json_body(json!({ "ok": true, "part": 1, "bytes": 16 }));
+            .json_body(json!({ "part": 1, "bytes": 16 }));
     });
     let part2 = server.mock(|when, then| {
         when.method(PUT)
             .path(format!("/v1/assets/{digest}/uploads/up-1/parts/2"));
         then.status(200)
-            .json_body(json!({ "ok": true, "part": 2, "bytes": 16 }));
+            .json_body(json!({ "part": 2, "bytes": 16 }));
     });
     let part3 = server.mock(|when, then| {
         when.method(PUT)
             .path(format!("/v1/assets/{digest}/uploads/up-1/parts/3"));
-        then.status(200)
-            .json_body(json!({ "ok": true, "part": 3, "bytes": 8 }));
+        then.status(200).json_body(json!({ "part": 3, "bytes": 8 }));
     });
     let complete = server.mock(|when, then| {
         when.method(POST)
             .path(format!("/v1/assets/{digest}/uploads/up-1/complete"));
         then.status(200).json_body(json!({
-            "ok": true,
             "sha256": digest,
             "assets_path": format!("ab/{digest}"),
             "already_present": false
@@ -902,14 +859,12 @@ fn multipart_upload_when_over_proxy_threshold() {
     let single_put = server.mock(|when, then| {
         when.method(PUT).path(format!("/v1/assets/{digest}"));
         then.status(200).json_body(json!({
-            "ok": true,
             "already_present": false
         }));
     });
     let import = server.mock(|when, then| {
         when.method(POST).path("/v1/import");
         then.status(200).json_body(json!({
-            "ok": true,
             "messages": 1,
             "messages_appended": 1
         }));
@@ -940,7 +895,7 @@ fn multipart_upload_when_over_proxy_threshold() {
     let report = run(&cfg, None).unwrap();
 
     assert!(
-        head.hits() >= 1,
+        head.calls() >= 1,
         "first upload pays one preflight HEAD of the queued digest"
     );
     start.assert();
@@ -949,7 +904,7 @@ fn multipart_upload_when_over_proxy_threshold() {
     part3.assert();
     complete.assert();
     assert_eq!(
-        single_put.hits(),
+        single_put.calls(),
         0,
         "single PUT must not be used for multipart path"
     );
@@ -965,10 +920,8 @@ fn multipart_aborts_on_hash_mismatch_complete() {
     let _auth = server.mock(|when, then| {
         when.method(GET).path("/v1/auth/check");
         then.status(200).json_body(json!({
-            "ok": true,
             "account_id": "acct-1",
             "username": "alice",
-            "account_ok": true,
             "sources": ["sms-backup-restore"]
         }));
     });
@@ -981,7 +934,6 @@ fn multipart_aborts_on_hash_mismatch_complete() {
         when.method(POST)
             .path(format!("/v1/assets/{digest}/uploads"));
         then.status(200).json_body(json!({
-            "ok": true,
             "upload_id": "up-bad",
             "part_size": 64
         }));
@@ -990,20 +942,19 @@ fn multipart_aborts_on_hash_mismatch_complete() {
         when.method(PUT)
             .path_includes(format!("/v1/assets/{digest}/uploads/up-bad/parts/"));
         then.status(200)
-            .json_body(json!({ "ok": true, "part": 1, "bytes": 24 }));
+            .json_body(json!({ "part": 1, "bytes": 24 }));
     });
     let _complete = server.mock(|when, then| {
         when.method(POST)
             .path(format!("/v1/assets/{digest}/uploads/up-bad/complete"));
         then.status(400).json_body(json!({
-            "ok": false,
             "error": "sha256 mismatch: claimed abc, got def"
         }));
     });
     let abort = server.mock(|when, then| {
         when.method(DELETE)
             .path(format!("/v1/assets/{digest}/uploads/up-bad"));
-        then.status(200).json_body(json!({ "ok": true }));
+        then.status(204);
     });
 
     let dir = tempdir().unwrap();
@@ -1089,17 +1040,15 @@ fn verify_digests_fails_on_mismatch() {
     let _auth = server.mock(|when, then| {
         when.method(GET).path("/v1/auth/check");
         then.status(200).json_body(json!({
-            "ok": true,
             "account_id": "acct-1",
             "username": "alice",
-            "account_ok": true,
             "sources": ["sms-backup-restore"]
         }));
     });
     let put = server.mock(|when, then| {
         when.method(PUT).path_includes("/v1/assets/");
         then.status(200)
-            .json_body(json!({ "ok": true, "already_present": false }));
+            .json_body(json!({ "already_present": false }));
     });
 
     let dir = tempdir().unwrap();
@@ -1127,7 +1076,7 @@ fn verify_digests_fails_on_mismatch() {
     let report = run(&cfg, None).unwrap();
     assert!(!report.ok);
     assert_eq!(report.conversations_failed, 1);
-    assert_eq!(put.hits(), 0, "mismatch must fail before upload");
+    assert_eq!(put.calls(), 0, "mismatch must fail before upload");
 }
 
 #[test]
@@ -1139,27 +1088,24 @@ fn shared_attachment_uploaded_once_across_conversations() {
     let _auth = server.mock(|when, then| {
         when.method(GET).path("/v1/auth/check");
         then.status(200).json_body(json!({
-            "ok": true,
             "account_id": "acct-1",
             "username": "alice",
-            "account_ok": true,
             "sources": ["sms-backup-restore"]
         }));
     });
     let head = server.mock(|when, then| {
         when.method("HEAD").path(format!("/v1/assets/{digest}"));
         then.status(404)
-            .json_body(json!({ "ok": false, "error": "asset not found" }));
+            .json_body(json!({ "error": "asset not found" }));
     });
     let put = server.mock(|when, then| {
         when.method(PUT).path(format!("/v1/assets/{digest}"));
         then.status(200)
-            .json_body(json!({ "ok": true, "already_present": false }));
+            .json_body(json!({ "already_present": false }));
     });
     let import = server.mock(|when, then| {
         when.method(POST).path("/v1/import");
         then.status(200).json_body(json!({
-            "ok": true,
             "messages": 2,
             "messages_appended": 2
         }));
@@ -1203,9 +1149,9 @@ fn shared_attachment_uploaded_once_across_conversations() {
     let report = run(&cfg, None).unwrap();
     assert!(report.ok);
     assert_eq!(report.conversations_ok, 2);
-    assert_eq!(put.hits(), 1, "shared digest must upload once");
+    assert_eq!(put.calls(), 1, "shared digest must upload once");
     assert!(
-        head.hits() >= 1,
+        head.calls() >= 1,
         "first upload pays one preflight HEAD of the queued digest"
     );
     import.assert();
@@ -1221,10 +1167,8 @@ fn skips_oversized_attachment_keeps_conversation_ok() {
     let _auth = server.mock(|when, then| {
         when.method(GET).path("/v1/auth/check");
         then.status(200).json_body(json!({
-            "ok": true,
             "account_id": "acct-1",
             "username": "alice",
-            "account_ok": true,
             "sources": ["sms-backup-restore"]
         }));
     });
@@ -1238,14 +1182,12 @@ fn skips_oversized_attachment_keeps_conversation_ok() {
     let small_put = server.mock(|when, then| {
         when.method(PUT).path(format!("/v1/assets/{small_digest}"));
         then.status(200).json_body(json!({
-            "ok": true,
             "already_present": false
         }));
     });
     let big_put = server.mock(|when, then| {
         when.method(PUT).path(format!("/v1/assets/{big_digest}"));
         then.status(200).json_body(json!({
-            "ok": true,
             "already_present": false
         }));
     });
@@ -1256,7 +1198,6 @@ fn skips_oversized_attachment_keeps_conversation_ok() {
             .body_includes("big.bin")
             .body_includes(&small_digest);
         then.status(200).json_body(json!({
-            "ok": true,
             "messages": 1,
             "messages_appended": 1
         }));
@@ -1321,8 +1262,8 @@ fn skips_oversized_attachment_keeps_conversation_ok() {
     assert_eq!(report.conversations_ok, 1);
     assert_eq!(report.conversations_failed, 0);
     assert_eq!(report.messages_attempted, 1);
-    assert_eq!(small_put.hits(), 1, "normal attachment must still upload");
-    assert_eq!(big_put.hits(), 0, "oversized attachment must not be PUT");
+    assert_eq!(small_put.calls(), 1, "normal attachment must still upload");
+    assert_eq!(big_put.calls(), 0, "oversized attachment must not be PUT");
     import.assert();
     assert!(
         issues.iter().any(|(kind, item, reason)| {
@@ -1342,10 +1283,8 @@ fn skips_missing_attachment_file_keeps_conversation_ok() {
     let _auth = server.mock(|when, then| {
         when.method(GET).path("/v1/auth/check");
         then.status(200).json_body(json!({
-            "ok": true,
             "account_id": "acct-1",
             "username": "alice",
-            "account_ok": true,
             "sources": ["sms-backup-restore"]
         }));
     });
@@ -1358,7 +1297,6 @@ fn skips_missing_attachment_file_keeps_conversation_ok() {
     let small_put = server.mock(|when, then| {
         when.method(PUT).path(format!("/v1/assets/{small_digest}"));
         then.status(200).json_body(json!({
-            "ok": true,
             "already_present": false
         }));
     });
@@ -1369,7 +1307,6 @@ fn skips_missing_attachment_file_keeps_conversation_ok() {
             .body_includes("gone.bin")
             .body_includes(&small_digest);
         then.status(200).json_body(json!({
-            "ok": true,
             "messages": 1,
             "messages_appended": 1
         }));
@@ -1428,7 +1365,7 @@ fn skips_missing_attachment_file_keeps_conversation_ok() {
 
     assert!(report.ok);
     assert_eq!(report.conversations_ok, 1);
-    assert_eq!(small_put.hits(), 1);
+    assert_eq!(small_put.calls(), 1);
     import.assert();
     assert!(
         issues.iter().any(|(kind, item, reason)| {
@@ -1446,10 +1383,8 @@ fn keeps_conversation_ok_when_skipped_attachment_has_no_path() {
     let _auth = server.mock(|when, then| {
         when.method(GET).path("/v1/auth/check");
         then.status(200).json_body(json!({
-            "ok": true,
             "account_id": "acct-1",
             "username": "alice",
-            "account_ok": true,
             "sources": ["sms-backup-restore"]
         }));
     });
@@ -1460,7 +1395,6 @@ fn keeps_conversation_ok_when_skipped_attachment_has_no_path() {
             .body_includes("IMG_0421.HEIC")
             .body_includes("image/heic");
         then.status(200).json_body(json!({
-            "ok": true,
             "messages": 1,
             "messages_appended": 1
         }));
@@ -1518,10 +1452,8 @@ fn reports_pathless_attachment_without_reason_as_no_path() {
     let _auth = server.mock(|when, then| {
         when.method(GET).path("/v1/auth/check");
         then.status(200).json_body(json!({
-            "ok": true,
             "account_id": "acct-1",
             "username": "alice",
-            "account_ok": true,
             "sources": ["sms-backup-restore"]
         }));
     });
@@ -1531,7 +1463,6 @@ fn reports_pathless_attachment_without_reason_as_no_path() {
             .body_includes(r#""missing_reason":"no_path""#)
             .body_includes("mystery.bin");
         then.status(200).json_body(json!({
-            "ok": true,
             "messages": 1,
             "messages_appended": 1
         }));

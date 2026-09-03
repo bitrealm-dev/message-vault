@@ -5,8 +5,8 @@
 //! vaults, so nothing in this module reads `messages.body`,
 //! `attachments.transcription`, or any other content column.
 
-use axum::Json;
-use axum::extract::{Path, State};
+use crate::extract::{Json, Path};
+use axum::extract::State;
 use serde::{Deserialize, Serialize};
 use sqlx::{AnyConnection, Connection};
 
@@ -307,7 +307,7 @@ pub async fn patch_user_handler(
     params(("id" = String, Path, description = "Account id whose password is set")),
     request_body = SetPasswordRequest,
     responses(
-        (status = 200, body = serde_json::Value),
+        (status = 204, description = "Password set"),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody),
@@ -319,7 +319,7 @@ pub async fn set_user_password_handler(
     Path(target): Path<String>,
     Admin(_auth): Admin,
     Json(req): Json<SetPasswordRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<axum::http::StatusCode, ApiError> {
     crate::auth::validate_password_policy(&req.password)?;
     let hash = crate::auth::hash_password(&req.password)?;
 
@@ -327,7 +327,7 @@ pub async fn set_user_password_handler(
     require_account_exists(&mut conn, &target).await?;
     account_profile::update_password_hash(&mut conn, &target, &hash).await?;
     crate::db::session_tokens::revoke_account_sessions(&mut conn, &target).await?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 /// Destroy one account's conversations, messages, and attachments. The
@@ -363,7 +363,6 @@ pub async fn delete_user_messages_handler(
     )?;
 
     Ok(Json(crate::profile::DeleteMessagesResponse {
-        ok: true,
         conversations: stats.conversations,
         attachments: stats.attachments,
     }))
@@ -378,7 +377,7 @@ pub async fn delete_user_messages_handler(
     security(("bearer" = [])),
     params(("id" = String, Path, description = "Account id to delete")),
     responses(
-        (status = 200, body = serde_json::Value),
+        (status = 204, description = "Account deleted"),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody),
@@ -389,7 +388,7 @@ pub async fn delete_user_handler(
     State(state): State<AppState>,
     Path(target): Path<String>,
     Admin(_auth): Admin,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<axum::http::StatusCode, ApiError> {
     let mut conn = state.db.acquire().await?;
     require_account_exists(&mut conn, &target).await?;
     if account_profile::is_last_admin(&mut conn, &target).await? {
@@ -406,7 +405,7 @@ pub async fn delete_user_handler(
             .map_err(|e| ApiError::Internal(e.to_string()))?
             .map_err(|e| ApiError::Internal(e.to_string()))?;
     }
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 #[cfg(test)]
@@ -603,7 +602,7 @@ mod tests {
         .await;
         assert_eq!(
             sorted_keys(&body),
-            vec!["attachments", "conversations", "ok"],
+            vec!["attachments", "conversations"],
             "delete-messages response must carry only counts, never message content"
         );
     }
@@ -616,16 +615,16 @@ mod tests {
         let victim = register_via_api(&state, "bob", "hunter2hunter2").await;
         seed_one_message(&state, &victim.account_id).await;
 
-        let body: serde_json::Value = delete_json(
+        let status = delete_status(
             &state,
             &format!("/v1/admin/users/{}", victim.account_id),
             &admin.token,
         )
         .await;
         assert_eq!(
-            sorted_keys(&body),
-            vec!["ok"],
-            "delete-account response must carry only the ok flag, never message content"
+            status,
+            StatusCode::NO_CONTENT,
+            "delete-account is an acknowledgement with no body"
         );
     }
 
@@ -922,7 +921,7 @@ mod tests {
             serde_json::json!({ "password": "newpassword123" }),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
+        assert_eq!(status, StatusCode::NO_CONTENT);
 
         let login = login_status(&state, "bob", "newpassword123").await;
         assert_eq!(login, StatusCode::OK);
@@ -948,7 +947,7 @@ mod tests {
             serde_json::json!({ "password": "newpassword123" }),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
+        assert_eq!(status, StatusCode::NO_CONTENT);
 
         assert_eq!(
             get_status(&state, "/v1/auth/check", &bob.token).await,
@@ -983,7 +982,7 @@ mod tests {
 
     /// The four handlers that were given an existence check beyond what the
     /// brief specified (so a bad account id can't silently no-op and still
-    /// report `{"ok": true}`) each get their own 404 case, so that guard
+    /// answer 204) each get their own 404 case, so that guard
     /// can't regress unnoticed.
     #[tokio::test]
     async fn patch_of_a_missing_account_is_404() {

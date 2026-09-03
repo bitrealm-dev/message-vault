@@ -4,9 +4,9 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::extract::{Json, Path as AxumPath, Query};
 use anyhow::{Result as AnyResult, bail};
-use axum::Json;
-use axum::extract::{Path as AxumPath, Query, State};
+use axum::extract::State;
 use message_ir::HandleType;
 use serde::{Deserialize, Serialize};
 use sqlx::AnyConnection;
@@ -15,22 +15,10 @@ use crate::db::contacts::{self, contact_id_for_handle};
 use crate::db::dialect::{engine_of, group_concat_unit_separator, order_by_name_ci};
 use crate::db::handles::{infer_handle_type_from_shape, normalize_handle};
 use crate::db::sql::{SqlParam, bind_args, in_placeholders, renumber_placeholders};
+use crate::paging::{
+    DEFAULT_LIST_LIMIT, MAX_CONTACT_SUMMARY_IDS, MAX_LIST_OFFSET, Page, PageQuery, page_params,
+};
 use crate::server::{ApiError, AppState, FullAccess};
-
-pub use crate::page_limits::{DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, MAX_LIST_OFFSET};
-
-/// One page of the contact list.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct ContactListPage {
-    /// Contacts on this page.
-    pub contacts: Vec<ContactSummary>,
-    /// Total contacts matching the query.
-    pub total: u64,
-    /// Page size used.
-    pub limit: usize,
-    /// Page offset used.
-    pub offset: usize,
-}
 
 /// Contact row for the list: name, handles, groups.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -184,7 +172,7 @@ pub struct ContactSelectionSummary {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactSummariesPage {
     /// One summary per requested contact.
-    pub contacts: Vec<ContactSelectionSummary>,
+    pub items: Vec<ContactSelectionSummary>,
 }
 
 /// A contact is linked to a conversation when one of its handles is either
@@ -236,8 +224,8 @@ const NOT_TRASHED_CONTACT_SQL: &str = "NOT EXISTS (
 ///
 /// # Errors
 ///
-/// `BadRequest` for a query the language refuses or an offset past the cap;
-/// `Internal` when a statement fails.
+/// `BadRequest` for a query the language refuses; `Internal` when a
+/// statement fails.
 pub async fn list_contacts(
     conn: &mut AnyConnection,
     account_id: &str,
@@ -245,13 +233,7 @@ pub async fn list_contacts(
     limit: usize,
     offset: usize,
     today: chrono::NaiveDate,
-) -> Result<ContactListPage, ApiError> {
-    let limit = limit.clamp(1, MAX_LIST_LIMIT);
-    if offset > MAX_LIST_OFFSET {
-        return Err(ApiError::BadRequest(format!(
-            "offset exceeds maximum of {MAX_LIST_OFFSET}"
-        )));
-    }
+) -> Result<Page<ContactSummary>, ApiError> {
     let engine = engine_of(conn);
     let filter = crate::search::compile(crate::search::CompileRequest {
         list: crate::search::ListKind::Contacts,
@@ -345,8 +327,8 @@ pub async fn list_contacts(
         )
         .collect();
 
-    Ok(ContactListPage {
-        contacts,
+    Ok(Page {
+        items: contacts,
         total,
         limit,
         offset,
@@ -502,8 +484,9 @@ type ContactHandleRow = (
 
 /// First/last seen and message counts for many contacts in one grouped query.
 ///
-/// Unknown, trashed, and duplicate ids are skipped. At most [`MAX_LIST_LIMIT`]
-/// ids are read so the `IN` list stays under SQLite's variable cap.
+/// Unknown, trashed, and duplicate ids are skipped. At most
+/// [`MAX_CONTACT_SUMMARY_IDS`] ids are read so the `IN` list stays under
+/// SQLite's variable cap.
 ///
 /// # Errors
 ///
@@ -520,7 +503,7 @@ pub async fn get_contact_summaries(
             continue;
         }
         unique.push(id);
-        if unique.len() == MAX_LIST_LIMIT {
+        if unique.len() == MAX_CONTACT_SUMMARY_IDS {
             break;
         }
     }
@@ -1108,11 +1091,11 @@ async fn touch_ok(conn: &mut AnyConnection, account_id: &str, contact_id: i64) -
     security(("bearer" = [])),
     params(
         ("q" = Option<String>, Query, description = "Contact search; empty lists all"),
-        ("limit" = Option<usize>, Query, description = "Page size"),
-        ("offset" = Option<usize>, Query, description = "Page offset")
+        ("limit" = Option<usize>, Query, description = "Page size, default 40, max 500"),
+        ("offset" = Option<usize>, Query, description = "Page offset, max 50000")
     ),
     responses(
-        (status = 200, body = ContactListPage),
+        (status = 200, body = Page<ContactSummary>),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody)
@@ -1121,22 +1104,26 @@ async fn touch_ok(conn: &mut AnyConnection, account_id: &str, contact_id: i64) -
 pub(crate) async fn contacts_list_handler(
     State(state): State<AppState>,
     FullAccess(auth): FullAccess,
-    Query(query): Query<crate::server::ListPageQuery>,
-) -> Result<Json<ContactListPage>, ApiError> {
+    Query(query): Query<PageQuery>,
+) -> Result<Json<Page<ContactSummary>>, ApiError> {
     let mut conn = state.db.acquire().await?;
     let q = query.q.unwrap_or_default();
-    let limit = query.limit.unwrap_or(DEFAULT_LIST_LIMIT);
-    let offset = query.offset.unwrap_or(0);
-    let page = list_contacts(
+    let page = page_params(
+        query.limit,
+        query.offset,
+        DEFAULT_LIST_LIMIT,
+        Some(MAX_LIST_OFFSET),
+    )?;
+    let result = list_contacts(
         &mut conn,
         &auth.account_id,
         &q,
-        limit,
-        offset,
+        page.limit,
+        page.offset,
         chrono::Local::now().date_naive(),
     )
     .await?;
-    Ok(Json(page))
+    Ok(Json(result))
 }
 
 /// First/last message dates and counts for a list of contact ids.
@@ -1158,16 +1145,15 @@ pub(crate) async fn contact_summaries_handler(
     FullAccess(auth): FullAccess,
     Json(body): Json<ContactSummariesBody>,
 ) -> Result<Json<ContactSummariesPage>, ApiError> {
-    if body.ids.len() > MAX_LIST_LIMIT {
+    if body.ids.len() > MAX_CONTACT_SUMMARY_IDS {
         return Err(ApiError::BadRequest(format!(
-            "at most {} contact ids",
-            MAX_LIST_LIMIT
+            "at most {MAX_CONTACT_SUMMARY_IDS} contact ids"
         )));
     }
     let mut conn = state.db.acquire().await?;
     let page = get_contact_summaries(&mut conn, &auth.account_id, &body.ids)
         .await
-        .map(|contacts| ContactSummariesPage { contacts })?;
+        .map(|items| ContactSummariesPage { items })?;
     Ok(Json(page))
 }
 
@@ -1467,16 +1453,16 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(page.total, 1);
-        assert_eq!(page.contacts.len(), 1);
-        assert_eq!(page.contacts[0].name, "Pat");
-        assert_eq!(page.contacts[0].handle_count, 1);
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].name, "Pat");
+        assert_eq!(page.items[0].handle_count, 1);
         assert!(
-            page.contacts[0]
+            page.items[0]
                 .handles
                 .iter()
                 .any(|h| h.contains("5555550100") || h.contains("+15555550100")),
             "handles={:?}",
-            page.contacts[0].handles
+            page.items[0].handles
         );
     }
 
@@ -1524,7 +1510,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(by_name.total, 1);
-        assert_eq!(by_name.contacts[0].name, "Sam");
+        assert_eq!(by_name.items[0].name, "Sam");
 
         let by_handle = list_contacts(
             &mut conn,
@@ -1537,7 +1523,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(by_handle.total, 1);
-        assert_eq!(by_handle.contacts[0].name, "Sam");
+        assert_eq!(by_handle.items[0].name, "Sam");
 
         let page0 = list_contacts(&mut conn, &account, "", 2, 0, crate::search::tests::today())
             .await
@@ -1545,26 +1531,13 @@ mod tests {
         assert_eq!(page0.total, 3);
         assert_eq!(page0.limit, 2);
         assert_eq!(page0.offset, 0);
-        assert_eq!(page0.contacts.len(), 2);
+        assert_eq!(page0.items.len(), 2);
         let page1 = list_contacts(&mut conn, &account, "", 2, 2, crate::search::tests::today())
             .await
             .unwrap();
         assert_eq!(page1.total, 3);
         assert_eq!(page1.offset, 2);
-        assert_eq!(page1.contacts.len(), 1);
-
-        let clamped = list_contacts(
-            &mut conn,
-            &account,
-            "",
-            MAX_LIST_LIMIT + 50,
-            0,
-            crate::search::tests::today(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(clamped.limit, MAX_LIST_LIMIT);
-        assert_eq!(clamped.total, 3);
+        assert_eq!(page1.items.len(), 1);
     }
 
     #[tokio::test]
@@ -2113,7 +2086,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(page.contacts[0].last_modified, detail.last_modified);
+        assert_eq!(page.items[0].last_modified, detail.last_modified);
 
         const OLD: &str = "2000-01-01 00:00:00";
         set_contact_last_modified(&mut conn, &account, contact_id, OLD).await;
@@ -2327,7 +2300,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(with_msg.total, 1);
-        assert_eq!(with_msg.contacts[0].name, "Messaged");
+        assert_eq!(with_msg.items[0].name, "Messaged");
 
         let never = list_contacts(
             &mut conn,
@@ -2340,7 +2313,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(never.total, 1);
-        assert_eq!(never.contacts[0].name, "Silent");
+        assert_eq!(never.items[0].name, "Silent");
     }
 
     #[tokio::test]
@@ -2366,8 +2339,8 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(page.total, 1);
-        assert_eq!(page.contacts[0].name, "Orphan");
-        assert_eq!(page.contacts[0].handle_count, 0);
+        assert_eq!(page.items[0].name, "Orphan");
+        assert_eq!(page.items[0].handle_count, 0);
     }
 
     #[tokio::test]
@@ -2416,7 +2389,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(page.total, 2);
-        let names: Vec<_> = page.contacts.iter().map(|c| c.name.as_str()).collect();
+        let names: Vec<_> = page.items.iter().map(|c| c.name.as_str()).collect();
         assert!(names.contains(&"IMsg"));
         assert!(names.contains(&"Sms"));
     }
@@ -2553,7 +2526,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(unknown.total, 2);
-        let mut names: Vec<String> = unknown.contacts.iter().map(|c| c.name.clone()).collect();
+        let mut names: Vec<String> = unknown.items.iter().map(|c| c.name.clone()).collect();
         names.sort();
         // The list renders a nameless contact as "(unknown)".
         assert_eq!(names, vec!["(unknown)".to_string(), "Sarah".to_string()]);
@@ -2576,7 +2549,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(after.total, 1);
-        assert_eq!(after.contacts[0].name, "Sarah");
+        assert_eq!(after.items[0].name, "Sarah");
     }
 
     #[tokio::test]
@@ -2607,8 +2580,8 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(grouped.total, 1);
-        assert_eq!(grouped.contacts[0].name, "Ada");
-        assert_eq!(grouped.contacts[0].groups, vec!["Family".to_string()]);
+        assert_eq!(grouped.items[0].name, "Ada");
+        assert_eq!(grouped.items[0].groups, vec!["Family".to_string()]);
 
         let quoted = list_contacts(
             &mut conn,
@@ -2633,8 +2606,8 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(none.total, 1);
-        assert_eq!(none.contacts[0].name, "Ben");
-        assert!(none.contacts[0].groups.is_empty());
+        assert_eq!(none.items[0].name, "Ben");
+        assert!(none.items[0].groups.is_empty());
     }
 
     #[tokio::test]
@@ -2667,11 +2640,11 @@ mod tests {
             crate::test_support::get_json(&vault.state, "/v1/contacts?q=group:Family", &token)
                 .await;
         assert_eq!(page["total"], 1);
-        assert_eq!(page["contacts"][0]["name"], "Contact 0");
+        assert_eq!(page["items"][0]["name"], "Contact 0");
         let page: serde_json::Value =
             crate::test_support::get_json(&vault.state, "/v1/contacts?q=group:none", &token).await;
         assert_eq!(page["total"], 1);
-        assert_eq!(page["contacts"][0]["name"], "Contact 1");
+        assert_eq!(page["items"][0]["name"], "Contact 1");
     }
 
     #[tokio::test]
@@ -2700,5 +2673,33 @@ mod tests {
             }
             other => panic!("expected BadRequest, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn the_contact_list_is_a_page_and_summaries_are_items() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let user = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+
+        let page: serde_json::Value =
+            crate::test_support::get_json(&state, "/v1/contacts?limit=5", &user.token).await;
+        assert_eq!(page["total"], 0);
+        assert_eq!(page["limit"], 5);
+        assert!(page["items"].is_array());
+        assert!(page.get("contacts").is_none());
+
+        let status =
+            crate::test_support::get_status(&state, "/v1/contacts?limit=501", &user.token).await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+
+        let summaries: serde_json::Value = crate::test_support::post_json(
+            &state,
+            "/v1/contacts/summaries",
+            &user.token,
+            serde_json::json!({ "ids": [] }),
+        )
+        .await;
+        assert!(summaries["items"].is_array());
+        assert!(summaries.get("contacts").is_none());
     }
 }

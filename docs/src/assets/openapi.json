@@ -160,15 +160,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeleteApiTokenResponse"
-                }
-              }
-            }
+          "204": {
+            "description": "Token deleted"
           },
           "401": {
             "description": "",
@@ -644,13 +637,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
+          "204": {
+            "description": "Account deleted"
           },
           "400": {
             "description": "",
@@ -882,13 +870,8 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
+          "204": {
+            "description": "Password set"
           },
           "400": {
             "description": "",
@@ -1343,15 +1326,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AssetUploadAbortResponse"
-                }
-              }
-            }
+          "204": {
+            "description": "Upload aborted"
           },
           "400": {
             "description": "",
@@ -1730,15 +1706,8 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeleteAccountResponse"
-                }
-              }
-            }
+          "204": {
+            "description": "Account deleted"
           },
           "400": {
             "description": "",
@@ -1857,15 +1826,8 @@
         "summary": "Revoke the presented session token.",
         "operationId": "logout_handler",
         "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LogoutResponse"
-                }
-              }
-            }
+          "204": {
+            "description": "Signed out"
           },
           "401": {
             "description": "",
@@ -2387,7 +2349,7 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Page size",
+            "description": "Page size, default 40, max 500",
             "required": false,
             "schema": {
               "type": "integer",
@@ -2397,7 +2359,7 @@
           {
             "name": "offset",
             "in": "query",
-            "description": "Page offset",
+            "description": "Page offset, max 50000",
             "required": false,
             "schema": {
               "type": "integer",
@@ -2411,7 +2373,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ContactListPage"
+                  "$ref": "#/components/schemas/Page_ContactSummary"
                 }
               }
             }
@@ -2827,7 +2789,7 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Page size",
+            "description": "Page size, default 40, max 500",
             "required": false,
             "schema": {
               "type": "integer",
@@ -2837,7 +2799,7 @@
           {
             "name": "offset",
             "in": "query",
-            "description": "Page offset",
+            "description": "Page offset, max 50000",
             "required": false,
             "schema": {
               "type": "integer",
@@ -2869,7 +2831,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ConversationListPage"
+                  "$ref": "#/components/schemas/Page_ConversationSummary"
                 }
               }
             }
@@ -2985,7 +2947,7 @@
         "tags": [
           "Export"
         ],
-        "summary": "Export messages matching a query in the search language (cursor paging).",
+        "summary": "Export messages matching a query in the search language, a page at a time.",
         "operationId": "export_messages_handler",
         "parameters": [
           {
@@ -3010,7 +2972,7 @@
           {
             "name": "offset",
             "in": "query",
-            "description": "Legacy offset; prefer cursor",
+            "description": "Page offset; no cap, an offset past the end is an empty page",
             "required": false,
             "schema": {
               "type": "integer",
@@ -3018,26 +2980,8 @@
             }
           },
           {
-            "name": "cursor",
-            "in": "query",
-            "description": "Opaque next_cursor from a previous page",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
             "name": "account",
             "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "source",
-            "in": "query",
-            "description": "Narrow to one backup: imessage, whatsapp, or sms-backup-restore",
             "required": false,
             "schema": {
               "type": "string"
@@ -3050,7 +2994,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ExportMessagesResponse"
+                  "$ref": "#/components/schemas/Page_ExportMessage"
                 }
               }
             }
@@ -3113,15 +3057,6 @@
           {
             "name": "account",
             "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "source",
-            "in": "query",
-            "description": "Narrow to one backup: imessage, whatsapp, or sms-backup-restore",
             "required": false,
             "schema": {
               "type": "string"
@@ -4360,7 +4295,7 @@
         "tags": [
           "Saved searches"
         ],
-        "summary": "Create a saved search and return it with the updated list.",
+        "summary": "Create a saved search and return it.",
         "operationId": "saved_searches_create_handler",
         "requestBody": {
           "content": {
@@ -4378,7 +4313,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SavedSearchResponse"
+                  "$ref": "#/components/schemas/SavedSearch"
                 }
               }
             }
@@ -4436,7 +4371,7 @@
         "tags": [
           "Saved searches"
         ],
-        "summary": "Delete a saved search and return the updated list.",
+        "summary": "Delete a saved search.",
         "description": "Deleting an import-created saved search removes the shortcut only. The\n`vault_imports` row it pointed at is the account's permanent record of that\nrun and is never touched here.",
         "operationId": "saved_searches_delete_handler",
         "parameters": [
@@ -4452,15 +4387,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SavedSearchDeleteResponse"
-                }
-              }
-            }
+          "204": {
+            "description": "Saved search deleted"
           },
           "401": {
             "description": "",
@@ -4503,7 +4431,7 @@
         "tags": [
           "Saved searches"
         ],
-        "summary": "Replace a saved search's name and query, and return the updated list.",
+        "summary": "Replace a saved search's name and query, and return it.",
         "operationId": "saved_searches_update_handler",
         "parameters": [
           {
@@ -4533,7 +4461,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SavedSearchResponse"
+                  "$ref": "#/components/schemas/SavedSearch"
                 }
               }
             }
@@ -4787,13 +4715,7 @@
       "ActiveImportResponse": {
         "type": "object",
         "description": "The account's live session, or null when there is none.",
-        "required": [
-          "ok"
-        ],
         "properties": {
-          "ok": {
-            "type": "boolean"
-          },
           "session": {
             "oneOf": [
               {
@@ -5037,7 +4959,6 @@
         "type": "object",
         "description": "Stored asset fingerprint and path.",
         "required": [
-          "ok",
           "sha256",
           "assets_path",
           "already_present"
@@ -5049,23 +4970,8 @@
           "assets_path": {
             "type": "string"
           },
-          "ok": {
-            "type": "boolean"
-          },
           "sha256": {
             "type": "string"
-          }
-        }
-      },
-      "AssetUploadAbortResponse": {
-        "type": "object",
-        "description": "Abort acknowledgement.",
-        "required": [
-          "ok"
-        ],
-        "properties": {
-          "ok": {
-            "type": "boolean"
           }
         }
       },
@@ -5073,7 +4979,6 @@
         "type": "object",
         "description": "Bytes written for one part.",
         "required": [
-          "ok",
           "part",
           "bytes"
         ],
@@ -5082,9 +4987,6 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
-          },
-          "ok": {
-            "type": "boolean"
           },
           "part": {
             "type": "integer",
@@ -5116,9 +5018,6 @@
       "AssetUploadStartResponse": {
         "type": "object",
         "description": "Upload id and part size, or the already-stored asset.",
-        "required": [
-          "ok"
-        ],
         "properties": {
           "already_present": {
             "type": "boolean"
@@ -5128,9 +5027,6 @@
               "string",
               "null"
             ]
-          },
-          "ok": {
-            "type": "boolean"
           },
           "part_size": {
             "type": [
@@ -5157,7 +5053,6 @@
         "type": "object",
         "description": "Token check result: account, username, sources.",
         "required": [
-          "ok",
           "sources"
         ],
         "properties": {
@@ -5167,20 +5062,11 @@
               "null"
             ]
           },
-          "account_ok": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
           "admin": {
             "type": [
               "boolean",
               "null"
             ]
-          },
-          "ok": {
-            "type": "boolean"
           },
           "sources": {
             "type": "array",
@@ -5241,14 +5127,9 @@
         "type": "object",
         "description": "Fresh session token issued after the password change.",
         "required": [
-          "ok",
           "token"
         ],
         "properties": {
-          "ok": {
-            "type": "boolean",
-            "description": "Always true when a response is returned."
-          },
           "token": {
             "type": "string",
             "description": "Replacement session token after password change (previous sessions are revoked)."
@@ -5362,7 +5243,6 @@
         "type": "object",
         "description": "Stored session status after completion.",
         "required": [
-          "ok",
           "id",
           "status",
           "message_count",
@@ -5385,9 +5265,6 @@
           "message_count": {
             "type": "integer",
             "format": "int64"
-          },
-          "ok": {
-            "type": "boolean"
           },
           "status": {
             "type": "string"
@@ -5540,41 +5417,6 @@
               "null"
             ],
             "description": "Platform service (`phone`, `email`, or `whatsapp`); inferred when omitted."
-          }
-        }
-      },
-      "ContactListPage": {
-        "type": "object",
-        "description": "One page of the contact list.",
-        "required": [
-          "contacts",
-          "total",
-          "limit",
-          "offset"
-        ],
-        "properties": {
-          "contacts": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ContactSummary"
-            },
-            "description": "Contacts on this page."
-          },
-          "limit": {
-            "type": "integer",
-            "description": "Page size used.",
-            "minimum": 0
-          },
-          "offset": {
-            "type": "integer",
-            "description": "Page offset used.",
-            "minimum": 0
-          },
-          "total": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Total contacts matching the query.",
-            "minimum": 0
           }
         }
       },
@@ -5755,10 +5597,10 @@
         "type": "object",
         "description": "Response for `POST /v1/contacts/summaries`.",
         "required": [
-          "contacts"
+          "items"
         ],
         "properties": {
-          "contacts": {
+          "items": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ContactSelectionSummary"
@@ -5834,41 +5676,6 @@
               "null"
             ],
             "description": "Platform service for the new handle."
-          }
-        }
-      },
-      "ConversationListPage": {
-        "type": "object",
-        "description": "One page of the conversation list.",
-        "required": [
-          "conversations",
-          "total",
-          "limit",
-          "offset"
-        ],
-        "properties": {
-          "conversations": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ConversationSummary"
-            },
-            "description": "Conversations on this page."
-          },
-          "limit": {
-            "type": "integer",
-            "description": "Page size used.",
-            "minimum": 0
-          },
-          "offset": {
-            "type": "integer",
-            "description": "Page offset used.",
-            "minimum": 0
-          },
-          "total": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Total conversations matching the query.",
-            "minimum": 0
           }
         }
       },
@@ -5949,10 +5756,10 @@
         "type": "object",
         "description": "Per-source counts for one conversation.",
         "required": [
-          "sources"
+          "items"
         ],
         "properties": {
-          "sources": {
+          "items": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ConversationSourceInfo"
@@ -5989,8 +5796,9 @@
             "description": "Timestamp of the conversation's first message."
           },
           "id": {
-            "type": "string",
-            "description": "Numeric `conversations.id`, serialized as a string; search for it as `in:#<id>`."
+            "type": "integer",
+            "format": "int64",
+            "description": "The conversation's id; search for it as `in:#<id>`."
           },
           "is_group": {
             "type": "boolean",
@@ -6183,16 +5991,12 @@
         "type": "object",
         "description": "The new import session id.",
         "required": [
-          "ok",
           "id"
         ],
         "properties": {
           "id": {
             "type": "integer",
             "format": "int64"
-          },
-          "ok": {
-            "type": "boolean"
           }
         }
       },
@@ -6270,32 +6074,6 @@
           }
         }
       },
-      "DeleteAccountResponse": {
-        "type": "object",
-        "description": "Deletion acknowledgement.",
-        "required": [
-          "ok"
-        ],
-        "properties": {
-          "ok": {
-            "type": "boolean",
-            "description": "Always true when a response is returned."
-          }
-        }
-      },
-      "DeleteApiTokenResponse": {
-        "type": "object",
-        "description": "Deletion acknowledgement.",
-        "required": [
-          "ok"
-        ],
-        "properties": {
-          "ok": {
-            "type": "boolean",
-            "description": "Always true when a response is returned."
-          }
-        }
-      },
       "DeleteMessagesRequest": {
         "type": "object",
         "description": "Confirmation flag for deleting all messages.",
@@ -6313,7 +6091,6 @@
         "type": "object",
         "description": "Counts of deleted conversations and attachment rows.",
         "required": [
-          "ok",
           "conversations",
           "attachments"
         ],
@@ -6329,10 +6106,6 @@
             "format": "int64",
             "description": "Conversations deleted.",
             "minimum": 0
-          },
-          "ok": {
-            "type": "boolean",
-            "description": "Always true when a response is returned."
           }
         }
       },
@@ -6340,7 +6113,6 @@
         "type": "object",
         "description": "Confirmation that a session was discarded.",
         "required": [
-          "ok",
           "id",
           "status"
         ],
@@ -6349,9 +6121,6 @@
             "type": "integer",
             "format": "int64"
           },
-          "ok": {
-            "type": "boolean"
-          },
           "status": {
             "type": "string"
           }
@@ -6359,19 +6128,14 @@
       },
       "ErrorBody": {
         "type": "object",
-        "description": "API error envelope returned for non-200 responses.",
+        "description": "The body of every failure: one sentence, with the HTTP status carrying the meaning.",
         "required": [
-          "ok",
           "error"
         ],
         "properties": {
           "error": {
             "type": "string",
             "description": "Human-readable description of the failure."
-          },
-          "ok": {
-            "type": "boolean",
-            "description": "Whether the request succeeded; always `false` for error responses."
           }
         }
       },
@@ -6470,8 +6234,6 @@
         "type": "object",
         "description": "Match counts for an export query.",
         "required": [
-          "ok",
-          "query",
           "messages",
           "conversations",
           "attachments",
@@ -6495,14 +6257,6 @@
             "format": "int64",
             "description": "Matching messages.",
             "minimum": 0
-          },
-          "ok": {
-            "type": "boolean",
-            "description": "Always true when a response is returned."
-          },
-          "query": {
-            "type": "string",
-            "description": "Query echoed back."
           },
           "total_bytes": {
             "type": "integer",
@@ -6638,46 +6392,6 @@
               "null"
             ],
             "description": "UTC timestamp, when known."
-          }
-        }
-      },
-      "ExportMessagesResponse": {
-        "type": "object",
-        "description": "One page of exported messages.",
-        "required": [
-          "ok",
-          "query",
-          "messages"
-        ],
-        "properties": {
-          "messages": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ExportMessage"
-            },
-            "description": "Messages on this page."
-          },
-          "next_cursor": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Cursor for the next page; absent on the last page."
-          },
-          "ok": {
-            "type": "boolean",
-            "description": "Always true when a response is returned."
-          },
-          "query": {
-            "type": "string",
-            "description": "Query echoed back."
-          },
-          "truncated": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "True when more rows matched than the page limit."
           }
         }
       },
@@ -6983,7 +6697,6 @@
           {
             "type": "object",
             "required": [
-              "ok",
               "source",
               "account"
             ],
@@ -7000,9 +6713,6 @@
                     "$ref": "#/components/schemas/DedupeResponse"
                   }
                 ]
-              },
-              "ok": {
-                "type": "boolean"
               },
               "source": {
                 "type": "string"
@@ -7220,10 +6930,10 @@
         "type": "object",
         "description": "Past import sessions.",
         "required": [
-          "imports"
+          "items"
         ],
         "properties": {
-          "imports": {
+          "items": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ImportSummary"
@@ -7286,19 +6996,6 @@
           "username": {
             "type": "string",
             "description": "Login username."
-          }
-        }
-      },
-      "LogoutResponse": {
-        "type": "object",
-        "description": "Revocation acknowledgement.",
-        "required": [
-          "ok"
-        ],
-        "properties": {
-          "ok": {
-            "type": "boolean",
-            "description": "Always true when a response is returned."
           }
         }
       },
@@ -7399,6 +7096,349 @@
             "items": {
               "$ref": "#/components/schemas/NamedSet"
             }
+          }
+        }
+      },
+      "Page_ContactSummary": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Contact row for the list: name, handles, groups.",
+              "required": [
+                "id",
+                "name",
+                "handle_count",
+                "last_modified"
+              ],
+              "properties": {
+                "groups": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Group names on this contact (A–Z)."
+                },
+                "handle_count": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Number of handles linked to the contact.",
+                  "minimum": 0
+                },
+                "handles": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Normalized (and raw when distinct) handle values for client-side filter."
+                },
+                "id": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Contact id."
+                },
+                "last_modified": {
+                  "type": "string",
+                  "description": "When the contact’s address-book shape last changed (`datetime('now')`)."
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Contact display name."
+                }
+              }
+            },
+            "description": "The rows on this page."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Page size used.",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Page offset used.",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows matching the query across every page.",
+            "minimum": 0
+          }
+        }
+      },
+      "Page_ConversationSummary": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Conversation row for the list: participants, counts, tags.",
+              "required": [
+                "id",
+                "participants",
+                "message_count",
+                "last_message_at",
+                "service",
+                "is_group",
+                "tags"
+              ],
+              "properties": {
+                "date_range_end": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Timestamp of the conversation's last message."
+                },
+                "date_range_start": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Timestamp of the conversation's first message."
+                },
+                "id": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "The conversation's id; search for it as `in:#<id>`."
+                },
+                "is_group": {
+                  "type": "boolean",
+                  "description": "True for group conversations."
+                },
+                "label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Group label from the export, when present."
+                },
+                "last_message_at": {
+                  "type": "string",
+                  "description": "Timestamp of the last message."
+                },
+                "message_count": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Messages in the conversation (excluding hidden duplicates).",
+                  "minimum": 0
+                },
+                "participants": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ConversationParticipant"
+                  },
+                  "description": "Participants with names and handles."
+                },
+                "service": {
+                  "type": "string",
+                  "description": "Platform service of the conversation, e.g. `imessage`."
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Message tags on this conversation."
+                }
+              }
+            },
+            "description": "The rows on this page."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Page size used.",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Page offset used.",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows matching the query across every page.",
+            "minimum": 0
+          }
+        }
+      },
+      "Page_ExportMessage": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One exported message.",
+              "required": [
+                "id",
+                "source",
+                "timestamp",
+                "sort_order",
+                "is_from_me",
+                "is_announcement",
+                "is_reply",
+                "num_replies",
+                "conversation",
+                "attachments",
+                "tapbacks"
+              ],
+              "properties": {
+                "attachments": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ExportAttachment"
+                  },
+                  "description": "Attachments on this message."
+                },
+                "conversation": {
+                  "$ref": "#/components/schemas/ExportConversation",
+                  "description": "The conversation this message belongs to."
+                },
+                "guid": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Export GUID for replies and grouping."
+                },
+                "id": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Message row id."
+                },
+                "is_announcement": {
+                  "type": "boolean",
+                  "description": "True for group announcements."
+                },
+                "is_from_me": {
+                  "type": "boolean",
+                  "description": "True for messages sent by the account owner."
+                },
+                "is_reply": {
+                  "type": "boolean",
+                  "description": "True when part of a reply thread."
+                },
+                "num_replies": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Replies in this thread."
+                },
+                "sender": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Sender handle for incoming messages."
+                },
+                "service": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Platform service, e.g. `imessage`, when known."
+                },
+                "sort_order": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Ordering key within the conversation."
+                },
+                "source": {
+                  "type": "string",
+                  "description": "Import source id."
+                },
+                "subject": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Subject line, when set."
+                },
+                "tapbacks": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ExportTapback"
+                  },
+                  "description": "Reactions on this message."
+                },
+                "text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Body text, when present."
+                },
+                "thread_originator_guid": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "GUID of the message this replies to."
+                },
+                "thread_originator_part": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int64",
+                  "description": "Part index of the originator (for tapbacks)."
+                },
+                "timestamp": {
+                  "type": "string",
+                  "description": "Message timestamp (local)."
+                },
+                "timestamp_utc": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "UTC timestamp, when known."
+                }
+              }
+            },
+            "description": "The rows on this page."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Page size used.",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Page offset used.",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows matching the query across every page.",
+            "minimum": 0
           }
         }
       },
@@ -7512,7 +7552,6 @@
         "type": "object",
         "description": "The renamed token's id and stored label.",
         "required": [
-          "ok",
           "id",
           "label"
         ],
@@ -7524,10 +7563,6 @@
           "label": {
             "type": "string",
             "description": "Stored label after the rename."
-          },
-          "ok": {
-            "type": "boolean",
-            "description": "Always true when a response is returned."
           }
         }
       },
@@ -7576,52 +7611,14 @@
           }
         }
       },
-      "SavedSearchDeleteResponse": {
-        "type": "object",
-        "description": "The updated list after deletion.",
-        "required": [
-          "ok",
-          "savedSearches"
-        ],
-        "properties": {
-          "ok": {
-            "type": "boolean"
-          },
-          "savedSearches": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SavedSearch"
-            }
-          }
-        }
-      },
-      "SavedSearchResponse": {
-        "type": "object",
-        "description": "The affected saved search plus the updated list.",
-        "required": [
-          "savedSearch",
-          "savedSearches"
-        ],
-        "properties": {
-          "savedSearch": {
-            "$ref": "#/components/schemas/SavedSearch"
-          },
-          "savedSearches": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SavedSearch"
-            }
-          }
-        }
-      },
       "SavedSearchesListResponse": {
         "type": "object",
         "description": "The account's saved searches, A–Z.",
         "required": [
-          "savedSearches"
+          "items"
         ],
         "properties": {
-          "savedSearches": {
+          "items": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/SavedSearch"
@@ -7663,13 +7660,9 @@
         "type": "object",
         "description": "Confirmation that the stage moved.",
         "required": [
-          "ok",
           "stage"
         ],
         "properties": {
-          "ok": {
-            "type": "boolean"
-          },
           "stage": {
             "type": "string"
           }

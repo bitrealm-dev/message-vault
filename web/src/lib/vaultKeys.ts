@@ -33,7 +33,7 @@ export const keys = {
     lists: ["conversations", "list"] as const,
     list: ({ q, sort, order }: ConversationListKey) =>
       ["conversations", "list", q, sort, order] as const,
-    sources: (id: string | null) => ["conversations", "sources", String(id)] as const,
+    sources: (id: number | null) => ["conversations", "sources", String(id)] as const,
   },
   contactGroups: { all: ["contact-groups"] as const },
   messageTags: { all: ["message-tags"] as const },

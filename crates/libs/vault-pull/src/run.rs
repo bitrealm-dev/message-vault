@@ -17,8 +17,10 @@ use vault_http::{auth_check as authenticate, with_retries};
 use crate::http::{ExportMessage, ExportMessagesArgs, HttpSession};
 use crate::project::{build_document, conversation_key, to_ir_message};
 
-/// Default page size for GET /v1/export/messages.
-pub const DEFAULT_PAGE_LIMIT: usize = 100;
+/// Page size for GET /v1/export/messages; the vault's maximum.
+pub const DEFAULT_PAGE_LIMIT: usize = 500;
+/// The largest page the vault will hand back for GET /v1/export/messages.
+pub const MAX_PAGE_LIMIT: usize = 500;
 /// Default number of parallel asset download workers.
 pub const DEFAULT_ASSET_DOWNLOAD_WORKERS: usize = 8;
 /// Extra tries for transient HTTP failures, matching the vault-push default.
@@ -33,7 +35,6 @@ pub struct VaultPullConfig {
     pub key: String,
     /// A query in the vault's search language (may be empty).
     pub query: String,
-    pub source: Option<String>,
     pub skip_attachments: bool,
     pub page_limit: usize,
     pub cancel: Option<CancelFlag>,
@@ -78,20 +79,14 @@ fn emit(on_progress: &mut Option<&mut ProgressFn<'_>>, event: ProgressEvent) {
     }
 }
 
-/// Compose `after:` / `before:` operators onto a base query string.
-pub fn compose_query(base: &str, after: Option<&str>, before: Option<&str>) -> String {
-    let mut parts = Vec::new();
-    let base = base.trim();
-    if !base.is_empty() {
-        parts.push(base.to_string());
+/// Where the next page starts, or `None` when the walk is over: the vault said
+/// this was the last of `total`, or it sent nothing (a stale total must not spin).
+fn next_offset(offset: usize, fetched: usize, total: u64) -> Option<usize> {
+    if fetched == 0 {
+        return None;
     }
-    if let Some(a) = after.map(str::trim).filter(|s| !s.is_empty()) {
-        parts.push(format!("after:{a}"));
-    }
-    if let Some(b) = before.map(str::trim).filter(|s| !s.is_empty()) {
-        parts.push(format!("before:{b}"));
-    }
-    parts.join(" ")
+    let next = offset + fetched;
+    (u64::try_from(next).unwrap_or(u64::MAX) < total).then_some(next)
 }
 
 /// Create the output folder and its `attachments/` child, and mark the folder
@@ -182,7 +177,7 @@ pub fn run(
     }
 
     let session = HttpSession::new()?;
-    let mut cursor: Option<String> = None;
+    let mut offset = 0usize;
     let mut by_conv: BTreeMap<String, (ExportMessage, Vec<message_ir::IrMessage>)> =
         BTreeMap::new();
     // sha256 -> (source, relative path under out_dir)
@@ -198,23 +193,23 @@ pub fn run(
                     base_url: &cfg.base_url,
                     key: &cfg.key,
                     q: &q,
-                    limit: cfg.page_limit.max(1),
-                    cursor: cursor.as_deref(),
+                    limit: cfg.page_limit.clamp(1, MAX_PAGE_LIMIT),
+                    offset,
                     account: &account,
-                    source: cfg.source.as_deref(),
                 },
             )
         })?;
-        total_messages += page.messages.len() as u64;
+        let fetched = page.items.len();
+        total_messages += fetched as u64;
         emit(
             &mut on_progress,
             ProgressEvent::Page {
-                messages: page.messages.len(),
+                messages: fetched,
                 total_so_far: total_messages,
             },
         );
 
-        for msg in page.messages {
+        for msg in page.items {
             if !cfg.skip_attachments {
                 for att in &msg.attachments {
                     if let Some(sha) = att
@@ -245,9 +240,9 @@ pub fn run(
             entry.1.push(ir);
         }
 
-        match page.next_cursor {
-            Some(next) if !next.is_empty() => cursor = Some(next),
-            _ => break,
+        match next_offset(offset, fetched, page.total) {
+            Some(next) => offset = next,
+            None => break,
         }
     }
 
@@ -519,6 +514,22 @@ fn sanitize_source_suffix(source: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod paging_tests {
+    use super::next_offset;
+
+    #[test]
+    fn paging_stops_at_the_total_or_on_an_empty_page() {
+        assert_eq!(next_offset(0, 500, 1200), Some(500));
+        assert_eq!(next_offset(1000, 200, 1200), None);
+        assert_eq!(
+            next_offset(1000, 0, 1200),
+            None,
+            "an empty page ends the walk even under total"
+        );
+    }
 }
 
 #[cfg(test)]

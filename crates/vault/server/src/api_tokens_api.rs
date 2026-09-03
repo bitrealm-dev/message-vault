@@ -1,7 +1,7 @@
 //! CRUD for named CLI API tokens.
 
-use axum::Json;
-use axum::extract::{Path as AxumPath, State};
+use crate::extract::{Json, Path as AxumPath};
+use axum::extract::State;
 use serde::{Deserialize, Serialize};
 
 use crate::db::api_tokens;
@@ -116,13 +116,6 @@ pub struct CreateApiTokenResponse {
     pub token_hint: String,
 }
 
-/// Deletion acknowledgement.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct DeleteApiTokenResponse {
-    /// Always true when a response is returned.
-    pub ok: bool,
-}
-
 /// Body for renaming a token.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct RenameApiTokenRequest {
@@ -133,8 +126,6 @@ pub struct RenameApiTokenRequest {
 /// The renamed token's id and stored label.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RenameApiTokenResponse {
-    /// Always true when a response is returned.
-    pub ok: bool,
     /// Token id that was renamed.
     pub id: String,
     /// Stored label after the rename.
@@ -224,7 +215,7 @@ pub async fn create_api_token_handler(
     security(("bearer" = [])),
     params(("id" = String, Path, description = "API token id")),
     responses(
-        (status = 200, body = DeleteApiTokenResponse),
+        (status = 204, description = "Token deleted"),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody),
         (status = 404, body = crate::server::ErrorBody)
@@ -234,7 +225,7 @@ pub async fn delete_api_token_handler(
     State(state): State<AppState>,
     FullAccess(auth): FullAccess,
     AxumPath(id): AxumPath<String>,
-) -> Result<Json<DeleteApiTokenResponse>, ApiError> {
+) -> Result<axum::http::StatusCode, ApiError> {
     let account_id = auth.account_id;
 
     let mut conn = state.db.acquire().await?;
@@ -244,7 +235,7 @@ pub async fn delete_api_token_handler(
     if !deleted {
         return Err(ApiError::NotFound("API token not found".into()));
     }
-    Ok(Json(DeleteApiTokenResponse { ok: true }))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 /// Rename one named API token. The label is trimmed before storing.
@@ -284,7 +275,6 @@ pub async fn rename_api_token_handler(
         return Err(ApiError::NotFound("API token not found".into()));
     }
     Ok(Json(RenameApiTokenResponse {
-        ok: true,
         id: id_for_resp,
         label: trimmed,
     }))

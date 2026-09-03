@@ -4,10 +4,10 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use crate::extract::{Json, Query};
 use anyhow::{Context, Result};
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
-use axum::Json;
-use axum::extract::{Query, State};
+use axum::extract::State;
 use axum::http::HeaderMap;
 use rand::TryRng;
 use serde::{Deserialize, Serialize};
@@ -230,14 +230,11 @@ pub(crate) struct AuthCheckQuery {
 /// Token check result: account, username, sources.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct AuthCheckResponse {
-    ok: bool,
     sources: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     account_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     username: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    account_ok: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     admin: Option<bool>,
 }
@@ -279,11 +276,9 @@ pub(crate) async fn auth_check(
     }
     let sources = list_account_sources(&state.db, &account_id).await?;
     Ok(Json(AuthCheckResponse {
-        ok: true,
         sources,
         account_id: Some(account_id),
         username,
-        account_ok: Some(true),
         admin: None,
     }))
 }
@@ -479,8 +474,6 @@ pub struct ChangePasswordRequest {
 /// Fresh session token issued after the password change.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ChangePasswordResponse {
-    /// Always true when a response is returned.
-    pub ok: bool,
     /// Replacement session token after password change (previous sessions are revoked).
     pub token: String,
 }
@@ -493,20 +486,6 @@ pub struct DeleteAccountRequest {
     /// Required when the account has a local password.
     #[serde(default)]
     pub current_password: Option<String>,
-}
-
-/// Deletion acknowledgement.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct DeleteAccountResponse {
-    /// Always true when a response is returned.
-    pub ok: bool,
-}
-
-/// Revocation acknowledgement.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct LogoutResponse {
-    /// Always true when a response is returned.
-    pub ok: bool,
 }
 
 /// Why a password change was refused.
@@ -600,19 +579,19 @@ async fn logout_on_conn(conn: &mut AnyConnection, token: &str) -> Result<()> {
     tag = "Auth",
     security(("bearer" = [])),
     responses(
-        (status = 200, body = LogoutResponse),
+        (status = 204, description = "Signed out"),
         (status = 401, body = crate::server::ErrorBody)
     )
 )]
 pub async fn logout_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<LogoutResponse>, ApiError> {
+) -> Result<axum::http::StatusCode, ApiError> {
     let token = crate::server::bearer_token(&headers)?;
     let mut conn = state.db.acquire().await?;
     schema::ensure_accounts_schema(&mut conn).await?;
     logout_on_conn(&mut conn, &token).await?;
-    Ok(Json(LogoutResponse { ok: true }))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 /// Verify the current password, store the new one, revoke API tokens, and
@@ -648,7 +627,7 @@ pub async fn change_password_handler(
     let token =
         change_password_on_conn(&mut conn, &account_id, &current_password, &new_hash).await?;
 
-    Ok(Json(ChangePasswordResponse { ok: true, token }))
+    Ok(Json(ChangePasswordResponse { token }))
 }
 
 /// Permanently delete the account and its data directory.
@@ -659,7 +638,7 @@ pub async fn change_password_handler(
     security(("bearer" = [])),
     request_body = DeleteAccountRequest,
     responses(
-        (status = 200, body = DeleteAccountResponse),
+        (status = 204, description = "Account deleted"),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody)
@@ -669,7 +648,7 @@ pub async fn delete_account_handler(
     State(state): State<AppState>,
     FullAccess(auth): FullAccess,
     Json(req): Json<DeleteAccountRequest>,
-) -> Result<Json<DeleteAccountResponse>, ApiError> {
+) -> Result<axum::http::StatusCode, ApiError> {
     if !req.confirm {
         return Err(ApiError::BadRequest(
             "confirmation flag must be true".into(),
@@ -713,7 +692,7 @@ pub async fn delete_account_handler(
             .with_context(|| format!("remove account data dir {}", account_root.display()))?;
     }
 
-    Ok(Json(DeleteAccountResponse { ok: true }))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 #[cfg(test)]
@@ -735,6 +714,28 @@ mod tests {
         let mut conn = pool.acquire().await.unwrap();
         schema::ensure_vault_schema(&mut conn).await.unwrap();
         (dir, conn)
+    }
+
+    #[tokio::test]
+    async fn auth_check_names_the_account_without_an_ok_flag_and_logout_is_204() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let user = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+        let body: serde_json::Value =
+            crate::test_support::get_json(&state, "/v1/auth/check", &user.token).await;
+        assert_eq!(body["username"], "alice");
+        assert!(
+            body.get("ok").is_none() && body.get("account_ok").is_none(),
+            "{body}"
+        );
+        let status = crate::test_support::post_status(
+            &state,
+            "/v1/auth/logout",
+            &user.token,
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
     }
 
     #[tokio::test]
@@ -1139,7 +1140,7 @@ mod tests {
         .await;
         assert_eq!(
             status,
-            StatusCode::OK,
+            StatusCode::NO_CONTENT,
             "the only administrator on their own vault must still be able to leave"
         );
 
@@ -1199,7 +1200,7 @@ mod tests {
         .await;
         assert_eq!(
             status,
-            StatusCode::OK,
+            StatusCode::NO_CONTENT,
             "an ordinary account must be able to delete itself regardless of the admin count"
         );
     }

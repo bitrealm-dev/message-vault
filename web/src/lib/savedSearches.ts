@@ -6,8 +6,11 @@ import {
   listSavedSearches,
   updateSavedSearch as updateVaultSavedSearch,
 } from "./vaultApi";
+import type { components } from "./vaultApi.types";
 import { keys } from "./vaultKeys";
 import { useVaultCache, useVaultQuery } from "./vaultQuery";
+
+type Schema = components["schemas"];
 
 /**
  * Saved searches live in the vault, not in the browser. They belong to an
@@ -25,49 +28,33 @@ import { useVaultCache, useVaultQuery } from "./vaultQuery";
  * remember.
  */
 
-export interface SavedSearch {
-  id: number;
-  name: string;
-  query: string;
-  /** `manual` when a person wrote it, `import` when an import run created it. */
-  kind: string;
-}
-
-type ListResponse = { savedSearches?: SavedSearch[] };
-
-function listFrom(res: ListResponse): SavedSearch[] {
-  return Array.isArray(res.savedSearches) ? res.savedSearches : [];
-}
+export type SavedSearch = Schema["SavedSearch"];
 
 /** The account's saved searches, A–Z as the vault orders them. */
 export function useSavedSearches(): {
   savedSearches: SavedSearch[];
   loading: boolean;
 } {
-  const { data, isPending } = useVaultQuery(keys.savedSearches.all, async (signal) =>
-    listFrom(await listSavedSearches({ signal })),
+  const { data, isPending } = useVaultQuery(
+    keys.savedSearches.all,
+    async (signal) => (await listSavedSearches({ signal })).items,
   );
   return { savedSearches: data ?? [], loading: isPending };
 }
 
-/**
- * Every write answers with the whole list, so each stores that answer where
- * the sidebar reads it and asks for nothing again.
- */
+/** Every write is followed by one fresh read of the list the sidebar shows. */
 function useSavedSearchWrite<V>(
-  write: (vars: V) => Promise<ListResponse>,
-): UseMutationResult<SavedSearch[], Error, V> {
+  write: (vars: V) => Promise<unknown>,
+): UseMutationResult<unknown, Error, V> {
   const cache = useVaultCache();
-  return useMutation<SavedSearch[], Error, V>({
-    mutationFn: async (vars) => listFrom(await write(vars)),
-    onSuccess: (list) => {
-      cache.set(keys.savedSearches.all, list);
-    },
+  return useMutation<unknown, Error, V>({
+    mutationFn: write,
+    onSettled: () => cache.invalidate(keys.savedSearches.all),
   });
 }
 
 export function useCreateSavedSearch(): UseMutationResult<
-  SavedSearch[],
+  unknown,
   Error,
   { name: string; query: string }
 > {
@@ -75,14 +62,14 @@ export function useCreateSavedSearch(): UseMutationResult<
 }
 
 export function useUpdateSavedSearch(): UseMutationResult<
-  SavedSearch[],
+  unknown,
   Error,
   { id: number; name: string; query: string }
 > {
   return useSavedSearchWrite(({ id, name, query }) => updateVaultSavedSearch(id, { name, query }));
 }
 
-export function useDeleteSavedSearch(): UseMutationResult<SavedSearch[], Error, number> {
+export function useDeleteSavedSearch(): UseMutationResult<unknown, Error, number> {
   return useSavedSearchWrite((id) => deleteVaultSavedSearch(id));
 }
 

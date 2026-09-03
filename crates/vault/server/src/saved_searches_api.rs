@@ -5,8 +5,9 @@
 //! and a query that are edited together, so name-addressing would use the
 //! changing field as the key.
 
-use axum::Json;
-use axum::extract::{Path, State};
+use crate::extract::{Json, Path};
+use axum::extract::State;
+use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 
 use crate::db::saved_searches::{self, SavedSearch, SavedSearchKind};
@@ -22,25 +23,7 @@ pub(crate) struct SavedSearchBody {
 /// The account's saved searches, A–Z.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct SavedSearchesListResponse {
-    #[serde(rename = "savedSearches")]
-    saved_searches: Vec<SavedSearch>,
-}
-
-/// The affected saved search plus the updated list.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct SavedSearchResponse {
-    #[serde(rename = "savedSearch")]
-    saved_search: SavedSearch,
-    #[serde(rename = "savedSearches")]
-    saved_searches: Vec<SavedSearch>,
-}
-
-/// The updated list after deletion.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct SavedSearchDeleteResponse {
-    ok: bool,
-    #[serde(rename = "savedSearches")]
-    saved_searches: Vec<SavedSearch>,
+    items: Vec<SavedSearch>,
 }
 
 /// List the account's saved searches, A–Z.
@@ -60,11 +43,11 @@ pub(crate) async fn saved_searches_list_handler(
     FullAccess(auth): FullAccess,
 ) -> Result<Json<SavedSearchesListResponse>, ApiError> {
     let mut conn = state.db.acquire().await?;
-    let saved_searches = saved_searches::list(&mut conn, &auth.account_id).await?;
-    Ok(Json(SavedSearchesListResponse { saved_searches }))
+    let items = saved_searches::list(&mut conn, &auth.account_id).await?;
+    Ok(Json(SavedSearchesListResponse { items }))
 }
 
-/// Create a saved search and return it with the updated list.
+/// Create a saved search and return it.
 #[utoipa::path(
     post,
     path = "/v1/saved-searches",
@@ -72,7 +55,7 @@ pub(crate) async fn saved_searches_list_handler(
     security(("bearer" = [])),
     request_body = SavedSearchBody,
     responses(
-        (status = 200, body = SavedSearchResponse),
+        (status = 200, body = SavedSearch),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody),
@@ -83,9 +66,9 @@ pub(crate) async fn saved_searches_create_handler(
     State(state): State<AppState>,
     FullAccess(auth): FullAccess,
     Json(body): Json<SavedSearchBody>,
-) -> Result<Json<SavedSearchResponse>, ApiError> {
+) -> Result<Json<SavedSearch>, ApiError> {
     let mut conn = state.db.acquire().await?;
-    let saved_search = saved_searches::create(
+    let row = saved_searches::create(
         &mut conn,
         &auth.account_id,
         &body.name,
@@ -93,14 +76,10 @@ pub(crate) async fn saved_searches_create_handler(
         SavedSearchKind::Manual,
     )
     .await?;
-    let saved_searches = saved_searches::list(&mut conn, &auth.account_id).await?;
-    Ok(Json(SavedSearchResponse {
-        saved_search,
-        saved_searches,
-    }))
+    Ok(Json(row))
 }
 
-/// Replace a saved search's name and query, and return the updated list.
+/// Replace a saved search's name and query, and return it.
 #[utoipa::path(
     patch,
     path = "/v1/saved-searches/{id}",
@@ -109,7 +88,7 @@ pub(crate) async fn saved_searches_create_handler(
     params(("id" = i64, Path, description = "Saved search id")),
     request_body = SavedSearchBody,
     responses(
-        (status = 200, body = SavedSearchResponse),
+        (status = 200, body = SavedSearch),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody),
@@ -122,18 +101,14 @@ pub(crate) async fn saved_searches_update_handler(
     FullAccess(auth): FullAccess,
     Path(id): Path<i64>,
     Json(body): Json<SavedSearchBody>,
-) -> Result<Json<SavedSearchResponse>, ApiError> {
+) -> Result<Json<SavedSearch>, ApiError> {
     let mut conn = state.db.acquire().await?;
-    let saved_search =
+    let row =
         saved_searches::update(&mut conn, &auth.account_id, id, &body.name, &body.query).await?;
-    let saved_searches = saved_searches::list(&mut conn, &auth.account_id).await?;
-    Ok(Json(SavedSearchResponse {
-        saved_search,
-        saved_searches,
-    }))
+    Ok(Json(row))
 }
 
-/// Delete a saved search and return the updated list.
+/// Delete a saved search.
 ///
 /// Deleting an import-created saved search removes the shortcut only. The
 /// `vault_imports` row it pointed at is the account's permanent record of that
@@ -145,7 +120,7 @@ pub(crate) async fn saved_searches_update_handler(
     security(("bearer" = [])),
     params(("id" = i64, Path, description = "Saved search id")),
     responses(
-        (status = 200, body = SavedSearchDeleteResponse),
+        (status = 204, description = "Saved search deleted"),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody),
         (status = 404, body = crate::server::ErrorBody)
@@ -155,12 +130,54 @@ pub(crate) async fn saved_searches_delete_handler(
     State(state): State<AppState>,
     FullAccess(auth): FullAccess,
     Path(id): Path<i64>,
-) -> Result<Json<SavedSearchDeleteResponse>, ApiError> {
+) -> Result<StatusCode, ApiError> {
     let mut conn = state.db.acquire().await?;
     saved_searches::delete(&mut conn, &auth.account_id, id).await?;
-    let saved_searches = saved_searches::list(&mut conn, &auth.account_id).await?;
-    Ok(Json(SavedSearchDeleteResponse {
-        ok: true,
-        saved_searches,
-    }))
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::StatusCode;
+
+    use crate::test_support::{
+        delete_status, get_json, patch_json, post_json, register_via_api, test_vault,
+    };
+
+    #[tokio::test]
+    async fn saved_searches_list_as_items_and_each_write_answers_the_row_or_204() {
+        let vault = test_vault().await;
+        let state = vault.state.clone();
+        let user = register_via_api(&state, "alice", "hunter2hunter2").await;
+
+        let created: serde_json::Value = post_json(
+            &state,
+            "/v1/saved-searches",
+            &user.token,
+            serde_json::json!({ "name": "Family", "query": "group:Family" }),
+        )
+        .await;
+        assert_eq!(created["name"], "Family");
+        assert!(created["id"].is_i64());
+        assert!(created.get("savedSearch").is_none() && created.get("savedSearches").is_none());
+        let id = created["id"].as_i64().unwrap();
+
+        let renamed: serde_json::Value = patch_json(
+            &state,
+            &format!("/v1/saved-searches/{id}"),
+            &user.token,
+            serde_json::json!({ "name": "Kin", "query": "group:Family" }),
+        )
+        .await;
+        assert_eq!(renamed["name"], "Kin");
+
+        let list: serde_json::Value = get_json(&state, "/v1/saved-searches", &user.token).await;
+        assert_eq!(list["items"][0]["name"], "Kin");
+        assert!(list.get("savedSearches").is_none());
+
+        let status = delete_status(&state, &format!("/v1/saved-searches/{id}"), &user.token).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let list: serde_json::Value = get_json(&state, "/v1/saved-searches", &user.token).await;
+        assert_eq!(list["items"].as_array().unwrap().len(), 0);
+    }
 }

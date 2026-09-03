@@ -27,7 +27,7 @@ import DataCard, { dataCardHeaderRowClass } from "./DataCard";
 
 type ContactTotals = ReturnType<typeof sumHandleTotals>;
 
-/** Matches `MAX_LIST_LIMIT` on `POST /v1/export/contacts/summaries`. */
+/** Matches `MAX_CONTACT_SUMMARY_IDS` on `POST /v1/contacts/summaries`. */
 const SUMMARY_BATCH_SIZE = 500;
 
 type ContactSelectionSummary = {
@@ -145,7 +145,7 @@ export default function CheckedContactsPanel({
         setMetrics((prev) => {
           const next = { ...prev };
           for (const page of pages) {
-            for (const summary of page.contacts) {
+            for (const summary of page.items) {
               next[String(summary.id)] = {
                 name: summary.name,
                 totals: totalsFromSummary(summary),

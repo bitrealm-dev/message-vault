@@ -15,16 +15,31 @@ use vault_http::{VaultHttpError, trim_base_url, truncate};
 
 pub use vault_http::HttpSession;
 
+/// One page from `GET /v1/export/messages`: `{items, total, limit, offset}`.
 #[derive(Debug, Deserialize)]
-/// One page from `GET /v1/export/messages`.
-pub struct ExportMessagesResponse {
-    pub ok: bool,
+pub struct ExportMessagesPage {
     #[serde(default)]
-    pub error: Option<String>,
+    pub items: Vec<ExportMessage>,
     #[serde(default)]
-    pub messages: Vec<ExportMessage>,
+    pub total: u64,
+}
+
+/// The vault's failure body: `{error}`.
+#[derive(Debug, Deserialize)]
+struct ErrorBody {
     #[serde(default)]
-    pub next_cursor: Option<String>,
+    error: Option<String>,
+}
+
+/// The sentence to show for a failed response: the body's `error` when it has
+/// one, otherwise the body itself, clipped.
+fn error_sentence(body: &str, _status: u16) -> String {
+    match serde_json::from_str::<ErrorBody>(body) {
+        Ok(ErrorBody {
+            error: Some(message),
+        }) if !message.trim().is_empty() => message,
+        _ => truncate(body, 300),
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -122,41 +137,30 @@ pub struct ExportTapback {
 
 struct ExportUrl<'a> {
     base_url: &'a str,
-    /// Route path starting with a slash, for example `/v1/export/messages`.
-    path: &'a str,
     /// A query in the vault's search language. Sent even when empty.
     q: &'a str,
-    /// Page size. Only the paging route accepts it.
-    limit: Option<usize>,
-    /// Continuation token from a previous page.
-    cursor: Option<&'a str>,
+    /// Page size.
+    limit: usize,
+    /// Row offset.
+    offset: usize,
     /// Vault account name. Left out when blank.
     account: &'a str,
-    /// Restrict the results to one vault source id.
-    source: Option<&'a str>,
 }
 
-/// Build the request URL for an export route, leaving out parameters that are
-/// absent or blank so the vault sees the same query string it did before.
+/// Build the request URL for `GET /v1/export/messages`, leaving out `account`
+/// when it is blank.
 fn export_url(request: ExportUrl<'_>) -> Result<reqwest::Url> {
     let base = trim_base_url(request.base_url);
-    let mut url = reqwest::Url::parse(&format!("{base}{}", request.path))
+    let mut url = reqwest::Url::parse(&format!("{base}/v1/export/messages"))
         .with_context(|| format!("invalid vault URL {base}"))?;
     {
         let mut pairs = url.query_pairs_mut();
         pairs.append_pair("q", request.q);
-        if let Some(limit) = request.limit {
-            pairs.append_pair("limit", &limit.to_string());
-        }
-        if let Some(cursor) = request.cursor.filter(|s| !s.is_empty()) {
-            pairs.append_pair("cursor", cursor);
-        }
+        pairs.append_pair("limit", &request.limit.to_string());
+        pairs.append_pair("offset", &request.offset.to_string());
         let account = request.account.trim();
         if !account.is_empty() {
             pairs.append_pair("account", account);
-        }
-        if let Some(source) = request.source.map(str::trim).filter(|s| !s.is_empty()) {
-            pairs.append_pair("source", source);
         }
     }
     Ok(url)
@@ -168,9 +172,8 @@ pub(crate) struct ExportMessagesArgs<'a> {
     pub key: &'a str,
     pub q: &'a str,
     pub limit: usize,
-    pub cursor: Option<&'a str>,
+    pub offset: usize,
     pub account: &'a str,
-    pub source: Option<&'a str>,
 }
 
 /// Fetch one page of messages from `GET /v1/export/messages`.
@@ -181,24 +184,21 @@ pub(crate) struct ExportMessagesArgs<'a> {
 pub fn export_messages(
     http: &HttpSession,
     args: ExportMessagesArgs<'_>,
-) -> Result<ExportMessagesResponse> {
+) -> Result<ExportMessagesPage> {
     let ExportMessagesArgs {
         base_url,
         key,
         q,
         limit,
-        cursor,
+        offset,
         account,
-        source,
     } = args;
     let url = export_url(ExportUrl {
         base_url,
-        path: "/v1/export/messages",
         q,
-        limit: Some(limit),
-        cursor,
+        limit,
+        offset,
         account,
-        source,
     })?;
 
     let response = http
@@ -210,28 +210,15 @@ pub fn export_messages(
     let status = response.status();
     let body = response.text().unwrap_or_default();
     if !status.is_success() {
-        // Prefer the vault's own error text; fall back to the raw body.
-        let detail = match serde_json::from_str::<ExportMessagesResponse>(&body) {
-            Ok(ExportMessagesResponse {
-                error: Some(message),
-                ..
-            }) => message,
-            _ => truncate(&body, 300),
-        };
+        let detail = error_sentence(&body, status.as_u16());
         return Err(VaultHttpError::new(
             status.as_u16(),
             format!("export messages failed ({status}): {detail}"),
         )
         .into());
     }
-    let parsed: ExportMessagesResponse =
+    let parsed: ExportMessagesPage =
         serde_json::from_str(&body).context("parse export messages response")?;
-    if !parsed.ok {
-        bail!(
-            "export messages rejected: {}",
-            parsed.error.unwrap_or_else(|| "unknown error".into())
-        );
-    }
     Ok(parsed)
 }
 
@@ -305,4 +292,37 @@ pub fn download_asset(
     std::fs::rename(&tmp, dest)
         .with_context(|| format!("rename {} -> {}", tmp.display(), dest.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_export_url_carries_q_limit_offset_and_account_only() {
+        let url = export_url(ExportUrl {
+            base_url: "http://127.0.0.1:8080/",
+            q: "from:me",
+            limit: 500,
+            offset: 1000,
+            account: " alice ",
+        })
+        .unwrap();
+        assert_eq!(
+            url.as_str(),
+            "http://127.0.0.1:8080/v1/export/messages?q=from%3Ame&limit=500&offset=1000&account=alice"
+        );
+    }
+
+    #[test]
+    fn a_page_parses_without_an_ok_flag_and_a_failure_body_yields_its_sentence() {
+        let page: ExportMessagesPage =
+            serde_json::from_str(r#"{"items":[],"total":7,"limit":500,"offset":0}"#).unwrap();
+        assert_eq!((page.items.len(), page.total), (0, 7));
+        assert_eq!(
+            error_sentence(r#"{"error":"limit exceeds maximum of 500"}"#, 400),
+            "limit exceeds maximum of 500"
+        );
+        assert_eq!(error_sentence("<html>", 502), "<html>");
+    }
 }

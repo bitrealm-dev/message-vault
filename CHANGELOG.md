@@ -13,6 +13,7 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ### Removed
 
+- 2026-09-03: The export cursor, the `source=` parameter on `GET /v1/export/messages` and `/count` (write `source:imessage` in the query instead), the `savedSearches` and `savedSearch` fields, the `ok` and `account_ok` flags, and `vault-pull`'s unused `compose_query`.
 - 2026-08-31: The legacy Slint desktop GUI (`crates/message-vault-io-gui`) is gone. The Tauri desktop app is the product path. Its screens are recorded, one image per exporter, in `docs/superpowers/reference/legacy-slint-gui.md`.
 
 ### Fixed
@@ -28,6 +29,8 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ### Changed
 
+- 2026-09-03: Every list on the HTTP interface answers `{items, total, limit, offset}` and takes `offset` and `limit`; a `limit` above 500 or an `offset` above 50 000 is a 400 instead of a silent clamp. Conversation ids are integers. Every failure is `{error}` with the status, including a malformed query parameter, path, or JSON body, an unknown `/v1` path, and a wrong method. No response carries an `ok` flag; acknowledgements with nothing else to say are 204. Saved searches list as `items`, and creating or renaming one answers the row. (ADR-0005)
+- 2026-09-03: `GET /v1/export/messages` pages by `offset` and `limit`, reports `total`, and has no offset cap. The desktop Export walks it in pages of 500.
 - 2026-08-31: The `/v1/thread-tags` route group is now `/v1/message-tags`, matching the product's Message Tag vocabulary; the OpenAPI tag reads "Message tags" and the backing tables are `message_tags` / `message_tag_members` (vault schema 7; existing databases are rebuilt empty). Saved searches and the `tag:` operator are unchanged.
 - 2026-08-30: The vault allows the packaged desktop app's three origins (`tauri://localhost`, `http://tauri.localhost`, `https://tauri.localhost`) without being configured to. A vault built from source ships `cors_origins` commented out, and the desktop app pointed at it failed in a way that reads as an unreachable server while `curl` to the same port succeeded. `cors_origins` still governs every other origin, and `["*"]` is unchanged.
 - 2026-08-28: Postgres JSONL staging writes up to 1000 rows per `INSERT` (SQLite stays at the 999-bind cap, about 55 message rows). Same statement shape on both engines.

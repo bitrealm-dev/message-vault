@@ -7,6 +7,15 @@ Route schemas, status codes, and JSON fields live in the generated [HTTP API ref
 
 `message-vault-server serve` reads `[server]` in `config/config.toml` (`bind`). Day-to-day import uses the desktop [Import](/vault/user/import-from-a-backup/) screen and download uses [Export](/vault/user/how-to/export-from-the-vault/). Both call this API with [JSONL](/vault/developer/reference/export-structure/) and attachment bytes keyed by SHA-256, through the `vault-push` and `vault-pull` libraries.
 
+## One shape for every route
+
+- A list takes `?offset=&limit=` and answers `{items, total, limit, offset}`. `limit` is at most 500 and at least 1; `offset` is at most 50 000 on the Contacts and Conversations lists and unlimited on Export.
+- A failure answers `{"error": "<sentence>"}` with the HTTP status. That includes a malformed query parameter, path, or JSON body, an unknown `/v1` path (404), and a wrong method (405). There is no `ok` field on any response.
+- A route with nothing to say on success answers `204 No Content`.
+- Every id is an integer, except API token ids and account ids, which are opaque strings.
+
+Why: [ADR-0005](https://github.com/bitrealm-io/message-vault/blob/main/docs/adr/0005-one-shape-for-every-route-on-the-http-interface.md).
+
 ## Tokens
 
 Auth is per-account. There is no host-wide admin token.

@@ -18,7 +18,7 @@ async function fetchOverview(signal: AbortSignal): Promise<StorageOverview> {
     getAccountStorage({ signal }),
   ]);
   return {
-    imports: importsRes.imports ?? [],
+    imports: importsRes.items,
     totalBytes: usageRes.total_bytes ?? 0,
     attachmentCount: usageRes.attachment_count ?? 0,
     topAttachments: usageRes.top_attachments ?? [],

@@ -3,7 +3,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Message } from "../../lib/types";
-import { countExportMessages, exportMessages } from "../../lib/vaultApi";
+import { exportMessages } from "../../lib/vaultApi";
 import {
   buildFooterLabel,
   conversationYears,
@@ -13,11 +13,9 @@ import {
 vi.mock("../../lib/vaultApi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lib/vaultApi")>()),
   exportMessages: vi.fn(),
-  countExportMessages: vi.fn(),
 }));
 
 const getMessages = vi.mocked(exportMessages);
-const getCount = vi.mocked(countExportMessages);
 
 function message(id: number): Message {
   return {
@@ -60,35 +58,38 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-/** Route the mocked calls: conversation A hangs on `slow`, conversation B answers at once. */
-function routeGets(slow: Promise<{ messages: Message[] }>) {
-  getCount.mockResolvedValue({ messages: 1 } as never);
+type MessagePage = { items: Message[]; total: number; limit: number; offset: number };
+function page(items: Message[]): MessagePage {
+  return { items, total: items.length, limit: 50, offset: 0 };
+}
+
+/** Route the mocked calls: conversation 1 hangs on `slow`, conversation 2 answers at once. */
+function routeGets(slow: Promise<MessagePage>) {
   getMessages.mockImplementation(((params: { q: string }) =>
-    params.q.includes("in:#A")
+    params.q.includes("in:#1")
       ? slow
-      : Promise.resolve({ messages: [message(2)] })) as unknown as typeof exportMessages);
+      : Promise.resolve(page([message(2)]))) as unknown as typeof exportMessages);
 }
 
 describe("useConversationMessages", () => {
   beforeEach(() => {
     getMessages.mockReset();
-    getCount.mockReset();
   });
 
   it("ignores a slow response from the conversation the user navigated away from", async () => {
-    const slow = deferred<{ messages: Message[] }>();
+    const slow = deferred<MessagePage>();
     routeGets(slow.promise);
 
     const { result, rerender } = renderHook(
-      ({ id }: { id: string }) => useConversationMessages(id),
-      { initialProps: { id: "A" } },
+      ({ id }: { id: number }) => useConversationMessages(id),
+      { initialProps: { id: 1 } },
     );
 
-    rerender({ id: "B" });
+    rerender({ id: 2 });
     await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual([2]));
 
     await act(async () => {
-      slow.resolve({ messages: [message(1)] });
+      slow.resolve(page([message(1)]));
       await slow.promise;
     });
 
@@ -97,15 +98,15 @@ describe("useConversationMessages", () => {
   });
 
   it("keeps the current page when a superseded request rejects", async () => {
-    const slow = deferred<{ messages: Message[] }>();
+    const slow = deferred<MessagePage>();
     routeGets(slow.promise);
 
     const { result, rerender } = renderHook(
-      ({ id }: { id: string }) => useConversationMessages(id),
-      { initialProps: { id: "A" } },
+      ({ id }: { id: number }) => useConversationMessages(id),
+      { initialProps: { id: 1 } },
     );
 
-    rerender({ id: "B" });
+    rerender({ id: 2 });
     await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual([2]));
 
     // The abort surfaces as a rejection; it must not blank B's messages.

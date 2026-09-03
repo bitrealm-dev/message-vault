@@ -16,7 +16,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use futures_util::StreamExt;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sqlx::AnyConnection;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
@@ -259,11 +259,9 @@ pub struct AppState {
     pub(crate) max_body_bytes: usize,
 }
 
-/// API error envelope returned for non-200 responses.
+/// The body of every failure: one sentence, with the HTTP status carrying the meaning.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ErrorBody {
-    /// Whether the request succeeded; always `false` for error responses.
-    pub ok: bool,
     /// Human-readable description of the failure.
     pub error: String,
 }
@@ -281,12 +279,19 @@ pub enum ApiError {
     Conflict(String),
     /// `404` — the requested resource does not exist.
     NotFound(String),
+    /// `405` — the path exists but not for this method.
+    MethodNotAllowed(String),
     /// `429` — rate limit hit.
     TooManyRequests(String),
     /// `503` — a dependency is temporarily unavailable.
     ServiceUnavailable(String),
     /// `500` — unexpected failure.
     Internal(String),
+    /// An explicit status the caller already picked, such as Axum's own
+    /// answer to a rejected `Json` extraction (413 over the body limit, 415
+    /// for the wrong `Content-Type`). ADR-0005 says the status carries the
+    /// meaning, so these must not be flattened to 400.
+    Status(StatusCode, String),
 }
 
 impl IntoResponse for ApiError {
@@ -297,6 +302,7 @@ impl IntoResponse for ApiError {
             Self::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
             Self::Conflict(m) => (StatusCode::CONFLICT, m),
             Self::NotFound(m) => (StatusCode::NOT_FOUND, m),
+            Self::MethodNotAllowed(m) => (StatusCode::METHOD_NOT_ALLOWED, m),
             Self::TooManyRequests(m) => (StatusCode::TOO_MANY_REQUESTS, m),
             Self::ServiceUnavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, m),
             Self::Internal(m) => {
@@ -307,15 +313,9 @@ impl IntoResponse for ApiError {
                     "internal server error".into(),
                 )
             }
+            Self::Status(status, m) => (status, m),
         };
-        (
-            status,
-            Json(ErrorBody {
-                ok: false,
-                error: message,
-            }),
-        )
-            .into_response()
+        (status, Json(ErrorBody { error: message })).into_response()
     }
 }
 
@@ -427,6 +427,51 @@ fn limited_auth_router() -> (Router<AppState>, utoipa::openapi::OpenApi) {
     )
 }
 
+/// A `/v1/…` path no route claims. Static files answer everything else.
+async fn api_not_found(uri: axum::http::Uri) -> ApiError {
+    ApiError::NotFound(format!("no route at {}", uri.path()))
+}
+
+/// A route that exists, asked with a method it does not take.
+async fn api_method_not_allowed(method: axum::http::Method, uri: axum::http::Uri) -> ApiError {
+    ApiError::MethodNotAllowed(format!("{method} is not allowed at {}", uri.path()))
+}
+
+/// tower_http's `RequestBodyLimitLayer` answers a plain-text `413` itself,
+/// bypassing every extractor, the moment a `Content-Length` header already
+/// announces a payload over the limit — `extract::Json`'s own 413 handling
+/// only ever sees a body that had to be read to discover it was too long.
+/// Rewrite that one plain-text response into the vault's `{error}` envelope
+/// so a body over the limit answers the same way however the client
+/// declares its size.
+async fn json_body_limit_response(mut response: Response) -> Response {
+    if response.status() != StatusCode::PAYLOAD_TOO_LARGE {
+        return response;
+    }
+    let already_json = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("application/json"));
+    if already_json {
+        return response;
+    }
+    let bytes = serde_json::to_vec(&ErrorBody {
+        error: "the request body is too large".to_string(),
+    })
+    .expect("ErrorBody always serializes");
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    response.headers_mut().insert(
+        header::CONTENT_LENGTH,
+        HeaderValue::from_str(&bytes.len().to_string()).expect("digits are a valid header value"),
+    );
+    *response.body_mut() = axum::body::Body::from(bytes);
+    response
+}
+
 pub(crate) fn http_app(state: AppState) -> Router {
     let openapi_ui = state
         .cfg
@@ -447,9 +492,18 @@ pub(crate) fn http_app(state: AppState) -> Router {
     let mut api = Router::new()
         .merge(doc_router)
         .merge(auth_small)
+        // `/v1/{*rest}` needs at least one character after the slash, so the
+        // bare prefix (with or without a trailing slash) needs its own
+        // routes to answer the same JSON 404 instead of falling through to
+        // the static file server.
+        .route("/v1", axum::routing::any(api_not_found))
+        .route("/v1/", axum::routing::any(api_not_found))
+        .route("/v1/{*rest}", axum::routing::any(api_not_found))
+        .method_not_allowed_fallback(api_method_not_allowed)
         .fallback_service(ServeDir::new("static"))
         .layer(build_cors_layer(&cors_origins))
-        .layer(RequestBodyLimitLayer::new(state.max_body_bytes));
+        .layer(RequestBodyLimitLayer::new(state.max_body_bytes))
+        .layer(axum::middleware::map_response(json_body_limit_response));
 
     if openapi_ui {
         api = api.merge(utoipa_swagger_ui::SwaggerUi::new("/docs").url("/openapi.json", spec));
@@ -528,11 +582,13 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     eprintln!("message-vault-server serve listening on http://{bind}");
     eprintln!("  GET  /health");
     eprintln!("  GET  /v1/auth/check   (Bearer session token or API token)");
-    eprintln!("  GET  /v1/export/messages?q=&limit=&cursor=&account=  (read-only export)");
+    eprintln!(
+        "  GET  /v1/export/messages?q=&limit=&offset=&account=  (download messages, a page at a time)"
+    );
     eprintln!("  GET  /v1/conversations?q=&limit=&offset=  (browse conversations)");
     eprintln!("  GET  /v1/contacts?q=&limit=&offset=     (browse contacts)");
     eprintln!("  PATCH /v1/contacts/{{id}}                  (edit a contact)");
-    eprintln!("  GET  /v1/export/messages/count?q=&account=&source=  (export match counts)");
+    eprintln!("  GET  /v1/export/messages/count?q=&account=  (export match counts)");
     eprintln!("  GET  /v1/assets/{{sha256}}?source=&account=  (download content-addressed media)");
     eprintln!("  GET  /v1/imports       (list past import sessions with stats)");
     eprintln!("  GET  /v1/account/storage  (usage + top attachments)");
@@ -742,16 +798,6 @@ pub(crate) fn safe_rel_path(name: &str) -> Result<PathBuf, ApiError> {
     crate::config::safe_rel_path(name).map_err(|e| ApiError::BadRequest(e.to_string()))
 }
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct ListPageQuery {
-    #[serde(default)]
-    pub(crate) q: Option<String>,
-    #[serde(default)]
-    pub(crate) limit: Option<usize>,
-    #[serde(default)]
-    pub(crate) offset: Option<usize>,
-}
-
 pub(crate) async fn read_body_limited(
     body: axum::body::Body,
     max_bytes: usize,
@@ -881,12 +927,13 @@ pub(crate) async fn test_app_state(pool: sqlx::AnyPool, data_dir: &Path) -> AppS
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::extract::{Json, Path as AxumPath};
     use crate::import::{
         CompleteImportBody, CompleteImportIssueBody, CreateImportBody, SetImportStageBody,
         imports_active_handler, imports_complete_handler, imports_create_handler,
         imports_discard_handler, imports_get_handler, imports_stage_handler,
     };
-    use axum::extract::{Path as AxumPath, State};
+    use axum::extract::State;
     use tempfile::TempDir;
 
     fn auth_public_router() -> Router<AppState> {

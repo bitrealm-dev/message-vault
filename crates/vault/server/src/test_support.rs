@@ -258,6 +258,50 @@ pub async fn post_raw(
     (status, text)
 }
 
+/// GET a path with a Bearer token, returning the status and the raw response
+/// text. For asserting on a non-JSON or malformed body, such as the error
+/// fallbacks' JSON that a plain `get_json` would panic decoding on failure.
+pub async fn get_raw(state: &AppState, path: &str, token: &str) -> (StatusCode, String) {
+    let app = http_app(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let response = reqwest::Client::new()
+        .get(format!("http://{address}{path}"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap();
+    server.abort();
+    let status = response.status();
+    let text = response.text().await.unwrap();
+    (status, text)
+}
+
+/// DELETE a path with a Bearer token, returning the status and the raw
+/// response text. For asserting on the body of a fallback response, such as
+/// the JSON `{error}` a wrong method produces.
+pub async fn delete_raw(state: &AppState, path: &str, token: &str) -> (StatusCode, String) {
+    let app = http_app(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let response = reqwest::Client::new()
+        .delete(format!("http://{address}{path}"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap();
+    server.abort();
+    let status = response.status();
+    let text = response.text().await.unwrap();
+    (status, text)
+}
+
 /// Give an account one conversation holding one message, so counts are non-zero.
 ///
 /// `messages.conversation_id` and `conversations.chat_handle_id` are integer

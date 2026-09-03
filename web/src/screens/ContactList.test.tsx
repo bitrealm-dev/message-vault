@@ -48,7 +48,7 @@ beforeEach(() => {
   listContactsMock.mockImplementation(
     async () =>
       ({
-        contacts: [
+        items: [
           {
             id: 1,
             name: "Alice",

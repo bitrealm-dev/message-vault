@@ -1662,7 +1662,7 @@ mod docs {
     use crate::search::fields::FIELDS;
 
     const PAGE: &str =
-        include_str!("../../../../../docs/src/content/docs/vault/user/how-to/search.md");
+        include_str!("../../../../../docs/src/content/docs/vault/user/how-to/search.mdx");
 
     /// The words the page's table lists: the first backticked `word:` in
     /// each table row.

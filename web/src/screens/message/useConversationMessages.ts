@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message } from "../../lib/types";
-import { countExportMessages, exportMessages } from "../../lib/vaultApi";
+import { exportMessages } from "../../lib/vaultApi";
 
 /** Page size for full-conversation browsing. */
 export const PAGE_SIZE = 50;
@@ -24,7 +24,7 @@ export function conversationYears(
 }
 
 /** Search query that loads every message in one calendar year. */
-function yearQuery(conversationId: string, year: number): string {
+function yearQuery(conversationId: number, year: number): string {
   return `in:#${conversationId} date:${year}`;
 }
 
@@ -54,19 +54,15 @@ async function fetchAllMessagesForQuery(
   q: string,
   signal: AbortSignal,
 ): Promise<{ messages: Message[]; total: number }> {
-  const countRes = await countExportMessages({ q }, { signal });
-  const total = countRes.messages ?? 0;
-  if (total === 0) return { messages: [], total: 0 };
-
   const collected: Message[] = [];
   let offset = 0;
-  while (offset < total) {
-    const msgRes = await exportMessages({ q, offset, limit: YEAR_FETCH_LIMIT }, { signal });
-    const batch = msgRes.messages ?? [];
-    collected.push(...batch);
-    if (batch.length === 0) break;
-    offset += batch.length;
-    if (batch.length < YEAR_FETCH_LIMIT) break;
+  let total = 0;
+  while (true) {
+    const page = await exportMessages({ q, offset, limit: YEAR_FETCH_LIMIT }, { signal });
+    total = page.total;
+    collected.push(...page.items);
+    offset += page.items.length;
+    if (page.items.length === 0 || offset >= total) break;
   }
   return { messages: collected, total };
 }
@@ -77,7 +73,7 @@ function isAbortError(err: unknown): boolean {
 }
 
 /** Load messages for one conversation, either a page at a time or a whole year. */
-export function useConversationMessages(conversationId: string) {
+export function useConversationMessages(conversationId: number) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
@@ -108,13 +104,10 @@ export function useConversationMessages(conversationId: string) {
       setLoading(true);
       try {
         const q = `in:#${conversationId}`;
-        const [msgRes, countRes] = await Promise.all([
-          exportMessages({ q, offset: newOffset, limit: PAGE_SIZE }, { signal }),
-          countExportMessages({ q }, { signal }),
-        ]);
+        const page = await exportMessages({ q, offset: newOffset, limit: PAGE_SIZE }, { signal });
         if (signal.aborted) return;
-        setMessages(msgRes.messages);
-        setTotal(countRes.messages);
+        setMessages(page.items);
+        setTotal(page.total);
         setOffset(newOffset);
       } catch (err) {
         if (signal.aborted || isAbortError(err)) return;

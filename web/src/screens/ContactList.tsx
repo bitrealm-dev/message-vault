@@ -26,6 +26,7 @@ import { checksFromMembers } from "../lib/membershipChecks";
 import { hasFieldToken, stripFieldTokens } from "../lib/searchFields";
 import { useContactGroups } from "../lib/useContactGroups";
 import { listContacts } from "../lib/vaultApi";
+import type { components } from "../lib/vaultApi.types";
 import { keys } from "../lib/vaultKeys";
 import { type PagedFetchPage, useVaultPagedList } from "../lib/vaultQuery";
 
@@ -33,20 +34,15 @@ const FILTER_DEBOUNCE_MS = 300;
 /** Fixed row height keeps virtualization slots aligned with flex-centered content. */
 const CONTACT_ROW_HEIGHT = 49;
 
-interface Contact {
-  id: string;
-  name: string;
-  handle_count: number;
-  handles?: string[];
-  groups?: string[];
-}
+/** The contact row as the API sends it: `id` is a real integer. */
+type ContactSummary = components["schemas"]["ContactSummary"];
 
-type ContactsPage = {
-  contacts: Array<Omit<Contact, "id"> & { id: string | number }>;
-  total: number;
-  limit: number;
-  offset: number;
-};
+/**
+ * A contact row as this screen keeps it. `id` is a string here because rows
+ * key React lists, feed `Set<string>` selection state, and build URL-ish
+ * search fragments (`with:#${id}`) — every other field is the API's own.
+ */
+type Contact = Omit<ContactSummary, "id"> & { id: string };
 
 type FilterNeedles = { text: string; handle: string | null };
 
@@ -95,8 +91,8 @@ function contactMatchesFilter(c: Contact, filter: string): boolean {
 }
 
 /** Make every contact id a string so list keys stay stable. */
-function normalizeContacts(rows: ContactsPage["contacts"] | undefined): Contact[] {
-  return (rows || []).map((c) => ({
+function normalizeContacts(rows: ContactSummary[]): Contact[] {
+  return rows.map((c) => ({
     ...c,
     id: String(c.id),
     handles: c.handles ?? [],
@@ -147,8 +143,8 @@ export default function ContactList({
     async ({ limit, offset, signal }) => {
       const res = await listContacts({ q: serverQ, limit, offset }, { signal });
       return {
-        items: normalizeContacts(res.contacts),
-        total: res.total ?? 0,
+        items: normalizeContacts(res.items),
+        total: res.total,
       };
     },
     [serverQ],
