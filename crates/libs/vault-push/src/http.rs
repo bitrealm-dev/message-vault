@@ -19,19 +19,13 @@ pub use vault_http::HttpSession;
 #[derive(Debug, Deserialize)]
 /// Vault reply after HEAD or PUT of one attachment.
 pub struct AssetPutResponse {
-    pub ok: bool,
     #[serde(default)]
     pub already_present: bool,
-    #[serde(default)]
-    pub error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 /// Vault reply after posting one JSON Lines import batch.
 pub struct ImportResponse {
-    pub ok: bool,
-    #[serde(default)]
-    pub error: Option<String>,
     #[serde(default)]
     pub messages: u64,
     #[serde(default)]
@@ -92,68 +86,41 @@ pub(crate) struct CompleteImportArgs<'a> {
 
 #[derive(Debug, Deserialize)]
 struct UploadStartResponse {
-    ok: bool,
     #[serde(default)]
     upload_id: Option<String>,
     #[serde(default)]
     part_size: Option<usize>,
     #[serde(default)]
     already_present: bool,
+}
+
+/// The vault's failure body: `{error}`.
+#[derive(Debug, Deserialize)]
+struct ErrorBody {
     #[serde(default)]
     error: Option<String>,
 }
 
-/// A response body with the vault's usual `ok` / `error` fields, for [`ok_json`].
-trait OkEnvelope: DeserializeOwned {
-    fn is_ok(&self) -> bool;
-    fn error_message(self) -> Option<String>;
-}
-
-impl OkEnvelope for AssetPutResponse {
-    fn is_ok(&self) -> bool {
-        self.ok
-    }
-    fn error_message(self) -> Option<String> {
-        self.error
-    }
-}
-
-impl OkEnvelope for ImportResponse {
-    fn is_ok(&self) -> bool {
-        self.ok
-    }
-    fn error_message(self) -> Option<String> {
-        self.error
-    }
-}
-
-impl OkEnvelope for UploadStartResponse {
-    fn is_ok(&self) -> bool {
-        self.ok
-    }
-    fn error_message(self) -> Option<String> {
-        self.error
-    }
-}
-
 /// Parse a vault JSON response body, or bail with the server's error text.
 ///
-/// Returns the parsed body only when the HTTP status is a success and the body
-/// says `ok: true`. Otherwise the error is a [`VaultHttpError`] carrying, in
-/// order of preference: the body's `error` field, `HTTP {status}: {body}`, or
-/// the raw body when it is not valid JSON.
-fn ok_json<T: OkEnvelope>(status: reqwest::StatusCode, text: &str) -> Result<T> {
-    match serde_json::from_str::<T>(text) {
-        Ok(parsed) if status.is_success() && parsed.is_ok() => Ok(parsed),
-        Ok(parsed) => Err(VaultHttpError::new(
-            status.as_u16(),
-            parsed
-                .error_message()
-                .unwrap_or_else(|| format!("HTTP {status}: {text}")),
-        )
-        .into()),
-        Err(_) => Err(VaultHttpError::new(status.as_u16(), text.to_string()).into()),
+/// A 2xx status is a success and the body is `T`. Anything else is a
+/// [`VaultHttpError`] carrying the body's `error` sentence when it has one,
+/// else `HTTP {status}: {body}`.
+fn ok_json<T: DeserializeOwned>(status: reqwest::StatusCode, text: &str) -> Result<T> {
+    if status.is_success() {
+        return serde_json::from_str::<T>(text).map_err(|e| {
+            VaultHttpError::new(
+                status.as_u16(),
+                format!("could not read the vault's answer ({e}): {text}"),
+            )
+            .into()
+        });
     }
+    let message = match serde_json::from_str::<ErrorBody>(text) {
+        Ok(ErrorBody { error: Some(m) }) if !m.trim().is_empty() => m,
+        _ => format!("HTTP {status}: {text}"),
+    };
+    Err(VaultHttpError::new(status.as_u16(), message).into())
 }
 
 /// True for HTTP 413 or a proxy HTML page that says the body was too large.
@@ -241,9 +208,7 @@ pub fn head_asset(
     // A 2xx without a usable JSON body means the asset is there: plain HEAD
     // responders and proxies often send no body at all.
     let assumed_present = AssetPutResponse {
-        ok: true,
         already_present: true,
-        error: None,
     };
     let text = response.text().unwrap_or_default();
     if text.trim().is_empty() {
@@ -253,7 +218,7 @@ pub fn head_asset(
         return Ok(Some(assumed_present));
     };
     // With a JSON body, only treat the asset as present when the server says so.
-    if !parsed.ok || !parsed.already_present {
+    if !parsed.already_present {
         return Ok(None);
     }
     Ok(Some(parsed))
@@ -344,9 +309,7 @@ fn put_asset_multipart(
     let started: UploadStartResponse = ok_json(start_status, &start_text)?;
     if started.already_present {
         return Ok(AssetPutResponse {
-            ok: true,
             already_present: true,
-            error: None,
         });
     }
     let upload_id = started
@@ -499,20 +462,8 @@ pub fn post_import(http: &HttpSession, args: PostImportArgs<'_>) -> Result<Impor
 #[derive(Debug, Deserialize)]
 /// Body of the `/v1/imports` and `/v1/imports/{id}/complete` replies.
 struct ImportSessionResponse {
-    ok: bool,
     #[serde(default)]
     id: Option<i64>,
-    #[serde(default)]
-    error: Option<String>,
-}
-
-impl OkEnvelope for ImportSessionResponse {
-    fn is_ok(&self) -> bool {
-        self.ok
-    }
-    fn error_message(self) -> Option<String> {
-        self.error
-    }
 }
 
 /// Start a vault import session. Returns `None` when the vault is older and
@@ -627,40 +578,37 @@ mod tests {
     }
 
     #[test]
-    fn ok_json_prefers_the_body_error_field() {
+    fn ok_json_prefers_the_body_error_sentence() {
         let err = ok_json::<AssetPutResponse>(
             reqwest::StatusCode::BAD_REQUEST,
-            r#"{"ok":false,"error":"sha mismatch"}"#,
+            r#"{"error":"sha mismatch"}"#,
         )
         .unwrap_err();
         assert_eq!(err.to_string(), "sha mismatch");
     }
 
     #[test]
-    fn ok_json_falls_back_to_status_then_raw_body() {
-        // Valid JSON with ok:false but no error field → HTTP status + body.
-        let err = ok_json::<AssetPutResponse>(reqwest::StatusCode::BAD_GATEWAY, r#"{"ok":false}"#)
-            .unwrap_err();
+    fn ok_json_falls_back_to_status_and_body() {
+        let err = ok_json::<AssetPutResponse>(reqwest::StatusCode::BAD_GATEWAY, "{}").unwrap_err();
         assert!(err.to_string().starts_with("HTTP 502"));
-        // Not JSON at all → the raw body.
-        let err = ok_json::<AssetPutResponse>(reqwest::StatusCode::OK, "gateway text").unwrap_err();
-        assert_eq!(err.to_string(), "gateway text");
+        let err = ok_json::<AssetPutResponse>(reqwest::StatusCode::BAD_GATEWAY, "gateway text")
+            .unwrap_err();
+        assert!(err.to_string().contains("gateway text"));
     }
 
     #[test]
-    fn ok_json_requires_both_http_success_and_ok_true() {
+    fn ok_json_trusts_the_status_not_a_flag() {
         let parsed = ok_json::<AssetPutResponse>(
             reqwest::StatusCode::OK,
-            r#"{"ok":true,"already_present":true}"#,
+            r#"{"sha256":"abc","assets_path":"a/b","already_present":true}"#,
         )
         .unwrap();
         assert!(parsed.already_present);
         assert!(
-            ok_json::<AssetPutResponse>(
-                reqwest::StatusCode::INTERNAL_SERVER_ERROR,
-                r#"{"ok":true}"#
-            )
-            .is_err()
+            ok_json::<AssetPutResponse>(reqwest::StatusCode::INTERNAL_SERVER_ERROR, "{}").is_err()
         );
+        // A success whose body cannot be read is a failure that names the problem.
+        let err = ok_json::<AssetPutResponse>(reqwest::StatusCode::OK, "not json").unwrap_err();
+        assert!(err.to_string().contains("not json"));
     }
 }

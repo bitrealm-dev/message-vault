@@ -120,11 +120,6 @@ impl HttpSession {
                 status: status_code,
                 snippet: truncate(&text, 200),
             })?;
-        if !parsed.ok {
-            return Err(AuthError::Rejected {
-                message: parsed.error.unwrap_or(text),
-            });
-        }
         let account_id = parsed
             .account_id
             .filter(|s| !s.is_empty())
@@ -141,17 +136,10 @@ impl HttpSession {
 
 #[derive(Debug, Deserialize)]
 struct AuthCheckResponse {
-    ok: bool,
     #[serde(default)]
     account_id: Option<String>,
     #[serde(default)]
     username: Option<String>,
-    /// Present on some vault versions; accepted for wire compat, unused here.
-    #[serde(default)]
-    #[allow(dead_code)]
-    account_ok: Option<bool>,
-    #[serde(default)]
-    error: Option<String>,
 }
 
 /// True when the body looks like an HTML error page instead of JSON.
