@@ -13,7 +13,7 @@
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { type SavedSearch, useSavedSearchActions, useSavedSearches } from "./savedSearches";
@@ -60,17 +60,10 @@ beforeEach(() => {
 
 describe("useSavedSearches", () => {
   it("reads the list from the vault, not from browser storage", async () => {
-    list.mockResolvedValue({ savedSearches: [search(1, "Family")] });
+    list.mockResolvedValue({ items: [search(1, "Family")] });
     const { result } = renderHook(() => useSavedSearches(), { wrapper });
     await waitFor(() => expect(result.current.savedSearches).toEqual([search(1, "Family")]));
     expect(list).toHaveBeenCalled();
-  });
-
-  it("treats a response without a list as empty rather than throwing", async () => {
-    list.mockResolvedValue({});
-    const { result } = renderHook(() => useSavedSearches(), { wrapper });
-    await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.savedSearches).toEqual([]);
   });
 
   /**
@@ -96,7 +89,7 @@ describe("useSavedSearches", () => {
       },
     });
 
-    list.mockResolvedValue({ savedSearches: [search(1, "Alice's Family")] });
+    list.mockResolvedValue({ items: [search(1, "Alice's Family")] });
     const first = renderHook(() => useSavedSearches(), { wrapper });
     await waitFor(() =>
       expect(first.result.current.savedSearches).toEqual([search(1, "Alice's Family")]),
@@ -104,7 +97,7 @@ describe("useSavedSearches", () => {
     first.unmount();
 
     account.current = "account-2";
-    list.mockResolvedValue({ savedSearches: [search(2, "Bob's Work")] });
+    list.mockResolvedValue({ items: [search(2, "Bob's Work")] });
     const second = renderHook(() => useSavedSearches(), { wrapper });
 
     await waitFor(() =>
@@ -114,7 +107,7 @@ describe("useSavedSearches", () => {
   });
 
   it("keeps the kind the vault reports, so import rows stay identifiable", async () => {
-    list.mockResolvedValue({ savedSearches: [search(2, "Backup 1", "import")] });
+    list.mockResolvedValue({ items: [search(2, "Backup 1", "import")] });
     const { result } = renderHook(() => useSavedSearches(), { wrapper });
     await waitFor(() => expect(result.current.savedSearches[0]?.kind).toBe("import"));
   });
@@ -122,37 +115,58 @@ describe("useSavedSearches", () => {
 
 describe("useSavedSearchActions", () => {
   it("addresses an update by id, sending both fields", async () => {
-    update.mockResolvedValue({ savedSearches: [search(3, "Renamed")] });
+    update.mockResolvedValue(search(3, "Renamed"));
     const { result } = renderHook(() => useSavedSearchActions(), { wrapper });
     await result.current.update(3, "Renamed", "kind:direct");
     expect(update).toHaveBeenCalledWith(3, { name: "Renamed", query: "kind:direct" });
   });
 
   it("addresses a delete by id", async () => {
-    remove.mockResolvedValue({ savedSearches: [] });
+    remove.mockResolvedValue(undefined);
     const { result } = renderHook(() => useSavedSearchActions(), { wrapper });
     await result.current.remove(7);
     expect(remove).toHaveBeenCalledWith(7);
   });
 
-  it("takes the refreshed list from a mutation instead of asking again", async () => {
-    list.mockResolvedValue({ savedSearches: [] });
-    const both = renderHook(
-      () => ({ read: useSavedSearches(), actions: useSavedSearchActions() }),
+  it("re-reads the list after a create", async () => {
+    list.mockResolvedValueOnce({ items: [] }).mockResolvedValueOnce({ items: [search(3, "Work")] });
+    create.mockResolvedValue(search(3, "Work"));
+    const { result } = renderHook(
+      () => ({ list: useSavedSearches(), actions: useSavedSearchActions() }),
       { wrapper },
     );
-    await waitFor(() => expect(both.result.current.read.loading).toBe(false));
-    expect(list).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(result.current.list.savedSearches).toEqual([]));
+    await act(() => result.current.actions.create("Work", "kind:group Work"));
+    await waitFor(() => expect(result.current.list.savedSearches).toEqual([search(3, "Work")]));
+    expect(list).toHaveBeenCalledTimes(2);
+  });
 
-    create.mockResolvedValue({ savedSearches: [search(1, "Family")] });
-    await both.result.current.actions.create("Family", "kind:group");
-
-    // The list a mutation answered with is what the sidebar shows, with no
-    // second request.
-    await waitFor(() =>
-      expect(both.result.current.read.savedSearches).toEqual([search(1, "Family")]),
+  it("re-reads the list after an update", async () => {
+    list
+      .mockResolvedValueOnce({ items: [search(3, "Work")] })
+      .mockResolvedValueOnce({ items: [search(3, "Renamed")] });
+    update.mockResolvedValue(search(3, "Renamed"));
+    const { result } = renderHook(
+      () => ({ list: useSavedSearches(), actions: useSavedSearchActions() }),
+      { wrapper },
     );
-    expect(list).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(result.current.list.savedSearches).toEqual([search(3, "Work")]));
+    await act(() => result.current.actions.update(3, "Renamed", "kind:group Work"));
+    await waitFor(() => expect(result.current.list.savedSearches).toEqual([search(3, "Renamed")]));
+    expect(list).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-reads the list after a delete", async () => {
+    list.mockResolvedValueOnce({ items: [search(3, "Work")] }).mockResolvedValueOnce({ items: [] });
+    remove.mockResolvedValue(undefined);
+    const { result } = renderHook(
+      () => ({ list: useSavedSearches(), actions: useSavedSearchActions() }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.list.savedSearches).toEqual([search(3, "Work")]));
+    await act(() => result.current.actions.remove(3));
+    await waitFor(() => expect(result.current.list.savedSearches).toEqual([]));
+    expect(list).toHaveBeenCalledTimes(2);
   });
 
   it("reports a write in flight and the failure it ended in", async () => {
@@ -175,7 +189,7 @@ describe("useSavedSearchActions", () => {
   });
 
   it("keeps the same create function across a write, so an effect watching it does not re-run", async () => {
-    create.mockResolvedValue({ savedSearches: [search(1, "Family")] });
+    create.mockResolvedValue(search(1, "Family"));
     const { result } = renderHook(() => useSavedSearchActions(), { wrapper });
     const before = result.current.create;
 

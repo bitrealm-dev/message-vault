@@ -41,8 +41,8 @@ const RAW_BODY_FALLBACK_LIMIT = 200;
 /**
  * Human-readable message for a failed response.
  *
- * The vault answers `{"ok":false,"error":"..."}`, and that sentence is what a
- * user should read — not the status code and not the envelope around it.
+ * The vault answers `{"error":"..."}`, and that sentence is what a user
+ * should read — not the status code and not the envelope around it.
  * Anything else (a proxy's HTML error page, an empty body) falls back to the
  * raw text — clamped to `RAW_BODY_FALLBACK_LIMIT` characters, since a
  * reverse proxy or non-vault host can answer with a whole HTML page — then to

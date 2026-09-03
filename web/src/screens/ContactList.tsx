@@ -42,7 +42,7 @@ interface Contact {
 }
 
 type ContactsPage = {
-  contacts: Array<Omit<Contact, "id"> & { id: string | number }>;
+  items: Array<Omit<Contact, "id"> & { id: string | number }>;
   total: number;
   limit: number;
   offset: number;
@@ -95,8 +95,8 @@ function contactMatchesFilter(c: Contact, filter: string): boolean {
 }
 
 /** Make every contact id a string so list keys stay stable. */
-function normalizeContacts(rows: ContactsPage["contacts"] | undefined): Contact[] {
-  return (rows || []).map((c) => ({
+function normalizeContacts(rows: ContactsPage["items"]): Contact[] {
+  return rows.map((c) => ({
     ...c,
     id: String(c.id),
     handles: c.handles ?? [],
@@ -147,8 +147,8 @@ export default function ContactList({
     async ({ limit, offset, signal }) => {
       const res = await listContacts({ q: serverQ, limit, offset }, { signal });
       return {
-        items: normalizeContacts(res.contacts),
-        total: res.total ?? 0,
+        items: normalizeContacts(res.items),
+        total: res.total,
       };
     },
     [serverQ],

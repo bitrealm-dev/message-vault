@@ -145,7 +145,7 @@ export default function CheckedContactsPanel({
         setMetrics((prev) => {
           const next = { ...prev };
           for (const page of pages) {
-            for (const summary of page.contacts) {
+            for (const summary of page.items) {
               next[String(summary.id)] = {
                 name: summary.name,
                 totals: totalsFromSummary(summary),

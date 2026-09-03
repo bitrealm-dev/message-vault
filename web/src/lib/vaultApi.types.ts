@@ -612,7 +612,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Export messages matching a query in the search language (cursor paging). */
+        /** Export messages matching a query in the search language, a page at a time. */
         get: operations["export_messages_handler"];
         put?: never;
         post?: never;
@@ -851,7 +851,7 @@ export interface paths {
         /** List the account's saved searches, A–Z. */
         get: operations["saved_searches_list_handler"];
         put?: never;
-        /** Create a saved search and return it with the updated list. */
+        /** Create a saved search and return it. */
         post: operations["saved_searches_create_handler"];
         delete?: never;
         options?: never;
@@ -870,7 +870,7 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Delete a saved search and return the updated list.
+         * Delete a saved search.
          * @description Deleting an import-created saved search removes the shortcut only. The
          *     `vault_imports` row it pointed at is the account's permanent record of that
          *     run and is never touched here.
@@ -878,7 +878,7 @@ export interface paths {
         delete: operations["saved_searches_delete_handler"];
         options?: never;
         head?: never;
-        /** Replace a saved search's name and query, and return the updated list. */
+        /** Replace a saved search's name and query, and return it. */
         patch: operations["saved_searches_update_handler"];
         trace?: never;
     };
@@ -945,7 +945,6 @@ export interface components {
         };
         /** @description The account's live session, or null when there is none. */
         ActiveImportResponse: {
-            ok: boolean;
             session?: null | components["schemas"]["ActiveImportSession"];
         };
         /** @description One live import session, as the desktop app needs to resume it. */
@@ -1054,18 +1053,12 @@ export interface components {
         AssetPutResponse: {
             already_present: boolean;
             assets_path: string;
-            ok: boolean;
             sha256: string;
-        };
-        /** @description Abort acknowledgement. */
-        AssetUploadAbortResponse: {
-            ok: boolean;
         };
         /** @description Bytes written for one part. */
         AssetUploadPartResponse: {
             /** Format: int64 */
             bytes: number;
-            ok: boolean;
             /** Format: int32 */
             part: number;
         };
@@ -1079,7 +1072,6 @@ export interface components {
         AssetUploadStartResponse: {
             already_present?: boolean;
             assets_path?: string | null;
-            ok: boolean;
             part_size?: number | null;
             sha256?: string | null;
             upload_id?: string | null;
@@ -1087,9 +1079,7 @@ export interface components {
         /** @description Token check result: account, username, sources. */
         AuthCheckResponse: {
             account_id?: string | null;
-            account_ok?: boolean | null;
             admin?: boolean | null;
-            ok: boolean;
             sources: string[];
             username?: string | null;
         };
@@ -1111,8 +1101,6 @@ export interface components {
         };
         /** @description Fresh session token issued after the password change. */
         ChangePasswordResponse: {
-            /** @description Always true when a response is returned. */
-            ok: boolean;
             /** @description Replacement session token after password change (previous sessions are revoked). */
             token: string;
         };
@@ -1160,7 +1148,6 @@ export interface components {
             id: number;
             /** Format: int64 */
             message_count: number;
-            ok: boolean;
             status: string;
         };
         /** @description Full contact view: every handle with stats, plus totals across them. */
@@ -1234,20 +1221,6 @@ export interface components {
             /** @description Platform service (`phone`, `email`, or `whatsapp`); inferred when omitted. */
             service?: string | null;
         };
-        /** @description One page of the contact list. */
-        ContactListPage: {
-            /** @description Contacts on this page. */
-            contacts: components["schemas"]["ContactSummary"][];
-            /** @description Page size used. */
-            limit: number;
-            /** @description Page offset used. */
-            offset: number;
-            /**
-             * Format: int64
-             * @description Total contacts matching the query.
-             */
-            total: number;
-        };
         /** @description Body for `POST /v1/contacts/match`. */
         ContactMatchBody: {
             /** @description Raw identifiers — phone numbers, emails — as they appear in an export. */
@@ -1319,7 +1292,7 @@ export interface components {
         /** @description Response for `POST /v1/contacts/summaries`. */
         ContactSummariesPage: {
             /** @description One summary per requested contact. */
-            contacts: components["schemas"]["ContactSelectionSummary"][];
+            items: components["schemas"]["ContactSelectionSummary"][];
         };
         /** @description Contact row for the list: name, handles, groups. */
         ContactSummary: {
@@ -1350,20 +1323,6 @@ export interface components {
             previous_handle: string;
             /** @description Platform service for the new handle. */
             service?: string | null;
-        };
-        /** @description One page of the conversation list. */
-        ConversationListPage: {
-            /** @description Conversations on this page. */
-            conversations: components["schemas"]["ConversationSummary"][];
-            /** @description Page size used. */
-            limit: number;
-            /** @description Page offset used. */
-            offset: number;
-            /**
-             * Format: int64
-             * @description Total conversations matching the query.
-             */
-            total: number;
         };
         /** @description One participant with display name and handle. */
         ConversationParticipant: {
@@ -1406,7 +1365,7 @@ export interface components {
         /** @description Per-source counts for one conversation. */
         ConversationSourcesPage: {
             /** @description One entry per source that contributed messages. */
-            sources: components["schemas"]["ConversationSourceInfo"][];
+            items: components["schemas"]["ConversationSourceInfo"][];
         };
         /** @description Conversation row for the list: participants, counts, tags. */
         ConversationSummary: {
@@ -1414,8 +1373,11 @@ export interface components {
             date_range_end?: string | null;
             /** @description Timestamp of the conversation's first message. */
             date_range_start?: string | null;
-            /** @description Numeric `conversations.id`, serialized as a string; search for it as `in:#<id>`. */
-            id: string;
+            /**
+             * Format: int64
+             * @description The conversation's id; search for it as `in:#<id>`.
+             */
+            id: number;
             /** @description True for group conversations. */
             is_group: boolean;
             /** @description Group label from the export, when present. */
@@ -1499,7 +1461,6 @@ export interface components {
         CreateImportResponse: {
             /** Format: int64 */
             id: number;
-            ok: boolean;
         };
         /** @description Body for creating an account as an administrator. */
         CreateUserRequest: {
@@ -1528,16 +1489,6 @@ export interface components {
             /** @description Required when the account has a local password. */
             current_password?: string | null;
         };
-        /** @description Deletion acknowledgement. */
-        DeleteAccountResponse: {
-            /** @description Always true when a response is returned. */
-            ok: boolean;
-        };
-        /** @description Deletion acknowledgement. */
-        DeleteApiTokenResponse: {
-            /** @description Always true when a response is returned. */
-            ok: boolean;
-        };
         /** @description Confirmation flag for deleting all messages. */
         DeleteMessagesRequest: {
             /** @description Must be `true`; anything else is rejected with a 400. */
@@ -1555,22 +1506,17 @@ export interface components {
              * @description Conversations deleted.
              */
             conversations: number;
-            /** @description Always true when a response is returned. */
-            ok: boolean;
         };
         /** @description Confirmation that a session was discarded. */
         DiscardImportResponse: {
             /** Format: int64 */
             id: number;
-            ok: boolean;
             status: string;
         };
-        /** @description API error envelope returned for non-200 responses. */
+        /** @description The body of every failure: one sentence, with the HTTP status carrying the meaning. */
         ErrorBody: {
             /** @description Human-readable description of the failure. */
             error: string;
-            /** @description Whether the request succeeded; always `false` for error responses. */
-            ok: boolean;
         };
         /** @description One attachment of an exported message. */
         ExportAttachment: {
@@ -1622,10 +1568,6 @@ export interface components {
              * @description Matching messages.
              */
             messages: number;
-            /** @description Always true when a response is returned. */
-            ok: boolean;
-            /** @description Query echoed back. */
-            query: string;
             /**
              * Format: int64
              * @description Sum of known `size_bytes` for those unique fingerprints (unknown sizes omitted).
@@ -1684,19 +1626,6 @@ export interface components {
             timestamp: string;
             /** @description UTC timestamp, when known. */
             timestamp_utc?: string | null;
-        };
-        /** @description One page of exported messages. */
-        ExportMessagesResponse: {
-            /** @description Messages on this page. */
-            messages: components["schemas"]["ExportMessage"][];
-            /** @description Cursor for the next page; absent on the last page. */
-            next_cursor?: string | null;
-            /** @description Always true when a response is returned. */
-            ok: boolean;
-            /** @description Query echoed back. */
-            query: string;
-            /** @description True when more rows matched than the page limit. */
-            truncated?: boolean | null;
         };
         /** @description One participant of an exported conversation. */
         ExportParticipant: {
@@ -1813,7 +1742,6 @@ export interface components {
         ImportResponse: components["schemas"]["ImportStats"] & {
             account: string;
             dedupe?: null | components["schemas"]["DedupeResponse"];
-            ok: boolean;
             source: string;
         };
         /** @description Counters for one import run (staging and promote results). */
@@ -1945,7 +1873,7 @@ export interface components {
         };
         /** @description Past import sessions. */
         ImportsListResponse: {
-            imports: components["schemas"]["ImportSummary"][];
+            items: components["schemas"]["ImportSummary"][];
         };
         /** @description The account's named API tokens. */
         ListApiTokensResponse: {
@@ -1969,11 +1897,6 @@ export interface components {
             password?: string;
             /** @description Login username. */
             username: string;
-        };
-        /** @description Revocation acknowledgement. */
-        LogoutResponse: {
-            /** @description Always true when a response is returned. */
-            ok: boolean;
         };
         /** @description Member ids of one set, ascending. */
         MemberIdList: {
@@ -2004,6 +1927,145 @@ export interface components {
         /** @description The account's sets of one kind, A–Z. */
         NamedSetList: {
             items: components["schemas"]["NamedSet"][];
+        };
+        /** @description One page of a list. */
+        Page_ContactSummary: {
+            /** @description The rows on this page. */
+            items: {
+                /** @description Group names on this contact (A–Z). */
+                groups?: string[];
+                /**
+                 * Format: int64
+                 * @description Number of handles linked to the contact.
+                 */
+                handle_count: number;
+                /** @description Normalized (and raw when distinct) handle values for client-side filter. */
+                handles?: string[];
+                /**
+                 * Format: int64
+                 * @description Contact id.
+                 */
+                id: number;
+                /** @description When the contact’s address-book shape last changed (`datetime('now')`). */
+                last_modified: string;
+                /** @description Contact display name. */
+                name: string;
+            }[];
+            /** @description Page size used. */
+            limit: number;
+            /** @description Page offset used. */
+            offset: number;
+            /**
+             * Format: int64
+             * @description Rows matching the query across every page.
+             */
+            total: number;
+        };
+        /** @description One page of a list. */
+        Page_ConversationSummary: {
+            /** @description The rows on this page. */
+            items: {
+                /** @description Timestamp of the conversation's last message. */
+                date_range_end?: string | null;
+                /** @description Timestamp of the conversation's first message. */
+                date_range_start?: string | null;
+                /**
+                 * Format: int64
+                 * @description The conversation's id; search for it as `in:#<id>`.
+                 */
+                id: number;
+                /** @description True for group conversations. */
+                is_group: boolean;
+                /** @description Group label from the export, when present. */
+                label?: string | null;
+                /** @description Timestamp of the last message. */
+                last_message_at: string;
+                /**
+                 * Format: int64
+                 * @description Messages in the conversation (excluding hidden duplicates).
+                 */
+                message_count: number;
+                /** @description Participants with names and handles. */
+                participants: components["schemas"]["ConversationParticipant"][];
+                /** @description Platform service of the conversation, e.g. `imessage`. */
+                service: string;
+                /** @description Message tags on this conversation. */
+                tags: string[];
+            }[];
+            /** @description Page size used. */
+            limit: number;
+            /** @description Page offset used. */
+            offset: number;
+            /**
+             * Format: int64
+             * @description Rows matching the query across every page.
+             */
+            total: number;
+        };
+        /** @description One page of a list. */
+        Page_ExportMessage: {
+            /** @description The rows on this page. */
+            items: {
+                /** @description Attachments on this message. */
+                attachments: components["schemas"]["ExportAttachment"][];
+                /** @description The conversation this message belongs to. */
+                conversation: components["schemas"]["ExportConversation"];
+                /** @description Export GUID for replies and grouping. */
+                guid?: string | null;
+                /**
+                 * Format: int64
+                 * @description Message row id.
+                 */
+                id: number;
+                /** @description True for group announcements. */
+                is_announcement: boolean;
+                /** @description True for messages sent by the account owner. */
+                is_from_me: boolean;
+                /** @description True when part of a reply thread. */
+                is_reply: boolean;
+                /**
+                 * Format: int64
+                 * @description Replies in this thread.
+                 */
+                num_replies: number;
+                /** @description Sender handle for incoming messages. */
+                sender?: string | null;
+                /** @description Platform service, e.g. `imessage`, when known. */
+                service?: string | null;
+                /**
+                 * Format: int64
+                 * @description Ordering key within the conversation.
+                 */
+                sort_order: number;
+                /** @description Import source id. */
+                source: string;
+                /** @description Subject line, when set. */
+                subject?: string | null;
+                /** @description Reactions on this message. */
+                tapbacks: components["schemas"]["ExportTapback"][];
+                /** @description Body text, when present. */
+                text?: string | null;
+                /** @description GUID of the message this replies to. */
+                thread_originator_guid?: string | null;
+                /**
+                 * Format: int64
+                 * @description Part index of the originator (for tapbacks).
+                 */
+                thread_originator_part?: number | null;
+                /** @description Message timestamp (local). */
+                timestamp: string;
+                /** @description UTC timestamp, when known. */
+                timestamp_utc?: string | null;
+            }[];
+            /** @description Page size used. */
+            limit: number;
+            /** @description Page offset used. */
+            offset: number;
+            /**
+             * Format: int64
+             * @description Rows matching the query across every page.
+             */
+            total: number;
         };
         /** @description Body for changing an account's flags. Omitted fields are left alone. */
         PatchUserRequest: {
@@ -2047,8 +2109,6 @@ export interface components {
             id: string;
             /** @description Stored label after the rename. */
             label: string;
-            /** @description Always true when a response is returned. */
-            ok: boolean;
         };
         /** @description One row of `saved_searches`. */
         SavedSearch: {
@@ -2069,19 +2129,9 @@ export interface components {
             name: string;
             query: string;
         };
-        /** @description The updated list after deletion. */
-        SavedSearchDeleteResponse: {
-            ok: boolean;
-            savedSearches: components["schemas"]["SavedSearch"][];
-        };
-        /** @description The affected saved search plus the updated list. */
-        SavedSearchResponse: {
-            savedSearch: components["schemas"]["SavedSearch"];
-            savedSearches: components["schemas"]["SavedSearch"][];
-        };
         /** @description The account's saved searches, A–Z. */
         SavedSearchesListResponse: {
-            savedSearches: components["schemas"]["SavedSearch"][];
+            items: components["schemas"]["SavedSearch"][];
         };
         /** @description The words for one list, in the order the docs table shows them. */
         SearchFieldsResponse: {
@@ -2104,7 +2154,6 @@ export interface components {
         };
         /** @description Confirmation that the stage moved. */
         SetImportStageResponse: {
-            ok: boolean;
             stage: string;
         };
         /** @description Body for an administrator setting someone's password. */
@@ -2266,13 +2315,12 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            200: {
+            /** @description Token deleted */
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["DeleteApiTokenResponse"];
-                };
+                content?: never;
             };
             401: {
                 headers: {
@@ -2616,13 +2664,12 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            200: {
+            /** @description Account deleted */
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": unknown;
-                };
+                content?: never;
             };
             400: {
                 headers: {
@@ -2778,13 +2825,12 @@ export interface operations {
             };
         };
         responses: {
-            200: {
+            /** @description Password set */
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": unknown;
-                };
+                content?: never;
             };
             400: {
                 headers: {
@@ -3058,13 +3104,12 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            200: {
+            /** @description Upload aborted */
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["AssetUploadAbortResponse"];
-                };
+                content?: never;
             };
             400: {
                 headers: {
@@ -3296,13 +3341,12 @@ export interface operations {
             };
         };
         responses: {
-            200: {
+            /** @description Account deleted */
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["DeleteAccountResponse"];
-                };
+                content?: never;
             };
             400: {
                 headers: {
@@ -3399,13 +3443,12 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            200: {
+            /** @description Signed out */
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["LogoutResponse"];
-                };
+                content?: never;
             };
             401: {
                 headers: {
@@ -3768,9 +3811,9 @@ export interface operations {
             query?: {
                 /** @description Contact search; empty lists all */
                 q?: string;
-                /** @description Page size */
+                /** @description Page size, default 40, max 500 */
                 limit?: number;
-                /** @description Page offset */
+                /** @description Page offset, max 50000 */
                 offset?: number;
             };
             header?: never;
@@ -3784,7 +3827,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ContactListPage"];
+                    "application/json": components["schemas"]["Page_ContactSummary"];
                 };
             };
             400: {
@@ -4063,9 +4106,9 @@ export interface operations {
             query?: {
                 /** @description Conversation search; empty lists all non-trashed */
                 q?: string;
-                /** @description Page size */
+                /** @description Page size, default 40, max 500 */
                 limit?: number;
-                /** @description Page offset */
+                /** @description Page offset, max 50000 */
                 offset?: number;
                 /** @description Order by `date` (last message, default) or `messages` (message count) */
                 sort?: string;
@@ -4083,7 +4126,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ConversationListPage"];
+                    "application/json": components["schemas"]["Page_ConversationSummary"];
                 };
             };
             400: {
@@ -4165,13 +4208,9 @@ export interface operations {
                 q: string;
                 /** @description Page size, default 100, max 500 */
                 limit?: number;
-                /** @description Legacy offset; prefer cursor */
+                /** @description Page offset; no cap, an offset past the end is an empty page */
                 offset?: number;
-                /** @description Opaque next_cursor from a previous page */
-                cursor?: string;
                 account?: string;
-                /** @description Narrow to one backup: imessage, whatsapp, or sms-backup-restore */
-                source?: string;
             };
             header?: never;
             path?: never;
@@ -4184,7 +4223,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ExportMessagesResponse"];
+                    "application/json": components["schemas"]["Page_ExportMessage"];
                 };
             };
             400: {
@@ -4219,8 +4258,6 @@ export interface operations {
                 /** @description Query in the search language; empty is every non-trashed message */
                 q: string;
                 account?: string;
-                /** @description Narrow to one backup: imessage, whatsapp, or sms-backup-restore */
-                source?: string;
             };
             header?: never;
             path?: never;
@@ -5084,7 +5121,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SavedSearchResponse"];
+                    "application/json": components["schemas"]["SavedSearch"];
                 };
             };
             400: {
@@ -5133,13 +5170,12 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            200: {
+            /** @description Saved search deleted */
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["SavedSearchDeleteResponse"];
-                };
+                content?: never;
             };
             401: {
                 headers: {
@@ -5188,7 +5224,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SavedSearchResponse"];
+                    "application/json": components["schemas"]["SavedSearch"];
                 };
             };
             400: {

@@ -83,9 +83,7 @@ export function useSearchSuggestions(value: string, list: SearchList): Suggestio
     const ac = new AbortController();
     const t = window.setTimeout(() => {
       listContacts({ q: valuePart, limit: 20, offset: 0 }, { signal: ac.signal })
-        .then((res) =>
-          setContacts((res.contacts || []).map((c) => ({ id: String(c.id), name: c.name }))),
-        )
+        .then((res) => setContacts(res.items.map((c) => ({ id: String(c.id), name: c.name }))))
         .catch(() => {
           if (!ac.signal.aborted) setContacts([]);
         });

@@ -73,8 +73,8 @@ export default function ConversationList({
         { signal },
       );
       return {
-        items: res.conversations || [],
-        total: res.total ?? 0,
+        items: res.items,
+        total: res.total,
       };
     },
     [debouncedQ, sortState],

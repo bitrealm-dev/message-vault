@@ -71,8 +71,8 @@ export function checkAuth(opts?: VaultRequestOptions): Promise<Schema["AuthCheck
   return apiClient.get<Schema["AuthCheckResponse"]>("/v1/auth/check", opts);
 }
 
-export function logout(opts?: VaultRequestOptions): Promise<Schema["LogoutResponse"]> {
-  return apiClient.post<Schema["LogoutResponse"]>("/v1/auth/logout", {}, opts);
+export function logout(opts?: VaultRequestOptions): Promise<void> {
+  return apiClient.post<void>("/v1/auth/logout", {}, opts);
 }
 
 export function changePassword(
@@ -81,10 +81,8 @@ export function changePassword(
   return apiClient.post<Schema["ChangePasswordResponse"]>("/v1/auth/change-password", body);
 }
 
-export function deleteAccount(
-  body: Schema["DeleteAccountRequest"],
-): Promise<Schema["DeleteAccountResponse"]> {
-  return apiClient.post<Schema["DeleteAccountResponse"]>("/v1/auth/delete-account", body);
+export function deleteAccount(body: Schema["DeleteAccountRequest"]): Promise<void> {
+  return apiClient.post<void>("/v1/auth/delete-account", body);
 }
 
 // ── Account ─────────────────────────────────────────────────────────────────
@@ -137,10 +135,8 @@ export function renameApiToken(
   );
 }
 
-export function deleteApiToken(id: string): Promise<Schema["DeleteApiTokenResponse"]> {
-  return apiClient.delete<Schema["DeleteApiTokenResponse"]>(
-    `/v1/account/api-tokens/${encodeURIComponent(id)}`,
-  );
+export function deleteApiToken(id: string): Promise<void> {
+  return apiClient.delete<void>(`/v1/account/api-tokens/${encodeURIComponent(id)}`);
 }
 
 // ── Administration ──────────────────────────────────────────────────────────
@@ -160,12 +156,12 @@ export function updateUser(accountId: string, body: Schema["PatchUserRequest"]):
 export function setUserPassword(
   accountId: string,
   body: Schema["SetPasswordRequest"],
-): Promise<unknown> {
-  return apiClient.put<unknown>(`/v1/admin/users/${encodeURIComponent(accountId)}/password`, body);
+): Promise<void> {
+  return apiClient.put<void>(`/v1/admin/users/${encodeURIComponent(accountId)}/password`, body);
 }
 
-export function deleteUser(accountId: string): Promise<unknown> {
-  return apiClient.delete<unknown>(`/v1/admin/users/${encodeURIComponent(accountId)}`);
+export function deleteUser(accountId: string): Promise<void> {
+  return apiClient.delete<void>(`/v1/admin/users/${encodeURIComponent(accountId)}`);
 }
 
 export function deleteUserMessages(accountId: string): Promise<unknown> {
@@ -215,8 +211,8 @@ export type ConversationListParams = {
 export function listConversations(
   params: ConversationListParams,
   opts?: VaultRequestOptions,
-): Promise<Schema["ConversationListPage"]> {
-  return apiClient.get<Schema["ConversationListPage"]>(
+): Promise<Schema["Page_ConversationSummary"]> {
+  return apiClient.get<Schema["Page_ConversationSummary"]>(
     withQuery("/v1/conversations", query(params)),
     opts,
   );
@@ -237,15 +233,15 @@ export function getConversationSources(
 export function exportMessages(
   params: { q: string; offset?: number; limit?: number },
   opts?: VaultRequestOptions,
-): Promise<Schema["ExportMessagesResponse"]> {
-  return apiClient.get<Schema["ExportMessagesResponse"]>(
+): Promise<Schema["Page_ExportMessage"]> {
+  return apiClient.get<Schema["Page_ExportMessage"]>(
     withQuery("/v1/export/messages", query(params)),
     opts,
   );
 }
 
 export function countExportMessages(
-  params: { q: string; source?: string },
+  params: { q: string },
   opts?: VaultRequestOptions,
 ): Promise<Schema["ExportCountResponse"]> {
   return apiClient.get<Schema["ExportCountResponse"]>(
@@ -261,8 +257,11 @@ export type ContactListParams = { q?: string; limit?: number; offset?: number };
 export function listContacts(
   params: ContactListParams,
   opts?: VaultRequestOptions,
-): Promise<Schema["ContactListPage"]> {
-  return apiClient.get<Schema["ContactListPage"]>(withQuery("/v1/contacts", query(params)), opts);
+): Promise<Schema["Page_ContactSummary"]> {
+  return apiClient.get<Schema["Page_ContactSummary"]>(
+    withQuery("/v1/contacts", query(params)),
+    opts,
+  );
 }
 
 export function getContact(
@@ -399,21 +398,19 @@ export function listSavedSearches(
   return apiClient.get<Schema["SavedSearchesListResponse"]>("/v1/saved-searches", opts);
 }
 
-export function createSavedSearch(
-  body: Schema["SavedSearchBody"],
-): Promise<Schema["SavedSearchResponse"]> {
-  return apiClient.post<Schema["SavedSearchResponse"]>("/v1/saved-searches", body);
+export function createSavedSearch(body: Schema["SavedSearchBody"]): Promise<Schema["SavedSearch"]> {
+  return apiClient.post<Schema["SavedSearch"]>("/v1/saved-searches", body);
 }
 
 export function updateSavedSearch(
   id: number,
   body: Schema["SavedSearchBody"],
-): Promise<Schema["SavedSearchResponse"]> {
-  return apiClient.patch<Schema["SavedSearchResponse"]>(`/v1/saved-searches/${id}`, body);
+): Promise<Schema["SavedSearch"]> {
+  return apiClient.patch<Schema["SavedSearch"]>(`/v1/saved-searches/${id}`, body);
 }
 
-export function deleteSavedSearch(id: number): Promise<Schema["SavedSearchDeleteResponse"]> {
-  return apiClient.delete<Schema["SavedSearchDeleteResponse"]>(`/v1/saved-searches/${id}`);
+export function deleteSavedSearch(id: number): Promise<void> {
+  return apiClient.delete<void>(`/v1/saved-searches/${id}`);
 }
 
 // ── Search ──────────────────────────────────────────────────────────────────
