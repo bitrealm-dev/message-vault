@@ -1,7 +1,7 @@
 //! Account profile read + update handlers.
 
+use crate::extract::Json;
 use anyhow::{Context, Result};
-use axum::Json;
 use axum::extract::State;
 use message_ir::HandleType;
 use serde::{Deserialize, Serialize};

@@ -4,10 +4,10 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use crate::extract::{Json, Query};
 use anyhow::{Context, Result};
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
-use axum::Json;
-use axum::extract::{Query, State};
+use axum::extract::State;
 use axum::http::HeaderMap;
 use rand::TryRng;
 use serde::{Deserialize, Serialize};

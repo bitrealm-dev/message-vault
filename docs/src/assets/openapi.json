@@ -6263,19 +6263,14 @@
       },
       "ErrorBody": {
         "type": "object",
-        "description": "API error envelope returned for non-200 responses.",
+        "description": "The body of every failure: one sentence, with the HTTP status carrying the meaning.",
         "required": [
-          "ok",
           "error"
         ],
         "properties": {
           "error": {
             "type": "string",
             "description": "Human-readable description of the failure."
-          },
-          "ok": {
-            "type": "boolean",
-            "description": "Whether the request succeeded; always `false` for error responses."
           }
         }
       },

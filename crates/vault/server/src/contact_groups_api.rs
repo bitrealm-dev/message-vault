@@ -1,8 +1,8 @@
 //! Contact Groups over HTTP: one handler per route, each a call into
 //! [`crate::named_set_api`] with [`group_spec`].
 
-use axum::Json;
-use axum::extract::{Path, State};
+use crate::extract::{Json, Path};
+use axum::extract::State;
 use axum::http::StatusCode;
 
 use crate::named_membership::group_spec;

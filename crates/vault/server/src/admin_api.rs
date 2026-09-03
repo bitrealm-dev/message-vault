@@ -5,8 +5,8 @@
 //! vaults, so nothing in this module reads `messages.body`,
 //! `attachments.transcription`, or any other content column.
 
-use axum::Json;
-use axum::extract::{Path, State};
+use crate::extract::{Json, Path};
+use axum::extract::State;
 use serde::{Deserialize, Serialize};
 use sqlx::{AnyConnection, Connection};
 

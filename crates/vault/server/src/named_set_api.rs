@@ -6,7 +6,7 @@
 //! `message_tags_api.rs` keep one three-line handler per route so every path
 //! stays greppable and utoipa has a concrete function to describe.
 
-use axum::Json;
+use crate::extract::Json;
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 

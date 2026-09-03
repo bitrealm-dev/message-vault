@@ -1,8 +1,7 @@
 //! `GET /v1/search/fields`: the words the search language accepts on one
 //! list, so the web's suggestions and the docs read the server's own table.
 
-use axum::Json;
-use axum::extract::Query;
+use crate::extract::{Json, Query};
 use serde::{Deserialize, Serialize};
 
 use crate::search::{FieldDoc, ListKind, describe};

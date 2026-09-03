@@ -1,7 +1,7 @@
 //! CRUD for named CLI API tokens.
 
-use axum::Json;
-use axum::extract::{Path as AxumPath, State};
+use crate::extract::{Json, Path as AxumPath};
+use axum::extract::State;
 use serde::{Deserialize, Serialize};
 
 use crate::db::api_tokens;

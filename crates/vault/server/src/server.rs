@@ -259,11 +259,9 @@ pub struct AppState {
     pub(crate) max_body_bytes: usize,
 }
 
-/// API error envelope returned for non-200 responses.
+/// The body of every failure: one sentence, with the HTTP status carrying the meaning.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ErrorBody {
-    /// Whether the request succeeded; always `false` for error responses.
-    pub ok: bool,
     /// Human-readable description of the failure.
     pub error: String,
 }
@@ -281,6 +279,8 @@ pub enum ApiError {
     Conflict(String),
     /// `404` — the requested resource does not exist.
     NotFound(String),
+    /// `405` — the path exists but not for this method.
+    MethodNotAllowed(String),
     /// `429` — rate limit hit.
     TooManyRequests(String),
     /// `503` — a dependency is temporarily unavailable.
@@ -297,6 +297,7 @@ impl IntoResponse for ApiError {
             Self::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
             Self::Conflict(m) => (StatusCode::CONFLICT, m),
             Self::NotFound(m) => (StatusCode::NOT_FOUND, m),
+            Self::MethodNotAllowed(m) => (StatusCode::METHOD_NOT_ALLOWED, m),
             Self::TooManyRequests(m) => (StatusCode::TOO_MANY_REQUESTS, m),
             Self::ServiceUnavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, m),
             Self::Internal(m) => {
@@ -308,14 +309,7 @@ impl IntoResponse for ApiError {
                 )
             }
         };
-        (
-            status,
-            Json(ErrorBody {
-                ok: false,
-                error: message,
-            }),
-        )
-            .into_response()
+        (status, Json(ErrorBody { error: message })).into_response()
     }
 }
 
@@ -427,6 +421,16 @@ fn limited_auth_router() -> (Router<AppState>, utoipa::openapi::OpenApi) {
     )
 }
 
+/// A `/v1/…` path no route claims. Static files answer everything else.
+async fn api_not_found(uri: axum::http::Uri) -> ApiError {
+    ApiError::NotFound(format!("no route at {}", uri.path()))
+}
+
+/// A route that exists, asked with a method it does not take.
+async fn api_method_not_allowed(method: axum::http::Method, uri: axum::http::Uri) -> ApiError {
+    ApiError::MethodNotAllowed(format!("{method} is not allowed at {}", uri.path()))
+}
+
 pub(crate) fn http_app(state: AppState) -> Router {
     let openapi_ui = state
         .cfg
@@ -447,6 +451,8 @@ pub(crate) fn http_app(state: AppState) -> Router {
     let mut api = Router::new()
         .merge(doc_router)
         .merge(auth_small)
+        .route("/v1/{*rest}", axum::routing::any(api_not_found))
+        .method_not_allowed_fallback(api_method_not_allowed)
         .fallback_service(ServeDir::new("static"))
         .layer(build_cors_layer(&cors_origins))
         .layer(RequestBodyLimitLayer::new(state.max_body_bytes));
@@ -873,12 +879,13 @@ pub(crate) async fn test_app_state(pool: sqlx::AnyPool, data_dir: &Path) -> AppS
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::extract::{Json, Path as AxumPath};
     use crate::import::{
         CompleteImportBody, CompleteImportIssueBody, CreateImportBody, SetImportStageBody,
         imports_active_handler, imports_complete_handler, imports_create_handler,
         imports_discard_handler, imports_get_handler, imports_stage_handler,
     };
-    use axum::extract::{Path as AxumPath, State};
+    use axum::extract::State;
     use tempfile::TempDir;
 
     fn auth_public_router() -> Router<AppState> {
