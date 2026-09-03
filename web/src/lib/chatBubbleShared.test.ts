@@ -63,13 +63,13 @@ describe("senderName / isGroupConversation", () => {
         chat_identifier: "x",
         conversation_type: "individual",
         group_title: null,
-        participants: [{ handle: "+1", name_alias: null, preferred_name: "Ada", contact_id: null }],
+        participants: [{ handle: "+1", name: "Ada", contact_id: null }],
       },
     });
-    expect(senderName(m, false)).toBe("Me");
+    expect(senderName(m)).toBe("Me");
   });
 
-  it("uses preferred name, then alias when aliases enabled", () => {
+  it("uses the participant's server-supplied name", () => {
     const conversation = {
       id: "c1",
       chat_identifier: "x",
@@ -78,15 +78,13 @@ describe("senderName / isGroupConversation", () => {
       participants: [
         {
           handle: "+1555",
-          name_alias: "A.L.",
-          preferred_name: "Ada",
+          name: "Ada",
           contact_id: null,
         },
       ],
     };
     const m = message({ sender: "+1555", conversation });
-    expect(senderName(m, false)).toBe("Ada");
-    expect(senderName(m, true)).toBe("A.L.");
+    expect(senderName(m)).toBe("Ada");
   });
 
   it("detects groups from type or participant count", () => {
@@ -96,7 +94,7 @@ describe("senderName / isGroupConversation", () => {
         chat_identifier: "x",
         conversation_type: "individual",
         group_title: null,
-        participants: [{ handle: "a", name_alias: null, preferred_name: null, contact_id: null }],
+        participants: [{ handle: "a", name: "A", contact_id: null }],
       },
     });
     expect(isGroupConversation(one)).toBe(false);
@@ -116,8 +114,8 @@ describe("senderName / isGroupConversation", () => {
         conversation_type: "individual",
         group_title: null,
         participants: [
-          { handle: "a", name_alias: null, preferred_name: null, contact_id: null },
-          { handle: "b", name_alias: null, preferred_name: null, contact_id: null },
+          { handle: "a", name: "A", contact_id: null },
+          { handle: "b", name: "B", contact_id: null },
         ],
       },
     });
