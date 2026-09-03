@@ -33,7 +33,6 @@ pub(crate) mod profile;
 pub(crate) mod reset_demo;
 pub(crate) mod saved_searches_api;
 pub(crate) mod search;
-pub(crate) mod search_query;
 pub(crate) mod server;
 #[cfg(test)]
 pub mod test_support;
@@ -41,15 +40,12 @@ pub mod test_support;
 pub use server::{ApiError, AppState, AuthCapability, AuthIdentity, ErrorBody, resolve_auth, run};
 
 // Integration tests (crates/vault/server/tests) cannot see `pub(crate)`
-// modules, so the search-parity suite reaches the schema, export, and query
-// parser entry points through these re-exports. Test-support surface, not
-// product API.
+// modules, so the search-parity suite reaches the schema and export entry
+// points through these re-exports. Test-support surface, not product API.
 #[doc(hidden)]
 pub use db::schema::ensure_vault_schema;
 #[doc(hidden)]
 pub use export_api::{ExportPageOpts, export_messages};
-#[doc(hidden)]
-pub use search_query::parse_search_query;
 
 use clap::Command;
 

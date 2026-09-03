@@ -1,9 +1,8 @@
 //! Per-account saved searches: named queries a user runs again from the sidebar.
 //!
 //! A saved search collects nothing. It stores a query string verbatim and is
-//! never validated, because the conversation list and the message search
-//! parse different grammars and disagree about what is legal (see
-//! `conversations_api` and `search_query`).
+//! never validated: each list accepts its own subset of the search language,
+//! so a query legal for one list can be a 400 on another (see `search`).
 //!
 //! Rows are addressed by `id` rather than by name, unlike contact groups and
 //! message tags: an edit changes the name and the query together, so a
@@ -337,13 +336,13 @@ mod tests {
             &mut conn,
             &account,
             "  Work team  ",
-            "  service:whatsapp is:group  ",
+            "  service:whatsapp kind:group  ",
             SavedSearchKind::Manual,
         )
         .await
         .unwrap();
         assert_eq!(made.name, "Work team");
-        assert_eq!(made.query, "service:whatsapp is:group");
+        assert_eq!(made.query, "service:whatsapp kind:group");
         assert_eq!(made.kind, "manual");
     }
 
@@ -356,7 +355,7 @@ mod tests {
                 &mut conn,
                 &account,
                 name,
-                "is:group",
+                "kind:group",
                 SavedSearchKind::Manual,
             )
             .await
@@ -379,7 +378,7 @@ mod tests {
             &mut conn,
             &account,
             "Family",
-            "is:group",
+            "kind:group",
             SavedSearchKind::Manual,
         )
         .await
@@ -388,7 +387,7 @@ mod tests {
             &mut conn,
             &account,
             "family",
-            "is:direct",
+            "kind:direct",
             SavedSearchKind::Manual,
         )
         .await
@@ -411,7 +410,7 @@ mod tests {
             &mut conn,
             &account,
             "Family",
-            "is:group",
+            "kind:group",
             SavedSearchKind::Manual,
         )
         .await
@@ -421,7 +420,7 @@ mod tests {
             &mut conn,
             &other,
             "Family",
-            "is:direct",
+            "kind:direct",
             SavedSearchKind::Manual,
         )
         .await
@@ -441,12 +440,12 @@ mod tests {
         let made = create_for_import(&mut conn, &account, 7, "imessage", "2026-08-30")
             .await
             .unwrap();
-        let edited = update(&mut conn, &account, made.id, "Renamed", "is:direct")
+        let edited = update(&mut conn, &account, made.id, "Renamed", "kind:direct")
             .await
             .unwrap();
         assert_eq!(edited.id, made.id);
         assert_eq!(edited.name, "Renamed");
-        assert_eq!(edited.query, "is:direct");
+        assert_eq!(edited.query, "kind:direct");
         assert_eq!(edited.kind, "import", "kind records how a row was born");
     }
 
@@ -458,16 +457,16 @@ mod tests {
             &mut conn,
             &account,
             "Family",
-            "is:group",
+            "kind:group",
             SavedSearchKind::Manual,
         )
         .await
         .unwrap();
-        let same = update(&mut conn, &account, made.id, "Family", "is:direct")
+        let same = update(&mut conn, &account, made.id, "Family", "kind:direct")
             .await
             .unwrap();
-        assert_eq!(same.query, "is:direct");
-        let recased = update(&mut conn, &account, made.id, "FAMILY", "is:direct")
+        assert_eq!(same.query, "kind:direct");
+        let recased = update(&mut conn, &account, made.id, "FAMILY", "kind:direct")
             .await
             .unwrap();
         assert_eq!(recased.name, "FAMILY");
@@ -481,7 +480,7 @@ mod tests {
             &mut conn,
             &account,
             "Family",
-            "is:group",
+            "kind:group",
             SavedSearchKind::Manual,
         )
         .await
@@ -490,12 +489,12 @@ mod tests {
             &mut conn,
             &account,
             "Work",
-            "is:direct",
+            "kind:direct",
             SavedSearchKind::Manual,
         )
         .await
         .unwrap();
-        let err = update(&mut conn, &account, second.id, "family", "is:direct")
+        let err = update(&mut conn, &account, second.id, "family", "kind:direct")
             .await
             .unwrap_err();
         assert!(matches!(err, SavedSearchError::Conflict(_)), "got {err:?}");
@@ -509,7 +508,7 @@ mod tests {
             &mut conn,
             &account,
             "   ",
-            "is:group",
+            "kind:group",
             SavedSearchKind::Manual,
         )
         .await
@@ -536,7 +535,7 @@ mod tests {
             &mut conn,
             &account,
             &long,
-            "is:group",
+            "kind:group",
             SavedSearchKind::Manual,
         )
         .await

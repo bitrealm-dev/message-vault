@@ -15,7 +15,6 @@ use crate::db::contacts::{self, contact_id_for_handle};
 use crate::db::dialect::{engine_of, group_concat_unit_separator, order_by_name_ci};
 use crate::db::handles::{infer_handle_type_from_shape, normalize_handle};
 use crate::db::sql::{SqlParam, bind_args, in_placeholders, renumber_placeholders};
-use crate::export_api::ExportQueryError;
 use crate::server::{ApiError, AppState, FullAccess};
 
 pub use crate::page_limits::{DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, MAX_LIST_OFFSET};
@@ -192,7 +191,7 @@ pub struct ContactSummariesPage {
 /// the conversation's chat handle or a participant handle in it.
 ///
 /// `contact_id_expr` is the SQL expression for the contact id (`$N` or `ct.id`).
-pub(crate) fn involves_contact_expr(contact_id_expr: &str) -> String {
+fn involves_contact_expr(contact_id_expr: &str) -> String {
     format!(
         "EXISTS (
        SELECT 1 FROM contact_handles ch
@@ -211,24 +210,24 @@ pub(crate) fn involves_contact_expr(contact_id_expr: &str) -> String {
 
 /// Expects two bind parameters: `account_id` ($1), `contact_id` ($2).
 /// Alias `c` = conversations.
-pub(crate) fn involves_contact_sql() -> String {
+fn involves_contact_sql() -> String {
     involves_contact_expr("$2")
 }
 
 /// Conversation `c` is not in `trashed_conversations`.
-pub(crate) const NOT_TRASHED_CONVERSATION_SQL: &str = "NOT EXISTS (
+const NOT_TRASHED_CONVERSATION_SQL: &str = "NOT EXISTS (
                SELECT 1 FROM trashed_conversations tc
                WHERE tc.account_id = c.account_id AND tc.conversation_id = c.id
              )";
 
 /// Conversation `c`'s chat handle is not in `trashed_handles`.
-pub(crate) const NOT_TRASHED_CHAT_HANDLE_SQL: &str = "NOT EXISTS (
+const NOT_TRASHED_CHAT_HANDLE_SQL: &str = "NOT EXISTS (
                SELECT 1 FROM trashed_handles th
                WHERE th.account_id = c.account_id AND th.handle_id = c.chat_handle_id
              )";
 
 /// Contact `ct` is not in `trashed_contacts`.
-pub(crate) const NOT_TRASHED_CONTACT_SQL: &str = "NOT EXISTS (
+const NOT_TRASHED_CONTACT_SQL: &str = "NOT EXISTS (
                SELECT 1 FROM trashed_contacts tct
                WHERE tct.account_id = ct.account_id AND tct.contact_id = ct.id
              )";
@@ -366,7 +365,7 @@ pub async fn get_contact_detail(
     conn: &mut AnyConnection,
     account_id: &str,
     contact_id: i64,
-) -> Result<Option<ContactDetail>, ExportQueryError> {
+) -> Result<Option<ContactDetail>, ApiError> {
     let name_and_modified: Option<(String, String)> = sqlx::query_as(&format!(
         "SELECT COALESCE(NULLIF(trim(preferred_name), ''), '(unknown)'),
                 last_modified
@@ -513,7 +512,7 @@ pub async fn get_contact_summaries(
     conn: &mut AnyConnection,
     account_id: &str,
     ids: &[i64],
-) -> Result<Vec<ContactSelectionSummary>, ExportQueryError> {
+) -> Result<Vec<ContactSelectionSummary>, ApiError> {
     let mut seen = HashSet::new();
     let mut unique = Vec::new();
     for id in ids.iter().copied() {

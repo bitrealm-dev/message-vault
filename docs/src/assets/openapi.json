@@ -2985,13 +2985,13 @@
         "tags": [
           "Export"
         ],
-        "summary": "Export messages matching a search query (message mode; cursor paging).",
+        "summary": "Export messages matching a query in the search language (cursor paging).",
         "operationId": "export_messages_handler",
         "parameters": [
           {
             "name": "q",
             "in": "query",
-            "description": "Metadata search subset; empty is all non-trashed",
+            "description": "Query in the search language; empty is every non-trashed message",
             "required": true,
             "schema": {
               "type": "string"
@@ -3037,6 +3037,7 @@
           {
             "name": "source",
             "in": "query",
+            "description": "Narrow to one backup: imessage, whatsapp, or sms-backup-restore",
             "required": false,
             "schema": {
               "type": "string"
@@ -3103,7 +3104,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "Metadata search subset; empty is all non-trashed",
+            "description": "Query in the search language; empty is every non-trashed message",
             "required": true,
             "schema": {
               "type": "string"
@@ -3120,6 +3121,7 @@
           {
             "name": "source",
             "in": "query",
+            "description": "Narrow to one backup: imessage, whatsapp, or sms-backup-restore",
             "required": false,
             "schema": {
               "type": "string"

@@ -822,7 +822,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_conversations_filters_by_handle_and_service() {
+    async fn list_conversations_finds_a_handle_across_platforms() {
         let (pool, _dir, account) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
         // setup() already has phone:+15555550200 as conversation 1.
@@ -1088,15 +1088,12 @@ mod tests {
                 crate::export_api::ExportCountOpts {
                     account_id: &account,
                     query,
-                    source_override: None,
+                    today: chrono::Local::now().date_naive(),
                 },
             )
             .await
             .unwrap_err();
-            assert!(matches!(
-                export_error,
-                crate::export_api::ExportQueryError::BadRequest(_)
-            ));
+            assert!(matches!(export_error, ApiError::BadRequest(_)));
         }
     }
 

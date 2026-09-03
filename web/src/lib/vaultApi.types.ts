@@ -612,7 +612,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Export messages matching a search query (message mode; cursor paging). */
+        /** Export messages matching a query in the search language (cursor paging). */
         get: operations["export_messages_handler"];
         put?: never;
         post?: never;
@@ -4116,7 +4116,7 @@ export interface operations {
     export_messages_handler: {
         parameters: {
             query: {
-                /** @description Metadata search subset; empty is all non-trashed */
+                /** @description Query in the search language; empty is every non-trashed message */
                 q: string;
                 /** @description Page size, default 100, max 500 */
                 limit?: number;
@@ -4125,6 +4125,7 @@ export interface operations {
                 /** @description Opaque next_cursor from a previous page */
                 cursor?: string;
                 account?: string;
+                /** @description Narrow to one backup: imessage, whatsapp, or sms-backup-restore */
                 source?: string;
             };
             header?: never;
@@ -4170,9 +4171,10 @@ export interface operations {
     export_messages_count_handler: {
         parameters: {
             query: {
-                /** @description Metadata search subset; empty is all non-trashed */
+                /** @description Query in the search language; empty is every non-trashed message */
                 q: string;
                 account?: string;
+                /** @description Narrow to one backup: imessage, whatsapp, or sms-backup-restore */
                 source?: string;
             };
             header?: never;

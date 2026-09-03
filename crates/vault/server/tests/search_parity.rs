@@ -11,9 +11,7 @@
 //! `test_pool` helper — integration tests cannot see it) and on Postgres
 //! when `MV_TEST_POSTGRES_URL` is set (CI and the local compose service).
 
-use message_vault_server::{
-    ExportPageOpts, ensure_vault_schema, export_messages, parse_search_query,
-};
+use message_vault_server::{ExportPageOpts, ensure_vault_schema, export_messages};
 use serde::Deserialize;
 use sqlx::AnyConnection;
 use sqlx::ConnectOptions;
@@ -183,14 +181,12 @@ async fn setup_vault(conn: &mut AnyConnection) {
 }
 
 /// Run the committed query list through the same search entry point the API
-/// uses ([`export_messages`] on `/v1/export/messages`), with each query first
-/// validated by the committed parser. Returns (query, id set) pairs in
-/// `CASES` order.
+/// uses ([`export_messages`] on `/v1/export/messages`). Returns (query, id set)
+/// pairs in `CASES` order.
 async fn run_against(conn: &mut AnyConnection) -> Vec<(&'static str, Vec<i64>)> {
     setup_vault(conn).await;
     let mut results = Vec::with_capacity(CASES.len());
     for &(query, _expected) in CASES {
-        parse_search_query(query).expect("committed parity query parses");
         let resp = export_messages(
             conn,
             ExportPageOpts {
@@ -199,7 +195,7 @@ async fn run_against(conn: &mut AnyConnection) -> Vec<(&'static str, Vec<i64>)> 
                 limit: 100,
                 offset: None,
                 cursor: None,
-                source_override: None,
+                today: chrono::NaiveDate::from_ymd_opt(2026, 9, 2).unwrap(),
             },
         )
         .await
@@ -239,7 +235,7 @@ async fn assert_diacritics_exception(conn: &mut AnyConnection, engine: Engine) {
             limit: 100,
             offset: None,
             cursor: None,
-            source_override: None,
+            today: chrono::NaiveDate::from_ymd_opt(2026, 9, 2).unwrap(),
         },
     )
     .await
