@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::AnyConnection;
 
 use crate::db::dialect::engine_of;
-use crate::db::participant_names::{Participant, load_for_conversations};
+use crate::db::participant_names::{Participant, load_for_chat_handle, load_for_conversations};
 use crate::db::sql::{
     SqlParam, bind_args, fold_in_id_chunks, in_placeholders, renumber_placeholders,
 };
@@ -250,7 +250,7 @@ pub async fn list_conversations_sorted(
         );
         let parts = participants.remove(&row.id).unwrap_or_default();
         let parts = if parts.is_empty() {
-            chat_handle_as_participant(conn, row.id).await?
+            load_for_chat_handle(conn, row.id).await?
         } else {
             parts
         };
@@ -275,36 +275,6 @@ pub async fn list_conversations_sorted(
         total,
         limit,
         offset,
-    })
-}
-
-async fn chat_handle_as_participant(
-    conn: &mut AnyConnection,
-    conversation_id: i64,
-) -> Result<Vec<Participant>, ApiError> {
-    let row: Option<(String, String, String)> = sqlx::query_as(
-        "SELECT h.raw,
-                h.service,
-                h.handle_type
-         FROM conversations c
-         JOIN handles h ON h.id = c.chat_handle_id
-         WHERE c.id = $1",
-    )
-    .bind(conversation_id)
-    .fetch_optional(&mut *conn)
-    .await?;
-    Ok(match row {
-        Some((handle, service, handle_type)) => vec![Participant {
-            name: handle.clone(),
-            handle,
-            service: if service.trim().is_empty() {
-                handle_type
-            } else {
-                service
-            },
-            contact_id: None,
-        }],
-        None => Vec::new(),
     })
 }
 

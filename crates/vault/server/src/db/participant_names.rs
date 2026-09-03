@@ -6,6 +6,12 @@
 //! screen. `participants.contact_id` is deliberately not consulted — a handle
 //! counts as a Contact's the moment it is on the Contact, which is what makes
 //! naming someone rename them everywhere at once.
+//!
+//! [`load_for_chat_handle`] is the same rule for the one conversation shape
+//! that has no participants rows to read: a backup that recorded the thread's
+//! address and nothing about who was in it. It stands here rather than beside
+//! its caller so both naming paths sit under this doc comment and cannot
+//! drift apart.
 
 use std::collections::HashMap;
 
@@ -76,6 +82,52 @@ pub async fn load_for_conversations(
         },
     )
     .await
+}
+
+/// The conversation's chat handle as its sole participant, for a conversation
+/// that has no participants rows at all.
+///
+/// Same rule, one clause shorter: with no participants row there is no
+/// per-conversation backup name, so it is the Contact's name, else the handle.
+/// The Contact is reached through `contact_handles` exactly as above, so a
+/// person the vault has a name for is named here too and their row opens the
+/// contact drawer instead of showing a bare phone number.
+///
+/// Returns an empty vector when the conversation has no chat handle row.
+///
+/// # Errors
+///
+/// Returns a database error when the query fails.
+pub async fn load_for_chat_handle(
+    conn: &mut AnyConnection,
+    conversation_id: i64,
+) -> Result<Vec<Participant>, sqlx::Error> {
+    let row: Option<(String, String, String, Option<i64>)> = sqlx::query_as(
+        "SELECT COALESCE(NULLIF(trim(c.preferred_name), ''), h.raw) AS name,
+                h.raw AS handle,
+                COALESCE(NULLIF(trim(h.service), ''), h.handle_type) AS service,
+                ch.contact_id
+         FROM conversations conv
+         JOIN handles h ON h.id = conv.chat_handle_id
+         LEFT JOIN contact_handles ch
+           ON ch.handle_id = h.id AND ch.account_id = conv.account_id
+         LEFT JOIN contacts c
+           ON c.id = ch.contact_id AND c.account_id = conv.account_id
+         WHERE conv.id = $1",
+    )
+    .bind(conversation_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(row
+        .map(|(name, handle, service, contact_id)| {
+            vec![Participant {
+                name,
+                handle,
+                service,
+                contact_id,
+            }]
+        })
+        .unwrap_or_default())
 }
 
 #[cfg(test)]
@@ -192,6 +244,52 @@ mod tests {
         let p = &loaded[&conversation_id][0];
         assert_eq!(p.name, "+15555550300");
         assert_eq!(p.contact_id, None);
+    }
+
+    /// A backup that recorded the thread's address and nothing about who was
+    /// in it leaves no participants rows, but the vault may still have a name
+    /// for the person on the other end.
+    #[tokio::test]
+    async fn the_chat_handle_takes_the_contact_name_and_id() {
+        let (pool, _dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let (conversation_id, handle_id) = seed(&mut conn, "+15555550500", None).await;
+        sqlx::query("DELETE FROM participants WHERE conversation_id = $1")
+            .bind(conversation_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let contact_id = link(&mut conn, handle_id, "Robert Smith").await;
+
+        let loaded = load_for_chat_handle(&mut conn, conversation_id)
+            .await
+            .unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].name, "Robert Smith");
+        assert_eq!(loaded[0].handle, "+15555550500");
+        assert_eq!(loaded[0].service, "imessage");
+        assert_eq!(loaded[0].contact_id, Some(contact_id));
+    }
+
+    /// With nothing naming them, the handle stands in, and there is no
+    /// contact drawer to open.
+    #[tokio::test]
+    async fn the_chat_handle_falls_back_to_itself() {
+        let (pool, _dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let (conversation_id, _handle_id) = seed(&mut conn, "+15555550600", None).await;
+        sqlx::query("DELETE FROM participants WHERE conversation_id = $1")
+            .bind(conversation_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let loaded = load_for_chat_handle(&mut conn, conversation_id)
+            .await
+            .unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].name, "+15555550600");
+        assert_eq!(loaded[0].contact_id, None);
     }
 
     /// `participants.contact_id` is not consulted: only the link in
