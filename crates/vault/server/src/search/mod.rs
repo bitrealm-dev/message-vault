@@ -3,10 +3,13 @@
 //! `docs/adr/0004-one-search-language-compiled-in-one-module.md`.
 
 pub mod error;
+pub(crate) mod fields;
 pub(crate) mod lex;
+pub(crate) mod parse;
 pub(crate) mod value;
 
 pub use error::{QueryError, QueryErrorKind};
+pub use fields::{FieldDoc, ValueType};
 
 use serde::{Deserialize, Serialize};
 
@@ -41,4 +44,9 @@ impl ListKind {
             Self::Messages => "m",
         }
     }
+}
+
+/// The words one list accepts, for the web's suggestions and the docs page.
+pub fn describe(list: ListKind) -> Vec<FieldDoc> {
+    fields::describe(list)
 }
