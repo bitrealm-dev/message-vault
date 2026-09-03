@@ -33,6 +33,7 @@ pub(crate) mod profile;
 pub(crate) mod reset_demo;
 pub(crate) mod saved_searches_api;
 pub(crate) mod search;
+pub(crate) mod search_api;
 pub(crate) mod server;
 #[cfg(test)]
 pub mod test_support;
