@@ -180,7 +180,18 @@ fn emit_text(ctx: &ListCtx<'_>, out: &mut Sql, term: &TextTerm) {
             free_text_match(out, e, PARTICIPANT_NAME, term);
             out.push(")))");
         }
-        ListKind::Messages => fts::leaf(out, e, term),
+        // The index, or an attachment's file name. Both are needed: a file
+        // name is one token to Postgres's text parser, so "IMG_0001" never
+        // reaches "IMG_0001.jpg" through the index there, while SQLite's
+        // tokenizer does split it. The file-name match makes the two engines
+        // agree and makes part of a file name findable on either.
+        ListKind::Messages => {
+            out.push("(");
+            fts::leaf(out, e, term);
+            out.push(" OR EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id AND ");
+            free_text_match(out, e, "coalesce(a.original_name, '')", term);
+            out.push("))");
+        }
     }
 }
 
@@ -645,16 +656,36 @@ fn emit_people_word(
         },
         "tag" => match v {
             Value::Keyword("none") => {
-                ctx.conversation(out, |o| {
-                    no_named_set(
-                        o,
+                match ctx.list {
+                    ListKind::Conversations => no_named_set(
+                        out,
                         "message_tags",
                         "message_tag_members",
                         "conversation_id",
                         "c.id",
                         "c.account_id",
-                    );
-                });
+                    ),
+                    // "No conversation of theirs carries any Message Tag":
+                    // the double negation wraps the bridge's EXISTS, so a
+                    // contact with one tagged conversation is out even when
+                    // their other conversations carry no tag. On Messages
+                    // the bridge reaches the one conversation the message
+                    // is in, so it reads "this conversation has no tag".
+                    _ => {
+                        out.push("NOT ");
+                        ctx.conversation(out, |o| {
+                            o.push("NOT ");
+                            no_named_set(
+                                o,
+                                "message_tags",
+                                "message_tag_members",
+                                "conversation_id",
+                                "c.id",
+                                "c.account_id",
+                            );
+                        });
+                    }
+                }
                 Ok(())
             }
             _ => {

@@ -79,7 +79,7 @@ pub(crate) fn tokenize(input: &str) -> Result<Vec<Token>, QueryError> {
         return Err(QueryError::new(
             QueryErrorKind::TooLong,
             0..input.len(),
-            format!("The search is longer than {MAX_QUERY_BYTES} characters."),
+            format!("The search is longer than {MAX_QUERY_BYTES} bytes."),
         ));
     }
     let bytes = input.as_bytes();

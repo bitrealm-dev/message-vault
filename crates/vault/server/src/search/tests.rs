@@ -825,6 +825,35 @@ mod free_text {
     }
 
     #[tokio::test]
+    async fn free_text_finds_part_of_an_attachment_file_name() {
+        let (pool, _dir, f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        // "each" sits inside "beach.jpg" but is not a word the full-text
+        // index holds, so only the file-name match can find it. Postgres
+        // reads a whole file name as one token, so without this leg a
+        // search for part of a file name finds nothing there at all.
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "each").await,
+            vec![f.feb_big_jpeg]
+        );
+        // A prefix and a phrase go through the same file-name match.
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "hike*").await,
+            vec![f.may_big_jpeg]
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "\"notes.pdf\"").await,
+            vec![f.feb_pdf]
+        );
+        // On Conversations free text is the title and the people, by
+        // design, so the thread is reached by the file name's own word.
+        assert_eq!(
+            run(&mut conn, ListKind::Conversations, "filename:each").await,
+            vec![f.jane_direct]
+        );
+    }
+
+    #[tokio::test]
     async fn a_participant_the_source_only_named_is_still_searchable() {
         let (pool, _dir, f) = seeded().await;
         let mut conn = pool.acquire().await.unwrap();
@@ -878,6 +907,32 @@ mod free_text {
         .unwrap();
         assert!(f.where_sql().starts_with("(ct.account_id = ?"));
         assert_eq!(f.where_sql().matches('?').count(), f.params().len());
+    }
+
+    /// Free text on Messages is two legs, the index and the file name, and
+    /// each binds its own value; Postgres is the engine where the two spell
+    /// themselves differently, so check the binding there.
+    #[test]
+    fn free_text_on_messages_binds_every_placeholder_on_postgres() {
+        for query in ["avocado", "avoc*", "\"two words\""] {
+            let f = compile(CompileRequest {
+                list: ListKind::Messages,
+                query,
+                account_id: ACCOUNT,
+                engine: DbEngine::Postgres,
+                today: today(),
+            })
+            .unwrap();
+            assert_eq!(
+                f.where_sql().matches('?').count(),
+                f.params().len(),
+                "{query}"
+            );
+            assert!(
+                !f.where_sql().contains("COLLATE NOCASE"),
+                "{query}: SQLite collation leaked into Postgres SQL"
+            );
+        }
     }
 }
 
@@ -1134,6 +1189,23 @@ mod people_words {
             .await,
             vec![f.archive_msg]
         );
+    }
+
+    #[tokio::test]
+    async fn tag_none_is_the_true_complement_on_every_list() {
+        let (pool, _dir, f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        // Ana, Bo, and Sam are all in Old Times, which carries Archive, so
+        // none of them is untagged — even though each of them also has a
+        // conversation that carries no tag.
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "tag:none").await,
+            sorted(vec![f.cy, f.jane, f.nameless])
+        );
+        // On Messages the tag belongs to the message's own conversation.
+        let untagged = run(&mut conn, ListKind::Messages, "tag:none").await;
+        assert!(!untagged.contains(&f.archive_msg));
+        assert!(untagged.contains(&f.jane_avocado_from_me));
     }
 
     #[tokio::test]
@@ -1532,6 +1604,36 @@ mod coverage {
                         "{q}: SQLite collation leaked into Postgres SQL"
                     );
                 }
+            }
+        }
+    }
+
+    /// The registry is the one place a word exists, so a slip here would
+    /// hand the parser, the web's suggestions, and the docs page three
+    /// different languages.
+    #[test]
+    fn the_registry_is_well_formed() {
+        assert_eq!(FIELDS.len(), 27, "the language has twenty-seven words");
+        for (i, spec) in FIELDS.iter().enumerate() {
+            assert!(
+                FIELDS[..i].iter().all(|f| f.word != spec.word),
+                "{} appears twice",
+                spec.word
+            );
+            assert!(
+                spec.example.starts_with(&format!("{}:", spec.word)),
+                "{}'s example does not start with the word itself: {}",
+                spec.word,
+                spec.example
+            );
+            assert!(!spec.lists.is_empty(), "{} is on no list", spec.word);
+            for value in spec.values {
+                assert_eq!(
+                    *value,
+                    value.to_lowercase(),
+                    "{}'s value {value} is not lower case",
+                    spec.word
+                );
             }
         }
     }
