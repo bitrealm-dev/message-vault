@@ -15,8 +15,9 @@ Build a local image when the work is about the container itself. Examples:
 - Checking that the website still works when it is compiled into the image, with no Vite server
 - Reproducing a Docker Hub build failure before pushing a `v*` tag
 
-[!NOTE]
-> A merge to `main` does not publish an image. CI only builds and pushes `bitrealm/message-vault` when a git tag that starts with `v` is pushed. How versions and tags work is on [Release](/vault/developer/release/).
+:::note
+A merge to `main` does not publish an image. CI only builds and pushes `bitrealm/message-vault` when a git tag that starts with `v` is pushed. How versions and tags work is on [Release](/vault/developer/release/).
+:::
 
 ## Two Compose files
 

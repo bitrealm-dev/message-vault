@@ -1,0 +1,48 @@
+---
+/**
+ * A search query shown as it would sit in the search box.
+ *
+ * Field names (`from:`, `-tag:`, `last-contact:`) are picked out in the
+ * accent colour so a reader can see where each field starts. Everything
+ * else is the value, in the text colour.
+ *
+ *   <TypedQuery query='from:me to:"Jane Doe" avocado' />
+ *   <TypedQuery query="last-contact:<2022" note="on Contacts" />
+ */
+interface Props {
+  /** The query, exactly as a person would type it. */
+  query: string;
+  /** A short aside shown at the right edge, such as which list it runs on. */
+  note?: string;
+}
+
+const { query, note } = Astro.props;
+
+type Part = { kind: 'k' | 'v'; text: string };
+
+function split(text: string): Part[] {
+  const parts: Part[] = [];
+  const field = /-?[a-z][a-z-]*:/g;
+  let last = 0;
+  for (const m of text.matchAll(field)) {
+    const at = m.index ?? 0;
+    // A field name starts the query or follows whitespace; `10:30` and
+    // `http://` inside a value are not fields.
+    if (at > 0 && !/\s/.test(text[at - 1] ?? '')) continue;
+    if (at > last) parts.push({ kind: 'v', text: text.slice(last, at) });
+    parts.push({ kind: 'k', text: m[0] });
+    last = at + m[0].length;
+  }
+  if (last < text.length) parts.push({ kind: 'v', text: text.slice(last) });
+  return parts;
+}
+
+const parts = split(query);
+---
+
+<div class="mv-query not-content" aria-label={`Example query: ${query}`}>
+  <span class="mv-query__text">{
+    parts.map((p) => (p.kind === 'k' ? <span class="mv-k">{p.text}</span> : p.text))
+  }</span>
+  {note && <span class="mv-query__note">{note}</span>}
+</div>
