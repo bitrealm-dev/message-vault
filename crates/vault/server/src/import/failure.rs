@@ -85,7 +85,6 @@ mod tests {
 
     #[test]
     fn in_error_finds_the_failure_under_anyhow_context() {
-        use anyhow::Context;
         let root: anyhow::Error = ImportFailure::Parse {
             line: 2,
             detail: "boom".into(),
