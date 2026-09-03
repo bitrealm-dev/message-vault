@@ -14,7 +14,7 @@ use crate::db::sql::{SqlParam, bind_all, group_rows_by_id, renumber_placeholders
 use crate::export_api::{self};
 use crate::server::{ApiError, AppState, ExportAccess, resolve_import_account};
 
-pub use crate::page_limits::{DEFAULT_EXPORT_LIMIT, MAX_EXPORT_LIMIT, MAX_EXPORT_OFFSET};
+pub use crate::paging::{DEFAULT_EXPORT_LIMIT, MAX_EXPORT_LIMIT, MAX_EXPORT_OFFSET};
 
 /// Options for one exported page of messages.
 #[derive(Debug, Clone)]

@@ -27,7 +27,7 @@ pub(crate) mod named_membership;
 pub(crate) mod named_set_api;
 pub(crate) mod openapi;
 pub(crate) mod operation_lock;
-pub(crate) mod page_limits;
+pub(crate) mod paging;
 pub(crate) mod process_assets;
 pub(crate) mod profile;
 pub(crate) mod reset_demo;

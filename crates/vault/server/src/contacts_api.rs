@@ -17,7 +17,7 @@ use crate::db::handles::{infer_handle_type_from_shape, normalize_handle};
 use crate::db::sql::{SqlParam, bind_args, in_placeholders, renumber_placeholders};
 use crate::server::{ApiError, AppState, FullAccess};
 
-pub use crate::page_limits::{DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, MAX_LIST_OFFSET};
+pub use crate::paging::{DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, MAX_LIST_OFFSET};
 
 /// One page of the contact list.
 #[derive(Debug, Serialize, utoipa::ToSchema)]

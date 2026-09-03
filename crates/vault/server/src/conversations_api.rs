@@ -15,7 +15,7 @@ use crate::db::sql::{
 };
 use crate::server::{ApiError, AppState, FullAccess};
 
-pub use crate::page_limits::{
+pub use crate::paging::{
     DEFAULT_LIST_LIMIT, MAX_CONVERSATION_LIST_LIMIT as MAX_LIST_LIMIT, MAX_LIST_OFFSET,
 };
 
