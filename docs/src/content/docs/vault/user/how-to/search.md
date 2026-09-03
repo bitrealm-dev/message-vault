@@ -27,7 +27,7 @@ One language works on all three lists: **Contacts**, **Conversations**, and **Me
 - Put quotes around a value with a space or a colon: `group:"Book Club"`. Two quotes in a row are one quote.
 - Case never matters.
 - `#12` means the thing with that id: `group:#7`, `with:#42`, `in:#19`.
-- `none` and `any` work on every word that names a thing or holds text: `tag:none`, `attachment:any`, `name:none`.
+- `none` means empty and `any` means not empty, on the words whose row below lists them: `name:none`, `tag:none`, `attachment:any`.
 - Dates name a span: `2024` is the year, `2024-05` the month, `2024-05-01` the day, `7d` or `2w` or `3m` or `1y` the last that long, plus `today` and `yesterday`. Add `>=` for from its start, `<` for before its start, `>` for after its end, `<=` for up to its end, or `a..b` for a range: `date:2019`, `date:>=2019`, `date:<1m`, `date:2019..2021`.
 - Sizes are `500k`, `1M`, `2G`, or plain bytes. Counts are plain numbers. Both take the same `>`, `>=`, `<`, `<=`, and `a..b`.
 - A comma inside a value means either: `service:imessage,sms`. Repeating a word means both: `tag:Work tag:Urgent`.
