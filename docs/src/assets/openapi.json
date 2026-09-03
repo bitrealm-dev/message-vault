@@ -4295,7 +4295,7 @@
         "tags": [
           "Saved searches"
         ],
-        "summary": "Create a saved search and return it with the updated list.",
+        "summary": "Create a saved search and return it.",
         "operationId": "saved_searches_create_handler",
         "requestBody": {
           "content": {
@@ -4313,7 +4313,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SavedSearchResponse"
+                  "$ref": "#/components/schemas/SavedSearch"
                 }
               }
             }
@@ -4371,7 +4371,7 @@
         "tags": [
           "Saved searches"
         ],
-        "summary": "Delete a saved search and return the updated list.",
+        "summary": "Delete a saved search.",
         "description": "Deleting an import-created saved search removes the shortcut only. The\n`vault_imports` row it pointed at is the account's permanent record of that\nrun and is never touched here.",
         "operationId": "saved_searches_delete_handler",
         "parameters": [
@@ -4387,15 +4387,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SavedSearchDeleteResponse"
-                }
-              }
-            }
+          "204": {
+            "description": "Saved search deleted"
           },
           "401": {
             "description": "",
@@ -4438,7 +4431,7 @@
         "tags": [
           "Saved searches"
         ],
-        "summary": "Replace a saved search's name and query, and return the updated list.",
+        "summary": "Replace a saved search's name and query, and return it.",
         "operationId": "saved_searches_update_handler",
         "parameters": [
           {
@@ -4468,7 +4461,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SavedSearchResponse"
+                  "$ref": "#/components/schemas/SavedSearch"
                 }
               }
             }
@@ -7618,52 +7611,14 @@
           }
         }
       },
-      "SavedSearchDeleteResponse": {
-        "type": "object",
-        "description": "The updated list after deletion.",
-        "required": [
-          "ok",
-          "savedSearches"
-        ],
-        "properties": {
-          "ok": {
-            "type": "boolean"
-          },
-          "savedSearches": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SavedSearch"
-            }
-          }
-        }
-      },
-      "SavedSearchResponse": {
-        "type": "object",
-        "description": "The affected saved search plus the updated list.",
-        "required": [
-          "savedSearch",
-          "savedSearches"
-        ],
-        "properties": {
-          "savedSearch": {
-            "$ref": "#/components/schemas/SavedSearch"
-          },
-          "savedSearches": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SavedSearch"
-            }
-          }
-        }
-      },
       "SavedSearchesListResponse": {
         "type": "object",
         "description": "The account's saved searches, A–Z.",
         "required": [
-          "savedSearches"
+          "items"
         ],
         "properties": {
-          "savedSearches": {
+          "items": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/SavedSearch"
