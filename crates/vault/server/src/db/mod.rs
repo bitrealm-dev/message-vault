@@ -7,6 +7,7 @@ pub mod contacts;
 pub mod dialect;
 pub mod engine;
 pub mod handles;
+pub mod participant_names;
 pub mod permissions;
 pub(crate) mod pg_ddl;
 pub mod saved_searches;
