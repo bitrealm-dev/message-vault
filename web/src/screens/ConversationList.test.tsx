@@ -42,8 +42,8 @@ vi.mock("../lib/vaultApi", () => ({
   updateMessageTagMembers: vi.fn(),
   listConversations: vi.fn().mockResolvedValue({
     items: [
-      { id: "1", display_name: "Alice", tags: ["Holiday"] },
-      { id: "2", display_name: "Bob", tags: [] },
+      { id: 1, display_name: "Alice", tags: ["Holiday"] },
+      { id: 2, display_name: "Bob", tags: [] },
     ],
     total: 2,
     limit: 40,

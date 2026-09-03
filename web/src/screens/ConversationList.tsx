@@ -32,7 +32,7 @@ export default function ConversationList({
   onSelect,
   query,
 }: {
-  selectedId: string | null;
+  selectedId: number | null;
   onSelect: (conversation: Conversation) => void;
   query: string;
 }) {
@@ -40,7 +40,7 @@ export default function ConversationList({
   const setTagMembers = useSetMessageTagMembers();
   const [debouncedQ, setDebouncedQ] = useState(query);
   const [visibleRange, setVisibleRange] = useState<VisibleRange>({ start: 0, end: 0 });
-  const [checkedIds, setCheckedIds] = useState<Set<string>>(() => new Set());
+  const [checkedIds, setCheckedIds] = useState<Set<number>>(() => new Set());
   const [sortState, setSortState] = useState<ConversationSortState>(() => loadConversationSort());
   const { tags: allTags } = useMessageTags();
   const setRightToolbar = useSetRightToolbar();
@@ -112,9 +112,7 @@ export default function ConversationList({
 
   const applyMembership = useCallback(
     (name: string, enable: boolean) => {
-      const ids = targetConversations
-        .map((c) => Number(c.id))
-        .filter((id) => Number.isFinite(id) && id > 0);
+      const ids = targetConversations.map((c) => c.id);
       if (ids.length === 0) return Promise.resolve();
       // The tags on the rows change in the cache before the vault answers and
       // go back if it refuses, so nothing here has to remember them. Marking

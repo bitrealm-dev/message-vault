@@ -88,8 +88,8 @@ describe("browse routes", () => {
   });
 
   it("addresses a conversation's sources by id", async () => {
-    await getConversationSources("abc");
-    expect(lastPath(get)).toBe("/v1/conversations/abc/sources");
+    await getConversationSources(12);
+    expect(lastPath(get)).toBe("/v1/conversations/12/sources");
   });
 
   it("listSearchFields asks for one list's words", async () => {
@@ -179,11 +179,6 @@ describe("path parameters are escaped", () => {
   it("escapes an id containing a slash rather than building a deeper path", async () => {
     await deleteApiToken("a/b");
     expect(del).toHaveBeenCalledWith("/v1/account/api-tokens/a%2Fb");
-  });
-
-  it("escapes a conversation id containing a space", async () => {
-    await getConversationSources("a b");
-    expect(lastPath(get)).toBe("/v1/conversations/a%20b/sources");
   });
 });
 

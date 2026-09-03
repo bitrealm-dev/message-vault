@@ -20,10 +20,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** True when the value looks like a conversation with a non-empty id. */
+/** True when the value looks like a conversation with a positive integer id. */
 function isConversation(value: unknown): value is Conversation {
   if (!isRecord(value)) return false;
-  return typeof value.id === "string" && value.id.length > 0;
+  return typeof value.id === "number" && Number.isInteger(value.id) && value.id > 0;
 }
 
 /** True when every element is a string. */

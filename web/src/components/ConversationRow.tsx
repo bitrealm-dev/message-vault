@@ -132,7 +132,7 @@ export default function ConversationRow({
   isSelected: boolean;
   onClick: () => void;
   checked?: boolean;
-  onCheckChange?: (id: string) => void;
+  onCheckChange?: (id: number) => void;
 }) {
   const checkboxId = useId();
   const columnResizing = useColumnResizing();

@@ -9,7 +9,7 @@ export default function SourcesPanel({
   conversationId,
   onClose,
 }: {
-  conversationId: string | null;
+  conversationId: number | null;
   onClose: () => void;
 }) {
   const fetchSources = useCallback(

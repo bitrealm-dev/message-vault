@@ -219,11 +219,11 @@ export function listConversations(
 }
 
 export function getConversationSources(
-  conversationId: string,
+  conversationId: number,
   opts?: VaultRequestOptions,
 ): Promise<Schema["ConversationSourcesPage"]> {
   return apiClient.get<Schema["ConversationSourcesPage"]>(
-    `/v1/conversations/${encodeURIComponent(conversationId)}/sources`,
+    `/v1/conversations/${conversationId}/sources`,
     opts,
   );
 }

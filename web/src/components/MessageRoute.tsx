@@ -8,8 +8,16 @@ import MessageView from "../screens/MessageView";
 import ListColumn from "./ListColumn";
 import RightPane from "./RightPane";
 
+/** The route's `:conversationId` as a number, or null when it is not a positive integer. */
+function positiveInteger(raw: string | undefined): number | null {
+  if (raw === undefined || !/^\d+$/.test(raw)) return null;
+  const n = Number(raw);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
+
 export default function MessageRoute() {
-  const { conversationId } = useParams<{ conversationId: string }>();
+  const { conversationId: conversationParam } = useParams<{ conversationId: string }>();
+  const conversationId = positiveInteger(conversationParam);
   const location = useLocation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -30,10 +38,10 @@ export default function MessageRoute() {
   const conversation = stateConversation ?? fetchedConversation;
 
   useEffect(() => {
-    if (stateConversation || !conversationId) {
+    if (stateConversation || conversationId === null) {
       setFetchedConversation(null);
       setFetchLoading(false);
-      setFetchError(null);
+      setFetchError(conversationParam === undefined ? null : "Conversation not found.");
       return;
     }
 
@@ -62,13 +70,13 @@ export default function MessageRoute() {
     })();
 
     return () => controller.abort();
-  }, [conversationId, stateConversation]);
+  }, [conversationId, conversationParam, stateConversation]);
 
   return (
     <>
       <ListColumn>
         <ConversationList
-          selectedId={conversationId ?? null}
+          selectedId={conversationId}
           onSelect={(c) =>
             navigate(`/messages/${c.id}`, {
               state: { conversation: c, openContactId, openContactPreview },

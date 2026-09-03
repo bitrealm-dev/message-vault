@@ -24,7 +24,7 @@ export function conversationYears(
 }
 
 /** Search query that loads every message in one calendar year. */
-function yearQuery(conversationId: string, year: number): string {
+function yearQuery(conversationId: number, year: number): string {
   return `in:#${conversationId} date:${year}`;
 }
 
@@ -73,7 +73,7 @@ function isAbortError(err: unknown): boolean {
 }
 
 /** Load messages for one conversation, either a page at a time or a whole year. */
-export function useConversationMessages(conversationId: string) {
+export function useConversationMessages(conversationId: number) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);

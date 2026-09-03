@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { asMessagesLocationState } from "./messagesLocationState.ts";
 
 const conversation = {
-  id: "42",
+  id: 42,
   participants: [],
   message_count: 1,
   last_message_at: "2026-01-01T00:00:00Z",
@@ -39,9 +39,14 @@ describe("asMessagesLocationState", () => {
   it("rejects non-objects and invalid shapes", () => {
     expect(asMessagesLocationState(null)).toBeNull();
     expect(asMessagesLocationState("x")).toBeNull();
-    expect(asMessagesLocationState({ conversation: { id: 1 } })).toBeNull();
+    expect(asMessagesLocationState({ conversation: { id: -1 } })).toBeNull();
     expect(asMessagesLocationState({ openContactId: 5 })).toBeNull();
     expect(asMessagesLocationState({})).toBeNull();
+  });
+
+  it("rejects a conversation whose id is not a positive integer", () => {
+    expect(asMessagesLocationState({ conversation: { ...conversation, id: "42" } })).toBeNull();
+    expect(asMessagesLocationState({ conversation: { ...conversation, id: 0 } })).toBeNull();
   });
 
   it("accepts openContactPreview when it matches openContactId", () => {

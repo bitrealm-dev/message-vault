@@ -81,11 +81,11 @@ describe("useConversationMessages", () => {
     routeGets(slow.promise);
 
     const { result, rerender } = renderHook(
-      ({ id }: { id: string }) => useConversationMessages(id),
-      { initialProps: { id: "1" } },
+      ({ id }: { id: number }) => useConversationMessages(id),
+      { initialProps: { id: 1 } },
     );
 
-    rerender({ id: "2" });
+    rerender({ id: 2 });
     await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual([2]));
 
     await act(async () => {
@@ -102,11 +102,11 @@ describe("useConversationMessages", () => {
     routeGets(slow.promise);
 
     const { result, rerender } = renderHook(
-      ({ id }: { id: string }) => useConversationMessages(id),
-      { initialProps: { id: "1" } },
+      ({ id }: { id: number }) => useConversationMessages(id),
+      { initialProps: { id: 1 } },
     );
 
-    rerender({ id: "2" });
+    rerender({ id: 2 });
     await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual([2]));
 
     // The abort surfaces as a rejection; it must not blank B's messages.
