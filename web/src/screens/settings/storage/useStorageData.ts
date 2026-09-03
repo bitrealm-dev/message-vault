@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiErrorMessage } from "../../../lib/apiErrorMessage";
 import { getAccountStorage, getImport, listImports } from "../../../lib/vaultApi";
+import { keys } from "../../../lib/vaultKeys";
 import { useVaultQuery } from "../../../lib/vaultQuery";
 import type { ImportRow, TopAttachment } from "./storageUtils";
 
@@ -37,7 +38,7 @@ export function useStorageData() {
     data: overview,
     isPending: loading,
     error,
-  } = useVaultQuery(["storage-overview"], fetchOverview);
+  } = useVaultQuery(keys.storage.overview, fetchOverview);
 
   // A fresh overview invalidates whatever page the user was on.
   useEffect(() => {
@@ -54,7 +55,7 @@ export function useStorageData() {
     data: selectedImport,
     isPending: selectedImportLoading,
     error: selectedImportError,
-  } = useVaultQuery(["import-detail", selectedImportId], fetchDetail, {
+  } = useVaultQuery(keys.storage.importDetail(selectedImportId), fetchDetail, {
     enabled: selectedImportId !== null,
   });
 

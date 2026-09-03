@@ -1,18 +1,52 @@
+import { type UseMutationResult, useMutation } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import { apiErrorMessage } from "../../lib/apiErrorMessage";
-import { useAsyncAction } from "../../lib/useAsyncAction";
 import { createApiToken, deleteApiToken, listApiTokens, renameApiToken } from "../../lib/vaultApi";
-import { useVaultQuery } from "../../lib/vaultQuery";
+import { keys } from "../../lib/vaultKeys";
+import { useVaultCache, useVaultQuery } from "../../lib/vaultQuery";
 import type { ApiTokenItem } from "./apiTokensUtils";
 
 const fetchTokens = (signal: AbortSignal) =>
   listApiTokens({ signal }).then((res) => res.items ?? []);
 
+type NewToken = Parameters<typeof createApiToken>[0];
+type CreatedToken = Awaited<ReturnType<typeof createApiToken>>;
+
+/** Every token write marks the list stale, and the list refetches itself. */
+function useApiTokenWrite<T, V>(write: (vars: V) => Promise<T>): UseMutationResult<T, Error, V> {
+  const cache = useVaultCache();
+  return useMutation<T, Error, V>({
+    mutationFn: write,
+    onSettled: () => cache.invalidate(keys.apiTokens.all),
+  });
+}
+
+export function useCreateApiToken(): UseMutationResult<CreatedToken, Error, NewToken> {
+  return useApiTokenWrite((body: NewToken) => createApiToken(body));
+}
+
+export function useRenameApiToken(): UseMutationResult<
+  Awaited<ReturnType<typeof renameApiToken>>,
+  Error,
+  { id: string; label: string }
+> {
+  return useApiTokenWrite(({ id, label }: { id: string; label: string }) =>
+    renameApiToken(id, { label }),
+  );
+}
+
+export function useRevokeApiToken(): UseMutationResult<
+  Awaited<ReturnType<typeof deleteApiToken>>,
+  Error,
+  string
+> {
+  return useApiTokenWrite((id: string) => deleteApiToken(id));
+}
+
 /**
- * The list goes through `useVaultQuery` and each mutation through
- * `useAsyncAction` — the busy flag, the cleared-then-captured error and the
- * try/catch/finally around each call were previously written out three times
- * here, matching those hooks line for line.
+ * The list goes through `useVaultQuery` and each write through one of the
+ * mutations above — the busy flag and error string are the union of the
+ * three mutations' own state rather than a separate piece of state.
  */
 export function useApiTokens() {
   const [composing, setComposing] = useState(false);
@@ -29,9 +63,31 @@ export function useApiTokens() {
     data,
     isPending: loading,
     error: loadError,
-    refetch: reload,
-  } = useVaultQuery(["api-tokens"], fetchTokens);
-  const { busy, error: actionError, run, clearError } = useAsyncAction();
+  } = useVaultQuery(keys.apiTokens.all, fetchTokens);
+  const createToken = useCreateApiToken();
+  const renameToken = useRenameApiToken();
+  const revokeToken = useRevokeApiToken();
+
+  const busy = createToken.isPending || renameToken.isPending || revokeToken.isPending;
+
+  // Each mutate call resets that mutation's own error and stamps a fresh
+  // `submittedAt`, so whichever of the three last started is also whichever
+  // last settled; its error (or lack of one) is `actionError`. A fixed
+  // create-then-rename-then-revoke order would instead let an old create
+  // failure outlive a later, successful rename.
+  const latest = [createToken, renameToken, revokeToken].reduce((newest, next) =>
+    next.submittedAt > newest.submittedAt ? next : newest,
+  );
+  const actionError = latest.error ? latest.error.message : "";
+
+  const resetCreate = createToken.reset;
+  const resetRename = renameToken.reset;
+  const resetRevoke = revokeToken.reset;
+  const clearError = useCallback(() => {
+    resetCreate();
+    resetRename();
+    resetRevoke();
+  }, [resetCreate, resetRename, resetRevoke]);
 
   const cancelCompose = useCallback(() => {
     setComposing(false);
@@ -59,45 +115,46 @@ export function useApiTokens() {
 
   const create = () => {
     const trimmed = label.trim();
-    if (!trimmed) return Promise.resolve();
-    return run(async () => {
-      const res = await createApiToken({
+    if (!trimmed) return;
+    createToken.mutate(
+      {
         label: trimmed,
         can_import: canImport,
         can_export: canExport,
         can_delete: canDelete,
-      });
-      setLabel("");
-      setCanImport(true);
-      setCanExport(true);
-      setCanDelete(false);
-      setComposing(false);
-      setReveal({ label: res.label, token: res.token });
-      reload();
-    });
+      },
+      {
+        onSuccess: (res) => {
+          setLabel("");
+          setCanImport(true);
+          setCanExport(true);
+          setCanDelete(false);
+          setComposing(false);
+          setReveal({ label: res.label, token: res.token });
+        },
+      },
+    );
   };
 
   const rename = () => {
-    if (!renameTarget) return Promise.resolve();
+    if (!renameTarget) return;
     const trimmed = renameLabel.trim();
-    if (!trimmed) return Promise.resolve();
-    return run(async () => {
-      await renameApiToken(renameTarget.id, { label: trimmed });
-      setRenameTarget(null);
-      setRenameLabel("");
-      reload();
-    });
+    if (!trimmed) return;
+    renameToken.mutate(
+      { id: renameTarget.id, label: trimmed },
+      {
+        onSuccess: () => {
+          setRenameTarget(null);
+          setRenameLabel("");
+        },
+      },
+    );
   };
 
-  const revoke = (item: ApiTokenItem) =>
-    run(async () => {
-      try {
-        await deleteApiToken(item.id);
-        reload();
-      } finally {
-        setRevokeTarget(null);
-      }
-    });
+  /** The dialog closes whether or not the vault agreed; the refusal shows in `actionError`. */
+  const revoke = (item: ApiTokenItem) => {
+    revokeToken.mutate(item.id, { onSettled: () => setRevokeTarget(null) });
+  };
 
   return {
     items: data ?? [],

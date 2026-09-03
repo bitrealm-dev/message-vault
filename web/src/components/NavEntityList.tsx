@@ -69,7 +69,7 @@ export default function NavEntityList({
   const location = useLocation();
   const navigate = useNavigate();
   const actions = useNameCollectionActions(collection);
-  const [busy, setBusy] = useState(false);
+  const busy = actions.pending;
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [renameFor, setRenameFor] = useState<string | null>(null);
@@ -81,7 +81,6 @@ export default function NavEntityList({
       setError(collection.reservedError(name));
       return;
     }
-    setBusy(true);
     setError(null);
     try {
       const created = await actions.create(name);
@@ -89,8 +88,6 @@ export default function NavEntityList({
       navigate(`${copy.routeBase}/${slug(created)}`);
     } catch (err) {
       setError(apiErrorMessage(err, copy.createError));
-    } finally {
-      setBusy(false);
     }
   };
 
@@ -99,7 +96,6 @@ export default function NavEntityList({
       setError(collection.reservedError(to));
       return;
     }
-    setBusy(true);
     setError(null);
     try {
       const next = await actions.rename(from, to);
@@ -109,13 +105,10 @@ export default function NavEntityList({
       }
     } catch (err) {
       setError(apiErrorMessage(err, copy.renameError));
-    } finally {
-      setBusy(false);
     }
   };
 
   const remove = async (name: string) => {
-    setBusy(true);
     setError(null);
     setMenuFor(null);
     try {
@@ -125,8 +118,6 @@ export default function NavEntityList({
       }
     } catch (err) {
       setError(apiErrorMessage(err, copy.deleteError));
-    } finally {
-      setBusy(false);
     }
   };
 

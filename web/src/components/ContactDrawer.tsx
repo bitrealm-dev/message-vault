@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { type ContactDetail, useContactDetail, useContactDetailCache } from "../lib/contactDetail";
-import { updateContact } from "../lib/vaultApi";
+import { type ContactDetail, useContactDetail, useUpdateContact } from "../lib/contactDetail";
 import Button from "./Button";
 import { ContactDrawerHandles } from "./contactDrawer/ContactDrawerHandles";
 import {
@@ -82,7 +81,7 @@ export default function ContactDrawer({
   }) => void;
   variant?: "docked" | "overlay";
 }) {
-  const detailCache = useContactDetailCache();
+  const updateContact = useUpdateContact();
   const { detail: matchedDetail } = useContactDetail(contactId);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
@@ -101,10 +100,6 @@ export default function ContactDrawer({
       ? preview?.name
       : "Loading…";
   const loading = !detailMatches;
-
-  const loadDetail = () => {
-    if (contactId) detailCache.invalidate(contactId);
-  };
 
   // Opening a different contact resets the name editor. Loading the contact
   // itself is the query's job, and the group chips a contact-list edit writes
@@ -204,9 +199,8 @@ export default function ContactDrawer({
         setEditingName(false);
         return;
       }
-      await updateContact(contactId, { name: nameValue });
+      await updateContact.mutateAsync({ contactId, body: { name: nameValue } });
       setEditingName(false);
-      loadDetail();
     } catch {
       savingNameRef.current = false;
     }
@@ -237,7 +231,6 @@ export default function ContactDrawer({
         contactId={contactId}
         handleRows={handleRows}
         loading={loading}
-        onHandlesChanged={loadDetail}
         onBrowse={onBrowseConversations ? browse : undefined}
         title={
           editingName && detailMatches ? (

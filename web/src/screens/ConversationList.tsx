@@ -17,10 +17,11 @@ import {
 } from "../lib/conversationSort";
 import { formatVisibleRange } from "../lib/listPaging";
 import { checksFromMembers } from "../lib/membershipChecks";
-import { useMessageTagActions } from "../lib/messageTags";
+import { useMessageTagActions, useSetMessageTagMembers } from "../lib/messageTags";
 import type { Conversation } from "../lib/types";
 import { useMessageTags } from "../lib/useMessageTags";
 import { listConversations } from "../lib/vaultApi";
+import { keys } from "../lib/vaultKeys";
 import { type PagedFetchPage, useVaultPagedList } from "../lib/vaultQuery";
 
 const QUERY_DEBOUNCE_MS = 300;
@@ -35,11 +36,10 @@ export default function ConversationList({
   query: string;
 }) {
   const tagActions = useMessageTagActions();
+  const setTagMembers = useSetMessageTagMembers();
   const [debouncedQ, setDebouncedQ] = useState(query);
   const [visibleRange, setVisibleRange] = useState<VisibleRange>({ start: 0, end: 0 });
   const [checkedIds, setCheckedIds] = useState<Set<string>>(() => new Set());
-  const [tagOverrides, setTagOverrides] = useState<Record<string, string[]>>({});
-  const [membershipRev, setMembershipRev] = useState(0);
   const [sortState, setSortState] = useState<ConversationSortState>(() => loadConversationSort());
   const { tags: allTags } = useMessageTags();
   const setRightToolbar = useSetRightToolbar();
@@ -47,7 +47,6 @@ export default function ConversationList({
   useEffect(() => {
     void query;
     setCheckedIds(new Set());
-    setTagOverrides({});
   }, [query]);
 
   useEffect(() => {
@@ -94,22 +93,17 @@ export default function ConversationList({
     hasMore,
     loadMore,
   } = useVaultPagedList(
-    ["conversations", debouncedQ, membershipRev, sortState.sort, sortState.order],
+    keys.conversations.list({ q: debouncedQ, sort: sortState.sort, order: sortState.order }),
     fetchPage,
   );
 
-  const displayConversations = useMemo(
-    () => conversations.map((c) => (tagOverrides[c.id] ? { ...c, tags: tagOverrides[c.id] } : c)),
-    [conversations, tagOverrides],
-  );
-
-  const selectedConversation = displayConversations.find((c) => c.id === selectedId) ?? null;
+  const selectedConversation = conversations.find((c) => c.id === selectedId) ?? null;
   const targetConversations = useMemo(() => {
     if (checkedIds.size > 0) {
-      return displayConversations.filter((c) => checkedIds.has(c.id));
+      return conversations.filter((c) => checkedIds.has(c.id));
     }
     return selectedConversation ? [selectedConversation] : [];
-  }, [checkedIds, displayConversations, selectedConversation]);
+  }, [checkedIds, conversations, selectedConversation]);
   const tagChecks = useMemo(
     () =>
       checksFromMembers(
@@ -120,29 +114,23 @@ export default function ConversationList({
   );
 
   const applyMembership = useCallback(
-    async (name: string, enable: boolean) => {
+    (name: string, enable: boolean) => {
       const ids = targetConversations
         .map((c) => Number(c.id))
         .filter((id) => Number.isFinite(id) && id > 0);
-      if (ids.length === 0) return;
-      await tagActions.setMembers(name, enable ? { add: ids } : { remove: ids });
-      setTagOverrides((prev) => {
-        const next = { ...prev };
-        for (const c of targetConversations) {
-          const current = next[c.id] ?? c.tags ?? [];
-          next[c.id] = enable
-            ? current.some((t) => t.toLowerCase() === name.toLowerCase())
-              ? current
-              : [...current, name]
-            : current.filter((t) => t.toLowerCase() !== name.toLowerCase());
-        }
-        return next;
-      });
-      if (/\b(?:-?tag:|-?people:|within:|label:)/i.test(query)) {
-        setMembershipRev((n) => n + 1);
-      }
+      if (ids.length === 0) return Promise.resolve();
+      // The tags on the rows change in the cache before the vault answers and
+      // go back if it refuses, so nothing here has to remember them. Marking
+      // every conversation stale afterwards is what used to need the
+      // `membershipRev` counter in the query key.
+      return setTagMembers
+        .mutateAsync({ name, patch: enable ? { add: ids } : { remove: ids } })
+        .then(
+          () => undefined,
+          () => undefined,
+        );
     },
-    [query, targetConversations, tagActions.setMembers],
+    [targetConversations, setTagMembers.mutateAsync],
   );
 
   useEffect(() => {
@@ -188,9 +176,9 @@ export default function ConversationList({
   ]);
 
   const selectAllChecked =
-    displayConversations.length > 0 && displayConversations.every((c) => checkedIds.has(c.id));
+    conversations.length > 0 && conversations.every((c) => checkedIds.has(c.id));
   const selectAllIndeterminate =
-    !selectAllChecked && displayConversations.some((c) => checkedIds.has(c.id));
+    !selectAllChecked && conversations.some((c) => checkedIds.has(c.id));
 
   const rangeLabel =
     loading && conversations.length === 0
@@ -198,7 +186,7 @@ export default function ConversationList({
       : formatVisibleRange(visibleRange.start, visibleRange.end, total, conversations.length);
   // Once there are rows the count rides at the bottom of the panel, the way the
   // contact list shows it; the header keeps it only while the list is still empty.
-  const showRangePill = displayConversations.length > 0;
+  const showRangePill = conversations.length > 0;
 
   if (error && conversations.length === 0) {
     return (
@@ -217,10 +205,10 @@ export default function ConversationList({
         selectAllChecked={selectAllChecked}
         selectAllIndeterminate={selectAllIndeterminate}
         onSelectAllChange={(on) => {
-          setCheckedIds(on ? new Set(displayConversations.map((c) => c.id)) : new Set());
+          setCheckedIds(on ? new Set(conversations.map((c) => c.id)) : new Set());
         }}
         selectAllLabel="Select all conversations"
-        selectAllDisabled={displayConversations.length === 0}
+        selectAllDisabled={conversations.length === 0}
         actions={
           <ConversationSortMenu
             sort={sortState.sort}
@@ -233,7 +221,7 @@ export default function ConversationList({
         }
       />
       <VirtualList
-        count={displayConversations.length}
+        count={conversations.length}
         estimateSize={64}
         dynamicSize
         onVisibleRangeChange={setVisibleRange}
@@ -246,7 +234,7 @@ export default function ConversationList({
           !loading ? <div className="p-4 text-[0.813rem] text-muted">No conversations</div> : null
         }
         renderItem={(index) => {
-          const c = displayConversations[index];
+          const c = conversations[index];
           if (!c) return null;
           return (
             <ConversationRow

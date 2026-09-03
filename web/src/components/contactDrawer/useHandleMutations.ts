@@ -1,28 +1,23 @@
 import { useEffect, useState } from "react";
-import type { ContactHandle } from "../../lib/contactDetail";
-import { updateContact } from "../../lib/vaultApi";
+import { type ContactHandle, useUpdateContact } from "../../lib/contactDetail";
 import { formatHandleServiceLabel, handleServiceSelectValue } from "./contactDrawerTypes";
 import { conversationCount, type RemoveIdentityTarget } from "./handleTableLogic";
 
-export function useHandleMutations({
-  contactId,
-  onHandlesChanged,
-}: {
-  contactId: string;
-  onHandlesChanged: () => void;
-}) {
+export function useHandleMutations({ contactId }: { contactId: string }) {
   const [adding, setAdding] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
   const [removeTarget, setRemoveTarget] = useState<RemoveIdentityTarget | null>(null);
+  const updateContact = useUpdateContact();
+  const busy = updateContact.isPending;
+  // The dialogs stay open on a refusal and show this, so a person can retry.
+  const error = updateContact.error ? updateContact.error.message : "";
+  const reset = updateContact.reset;
 
   useEffect(() => {
     void contactId;
     setAdding(false);
-    setBusy(false);
-    setError("");
     setRemoveTarget(null);
-  }, [contactId]);
+    reset();
+  }, [contactId, reset]);
 
   const requestRemoveHandle = (h: ContactHandle) => {
     if (busy) return;
@@ -34,40 +29,22 @@ export function useHandleMutations({
     });
   };
 
-  const confirmRemoveHandle = async () => {
+  const confirmRemoveHandle = () => {
     if (!removeTarget || busy) return;
     const handle = removeTarget.handle;
     const service = handleServiceSelectValue(handle, removeTarget.service);
-    setBusy(true);
-    setError("");
-    try {
-      await updateContact(contactId, { remove_handle: { handle, service } });
-      setRemoveTarget(null);
-      onHandlesChanged();
-    } catch (e: unknown) {
-      // Keep the dialog open for retry, but say why it did not go through.
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+    updateContact.mutate(
+      { contactId, body: { remove_handle: { handle, service } } },
+      { onSuccess: () => setRemoveTarget(null) },
+    );
   };
 
-  const confirmAdd = async (args: { handle: string; service: string }) => {
+  const confirmAdd = (args: { handle: string; service: string }) => {
     if (busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      await updateContact(contactId, {
-        add_handle: { handle: args.handle, service: args.service },
-      });
-      setAdding(false);
-      onHandlesChanged();
-    } catch (e: unknown) {
-      // Keep the dialog open for retry, but say why it did not go through.
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+    updateContact.mutate(
+      { contactId, body: { add_handle: { handle: args.handle, service: args.service } } },
+      { onSuccess: () => setAdding(false) },
+    );
   };
 
   return {

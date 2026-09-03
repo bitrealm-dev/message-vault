@@ -1,3 +1,4 @@
+import { type UseMutationResult, useMutation } from "@tanstack/react-query";
 import { useMemo } from "react";
 import {
   createSavedSearch as createVaultSavedSearch,
@@ -5,7 +6,8 @@ import {
   listSavedSearches,
   updateSavedSearch as updateVaultSavedSearch,
 } from "./vaultApi";
-import { useVaultQuery, useVaultSetCached } from "./vaultQuery";
+import { keys } from "./vaultKeys";
+import { useVaultCache, useVaultQuery } from "./vaultQuery";
 
 /**
  * Saved searches live in the vault, not in the browser. They belong to an
@@ -33,8 +35,6 @@ export interface SavedSearch {
 
 type ListResponse = { savedSearches?: SavedSearch[] };
 
-const SAVED_SEARCHES_KEY = ["saved-searches"] as const;
-
 function listFrom(res: ListResponse): SavedSearch[] {
   return Array.isArray(res.savedSearches) ? res.savedSearches : [];
 }
@@ -44,39 +44,97 @@ export function useSavedSearches(): {
   savedSearches: SavedSearch[];
   loading: boolean;
 } {
-  const { data, isPending } = useVaultQuery(SAVED_SEARCHES_KEY, async (signal) =>
+  const { data, isPending } = useVaultQuery(keys.savedSearches.all, async (signal) =>
     listFrom(await listSavedSearches({ signal })),
   );
   return { savedSearches: data ?? [], loading: isPending };
 }
 
 /**
- * Create, rename, and delete saved searches.
- *
- * Every mutation answers with the refreshed list, so each writes that straight
- * into the cache and the sidebar updates without a second round trip.
+ * Every write answers with the whole list, so each stores that answer where
+ * the sidebar reads it and asks for nothing again.
  */
-export function useSavedSearchActions(): {
+function useSavedSearchWrite<V>(
+  write: (vars: V) => Promise<ListResponse>,
+): UseMutationResult<SavedSearch[], Error, V> {
+  const cache = useVaultCache();
+  return useMutation<SavedSearch[], Error, V>({
+    mutationFn: async (vars) => listFrom(await write(vars)),
+    onSuccess: (list) => {
+      cache.set(keys.savedSearches.all, list);
+    },
+  });
+}
+
+export function useCreateSavedSearch(): UseMutationResult<
+  SavedSearch[],
+  Error,
+  { name: string; query: string }
+> {
+  return useSavedSearchWrite((body) => createVaultSavedSearch(body));
+}
+
+export function useUpdateSavedSearch(): UseMutationResult<
+  SavedSearch[],
+  Error,
+  { id: number; name: string; query: string }
+> {
+  return useSavedSearchWrite(({ id, name, query }) => updateVaultSavedSearch(id, { name, query }));
+}
+
+export function useDeleteSavedSearch(): UseMutationResult<SavedSearch[], Error, number> {
+  return useSavedSearchWrite((id) => deleteVaultSavedSearch(id));
+}
+
+export type SavedSearchActions = {
   create: (name: string, query: string) => Promise<void>;
   update: (id: number, name: string, query: string) => Promise<void>;
   remove: (id: number) => Promise<void>;
-} {
-  const setCached = useVaultSetCached();
-  // One stable object, for the same reason as the name collections.
-  return useMemo(() => {
-    const adopt = (res: ListResponse) => {
-      setCached(SAVED_SEARCHES_KEY, listFrom(res));
-    };
-    return {
-      async create(name: string, query: string) {
-        adopt(await createVaultSavedSearch({ name, query }));
+  /** Any of the three in flight. */
+  pending: boolean;
+  /** The most recent failure, or null. */
+  error: Error | null;
+};
+
+/** Create, rename and delete saved searches, as the sidebar asks for them. */
+export function useSavedSearchActions(): SavedSearchActions {
+  const createSearch = useCreateSavedSearch();
+  const updateSearch = useUpdateSavedSearch();
+  const deleteSearch = useDeleteSavedSearch();
+
+  const create = createSearch.mutateAsync;
+  const update = updateSearch.mutateAsync;
+  const remove = deleteSearch.mutateAsync;
+  const pending = createSearch.isPending || updateSearch.isPending || deleteSearch.isPending;
+
+  // Each mutate call resets that mutation's own error and stamps a fresh
+  // `submittedAt`, so whichever of the three last started is also whichever
+  // last settled; its error (or lack of one) is the actions' error. A fixed
+  // create-then-update-then-remove order would instead let an old create
+  // failure outlive every write that came after it.
+  const latest = [createSearch, updateSearch, deleteSearch].reduce((newest, next) =>
+    next.submittedAt > newest.submittedAt ? next : newest,
+  );
+  const error = latest.error;
+
+  // Memoised on the mutations' own stable `mutateAsync` identities only:
+  // `pending` and `error` change on every keystroke of a write, and a caller
+  // that lists these methods in a `useEffect` dependency array must not see a
+  // new function each time.
+  const callbacks = useMemo(
+    () => ({
+      create: async (name: string, query: string) => {
+        await create({ name, query });
       },
-      async update(id: number, name: string, query: string) {
-        adopt(await updateVaultSavedSearch(id, { name, query }));
+      update: async (id: number, name: string, query: string) => {
+        await update({ id, name, query });
       },
-      async remove(id: number) {
-        adopt(await deleteVaultSavedSearch(id));
+      remove: async (id: number) => {
+        await remove(id);
       },
-    };
-  }, [setCached]);
+    }),
+    [create, update, remove],
+  );
+
+  return { ...callbacks, pending, error };
 }

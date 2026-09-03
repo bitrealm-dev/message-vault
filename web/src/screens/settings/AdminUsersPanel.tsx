@@ -251,10 +251,11 @@ export function AdminUsersPanel() {
           if (!confirming) return;
           const { user, kind } = confirming;
           // `deleteMessages`/`deleteUser` resolve to whether the call actually
-          // succeeded (the shared `run` swallows the error into `actionError`
-          // rather than rejecting). Close only on success — a 400 ("only
-          // administrator") or 404 must keep the dialog open with the reason
-          // showing, not vanish as though the delete had gone through.
+          // succeeded: on a refusal the mutation answers `false` and leaves
+          // the reason in `actionError` instead of throwing. Close only on
+          // success — a 400 ("only administrator") or 404 must keep the
+          // dialog open with the reason showing, not vanish as though the
+          // delete had gone through.
           const ok =
             kind === "messages"
               ? await deleteMessages(user.account_id)

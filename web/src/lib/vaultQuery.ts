@@ -27,7 +27,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useCallback, useMemo } from "react";
+import { useMemo } from "react";
 import { useAuth } from "./auth";
 import { PAGE_SIZE_FILL, PAGE_SIZE_FIRST } from "./listPaging";
 import { ANONYMOUS_ACCOUNT, type VaultQueryKey, vaultQueryKey } from "./vaultQueryKey";
@@ -84,81 +84,6 @@ export function useVaultQuery<TData>(
     queryFn: ({ signal }) => queryFn(signal),
     ...options,
   });
-}
-
-/**
- * Mark something stale, so whatever is showing it refetches.
- *
- * This replaces the browser events the caches used to dispatch: instead of
- * naming an event and having every interested component subscribe and
- * unsubscribe, a mutation names what changed and the library refreshes whoever
- * is reading it.
- */
-export function useVaultInvalidate(): (key: VaultQueryKey) => Promise<void> {
-  const client = useQueryClient();
-  const account = useAccountScope();
-  return useCallback(
-    (key: VaultQueryKey) => client.invalidateQueries({ queryKey: vaultQueryKey(account, key) }),
-    [client, account],
-  );
-}
-
-/**
- * Write a value straight into the cache, so a change shows without a round
- * trip.
- *
- * The vault's mutations answer with the updated value, so there is usually no
- * reason to ask for it again.
- */
-export function useVaultSetCached(): <T>(key: VaultQueryKey, value: T) => void {
-  const client = useQueryClient();
-  const account = useAccountScope();
-  return useCallback(
-    <T>(key: VaultQueryKey, value: T) => {
-      client.setQueryData(vaultQueryKey(account, key), value);
-    },
-    [client, account],
-  );
-}
-
-/**
- * What the cache holds for a key, or `undefined`, without fetching.
- *
- * For a lookup that a write needs before it can be sent — a Contact Group's
- * id behind the name a screen holds — where the list is almost always in the
- * cache already.
- */
-export function useVaultCached(): <T>(key: VaultQueryKey) => T | undefined {
-  const client = useQueryClient();
-  const account = useAccountScope();
-  return useCallback(
-    <T>(key: VaultQueryKey) => client.getQueryData<T>(vaultQueryKey(account, key)),
-    [client, account],
-  );
-}
-
-/**
- * Ask the vault now, store the answer under the key, and resolve it.
- *
- * The one case `useVaultCached` cannot cover: the cache has no entry, or has
- * one that does not hold what the caller is looking for. `staleTime: 0` makes
- * the library fetch rather than hand back the entry it already has.
- */
-export function useVaultFetchFresh(): <T>(
-  key: VaultQueryKey,
-  queryFn: (signal: AbortSignal) => Promise<T>,
-) => Promise<T> {
-  const client = useQueryClient();
-  const account = useAccountScope();
-  return useCallback(
-    <T>(key: VaultQueryKey, queryFn: (signal: AbortSignal) => Promise<T>) =>
-      client.fetchQuery<T>({
-        queryKey: vaultQueryKey(account, key),
-        queryFn: ({ signal }) => queryFn(signal),
-        staleTime: 0,
-      }),
-    [client, account],
-  );
 }
 
 /** One page of an offset-paged list, with the total the vault reported. */
@@ -261,6 +186,70 @@ export function useVaultPagedList<T>(
       if (query.hasNextPage && !query.isFetchingNextPage) void query.fetchNextPage();
     },
   };
+}
+
+/** Entries as `snapshot` took them. The key is complete, account included. */
+export type VaultCacheEntries = readonly [readonly unknown[], unknown][];
+
+/**
+ * The cache operations a write needs, with the account already in front of
+ * every key.
+ *
+ * A mutation draws its change before the vault answers, puts the old value
+ * back when the vault refuses, and says what is stale once it settles. Each of
+ * those is one call on the query client — this is that client with the account
+ * rule applied, and nothing else. It is not a cache.
+ */
+export type VaultCache = {
+  /** What the cache holds under one key, without fetching. */
+  read: <T>(key: VaultQueryKey) => T | undefined;
+  /** Ask the vault now and store the answer under the key. */
+  fetch: <T>(key: VaultQueryKey, queryFn: (signal: AbortSignal) => Promise<T>) => Promise<T>;
+  /** Write one entry, for a mutation that answered with the whole value. */
+  set: <T>(key: VaultQueryKey, value: T) => void;
+  /** Stop fetches under a prefix, so none lands on top of an optimistic write. */
+  cancel: (prefix: VaultQueryKey) => Promise<void>;
+  /** Every entry under a prefix, as it stands, to put back on failure. */
+  snapshot: (prefix: VaultQueryKey) => VaultCacheEntries;
+  /** Rewrite every entry under a prefix. */
+  patch: <T>(prefix: VaultQueryKey, update: (entry: T | undefined) => T | undefined) => void;
+  /** Put snapshotted entries back where they came from. */
+  restore: (entries: VaultCacheEntries) => void;
+  /** Mark prefixes stale, so whatever is showing them refetches. */
+  invalidate: (...prefixes: VaultQueryKey[]) => Promise<void>;
+};
+
+export function useVaultCache(): VaultCache {
+  const client = useQueryClient();
+  const account = useAccountScope();
+  return useMemo(() => {
+    const at = (key: VaultQueryKey) => vaultQueryKey(account, key);
+    return {
+      read: <T>(key: VaultQueryKey) => client.getQueryData<T>(at(key)),
+      fetch: <T>(key: VaultQueryKey, queryFn: (signal: AbortSignal) => Promise<T>) =>
+        client.fetchQuery<T>({
+          queryKey: at(key),
+          queryFn: ({ signal }) => queryFn(signal),
+          staleTime: 0,
+        }),
+      set: <T>(key: VaultQueryKey, value: T) => {
+        client.setQueryData(at(key), value);
+      },
+      cancel: (prefix: VaultQueryKey) => client.cancelQueries({ queryKey: at(prefix) }),
+      snapshot: (prefix: VaultQueryKey) => client.getQueriesData({ queryKey: at(prefix) }),
+      patch: <T>(prefix: VaultQueryKey, update: (entry: T | undefined) => T | undefined) => {
+        client.setQueriesData<T>({ queryKey: at(prefix) }, update);
+      },
+      restore: (entries: VaultCacheEntries) => {
+        for (const [key, data] of entries) client.setQueryData(key, data);
+      },
+      invalidate: async (...prefixes: VaultQueryKey[]) => {
+        await Promise.all(
+          prefixes.map((prefix) => client.invalidateQueries({ queryKey: at(prefix) })),
+        );
+      },
+    };
+  }, [client, account]);
 }
 
 export type { VaultQueryKey };
