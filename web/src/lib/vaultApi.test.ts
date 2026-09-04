@@ -12,14 +12,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiClient } from "./api";
 import {
-  countExportMessages,
   createContactGroup,
   createMessageTag,
   deleteApiToken,
   deleteContactGroup,
   deleteMessageTag,
   discardImport,
-  exportMessages,
   getContact,
   getConversationSources,
   getImport,
@@ -115,20 +113,8 @@ describe("query building", () => {
   });
 
   it("encodes a query that contains spaces and colons", async () => {
-    await exportMessages({ q: "in:#A attachment:any" });
+    await listConversations({ q: "in:#A attachment:any" });
     expect(lastQuery(get)).toEqual({ q: "in:#A attachment:any" });
-  });
-});
-
-describe("export routes keep the export prefix", () => {
-  it("reads messages from /v1/export/messages", async () => {
-    await exportMessages({ q: "in:#1" });
-    expect(lastPath(get)).toBe("/v1/export/messages");
-  });
-
-  it("counts messages from /v1/export/messages/count", async () => {
-    await countExportMessages({ q: "in:#1" });
-    expect(lastPath(get)).toBe("/v1/export/messages/count");
   });
 });
 

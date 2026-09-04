@@ -253,28 +253,6 @@ export function getConversationSources(
   );
 }
 
-// ── Messages (Export) ───────────────────────────────────────────────────────
-
-export function exportMessages(
-  params: { q: string; offset?: number; limit?: number },
-  opts?: VaultRequestOptions,
-): Promise<Schema["Page_Message"]> {
-  return apiClient.get<Schema["Page_Message"]>(
-    withQuery("/v1/export/messages", query(params)),
-    opts,
-  );
-}
-
-export function countExportMessages(
-  params: { q: string },
-  opts?: VaultRequestOptions,
-): Promise<Schema["ExportCountResponse"]> {
-  return apiClient.get<Schema["ExportCountResponse"]>(
-    withQuery("/v1/export/messages/count", query(params)),
-    opts,
-  );
-}
-
 // ── Contacts ────────────────────────────────────────────────────────────────
 
 export type ContactListParams = { q?: string; limit?: number; offset?: number };
