@@ -16,15 +16,16 @@ the spec's wording; for everything else, the spec wins.
 | 1 | Import failures typed; `source` contract; schema docs say 4 | Import failures | merged, #316 |
 | 2 | One shape for every route (ADR-0005) | Interface convention | merged, #317 |
 | 3 | An import names the Contact (ADR-0006) | Names | merged, #319 |
-| 4 | Conversation read routes; message screen on TanStack Query | Conversation read routes | **next** |
-| 5 | Trash module and four routes | Trash | queued |
+| 4 | Conversation read routes; message screen on TanStack Query | Conversation read routes | merged, #325 |
+| 5 | Trash module and four routes | Trash | **next** |
 | 6 | One query builder on the web; shared example file | Query text on the web | queued |
 | 7 | One test fixture; route-level tests | Tests and fixtures | queued |
 | 8 | Named-set route files folded | Named sets | queued |
 
 Plans so far: `2026-09-03-import-failures-and-schema-docs.md` (PR 1),
 `2026-09-03-route-convention.md` (PR 2),
-`2026-09-03-an-import-names-the-contact.md` (PR 3).
+`2026-09-03-an-import-names-the-contact.md` (PR 3),
+`2026-09-04-conversation-read-routes.md` (PR 4).
 
 ## How a pull request is delivered
 
@@ -70,43 +71,32 @@ named itself by its raw handle.
 
 Left behind, with the reasoning: issue #320.
 
-## PR 4: Conversation read routes
+## PR 4: Conversation read routes — merged, #325
 
-Spec section "Conversation read routes".
+Shipped in `d9c57ab8`. `GET /v1/conversations/{id}` and
+`GET /v1/conversations/{id}/messages` both exist, sharing one message-row loader
+with Export so the two cannot drift on ordering, duplicate filtering or
+participant naming; `year=` reuses the same span computation and column
+`date:YYYY` uses. `useConversationMessages` runs on TanStack Query with no
+`AbortController` of its own, `MessageRoute` reads one conversation in one
+request with `location.state` as `placeholderData`, `fetchConversationById` is
+gone, the nine phantom fields are out of `types.ts`, tapbacks render, and
+`tsconfig.json` type-checks the tests.
 
-Changed since the spec:
+Five defects the reviews caught and the pull request fixed: a vault-to-vault
+pull would have failed outright once the server started sending `handle: null`,
+because `vault-pull`'s hand-written mirror declared that field `String` — the
+third defect of that class in that crate, now covered by a test that parses a
+real JSON page instead of building the structs in Rust; issue #324, in the same
+file, where `vault-pull` read a `service` the server has never sent; an importer
+writing participant rows with no address, no name and no contact and counting
+them in its participant total; a Contact rename that could never reach an
+address-less participant; and `exportMessages`/`countExportMessages`, which
+turned out to have no callers at all, so this pull request's own Done-when was
+being met by accident.
 
-- Conversation ids are already numbers end to end in the web (PR 2).
-- `useConversationMessages.ts` already reads a page's `items` and `total`
-  and makes no count call, but it still reads through
-  `GET /v1/export/messages` with an `in:#id` query. That is the defect this
-  pull request removes: reading a conversation gets its own route, and
-  Export goes back to being the download path only.
-- Export answers `Page<ExportMessage>`; the spec's `Message` type is
-  `ExportMessage` renamed and shared by both routes.
-
-Inventory before planning:
-
-```
-grep -rn 'export/messages\|exportMessages\|countExportMessages' web/src --include=*.ts --include=*.tsx | grep -v '\.test\.'
-grep -n 'reactions\|tapbacks' web/src/lib/types.ts
-```
-
-Done when: `GET /v1/conversations/{id}` and `GET /v1/conversations/{id}/messages`
-are in `openapi.json` with HTTP-level tests including 404 and `year=`;
-the first grep lists only the Export screen; `fetchConversationById.ts`
-is gone; `MessageThread` has an empty state and an error state that shows
-the server's sentence; tapbacks render; the nine phantom fields are out of
-`types.ts`; `tsconfig.json` type-checks `*.test.ts*`; `check-pr.sh` passes.
-
-Carried over from the PR 2 review: every Export page now runs `COUNT(*)`
-before its row query, so the read route should take `total` from one
-count per request and never per page of a year walk.
-
-Carried over from PR 3 (issue #320, item 1): `load_for_conversations` inner-joins
-`handles`, so a participant the source named without recording an address never
-appears in a conversation. Fixing it means deciding what `handle` and `service`
-mean for someone with no address, which is this pull request's call to make.
+Left behind, with the reasoning: issue #326. The year-load decision it inherited
+stays open as issue #323.
 
 ## PR 5: Trash
 
@@ -128,6 +118,12 @@ header and contact drawer, and "Restore" on the Trash screen;
 `check-pr.sh` passes.
 
 Carried over: none. Permanent delete and Empty Trash stay in #314.
+
+Carried over from PR 4: `keys.conversations.messagesAll` and
+`keys.conversations.details` were added in `web/src/lib/vaultKeys.ts` as prefix
+handles and have no caller yet. Trashing a conversation is what needs them —
+invalidating `conversations.all` would throw away every message page as well,
+which is heavier than trash requires.
 
 ## PR 6: Query text on the web
 
