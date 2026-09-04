@@ -2874,6 +2874,74 @@
         ]
       }
     },
+    "/v1/conversations/{id}": {
+      "get": {
+        "tags": [
+          "Conversations"
+        ],
+        "summary": "One conversation, in the same shape a list row already has — so a caller\nthat opens a thread from a list does not have to convert between two\nshapes, and paging through the whole list to find one id is never\nnecessary. Trash is a property the list applies, not a gate on reading:\na trashed conversation still answers here.",
+        "operationId": "conversation_detail_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Conversation id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationSummary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/conversations/{id}/sources": {
       "get": {
         "tags": [

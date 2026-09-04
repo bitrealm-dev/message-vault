@@ -588,6 +588,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/conversations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One conversation, in the same shape a list row already has — so a caller
+         *     that opens a thread from a list does not have to convert between two
+         *     shapes, and paging through the whole list to find one id is never
+         *     necessary. Trash is a property the list applies, not a gate on reading:
+         *     a trashed conversation still answers here.
+         */
+        get: operations["conversation_detail_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/conversations/{id}/sources": {
         parameters: {
             query?: never;
@@ -4138,6 +4161,52 @@ export interface operations {
                 };
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    conversation_detail_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Conversation id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationSummary"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

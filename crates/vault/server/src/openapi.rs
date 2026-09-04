@@ -116,6 +116,9 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
             crate::conversations_api::conversations_list_handler
         ))
         .routes(routes!(
+            crate::conversations_api::conversation_detail_handler
+        ))
+        .routes(routes!(
             crate::conversations_api::conversation_sources_handler
         ))
         .routes(routes!(crate::import::imports_list_handler))

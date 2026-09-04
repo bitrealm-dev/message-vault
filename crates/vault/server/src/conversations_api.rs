@@ -176,8 +176,50 @@ pub async fn list_conversations_sorted(
         .await?;
     let total = total.max(0) as u64;
 
+    let mut params = filter.params().to_vec();
+    params.push(SqlParam::Int(limit as i64));
+    params.push(SqlParam::Int(offset as i64));
     let sql = renumber_placeholders(&format!(
-        "SELECT c.id,
+        "{select} WHERE {where_sql} ORDER BY {order_by} LIMIT ? OFFSET ?",
+        select = CONVERSATION_ROW_SELECT,
+        order_by = order.order_by_sql(),
+    ));
+    let out = load_conversation_rows(conn, account_id, &sql, &params).await?;
+    Ok(Page {
+        items: out,
+        total,
+        limit,
+        offset,
+    })
+}
+
+/// One conversation by id, scoped to `account_id`. `None` when the id does
+/// not exist or belongs to another account — the two cases look identical to
+/// the caller, which is what keeps this a 404 rather than a 403.
+///
+/// # Errors
+///
+/// `Internal` when a statement fails.
+pub async fn get_conversation_summary(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    conversation_id: i64,
+) -> Result<Option<ConversationSummary>, ApiError> {
+    let sql = renumber_placeholders(&format!(
+        "{CONVERSATION_ROW_SELECT} WHERE c.id = ? AND c.account_id = ?"
+    ));
+    let params = [
+        SqlParam::Int(conversation_id),
+        SqlParam::Text(account_id.to_string()),
+    ];
+    let out = load_conversation_rows(conn, account_id, &sql, &params).await?;
+    Ok(out.into_iter().next())
+}
+
+/// The row shape shared by the conversation list and the single-conversation
+/// read: id, type, title, and the counts/timestamps computed from `messages`.
+/// Callers append their own `WHERE`, `ORDER BY`, and paging.
+const CONVERSATION_ROW_SELECT: &str = "SELECT c.id,
                 c.conversation_type,
                 c.group_title,
                 (SELECT COUNT(*) FROM messages m
@@ -188,16 +230,19 @@ pub async fn list_conversations_sorted(
                  WHERE m.conversation_id = c.id AND m.duplicate_of IS NULL) AS date_range_start,
                 (SELECT MAX(m.timestamp) FROM messages m
                  WHERE m.conversation_id = c.id AND m.duplicate_of IS NULL) AS date_range_end
-         FROM conversations c
-         WHERE {where_sql}
-         ORDER BY {order_by}
-         LIMIT ? OFFSET ?",
-        order_by = order.order_by_sql(),
-    ));
-    let mut params = filter.params().to_vec();
-    params.push(SqlParam::Int(limit as i64));
-    params.push(SqlParam::Int(offset as i64));
-    let rows: Vec<RawConversationRow> = sqlx::query_as_with(&sql, bind_args(&params))
+         FROM conversations c";
+
+/// Run a `CONVERSATION_ROW_SELECT`-shaped query and assemble
+/// [`ConversationSummary`] rows: participants, sources, and tags, exactly as
+/// the list builds them. Shared so the list and the single-conversation read
+/// cannot drift into two different notions of what a conversation summary is.
+async fn load_conversation_rows(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    sql: &str,
+    params: &[SqlParam],
+) -> Result<Vec<ConversationSummary>, ApiError> {
+    let rows: Vec<RawConversationRow> = sqlx::query_as_with(sql, bind_args(params))
         .fetch_all(&mut *conn)
         .await?;
     let rows: Vec<RawConversation> = rows
@@ -270,12 +315,7 @@ pub async fn list_conversations_sorted(
             tags: tag_sets.remove(&row.id).unwrap_or_default(),
         });
     }
-    Ok(Page {
-        items: out,
-        total,
-        limit,
-        offset,
-    })
+    Ok(out)
 }
 
 const IMESSAGE_SOURCE: &str = "imessage";
@@ -482,6 +522,37 @@ pub(crate) async fn conversations_list_handler(
     )
     .await?;
     Ok(Json(result))
+}
+
+/// One conversation, in the same shape a list row already has — so a caller
+/// that opens a thread from a list does not have to convert between two
+/// shapes, and paging through the whole list to find one id is never
+/// necessary. Trash is a property the list applies, not a gate on reading:
+/// a trashed conversation still answers here.
+#[utoipa::path(
+    get,
+    path = "/v1/conversations/{id}",
+    tag = "Conversations",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Conversation id")),
+    responses(
+        (status = 200, body = crate::conversations_api::ConversationSummary),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn conversation_detail_handler(
+    State(state): State<AppState>,
+    FullAccess(auth): FullAccess,
+    AxumPath(conversation_id): AxumPath<i64>,
+) -> Result<Json<ConversationSummary>, ApiError> {
+    let mut conn = state.db.acquire().await?;
+    let conversation =
+        get_conversation_summary(&mut conn, &auth.account_id, conversation_id).await?;
+    conversation
+        .map(Json)
+        .ok_or_else(|| ApiError::NotFound("conversation not found".into()))
 }
 
 /// Per-backup message counts for one conversation (the Sources panel).
@@ -1942,5 +2013,104 @@ mod tests {
             let status = crate::test_support::get_status(&state, path, &user.token).await;
             assert_eq!(status, axum::http::StatusCode::BAD_REQUEST, "{path}");
         }
+    }
+
+    #[tokio::test]
+    async fn conversation_detail_returns_the_owned_conversation() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let user = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+        crate::test_support::seed_one_message(&state, &user.account_id).await;
+        let list: serde_json::Value =
+            crate::test_support::get_json(&state, "/v1/conversations", &user.token).await;
+        let id = list["items"][0]["id"].as_i64().unwrap();
+
+        let body: serde_json::Value =
+            crate::test_support::get_json(&state, &format!("/v1/conversations/{id}"), &user.token)
+                .await;
+        assert_eq!(body["id"], id);
+        let participants = body["participants"].as_array().unwrap();
+        assert!(!participants.is_empty());
+        assert!(
+            participants[0]["name"]
+                .as_str()
+                .is_some_and(|n| !n.is_empty()),
+            "participant should carry a name: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn conversation_detail_404s_for_an_id_this_account_does_not_own() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let user = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+
+        let status =
+            crate::test_support::get_status(&state, "/v1/conversations/999999", &user.token).await;
+        assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn conversation_detail_404s_for_another_accounts_conversation() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let alice = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+        crate::test_support::seed_one_message(&state, &alice.account_id).await;
+        let alice_list: serde_json::Value =
+            crate::test_support::get_json(&state, "/v1/conversations", &alice.token).await;
+        let alice_conversation_id = alice_list["items"][0]["id"].as_i64().unwrap();
+
+        let bob = crate::test_support::register_via_api(&state, "bob", "hunter2hunter2").await;
+        crate::test_support::seed_one_message(&state, &bob.account_id).await;
+
+        // Bob asking for Alice's conversation id must 404, not 403 — a 403
+        // would confirm the id exists in someone else's vault, and it must
+        // not come back as Bob's own conversation either.
+        let status = crate::test_support::get_status(
+            &state,
+            &format!("/v1/conversations/{alice_conversation_id}"),
+            &bob.token,
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn conversation_detail_reads_a_trashed_conversation() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let user = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+        crate::test_support::seed_one_message(&state, &user.account_id).await;
+        let list: serde_json::Value =
+            crate::test_support::get_json(&state, "/v1/conversations", &user.token).await;
+        let id = list["items"][0]["id"].as_i64().unwrap();
+
+        let mut conn = state.db.acquire().await.unwrap();
+        sqlx::query(
+            "INSERT INTO trashed_conversations (account_id, conversation_id) VALUES ($1, $2)",
+        )
+        .bind(&user.account_id)
+        .bind(id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        // Trashed for the list, which no longer applies here — trash is a
+        // property the list applies, not a gate on reading.
+        let list_after: serde_json::Value =
+            crate::test_support::get_json(&state, "/v1/conversations", &user.token).await;
+        assert_eq!(
+            list_after["total"], 0,
+            "trashed conversation leaves the inbox list"
+        );
+
+        let status = crate::test_support::get_status(
+            &state,
+            &format!("/v1/conversations/{id}"),
+            &user.token,
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::OK);
     }
 }
