@@ -892,7 +892,10 @@ pub(crate) async fn stream_field_to_file(
     while let Some(chunk) = field
         .chunk()
         .await
-        .map_err(|e| ApiError::BadRequest(format!("multipart chunk: {e}")))?
+        // Axum's own status (413 over its inner ~2 MiB body limit, see
+        // issue #334) carries the meaning, so pass it through rather than
+        // flattening to 400. ADR-0005.
+        .map_err(|e| ApiError::Status(e.status(), e.body_text()))?
     {
         file.write_all(&chunk)
             .await

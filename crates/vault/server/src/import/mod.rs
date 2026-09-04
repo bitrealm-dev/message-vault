@@ -1482,7 +1482,10 @@ async fn import_multipart(
     while let Some(mut field) = multipart
         .next_field()
         .await
-        .map_err(|e| ApiError::BadRequest(format!("multipart field error: {e}")))?
+        // Same rule as the extractor above: Axum's own status (413 over the
+        // body limit) carries the meaning, so pass it through rather than
+        // flattening to 400.
+        .map_err(|e| ApiError::Status(e.status(), e.body_text()))?
     {
         let name = field.name().unwrap_or("").to_string();
         match name.as_str() {
@@ -1512,7 +1515,7 @@ async fn import_multipart(
                 while let Some(chunk) = field
                     .chunk()
                     .await
-                    .map_err(|e| ApiError::BadRequest(format!("multipart chunk: {e}")))?
+                    .map_err(|e| ApiError::Status(e.status(), e.body_text()))?
                 {
                     let _ = chunk;
                 }
@@ -3071,12 +3074,8 @@ mod tests {
         .await;
         let body: serde_json::Value =
             serde_json::from_str(&text).unwrap_or_else(|_| panic!("non-JSON body: {text}"));
-        assert!(body["error"].is_string(), "{body}");
-        assert!(
-            !body["error"]
-                .as_str()
-                .unwrap()
-                .starts_with("invalid multipart body:"),
+        assert_eq!(
+            body["error"], "Invalid `boundary` for `multipart/form-data` request",
             "the handler must pass Axum's own sentence through, not wrap it: {body}"
         );
         assert_eq!(
@@ -3084,5 +3083,45 @@ mod tests {
             axum::http::StatusCode::BAD_REQUEST,
             "a missing boundary is Axum's 400: {text}"
         );
+    }
+
+    /// A well-formed multipart body whose `jsonl` field data alone exceeds
+    /// Axum's inner ~2 MiB per-request body limit (see issue #334 — that cap
+    /// is an inherited `axum` default nobody chose, well below this crate's
+    /// configured 512 MiB `max_body_bytes`, and whether it should exist at
+    /// all is an open product question). This test pins today's
+    /// pass-through behaviour, not the ceiling: it exists to catch a
+    /// regression that re-flattens the status, not to defend 2 MiB as the
+    /// right limit. Whoever resolves #334 should update this test
+    /// deliberately, not treat a failure here as having broken it.
+    #[tokio::test]
+    async fn a_multipart_field_over_axums_body_limit_answers_413() {
+        let vault = crate::test_support::test_vault().await;
+        let user =
+            crate::test_support::register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+
+        let boundary = "MessageVaultTestBoundary";
+        let big = "a".repeat(3 * 1024 * 1024);
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"jsonl\"\r\n\r\n{big}\r\n--{boundary}--\r\n"
+        );
+        let content_type = format!("multipart/form-data; boundary={boundary}");
+
+        let (status, text) = crate::test_support::post_raw(
+            &vault.state,
+            "/v1/import?source=imessage&mode=append",
+            &user.token,
+            &content_type,
+            body,
+        )
+        .await;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&text).unwrap_or_else(|_| panic!("non-JSON body: {text}"));
+        assert_eq!(
+            status,
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+            "a field over axum's inner body limit is its own 413: {text}"
+        );
+        assert_eq!(parsed["error"], "Request payload is too large");
     }
 }
