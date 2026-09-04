@@ -7311,9 +7311,7 @@
         "type": "object",
         "description": "One participant of a conversation, carrying the name to show for them:\nthe Contact's name, else what that backup called them in that\nconversation, else the handle.",
         "required": [
-          "name",
-          "handle",
-          "service"
+          "name"
         ],
         "properties": {
           "contact_id": {
@@ -7322,19 +7320,25 @@
               "null"
             ],
             "format": "int64",
-            "description": "Linked vault contact id, when the handle is on a Contact. Matches the\n`id` every other contact shape uses, so a caller can compare the two\nwithout converting either."
+            "description": "Linked vault contact id: when the handle is on a Contact, or — for a\nparticipant with no handle — the contact `resolve_name_only_participant`\nbound the name to directly, since that is the only place the link is\nrecorded for them. Matches the `id` every other contact shape uses, so\na caller can compare the two without converting either."
           },
           "handle": {
-            "type": "string",
-            "description": "Raw handle value (phone, email, or username)."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Raw handle value (phone, email, or username). `None` when the source\nnamed this person without recording any address for them."
           },
           "name": {
             "type": "string",
             "description": "What to show for this person. Never empty: the rule ends at the handle."
           },
           "service": {
-            "type": "string",
-            "description": "Platform service, e.g. `imessage`."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Platform service, e.g. `imessage`. `None` for the same reason as\n`handle`: with no address there is nothing to carry a service on."
           }
         }
       },

@@ -27,13 +27,17 @@ use crate::db::sql::group_rows_by_id;
 pub struct Participant {
     /// What to show for this person. Never empty: the rule ends at the handle.
     pub name: String,
-    /// Raw handle value (phone, email, or username).
-    pub handle: String,
-    /// Platform service, e.g. `imessage`.
-    pub service: String,
-    /// Linked vault contact id, when the handle is on a Contact. Matches the
-    /// `id` every other contact shape uses, so a caller can compare the two
-    /// without converting either.
+    /// Raw handle value (phone, email, or username). `None` when the source
+    /// named this person without recording any address for them.
+    pub handle: Option<String>,
+    /// Platform service, e.g. `imessage`. `None` for the same reason as
+    /// `handle`: with no address there is nothing to carry a service on.
+    pub service: Option<String>,
+    /// Linked vault contact id: when the handle is on a Contact, or — for a
+    /// participant with no handle — the contact `resolve_name_only_participant`
+    /// bound the name to directly, since that is the only place the link is
+    /// recorded for them. Matches the `id` every other contact shape uses, so
+    /// a caller can compare the two without converting either.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contact_id: Option<i64>,
 }
@@ -56,12 +60,13 @@ pub async fn load_for_conversations(
                 "SELECT p.conversation_id,
                         COALESCE(NULLIF(trim(c.preferred_name), ''),
                                  NULLIF(trim(p.name_alias), ''),
-                                 h.raw) AS name,
+                                 h.raw, '') AS name,
                         h.raw AS handle,
                         COALESCE(NULLIF(trim(h.service), ''), h.handle_type) AS service,
-                        ch.contact_id
+                        CASE WHEN p.handle_id IS NULL THEN p.contact_id ELSE ch.contact_id END
+                          AS contact_id
                  FROM participants p
-                 JOIN handles h ON h.id = p.handle_id
+                 LEFT JOIN handles h ON h.id = p.handle_id
                  JOIN conversations conv ON conv.id = p.conversation_id
                  LEFT JOIN contact_handles ch
                    ON ch.handle_id = p.handle_id AND ch.account_id = conv.account_id
@@ -104,7 +109,11 @@ pub async fn load_for_chat_handle(
     conn: &mut AnyConnection,
     conversation_id: i64,
 ) -> Result<Vec<Participant>, sqlx::Error> {
-    let row: Option<(String, String, String, Option<i64>)> = sqlx::query_as(
+    // `conv.chat_handle_id` is `NOT NULL`, so this join always matches and
+    // `handle`/`service` are never actually absent here — the tuple types
+    // just have to match `Participant`'s, which carry the address-less case
+    // that only `load_for_conversations` can produce.
+    let row: Option<(String, Option<String>, Option<String>, Option<i64>)> = sqlx::query_as(
         "SELECT COALESCE(NULLIF(trim(c.preferred_name), ''), h.raw) AS name,
                 h.raw AS handle,
                 COALESCE(NULLIF(trim(h.service), ''), h.handle_type) AS service,
@@ -204,6 +213,37 @@ mod tests {
         contact_id
     }
 
+    /// Insert an address-less participant on `conversation_id`: `handle_id
+    /// IS NULL`, bound to a fresh contact carrying `name_alias`. This is the
+    /// row shape `resolve_name_only_participant` produces — the contact link
+    /// lives on `participants.contact_id` directly, since there is no handle
+    /// for `contact_handles` to key on. Returns the contact id.
+    async fn seed_address_less(
+        conn: &mut sqlx::AnyConnection,
+        conversation_id: i64,
+        name_alias: &str,
+    ) -> i64 {
+        let contact_id: i64 = sqlx::query_scalar(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, $2) RETURNING id",
+        )
+        .bind(TEST_ACCOUNT)
+        .bind(name_alias)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO participants (conversation_id, handle_id, contact_id, name_alias)
+             VALUES ($1, NULL, $2, $3)",
+        )
+        .bind(conversation_id)
+        .bind(contact_id)
+        .bind(name_alias)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        contact_id
+    }
+
     #[tokio::test]
     async fn contact_name_wins_over_the_backup_name() {
         let (pool, _dir) = crate::db::engine::test_pool().await;
@@ -216,8 +256,8 @@ mod tests {
             .unwrap();
         let p = &loaded[&conversation_id][0];
         assert_eq!(p.name, "Robert Smith");
-        assert_eq!(p.handle, "+15555550100");
-        assert_eq!(p.service, "imessage");
+        assert_eq!(p.handle, Some("+15555550100".to_string()));
+        assert_eq!(p.service, Some("imessage".to_string()));
         assert_eq!(p.contact_id, Some(contact_id));
     }
 
@@ -268,8 +308,8 @@ mod tests {
             .unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].name, "Robert Smith");
-        assert_eq!(loaded[0].handle, "+15555550500");
-        assert_eq!(loaded[0].service, "imessage");
+        assert_eq!(loaded[0].handle, Some("+15555550500".to_string()));
+        assert_eq!(loaded[0].service, Some("imessage".to_string()));
         assert_eq!(loaded[0].contact_id, Some(contact_id));
     }
 
@@ -322,5 +362,61 @@ mod tests {
         let p = &loaded[&conversation_id][0];
         assert_eq!(p.name, "Bobby");
         assert_eq!(p.contact_id, None);
+    }
+
+    /// `resolve_name_only_participant` binds a name-only participant straight
+    /// to a contact with `handle_id IS NULL`; the `INNER JOIN handles` this
+    /// module used to have dropped that row from every conversation it
+    /// belongs to. This pins that a `LEFT JOIN` brings it back, carrying the
+    /// name from `p.name_alias` (the naming rule's second clause — no handle
+    /// means no `h.raw` fallback and no contact to consult via
+    /// `contact_handles`), no handle, no service, and the contact bound
+    /// directly on the participant row, since that is the only place an
+    /// address-less participant's contact link is recorded.
+    #[tokio::test]
+    async fn an_address_less_participant_appears_in_their_conversation() {
+        let (pool, _dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let (conversation_id, _handle_id) = seed(&mut conn, "+15555550700", None).await;
+        sqlx::query("DELETE FROM participants WHERE conversation_id = $1")
+            .bind(conversation_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let contact_id = seed_address_less(&mut conn, conversation_id, "Sarah Vale").await;
+
+        let loaded = load_for_conversations(&mut conn, &[conversation_id])
+            .await
+            .unwrap();
+        let p = &loaded[&conversation_id][0];
+        assert_eq!(p.name, "Sarah Vale");
+        assert_eq!(p.handle, None);
+        assert_eq!(p.service, None);
+        assert_eq!(p.contact_id, Some(contact_id));
+    }
+
+    /// A conversation can hold both kinds of participant at once — one with
+    /// an address, one without — and both come back in participant-id order,
+    /// so a conversation's roster is stable regardless of which shape each
+    /// member is.
+    #[tokio::test]
+    async fn addressed_and_address_less_participants_both_return_in_id_order() {
+        let (pool, _dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let (conversation_id, _handle_id) = seed(&mut conn, "+15555550800", Some("Bobby")).await;
+        let address_less_contact =
+            seed_address_less(&mut conn, conversation_id, "Sarah Vale").await;
+
+        let loaded = load_for_conversations(&mut conn, &[conversation_id])
+            .await
+            .unwrap();
+        let participants = &loaded[&conversation_id];
+        assert_eq!(participants.len(), 2);
+        assert_eq!(participants[0].name, "Bobby");
+        assert_eq!(participants[0].handle, Some("+15555550800".to_string()));
+        assert_eq!(participants[1].name, "Sarah Vale");
+        assert_eq!(participants[1].handle, None);
+        assert_eq!(participants[1].service, None);
+        assert_eq!(participants[1].contact_id, Some(address_less_contact));
     }
 }

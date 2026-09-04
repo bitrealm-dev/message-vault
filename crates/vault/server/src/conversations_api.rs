@@ -635,7 +635,10 @@ mod tests {
         assert_eq!(page.items[0].message_count, 1);
         assert!(!page.items[0].is_group);
         assert_eq!(page.items[0].participants.len(), 1);
-        assert_eq!(page.items[0].participants[0].handle, "+15555550200");
+        assert_eq!(
+            page.items[0].participants[0].handle,
+            Some("+15555550200".to_string())
+        );
     }
 
     #[tokio::test]
@@ -1125,7 +1128,7 @@ mod tests {
         page.items
             .iter()
             .flat_map(|c| c.participants.iter())
-            .find(|p| p.handle == handle)
+            .find(|p| p.handle.as_deref() == Some(handle))
             .expect("participant is in the page")
     }
 

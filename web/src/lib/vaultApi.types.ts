@@ -2023,17 +2023,25 @@ export interface components {
         Participant: {
             /**
              * Format: int64
-             * @description Linked vault contact id, when the handle is on a Contact. Matches the
-             *     `id` every other contact shape uses, so a caller can compare the two
-             *     without converting either.
+             * @description Linked vault contact id: when the handle is on a Contact, or — for a
+             *     participant with no handle — the contact `resolve_name_only_participant`
+             *     bound the name to directly, since that is the only place the link is
+             *     recorded for them. Matches the `id` every other contact shape uses, so
+             *     a caller can compare the two without converting either.
              */
             contact_id?: number | null;
-            /** @description Raw handle value (phone, email, or username). */
-            handle: string;
+            /**
+             * @description Raw handle value (phone, email, or username). `None` when the source
+             *     named this person without recording any address for them.
+             */
+            handle?: string | null;
             /** @description What to show for this person. Never empty: the rule ends at the handle. */
             name: string;
-            /** @description Platform service, e.g. `imessage`. */
-            service: string;
+            /**
+             * @description Platform service, e.g. `imessage`. `None` for the same reason as
+             *     `handle`: with no address there is nothing to carry a service on.
+             */
+            service?: string | null;
         };
         /** @description Body for changing an account's flags. Omitted fields are left alone. */
         PatchUserRequest: {
