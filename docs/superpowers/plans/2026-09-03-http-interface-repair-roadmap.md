@@ -18,15 +18,16 @@ the spec's wording; for everything else, the spec wins.
 | 3 | An import names the Contact (ADR-0006) | Names | merged, #319 |
 | 4 | Conversation read routes; message screen on TanStack Query | Conversation read routes | merged, #325 |
 | 5 | Trash module and four routes | Trash | merged, #329 |
-| 6 | One query builder on the web; shared example file | Query text on the web | **next** |
-| 7 | One test fixture; route-level tests | Tests and fixtures | queued |
+| 6 | One query builder on the web; shared example file | Query text on the web | merged, #332 |
+| 7 | One test fixture; route-level tests | Tests and fixtures | **next** |
 | 8 | Named-set route files folded | Named sets | queued |
 
 Plans so far: `2026-09-03-import-failures-and-schema-docs.md` (PR 1),
 `2026-09-03-route-convention.md` (PR 2),
 `2026-09-03-an-import-names-the-contact.md` (PR 3),
 `2026-09-04-conversation-read-routes.md` (PR 4),
-`2026-09-04-trash-routes.md` (PR 5).
+`2026-09-04-trash-routes.md` (PR 5),
+`2026-09-04-web-query-builder.md` (PR 6).
 
 ## How a pull request is delivered
 
@@ -127,36 +128,32 @@ Left behind, with the reasoning: issue #328.
 
 ## PR 6: Query text on the web
 
-Spec section "Query text on the web".
+Merged as #332. `web/src/lib/searchQuery.ts` holds one `quote` and every
+builder; the six places that composed query text by hand now call them, and
+the two advanced-search forms no longer quote the same handle two different
+ways. `quote` quotes on whitespace, parentheses or a quote and escapes by
+doubling, matching `lex.rs`'s `read_quoted`. A web test writes
+`tests/fixtures/search/web-queries.txt` and the vault's `search::tests`
+reads it back and parses each line on the list it names. `api.md` is
+generated from the `FIELDS` registry, and the docs test now also checks each
+page's list-applicability tiles against it.
 
-Changed since the spec: `vault-pull`'s `compose_query` is already deleted
-(PR 2). The `api.md` section "One shape for every route" written in PR 2
-stays when the page is rewritten from the field registry.
+Worth carrying forward what that fixture does and does not prove: the search
+language reinterprets an unquoted space or a balanced parenthesis rather than
+refusing it, so the fixture is a **syntax** agreement check. It catches a
+builder emitting something the vault refuses; it cannot catch one emitting
+something the vault accepts and reads differently. The exact-output unit
+tests next to each builder are what guard the meaning. Any later work that
+adds a builder needs both.
 
-Inventory before planning (broad on purpose; comments and prose match too):
+The carried-over item from the PR 2 review is done: `useSavedSearchWrite`
+in `web/src/lib/savedSearches.ts` is now generic over its result, so create
+and update stay typed as `SavedSearch`.
 
-```
-grep -rln 'in:#\|group:\|tag:\|contact:\|handle:\|kind:\|date:' web/src --include=*.ts --include=*.tsx | grep -v '\.test\.'
-```
-
-Done when: every `<word>:` term the web sends is built in
-`web/src/lib/searchQuery.ts`; the builder test writes
-`tests/fixtures/search/web-queries.txt` and fails on drift;
-`crates/vault/server/src/search/tests.rs` parses every line of that file on
-its named list; `api.md` is generated from the registry and the docs test
-covers it; `check-pr.sh` passes.
-
-Carried over from the PR 2 review: `useSavedSearchWrite` in
-`web/src/lib/savedSearches.ts` returns `UseMutationResult<unknown, …>` for
-all three writes; give it a result type parameter so create and update
-stay typed as `SavedSearch`.
-
-Carried over from PR 5 (issue #328): nothing checks the operator table in
-`docs/src/content/docs/vault/user/how-to/search.mdx` against the field registry
-in `crates/vault/server/src/search/fields.rs`. It drifted on the first change
-that touched it, with CI green throughout. This pull request rewrites `api.md`
-from the registry and already adds a docs test; extending that test to cover the
-user page's table would close the same gap in the same pass.
+Left open: #331, Advanced Search inside Trash builds a conversations-shaped
+query and sends it to the Contacts list too, which refuses `participants:`.
+That needs a product decision about what the Trash search box means when the
+rows beneath it are two different kinds, so it is not PR 7's work.
 
 ## PR 7: Tests and fixtures
 
@@ -193,6 +190,15 @@ already reworks:
 - Issue #273: `scripts/test/smoke-vault-push.sh` does not exercise
   `vault-push` and nothing runs it. Fold it into the route-level tests or
   close the issue with the reason.
+
+Handed over by PR 6: `tests/fixtures/search/web-queries.txt` already exists
+and is already read by `crates/vault/server/src/search/tests.rs`. The spec's
+"one test fixture" means one fixture *tree* with one owner per file, not one
+file; do not rewrite or duplicate that one. `vault-pull` has now lost data
+silently three times (PR 3, and #324 in PR 4) because every fixture in the
+crate builds Rust structs instead of parsing JSON, so a field removed from
+the server keeps deserializing through `#[serde(default)]`. PR 4 added one
+JSON-literal test; the rest of that crate still has none.
 
 ## PR 8: Named sets
 
