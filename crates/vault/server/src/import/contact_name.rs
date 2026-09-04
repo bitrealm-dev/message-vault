@@ -29,9 +29,10 @@ pub(super) async fn ensure_contact_for_handle(
 ) -> Result<i64> {
     let name = nonempty_str(backup_name).unwrap_or("");
     if let Some(existing) = ensure_sibling_contact_link(tx, account_id, handle_id).await? {
-        if !name.is_empty() {
-            name_nameless_import_contact(tx, account_id, existing, name).await?;
-        }
+        // An import names only a contact an earlier import left nameless;
+        // `contacts::propose_name` is where that rule and its two siblings
+        // live.
+        contacts::propose_name(tx, account_id, existing, name, contacts::Origin::Import).await?;
         return Ok(existing);
     }
     let contact_id =
@@ -46,35 +47,6 @@ pub(super) async fn ensure_contact_for_handle(
     .await?;
     stats.contacts_created += 1;
     Ok(contact_id)
-}
-
-/// Put the backup's name on a contact an earlier import left nameless.
-///
-/// The `origin = 'import'` clause is what keeps a typed or address-book name
-/// safe, and the empty-name clause is what makes the first backup win.
-async fn name_nameless_import_contact(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    contact_id: i64,
-    name: &str,
-) -> Result<()> {
-    let updated = sqlx::query(
-        "UPDATE contacts
-         SET preferred_name = $1
-         WHERE account_id = $2 AND id = $3
-           AND origin = 'import'
-           AND trim(preferred_name) = ''",
-    )
-    .bind(name)
-    .bind(account_id)
-    .bind(contact_id)
-    .execute(&mut *conn)
-    .await?
-    .rows_affected();
-    if updated > 0 {
-        contacts::touch_contact(conn, account_id, contact_id).await?;
-    }
-    Ok(())
 }
 
 /// Bind a participant the source named without recording any address.
@@ -133,8 +105,9 @@ pub(super) async fn resolve_incoming_sender_handle(
     Ok(Some(handle_id))
 }
 
-/// If this handle has no contact but a sibling handle (same normalized + type,
-/// different platform service) is already linked, attach this handle to that contact.
+/// If this handle has no contact but a sibling handle (same normalized value
+/// and type, different platform service) is already linked, attach this handle
+/// to that contact.
 pub(super) async fn ensure_sibling_contact_link(
     conn: &mut AnyConnection,
     account_id: &str,
@@ -143,39 +116,21 @@ pub(super) async fn ensure_sibling_contact_link(
     if let Some(existing) = contacts::contact_id_for_handle(conn, account_id, handle_id).await? {
         return Ok(Some(existing));
     }
-    let sibling_contact: Option<i64> = sqlx::query_scalar(
-        "SELECT ch.contact_id
-         FROM handles h
-         JOIN handles h2
-           ON h2.account_id = h.account_id
-          AND h2.normalized = h.normalized
-          AND h2.handle_type = h.handle_type
-          AND h2.id != h.id
-         JOIN contact_handles ch
-           ON ch.account_id = h.account_id AND ch.handle_id = h2.id
-         WHERE h.id = $1 AND h.account_id = $2
-         LIMIT 1",
-    )
-    .bind(handle_id)
-    .bind(account_id)
-    .fetch_optional(&mut *conn)
-    .await?;
-    let Some(contact_id) = sibling_contact else {
+    let Some(contact_id) =
+        contacts::contact_id_of_sibling_handle(conn, account_id, handle_id).await?
+    else {
         return Ok(None);
     };
-    let inserted = sqlx::query(
-        "INSERT INTO contact_handles (account_id, handle_id, contact_id)
-         VALUES ($1, $2, $3)
-         ON CONFLICT DO NOTHING",
+    if contacts::link_handle_to_contact(
+        conn,
+        account_id,
+        handle_id,
+        contact_id,
+        contacts::Origin::Import,
     )
-    .bind(account_id)
-    .bind(handle_id)
-    .bind(contact_id)
-    .execute(&mut *conn)
     .await?
-    .rows_affected();
-    if inserted > 0 {
-        crate::db::contacts::touch_contact(conn, account_id, contact_id).await?;
+    {
+        contacts::touch_contact(conn, account_id, contact_id).await?;
     }
     Ok(Some(contact_id))
 }

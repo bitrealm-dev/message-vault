@@ -926,20 +926,12 @@ pub async fn mutate_contact(
         if name.is_empty() {
             bail!("name must not be empty");
         }
-        // Typing a name in the drawer is the most deliberate naming act in the
-        // product, so the row stops being the import's and becomes the
-        // person's. That is what keeps a later address book from replacing
-        // this name: an address book renames only `origin = 'import'` rows.
-        sqlx::query(
-            "UPDATE contacts SET preferred_name = $1, origin = 'user'
-             WHERE id = $2 AND account_id = $3",
-        )
-        .bind(name)
-        .bind(contact_id)
-        .bind(account_id)
-        .execute(&mut *conn)
-        .await?;
-        return touch_ok(conn, account_id, contact_id).await;
+        // Typing a name in the drawer is the most deliberate naming act in
+        // the product, so the row stops being the import's and becomes the
+        // person's. `contacts::propose_name` is where that rule lives, along
+        // with what it means for the import and the address book.
+        contacts::propose_name(conn, account_id, contact_id, name, contacts::Origin::User).await?;
+        return Ok(true);
     }
 
     if let Some(add) = body.add_handle.as_ref() {
