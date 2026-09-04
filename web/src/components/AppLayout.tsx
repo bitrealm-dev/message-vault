@@ -115,6 +115,11 @@ export default function AppLayout() {
   // Trash keeps its own term so leaving and returning to Trash does not inherit
   // whatever the inbox was last searching for.
   const trashSearch = searchParams.get("tq") || "";
+  // Clicking a trashed row sets this instead of navigating to /messages/:id, so
+  // TrashScreen can offer Restore for it without leaving the Trash list behind.
+  const trashSelectedRaw = searchParams.get("tsel");
+  const trashSelectedId =
+    trashSelectedRaw && /^\d+$/.test(trashSelectedRaw) ? Number(trashSelectedRaw) : null;
 
   const trashMode = mode === "trash";
   const searchQuery = trashMode ? trashSearch : contactsMode ? contactSearch : conversationSearch;
@@ -284,8 +289,8 @@ export default function AppLayout() {
               <>
                 <ListColumn>
                   <ConversationList
-                    selectedId={null}
-                    onSelect={handleConversationSelect}
+                    selectedId={trashSelectedId}
+                    onSelect={(c) => updateSearchParams({ tsel: String(c.id) })}
                     query={trashListQuery}
                   />
                 </ListColumn>
