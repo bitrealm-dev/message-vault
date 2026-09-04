@@ -920,37 +920,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn is_trash_includes_handle_trashed_conversations() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let handle_id: i64 =
-            sqlx::query_scalar("SELECT chat_handle_id FROM conversations WHERE id = 1")
-                .fetch_one(&mut *conn)
-                .await
-                .unwrap();
-        sqlx::query("INSERT INTO trashed_handles (account_id, handle_id) VALUES ($1, $2)")
-            .bind(&account)
-            .bind(handle_id)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-
-        let normal = list_conversations(&mut conn, &account, "", DEFAULT_LIST_LIMIT, 0)
-            .await
-            .unwrap();
-        assert_eq!(normal.total, 0, "handle-trashed threads leave the inbox");
-
-        let trash = list_conversations(&mut conn, &account, "trashed:yes", DEFAULT_LIST_LIMIT, 0)
-            .await
-            .unwrap();
-        assert_eq!(
-            trash.total, 1,
-            "trashed:yes should include handle-trashed threads"
-        );
-        assert_eq!(trash.items[0].id, 1);
-    }
-
-    #[tokio::test]
     async fn list_conversations_filters_by_handle() {
         let (pool, _dir, account) = setup().await;
         let mut conn = pool.acquire().await.unwrap();

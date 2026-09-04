@@ -139,8 +139,8 @@ Import writes into `staging_*` tables first, then promotes into lasting tables
 (cleared per account during import). Staging rows carry the same `handle_id`
 columns; import resolves handles to ids while rows are being staged.
 
-`trashed_handles`, `trashed_conversations`, and `trashed_contacts` mark items
-as trashed without deleting underlying rows.
+`trashed_conversations` and `trashed_contacts` mark items as trashed without
+deleting underlying rows.
 
 ## Quick map
 

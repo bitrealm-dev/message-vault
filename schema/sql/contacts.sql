@@ -88,17 +88,6 @@ CREATE TABLE IF NOT EXISTS contact_group_members (
     PRIMARY KEY (contact_id, group_id)
 );
 
--- Soft-delete marker for a handle; underlying handle row stays.
-CREATE TABLE IF NOT EXISTS trashed_handles (
-    -- Owning vault account (`accounts.id`).
-    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    -- Handle marked trash (`handles.id`).
-    handle_id INTEGER NOT NULL REFERENCES handles(id) ON DELETE CASCADE,
-    -- When the handle entered trash (SQLite datetime string).
-    trashed_at TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (account_id, handle_id)
-);
-
 -- Soft-delete marker for a conversation; chat rows stay until purge.
 CREATE TABLE IF NOT EXISTS trashed_conversations (
     -- Owning vault account (`accounts.id`).

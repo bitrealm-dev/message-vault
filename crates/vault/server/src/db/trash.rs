@@ -127,23 +127,12 @@ pub async fn restore_contact(
 
 /// Remove every trash marker `account_id` holds. Called when an account's
 /// conversations (and, by extension, whatever they trashed) are purged.
-///
-/// `trashed_handles` is included here for now, moved verbatim out of
-/// `account_profile::delete_all_messages_for_account`. It is not one of the
-/// two tables this module otherwise owns — there is no `trash_handle` /
-/// `restore_handle` pair, and the table itself is dropped in a later task —
-/// but until that drop lands, purging an account still means clearing
-/// whatever rows it holds.
 pub async fn purge_account(conn: &mut AnyConnection, account_id: &str) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM trashed_conversations WHERE account_id = $1")
         .bind(account_id)
         .execute(&mut *conn)
         .await?;
     sqlx::query("DELETE FROM trashed_contacts WHERE account_id = $1")
-        .bind(account_id)
-        .execute(&mut *conn)
-        .await?;
-    sqlx::query("DELETE FROM trashed_handles WHERE account_id = $1")
         .bind(account_id)
         .execute(&mut *conn)
         .await?;

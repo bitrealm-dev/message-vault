@@ -207,12 +207,6 @@ const NOT_TRASHED_CONVERSATION_SQL: &str = "NOT EXISTS (
                WHERE tc.account_id = c.account_id AND tc.conversation_id = c.id
              )";
 
-/// Conversation `c`'s chat handle is not in `trashed_handles`.
-const NOT_TRASHED_CHAT_HANDLE_SQL: &str = "NOT EXISTS (
-               SELECT 1 FROM trashed_handles th
-               WHERE th.account_id = c.account_id AND th.handle_id = c.chat_handle_id
-             )";
-
 /// Contact `ct` is not in `trashed_contacts`.
 const NOT_TRASHED_CONTACT_SQL: &str = "NOT EXISTS (
                SELECT 1 FROM trashed_contacts tct
@@ -383,13 +377,11 @@ pub async fn get_contact_detail(
                       WHERE p.conversation_id = c.id AND p.handle_id = ch.handle_id
                     ))
                AND {not_trashed_conversation}
-               AND {not_trashed_handle}
              LEFT JOIN messages m ON m.conversation_id = c.id AND m.duplicate_of IS NULL
              WHERE ch.account_id = $1 AND ch.contact_id = $2
              GROUP BY ch.handle_id, h.raw, h.service
              ORDER BY h.raw",
         not_trashed_conversation = NOT_TRASHED_CONVERSATION_SQL,
-        not_trashed_handle = NOT_TRASHED_CHAT_HANDLE_SQL,
     ))
     .bind(account_id)
     .bind(contact_id)
@@ -429,7 +421,6 @@ pub async fn get_contact_detail(
                WHERE c.account_id = $1
                  AND {involves_contact_sql}
                  AND {not_trashed_conversation}
-                 AND {not_trashed_handle}
              )
              SELECT
                (SELECT COUNT(*) FROM involved WHERE conversation_type = 'individual'),
@@ -439,7 +430,6 @@ pub async fn get_contact_detail(
                   AND m.conversation_id IN (SELECT id FROM involved))",
         involves_contact_sql = involves_contact_sql(),
         not_trashed_conversation = NOT_TRASHED_CONVERSATION_SQL,
-        not_trashed_handle = NOT_TRASHED_CHAT_HANDLE_SQL,
     ))
     .bind(account_id)
     .bind(contact_id)
@@ -524,7 +514,6 @@ pub async fn get_contact_summaries(
             JOIN conversations c ON c.account_id = selected.account_id
               AND {involves}
               AND {not_trashed_conversation}
-              AND {not_trashed_handle}
          )
          SELECT
             s.id,
@@ -542,7 +531,6 @@ pub async fn get_contact_summaries(
          GROUP BY s.id, s.name",
         not_trashed = NOT_TRASHED_CONTACT_SQL,
         not_trashed_conversation = NOT_TRASHED_CONVERSATION_SQL,
-        not_trashed_handle = NOT_TRASHED_CHAT_HANDLE_SQL,
     );
 
     let mut q = sqlx::query_as::<_, ContactSelectionRow>(&sql);

@@ -14,9 +14,8 @@ use super::{Filter, ListKind};
 
 /// Contact `ct` is not in the trash.
 pub(crate) const NOT_TRASHED_CONTACT: &str = "NOT EXISTS (SELECT 1 FROM trashed_contacts tct WHERE tct.account_id = ct.account_id AND tct.contact_id = ct.id)";
-/// Conversation `c` is not in the trash and neither is its chat handle.
-pub(crate) const NOT_TRASHED_CONVERSATION: &str = "NOT EXISTS (SELECT 1 FROM trashed_conversations tc WHERE tc.account_id = c.account_id AND tc.conversation_id = c.id) \
-     AND NOT EXISTS (SELECT 1 FROM trashed_handles th WHERE th.account_id = c.account_id AND th.handle_id = c.chat_handle_id)";
+/// Conversation `c` is not in the trash.
+pub(crate) const NOT_TRASHED_CONVERSATION: &str = "NOT EXISTS (SELECT 1 FROM trashed_conversations tc WHERE tc.account_id = c.account_id AND tc.conversation_id = c.id)";
 
 /// Compile a parsed query into one parenthesised WHERE fragment.
 pub(crate) fn compile(

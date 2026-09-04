@@ -23,7 +23,6 @@
     "contact_handles",
     "contact_groups",
     "contact_group_members",
-    "trashed_handles",
     "trashed_conversations",
     "trashed_contacts",
     "messages_fts",
