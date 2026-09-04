@@ -24,7 +24,10 @@ export function formatMessageTime(timestamp: string, withYear = false): string {
 }
 
 /** Message text with search matches marked, or nothing when the body is empty. */
-export function bubbleBody(body: string, highlight: string | undefined): ReactNode | undefined {
+export function bubbleBody(
+  body: string,
+  highlight: string | undefined,
+): ReactNode[] | string | undefined {
   if (!body) return undefined;
   return highlight ? highlightText(body, highlight) : body;
 }

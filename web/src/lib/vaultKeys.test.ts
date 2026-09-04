@@ -37,7 +37,7 @@ describe("keys", () => {
       keys.conversations.list({ q: "tag:Holiday", sort: "date", order: "asc" }),
     );
     expect(coveredBy(key, keys.conversations.all)).toBe(true);
-    expect(coveredBy(keys.conversations.sources("7"), keys.conversations.all)).toBe(true);
+    expect(coveredBy(keys.conversations.sources(7), keys.conversations.all)).toBe(true);
   });
 
   it("gives every named collection a prefix of its own", () => {

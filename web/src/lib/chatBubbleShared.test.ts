@@ -10,13 +10,17 @@ import type { Message } from "./types";
 
 function message(partial: Partial<Message> & Pick<Message, "conversation">): Message {
   return {
-    id: "1",
+    id: 1,
     source: "imessage",
     service: "iMessage",
     guid: null,
     timestamp: "2026-08-11T15:04:00Z",
     timestamp_utc: "2026-08-11T15:04:00Z",
     is_from_me: false,
+    is_announcement: false,
+    is_reply: false,
+    num_replies: 0,
+    sort_order: 0,
     sender: null,
     subject: null,
     text: "hi",
@@ -59,7 +63,7 @@ describe("senderName / isGroupConversation", () => {
     const m = message({
       is_from_me: true,
       conversation: {
-        id: "c1",
+        id: 1,
         chat_identifier: "x",
         conversation_type: "individual",
         group_title: null,
@@ -71,7 +75,7 @@ describe("senderName / isGroupConversation", () => {
 
   it("uses the participant's server-supplied name", () => {
     const conversation = {
-      id: "c1",
+      id: 1,
       chat_identifier: "x",
       conversation_type: "individual",
       group_title: null,
@@ -90,7 +94,7 @@ describe("senderName / isGroupConversation", () => {
   it("detects groups from type or participant count", () => {
     const one = message({
       conversation: {
-        id: "c1",
+        id: 1,
         chat_identifier: "x",
         conversation_type: "individual",
         group_title: null,
@@ -109,7 +113,7 @@ describe("senderName / isGroupConversation", () => {
 
     const many = message({
       conversation: {
-        id: "c1",
+        id: 1,
         chat_identifier: "x",
         conversation_type: "individual",
         group_title: null,

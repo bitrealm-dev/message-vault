@@ -115,9 +115,13 @@ describe("importOutcome", () => {
   });
 
   it("is completed_with_issues when the run recorded an issue", () => {
-    expect(importOutcome({ report: report(), threw: false, issues: [{ kind: "skip" }] })).toBe(
-      "completed_with_issues",
-    );
+    expect(
+      importOutcome({
+        report: report(),
+        threw: false,
+        issues: [{ kind: "skip", step: "upload", item: "attachments/a.jpg", reason: "not found" }],
+      }),
+    ).toBe("completed_with_issues");
   });
 });
 

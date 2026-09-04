@@ -12,8 +12,8 @@ import { useColumnResizing } from "./columnResizeState";
  * text message — and which transport carried it is not what the row is for.
  * Anything else (WhatsApp, say) keeps its own name.
  */
-function formatServiceLabel(service: string): string | null {
-  const s = service.trim();
+function formatServiceLabel(service: string | null | undefined): string | null {
+  const s = (service ?? "").trim();
   if (!s || s.toLowerCase() === "unknown") return null;
   const lower = s.toLowerCase();
   const texting = ["imessage", "ios", "sms/mms", "sms", "mms"];
@@ -48,7 +48,11 @@ function GroupNames({ conv }: { conv: Conversation }) {
   return (
     <span className="line-clamp-2 break-words leading-[1.35]">
       {conv.participants.map((p, i) => (
-        <span key={p.handle}>
+        // contact_id and handle can both be absent for a participant with no
+        // recorded address, so neither alone is safe as a key; name is never
+        // empty (server rule), so the combination is always present, and
+        // distinct unless two addressless, unlinked participants share a name.
+        <span key={`${p.contact_id ?? ""}:${p.handle ?? ""}:${p.name}`}>
           {i > 0 ? ", " : null}
           <span className="whitespace-nowrap">{p.name}</span>
         </span>
