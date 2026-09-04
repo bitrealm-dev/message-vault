@@ -1550,4 +1550,63 @@ mod tests {
         assert_eq!(removed, 1);
         assert!(!session.exists());
     }
+
+    #[tokio::test]
+    async fn an_asset_put_then_get_returns_the_same_bytes() {
+        let vault = crate::test_support::test_vault().await;
+        let user =
+            crate::test_support::register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+
+        // Arbitrary non-UTF-8 bytes, to prove the round trip preserves the
+        // raw content rather than only text that happens to decode.
+        let bytes: Vec<u8> = vec![0xff, 0x00, 0xde, 0xad, 0xbe, 0xef, b'\n', b'x'];
+        let sha = sha256_hex(&bytes);
+        let path = format!(
+            "/v1/assets/{sha}?source=sms-backup-restore&account={}",
+            user.username
+        );
+
+        let (status, text) = crate::test_support::put_raw(
+            &vault.state,
+            &path,
+            &user.token,
+            "application/octet-stream",
+            bytes.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{text}");
+
+        let server = crate::test_support::serve(&vault.state).await;
+        let response = reqwest::Client::new()
+            .get(format!("{}{path}", server.base()))
+            .bearer_auth(&user.token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let got = response.bytes().await.unwrap();
+        assert_eq!(got.as_ref(), bytes.as_slice(), "the bytes must round-trip");
+    }
+
+    #[tokio::test]
+    async fn an_asset_get_for_an_unknown_sha_is_a_json_404() {
+        let vault = crate::test_support::test_vault().await;
+        let user =
+            crate::test_support::register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+
+        let unknown = "0".repeat(64);
+        let (status, text) = crate::test_support::get_raw(
+            &vault.state,
+            &format!(
+                "/v1/assets/{unknown}?source=sms-backup-restore&account={}",
+                user.username
+            ),
+            &user.token,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{text}");
+        let body: serde_json::Value =
+            serde_json::from_str(&text).unwrap_or_else(|_| panic!("non-JSON body: {text}"));
+        assert!(body["error"].is_string(), "{body}");
+    }
 }

@@ -363,6 +363,26 @@ pub async fn post_raw(
     .await
 }
 
+/// PUT a body that is not JSON with a Bearer token and an explicit
+/// Content-Type, returning the status and the response text. For routes whose
+/// contract is the raw body, such as `PUT /v1/assets/{sha256}`.
+pub async fn put_raw(
+    state: &AppState,
+    path: &str,
+    token: &str,
+    content_type: &str,
+    body: impl Into<reqwest::Body>,
+) -> (StatusCode, String) {
+    request(
+        state,
+        reqwest::Method::PUT,
+        path,
+        Some(token),
+        Some((content_type, body.into())),
+    )
+    .await
+}
+
 /// GET a path with a Bearer token, returning the status and the raw response
 /// text. For asserting on a non-JSON or malformed body, such as the error
 /// fallbacks' JSON that a plain `get_json` would panic decoding on failure.
