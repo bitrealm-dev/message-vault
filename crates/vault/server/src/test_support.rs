@@ -17,7 +17,7 @@ use crate::server::{AppState, http_app};
 /// A vault plus its temp directory. Drop the `TempDir` last.
 pub struct TestVault {
     /// Keeps the temp directory alive for the test's lifetime.
-    pub tmp: TempDir,
+    tmp: TempDir,
     /// The server state every helper drives.
     pub state: AppState,
 }
@@ -35,8 +35,9 @@ pub struct RegisteredAccount {
 /// A running instance of the real axum app on an ephemeral port.
 ///
 /// The task is aborted when this value drops, so it must stay alive until the
-/// response body has been read. Reading a body after the server task is gone
-/// truncates it whenever the response was not already buffered.
+/// response body has been read. A helper must not hand back a response whose
+/// server has already been told to stop, so the body is always read before
+/// this value drops, regardless of how the runtime handles shutdown.
 pub struct TestServer {
     base: String,
     handle: tokio::task::JoinHandle<()>,
@@ -255,24 +256,6 @@ pub async fn post_status(
     )
     .await
     .0
-}
-
-/// PUT a JSON body with a Bearer token and decode the JSON response.
-pub async fn put_json<T: DeserializeOwned>(
-    state: &AppState,
-    path: &str,
-    token: &str,
-    body: serde_json::Value,
-) -> T {
-    let (status, text) = request(
-        state,
-        reqwest::Method::PUT,
-        path,
-        Some(token),
-        Some(json_body(body)),
-    )
-    .await;
-    expect_ok(&format!("PUT {path}"), status, &text)
 }
 
 /// PUT a JSON body with a Bearer token, returning only the status.
