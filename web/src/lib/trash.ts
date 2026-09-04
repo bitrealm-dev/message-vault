@@ -37,12 +37,12 @@ function useConversationTrashWrite(
     //   `crates/vault/server/src/db/participant_names.rs` and
     //   `get_contact_detail`'s comment), and the 204 response names no
     //   participant to narrow this to, so every open detail is marked.
-    // Not invalidated: conversations.details and conversations.messagesAll —
-    // GET /v1/conversations/{id} answers the same ConversationSummary
-    // whether or not it is trashed ("trash is a property the list applies,
-    // not a gate on reading"), and trashing a conversation does not touch
-    // its own messages. contacts.lists is also left alone: ContactSummary
-    // (name, handles, groups) carries no conversation or message counts.
+    // Nothing under conversations beyond the list needs marking: GET
+    // /v1/conversations/{id} answers the same ConversationSummary whether or
+    // not it is trashed ("trash is a property the list applies, not a gate
+    // on reading"), and trashing a conversation does not touch its own
+    // messages. contacts.lists is also left alone: ContactSummary (name,
+    // handles, groups) carries no conversation or message counts.
     onSettled: () =>
       cache.invalidate(keys.conversations.lists, keys.trash.all, keys.contacts.details),
   });
