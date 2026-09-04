@@ -1405,7 +1405,8 @@ pub(crate) async fn imports_discard_handler(
             status = 409,
             body = crate::server::ErrorBody,
             description = "The account already has an active import session"
-        )
+        ),
+        (status = 413, body = crate::server::ErrorBody)
     )
 )]
 pub(crate) async fn import_handler(

@@ -1002,6 +1002,16 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1081,6 +1091,16 @@
             }
           },
           "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
             "description": "",
             "content": {
               "application/json": {
@@ -1181,6 +1201,16 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1266,6 +1296,16 @@
             }
           },
           "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
             "description": "",
             "content": {
               "application/json": {
@@ -1449,6 +1489,16 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1548,6 +1598,16 @@
             }
           },
           "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
             "description": "",
             "content": {
               "application/json": {
@@ -3644,6 +3704,16 @@
           },
           "409": {
             "description": "The account already has an active import session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "",
             "content": {
               "application/json": {
                 "schema": {

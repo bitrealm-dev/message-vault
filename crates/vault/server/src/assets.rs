@@ -698,7 +698,8 @@ async fn resolve_asset_lookup(
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody)
+        (status = 404, body = crate::server::ErrorBody),
+        (status = 413, body = crate::server::ErrorBody)
     )
 )]
 pub(crate) async fn asset_head_handler(
@@ -733,7 +734,8 @@ pub(crate) async fn asset_head_handler(
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody)
+        (status = 404, body = crate::server::ErrorBody),
+        (status = 413, body = crate::server::ErrorBody)
     )
 )]
 pub(crate) async fn asset_get_handler(
@@ -812,7 +814,8 @@ pub(crate) async fn asset_get_handler(
         (status = 200, body = AssetPutResponse),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 413, body = crate::server::ErrorBody)
     )
 )]
 pub(crate) async fn asset_put_handler(
@@ -928,7 +931,8 @@ pub(crate) struct AssetUploadPartResponse {
         (status = 200, body = AssetUploadStartResponse),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 413, body = crate::server::ErrorBody)
     )
 )]
 pub(crate) async fn asset_upload_start_handler(
@@ -991,7 +995,8 @@ pub(crate) async fn asset_upload_start_handler(
         (status = 200, body = AssetUploadPartResponse),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 413, body = crate::server::ErrorBody)
     )
 )]
 pub(crate) async fn asset_upload_part_handler(
@@ -1039,7 +1044,8 @@ pub(crate) async fn asset_upload_part_handler(
         (status = 200, body = AssetPutResponse),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 413, body = crate::server::ErrorBody)
     )
 )]
 pub(crate) async fn asset_upload_complete_handler(
@@ -1608,5 +1614,43 @@ mod tests {
         let body: serde_json::Value =
             serde_json::from_str(&text).unwrap_or_else(|_| panic!("non-JSON body: {text}"));
         assert!(body["error"].is_string(), "{body}");
+    }
+
+    /// A part body past `upload_limits.part_size` is a 413. This is the one
+    /// oversize check reachable over HTTP: the layer limit is `max_body_bytes`
+    /// (512 MiB by default) and the part limit is far smaller, so the handler's
+    /// own check is what answers. ADR-0005: the status carries the meaning.
+    #[tokio::test]
+    async fn an_upload_part_over_the_part_size_is_a_json_413() {
+        let vault = crate::test_support::test_vault().await;
+        let mut state = vault.state.clone();
+        // `UploadLimits` is `Copy` and `part_size` is public, so a test can lower
+        // it without rebuilding the config.
+        state.upload_limits.part_size = 16;
+        let user = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+
+        let sha = "0".repeat(64);
+        let (status, text) = crate::test_support::put_raw(
+            &state,
+            &format!(
+                "/v1/assets/{sha}/uploads/upload-1/parts/1?source=sms-backup-restore&account={}",
+                user.username
+            ),
+            &user.token,
+            "application/octet-stream",
+            vec![b'x'; 4096],
+        )
+        .await;
+        assert_eq!(
+            status,
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+            "a part over part_size must be 413, got: {text}"
+        );
+        let body: serde_json::Value =
+            serde_json::from_str(&text).unwrap_or_else(|_| panic!("non-JSON body: {text}"));
+        assert_eq!(
+            body["error"], "request body too large",
+            "the sentence must be the handler's own, proving the layer did not answer: {body}"
+        );
     }
 }

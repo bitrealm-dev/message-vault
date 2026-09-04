@@ -815,7 +815,10 @@ pub(crate) async fn read_body_limited(
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| ApiError::BadRequest(format!("failed to read body: {e}")))?;
         if out.len().saturating_add(chunk.len()) > max_bytes {
-            return Err(ApiError::BadRequest("request body too large".into()));
+            return Err(ApiError::Status(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "request body too large".into(),
+            ));
         }
         out.extend_from_slice(&chunk);
     }
@@ -833,7 +836,10 @@ pub(crate) async fn discard_body(
         let chunk = chunk.map_err(|e| ApiError::BadRequest(format!("failed to read body: {e}")))?;
         seen = seen.saturating_add(chunk.len());
         if seen > max_body_bytes {
-            return Err(ApiError::BadRequest("request body too large".into()));
+            return Err(ApiError::Status(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "request body too large".into(),
+            ));
         }
     }
     Ok(())
@@ -862,7 +868,10 @@ pub(crate) async fn stream_body_to_file(
         let chunk = chunk.map_err(|e| ApiError::BadRequest(format!("failed to read body: {e}")))?;
         written = written.saturating_add(chunk.len() as u64);
         if written > max_body_bytes as u64 {
-            return Err(ApiError::BadRequest("request body too large".into()));
+            return Err(ApiError::Status(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "request body too large".into(),
+            ));
         }
         file.write_all(&chunk)
             .await
