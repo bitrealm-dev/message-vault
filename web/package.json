@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "build": "npm run typecheck && vite build",
     "preview": "vite preview",
     "lint": "biome lint .",
     "format": "biome check --write --linter-enabled=false .",

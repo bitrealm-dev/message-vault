@@ -13,7 +13,12 @@
     "isolatedModules": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
-    "types": ["node"]
+    "types": []
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Tests are a separate program (tsconfig.test.json). Keeping them out of
+  // this one is what stops a browser-only component from type-checking
+  // against Node's ambient globals — `process`, `Buffer`, `__dirname` —
+  // which enter the moment any file in the program pulls in @types/node.
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test"]
 }

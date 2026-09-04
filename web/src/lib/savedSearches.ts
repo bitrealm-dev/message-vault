@@ -43,9 +43,7 @@ export function useSavedSearches(): {
 }
 
 /** Every write is followed by one fresh read of the list the sidebar shows. */
-function useSavedSearchWrite<T, V>(
-  write: (vars: V) => Promise<T>,
-): UseMutationResult<T, Error, V> {
+function useSavedSearchWrite<T, V>(write: (vars: V) => Promise<T>): UseMutationResult<T, Error, V> {
   const cache = useVaultCache();
   return useMutation<T, Error, V>({
     mutationFn: write,
