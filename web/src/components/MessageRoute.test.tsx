@@ -4,8 +4,8 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Conversation } from "../lib/types";
-import { mockedAuth, VaultProviders } from "../test/vaultProviders";
 import { getConversation, listConversationMessages } from "../lib/vaultApi";
+import { mockedAuth, VaultProviders } from "../test/vaultProviders";
 import MessageRoute from "./MessageRoute";
 import { RightToolbarProvider } from "./RightToolbarContext";
 

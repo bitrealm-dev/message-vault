@@ -95,9 +95,8 @@ describe("contactPreviewFromThreadParticipants", () => {
 
   it("falls back to the handle when no display name is set", () => {
     expect(
-      contactPreviewFromThreadParticipants("1", [
-        { contact_id: 1, handle: "+15550001", name: "" },
-      ])?.name,
+      contactPreviewFromThreadParticipants("1", [{ contact_id: 1, handle: "+15550001", name: "" }])
+        ?.name,
     ).toBe("+15550001");
   });
 
