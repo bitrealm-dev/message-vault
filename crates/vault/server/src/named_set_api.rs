@@ -145,7 +145,6 @@ pub(crate) async fn members_update(
     Ok(Json(MembersChanged { added, removed }))
 }
 
-#[rustfmt::skip]
 /// One collection's six HTTP handlers.
 ///
 /// Contact Groups and Message Tags are the same six operations over
@@ -158,6 +157,15 @@ pub(crate) async fn members_update(
 /// The function names and doc comments are load-bearing: `operationId` comes
 /// from the name and `summary` from the first line of the doc, so both appear
 /// in `docs/src/assets/openapi.json`.
+///
+/// Adding a third collection is this macro invoked a third time, plus a
+/// `MembershipSpec` for it in `named_membership.rs` and six
+/// `.routes(routes!(..))` lines in `openapi.rs` — `utoipa_axum` needs each
+/// route named there and that cannot be folded in here.
+///
+/// The formatting is pinned because rustfmt reindents an attribute body
+/// inside a macro arm to three times the depth of the code around it.
+#[rustfmt::skip]
 macro_rules! named_set_routes {
     (
         spec: $spec:path,
