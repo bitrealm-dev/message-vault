@@ -14,9 +14,8 @@ use super::{Filter, ListKind};
 
 /// Contact `ct` is not in the trash.
 pub(crate) const NOT_TRASHED_CONTACT: &str = "NOT EXISTS (SELECT 1 FROM trashed_contacts tct WHERE tct.account_id = ct.account_id AND tct.contact_id = ct.id)";
-/// Conversation `c` is not in the trash and neither is its chat handle.
-pub(crate) const NOT_TRASHED_CONVERSATION: &str = "NOT EXISTS (SELECT 1 FROM trashed_conversations tc WHERE tc.account_id = c.account_id AND tc.conversation_id = c.id) \
-     AND NOT EXISTS (SELECT 1 FROM trashed_handles th WHERE th.account_id = c.account_id AND th.handle_id = c.chat_handle_id)";
+/// Conversation `c` is not in the trash.
+pub(crate) const NOT_TRASHED_CONVERSATION: &str = "NOT EXISTS (SELECT 1 FROM trashed_conversations tc WHERE tc.account_id = c.account_id AND tc.conversation_id = c.id)";
 
 /// Compile a parsed query into one parenthesised WHERE fragment.
 pub(crate) fn compile(
@@ -63,11 +62,13 @@ pub(crate) fn compile(
             if !uses("source") && !uses("import") {
                 out.push(" AND m.duplicate_of IS NULL");
             }
-            out.push(
-                " AND EXISTS (SELECT 1 FROM conversations c WHERE c.id = m.conversation_id AND ",
-            );
-            out.push(NOT_TRASHED_CONVERSATION);
-            out.push(")");
+            if !uses("trashed") {
+                out.push(
+                    " AND EXISTS (SELECT 1 FROM conversations c WHERE c.id = m.conversation_id AND ",
+                );
+                out.push(NOT_TRASHED_CONVERSATION);
+                out.push(")");
+            }
         }
     }
     if let Some(expr) = expr {
@@ -827,9 +828,10 @@ fn source_id(choice: &str) -> &'static str {
 /// `attachment`, `size`, `trashed`. `kind:`, `service:`, and `source:` bind
 /// their mapped value with `bind_text` rather than interpolating it, even
 /// though the value is one the code chose, not user text, so no value ever
-/// reaches the SQL text directly. `trashed:` is registered for Contacts and
-/// Conversations only, so it reads `ct.`/`c.` directly rather than through a
-/// bridge, reusing the same "not trashed" constants the per-list defaults do.
+/// reaches the SQL text directly. `trashed:` reuses the same "not trashed"
+/// constants the per-list defaults do: on Contacts and Conversations it
+/// reads `ct.`/`c.` directly, the base row's own alias; on Messages, where
+/// `c` is not in scope, it goes through the `conversation` bridge instead.
 fn emit_kind_word(
     ctx: &ListCtx<'_>,
     out: &mut Sql,
@@ -901,13 +903,19 @@ fn emit_kind_word(
                 ListKind::Contacts => NOT_TRASHED_CONTACT,
                 _ => NOT_TRASHED_CONVERSATION,
             };
-            match *flag {
-                "no" => out.push(not_trashed),
-                "yes" => out.push(&format!("NOT ({not_trashed})")),
+            let write = |o: &mut Sql| match *flag {
+                "no" => o.push(not_trashed),
+                "yes" => o.push(&format!("NOT ({not_trashed})")),
                 // "any" lifts the default and filters nothing: the one place
                 // an always-true predicate is legitimate, since the word
                 // itself means "show every row regardless of trash state".
-                _ => out.push("1=1"),
+                _ => o.push("1=1"),
+            };
+            match ctx.list {
+                // `c` is not the base alias on Messages, so this needs the
+                // same bridge every conversation-scoped word on Messages uses.
+                ListKind::Messages => ctx.conversation(out, write),
+                ListKind::Contacts | ListKind::Conversations => write(out),
             }
             Ok(())
         }

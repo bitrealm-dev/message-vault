@@ -26,6 +26,17 @@ describe("keys", () => {
     expect(coveredBy(keys.contacts.detail(12), keys.contacts.lists)).toBe(false);
   });
 
+  it("keeps the trashed contact list under the list prefix without sharing an entry", () => {
+    const trashed = keys.contacts.trashed("trashed:yes");
+    // A contact trash write invalidates `contacts.lists`, and that has to
+    // reach the Trash screen's list.
+    expect(coveredBy(trashed, keys.contacts.lists)).toBe(true);
+    // The Trash screen holds one page and the contact list holds paged
+    // `InfiniteData`, so no search term may make the two keys equal.
+    expect(trashed).not.toEqual(keys.contacts.list("trashed:yes"));
+    expect(trashed).not.toEqual(keys.contacts.list("trashed"));
+  });
+
   it('carries a contact id as text, so 12 and "12" name one entry', () => {
     expect(keys.contacts.detail(12)).toEqual(keys.contacts.detail("12"));
   });

@@ -1428,6 +1428,47 @@ mod kind_words {
         );
         assert!(!run(&mut conn, ListKind::Contacts, "").await.contains(&f.cy));
     }
+
+    /// Pins the unchanged default: a Messages query that never mentions
+    /// `trashed:` still leaves the trashed conversation's message out, even
+    /// one that matches the query on its own text. This must pass before
+    /// and after the Messages arm gets its `trashed:` gate — if it ever
+    /// goes red, the gate broke the default every Export and download
+    /// relies on.
+    #[tokio::test]
+    async fn messages_still_exclude_trash_by_default() {
+        let (pool, _dir, f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        assert!(
+            !run(&mut conn, ListKind::Messages, "")
+                .await
+                .contains(&f.trashed_msg)
+        );
+        assert!(run(&mut conn, ListKind::Messages, "gone").await.is_empty());
+    }
+
+    /// `trashed:yes` on Messages answers for the trashed conversation's
+    /// message only, the same as it does on Contacts and Conversations.
+    #[tokio::test]
+    async fn messages_trashed_yes_finds_the_trashed_conversations_message() {
+        let (pool, _dir, f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        assert_eq!(
+            run(&mut conn, ListKind::Messages, "trashed:yes").await,
+            vec![f.trashed_msg]
+        );
+    }
+
+    /// `trashed:any` on Messages lifts the default: both the trashed
+    /// conversation's message and an ordinary one come back.
+    #[tokio::test]
+    async fn messages_trashed_any_returns_both() {
+        let (pool, _dir, f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let any = run(&mut conn, ListKind::Messages, "trashed:any").await;
+        assert!(any.contains(&f.trashed_msg));
+        assert!(any.contains(&f.ana_2018));
+    }
 }
 
 mod measure_words {

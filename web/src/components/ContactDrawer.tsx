@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { apiErrorMessage } from "../lib/apiErrorMessage";
 import { type ContactDetail, useContactDetail, useUpdateContact } from "../lib/contactDetail";
+import { useTrashContact } from "../lib/trash";
 import Button from "./Button";
 import { ContactDrawerHandles } from "./contactDrawer/ContactDrawerHandles";
 import {
@@ -80,6 +82,7 @@ export default function ContactDrawer({
   variant?: "docked" | "overlay";
 }) {
   const updateContact = useUpdateContact();
+  const trashContact = useTrashContact();
   const { detail: matchedDetail } = useContactDetail(contactId);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
@@ -183,6 +186,12 @@ export default function ContactDrawer({
     onBrowseConversations({ contactId, kind: args.kind, handle: args.handle });
   };
 
+  // The contact just left the list this drawer was opened from, so close it
+  // rather than leave the person looking at a contact that has quietly gone.
+  const handleMoveToTrash = () => {
+    trashContact.mutate(contactId, { onSuccess: onClose });
+  };
+
   const saveName = async () => {
     if (savingNameRef.current) return;
     savingNameRef.current = true;
@@ -269,6 +278,11 @@ export default function ContactDrawer({
         }
         intro={
           <div>
+            {trashContact.error && (
+              <div className="mb-3 rounded border border-danger-soft-border bg-danger-soft-bg px-3 py-2 text-[0.75rem] text-danger">
+                {apiErrorMessage(trashContact.error, "Could not move this contact to trash.")}
+              </div>
+            )}
             <div className="mb-1.5">
               <span className="text-[0.75rem] font-semibold uppercase tracking-[0.04em] text-muted">
                 Contact groups
@@ -295,14 +309,24 @@ export default function ContactDrawer({
           </div>
         }
         toolbarExtra={
-          <button
-            type="button"
-            aria-label="Close"
-            onClick={onClose}
-            className="shrink-0 cursor-pointer border-none bg-transparent p-0 text-[1.25rem] leading-none text-muted outline-none hover:text-text"
-          >
-            ×
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              variant="ghostNeutral"
+              size="sm"
+              disabled={trashContact.isPending}
+              onClick={handleMoveToTrash}
+            >
+              {trashContact.isPending ? "Moving to trash…" : "Move to trash"}
+            </Button>
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={onClose}
+              className="cursor-pointer border-none bg-transparent p-0 text-[1.25rem] leading-none text-muted outline-none hover:text-text"
+            >
+              ×
+            </button>
+          </div>
         }
       />
     </aside>

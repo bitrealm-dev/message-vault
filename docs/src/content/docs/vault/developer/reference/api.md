@@ -62,7 +62,8 @@ Export uses a **metadata** search subset (sender, participants, contact `preferr
 - `people:` / `within:` / `label:` (threads that involve a contact group)
 - `-people:` (hide those threads)
 - `tag:` / `-tag:` (message tags; `tag:none` for untagged threads)
-- Trash is always excluded; legacy `in:trash` is ignored
+- `trashed:` (`yes`, `no`, `any`) — export compiles as the Messages list, which answers all three
+- Trash is excluded by default; `trashed:yes` or `trashed:any` lifts that. Legacy `in:trash` is ignored
 - `search:contacts` on message export returns `400`
 
 ## Verify a token
