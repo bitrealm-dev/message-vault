@@ -501,9 +501,13 @@ pub(crate) fn http_app(state: AppState) -> Router {
         .route("/v1/{*rest}", axum::routing::any(api_not_found))
         .method_not_allowed_fallback(api_method_not_allowed)
         .fallback_service(ServeDir::new("static"))
-        .layer(build_cors_layer(&cors_origins))
         .layer(RequestBodyLimitLayer::new(state.max_body_bytes))
-        .layer(axum::middleware::map_response(json_body_limit_response));
+        // Rewrite the limit layer's plain-text 413 into `{error}` before CORS
+        // sees it, so the response a browser gets is both JSON and CORS-clean.
+        .layer(axum::middleware::map_response(json_body_limit_response))
+        // Outermost: every response, including one the limit layer answered
+        // itself, carries the CORS headers a browser needs to show it.
+        .layer(build_cors_layer(&cors_origins));
 
     if openapi_ui {
         api = api.merge(utoipa_swagger_ui::SwaggerUi::new("/docs").url("/openapi.json", spec));
@@ -1879,5 +1883,47 @@ mod tests {
             StatusCode::OK,
             "can_export=true must allow GET /v1/export/messages/count"
         );
+    }
+
+    /// `RequestBodyLimitLayer` answers its own 413 the moment a `Content-Length`
+    /// announces an oversize body, without running any handler. That response
+    /// must still pass through the CORS layer, or a browser reports a CORS
+    /// failure instead of showing the 413 the vault sent.
+    #[tokio::test]
+    async fn the_fast_413_carries_cors_headers() {
+        let vault = crate::test_support::test_vault().await;
+        // The default test config's `cors_origins` is empty, which only
+        // allows the packaged desktop origins (`build_cors_layer`) — not the
+        // browser origin this test sends. Configure it explicitly so the
+        // assertion below tests CORS header propagation, not the allow list.
+        let mut state = with_cors(vault.state.clone(), &["https://app.example"]);
+        state.max_body_bytes = 1024;
+        let user = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+
+        let server = crate::test_support::serve(&state).await;
+        let response = reqwest::Client::new()
+            .post(format!(
+                "{}/v1/import?source=imessage&mode=append",
+                server.base()
+            ))
+            .bearer_auth(&user.token)
+            .header(header::ORIGIN, "https://app.example")
+            .header(header::CONTENT_TYPE, "application/x-ndjson")
+            // A sized body, so the limit layer answers from Content-Length alone.
+            .body(vec![b'x'; 4096])
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(
+            response
+                .headers()
+                .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+            "the fast 413 must carry CORS headers, got: {:?}",
+            response.headers()
+        );
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert!(body["error"].is_string(), "{body}");
     }
 }
