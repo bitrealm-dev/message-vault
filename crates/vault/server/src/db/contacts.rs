@@ -49,6 +49,76 @@ impl Origin {
     }
 }
 
+/// Offer `name` as the contact's preferred name, on behalf of `by`. Returns
+/// true when the row changed.
+///
+/// This is the one place that decides who may name a Contact, the rule
+/// ADR-0006 sets. Three things name people — an import reading a backup, an
+/// address book the person loaded, and the person typing in the contact
+/// drawer — and each used to carry its own copy of the rule, in three files,
+/// with three comments explaining it from three angles.
+///
+/// The rule, in one place:
+///
+/// - The person outranks everything. Typing a name is the most deliberate
+///   naming act in the product, so the row becomes theirs (`origin = 'user'`)
+///   and nothing later renames it.
+/// - An address book outranks an import, because the person curated it, but
+///   it does not touch a name they typed.
+/// - An import names only a contact no earlier import managed to name. The
+///   same number arrives spelled differently across backups and the first
+///   spelling is as good as the second.
+///
+/// An empty `name` says nothing about who someone is, so it never overwrites
+/// anything; only [`create_contact`] stores an empty name, for a contact
+/// nothing has named yet.
+///
+/// # Errors
+///
+/// Returns an error when a statement fails.
+pub async fn propose_name(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    contact_id: i64,
+    name: &str,
+    by: Origin,
+) -> Result<bool> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Ok(false);
+    }
+    // Each arm is a fixed literal chosen by matching on `by`; the name and the
+    // ids are bound. `origin` is only rewritten when the person names the row,
+    // because that is the only claim that outranks a later address book.
+    let sql = match by {
+        Origin::User => {
+            "UPDATE contacts SET preferred_name = $1, origin = 'user'
+             WHERE account_id = $2 AND id = $3"
+        }
+        Origin::AddressBook => {
+            "UPDATE contacts SET preferred_name = $1
+             WHERE account_id = $2 AND id = $3 AND origin = 'import'"
+        }
+        Origin::Import => {
+            "UPDATE contacts SET preferred_name = $1
+             WHERE account_id = $2 AND id = $3
+               AND origin = 'import' AND trim(preferred_name) = ''"
+        }
+    };
+    let changed = sqlx::query(sql)
+        .bind(name)
+        .bind(account_id)
+        .bind(contact_id)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected()
+        > 0;
+    if changed {
+        touch_contact(conn, account_id, contact_id).await?;
+    }
+    Ok(changed)
+}
+
 /// Create a contact carrying `preferred_name`, which may be empty.
 ///
 /// # Errors
@@ -72,6 +142,8 @@ pub async fn create_contact(
 }
 
 /// Link `handle_id` to `contact_id`, doing nothing when the link exists.
+/// Returns true when the link was made here, false when it already existed —
+/// the difference a caller needs to decide whether the contact changed.
 ///
 /// # Errors
 ///
@@ -82,8 +154,8 @@ pub async fn link_handle_to_contact(
     handle_id: i64,
     contact_id: i64,
     origin: Origin,
-) -> Result<()> {
-    sqlx::query(
+) -> Result<bool> {
+    let inserted = sqlx::query(
         "INSERT INTO contact_handles (account_id, handle_id, contact_id, origin)
          VALUES ($1, $2, $3, $4)
          ON CONFLICT DO NOTHING",
@@ -93,8 +165,44 @@ pub async fn link_handle_to_contact(
     .bind(contact_id)
     .bind(origin.as_str())
     .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    Ok(inserted > 0)
+}
+
+/// The contact a sibling of `handle_id` is on, if any: the same normalized
+/// value and handle type on a different platform service, already linked.
+///
+/// One person's phone number arrives once as an iMessage address and again as
+/// an SMS one; they are two `handles` rows and one person, so a link made for
+/// either is the answer for both.
+///
+/// # Errors
+///
+/// Returns an error when the query fails.
+pub async fn contact_id_of_sibling_handle(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    handle_id: i64,
+) -> Result<Option<i64>> {
+    let contact_id: Option<i64> = sqlx::query_scalar(
+        "SELECT ch.contact_id
+         FROM handles h
+         JOIN handles h2
+           ON h2.account_id = h.account_id
+          AND h2.normalized = h.normalized
+          AND h2.handle_type = h.handle_type
+          AND h2.id != h.id
+         JOIN contact_handles ch
+           ON ch.account_id = h.account_id AND ch.handle_id = h2.id
+         WHERE h.id = $1 AND h.account_id = $2
+         LIMIT 1",
+    )
+    .bind(handle_id)
+    .bind(account_id)
+    .fetch_optional(&mut *conn)
     .await?;
-    Ok(())
+    Ok(contact_id)
 }
 
 /// The contact this account already has under exactly `name`, if any.
@@ -546,26 +654,19 @@ async fn insert_contact_drafts(
         // then Unknown by the computed rule, which is the same thing said once.
         let preferred_name = draft.preferred_name.as_deref().unwrap_or("");
         let contact_id =
-            match adoptable_contact_for_draft(&mut *tx, account_id, &draft.phones).await? {
-                Some((existing, origin)) => {
+            match adoptable_contact_for_draft(&mut tx, account_id, &draft.phones).await? {
+                Some((existing, _origin)) => {
                     // A card that lists a number without a name has nothing to
-                    // say about who that person is, so it does not get to
-                    // unname them: only overwrite the imported name when the
-                    // book actually supplied one. A name the person typed
-                    // (`origin = 'user'`) outranks the book, so that row is
-                    // adopted and left named as they wrote it.
-                    if !preferred_name.is_empty() && origin == Origin::Import.as_str() {
-                        sqlx::query(
-                            "UPDATE contacts SET preferred_name = $1
-                             WHERE account_id = $2 AND id = $3",
-                        )
-                        .bind(preferred_name)
-                        .bind(account_id)
-                        .bind(existing)
-                        .execute(&mut *tx)
-                        .await?;
-                        touch_contact(&mut *tx, account_id, existing).await?;
-                    }
+                    // say about who that person is, and a name the person typed
+                    // outranks the book. `propose_name` holds both rules.
+                    propose_name(
+                        &mut tx,
+                        account_id,
+                        existing,
+                        preferred_name,
+                        Origin::AddressBook,
+                    )
+                    .await?;
                     existing
                 }
                 None => {
@@ -732,6 +833,95 @@ mod tests {
                 ("+15559876543".to_string(), None)
             ]
         );
+    }
+
+    /// One table for the naming rule ADR-0006 sets, read at the seam that
+    /// enforces it rather than through the three callers that used to carry
+    /// their own copy of it.
+    #[tokio::test]
+    async fn who_may_name_a_contact() {
+        let (pool, _dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        crate::db::schema::ensure_vault_schema(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 't')")
+            .bind(TEST_ACCOUNT_ID)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let name_of = async |conn: &mut AnyConnection, id: i64| -> String {
+            sqlx::query_scalar("SELECT preferred_name FROM contacts WHERE id = $1")
+                .bind(id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap()
+        };
+
+        // An import names a contact no earlier import managed to name, and
+        // leaves the first spelling alone after that.
+        let nameless = create_contact(&mut conn, TEST_ACCOUNT_ID, "", Origin::Import)
+            .await
+            .unwrap();
+        assert!(
+            propose_name(
+                &mut conn,
+                TEST_ACCOUNT_ID,
+                nameless,
+                "Bobby",
+                Origin::Import
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            !propose_name(&mut conn, TEST_ACCOUNT_ID, nameless, "Bob", Origin::Import)
+                .await
+                .unwrap()
+        );
+        assert_eq!(name_of(&mut conn, nameless).await, "Bobby");
+
+        // An address book outranks an import.
+        assert!(
+            propose_name(
+                &mut conn,
+                TEST_ACCOUNT_ID,
+                nameless,
+                "Robert Smith",
+                Origin::AddressBook
+            )
+            .await
+            .unwrap()
+        );
+        assert_eq!(name_of(&mut conn, nameless).await, "Robert Smith");
+
+        // The person outranks both, and nothing renames the row afterwards.
+        assert!(
+            propose_name(&mut conn, TEST_ACCOUNT_ID, nameless, "Bob S", Origin::User)
+                .await
+                .unwrap()
+        );
+        for by in [Origin::Import, Origin::AddressBook] {
+            assert!(
+                !propose_name(&mut conn, TEST_ACCOUNT_ID, nameless, "Someone Else", by)
+                    .await
+                    .unwrap(),
+                "{by:?} must not rename a contact the person named"
+            );
+        }
+        assert_eq!(name_of(&mut conn, nameless).await, "Bob S");
+
+        // An empty name says nothing about who someone is.
+        let blank = create_contact(&mut conn, TEST_ACCOUNT_ID, "", Origin::Import)
+            .await
+            .unwrap();
+        assert!(
+            !propose_name(&mut conn, TEST_ACCOUNT_ID, blank, "   ", Origin::User)
+                .await
+                .unwrap()
+        );
+        assert_eq!(name_of(&mut conn, blank).await, "");
     }
 
     #[tokio::test]

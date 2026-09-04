@@ -12,7 +12,7 @@ use message_ir::{
 };
 use serde_json::{Value, json};
 
-use crate::http::{Attachment, Message, Tapback};
+use vault_api_types::{Attachment, Message, Tapback};
 
 /// Grouping key so messages from the same chat and backup source stay together.
 pub fn conversation_key(msg: &Message) -> String {
@@ -271,7 +271,7 @@ fn parse_timestamp_unix_ms(raw: &str) -> Result<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::http::{MessageConversation, Participant};
+    use vault_api_types::{MessageConversation, Participant};
 
     /// One page of `GET /v1/export/messages` exactly as the vault serializes
     /// it: `service` on the message rather than on the conversation, an
@@ -398,6 +398,7 @@ mod tests {
             thread_originator_guid: None,
             thread_originator_part: None,
             num_replies: 0,
+            sort_order: 0,
             conversation: MessageConversation {
                 id: 9,
                 chat_identifier: "+1".into(),
@@ -406,6 +407,8 @@ mod tests {
                 participants: vec![Participant {
                     handle: Some("+1".into()),
                     name: "Sam".into(),
+                    service: None,
+                    contact_id: None,
                 }],
             },
             attachments: vec![],
@@ -424,6 +427,8 @@ mod tests {
         let seed = seed_message_with_participant(Participant {
             handle: Some("+1".into()),
             name: "Sam".into(),
+            service: None,
+            contact_id: None,
         });
         let participants = participants_from_seed(&seed);
         assert_eq!(participants[0].handle.as_deref(), Some("+1"));
@@ -438,6 +443,8 @@ mod tests {
         let seed = seed_message_with_participant(Participant {
             handle: Some("+1".into()),
             name: "+1".into(),
+            service: None,
+            contact_id: None,
         });
         let participants = participants_from_seed(&seed);
         assert_eq!(participants[0].display_name, None);
@@ -461,6 +468,7 @@ mod tests {
             thread_originator_guid: None,
             thread_originator_part: None,
             num_replies: 0,
+            sort_order: 0,
             conversation: MessageConversation {
                 id: 9,
                 chat_identifier: "+1".into(),

@@ -21,7 +21,8 @@ use crate::jsonl;
 use crate::models::{AttachmentRecord, ExportRecord, MessageRecord, clean_body};
 
 use super::contact_name::{
-    ensure_contact_for_handle, resolve_incoming_sender_handle, resolve_name_only_participant,
+    IncomingSender, ensure_contact_for_handle, resolve_incoming_sender_handle,
+    resolve_name_only_participant,
 };
 use super::{ImportOptions, ImportStats};
 
@@ -587,10 +588,12 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
             tx,
             &mut stmts.handles,
             &stmts.account_id,
-            msg.is_from_me,
-            msg.sender.as_deref(),
-            msg.sender_handle_type,
-            sender_platform.as_str(),
+            IncomingSender {
+                is_from_me: msg.is_from_me,
+                address: msg.sender.as_deref(),
+                handle_type: msg.sender_handle_type,
+                platform: sender_platform.as_str(),
+            },
             &mut stats,
         )
         .await?;
@@ -747,10 +750,12 @@ async fn flush_staging_message_chunk(
                 tx,
                 &mut stmts.handles,
                 &stmts.account_id,
-                tap.is_from_me,
-                tap.sender.as_deref(),
-                None,
-                &row.sender_platform,
+                IncomingSender {
+                    is_from_me: tap.is_from_me,
+                    address: tap.sender.as_deref(),
+                    handle_type: None,
+                    platform: &row.sender_platform,
+                },
                 stats,
             )
             .await?;

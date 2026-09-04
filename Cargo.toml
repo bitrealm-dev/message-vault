@@ -14,6 +14,7 @@ members = [
     "crates/libs/go-sms-mms",
     "crates/libs/journal",
     "crates/libs/vault-http",
+    "crates/libs/vault-api-types",
     "crates/exporters/go-sms-pro-exporter",
     "crates/exporters/sms-backup-restore-exporter",
     "crates/exporters/sms-backup-plus-exporter",

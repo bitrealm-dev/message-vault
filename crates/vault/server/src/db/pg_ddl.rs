@@ -128,8 +128,7 @@ fn table_name(rest: &str) -> String {
 
 /// First identifier on a column-definition line: the column name.
 fn column_name(line: &str) -> String {
-    line.trim_start()
-        .split_whitespace()
+    line.split_whitespace()
         .next()
         .unwrap_or_default()
         .to_string()

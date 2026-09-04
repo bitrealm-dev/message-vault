@@ -13,8 +13,6 @@ use crate::db::conversation_messages::{
 use crate::db::dialect::engine_of;
 use crate::db::engine::DbEngine;
 use crate::db::sql::{bind_all, renumber_placeholders};
-// Required so the moved handlers' unqualified `export_api::…` paths resolve.
-use crate::export_api::{self};
 use crate::server::{ApiError, AppState, ExportAccess, resolve_import_account};
 
 use crate::paging::{DEFAULT_EXPORT_LIMIT, Page, page_params};
@@ -227,13 +225,13 @@ pub(crate) async fn export_messages_count_handler(
     State(state): State<AppState>,
     ExportAccess(auth): ExportAccess,
     Query(query): Query<ExportMessagesCountQuery>,
-) -> Result<Json<export_api::ExportCountResponse>, ApiError> {
+) -> Result<Json<ExportCountResponse>, ApiError> {
     let account = resolve_import_account(&auth, query.account.as_deref(), &state.db).await?;
     let q = query.q;
     let today = chrono::Local::now().date_naive();
 
     let mut conn = state.db.acquire().await?;
-    let body = export_api::export_message_count(
+    let body = export_message_count(
         &mut conn,
         ExportCountOpts {
             account_id: &account,
@@ -258,7 +256,7 @@ pub(crate) async fn export_messages_count_handler(
         ("account" = Option<String>, Query)
     ),
     responses(
-        (status = 200, body = crate::paging::Page<crate::export_api::Message>),
+        (status = 200, body = crate::paging::Page<vault_api_types::Message>),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody)
@@ -268,13 +266,13 @@ pub(crate) async fn export_messages_handler(
     State(state): State<AppState>,
     ExportAccess(auth): ExportAccess,
     Query(query): Query<ExportMessagesQuery>,
-) -> Result<Json<Page<export_api::Message>>, ApiError> {
+) -> Result<Json<Page<Message>>, ApiError> {
     let account = resolve_import_account(&auth, query.account.as_deref(), &state.db).await?;
     let page = page_params(query.limit, query.offset, DEFAULT_EXPORT_LIMIT, None)?;
     let today = chrono::Local::now().date_naive();
 
     let mut conn = state.db.acquire().await?;
-    let body = export_api::export_messages(
+    let body = export_messages(
         &mut conn,
         ExportPageOpts {
             account_id: &account,

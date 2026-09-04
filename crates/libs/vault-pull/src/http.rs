@@ -2,6 +2,11 @@
 //!
 //! Calls are blocking so they can run on worker threads without an async
 //! runtime. The session type is [`vault_http::HttpSession`].
+//!
+//! The message shapes are `vault-api-types`, the same definitions the vault
+//! serializes from. This file used to mirror them by hand, and three defects
+//! shipped because the mirror and the vault drifted apart with nothing to
+//! notice.
 
 use std::fs::File;
 use std::io::Write;
@@ -11,7 +16,9 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use reqwest::Method;
 use serde::Deserialize;
-use vault_http::{VaultHttpError, trim_base_url, truncate};
+use vault_http::{VaultHttpError, error_sentence, ok_json, trim_base_url};
+
+use vault_api_types::Message;
 
 pub use vault_http::HttpSession;
 
@@ -22,125 +29,6 @@ pub struct ExportMessagesPage {
     pub items: Vec<Message>,
     #[serde(default)]
     pub total: u64,
-}
-
-/// The vault's failure body: `{error}`.
-#[derive(Debug, Deserialize)]
-struct ErrorBody {
-    #[serde(default)]
-    error: Option<String>,
-}
-
-/// The sentence to show for a failed response: the body's `error` when it has
-/// one, otherwise the body itself, clipped.
-fn error_sentence(body: &str, _status: u16) -> String {
-    match serde_json::from_str::<ErrorBody>(body) {
-        Ok(ErrorBody {
-            error: Some(message),
-        }) if !message.trim().is_empty() => message,
-        _ => truncate(body, 300),
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-/// One message row from the vault export API.
-pub struct Message {
-    pub id: i64,
-    pub source: String,
-    /// Platform service, e.g. `imessage`. The vault sends it on the message,
-    /// not on the conversation.
-    #[serde(default)]
-    pub service: Option<String>,
-    #[serde(default)]
-    pub guid: Option<String>,
-    pub timestamp: String,
-    #[serde(default)]
-    pub timestamp_utc: Option<String>,
-    #[serde(default)]
-    pub is_from_me: bool,
-    #[serde(default)]
-    pub sender: Option<String>,
-    #[serde(default)]
-    pub subject: Option<String>,
-    #[serde(default)]
-    pub text: Option<String>,
-    #[serde(default)]
-    pub is_announcement: bool,
-    #[serde(default)]
-    pub is_reply: bool,
-    #[serde(default)]
-    pub thread_originator_guid: Option<String>,
-    #[serde(default)]
-    pub thread_originator_part: Option<i64>,
-    #[serde(default)]
-    pub num_replies: i64,
-    pub conversation: MessageConversation,
-    #[serde(default)]
-    pub attachments: Vec<Attachment>,
-    #[serde(default)]
-    pub tapbacks: Vec<Tapback>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-/// Chat metadata attached to each export message.
-pub struct MessageConversation {
-    pub id: i64,
-    pub chat_identifier: String,
-    pub conversation_type: String,
-    #[serde(default)]
-    pub group_title: Option<String>,
-    #[serde(default)]
-    pub participants: Vec<Participant>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-/// One person in a conversation, mirroring the vault's `Participant` schema.
-///
-/// `name` is never empty — the vault falls back to the handle when nothing
-/// else names the person — so it is not `#[serde(default)]`: a response
-/// missing it should fail loudly rather than silently becoming `None`.
-///
-/// `handle` is optional because the vault sends `"handle": null` for a
-/// participant a backup named without recording any address for them. It was
-/// once `String`, which made every page carrying such a person fail to
-/// deserialize and aborted the whole pull.
-pub struct Participant {
-    #[serde(default)]
-    pub handle: Option<String>,
-    pub name: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-/// One attachment on an export message (path, fingerprint, transcription).
-pub struct Attachment {
-    #[serde(default)]
-    pub path: Option<String>,
-    #[serde(default)]
-    pub original_name: Option<String>,
-    #[serde(default)]
-    pub mime_type: Option<String>,
-    #[serde(default)]
-    pub sha256: Option<String>,
-    #[serde(default)]
-    pub is_sticker: bool,
-    #[serde(default)]
-    pub transcription: Option<String>,
-    #[serde(default)]
-    pub missing_reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-/// One reaction (tapback) on an export message.
-pub struct Tapback {
-    #[serde(default)]
-    pub part_index: i64,
-    pub kind: String,
-    #[serde(default)]
-    pub emoji: Option<String>,
-    #[serde(default)]
-    pub is_from_me: bool,
-    #[serde(default)]
-    pub sender: Option<String>,
 }
 
 struct ExportUrl<'a> {
@@ -217,17 +105,7 @@ pub fn export_messages(
 
     let status = response.status();
     let body = response.text().unwrap_or_default();
-    if !status.is_success() {
-        let detail = error_sentence(&body, status.as_u16());
-        return Err(VaultHttpError::new(
-            status.as_u16(),
-            format!("export messages failed ({status}): {detail}"),
-        )
-        .into());
-    }
-    let parsed: ExportMessagesPage =
-        serde_json::from_str(&body).context("parse export messages response")?;
-    Ok(parsed)
+    ok_json("export messages", status, &body)
 }
 
 /// Download one attachment by SHA-256 fingerprint to `dest`.
@@ -283,7 +161,10 @@ pub fn download_asset(
         let body = response.text().unwrap_or_default();
         return Err(VaultHttpError::new(
             status.as_u16(),
-            format!("asset download failed ({status}): {}", truncate(&body, 300)),
+            format!(
+                "asset download failed (HTTP {status}): {}",
+                error_sentence(&body)
+            ),
         )
         .into());
     }
@@ -328,9 +209,9 @@ mod tests {
             serde_json::from_str(r#"{"items":[],"total":7,"limit":500,"offset":0}"#).unwrap();
         assert_eq!((page.items.len(), page.total), (0, 7));
         assert_eq!(
-            error_sentence(r#"{"error":"limit exceeds maximum of 500"}"#, 400),
+            error_sentence(r#"{"error":"limit exceeds maximum of 500"}"#),
             "limit exceeds maximum of 500"
         );
-        assert_eq!(error_sentence("<html>", 502), "<html>");
+        assert_eq!(error_sentence("<html>"), "<html>");
     }
 }

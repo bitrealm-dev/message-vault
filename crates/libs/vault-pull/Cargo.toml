@@ -10,6 +10,7 @@ anyhow = "1.0.103"
 chrono = { version = "0.4.44", default-features = false, features = ["clock", "std"] }
 hex = "0.4"
 jsonl_journal = { package = "journal", path = "../../libs/journal" }
+vault-api-types = { path = "../../libs/vault-api-types" }
 vault-http = { path = "../../libs/vault-http" }
 message-vault-io-core = { path = "../../core/message-vault-io-core" }
 message-ir = { path = "../../libs/ir" }

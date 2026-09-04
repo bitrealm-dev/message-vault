@@ -1,6 +1,9 @@
 //! The message row loader shared by every route that reads messages: their
 //! conversation, attachments and tapbacks, joined and grouped.
 //!
+//! The row shapes themselves live in `vault-api-types`, where `vault-pull`
+//! reads them from the same definition rather than a hand-written mirror.
+//!
 //! `load_messages` takes an already-compiled `WHERE` fragment and its bound
 //! params, so the caller decides what selects the rows — a search query, a
 //! conversation id — while this module owns only the row shape and how it is
@@ -8,115 +11,14 @@
 
 use std::collections::HashMap;
 
-use serde::Serialize;
 use sqlx::AnyConnection;
 use sqlx::{Executor, Row};
 
-use crate::db::participant_names::{Participant, load_for_conversations};
+pub use vault_api_types::{Attachment, Message, MessageConversation, Tapback};
+
+use crate::db::participant_names::load_for_conversations;
 use crate::db::sql::{SqlParam, bind_all, group_rows_by_id, renumber_placeholders};
 use crate::server::ApiError;
-
-/// One exported message.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct Message {
-    /// Message row id.
-    pub id: i64,
-    /// Import source id.
-    pub source: String,
-    /// Platform service, e.g. `imessage`, when known.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub service: Option<String>,
-    /// Export GUID for replies and grouping.
-    pub guid: Option<String>,
-    /// Message timestamp (local).
-    pub timestamp: String,
-    /// UTC timestamp, when known.
-    pub timestamp_utc: Option<String>,
-    /// Ordering key within the conversation.
-    pub sort_order: i64,
-    /// True for messages sent by the account owner.
-    pub is_from_me: bool,
-    /// Sender handle for incoming messages.
-    pub sender: Option<String>,
-    /// Subject line, when set.
-    pub subject: Option<String>,
-    /// Body text, when present.
-    pub text: Option<String>,
-    /// True for group announcements.
-    pub is_announcement: bool,
-    /// True when part of a reply thread.
-    pub is_reply: bool,
-    /// GUID of the message this replies to.
-    pub thread_originator_guid: Option<String>,
-    /// Part index of the originator (for tapbacks).
-    pub thread_originator_part: Option<i64>,
-    /// Replies in this thread.
-    pub num_replies: i64,
-    /// The conversation this message belongs to.
-    pub conversation: MessageConversation,
-    /// Attachments on this message.
-    pub attachments: Vec<Attachment>,
-    /// Reactions on this message.
-    pub tapbacks: Vec<Tapback>,
-}
-
-/// The conversation a message belongs to.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct MessageConversation {
-    /// Conversation row id.
-    pub id: i64,
-    /// Original chat id from the export.
-    pub chat_identifier: String,
-    /// `individual` or `group`.
-    pub conversation_type: String,
-    /// Group label, when set.
-    pub group_title: Option<String>,
-    /// Participants of the conversation.
-    pub participants: Vec<Participant>,
-}
-
-/// One attachment of an exported message.
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
-pub struct Attachment {
-    /// Path inside the export.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-    /// File name from the export.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub original_name: Option<String>,
-    /// MIME type, when known.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-    /// Content fingerprint of the stored bytes.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sha256: Option<String>,
-    /// True for sticker files.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub is_sticker: bool,
-    /// OCR/ASR transcription, when processed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub transcription: Option<String>,
-    /// Why the file is missing, when it is.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub missing_reason: Option<String>,
-}
-
-/// One tapback reaction on an exported message.
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
-pub struct Tapback {
-    /// Attachment part the reaction applies to.
-    pub part_index: i64,
-    /// Reaction type, e.g. `love`.
-    pub kind: String,
-    /// Emoji form of the reaction, when one exists.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub emoji: Option<String>,
-    /// True when the account owner reacted.
-    pub is_from_me: bool,
-    /// Reactor handle for incoming reactions.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sender: Option<String>,
-}
 
 fn unique_ids(ids: impl IntoIterator<Item = i64>) -> Vec<i64> {
     let mut ids: Vec<i64> = ids.into_iter().collect();

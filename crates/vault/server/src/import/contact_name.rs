@@ -29,9 +29,10 @@ pub(super) async fn ensure_contact_for_handle(
 ) -> Result<i64> {
     let name = nonempty_str(backup_name).unwrap_or("");
     if let Some(existing) = ensure_sibling_contact_link(tx, account_id, handle_id).await? {
-        if !name.is_empty() {
-            name_nameless_import_contact(tx, account_id, existing, name).await?;
-        }
+        // An import names only a contact an earlier import left nameless;
+        // `contacts::propose_name` is where that rule and its two siblings
+        // live.
+        contacts::propose_name(tx, account_id, existing, name, contacts::Origin::Import).await?;
         return Ok(existing);
     }
     let contact_id =
@@ -46,35 +47,6 @@ pub(super) async fn ensure_contact_for_handle(
     .await?;
     stats.contacts_created += 1;
     Ok(contact_id)
-}
-
-/// Put the backup's name on a contact an earlier import left nameless.
-///
-/// The `origin = 'import'` clause is what keeps a typed or address-book name
-/// safe, and the empty-name clause is what makes the first backup win.
-async fn name_nameless_import_contact(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    contact_id: i64,
-    name: &str,
-) -> Result<()> {
-    let updated = sqlx::query(
-        "UPDATE contacts
-         SET preferred_name = $1
-         WHERE account_id = $2 AND id = $3
-           AND origin = 'import'
-           AND trim(preferred_name) = ''",
-    )
-    .bind(name)
-    .bind(account_id)
-    .bind(contact_id)
-    .execute(&mut *conn)
-    .await?
-    .rows_affected();
-    if updated > 0 {
-        contacts::touch_contact(conn, account_id, contact_id).await?;
-    }
-    Ok(())
 }
 
 /// Bind a participant the source named without recording any address.
@@ -104,26 +76,50 @@ pub(super) async fn resolve_name_only_participant(
     Ok((Some(contact_id), Some(name.to_string())))
 }
 
+/// What one message says about who sent it. Its own type because these four
+/// facts travel together and come from the message, while the connection,
+/// handle cache, account and stats around them belong to the import run.
+pub(super) struct IncomingSender<'a> {
+    /// True when the account owner sent it, in which case there is no sender
+    /// handle to resolve.
+    pub is_from_me: bool,
+    /// The sender's address as the backup recorded it, when it recorded one.
+    pub address: Option<&'a str>,
+    /// The address's type when the source stated it; inferred from the
+    /// address's shape when it did not.
+    pub handle_type: Option<HandleType>,
+    /// Platform service the message arrived on, e.g. `imessage`.
+    pub platform: &'a str,
+}
+
+/// The `handles` row for an incoming message's sender, creating it when this
+/// import is the first to meet that address. `None` for a message the account
+/// owner sent, and for one whose source recorded no sender address.
 pub(super) async fn resolve_incoming_sender_handle(
     tx: &mut AnyConnection,
     cache: &mut HandleIdCache,
     account_id: &str,
-    is_from_me: bool,
-    sender: Option<&str>,
-    handle_type: Option<HandleType>,
-    platform: &str,
+    sender: IncomingSender<'_>,
     stats: &mut ImportStats,
 ) -> Result<Option<i64>> {
-    if is_from_me {
+    if sender.is_from_me {
         return Ok(None);
     }
-    let Some(sender) = nonempty_str(sender) else {
+    let Some(address) = nonempty_str(sender.address) else {
         return Ok(None);
     };
-    let handle_type = handle_type.unwrap_or_else(|| infer_handle_type(sender));
-    let (handle_id, flagged, cached) =
-        upsert_handle_row_cached(tx, cache, account_id, sender, handle_type, Some(platform))
-            .await?;
+    let handle_type = sender
+        .handle_type
+        .unwrap_or_else(|| infer_handle_type(address));
+    let (handle_id, flagged, cached) = upsert_handle_row_cached(
+        tx,
+        cache,
+        account_id,
+        address,
+        handle_type,
+        Some(sender.platform),
+    )
+    .await?;
     if flagged {
         stats.phones_needing_review += 1;
     }
@@ -133,8 +129,9 @@ pub(super) async fn resolve_incoming_sender_handle(
     Ok(Some(handle_id))
 }
 
-/// If this handle has no contact but a sibling handle (same normalized + type,
-/// different platform service) is already linked, attach this handle to that contact.
+/// If this handle has no contact but a sibling handle (same normalized value
+/// and type, different platform service) is already linked, attach this handle
+/// to that contact.
 pub(super) async fn ensure_sibling_contact_link(
     conn: &mut AnyConnection,
     account_id: &str,
@@ -143,39 +140,21 @@ pub(super) async fn ensure_sibling_contact_link(
     if let Some(existing) = contacts::contact_id_for_handle(conn, account_id, handle_id).await? {
         return Ok(Some(existing));
     }
-    let sibling_contact: Option<i64> = sqlx::query_scalar(
-        "SELECT ch.contact_id
-         FROM handles h
-         JOIN handles h2
-           ON h2.account_id = h.account_id
-          AND h2.normalized = h.normalized
-          AND h2.handle_type = h.handle_type
-          AND h2.id != h.id
-         JOIN contact_handles ch
-           ON ch.account_id = h.account_id AND ch.handle_id = h2.id
-         WHERE h.id = $1 AND h.account_id = $2
-         LIMIT 1",
-    )
-    .bind(handle_id)
-    .bind(account_id)
-    .fetch_optional(&mut *conn)
-    .await?;
-    let Some(contact_id) = sibling_contact else {
+    let Some(contact_id) =
+        contacts::contact_id_of_sibling_handle(conn, account_id, handle_id).await?
+    else {
         return Ok(None);
     };
-    let inserted = sqlx::query(
-        "INSERT INTO contact_handles (account_id, handle_id, contact_id)
-         VALUES ($1, $2, $3)
-         ON CONFLICT DO NOTHING",
+    if contacts::link_handle_to_contact(
+        conn,
+        account_id,
+        handle_id,
+        contact_id,
+        contacts::Origin::Import,
     )
-    .bind(account_id)
-    .bind(handle_id)
-    .bind(contact_id)
-    .execute(&mut *conn)
     .await?
-    .rows_affected();
-    if inserted > 0 {
-        crate::db::contacts::touch_contact(conn, account_id, contact_id).await?;
+    {
+        contacts::touch_contact(conn, account_id, contact_id).await?;
     }
     Ok(Some(contact_id))
 }
