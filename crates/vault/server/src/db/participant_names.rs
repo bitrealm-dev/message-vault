@@ -1,7 +1,18 @@
 //! The one query that decides the name shown for a participant.
 //!
 //! ADR-0006: the Contact's name, else what that backup called them in that
-//! conversation, else the handle. Every route that names a participant calls
+//! conversation, else the handle.
+//!
+//! The query's `COALESCE` does not actually end at the handle — it ends at
+//! `''`, because a participant with no address has no handle to end at. What
+//! keeps `name` non-empty is an import invariant rather than this query:
+//! import never creates a participant with neither an address nor a name, so
+//! every row has already matched one of the three earlier clauses. Read that
+//! guarantee here and enforce it in `import::contact_name`, whose
+//! `resolve_name_only_participant` is the only writer of a handle-less
+//! participant row.
+//!
+//! Every route that names a participant calls
 //! [`load_for_conversations`], so one person cannot show two names on one
 //! screen. `participants.contact_id` is not consulted for naming a
 //! participant who has a handle — that always routes through
@@ -28,7 +39,10 @@ use crate::db::sql::group_rows_by_id;
 /// conversation, else the handle.
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct Participant {
-    /// What to show for this person. Never empty: the rule ends at the handle.
+    /// What to show for this person. Never empty — but the query's own
+    /// `COALESCE` ends at `''`, not at the handle, since a handle-less
+    /// participant has no handle to end at. What keeps it non-empty is the
+    /// import invariant described in this module's doc comment.
     pub name: String,
     /// Raw handle value (phone, email, or username). `None` when the source
     /// named this person without recording any address for them.

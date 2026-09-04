@@ -44,7 +44,7 @@ const baseProps = {
   findTerm: "",
   matchIds: [] as string[],
   activeMatch: 0,
-  yearMode: false,
+  activeYear: null as number | null,
   footerLabel: "Messages 0 of 0",
   offset: 0,
   total: 0,
@@ -72,6 +72,11 @@ describe("MessageThread", () => {
   it("shows an empty state when the conversation has no messages", () => {
     render(<MessageThread {...baseProps} messages={[]} />);
     expect(screen.getByText("No messages in this conversation")).toBeInTheDocument();
+  });
+
+  it("names the year in the empty state while a year filter is on", () => {
+    render(<MessageThread {...baseProps} messages={[]} activeYear={2021} />);
+    expect(screen.getByText("No messages in 2021")).toBeInTheDocument();
   });
 
   it("renders messages when there are some", () => {

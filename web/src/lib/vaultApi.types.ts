@@ -2079,7 +2079,12 @@ export interface components {
              *     named this person without recording any address for them.
              */
             handle?: string | null;
-            /** @description What to show for this person. Never empty: the rule ends at the handle. */
+            /**
+             * @description What to show for this person. Never empty — but the query's own
+             *     `COALESCE` ends at `''`, not at the handle, since a handle-less
+             *     participant has no handle to end at. What keeps it non-empty is the
+             *     import invariant described in this module's doc comment.
+             */
             name: string;
             /**
              * @description Platform service, e.g. `imessage`. `None` for the same reason as

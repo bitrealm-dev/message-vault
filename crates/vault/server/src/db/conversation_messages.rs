@@ -150,8 +150,15 @@ struct RawRow {
 
 /// FROM clause for message queries. The compiled filter mentions only `m`;
 /// these joins are here for the SELECT list, which reports the conversation
-/// and the two handles' raw text. The count statements carry the same joins
-/// so they count exactly the rows the page can return.
+/// and the two handles' raw text.
+///
+/// Export's count statements carry the same joins, because a search filter can
+/// name a conversation column and would not compile against `messages` alone.
+/// The conversation read route's count is `FROM messages m` with no joins: its
+/// filter is a conversation id and a timestamp range, both on `m`. The two
+/// still count the same rows, because `conversations.chat_handle_id` is
+/// `NOT NULL` with a foreign key to `handles`, so the one inner join here
+/// never drops a row (`hs` is a `LEFT JOIN` and cannot drop one either).
 pub(crate) fn messages_from_sql() -> String {
     format!("FROM messages m\n{}", conversation_join_sql())
 }

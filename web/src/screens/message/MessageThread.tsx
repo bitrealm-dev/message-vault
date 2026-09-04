@@ -11,7 +11,7 @@ export default function MessageThread({
   findTerm,
   matchIds,
   activeMatch,
-  yearMode,
+  activeYear,
   footerLabel,
   offset,
   total,
@@ -25,7 +25,8 @@ export default function MessageThread({
   findTerm: string;
   matchIds: string[];
   activeMatch: number;
-  yearMode: boolean;
+  /** The year the person is filtered to, or `null` while browsing all years. */
+  activeYear: number | null;
   footerLabel: string;
   offset: number;
   total: number;
@@ -33,6 +34,7 @@ export default function MessageThread({
   onNextPage: () => void;
   onAttachmentClick: (att: MessageAttachment, source: string) => void;
 }) {
+  const yearMode = activeYear !== null;
   return (
     <>
       <div className="flex-1 overflow-auto">
@@ -43,7 +45,9 @@ export default function MessageThread({
             {apiErrorMessage(error, "Could not load messages.")}
           </div>
         ) : messages.length === 0 ? (
-          <div className="p-4 text-[0.813rem] text-muted">No messages in this conversation</div>
+          <div className="p-4 text-[0.813rem] text-muted">
+            {yearMode ? `No messages in ${activeYear}` : "No messages in this conversation"}
+          </div>
         ) : (
           messages.map((m) => (
             <MessageBubble

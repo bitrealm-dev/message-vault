@@ -15,10 +15,10 @@ export type Participant = Schema["Participant"];
 /** One conversation in the browse list. */
 export type Conversation = Schema["ConversationSummary"];
 
-/** One participant on a message the Export routes return. */
+/** One participant on a message. */
 export type MessageParticipant = Schema["Participant"];
 
-/** The conversation a message belongs to, as the Export routes return it. */
+/** The conversation a message belongs to, as a message carries it. */
 export type MessageConversation = Schema["MessageConversation"];
 
 /** One attachment on a message. */
@@ -27,7 +27,8 @@ export type MessageAttachment = Schema["Attachment"];
 /** One tapback reaction on a message. */
 export type MessageTapback = Schema["Tapback"];
 
-/** One message as the Export routes return it. */
+/** One message, as `GET /v1/conversations/{id}/messages` returns it — the
+ * same row shape the Export routes return, since one loader serves both. */
 export type Message = Schema["Message"];
 
 export type AttachmentMediaMode = "copy" | "convert" | "compress" | "skip";

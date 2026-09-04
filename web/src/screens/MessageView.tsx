@@ -152,7 +152,7 @@ export default function MessageView({
         findTerm={deferredFindTerm}
         matchIds={matchIds}
         activeMatch={activeMatch}
-        yearMode={yearMode}
+        activeYear={activeYear}
         footerLabel={footerLabel}
         offset={offset}
         total={total}

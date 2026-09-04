@@ -7507,7 +7507,7 @@
           },
           "name": {
             "type": "string",
-            "description": "What to show for this person. Never empty: the rule ends at the handle."
+            "description": "What to show for this person. Never empty — but the query's own\n`COALESCE` ends at `''`, not at the handle, since a handle-less\nparticipant has no handle to end at. What keeps it non-empty is the\nimport invariant described in this module's doc comment."
           },
           "service": {
             "type": [

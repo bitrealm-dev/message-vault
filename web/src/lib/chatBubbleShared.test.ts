@@ -175,6 +175,14 @@ describe("tapbackGroups", () => {
     expect(tapbackGroups(m)).toEqual([{ emoji: "❤️", count: 2, senderNames: ["Ada", "Bob"] }]);
   });
 
+  // The exporter's kind vocabulary ends `emoji|sticker`. A sticker tapback
+  // carries no emoji of its own, so without a glyph the badge showed the
+  // literal word "sticker".
+  it("gives a sticker tapback a glyph rather than the word", () => {
+    const m = message({ conversation, tapbacks: [tapback({ kind: "sticker", sender: "+1555" })] });
+    expect(tapbackGroups(m)[0]?.emoji).toBe("🖼️");
+  });
+
   it("names the account owner Me", () => {
     const m = message({ conversation, tapbacks: [tapback({ kind: "liked", is_from_me: true })] });
     expect(tapbackGroups(m)[0]?.senderNames).toEqual(["Me"]);

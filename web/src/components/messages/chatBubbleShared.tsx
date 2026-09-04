@@ -58,6 +58,10 @@ const TAPBACK_KIND_EMOJI: Record<string, string> = {
   laughed: "😂",
   emphasized: "‼️",
   questioned: "❓",
+  // The exporter's kind vocabulary ends `emoji|sticker`. An `emoji` tapback
+  // carries its own character in `emoji`; a `sticker` one carries nothing, so
+  // without an entry here the badge rendered the literal word "sticker".
+  sticker: "🖼️",
 };
 
 /** Who left a tapback: "Me" for the account owner, else the matching participant's name. */
@@ -204,7 +208,7 @@ export function ServiceRow({
 
 /**
  * Shared branded-service row: ServiceRow + sender/time header.
- * Color and optional header slots stay per-service; body is `children`.
+ * Color and header alignment stay per-service; body is `children`.
  */
 export function ServiceBubbleShell({
   message,
@@ -213,7 +217,6 @@ export function ServiceBubbleShell({
   senderStyle,
   timeClassName = "text-[0.75rem] text-muted",
   headerAlignClassName,
-  headerExtra,
   children,
 }: {
   message: Message;
@@ -223,7 +226,6 @@ export function ServiceBubbleShell({
   timeClassName?: string;
   /** Extra flex alignment on the header row (e.g. `items-center`). */
   headerAlignClassName?: string;
-  headerExtra?: ReactNode;
   children: ReactNode;
 }) {
   const mine = message.is_from_me;
@@ -241,7 +243,6 @@ export function ServiceBubbleShell({
           {senderName(message)}
         </span>
         <span className={timeClassName}>{formatMessageTime(message.timestamp)}</span>
-        {headerExtra}
       </div>
       {children}
     </ServiceRow>

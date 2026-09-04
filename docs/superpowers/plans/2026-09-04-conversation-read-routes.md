@@ -566,10 +566,19 @@ Expected: `All pre-PR checks passed.`
 ```bash
 grep -rn 'export/messages\|exportMessages\|countExportMessages' web/src --include=*.ts --include=*.tsx | grep -v '\.test\.'
 ls web/src/lib/fetchConversationById.ts 2>&1
-grep -n 'reactions\|tapbacks' web/src/lib/types.ts
+grep -n 'Schema\["Message"\]' web/src/lib/types.ts
 ```
-Expected: the first lists only `vaultApi.ts` and the Export screen; the second
-says no such file; the third shows `tapbacks` and no `reactions`.
+Expected: the first lists only the two generated `vaultApi.types.ts` path
+entries — the fix wave deleted `exportMessages` and `countExportMessages`, which
+had no caller left once `useConversationMessages` moved to the read route, and
+the Export screen goes through `useTauriJob` rather than either; the second says
+no such file; the third shows `Message` as a bare `Schema["Message"]` alias.
+
+The check written here first — `grep -n 'reactions|tapbacks' web/src/lib/types.ts`
+"shows `tapbacks` and no `reactions`" — is obsolete and now shows neither.
+Task 7 Step 1 deleted the hand-written field list from `types.ts`, so `Message`
+names no fields at all and the generated type carries `tapbacks`. That is the
+outcome the task wanted; the check was written against the shape it replaced.
 
 - [ ] **Step 3: Open the pull request against main, wait for CI, squash-merge.**
 
@@ -594,6 +603,15 @@ The spec also lists route tests for `MessageView`; Task 7 adds tests for
 `MessageThread` and Task 6 for `MessageRoute`, and `MessageView` already has
 coverage through the drawer tests — if the reviewer finds it does not, that is a
 fair finding.
+
+A message's `sender` is still `hs.raw` — the sender handle's raw text, read
+straight off the join in `load_messages` — rather than a name resolved through
+`db::participant_names`, which the spec mentions doing. The practical effect is
+nil: every screen that shows a sender name looks the handle up in
+`conversation.participants`, which `load_messages` fills from
+`load_for_conversations`, so the displayed name already comes from the naming
+module. `sender` is the identity the row matches on, not the text anyone reads.
+Recorded here so the next pull request does not re-open it.
 
 **Risk to watch.** Task 1 is a rename across a wire shape that `vault-pull`
 mirrors. PR 3 shipped a silent data loss in exactly that crate because its copy

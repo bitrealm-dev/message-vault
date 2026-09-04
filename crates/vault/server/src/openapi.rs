@@ -262,6 +262,7 @@ mod tests {
             "/v1/saved-searches/{id}",
             "/v1/search/fields",
             "/v1/conversations",
+            "/v1/conversations/{id}",
             "/v1/conversations/{id}/sources",
             "/v1/conversations/{id}/messages",
         ] {
