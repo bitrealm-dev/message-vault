@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::extract::{Json, Path as AxumPath, Query};
 use axum::extract::State;
+use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use sqlx::AnyConnection;
 
@@ -13,6 +14,7 @@ use crate::db::participant_names::{Participant, load_for_chat_handle, load_for_c
 use crate::db::sql::{
     SqlParam, bind_args, fold_in_id_chunks, in_placeholders, renumber_placeholders,
 };
+use crate::db::trash::{restore_conversation, trash_conversation};
 use crate::paging::{DEFAULT_LIST_LIMIT, MAX_LIST_OFFSET, Page, page_params};
 use crate::server::{ApiError, AppState, FullAccess};
 
@@ -727,6 +729,62 @@ pub(crate) async fn conversation_messages_handler(
     result
         .map(Json)
         .ok_or_else(|| ApiError::NotFound("conversation not found".into()))
+}
+
+/// Put a conversation in the trash. Idempotent: trashing an
+/// already-trashed conversation still answers 204.
+#[utoipa::path(
+    post,
+    path = "/v1/conversations/{id}/trash",
+    tag = "Conversations",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Conversation id")),
+    responses(
+        (status = 204, description = "Trashed"),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn conversation_trash_handler(
+    State(state): State<AppState>,
+    FullAccess(auth): FullAccess,
+    AxumPath(conversation_id): AxumPath<i64>,
+) -> Result<StatusCode, ApiError> {
+    let mut conn = state.db.acquire().await?;
+    if trash_conversation(&mut conn, &auth.account_id, conversation_id).await? {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::NotFound("conversation not found".into()))
+    }
+}
+
+/// Take a conversation out of the trash. Idempotent: restoring a
+/// conversation that was not trashed still answers 204.
+#[utoipa::path(
+    post,
+    path = "/v1/conversations/{id}/restore",
+    tag = "Conversations",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Conversation id")),
+    responses(
+        (status = 204, description = "Restored"),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn conversation_restore_handler(
+    State(state): State<AppState>,
+    FullAccess(auth): FullAccess,
+    AxumPath(conversation_id): AxumPath<i64>,
+) -> Result<StatusCode, ApiError> {
+    let mut conn = state.db.acquire().await?;
+    if restore_conversation(&mut conn, &auth.account_id, conversation_id).await? {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::NotFound("conversation not found".into()))
+    }
 }
 
 #[cfg(test)]
@@ -2261,6 +2319,288 @@ mod tests {
         )
         .await;
         assert_eq!(status, axum::http::StatusCode::OK);
+    }
+
+    async fn trashed_conversation_row_count(
+        conn: &mut AnyConnection,
+        account_id: &str,
+        id: i64,
+    ) -> i64 {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM trashed_conversations
+             WHERE account_id = $1 AND conversation_id = $2",
+        )
+        .bind(account_id)
+        .bind(id)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn conversation_trash_drops_it_from_the_list() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let user = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+        crate::test_support::seed_one_message(&state, &user.account_id).await;
+        let list: serde_json::Value =
+            crate::test_support::get_json(&state, "/v1/conversations", &user.token).await;
+        let id = list["items"][0]["id"].as_i64().unwrap();
+
+        let status = crate::test_support::post_status(
+            &state,
+            &format!("/v1/conversations/{id}/trash"),
+            &user.token,
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+
+        let list_after: serde_json::Value =
+            crate::test_support::get_json(&state, "/v1/conversations", &user.token).await;
+        assert_eq!(
+            list_after["total"], 0,
+            "a trashed conversation must leave the conversations list"
+        );
+    }
+
+    #[tokio::test]
+    async fn conversation_trash_twice_is_204_with_no_second_marker() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let user = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+        crate::test_support::seed_one_message(&state, &user.account_id).await;
+        let list: serde_json::Value =
+            crate::test_support::get_json(&state, "/v1/conversations", &user.token).await;
+        let id = list["items"][0]["id"].as_i64().unwrap();
+        let path = format!("/v1/conversations/{id}/trash");
+
+        for _ in 0..2 {
+            let status =
+                crate::test_support::post_status(&state, &path, &user.token, serde_json::json!({}))
+                    .await;
+            assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+        }
+
+        let mut conn = state.db.acquire().await.unwrap();
+        assert_eq!(
+            trashed_conversation_row_count(&mut conn, &user.account_id, id).await,
+            1,
+            "trashing twice must not create a second marker row"
+        );
+    }
+
+    #[tokio::test]
+    async fn conversation_restore_brings_it_back_to_the_list() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let user = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+        crate::test_support::seed_one_message(&state, &user.account_id).await;
+        let list: serde_json::Value =
+            crate::test_support::get_json(&state, "/v1/conversations", &user.token).await;
+        let id = list["items"][0]["id"].as_i64().unwrap();
+        crate::test_support::post_status(
+            &state,
+            &format!("/v1/conversations/{id}/trash"),
+            &user.token,
+            serde_json::json!({}),
+        )
+        .await;
+
+        let status = crate::test_support::post_status(
+            &state,
+            &format!("/v1/conversations/{id}/restore"),
+            &user.token,
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+
+        let list_after: serde_json::Value =
+            crate::test_support::get_json(&state, "/v1/conversations", &user.token).await;
+        assert_eq!(
+            list_after["total"], 1,
+            "a restored conversation must come back to the conversations list"
+        );
+    }
+
+    #[tokio::test]
+    async fn conversation_restore_twice_is_204_with_marker_gone() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let user = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+        crate::test_support::seed_one_message(&state, &user.account_id).await;
+        let list: serde_json::Value =
+            crate::test_support::get_json(&state, "/v1/conversations", &user.token).await;
+        let id = list["items"][0]["id"].as_i64().unwrap();
+        crate::test_support::post_status(
+            &state,
+            &format!("/v1/conversations/{id}/trash"),
+            &user.token,
+            serde_json::json!({}),
+        )
+        .await;
+        let path = format!("/v1/conversations/{id}/restore");
+
+        for _ in 0..2 {
+            let status =
+                crate::test_support::post_status(&state, &path, &user.token, serde_json::json!({}))
+                    .await;
+            assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+        }
+
+        let mut conn = state.db.acquire().await.unwrap();
+        assert_eq!(
+            trashed_conversation_row_count(&mut conn, &user.account_id, id).await,
+            0,
+            "restoring twice must leave no marker row"
+        );
+    }
+
+    #[tokio::test]
+    async fn conversation_trash_404s_for_an_unknown_id() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let user = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+
+        let status = crate::test_support::post_status(
+            &state,
+            "/v1/conversations/999999/trash",
+            &user.token,
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn conversation_restore_404s_for_an_unknown_id() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let user = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+
+        let status = crate::test_support::post_status(
+            &state,
+            "/v1/conversations/999999/restore",
+            &user.token,
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn conversation_trash_404s_for_another_accounts_conversation() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let alice = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+        crate::test_support::seed_one_message(&state, &alice.account_id).await;
+        let alice_list: serde_json::Value =
+            crate::test_support::get_json(&state, "/v1/conversations", &alice.token).await;
+        let alice_conversation_id = alice_list["items"][0]["id"].as_i64().unwrap();
+
+        let bob = crate::test_support::register_via_api(&state, "bob", "hunter2hunter2").await;
+        crate::test_support::seed_one_message(&state, &bob.account_id).await;
+
+        // Bob trashing Alice's conversation id must 404, not 403 — a 403
+        // would confirm the id exists in someone else's vault.
+        let status = crate::test_support::post_status(
+            &state,
+            &format!("/v1/conversations/{alice_conversation_id}/trash"),
+            &bob.token,
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+
+        let mut conn = state.db.acquire().await.unwrap();
+        assert_eq!(
+            trashed_conversation_row_count(&mut conn, &alice.account_id, alice_conversation_id)
+                .await,
+            0,
+            "Bob's request must not trash Alice's conversation"
+        );
+    }
+
+    #[tokio::test]
+    async fn conversation_restore_404s_for_another_accounts_conversation() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let alice = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+        crate::test_support::seed_one_message(&state, &alice.account_id).await;
+        let alice_list: serde_json::Value =
+            crate::test_support::get_json(&state, "/v1/conversations", &alice.token).await;
+        let alice_conversation_id = alice_list["items"][0]["id"].as_i64().unwrap();
+        let mut conn = state.db.acquire().await.unwrap();
+        sqlx::query(
+            "INSERT INTO trashed_conversations (account_id, conversation_id) VALUES ($1, $2)",
+        )
+        .bind(&alice.account_id)
+        .bind(alice_conversation_id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        let bob = crate::test_support::register_via_api(&state, "bob", "hunter2hunter2").await;
+        crate::test_support::seed_one_message(&state, &bob.account_id).await;
+
+        let status = crate::test_support::post_status(
+            &state,
+            &format!("/v1/conversations/{alice_conversation_id}/restore"),
+            &bob.token,
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+
+        let mut conn = state.db.acquire().await.unwrap();
+        assert_eq!(
+            trashed_conversation_row_count(&mut conn, &alice.account_id, alice_conversation_id)
+                .await,
+            1,
+            "Bob's request must not restore Alice's conversation"
+        );
+    }
+
+    #[tokio::test]
+    async fn conversation_trash_requires_auth() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let user = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+        crate::test_support::seed_one_message(&state, &user.account_id).await;
+        let list: serde_json::Value =
+            crate::test_support::get_json(&state, "/v1/conversations", &user.token).await;
+        let id = list["items"][0]["id"].as_i64().unwrap();
+
+        let status = crate::test_support::post_status(
+            &state,
+            &format!("/v1/conversations/{id}/trash"),
+            "not-a-token",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn conversation_restore_requires_auth() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let user = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+        crate::test_support::seed_one_message(&state, &user.account_id).await;
+        let list: serde_json::Value =
+            crate::test_support::get_json(&state, "/v1/conversations", &user.token).await;
+        let id = list["items"][0]["id"].as_i64().unwrap();
+
+        let status = crate::test_support::post_status(
+            &state,
+            &format!("/v1/conversations/{id}/restore"),
+            "not-a-token",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
     }
 
     /// A signed-in account and one conversation with no messages yet, for

@@ -81,6 +81,8 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(crate::contacts_api::contact_summaries_handler))
         .routes(routes!(crate::contacts_api::contact_detail_handler))
         .routes(routes!(crate::contacts_api::contact_mutate_handler))
+        .routes(routes!(crate::contacts_api::contact_trash_handler))
+        .routes(routes!(crate::contacts_api::contact_restore_handler))
         .routes(routes!(crate::contacts_api::contact_match_handler))
         .routes(routes!(crate::contacts_api::address_book_load_handler))
         .routes(routes!(crate::contact_groups_api::contact_groups_list))
@@ -123,6 +125,12 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         ))
         .routes(routes!(
             crate::conversations_api::conversation_messages_handler
+        ))
+        .routes(routes!(
+            crate::conversations_api::conversation_trash_handler
+        ))
+        .routes(routes!(
+            crate::conversations_api::conversation_restore_handler
         ))
         .routes(routes!(crate::import::imports_list_handler))
         .routes(routes!(crate::import::imports_create_handler))
@@ -251,6 +259,8 @@ mod tests {
             "/v1/contacts",
             "/v1/contacts/summaries",
             "/v1/contacts/{id}",
+            "/v1/contacts/{id}/trash",
+            "/v1/contacts/{id}/restore",
             "/v1/contacts/match",
             "/v1/contact-groups",
             "/v1/contact-groups/{id}",
@@ -265,6 +275,8 @@ mod tests {
             "/v1/conversations/{id}",
             "/v1/conversations/{id}/sources",
             "/v1/conversations/{id}/messages",
+            "/v1/conversations/{id}/trash",
+            "/v1/conversations/{id}/restore",
         ] {
             assert!(paths.contains_key(p), "missing {p}");
         }

@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use crate::extract::{Json, Path as AxumPath, Query};
 use anyhow::{Result as AnyResult, bail};
 use axum::extract::State;
+use axum::http::StatusCode;
 use message_ir::HandleType;
 use serde::{Deserialize, Serialize};
 use sqlx::AnyConnection;
@@ -15,6 +16,7 @@ use crate::db::contacts::{self, contact_id_for_handle};
 use crate::db::dialect::{engine_of, group_concat_unit_separator, order_by_name_ci};
 use crate::db::handles::{infer_handle_type_from_shape, normalize_handle};
 use crate::db::sql::{SqlParam, bind_args, in_placeholders, renumber_placeholders};
+use crate::db::trash::{restore_contact, trash_contact};
 use crate::paging::{
     DEFAULT_LIST_LIMIT, MAX_CONTACT_SUMMARY_IDS, MAX_LIST_OFFSET, Page, PageQuery, page_params,
 };
@@ -1228,6 +1230,62 @@ pub(crate) async fn contact_mutate_handler(
             .await?
             .ok_or_else(|| ApiError::Internal("contact missing after mutate".into()))
             .map(Json),
+    }
+}
+
+/// Put a contact in the trash. Idempotent: trashing an already-trashed
+/// contact still answers 204.
+#[utoipa::path(
+    post,
+    path = "/v1/contacts/{id}/trash",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Contact id")),
+    responses(
+        (status = 204, description = "Trashed"),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_trash_handler(
+    State(state): State<AppState>,
+    FullAccess(auth): FullAccess,
+    AxumPath(contact_id): AxumPath<i64>,
+) -> Result<StatusCode, ApiError> {
+    let mut conn = state.db.acquire().await?;
+    if trash_contact(&mut conn, &auth.account_id, contact_id).await? {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::NotFound("contact not found".into()))
+    }
+}
+
+/// Take a contact out of the trash. Idempotent: restoring a contact that
+/// was not trashed still answers 204.
+#[utoipa::path(
+    post,
+    path = "/v1/contacts/{id}/restore",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Contact id")),
+    responses(
+        (status = 204, description = "Restored"),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_restore_handler(
+    State(state): State<AppState>,
+    FullAccess(auth): FullAccess,
+    AxumPath(contact_id): AxumPath<i64>,
+) -> Result<StatusCode, ApiError> {
+    let mut conn = state.db.acquire().await?;
+    if restore_contact(&mut conn, &auth.account_id, contact_id).await? {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::NotFound("contact not found".into()))
     }
 }
 
@@ -2908,5 +2966,258 @@ mod tests {
         .await;
         assert!(summaries["items"].is_array());
         assert!(summaries.get("contacts").is_none());
+    }
+
+    async fn trashed_contact_row_count(conn: &mut AnyConnection, account_id: &str, id: i64) -> i64 {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM trashed_contacts WHERE account_id = $1 AND contact_id = $2",
+        )
+        .bind(account_id)
+        .bind(id)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn contact_trash_drops_it_from_the_list() {
+        let (vault, token, _account) = contacts_fixture_with_handles(&["+15550100"]).await;
+        let list: serde_json::Value =
+            crate::test_support::get_json(&vault.state, "/v1/contacts", &token).await;
+        let id = list["items"][0]["id"].as_i64().unwrap();
+
+        let status = crate::test_support::post_status(
+            &vault.state,
+            &format!("/v1/contacts/{id}/trash"),
+            &token,
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+
+        let list_after: serde_json::Value =
+            crate::test_support::get_json(&vault.state, "/v1/contacts", &token).await;
+        assert_eq!(
+            list_after["total"], 0,
+            "a trashed contact must leave the contacts list"
+        );
+    }
+
+    #[tokio::test]
+    async fn contact_trash_twice_is_204_with_no_second_marker() {
+        let (vault, token, account) = contacts_fixture_with_handles(&["+15550100"]).await;
+        let list: serde_json::Value =
+            crate::test_support::get_json(&vault.state, "/v1/contacts", &token).await;
+        let id = list["items"][0]["id"].as_i64().unwrap();
+        let path = format!("/v1/contacts/{id}/trash");
+
+        for _ in 0..2 {
+            let status = crate::test_support::post_status(
+                &vault.state,
+                &path,
+                &token,
+                serde_json::json!({}),
+            )
+            .await;
+            assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+        }
+
+        let mut conn = vault.state.db.acquire().await.unwrap();
+        assert_eq!(
+            trashed_contact_row_count(&mut conn, &account.account_id, id).await,
+            1,
+            "trashing twice must not create a second marker row"
+        );
+    }
+
+    #[tokio::test]
+    async fn contact_restore_brings_it_back_to_the_list() {
+        let (vault, token, _account) = contacts_fixture_with_handles(&["+15550100"]).await;
+        let list: serde_json::Value =
+            crate::test_support::get_json(&vault.state, "/v1/contacts", &token).await;
+        let id = list["items"][0]["id"].as_i64().unwrap();
+        crate::test_support::post_status(
+            &vault.state,
+            &format!("/v1/contacts/{id}/trash"),
+            &token,
+            serde_json::json!({}),
+        )
+        .await;
+
+        let status = crate::test_support::post_status(
+            &vault.state,
+            &format!("/v1/contacts/{id}/restore"),
+            &token,
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+
+        let list_after: serde_json::Value =
+            crate::test_support::get_json(&vault.state, "/v1/contacts", &token).await;
+        assert_eq!(
+            list_after["total"], 1,
+            "a restored contact must come back to the contacts list"
+        );
+    }
+
+    #[tokio::test]
+    async fn contact_restore_twice_is_204_with_marker_gone() {
+        let (vault, token, account) = contacts_fixture_with_handles(&["+15550100"]).await;
+        let list: serde_json::Value =
+            crate::test_support::get_json(&vault.state, "/v1/contacts", &token).await;
+        let id = list["items"][0]["id"].as_i64().unwrap();
+        crate::test_support::post_status(
+            &vault.state,
+            &format!("/v1/contacts/{id}/trash"),
+            &token,
+            serde_json::json!({}),
+        )
+        .await;
+        let path = format!("/v1/contacts/{id}/restore");
+
+        for _ in 0..2 {
+            let status = crate::test_support::post_status(
+                &vault.state,
+                &path,
+                &token,
+                serde_json::json!({}),
+            )
+            .await;
+            assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+        }
+
+        let mut conn = vault.state.db.acquire().await.unwrap();
+        assert_eq!(
+            trashed_contact_row_count(&mut conn, &account.account_id, id).await,
+            0,
+            "restoring twice must leave no marker row"
+        );
+    }
+
+    #[tokio::test]
+    async fn contact_trash_404s_for_an_unknown_id() {
+        let (vault, token, _account) = contacts_fixture_with_handles(&[]).await;
+
+        let status = crate::test_support::post_status(
+            &vault.state,
+            "/v1/contacts/999999/trash",
+            &token,
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn contact_restore_404s_for_an_unknown_id() {
+        let (vault, token, _account) = contacts_fixture_with_handles(&[]).await;
+
+        let status = crate::test_support::post_status(
+            &vault.state,
+            "/v1/contacts/999999/restore",
+            &token,
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn contact_trash_404s_for_another_accounts_contact() {
+        let (vault, alice_token, alice) = contacts_fixture_with_handles(&["+15550100"]).await;
+        let alice_list: serde_json::Value =
+            crate::test_support::get_json(&vault.state, "/v1/contacts", &alice_token).await;
+        let alice_contact_id = alice_list["items"][0]["id"].as_i64().unwrap();
+
+        let bob =
+            crate::test_support::register_via_api(&vault.state, "bob", "hunter2hunter2").await;
+
+        // Bob trashing Alice's contact id must 404, not 403 — a 403 would
+        // confirm the id exists in someone else's vault.
+        let status = crate::test_support::post_status(
+            &vault.state,
+            &format!("/v1/contacts/{alice_contact_id}/trash"),
+            &bob.token,
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+
+        let mut conn = vault.state.db.acquire().await.unwrap();
+        assert_eq!(
+            trashed_contact_row_count(&mut conn, &alice.account_id, alice_contact_id).await,
+            0,
+            "Bob's request must not trash Alice's contact"
+        );
+    }
+
+    #[tokio::test]
+    async fn contact_restore_404s_for_another_accounts_contact() {
+        let (vault, alice_token, alice) = contacts_fixture_with_handles(&["+15550100"]).await;
+        let alice_list: serde_json::Value =
+            crate::test_support::get_json(&vault.state, "/v1/contacts", &alice_token).await;
+        let alice_contact_id = alice_list["items"][0]["id"].as_i64().unwrap();
+        let mut conn = vault.state.db.acquire().await.unwrap();
+        sqlx::query("INSERT INTO trashed_contacts (account_id, contact_id) VALUES ($1, $2)")
+            .bind(&alice.account_id)
+            .bind(alice_contact_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        drop(conn);
+
+        let bob =
+            crate::test_support::register_via_api(&vault.state, "bob", "hunter2hunter2").await;
+
+        let status = crate::test_support::post_status(
+            &vault.state,
+            &format!("/v1/contacts/{alice_contact_id}/restore"),
+            &bob.token,
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+
+        let mut conn = vault.state.db.acquire().await.unwrap();
+        assert_eq!(
+            trashed_contact_row_count(&mut conn, &alice.account_id, alice_contact_id).await,
+            1,
+            "Bob's request must not restore Alice's contact"
+        );
+    }
+
+    #[tokio::test]
+    async fn contact_trash_requires_auth() {
+        let (vault, token, _account) = contacts_fixture_with_handles(&["+15550100"]).await;
+        let list: serde_json::Value =
+            crate::test_support::get_json(&vault.state, "/v1/contacts", &token).await;
+        let id = list["items"][0]["id"].as_i64().unwrap();
+
+        let status = crate::test_support::post_status(
+            &vault.state,
+            &format!("/v1/contacts/{id}/trash"),
+            "not-a-token",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn contact_restore_requires_auth() {
+        let (vault, token, _account) = contacts_fixture_with_handles(&["+15550100"]).await;
+        let list: serde_json::Value =
+            crate::test_support::get_json(&vault.state, "/v1/contacts", &token).await;
+        let id = list["items"][0]["id"].as_i64().unwrap();
+
+        let status = crate::test_support::post_status(
+            &vault.state,
+            &format!("/v1/contacts/{id}/restore"),
+            "not-a-token",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
     }
 }

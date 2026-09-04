@@ -590,8 +590,12 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     eprintln!(
         "  GET  /v1/conversations/{{id}}/messages?limit=&offset=&year=  (a conversation's messages, a page at a time)"
     );
+    eprintln!("  POST /v1/conversations/{{id}}/trash        (trash a conversation)");
+    eprintln!("  POST /v1/conversations/{{id}}/restore      (take a conversation out of trash)");
     eprintln!("  GET  /v1/contacts?q=&limit=&offset=     (browse contacts)");
     eprintln!("  PATCH /v1/contacts/{{id}}                  (edit a contact)");
+    eprintln!("  POST /v1/contacts/{{id}}/trash             (trash a contact)");
+    eprintln!("  POST /v1/contacts/{{id}}/restore           (take a contact out of trash)");
     eprintln!("  GET  /v1/export/messages/count?q=&account=  (export match counts)");
     eprintln!("  GET  /v1/assets/{{sha256}}?source=&account=  (download content-addressed media)");
     eprintln!("  GET  /v1/imports       (list past import sessions with stats)");
