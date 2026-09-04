@@ -2874,6 +2874,182 @@
         ]
       }
     },
+    "/v1/conversations/{id}": {
+      "get": {
+        "tags": [
+          "Conversations"
+        ],
+        "summary": "One conversation, in the same shape a list row already has — so a caller\nthat opens a thread from a list does not have to convert between two\nshapes, and paging through the whole list to find one id is never\nnecessary. Trash is a property the list applies, not a gate on reading:\na trashed conversation still answers here.",
+        "operationId": "conversation_detail_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Conversation id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationSummary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/conversations/{id}/messages": {
+      "get": {
+        "tags": [
+          "Conversations"
+        ],
+        "summary": "A conversation's messages, ascending by timestamp then `sort_order`. The\nread path a screen uses to open a thread: no search query to compose,\njust the conversation id.",
+        "operationId": "conversation_messages_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Conversation id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, default 40, max 500",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Page offset, max 50000",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "year",
+            "in": "query",
+            "description": "Narrow to one calendar year, in the vault's stored offset",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Message"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/conversations/{id}/sources": {
       "get": {
         "tags": [
@@ -2994,7 +3170,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_ExportMessage"
+                  "$ref": "#/components/schemas/Page_Message"
                 }
               }
             }
@@ -5041,6 +5217,58 @@
           }
         }
       },
+      "Attachment": {
+        "type": "object",
+        "description": "One attachment of an exported message.",
+        "properties": {
+          "is_sticker": {
+            "type": "boolean",
+            "description": "True for sticker files."
+          },
+          "mime_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MIME type, when known."
+          },
+          "missing_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the file is missing, when it is."
+          },
+          "original_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "File name from the export."
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Path inside the export."
+          },
+          "sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Content fingerprint of the stored bytes."
+          },
+          "transcription": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "OCR/ASR transcription, when processed."
+          }
+        }
+      },
       "AuthCheckResponse": {
         "type": "object",
         "description": "Token check result: account, username, sources.",
@@ -6084,97 +6312,6 @@
           }
         }
       },
-      "ExportAttachment": {
-        "type": "object",
-        "description": "One attachment of an exported message.",
-        "properties": {
-          "is_sticker": {
-            "type": "boolean",
-            "description": "True for sticker files."
-          },
-          "mime_type": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "MIME type, when known."
-          },
-          "missing_reason": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Why the file is missing, when it is."
-          },
-          "original_name": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "File name from the export."
-          },
-          "path": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Path inside the export."
-          },
-          "sha256": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Content fingerprint of the stored bytes."
-          },
-          "transcription": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "OCR/ASR transcription, when processed."
-          }
-        }
-      },
-      "ExportConversation": {
-        "type": "object",
-        "description": "The conversation a message belongs to.",
-        "required": [
-          "id",
-          "chat_identifier",
-          "conversation_type",
-          "participants"
-        ],
-        "properties": {
-          "chat_identifier": {
-            "type": "string",
-            "description": "Original chat id from the export."
-          },
-          "conversation_type": {
-            "type": "string",
-            "description": "`individual` or `group`."
-          },
-          "group_title": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Group label, when set."
-          },
-          "id": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Conversation row id."
-          },
-          "participants": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Participant"
-            },
-            "description": "Participants of the conversation."
-          }
-        }
-      },
       "ExportCountResponse": {
         "type": "object",
         "description": "Match counts for an export query.",
@@ -6208,173 +6345,6 @@
             "format": "int64",
             "description": "Sum of known `size_bytes` for those unique fingerprints (unknown sizes omitted).",
             "minimum": 0
-          }
-        }
-      },
-      "ExportMessage": {
-        "type": "object",
-        "description": "One exported message.",
-        "required": [
-          "id",
-          "source",
-          "timestamp",
-          "sort_order",
-          "is_from_me",
-          "is_announcement",
-          "is_reply",
-          "num_replies",
-          "conversation",
-          "attachments",
-          "tapbacks"
-        ],
-        "properties": {
-          "attachments": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ExportAttachment"
-            },
-            "description": "Attachments on this message."
-          },
-          "conversation": {
-            "$ref": "#/components/schemas/ExportConversation",
-            "description": "The conversation this message belongs to."
-          },
-          "guid": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Export GUID for replies and grouping."
-          },
-          "id": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Message row id."
-          },
-          "is_announcement": {
-            "type": "boolean",
-            "description": "True for group announcements."
-          },
-          "is_from_me": {
-            "type": "boolean",
-            "description": "True for messages sent by the account owner."
-          },
-          "is_reply": {
-            "type": "boolean",
-            "description": "True when part of a reply thread."
-          },
-          "num_replies": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Replies in this thread."
-          },
-          "sender": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Sender handle for incoming messages."
-          },
-          "service": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Platform service, e.g. `imessage`, when known."
-          },
-          "sort_order": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Ordering key within the conversation."
-          },
-          "source": {
-            "type": "string",
-            "description": "Import source id."
-          },
-          "subject": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Subject line, when set."
-          },
-          "tapbacks": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ExportTapback"
-            },
-            "description": "Reactions on this message."
-          },
-          "text": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Body text, when present."
-          },
-          "thread_originator_guid": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "GUID of the message this replies to."
-          },
-          "thread_originator_part": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Part index of the originator (for tapbacks)."
-          },
-          "timestamp": {
-            "type": "string",
-            "description": "Message timestamp (local)."
-          },
-          "timestamp_utc": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "UTC timestamp, when known."
-          }
-        }
-      },
-      "ExportTapback": {
-        "type": "object",
-        "description": "One tapback reaction on an exported message.",
-        "required": [
-          "part_index",
-          "kind",
-          "is_from_me"
-        ],
-        "properties": {
-          "emoji": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Emoji form of the reaction, when one exists."
-          },
-          "is_from_me": {
-            "type": "boolean",
-            "description": "True when the account owner reacted."
-          },
-          "kind": {
-            "type": "string",
-            "description": "Reaction type, e.g. `love`."
-          },
-          "part_index": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Attachment part the reaction applies to."
-          },
-          "sender": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Reactor handle for incoming reactions."
           }
         }
       },
@@ -6958,6 +6928,174 @@
           }
         }
       },
+      "Message": {
+        "type": "object",
+        "description": "One exported message.",
+        "required": [
+          "id",
+          "source",
+          "timestamp",
+          "sort_order",
+          "is_from_me",
+          "is_announcement",
+          "is_reply",
+          "num_replies",
+          "conversation",
+          "attachments",
+          "tapbacks"
+        ],
+        "properties": {
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Attachment"
+            },
+            "description": "Attachments on this message."
+          },
+          "conversation": {
+            "$ref": "#/components/schemas/MessageConversation",
+            "description": "The conversation this message belongs to."
+          },
+          "guid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Export GUID for replies and grouping."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Message row id."
+          },
+          "is_announcement": {
+            "type": "boolean",
+            "description": "True for group announcements."
+          },
+          "is_from_me": {
+            "type": "boolean",
+            "description": "True for messages sent by the account owner."
+          },
+          "is_reply": {
+            "type": "boolean",
+            "description": "True when part of a reply thread."
+          },
+          "num_replies": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Replies in this thread."
+          },
+          "sender": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Sender handle for incoming messages."
+          },
+          "service": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Platform service, e.g. `imessage`, when known."
+          },
+          "sort_order": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Ordering key within the conversation."
+          },
+          "source": {
+            "type": "string",
+            "description": "Import source id."
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Subject line, when set."
+          },
+          "tapbacks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Tapback"
+            },
+            "description": "Reactions on this message."
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Body text, when present."
+          },
+          "thread_originator_guid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "GUID of the message this replies to."
+          },
+          "thread_originator_part": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Part index of the originator (for tapbacks)."
+          },
+          "timestamp": {
+            "type": "string",
+            "description": "Message timestamp (local)."
+          },
+          "timestamp_utc": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "UTC timestamp, when known."
+          }
+        }
+      },
+      "MessageConversation": {
+        "type": "object",
+        "description": "The conversation a message belongs to.",
+        "required": [
+          "id",
+          "chat_identifier",
+          "conversation_type",
+          "participants"
+        ],
+        "properties": {
+          "chat_identifier": {
+            "type": "string",
+            "description": "Original chat id from the export."
+          },
+          "conversation_type": {
+            "type": "string",
+            "description": "`individual` or `group`."
+          },
+          "group_title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Group label, when set."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Conversation row id."
+          },
+          "participants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Participant"
+            },
+            "description": "Participants of the conversation."
+          }
+        }
+      },
       "NamedSet": {
         "type": "object",
         "description": "One Contact Group or Message Tag: its id and name.",
@@ -7184,7 +7322,7 @@
           }
         }
       },
-      "Page_ExportMessage": {
+      "Page_Message": {
         "type": "object",
         "description": "One page of a list.",
         "required": [
@@ -7216,12 +7354,12 @@
                 "attachments": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/ExportAttachment"
+                    "$ref": "#/components/schemas/Attachment"
                   },
                   "description": "Attachments on this message."
                 },
                 "conversation": {
-                  "$ref": "#/components/schemas/ExportConversation",
+                  "$ref": "#/components/schemas/MessageConversation",
                   "description": "The conversation this message belongs to."
                 },
                 "guid": {
@@ -7286,7 +7424,7 @@
                 "tapbacks": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/ExportTapback"
+                    "$ref": "#/components/schemas/Tapback"
                   },
                   "description": "Reactions on this message."
                 },
@@ -7349,9 +7487,7 @@
         "type": "object",
         "description": "One participant of a conversation, carrying the name to show for them:\nthe Contact's name, else what that backup called them in that\nconversation, else the handle.",
         "required": [
-          "name",
-          "handle",
-          "service"
+          "name"
         ],
         "properties": {
           "contact_id": {
@@ -7360,19 +7496,25 @@
               "null"
             ],
             "format": "int64",
-            "description": "Linked vault contact id, when the handle is on a Contact. Matches the\n`id` every other contact shape uses, so a caller can compare the two\nwithout converting either."
+            "description": "Linked vault contact id: when the handle is on a Contact, or — for a\nparticipant with no handle — the contact `resolve_name_only_participant`\nbound the name to directly, since that is the only place the link is\nrecorded for them. Matches the `id` every other contact shape uses, so\na caller can compare the two without converting either."
           },
           "handle": {
-            "type": "string",
-            "description": "Raw handle value (phone, email, or username)."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Raw handle value (phone, email, or username). `None` when the source\nnamed this person without recording any address for them."
           },
           "name": {
             "type": "string",
-            "description": "What to show for this person. Never empty: the rule ends at the handle."
+            "description": "What to show for this person. Never empty — but the query's own\n`COALESCE` ends at `''`, not at the handle, since a handle-less\nparticipant has no handle to end at. What keeps it non-empty is the\nimport invariant described in this module's doc comment."
           },
           "service": {
-            "type": "string",
-            "description": "Platform service, e.g. `imessage`."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Platform service, e.g. `imessage`. `None` for the same reason as\n`handle`: with no address there is nothing to carry a service on."
           }
         }
       },
@@ -7612,6 +7754,44 @@
           "password": {
             "type": "string",
             "description": "The new password. Must satisfy the vault's password policy."
+          }
+        }
+      },
+      "Tapback": {
+        "type": "object",
+        "description": "One tapback reaction on an exported message.",
+        "required": [
+          "part_index",
+          "kind",
+          "is_from_me"
+        ],
+        "properties": {
+          "emoji": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Emoji form of the reaction, when one exists."
+          },
+          "is_from_me": {
+            "type": "boolean",
+            "description": "True when the account owner reacted."
+          },
+          "kind": {
+            "type": "string",
+            "description": "Reaction type, e.g. `love`."
+          },
+          "part_index": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Attachment part the reaction applies to."
+          },
+          "sender": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Reactor handle for incoming reactions."
           }
         }
       },

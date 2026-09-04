@@ -15,63 +15,21 @@ export type Participant = Schema["Participant"];
 /** One conversation in the browse list. */
 export type Conversation = Schema["ConversationSummary"];
 
-/** One participant on a message the Export routes return. */
+/** One participant on a message. */
 export type MessageParticipant = Schema["Participant"];
 
-/** The conversation a message belongs to, as the Export routes return it. */
-export type MessageConversation = Schema["ExportConversation"];
+/** The conversation a message belongs to, as a message carries it. */
+export type MessageConversation = Schema["MessageConversation"];
 
 /** One attachment on a message. */
-export type MessageAttachment = Schema["ExportAttachment"];
+export type MessageAttachment = Schema["Attachment"];
 
 /** One tapback reaction on a message. */
-export type MessageTapback = Schema["ExportTapback"];
+export type MessageTapback = Schema["Tapback"];
 
-export interface Reaction {
-  emoji: string;
-  count: number;
-  users: string[]; // display names
-}
-
-export interface MessageRef {
-  id: string;
-  sender_name: string;
-  body_preview: string;
-}
-
-export interface Embed {
-  type: "image" | "video" | "link" | "rich";
-  url?: string;
-  title?: string;
-  description?: string;
-  thumbnail_url?: string;
-}
-
-export interface EditEntry {
-  body: string;
-  edited_at: string;
-}
-
-/**
- * One message as the Export routes return it, plus the per-app extras the
- * message bubbles render.
- *
- * The vault does not currently send any of the optional fields below: they are
- * not in its OpenAPI document, so the branches that render them never run. They
- * are kept typed rather than deleted so that removing those branches stays a
- * separate, reviewable change.
- */
-export type Message = Schema["ExportMessage"] & {
-  reactions?: Reaction[]; // iMessage tapbacks, Discord reactions
-  reply_to_message?: MessageRef; // WhatsApp reply chains
-  embeds?: Embed[]; // Discord embeds
-  edit_history?: EditEntry[]; // iMessage edit history
-  deleted_indicator?: boolean; // WhatsApp "this message was deleted"
-  effect?: string; // iMessage screen effect
-  role_color?: string; // Discord role color
-  is_story_reply?: boolean; // Instagram story reply
-  forwarded?: boolean; // Instagram forwarding indicator
-};
+/** One message, as `GET /v1/conversations/{id}/messages` returns it — the
+ * same row shape the Export routes return, since one loader serves both. */
+export type Message = Schema["Message"];
 
 export type AttachmentMediaMode = "copy" | "convert" | "compress" | "skip";
 

@@ -62,6 +62,7 @@
               "sectionGap",
               "selectItemClassName",
               "senderName",
+              "tapbackGroups",
               "testQueryClient",
               "useAuth",
               "useTheme"

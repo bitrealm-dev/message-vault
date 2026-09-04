@@ -12,20 +12,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiClient } from "./api";
 import {
-  countExportMessages,
   createContactGroup,
   createMessageTag,
   deleteApiToken,
   deleteContactGroup,
   deleteMessageTag,
   discardImport,
-  exportMessages,
   getContact,
+  getConversation,
   getConversationSources,
   getImport,
   listContactGroupMembers,
   listContactGroups,
   listContacts,
+  listConversationMessages,
   listConversations,
   listMessageTagMembers,
   listMessageTags,
@@ -87,9 +87,29 @@ describe("browse routes", () => {
     expect(lastPath(get)).toBe("/v1/contacts/42");
   });
 
+  it("addresses one conversation by id", async () => {
+    await getConversation(12);
+    expect(get).toHaveBeenCalledWith("/v1/conversations/12", undefined);
+  });
+
   it("addresses a conversation's sources by id", async () => {
     await getConversationSources(12);
     expect(lastPath(get)).toBe("/v1/conversations/12/sources");
+  });
+
+  it("reads a conversation's messages from its own route, paged", async () => {
+    await listConversationMessages(12, { offset: 50, limit: 50 });
+    expect(lastPath(get)).toBe("/v1/conversations/12/messages");
+    expect(lastQuery(get)).toEqual({ offset: "50", limit: "50" });
+  });
+
+  // The point of the read route: a year is a `year=` parameter, not a
+  // `date:YYYY` term smuggled through the search language.
+  it("narrows a conversation's messages with year=, not with date:YYYY", async () => {
+    await listConversationMessages(12, { offset: 0, limit: 500, year: 2020 });
+    expect(lastPath(get)).toBe("/v1/conversations/12/messages");
+    expect(lastQuery(get)).toEqual({ offset: "0", limit: "500", year: "2020" });
+    expect(String(get.mock.calls.at(-1)?.[0])).not.toContain("date:");
   });
 
   it("listSearchFields asks for one list's words", async () => {
@@ -115,20 +135,8 @@ describe("query building", () => {
   });
 
   it("encodes a query that contains spaces and colons", async () => {
-    await exportMessages({ q: "in:#A attachment:any" });
+    await listConversations({ q: "in:#A attachment:any" });
     expect(lastQuery(get)).toEqual({ q: "in:#A attachment:any" });
-  });
-});
-
-describe("export routes keep the export prefix", () => {
-  it("reads messages from /v1/export/messages", async () => {
-    await exportMessages({ q: "in:#1" });
-    expect(lastPath(get)).toBe("/v1/export/messages");
-  });
-
-  it("counts messages from /v1/export/messages/count", async () => {
-    await countExportMessages({ q: "in:#1" });
-    expect(lastPath(get)).toBe("/v1/export/messages/count");
   });
 });
 

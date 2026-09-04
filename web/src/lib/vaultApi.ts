@@ -218,34 +218,37 @@ export function listConversations(
   );
 }
 
+export function getConversation(
+  conversationId: number,
+  opts?: VaultRequestOptions,
+): Promise<Schema["ConversationSummary"]> {
+  return apiClient.get<Schema["ConversationSummary"]>(`/v1/conversations/${conversationId}`, opts);
+}
+
+/** Filters `GET /v1/conversations/{id}/messages` accepts. */
+export type ConversationMessagesParams = {
+  offset?: number;
+  limit?: number;
+  year?: number;
+};
+
+export function listConversationMessages(
+  conversationId: number,
+  params: ConversationMessagesParams,
+  opts?: VaultRequestOptions,
+): Promise<Schema["Page_Message"]> {
+  return apiClient.get<Schema["Page_Message"]>(
+    withQuery(`/v1/conversations/${conversationId}/messages`, query(params)),
+    opts,
+  );
+}
+
 export function getConversationSources(
   conversationId: number,
   opts?: VaultRequestOptions,
 ): Promise<Schema["ConversationSourcesPage"]> {
   return apiClient.get<Schema["ConversationSourcesPage"]>(
     `/v1/conversations/${conversationId}/sources`,
-    opts,
-  );
-}
-
-// ── Messages (Export) ───────────────────────────────────────────────────────
-
-export function exportMessages(
-  params: { q: string; offset?: number; limit?: number },
-  opts?: VaultRequestOptions,
-): Promise<Schema["Page_ExportMessage"]> {
-  return apiClient.get<Schema["Page_ExportMessage"]>(
-    withQuery("/v1/export/messages", query(params)),
-    opts,
-  );
-}
-
-export function countExportMessages(
-  params: { q: string },
-  opts?: VaultRequestOptions,
-): Promise<Schema["ExportCountResponse"]> {
-  return apiClient.get<Schema["ExportCountResponse"]>(
-    withQuery("/v1/export/messages/count", query(params)),
     opts,
   );
 }

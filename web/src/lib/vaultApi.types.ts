@@ -588,6 +588,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/conversations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One conversation, in the same shape a list row already has — so a caller
+         *     that opens a thread from a list does not have to convert between two
+         *     shapes, and paging through the whole list to find one id is never
+         *     necessary. Trash is a property the list applies, not a gate on reading:
+         *     a trashed conversation still answers here.
+         */
+        get: operations["conversation_detail_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A conversation's messages, ascending by timestamp then `sort_order`. The
+         *     read path a screen uses to open a thread: no search query to compose,
+         *     just the conversation id.
+         */
+        get: operations["conversation_messages_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/conversations/{id}/sources": {
         parameters: {
             query?: never;
@@ -1076,6 +1120,23 @@ export interface components {
             sha256?: string | null;
             upload_id?: string | null;
         };
+        /** @description One attachment of an exported message. */
+        Attachment: {
+            /** @description True for sticker files. */
+            is_sticker?: boolean;
+            /** @description MIME type, when known. */
+            mime_type?: string | null;
+            /** @description Why the file is missing, when it is. */
+            missing_reason?: string | null;
+            /** @description File name from the export. */
+            original_name?: string | null;
+            /** @description Path inside the export. */
+            path?: string | null;
+            /** @description Content fingerprint of the stored bytes. */
+            sha256?: string | null;
+            /** @description OCR/ASR transcription, when processed. */
+            transcription?: string | null;
+        };
         /** @description Token check result: account, username, sources. */
         AuthCheckResponse: {
             account_id?: string | null;
@@ -1498,39 +1559,6 @@ export interface components {
             /** @description Human-readable description of the failure. */
             error: string;
         };
-        /** @description One attachment of an exported message. */
-        ExportAttachment: {
-            /** @description True for sticker files. */
-            is_sticker?: boolean;
-            /** @description MIME type, when known. */
-            mime_type?: string | null;
-            /** @description Why the file is missing, when it is. */
-            missing_reason?: string | null;
-            /** @description File name from the export. */
-            original_name?: string | null;
-            /** @description Path inside the export. */
-            path?: string | null;
-            /** @description Content fingerprint of the stored bytes. */
-            sha256?: string | null;
-            /** @description OCR/ASR transcription, when processed. */
-            transcription?: string | null;
-        };
-        /** @description The conversation a message belongs to. */
-        ExportConversation: {
-            /** @description Original chat id from the export. */
-            chat_identifier: string;
-            /** @description `individual` or `group`. */
-            conversation_type: string;
-            /** @description Group label, when set. */
-            group_title?: string | null;
-            /**
-             * Format: int64
-             * @description Conversation row id.
-             */
-            id: number;
-            /** @description Participants of the conversation. */
-            participants: components["schemas"]["Participant"][];
-        };
         /** @description Match counts for an export query. */
         ExportCountResponse: {
             /**
@@ -1553,75 +1581,6 @@ export interface components {
              * @description Sum of known `size_bytes` for those unique fingerprints (unknown sizes omitted).
              */
             total_bytes: number;
-        };
-        /** @description One exported message. */
-        ExportMessage: {
-            /** @description Attachments on this message. */
-            attachments: components["schemas"]["ExportAttachment"][];
-            /** @description The conversation this message belongs to. */
-            conversation: components["schemas"]["ExportConversation"];
-            /** @description Export GUID for replies and grouping. */
-            guid?: string | null;
-            /**
-             * Format: int64
-             * @description Message row id.
-             */
-            id: number;
-            /** @description True for group announcements. */
-            is_announcement: boolean;
-            /** @description True for messages sent by the account owner. */
-            is_from_me: boolean;
-            /** @description True when part of a reply thread. */
-            is_reply: boolean;
-            /**
-             * Format: int64
-             * @description Replies in this thread.
-             */
-            num_replies: number;
-            /** @description Sender handle for incoming messages. */
-            sender?: string | null;
-            /** @description Platform service, e.g. `imessage`, when known. */
-            service?: string | null;
-            /**
-             * Format: int64
-             * @description Ordering key within the conversation.
-             */
-            sort_order: number;
-            /** @description Import source id. */
-            source: string;
-            /** @description Subject line, when set. */
-            subject?: string | null;
-            /** @description Reactions on this message. */
-            tapbacks: components["schemas"]["ExportTapback"][];
-            /** @description Body text, when present. */
-            text?: string | null;
-            /** @description GUID of the message this replies to. */
-            thread_originator_guid?: string | null;
-            /**
-             * Format: int64
-             * @description Part index of the originator (for tapbacks).
-             */
-            thread_originator_part?: number | null;
-            /** @description Message timestamp (local). */
-            timestamp: string;
-            /** @description UTC timestamp, when known. */
-            timestamp_utc?: string | null;
-        };
-        /** @description One tapback reaction on an exported message. */
-        ExportTapback: {
-            /** @description Emoji form of the reaction, when one exists. */
-            emoji?: string | null;
-            /** @description True when the account owner reacted. */
-            is_from_me: boolean;
-            /** @description Reaction type, e.g. `love`. */
-            kind: string;
-            /**
-             * Format: int64
-             * @description Attachment part the reaction applies to.
-             */
-            part_index: number;
-            /** @description Reactor handle for incoming reactions. */
-            sender?: string | null;
         };
         /** @description One word as the web and the docs see it. */
         FieldDoc: {
@@ -1878,6 +1837,75 @@ export interface components {
             add?: number[];
             remove?: number[];
         };
+        /** @description One exported message. */
+        Message: {
+            /** @description Attachments on this message. */
+            attachments: components["schemas"]["Attachment"][];
+            /** @description The conversation this message belongs to. */
+            conversation: components["schemas"]["MessageConversation"];
+            /** @description Export GUID for replies and grouping. */
+            guid?: string | null;
+            /**
+             * Format: int64
+             * @description Message row id.
+             */
+            id: number;
+            /** @description True for group announcements. */
+            is_announcement: boolean;
+            /** @description True for messages sent by the account owner. */
+            is_from_me: boolean;
+            /** @description True when part of a reply thread. */
+            is_reply: boolean;
+            /**
+             * Format: int64
+             * @description Replies in this thread.
+             */
+            num_replies: number;
+            /** @description Sender handle for incoming messages. */
+            sender?: string | null;
+            /** @description Platform service, e.g. `imessage`, when known. */
+            service?: string | null;
+            /**
+             * Format: int64
+             * @description Ordering key within the conversation.
+             */
+            sort_order: number;
+            /** @description Import source id. */
+            source: string;
+            /** @description Subject line, when set. */
+            subject?: string | null;
+            /** @description Reactions on this message. */
+            tapbacks: components["schemas"]["Tapback"][];
+            /** @description Body text, when present. */
+            text?: string | null;
+            /** @description GUID of the message this replies to. */
+            thread_originator_guid?: string | null;
+            /**
+             * Format: int64
+             * @description Part index of the originator (for tapbacks).
+             */
+            thread_originator_part?: number | null;
+            /** @description Message timestamp (local). */
+            timestamp: string;
+            /** @description UTC timestamp, when known. */
+            timestamp_utc?: string | null;
+        };
+        /** @description The conversation a message belongs to. */
+        MessageConversation: {
+            /** @description Original chat id from the export. */
+            chat_identifier: string;
+            /** @description `individual` or `group`. */
+            conversation_type: string;
+            /** @description Group label, when set. */
+            group_title?: string | null;
+            /**
+             * Format: int64
+             * @description Conversation row id.
+             */
+            id: number;
+            /** @description Participants of the conversation. */
+            participants: components["schemas"]["Participant"][];
+        };
         /** @description One Contact Group or Message Tag: its id and name. */
         NamedSet: {
             /** Format: int64 */
@@ -1967,13 +1995,13 @@ export interface components {
             total: number;
         };
         /** @description One page of a list. */
-        Page_ExportMessage: {
+        Page_Message: {
             /** @description The rows on this page. */
             items: {
                 /** @description Attachments on this message. */
-                attachments: components["schemas"]["ExportAttachment"][];
+                attachments: components["schemas"]["Attachment"][];
                 /** @description The conversation this message belongs to. */
-                conversation: components["schemas"]["ExportConversation"];
+                conversation: components["schemas"]["MessageConversation"];
                 /** @description Export GUID for replies and grouping. */
                 guid?: string | null;
                 /**
@@ -2006,7 +2034,7 @@ export interface components {
                 /** @description Subject line, when set. */
                 subject?: string | null;
                 /** @description Reactions on this message. */
-                tapbacks: components["schemas"]["ExportTapback"][];
+                tapbacks: components["schemas"]["Tapback"][];
                 /** @description Body text, when present. */
                 text?: string | null;
                 /** @description GUID of the message this replies to. */
@@ -2039,17 +2067,30 @@ export interface components {
         Participant: {
             /**
              * Format: int64
-             * @description Linked vault contact id, when the handle is on a Contact. Matches the
-             *     `id` every other contact shape uses, so a caller can compare the two
-             *     without converting either.
+             * @description Linked vault contact id: when the handle is on a Contact, or — for a
+             *     participant with no handle — the contact `resolve_name_only_participant`
+             *     bound the name to directly, since that is the only place the link is
+             *     recorded for them. Matches the `id` every other contact shape uses, so
+             *     a caller can compare the two without converting either.
              */
             contact_id?: number | null;
-            /** @description Raw handle value (phone, email, or username). */
-            handle: string;
-            /** @description What to show for this person. Never empty: the rule ends at the handle. */
+            /**
+             * @description Raw handle value (phone, email, or username). `None` when the source
+             *     named this person without recording any address for them.
+             */
+            handle?: string | null;
+            /**
+             * @description What to show for this person. Never empty — but the query's own
+             *     `COALESCE` ends at `''`, not at the handle, since a handle-less
+             *     participant has no handle to end at. What keeps it non-empty is the
+             *     import invariant described in this module's doc comment.
+             */
             name: string;
-            /** @description Platform service, e.g. `imessage`. */
-            service: string;
+            /**
+             * @description Platform service, e.g. `imessage`. `None` for the same reason as
+             *     `handle`: with no address there is nothing to carry a service on.
+             */
+            service?: string | null;
         };
         /** @description Body for changing an account's flags. Omitted fields are left alone. */
         PatchUserRequest: {
@@ -2144,6 +2185,22 @@ export interface components {
         SetPasswordRequest: {
             /** @description The new password. Must satisfy the vault's password policy. */
             password: string;
+        };
+        /** @description One tapback reaction on an exported message. */
+        Tapback: {
+            /** @description Emoji form of the reaction, when one exists. */
+            emoji?: string | null;
+            /** @description True when the account owner reacted. */
+            is_from_me: boolean;
+            /** @description Reaction type, e.g. `love`. */
+            kind: string;
+            /**
+             * Format: int64
+             * @description Attachment part the reaction applies to.
+             */
+            part_index: number;
+            /** @description Reactor handle for incoming reactions. */
+            sender?: string | null;
         };
         /** @description One of an account's largest attachments by byte size. */
         TopAttachment: {
@@ -4139,6 +4196,113 @@ export interface operations {
             };
         };
     };
+    conversation_detail_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Conversation id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationSummary"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    conversation_messages_handler: {
+        parameters: {
+            query?: {
+                /** @description Page size, default 40, max 500 */
+                limit?: number;
+                /** @description Page offset, max 50000 */
+                offset?: number;
+                /** @description Narrow to one calendar year, in the vault's stored offset */
+                year?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Conversation id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Message"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     conversation_sources_handler: {
         parameters: {
             query?: never;
@@ -4207,7 +4371,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Page_ExportMessage"];
+                    "application/json": components["schemas"]["Page_Message"];
                 };
             };
             400: {

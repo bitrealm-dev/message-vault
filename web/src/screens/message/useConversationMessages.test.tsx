@@ -3,19 +3,22 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Message } from "../../lib/types";
-import { exportMessages } from "../../lib/vaultApi";
+import { listConversationMessages } from "../../lib/vaultApi";
+import { mockedAuth, VaultProviders } from "../../test/vaultProviders";
 import {
   buildFooterLabel,
   conversationYears,
   useConversationMessages,
 } from "./useConversationMessages";
 
+vi.mock("../../lib/auth", () => ({ useAuth: () => mockedAuth }));
+
 vi.mock("../../lib/vaultApi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lib/vaultApi")>()),
-  exportMessages: vi.fn(),
+  listConversationMessages: vi.fn(),
 }));
 
-const getMessages = vi.mocked(exportMessages);
+const getMessages = vi.mocked(listConversationMessages);
 
 function message(id: number): Message {
   return {
@@ -65,10 +68,10 @@ function page(items: Message[]): MessagePage {
 
 /** Route the mocked calls: conversation 1 hangs on `slow`, conversation 2 answers at once. */
 function routeGets(slow: Promise<MessagePage>) {
-  getMessages.mockImplementation(((params: { q: string }) =>
-    params.q.includes("in:#1")
+  getMessages.mockImplementation(((id: number) =>
+    id === 1
       ? slow
-      : Promise.resolve(page([message(2)]))) as unknown as typeof exportMessages);
+      : Promise.resolve(page([message(2)]))) as unknown as typeof listConversationMessages);
 }
 
 describe("useConversationMessages", () => {
@@ -82,41 +85,110 @@ describe("useConversationMessages", () => {
 
     const { result, rerender } = renderHook(
       ({ id }: { id: number }) => useConversationMessages(id),
-      { initialProps: { id: 1 } },
+      { initialProps: { id: 1 }, wrapper: VaultProviders },
     );
 
     rerender({ id: 2 });
     await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual([2]));
 
-    await act(async () => {
-      slow.resolve(page([message(1)]));
-      await slow.promise;
-    });
+    slow.resolve(page([message(1)]));
+    await slow.promise;
 
+    // Conversation 1's own cache entry now holds its answer, but the hook is
+    // reading conversation 2's entry, so its messages are untouched.
     expect(result.current.messages.map((m) => m.id)).toEqual([2]);
     expect(result.current.loading).toBe(false);
   });
 
-  it("keeps the current page when a superseded request rejects", async () => {
+  it("keeps the current page when a request rejects", async () => {
     const slow = deferred<MessagePage>();
     routeGets(slow.promise);
 
     const { result, rerender } = renderHook(
       ({ id }: { id: number }) => useConversationMessages(id),
-      { initialProps: { id: 1 } },
+      { initialProps: { id: 1 }, wrapper: VaultProviders },
     );
 
     rerender({ id: 2 });
     await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual([2]));
 
-    // The abort surfaces as a rejection; it must not blank B's messages.
-    await act(async () => {
-      slow.reject(new DOMException("aborted", "AbortError"));
-      await slow.promise.catch(() => {});
-    });
+    // Conversation 1's own entry fails; it must not touch conversation 2's.
+    slow.reject(new Error("boom"));
+    await slow.promise.catch(() => {});
 
     expect(result.current.messages.map((m) => m.id)).toEqual([2]);
     expect(result.current.loading).toBe(false);
+  });
+
+  it("asks for a year with year=, and walks its pages until the total is covered", async () => {
+    // Page one of the unfiltered view, then a two-page year.
+    getMessages
+      .mockResolvedValueOnce(page([message(9)]))
+      .mockResolvedValueOnce({ items: [message(1), message(2)], total: 3, limit: 500, offset: 0 })
+      .mockResolvedValueOnce({ items: [message(3)], total: 3, limit: 500, offset: 2 });
+
+    const { result } = renderHook(({ id }: { id: number }) => useConversationMessages(id), {
+      initialProps: { id: 7 },
+      wrapper: VaultProviders,
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    // Browsing all years carries no year at all.
+    expect(getMessages).toHaveBeenNthCalledWith(
+      1,
+      7,
+      { offset: 0, limit: 50 },
+      expect.objectContaining({ signal: expect.anything() }),
+    );
+
+    act(() => result.current.selectYear(2020));
+    await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual([1, 2, 3]));
+
+    // The year is a `year=` parameter on the conversation's own messages
+    // route, asked for a whole page at a time, and paged until the vault's
+    // total is covered — not a `date:2020` term in a search query.
+    expect(getMessages).toHaveBeenNthCalledWith(
+      2,
+      7,
+      { offset: 0, limit: 500, year: 2020 },
+      expect.objectContaining({ signal: expect.anything() }),
+    );
+    expect(getMessages).toHaveBeenNthCalledWith(
+      3,
+      7,
+      { offset: 2, limit: 500, year: 2020 },
+      expect.objectContaining({ signal: expect.anything() }),
+    );
+    expect(getMessages).toHaveBeenCalledTimes(3);
+    expect(result.current.total).toBe(3);
+  });
+
+  it("resets offset, activeYear, findTerm and activeMatch when the conversation changes", async () => {
+    getMessages.mockResolvedValue(page([message(1)]));
+
+    const { result, rerender } = renderHook(
+      ({ id }: { id: number }) => useConversationMessages(id),
+      { initialProps: { id: 1 }, wrapper: VaultProviders },
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    // Drive every reset-target away from its default before switching.
+    act(() => result.current.selectYear(2020));
+    act(() => result.current.fetchConversationPage(50));
+    act(() => result.current.setFindTerm("hello"));
+    act(() => result.current.setActiveMatch(3));
+
+    expect(result.current.activeYear).toBe(2020);
+    expect(result.current.offset).toBe(50);
+    expect(result.current.findTerm).toBe("hello");
+    expect(result.current.activeMatch).toBe(3);
+
+    rerender({ id: 2 });
+
+    expect(result.current.activeYear).toBeNull();
+    expect(result.current.offset).toBe(0);
+    expect(result.current.findTerm).toBe("");
+    expect(result.current.activeMatch).toBe(0);
   });
 });
 

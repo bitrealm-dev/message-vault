@@ -15,6 +15,7 @@ function session(overrides: Partial<ActiveImportSession> = {}): ActiveImportSess
     form: { source: "imessage-ios" },
     source_fingerprint: null,
     source_identities: null,
+    summary: null,
     ...overrides,
   };
 }

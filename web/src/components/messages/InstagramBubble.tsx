@@ -18,14 +18,6 @@ export default function InstagramBubble({
       message={message}
       isActive={isActive}
       senderClassName="text-[var(--instagram-brand)]"
-      headerExtra={
-        <>
-          {message.is_story_reply && (
-            <span className="text-[0.688rem] text-[var(--instagram-brand)]">Story reply</span>
-          )}
-          {message.forwarded && <span className="text-[0.688rem] text-muted">Forwarded</span>}
-        </>
-      }
     >
       <ServiceMessageText text={message.text || ""} highlight={highlight} mine={mine} />
 

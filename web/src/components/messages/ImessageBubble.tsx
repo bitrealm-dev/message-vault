@@ -6,6 +6,7 @@ import {
   isGroupConversation,
   type MessageBubbleProps,
   senderName,
+  tapbackGroups,
 } from "./chatBubbleShared";
 
 export default function ImessageBubble({
@@ -18,21 +19,23 @@ export default function ImessageBubble({
   const mine = message.is_from_me;
   const group = isGroupConversation(message);
   const body = (message.text || "").trim();
-  const hasReactions = Boolean(message.reactions && message.reactions.length > 0);
   const hasAttachments = message.attachments.length > 0;
+  const tapbacks = tapbackGroups(message);
+  const hasTapbacks = tapbacks.length > 0;
 
   const footer =
-    hasAttachments || hasReactions ? (
+    hasAttachments || hasTapbacks ? (
       <>
         <MessageAttachments message={message} onAttachmentClick={onAttachmentClick} />
-        {hasReactions ? (
+        {hasTapbacks ? (
           <div className={`flex flex-wrap gap-1 ${hasAttachments ? "mt-1" : "mt-0"}`}>
-            {message.reactions?.map((r) => (
+            {tapbacks.map((t) => (
               <span
-                key={r.emoji}
+                key={t.emoji}
+                title={t.senderNames.join(", ")}
                 className="rounded-full border border-border bg-elevated px-[0.35rem] py-[0.1rem] text-[0.75rem] text-text"
               >
-                {r.emoji} {r.count}
+                {t.emoji} {t.count}
               </span>
             ))}
           </div>
@@ -49,16 +52,6 @@ export default function ImessageBubble({
       showSender={!mine && group}
       senderLabel={senderName(message)}
       timeLabel={time}
-      meta={
-        <>
-          {message.effect ? (
-            <span className="italic text-[var(--imessage-effect)]">{message.effect}</span>
-          ) : null}
-          {message.edit_history && message.edit_history.length > 0 ? (
-            <span className="italic">Edited</span>
-          ) : null}
-        </>
-      }
       footer={footer}
     >
       {bubbleBody(body, highlight)}

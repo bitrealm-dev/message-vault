@@ -14,7 +14,7 @@ use message_vault_io_core::{CancelFlag, check_cancel, parallel_for_each};
 use serde::Serialize;
 use vault_http::{auth_check as authenticate, with_retries};
 
-use crate::http::{ExportMessage, ExportMessagesArgs, HttpSession};
+use crate::http::{ExportMessagesArgs, HttpSession, Message};
 use crate::project::{build_document, conversation_key, to_ir_message};
 
 /// Page size for GET /v1/export/messages; the vault's maximum.
@@ -178,8 +178,7 @@ pub fn run(
 
     let session = HttpSession::new()?;
     let mut offset = 0usize;
-    let mut by_conv: BTreeMap<String, (ExportMessage, Vec<message_ir::IrMessage>)> =
-        BTreeMap::new();
+    let mut by_conv: BTreeMap<String, (Message, Vec<message_ir::IrMessage>)> = BTreeMap::new();
     // sha256 -> (source, relative path under out_dir)
     let mut assets: HashMap<String, (String, String)> = HashMap::new();
     let mut total_messages = 0u64;

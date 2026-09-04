@@ -1,15 +1,17 @@
 import Button from "../../components/Button";
 import MessageBubble from "../../components/MessageBubble";
+import { apiErrorMessage } from "../../lib/apiErrorMessage";
 import type { Message, MessageAttachment } from "../../lib/types";
 import { PAGE_SIZE } from "./useConversationMessages";
 
 export default function MessageThread({
   messages,
   loading,
+  error,
   findTerm,
   matchIds,
   activeMatch,
-  yearMode,
+  activeYear,
   footerLabel,
   offset,
   total,
@@ -19,10 +21,12 @@ export default function MessageThread({
 }: {
   messages: Message[];
   loading: boolean;
+  error: unknown;
   findTerm: string;
   matchIds: string[];
   activeMatch: number;
-  yearMode: boolean;
+  /** The year the person is filtered to, or `null` while browsing all years. */
+  activeYear: number | null;
   footerLabel: string;
   offset: number;
   total: number;
@@ -30,11 +34,20 @@ export default function MessageThread({
   onNextPage: () => void;
   onAttachmentClick: (att: MessageAttachment, source: string) => void;
 }) {
+  const yearMode = activeYear !== null;
   return (
     <>
       <div className="flex-1 overflow-auto">
         {loading ? (
           <div className="p-4 text-[0.813rem] text-muted">Loading…</div>
+        ) : error ? (
+          <div className="p-4 text-[0.813rem] text-danger">
+            {apiErrorMessage(error, "Could not load messages.")}
+          </div>
+        ) : messages.length === 0 ? (
+          <div className="p-4 text-[0.813rem] text-muted">
+            {yearMode ? `No messages in ${activeYear}` : "No messages in this conversation"}
+          </div>
         ) : (
           messages.map((m) => (
             <MessageBubble

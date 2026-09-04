@@ -1,6 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
 import { highlightText } from "../../lib/highlightText";
-import type { Message, MessageAttachment } from "../../lib/types";
+import type { Message, MessageAttachment, MessageTapback } from "../../lib/types";
 
 type BubblePalette = "imessage" | "sms";
 
@@ -24,7 +24,10 @@ export function formatMessageTime(timestamp: string, withYear = false): string {
 }
 
 /** Message text with search matches marked, or nothing when the body is empty. */
-export function bubbleBody(body: string, highlight: string | undefined): ReactNode | undefined {
+export function bubbleBody(
+  body: string,
+  highlight: string | undefined,
+): ReactNode[] | string | undefined {
   if (!body) return undefined;
   return highlight ? highlightText(body, highlight) : body;
 }
@@ -41,6 +44,59 @@ export function senderName(m: Message): string {
 
 export function isGroupConversation(m: Message): boolean {
   return m.conversation.conversation_type === "group" || m.conversation.participants.length > 1;
+}
+
+/**
+ * iMessage's fixed tapback kinds carry no emoji of their own (the export
+ * sends `emoji: null` for them) — the client renders the emoji instead.
+ * A tapback with its own `emoji` (Discord, say) always wins over this.
+ */
+const TAPBACK_KIND_EMOJI: Record<string, string> = {
+  loved: "❤️",
+  liked: "👍",
+  disliked: "👎",
+  laughed: "😂",
+  emphasized: "‼️",
+  questioned: "❓",
+  // The exporter's kind vocabulary ends `emoji|sticker`. An `emoji` tapback
+  // carries its own character in `emoji`; a `sticker` one carries nothing, so
+  // without an entry here the badge rendered the literal word "sticker".
+  sticker: "🖼️",
+};
+
+/** Who left a tapback: "Me" for the account owner, else the matching participant's name. */
+function tapbackSenderName(m: Message, t: MessageTapback): string {
+  if (t.is_from_me) return "Me";
+  if (t.sender) {
+    const p = m.conversation.participants.find((x) => x.handle === t.sender);
+    if (p) return p.name;
+    return t.sender;
+  }
+  return "Someone";
+}
+
+type TapbackGroup = {
+  /** The emoji to show — the tapback's own, or the fixed kind's, or the raw kind as a last resort. */
+  emoji: string;
+  count: number;
+  senderNames: string[];
+};
+
+/** This message's tapbacks, grouped by the emoji they display, each with who sent it. */
+export function tapbackGroups(m: Message): TapbackGroup[] {
+  const groups = new Map<string, TapbackGroup>();
+  for (const t of m.tapbacks) {
+    const emoji = t.emoji || TAPBACK_KIND_EMOJI[t.kind] || t.kind;
+    const senderName = tapbackSenderName(m, t);
+    const existing = groups.get(emoji);
+    if (existing) {
+      existing.count += 1;
+      existing.senderNames.push(senderName);
+    } else {
+      groups.set(emoji, { emoji, count: 1, senderNames: [senderName] });
+    }
+  }
+  return [...groups.values()];
 }
 
 /** Bubble fill/text color per palette (theme vars switch with data-theme). */
@@ -152,7 +208,7 @@ export function ServiceRow({
 
 /**
  * Shared branded-service row: ServiceRow + sender/time header.
- * Color and optional header slots stay per-service; body is `children`.
+ * Color and header alignment stay per-service; body is `children`.
  */
 export function ServiceBubbleShell({
   message,
@@ -161,7 +217,6 @@ export function ServiceBubbleShell({
   senderStyle,
   timeClassName = "text-[0.75rem] text-muted",
   headerAlignClassName,
-  headerExtra,
   children,
 }: {
   message: Message;
@@ -171,7 +226,6 @@ export function ServiceBubbleShell({
   timeClassName?: string;
   /** Extra flex alignment on the header row (e.g. `items-center`). */
   headerAlignClassName?: string;
-  headerExtra?: ReactNode;
   children: ReactNode;
 }) {
   const mine = message.is_from_me;
@@ -189,7 +243,6 @@ export function ServiceBubbleShell({
           {senderName(message)}
         </span>
         <span className={timeClassName}>{formatMessageTime(message.timestamp)}</span>
-        {headerExtra}
       </div>
       {children}
     </ServiceRow>

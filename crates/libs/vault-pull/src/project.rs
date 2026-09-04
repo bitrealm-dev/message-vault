@@ -12,17 +12,17 @@ use message_ir::{
 };
 use serde_json::{Value, json};
 
-use crate::http::{ExportAttachment, ExportMessage, ExportTapback};
+use crate::http::{Attachment, Message, Tapback};
 
 /// Grouping key so messages from the same chat and backup source stay together.
-pub fn conversation_key(msg: &ExportMessage) -> String {
+pub fn conversation_key(msg: &Message) -> String {
     format!("{}::{}", msg.source, msg.conversation.chat_identifier)
 }
 
 /// Build one conversation document from a seed message and the mapped rows.
 pub fn build_document(
     source: &str,
-    seed: &ExportMessage,
+    seed: &Message,
     messages: Vec<IrMessage>,
 ) -> ConversationDocument {
     let conversation_type = IrConversationType::parse(&seed.conversation.conversation_type);
@@ -67,7 +67,7 @@ pub fn build_document(
 /// # Errors
 ///
 /// Returns an error when the timestamp cannot be parsed.
-pub fn to_ir_message(msg: &ExportMessage, skip_attachments: bool) -> Result<IrMessage> {
+pub fn to_ir_message(msg: &Message, skip_attachments: bool) -> Result<IrMessage> {
     let timestamp_unix_ms = parse_timestamp_unix_ms(
         msg.timestamp_utc
             .as_deref()
@@ -76,7 +76,7 @@ pub fn to_ir_message(msg: &ExportMessage, skip_attachments: bool) -> Result<IrMe
     )
     .with_context(|| format!("message {} timestamp", msg.id))?;
 
-    let service = IrService::parse(msg.conversation.service.as_deref().unwrap_or(""));
+    let service = IrService::parse(msg.service.as_deref().unwrap_or(""));
     let direction = if msg.is_from_me {
         IrDirection::Outgoing
     } else {
@@ -142,18 +142,19 @@ pub fn to_ir_message(msg: &ExportMessage, skip_attachments: bool) -> Result<IrMe
 }
 
 /// Copy participant handles and display names from the seed export message.
-fn participants_from_seed(seed: &ExportMessage) -> Vec<IrParticipant> {
+fn participants_from_seed(seed: &Message) -> Vec<IrParticipant> {
     let mut participants = Vec::with_capacity(seed.conversation.participants.len());
     for p in &seed.conversation.participants {
         participants.push(IrParticipant {
-            handle: Some(p.handle.clone()),
+            handle: p.handle.clone(),
             // `name` falls back to the raw handle when nothing names the
             // person (ADR-0006). Carrying a bare handle through as a display
             // name would let a later import write it onto a Contact as that
             // person's name, turning a correctly nameless Contact into a
             // wrongly-named one — so only a name distinct from the handle
-            // counts as a display name here.
-            display_name: (p.name != p.handle).then(|| p.name.clone()),
+            // counts as a display name here. A participant with no handle at
+            // all has nothing to be identical to, so their name always counts.
+            display_name: (p.handle.as_deref() != Some(p.name.as_str())).then(|| p.name.clone()),
             handle_type: None,
         });
     }
@@ -161,7 +162,7 @@ fn participants_from_seed(seed: &ExportMessage) -> Vec<IrParticipant> {
 }
 
 /// Map one vault attachment record onto the shared attachment type.
-fn to_ir_attachment(att: &ExportAttachment) -> IrAttachment {
+fn to_ir_attachment(att: &Attachment) -> IrAttachment {
     let path = att
         .path
         .clone()
@@ -174,14 +175,15 @@ fn to_ir_attachment(att: &ExportAttachment) -> IrAttachment {
         is_sticker: att.is_sticker,
         transcription: att.transcription.clone(),
         sticker_effect: None,
-        size_bytes: att.size_bytes,
+        // The vault's attachment shape carries no byte length.
+        size_bytes: None,
         missing_reason: att.missing_reason.clone(),
         bytes: None,
     }
 }
 
 /// JSON array of tapbacks (reactions), or `None` when the message has none.
-fn tapbacks_json(tapbacks: &[ExportTapback]) -> Option<Value> {
+fn tapbacks_json(tapbacks: &[Tapback]) -> Option<Value> {
     if tapbacks.is_empty() {
         return None;
     }
@@ -199,7 +201,7 @@ fn tapbacks_json(tapbacks: &[ExportTapback]) -> Option<Value> {
 }
 
 /// Choose SMS, MMS, iMessage, or announcement from service and attachments.
-fn infer_kind(msg: &ExportMessage, service: IrService) -> IrMessageKind {
+fn infer_kind(msg: &Message, service: IrService) -> IrMessageKind {
     if msg.is_announcement {
         return IrMessageKind::Announcement;
     }
@@ -269,7 +271,108 @@ fn parse_timestamp_unix_ms(raw: &str) -> Result<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::http::{ExportConversation, ExportParticipant};
+    use crate::http::{MessageConversation, Participant};
+
+    /// One page of `GET /v1/export/messages` exactly as the vault serializes
+    /// it: `service` on the message rather than on the conversation, an
+    /// attachment with no byte length, and a participant the source named
+    /// without recording an address, whose `handle` and `service` are `null`.
+    ///
+    /// This is a string literal on purpose. Every fixture in this module
+    /// builds the mirror types in Rust, which is what let three of them drift
+    /// away from the shape they mirror without the compiler or the suite
+    /// noticing: `handle: String` rejected `"handle": null` and aborted every
+    /// pull of a conversation holding an address-less participant, and
+    /// `conversation.service` read a field the vault has never sent, so every
+    /// pulled message came out `IrService::Unknown`.
+    const EXPORT_PAGE_JSON: &str = r#"{
+      "items": [
+        {
+          "id": 4021,
+          "source": "imessage",
+          "service": "iMessage",
+          "guid": "3A9E-0001",
+          "timestamp": "2015-03-12T14:05:22-04:00",
+          "timestamp_utc": "2015-03-12T18:05:22Z",
+          "sort_order": 0,
+          "is_from_me": false,
+          "sender": "+15555550100",
+          "subject": null,
+          "text": "dinner at seven?",
+          "is_announcement": false,
+          "is_reply": false,
+          "thread_originator_guid": null,
+          "thread_originator_part": null,
+          "num_replies": 0,
+          "conversation": {
+            "id": 9,
+            "chat_identifier": "chat9000",
+            "conversation_type": "group",
+            "group_title": "Book Club",
+            "participants": [
+              { "name": "Robert Smith", "handle": "+15555550100", "service": "imessage", "contact_id": 3 },
+              { "name": "Sarah Vale", "handle": null, "service": null, "contact_id": 7 },
+              { "name": "+15555550200", "handle": "+15555550200", "service": "imessage" }
+            ]
+          },
+          "attachments": [
+            {
+              "path": "attachments/ab",
+              "original_name": "menu.pdf",
+              "mime_type": "application/pdf",
+              "sha256": "ab",
+              "transcription": null
+            }
+          ],
+          "tapbacks": [
+            { "part_index": 0, "kind": "loved", "is_from_me": true }
+          ]
+        }
+      ],
+      "total": 1,
+      "limit": 500,
+      "offset": 0
+    }"#;
+
+    /// The whole page parses, an address-less participant survives it, and the
+    /// service the vault sent reaches the IR message.
+    #[test]
+    fn a_real_export_page_parses_with_an_address_less_participant() {
+        let page: crate::http::ExportMessagesPage =
+            serde_json::from_str(EXPORT_PAGE_JSON).expect("the vault's own page shape must parse");
+        assert_eq!((page.items.len(), page.total), (1, 1));
+
+        let participants = participants_from_seed(&page.items[0]);
+        assert_eq!(participants.len(), 3);
+        assert_eq!(participants[0].handle.as_deref(), Some("+15555550100"));
+        assert_eq!(
+            participants[0].display_name.as_deref(),
+            Some("Robert Smith")
+        );
+        // No address at all: the name is all the vault has for this person, so
+        // it carries through as their display name.
+        assert_eq!(participants[1].handle, None);
+        assert_eq!(participants[1].display_name.as_deref(), Some("Sarah Vale"));
+        // A name that is only the handle is still not a display name.
+        assert_eq!(participants[2].handle.as_deref(), Some("+15555550200"));
+        assert_eq!(participants[2].display_name, None);
+    }
+
+    /// The service rides on the message, so the IR message gets iMessage and
+    /// the kind that follows from it — not `Unknown`/`Mms`, which is what
+    /// reading `conversation.service` produced (issue #324).
+    #[test]
+    fn the_message_service_round_trips_from_a_real_export_page() {
+        let page: crate::http::ExportMessagesPage = serde_json::from_str(EXPORT_PAGE_JSON).unwrap();
+        assert_eq!(page.items[0].service.as_deref(), Some("iMessage"));
+
+        let ir = to_ir_message(&page.items[0], false).unwrap();
+        assert_eq!(ir.service, IrService::IMessage);
+        assert_eq!(ir.message_kind, IrMessageKind::IMessage);
+        // The attachment maps without a byte length: the vault never sends one.
+        assert_eq!(ir.attachments.len(), 1);
+        assert_eq!(ir.attachments[0].size_bytes, None);
+    }
 
     #[test]
     fn parses_rfc3339() {
@@ -279,9 +382,10 @@ mod tests {
 
     #[test]
     fn maps_basic_message() {
-        let msg = ExportMessage {
+        let msg = Message {
             id: 1,
             source: "imessage".into(),
+            service: Some("iMessage".into()),
             guid: Some("g1".into()),
             timestamp: "2015-03-12T14:05:22-04:00".into(),
             timestamp_utc: Some("2015-03-12T18:05:22Z".into()),
@@ -294,14 +398,13 @@ mod tests {
             thread_originator_guid: None,
             thread_originator_part: None,
             num_replies: 0,
-            conversation: ExportConversation {
+            conversation: MessageConversation {
                 id: 9,
                 chat_identifier: "+1".into(),
-                service: Some("iMessage".into()),
                 conversation_type: "individual".into(),
                 group_title: None,
-                participants: vec![ExportParticipant {
-                    handle: "+1".into(),
+                participants: vec![Participant {
+                    handle: Some("+1".into()),
                     name: "Sam".into(),
                 }],
             },
@@ -318,8 +421,8 @@ mod tests {
     /// IR participant's display name.
     #[test]
     fn participants_from_seed_carries_a_real_name() {
-        let seed = seed_message_with_participant(ExportParticipant {
-            handle: "+1".into(),
+        let seed = seed_message_with_participant(Participant {
+            handle: Some("+1".into()),
             name: "Sam".into(),
         });
         let participants = participants_from_seed(&seed);
@@ -332,19 +435,20 @@ mod tests {
     /// the comment on `participants_from_seed` for why.
     #[test]
     fn participants_from_seed_drops_a_name_that_is_just_the_handle() {
-        let seed = seed_message_with_participant(ExportParticipant {
-            handle: "+1".into(),
+        let seed = seed_message_with_participant(Participant {
+            handle: Some("+1".into()),
             name: "+1".into(),
         });
         let participants = participants_from_seed(&seed);
         assert_eq!(participants[0].display_name, None);
     }
 
-    /// A minimal `ExportMessage` carrying exactly one conversation participant.
-    fn seed_message_with_participant(participant: ExportParticipant) -> ExportMessage {
-        ExportMessage {
+    /// A minimal `Message` carrying exactly one conversation participant.
+    fn seed_message_with_participant(participant: Participant) -> Message {
+        Message {
             id: 1,
             source: "imessage".into(),
+            service: Some("iMessage".into()),
             guid: Some("g1".into()),
             timestamp: "2015-03-12T14:05:22-04:00".into(),
             timestamp_utc: Some("2015-03-12T18:05:22Z".into()),
@@ -357,10 +461,9 @@ mod tests {
             thread_originator_guid: None,
             thread_originator_part: None,
             num_replies: 0,
-            conversation: ExportConversation {
+            conversation: MessageConversation {
                 id: 9,
                 chat_identifier: "+1".into(),
-                service: Some("iMessage".into()),
                 conversation_type: "individual".into(),
                 group_title: None,
                 participants: vec![participant],

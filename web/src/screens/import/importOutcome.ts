@@ -1,3 +1,4 @@
+import type { ImportIssue } from "../../components/import/ImportSummaryPanel";
 import type {
   AttachmentForecast,
   PushFinishedReport,
@@ -44,7 +45,7 @@ function issueNamesForecastRow(item: string, row: AttachmentForecast): boolean {
  * the wire.
  */
 function isApprovedOmission(
-  issue: { kind: string; item?: string },
+  issue: Pick<ImportIssue, "kind" | "item">,
   approved: StagingSummary | undefined,
 ): boolean {
   if (!approved || issue.kind === "error" || !issue.item) return false;
@@ -71,7 +72,7 @@ function isApprovedOmission(
 export function importOutcome(args: {
   report: PushFinishedReport | undefined;
   threw: boolean;
-  issues: readonly { kind: string; item?: string }[];
+  issues: readonly ImportIssue[];
   approved?: StagingSummary;
 }): ImportOutcome {
   const { report, threw, issues, approved } = args;

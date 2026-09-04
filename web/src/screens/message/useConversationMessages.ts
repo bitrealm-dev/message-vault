@@ -1,11 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type { Message } from "../../lib/types";
-import { exportMessages } from "../../lib/vaultApi";
+import { listConversationMessages } from "../../lib/vaultApi";
+import { keys } from "../../lib/vaultKeys";
+import { useVaultQuery } from "../../lib/vaultQuery";
 
 /** Page size for full-conversation browsing. */
 export const PAGE_SIZE = 50;
 /** Largest page the messages API will return in one request. */
 const YEAR_FETCH_LIMIT = 500;
+
+/** One page's worth of conversation messages, as the hook hands them to a screen. */
+type MessagesResult = { items: Message[]; total: number };
 
 /** Calendar years covered by a conversation's first and last message dates. */
 export function conversationYears(
@@ -21,11 +26,6 @@ export function conversationYears(
   const years: number[] = [];
   for (let y = startYear; y <= endYear; y++) years.push(y);
   return years;
-}
-
-/** Search query that loads every message in one calendar year. */
-function yearQuery(conversationId: number, year: number): string {
-  return `in:#${conversationId} date:${year}`;
 }
 
 /** Short label for a backup source shown in the message footer. */
@@ -49,113 +49,81 @@ export function buildFooterLabel(activeYear: number | null, total: number, offse
   return `Messages ${offset + 1}–${Math.min(offset + PAGE_SIZE, total)} of ${total}`;
 }
 
-/** Load every message matching this search, paging until the server has no more. */
-async function fetchAllMessagesForQuery(
-  q: string,
+/**
+ * Load every message in one calendar year, paging until the server has no
+ * more. Runs inside a query function so the whole year lands in one cache
+ * entry — see issue #323: a year is not paged lazily.
+ */
+async function fetchYear(
+  conversationId: number,
+  year: number,
   signal: AbortSignal,
-): Promise<{ messages: Message[]; total: number }> {
-  const collected: Message[] = [];
+): Promise<MessagesResult> {
+  const items: Message[] = [];
   let offset = 0;
   let total = 0;
   while (true) {
-    const page = await exportMessages({ q, offset, limit: YEAR_FETCH_LIMIT }, { signal });
+    const page = await listConversationMessages(
+      conversationId,
+      { offset, limit: YEAR_FETCH_LIMIT, year },
+      { signal },
+    );
     total = page.total;
-    collected.push(...page.items);
+    items.push(...page.items);
     offset += page.items.length;
     if (page.items.length === 0 || offset >= total) break;
   }
-  return { messages: collected, total };
-}
-
-/** True for the rejection `fetch` raises when its signal is aborted. */
-function isAbortError(err: unknown): boolean {
-  return err instanceof DOMException && err.name === "AbortError";
+  return { items, total };
 }
 
 /** Load messages for one conversation, either a page at a time or a whole year. */
 export function useConversationMessages(conversationId: number) {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [total, setTotal] = useState(0);
+  /** `offset`, `activeYear`, `findTerm` and `activeMatch` are view state, not
+   * server state — a screen's choice of what to look at, not anything the
+   * vault owns. The messages themselves come from `useVaultQuery` below. */
   const [offset, setOffset] = useState(0);
   /** `null` = all years (paged). Otherwise load every message in that calendar year. */
   const [activeYear, setActiveYear] = useState<number | null>(null);
   const [findTerm, setFindTerm] = useState("");
   const [activeMatch, setActiveMatch] = useState(0);
-  const [loading, setLoading] = useState(false);
 
-  /**
-   * The one request whose result may reach state. Switching conversations, or
-   * paging again before the previous page lands, aborts the old one — otherwise
-   * a slow response can overwrite a newer conversation's messages.
-   */
-  const inFlightRef = useRef<AbortController | null>(null);
-  const startRequest = useCallback(() => {
-    inFlightRef.current?.abort();
-    const controller = new AbortController();
-    inFlightRef.current = controller;
-    return controller.signal;
-  }, []);
-
-  useEffect(() => () => inFlightRef.current?.abort(), []);
-
-  const fetchConversationPage = useCallback(
-    async (newOffset: number) => {
-      const signal = startRequest();
-      setLoading(true);
-      try {
-        const q = `in:#${conversationId}`;
-        const page = await exportMessages({ q, offset: newOffset, limit: PAGE_SIZE }, { signal });
-        if (signal.aborted) return;
-        setMessages(page.items);
-        setTotal(page.total);
-        setOffset(newOffset);
-      } catch (err) {
-        if (signal.aborted || isAbortError(err)) return;
-        setMessages([]);
-        setTotal(0);
-      } finally {
-        // A newer request owns `loading` once this one is superseded.
-        if (!signal.aborted) setLoading(false);
-      }
-    },
-    [conversationId, startRequest],
-  );
-
-  const fetchYear = useCallback(
-    async (year: number) => {
-      const signal = startRequest();
-      setLoading(true);
-      try {
-        const { messages: all, total: yearTotal } = await fetchAllMessagesForQuery(
-          yearQuery(conversationId, year),
-          signal,
-        );
-        if (signal.aborted) return;
-        setMessages(all);
-        setTotal(yearTotal);
-        setOffset(0);
-      } catch (err) {
-        if (signal.aborted || isAbortError(err)) return;
-        setMessages([]);
-        setTotal(0);
-      } finally {
-        if (!signal.aborted) setLoading(false);
-      }
-    },
-    [conversationId, startRequest],
-  );
-
-  useEffect(() => {
+  // A new conversation starts back at page one, with no year filter or find
+  // term carried over from the last one. Adjusted during render, per React's
+  // own guidance for resetting state on a prop change, rather than in an
+  // effect that would otherwise run one render late.
+  const [renderedConversationId, setRenderedConversationId] = useState(conversationId);
+  if (conversationId !== renderedConversationId) {
+    setRenderedConversationId(conversationId);
+    setOffset(0);
     setActiveYear(null);
     setFindTerm("");
     setActiveMatch(0);
-    void fetchConversationPage(0);
-  }, [fetchConversationPage]);
+  }
+
+  const keyParams =
+    activeYear !== null
+      ? { offset: 0, limit: YEAR_FETCH_LIMIT, year: activeYear }
+      : { offset, limit: PAGE_SIZE, year: null };
+
+  const query = useVaultQuery<MessagesResult>(
+    keys.conversations.messages(conversationId, keyParams),
+    (signal) =>
+      activeYear !== null
+        ? fetchYear(conversationId, activeYear, signal)
+        : listConversationMessages(conversationId, { offset, limit: PAGE_SIZE }, { signal }),
+  );
+
+  const messages = query.data?.items ?? [];
+  const total = query.data?.total ?? 0;
+
+  const fetchConversationPage = (newOffset: number) => {
+    setOffset(newOffset);
+  };
 
   const selectAllYears = () => {
     setActiveYear(null);
+    setOffset(0);
     setActiveMatch(0);
-    void fetchConversationPage(0);
   };
 
   const selectYear = (year: number) => {
@@ -164,8 +132,8 @@ export function useConversationMessages(conversationId: number) {
       return;
     }
     setActiveYear(year);
+    setOffset(0);
     setActiveMatch(0);
-    void fetchYear(year);
   };
 
   return {
@@ -177,9 +145,12 @@ export function useConversationMessages(conversationId: number) {
     setFindTerm,
     activeMatch,
     setActiveMatch,
-    loading,
+    loading: query.isLoading,
     fetchConversationPage,
     selectAllYears,
     selectYear,
+    data: query.data,
+    error: query.error,
+    isLoading: query.isLoading,
   };
 }

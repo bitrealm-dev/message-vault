@@ -586,6 +586,10 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         "  GET  /v1/export/messages?q=&limit=&offset=&account=  (download messages, a page at a time)"
     );
     eprintln!("  GET  /v1/conversations?q=&limit=&offset=  (browse conversations)");
+    eprintln!("  GET  /v1/conversations/{{id}}              (one conversation, list shape)");
+    eprintln!(
+        "  GET  /v1/conversations/{{id}}/messages?limit=&offset=&year=  (a conversation's messages, a page at a time)"
+    );
     eprintln!("  GET  /v1/contacts?q=&limit=&offset=     (browse contacts)");
     eprintln!("  PATCH /v1/contacts/{{id}}                  (edit a contact)");
     eprintln!("  GET  /v1/export/messages/count?q=&account=  (export match counts)");

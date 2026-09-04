@@ -116,7 +116,13 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
             crate::conversations_api::conversations_list_handler
         ))
         .routes(routes!(
+            crate::conversations_api::conversation_detail_handler
+        ))
+        .routes(routes!(
             crate::conversations_api::conversation_sources_handler
+        ))
+        .routes(routes!(
+            crate::conversations_api::conversation_messages_handler
         ))
         .routes(routes!(crate::import::imports_list_handler))
         .routes(routes!(crate::import::imports_create_handler))
@@ -256,7 +262,9 @@ mod tests {
             "/v1/saved-searches/{id}",
             "/v1/search/fields",
             "/v1/conversations",
+            "/v1/conversations/{id}",
             "/v1/conversations/{id}/sources",
+            "/v1/conversations/{id}/messages",
         ] {
             assert!(paths.contains_key(p), "missing {p}");
         }
