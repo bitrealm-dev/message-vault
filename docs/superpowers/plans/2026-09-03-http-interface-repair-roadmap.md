@@ -19,15 +19,16 @@ the spec's wording; for everything else, the spec wins.
 | 4 | Conversation read routes; message screen on TanStack Query | Conversation read routes | merged, #325 |
 | 5 | Trash module and four routes | Trash | merged, #329 |
 | 6 | One query builder on the web; shared example file | Query text on the web | merged, #332 |
-| 7 | One test fixture; route-level tests | Tests and fixtures | **next** |
-| 8 | Named-set route files folded | Named sets | queued |
+| 7 | One test fixture; route-level tests | Tests and fixtures | merged, #341 |
+| 8 | Named-set route files folded | Named sets | **next** |
 
 Plans so far: `2026-09-03-import-failures-and-schema-docs.md` (PR 1),
 `2026-09-03-route-convention.md` (PR 2),
 `2026-09-03-an-import-names-the-contact.md` (PR 3),
 `2026-09-04-conversation-read-routes.md` (PR 4),
 `2026-09-04-trash-routes.md` (PR 5),
-`2026-09-04-web-query-builder.md` (PR 6).
+`2026-09-04-web-query-builder.md` (PR 6),
+`2026-09-04-tests-and-fixtures.md` (PR 7).
 
 ## How a pull request is delivered
 
@@ -155,50 +156,43 @@ query and sends it to the Contacts list too, which refuses `participants:`.
 That needs a product decision about what the Trash search box means when the
 rows beneath it are two different kinds, so it is not PR 7's work.
 
-## PR 7: Tests and fixtures
+## PR 7: Tests and fixtures — merged, #341
 
-Spec section "Tests and fixtures".
+Spec section "Tests and fixtures". Plan:
+`docs/superpowers/plans/2026-09-04-tests-and-fixtures.md`.
 
-Changed since the spec: `test_vault()` exists in
-`crates/vault/server/src/test_support.rs`; `test_vault_http()` does not, and
-`get_raw`, `post_raw`, and `delete_raw` each bind, spawn, and abort their
-own server.
+`crates/vault/server/src/test_support.rs` is now the only place a test
+server is started, a test account is made, or a conversation is seeded. Ten
+`fn setup()` functions are gone and `test_support.rs` holds exactly one
+`TcpListener::bind`. Route-level tests cover Export, the contacts `offset`
+ceiling, an asset round-trip, an unknown SHA, and an oversize upload part.
+528 tests, up from 513.
 
-Inventory before planning:
+All four items PR 2's review carried into this section shipped, two of them
+differently than the section expected:
 
-```
-grep -rn 'fn setup(' crates/vault/server/src
-grep -c 'TcpListener::bind' crates/vault/server/src/test_support.rs
-```
+- The multipart rejections were mapped, but not at `Multipart::from_request`
+  as written. That site can only ever produce 400 — `MultipartRejection` has
+  a single variant, `InvalidBoundary`, marked `#[status = BAD_REQUEST]`. The
+  sites that actually flattened a status Axum picked are `next_field()` and
+  the chunk loop in `import_multipart`, plus `stream_field_to_file`.
+- `read_body_limited`, `discard_body`, and `stream_body_to_file` answer 413.
+- The CORS ordering was reordered rather than documented. The layers in
+  `http_app` now run CORS → `json_body_limit_response` →
+  `RequestBodyLimitLayer` → router, so the limit layer's plain-text 413 is
+  rewritten to `{error}` and then gets its CORS headers.
+- Issue #273 closed by deleting all three smoke scripts. The premise was
+  checked first and did not fully hold: nothing else tested passing
+  `?account=` for another account with a valid token, so that came back as
+  two route tests with positive controls.
 
-Done when: the first grep returns nothing; one `serve(state)` helper backs
-every raw and JSON HTTP helper; Export and both read routes have
-route-level tests through it; a contacts test covers `offset` above
-`MAX_LIST_OFFSET` as the conversations test does; `check-pr.sh` passes.
-
-Carried over from the PR 2 review, all in server code this pull request
-already reworks:
-
-- `import/mod.rs` still takes Axum's `Multipart` directly; map its
-  rejections to `{error}` like the three extractors in `extract.rs`.
-- `read_body_limited`, `discard_body`, and `stream_body_to_file` in
-  `server.rs` answer 400 for their own oversize checks; 413 is the status
-  that carries that meaning.
-- The fast `Content-Length` 413 from `RequestBodyLimitLayer` carries no
-  CORS headers because the limit layer sits outside the CORS layer; decide
-  whether to reorder or document.
-- Issue #273: `scripts/test/smoke-vault-push.sh` does not exercise
-  `vault-push` and nothing runs it. Fold it into the route-level tests or
-  close the issue with the reason.
-
-Handed over by PR 6: `tests/fixtures/search/web-queries.txt` already exists
-and is already read by `crates/vault/server/src/search/tests.rs`. The spec's
-"one test fixture" means one fixture *tree* with one owner per file, not one
-file; do not rewrite or duplicate that one. `vault-pull` has now lost data
-silently three times (PR 3, and #324 in PR 4) because every fixture in the
-crate builds Rust structs instead of parsing JSON, so a field removed from
-the server keeps deserializing through `#[serde(default)]`. PR 4 added one
-JSON-literal test; the rest of that crate still has none.
+One rule now decides where 413 is documented: **413 is documented where the
+handler's own body-reading code produces it** — `read_body_limited`,
+`discard_body`, `stream_body_to_file`, `stream_field_to_file`. That is
+`PUT /v1/assets/{sha256}`, `PUT …/uploads/{id}/parts/{part}`, and
+`POST /v1/import`. The 413 from `RequestBodyLimitLayer` and from
+`extract::Json` applies uniformly to every body-carrying route and is a
+transport concern, not a route's contract.
 
 ## PR 8: Named sets
 
@@ -214,6 +208,27 @@ Done when: `contact_groups_api.rs` and `message_tags_api.rs` are gone, the
 routes and their OpenAPI operations are unchanged
 (`git diff main -- docs/src/assets/openapi.json` shows nothing), and
 issue #281 is closed by the pull request; `check-pr.sh` passes.
+
+What PR 8 inherits:
+
+- `crates/vault/server/src/test_support.rs` is the fixture. New tests use
+  `serve()`, `test_vault()`, `TestVault::account()`, and
+  `seed_conversation`; do not add a `fn setup()` and do not bind a listener.
+  Three helpers in `server.rs` still bind their own — `get_path`,
+  `cors_preflight`, and `auth_route_status` — tracked as #340, not PR 8's
+  work.
+- The routes are unchanged, so `docs/src/assets/openapi.json` must not move.
+  If it does, the fold changed a route and the fold is wrong. Regenerate and
+  diff rather than trusting the annotations to be untouched.
+- `openapi::tests::committed_openapi_matches_dump` pins the JSON to the
+  annotations, and `scripts/check-generated-api-types.sh` pins
+  `web/src/lib/vaultApi.types.ts` to the JSON. Both must stay green with an
+  empty diff.
+- Open against the vault server but not PR 8's to fix: #334 (multipart
+  imports capped at 2 MiB by Axum's inherited `DefaultBodyLimit`), #337 (the
+  multipart import success path has no test and possibly no caller), #339
+  (`db/engine.rs` `test_pool()` is hard-wired to SQLite, so the Postgres CI
+  job runs almost the whole suite on SQLite), and #340.
 
 ## Out of scope
 
