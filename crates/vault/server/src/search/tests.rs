@@ -1744,46 +1744,291 @@ mod coverage {
 }
 
 mod docs {
-    use crate::search::fields::FIELDS;
+    use crate::search::ListKind;
+    use crate::search::fields::{FIELDS, for_list, lookup};
 
-    const PAGE: &str =
+    const SEARCH_PAGE: &str =
         include_str!("../../../../../docs/src/content/docs/vault/user/how-to/search.mdx");
+    const API_PAGE: &str =
+        include_str!("../../../../../docs/src/content/docs/vault/developer/reference/api.md");
+    const BROWSE_PAGE: &str =
+        include_str!("../../../../../docs/src/content/docs/vault/user/browse-your-messages.md");
 
-    /// The words the page's table lists: the first backticked `word:` in
-    /// each table row.
-    fn documented_words() -> Vec<String> {
-        PAGE.lines()
+    /// Every backticked `word:` token on `line`, in order. `search.mdx`
+    /// lists one per table row; `api.md`'s prose bullets often name several
+    /// before the dash (`` `date:`, `first-message:`, `last-message:` ``),
+    /// so both pages read through this rather than assuming one-per-line.
+    fn words_on_line(line: &str) -> impl Iterator<Item = String> + '_ {
+        line.split('`').filter_map(|token| {
+            let word = token.strip_suffix(':')?;
+            (!word.is_empty() && word.chars().all(|c| c.is_ascii_lowercase() || c == '-'))
+                .then(|| word.to_string())
+        })
+    }
+
+    /// The words `search.mdx`'s table lists, one row at a time.
+    fn search_page_words() -> Vec<String> {
+        SEARCH_PAGE
+            .lines()
             .filter(|l| l.starts_with("| `"))
-            .filter_map(|l| {
-                let cell = l.trim_start_matches("| `");
-                let token = cell.split('`').next()?;
-                let word = token
-                    .strip_suffix(':')
-                    .or_else(|| token.split(':').next())?;
-                if word.chars().all(|c| c.is_ascii_lowercase() || c == '-') && !word.is_empty() {
-                    Some(word.to_string())
-                } else {
-                    None
-                }
+            .flat_map(words_on_line)
+            .collect()
+    }
+
+    /// The words `api.md`'s bullets list, a bullet possibly naming several.
+    ///
+    /// Only the bullets under the "Search operators" heading count. The page has
+    /// backticked `word:` bullets elsewhere — the two `Content-Type:` lines
+    /// under "Import body" — and reading the whole file would report them as
+    /// search words the language does not have, which is a confusing way for
+    /// this test to fail.
+    fn api_page_words() -> Vec<String> {
+        API_PAGE
+            .lines()
+            .skip_while(|l| *l != SEARCH_SECTION)
+            .skip(1)
+            .take_while(|l| !l.starts_with("## "))
+            .filter(|l| l.trim_start().starts_with("- `"))
+            .flat_map(words_on_line)
+            .collect()
+    }
+
+    /// The heading `api_page_words` scans between. A rename in `api.md`
+    /// empties that scan, so this test asserts the heading is still there.
+    const SEARCH_SECTION: &str = "## Search operators (`q`)";
+
+    #[test]
+    fn the_api_reference_still_has_a_search_operators_section() {
+        assert!(
+            API_PAGE.lines().any(|l| l == SEARCH_SECTION),
+            "api.md no longer has a {SEARCH_SECTION:?} heading, so \
+             the_api_reference_lists_every_messages_word_and_nothing_else \
+             would scan nothing"
+        );
+    }
+
+    /// The word in front of the colon in every backticked `word:value` token
+    /// in `page`. `words_on_line` only sees a token that *ends* in a colon,
+    /// which is how a reference table names a word; a page writing prose
+    /// names one by spelling out a whole term instead.
+    ///
+    /// Tokens holding a `/` or a space are skipped, so a URL, a file path, or
+    /// a header (`http://127.0.0.1:8080`, `crates/…/lib.rs:7`) does not read
+    /// as a search word.
+    fn prose_words(page: &str) -> Vec<String> {
+        page.split('`')
+            .skip(1)
+            .step_by(2)
+            .filter(|token| !token.contains('/') && !token.contains(' '))
+            .filter_map(|token| {
+                let word = token.split_once(':')?.0;
+                (!word.is_empty() && word.chars().all(|c| c.is_ascii_lowercase() || c == '-'))
+                    .then(|| word.to_string())
             })
             .collect()
     }
 
+    /// The tour page names its search words in prose rather than in a table,
+    /// so `the_page_lists_every_word_and_nothing_else` never read it. It told
+    /// people to search `is:group` for years — an operator the language has
+    /// never had. This is the check that would have caught it.
+    #[test]
+    fn the_browse_page_names_only_words_the_language_has() {
+        let words = prose_words(BROWSE_PAGE);
+        assert!(
+            !words.is_empty(),
+            "browse-your-messages.md names no search word at all, so this test \
+             is no longer reading what it thinks it is"
+        );
+        for word in &words {
+            assert!(
+                lookup(word).is_some(),
+                "browse-your-messages.md tells people to search {word}:, which \
+                 the language does not have"
+            );
+        }
+    }
+
     #[test]
     fn the_page_lists_every_word_and_nothing_else() {
-        let documented = documented_words();
+        let documented = search_page_words();
         for spec in FIELDS {
             assert!(
                 documented.contains(&spec.word.to_string()),
-                "docs page is missing {}:",
+                "search.mdx is missing {}:",
                 spec.word
             );
         }
         for word in &documented {
             assert!(
                 FIELDS.iter().any(|f| f.word == word),
-                "docs page lists {word}:, which the language does not have"
+                "search.mdx lists {word}:, which the language does not have"
             );
+        }
+    }
+
+    /// `api.md` describes what `GET /v1/export/messages` accepts, which
+    /// compiles as the Messages list (`export_api::message_filter`). It
+    /// should name every word the registry marks for Messages, and no word
+    /// the registry does not have at all — the same shape of check as
+    /// `the_page_lists_every_word_and_nothing_else`, scoped to one list.
+    #[test]
+    fn the_api_reference_lists_every_messages_word_and_nothing_else() {
+        let documented = api_page_words();
+        let messages_words: Vec<&'static str> =
+            for_list(ListKind::Messages).map(|f| f.word).collect();
+        for word in &messages_words {
+            assert!(
+                documented.iter().any(|d| d == word),
+                "api.md is missing {word}:, which fields.rs marks for the Messages list"
+            );
+        }
+        for word in &documented {
+            assert!(
+                messages_words.contains(&word.as_str()),
+                "api.md lists {word}:, but fields.rs does not mark it for the Messages list \
+                 ({})",
+                match lookup(word) {
+                    Some(spec) => format!("it registers {word}: for {}", tiles_str(spec.lists)),
+                    None => format!("the language does not have {word}: at all"),
+                }
+            );
+        }
+    }
+
+    /// The tile letters `<ListTiles on="…" />` uses, as `search.mdx`'s own
+    /// intro states them: "C" Contacts, "V" Conversations, "M" Messages.
+    fn tile(letter: &str, line: &str) -> ListKind {
+        match letter {
+            "C" => ListKind::Contacts,
+            "V" => ListKind::Conversations,
+            "M" => ListKind::Messages,
+            other => panic!("search.mdx ListTiles has an unknown tile {other:?} in: {line}"),
+        }
+    }
+
+    /// The `ListKind`s named in one row's `<ListTiles on="…" />`.
+    fn row_tiles(line: &str) -> Vec<ListKind> {
+        let after_on = line
+            .split("on=\"")
+            .nth(1)
+            .unwrap_or_else(|| panic!("search.mdx row has no ListTiles on=\"…\": {line}"));
+        let letters = after_on
+            .split('"')
+            .next()
+            .unwrap_or_else(|| panic!("search.mdx row's ListTiles on=\"…\" never closes: {line}"));
+        letters.split_whitespace().map(|l| tile(l, line)).collect()
+    }
+
+    /// `lists`, rendered as the same letters `<ListTiles on="…" />` uses, in
+    /// Contacts/Conversations/Messages order, for an assertion message.
+    fn tiles_str(lists: &[ListKind]) -> String {
+        [
+            (ListKind::Contacts, "C"),
+            (ListKind::Conversations, "V"),
+            (ListKind::Messages, "M"),
+        ]
+        .into_iter()
+        .filter(|(kind, _)| lists.contains(kind))
+        .map(|(_, letter)| letter)
+        .collect::<Vec<_>>()
+        .join(" ")
+    }
+
+    fn is_same_lists(a: &[ListKind], b: &[ListKind]) -> bool {
+        let has = |lists: &[ListKind], kind: ListKind| lists.contains(&kind);
+        [
+            ListKind::Contacts,
+            ListKind::Conversations,
+            ListKind::Messages,
+        ]
+        .into_iter()
+        .all(|kind| has(a, kind) == has(b, kind))
+    }
+
+    /// Issue #328: the word-only check above says nothing about *which*
+    /// lists a row claims a word applies to. `trashed:` sat at `on="C V"`
+    /// after a pull request registered it for Messages too, with CI green
+    /// throughout, because nothing read the tile letters. This reads them
+    /// and compares against `fields.rs`.
+    #[test]
+    fn each_rows_list_tiles_match_the_registry() {
+        for line in SEARCH_PAGE.lines().filter(|l| l.starts_with("| `")) {
+            let word = words_on_line(line)
+                .next()
+                .unwrap_or_else(|| panic!("search.mdx row names no word: {line}"));
+            let spec = lookup(&word).unwrap_or_else(|| {
+                panic!("search.mdx lists {word}:, which the language does not have")
+            });
+            let page_lists = row_tiles(line);
+            if !is_same_lists(&page_lists, spec.lists) {
+                panic!(
+                    "search.mdx says {word}: applies to {}, but fields.rs registers it for {}",
+                    tiles_str(&page_lists),
+                    tiles_str(spec.lists),
+                );
+            }
+        }
+    }
+}
+
+/// Reads `tests/fixtures/search/web-queries.txt`, generated by
+/// `web/src/lib/searchQuery.test.ts`: one line per query the web's search
+/// builders (`web/src/lib/searchQuery.ts`) can produce, as `list<TAB>query`.
+/// This is the other half of that generation — the web writes the fixture,
+/// this reads it back, and the two sides can only agree because each query
+/// actually parses on the list its own first column names. Nothing here
+/// checks the query against seeded data; that is what `every_word_compiles_*`
+/// above already does per word. This checks the builders' *composition* of
+/// several words together, the shape a hand-picked per-word sample can't
+/// cover.
+mod web_fixture {
+    use super::*;
+
+    const FIXTURE: &str = include_str!("../../../../../tests/fixtures/search/web-queries.txt");
+
+    fn list_named(name: &str) -> Option<ListKind> {
+        match name {
+            "contacts" => Some(ListKind::Contacts),
+            "conversations" => Some(ListKind::Conversations),
+            "messages" => Some(ListKind::Messages),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn every_query_the_web_can_build_parses_on_its_list() {
+        for (i, line) in FIXTURE.lines().enumerate() {
+            let lineno = i + 1;
+            if line.is_empty() {
+                continue;
+            }
+            let (list_name, query) = line.split_once('\t').unwrap_or_else(|| {
+                panic!(
+                    "tests/fixtures/search/web-queries.txt:{lineno}: no tab between the \
+                     list name and the query: {line:?}"
+                )
+            });
+            let list = list_named(list_name).unwrap_or_else(|| {
+                panic!(
+                    "tests/fixtures/search/web-queries.txt:{lineno}: {list_name:?} is not \
+                     a list name (want contacts, conversations, or messages)"
+                )
+            });
+            compile(CompileRequest {
+                list,
+                query,
+                account_id: ACCOUNT,
+                engine: DbEngine::Sqlite,
+                today: today(),
+            })
+            .unwrap_or_else(|e| {
+                panic!(
+                    "tests/fixtures/search/web-queries.txt:{lineno}: {list_name} query \
+                     {query:?} does not parse: {}",
+                    e.message
+                )
+            });
         }
     }
 }

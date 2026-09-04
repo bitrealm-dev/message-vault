@@ -56,7 +56,7 @@ function groupsOver(routes: NameCollectionRoutes) {
       { key: keys.contacts.details, field: "groups", shape: "row" },
     ],
     label: "group",
-    queryToken: "group",
+    forName: (name) => `group:${name}`,
     reservedNames: new Set(["trash"]),
     reservedError: (name) => `${name} is reserved`,
   });

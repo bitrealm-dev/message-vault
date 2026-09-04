@@ -27,7 +27,7 @@ One language works on all three lists: **Contacts**, **Conversations**, and **Me
 
 ### How values work
 
-- Put quotes around a value with a space or a colon: `group:"Book Club"`. Two quotes in a row are one quote.
+- Put quotes around a value with a space, a colon, or a parenthesis: `group:"Book Club"`, `group:"Family (close)"`. Parentheses group clauses, so an unquoted `group:Family (close)` asks a different question. Two quotes in a row are one quote.
 - Case never matters.
 - `#12` means the thing with that id: `group:#7`, `with:#42`, `in:#19`.
 - `none` means empty and `any` means not empty, on the words whose row below lists them: `name:none`, `tag:none`, `attachment:any`.

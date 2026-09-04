@@ -43,18 +43,16 @@ export function useSavedSearches(): {
 }
 
 /** Every write is followed by one fresh read of the list the sidebar shows. */
-function useSavedSearchWrite<V>(
-  write: (vars: V) => Promise<unknown>,
-): UseMutationResult<unknown, Error, V> {
+function useSavedSearchWrite<T, V>(write: (vars: V) => Promise<T>): UseMutationResult<T, Error, V> {
   const cache = useVaultCache();
-  return useMutation<unknown, Error, V>({
+  return useMutation<T, Error, V>({
     mutationFn: write,
     onSettled: () => cache.invalidate(keys.savedSearches.all),
   });
 }
 
 export function useCreateSavedSearch(): UseMutationResult<
-  unknown,
+  SavedSearch,
   Error,
   { name: string; query: string }
 > {
@@ -62,14 +60,14 @@ export function useCreateSavedSearch(): UseMutationResult<
 }
 
 export function useUpdateSavedSearch(): UseMutationResult<
-  unknown,
+  SavedSearch,
   Error,
   { id: number; name: string; query: string }
 > {
   return useSavedSearchWrite(({ id, name, query }) => updateVaultSavedSearch(id, { name, query }));
 }
 
-export function useDeleteSavedSearch(): UseMutationResult<unknown, Error, number> {
+export function useDeleteSavedSearch(): UseMutationResult<void, Error, number> {
   return useSavedSearchWrite((id) => deleteVaultSavedSearch(id));
 }
 

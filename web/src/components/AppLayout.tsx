@@ -1,8 +1,10 @@
 import { useCallback, useState } from "react";
 import { Outlet, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { contactBrowseQuery } from "../lib/contactBrowseQuery";
 import { groupFromSlug } from "../lib/contactGroups";
 import { asMessagesLocationState } from "../lib/messagesLocationState";
 import { tagFromSlug, tagListQuery } from "../lib/messageTags";
+import { trashed } from "../lib/searchQuery";
 import type { Conversation } from "../lib/types";
 import { useContactGroups } from "../lib/useContactGroups";
 import { useMessageTags } from "../lib/useMessageTags";
@@ -24,19 +26,6 @@ import LeftPanel from "./LeftPanel";
 import ListColumn from "./ListColumn";
 import RightPane from "./RightPane";
 import { RightToolbarProvider } from "./RightToolbarContext";
-
-/** Search query used when browsing a contact's conversations from the drawer. */
-function contactBrowseQuery(contactId: string, kind: ContactBrowseKind, handle?: string): string {
-  let kindSuffix = "";
-  if (kind === "direct") kindSuffix = " kind:direct";
-  else if (kind === "group") kindSuffix = " kind:group";
-  const h = handle?.trim();
-  if (h) {
-    const quoted = /\s/.test(h) ? `"${h}"` : h;
-    return `handle:${quoted}${kindSuffix}`;
-  }
-  return `with:#${contactId}${kindSuffix}`;
-}
 
 type ColumnMode = "conversations" | "contacts" | "trash" | "import" | "export" | "settings";
 
@@ -185,8 +174,7 @@ export default function AppLayout() {
     updateSearchParams({ q: q, f: "" });
   };
 
-  /** Trash is always `trashed:yes`; the search box narrows within it. */
-  const trashListQuery = trashSearch.trim() ? `trashed:yes ${trashSearch.trim()}` : "trashed:yes";
+  const trashListQuery = trashed(trashSearch);
 
   const threadListQuery = tagListQuery(tagFilter, conversationFilter || conversationSearch);
 

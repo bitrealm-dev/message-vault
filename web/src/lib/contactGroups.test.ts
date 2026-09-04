@@ -58,4 +58,8 @@ describe("groupListQuery", () => {
     expect(groupListQuery("none", "bob")).toBe("group:none bob");
     expect(groupListQuery(null, "ada")).toBe("ada");
   });
+
+  it("quotes a name with parentheses, since the language reads them as grouping", () => {
+    expect(groupListQuery("Family (close)", "")).toBe('group:"Family (close)"');
+  });
 });

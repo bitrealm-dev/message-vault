@@ -1,0 +1,12 @@
+{
+  // The test program: everything under src/, plus Node's types, which
+  // searchQuery.test.ts needs to write the web-queries fixture with node:fs.
+  // `npm run typecheck` runs this alongside tsconfig.json, so tests are still
+  // type-checked in CI — just not in the same global scope as the app.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src"],
+  "exclude": []
+}

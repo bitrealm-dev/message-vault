@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import Button from "../components/Button";
 import { apiErrorMessage } from "../lib/apiErrorMessage";
+import { trashed } from "../lib/searchQuery";
 import { useRestoreContact, useRestoreConversation } from "../lib/trash";
 import { getConversation, listContacts, listConversations } from "../lib/vaultApi";
 import { keys } from "../lib/vaultKeys";
@@ -25,12 +26,6 @@ import { useVaultQuery } from "../lib/vaultQuery";
 /** How many trashed contacts this pane lists before it stops. */
 const CONTACT_LIMIT = 100;
 
-/** Trash is always `trashed:yes`; the header search box narrows within it. */
-function trashQuery(search: string): string {
-  const term = search.trim();
-  return term ? `trashed:yes ${term}` : "trashed:yes";
-}
-
 /** The `tsel` param as a positive conversation id, or null when absent or malformed. */
 function selectedIdFromParam(raw: string | null): number | null {
   if (raw === null || !/^\d+$/.test(raw)) return null;
@@ -47,7 +42,7 @@ const errorBox =
 export default function TrashScreen() {
   const [searchParams, setSearchParams] = useSearchParams();
   const search = searchParams.get("tq") || "";
-  const query = trashQuery(search);
+  const query = trashed(search);
   const selectedId = selectedIdFromParam(searchParams.get("tsel"));
 
   // Only `total` is read here; the rows themselves are rendered by the list

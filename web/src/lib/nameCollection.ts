@@ -75,8 +75,8 @@ export type NameCollectionConfig = {
   chips: readonly ChipTarget[];
   /** What one of these is called in an error, e.g. `group`. */
   label: string;
-  /** Search token used in list queries, e.g. `group` for `group:Family`. */
-  queryToken: string;
+  /** This collection's search term for one name, e.g. `forGroup` from `searchQuery.ts`. */
+  forName: (name: string) => string;
   reservedNames: ReadonlySet<string>;
   reservedError: (name: string) => string;
 };
@@ -99,13 +99,7 @@ export function createNameCollection(config: NameCollectionConfig): NameCollecti
 
   function listQuery(name: string | "none" | null, search: string): string {
     const parts: string[] = [];
-    if (name === "none") {
-      parts.push(`${config.queryToken}:none`);
-    } else if (name) {
-      parts.push(
-        /\s/.test(name) ? `${config.queryToken}:"${name}"` : `${config.queryToken}:${name}`,
-      );
-    }
+    if (name) parts.push(config.forName(name));
     const extra = search.trim();
     if (extra) parts.push(extra);
     return parts.join(" ");

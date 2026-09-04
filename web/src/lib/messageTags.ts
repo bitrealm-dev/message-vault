@@ -4,6 +4,7 @@ import {
   useNameCollectionActions,
   useSetNamedSetMembers,
 } from "./nameCollection";
+import { forTag } from "./searchQuery";
 import {
   createMessageTag,
   deleteMessageTag,
@@ -52,7 +53,7 @@ export const messageTags = createNameCollection({
   invalidates: [keys.conversations.all, keys.trash.all],
   chips: [{ key: keys.conversations.lists, field: "tags", shape: "pages" }],
   label: "tag",
-  queryToken: "tag",
+  forName: forTag,
   reservedNames: RESERVED_TAG_NAMES,
   reservedError: reservedTagError,
 });
