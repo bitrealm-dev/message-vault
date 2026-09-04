@@ -78,4 +78,21 @@ mod tests {
             assert!(page.contains(subcommand), "missing {subcommand}:\n{page}");
         }
     }
+
+    #[test]
+    fn committed_page_matches_the_generator() {
+        // The twin of `openapi::tests::committed_openapi_matches_dump`. Both
+        // guard a generated file the docs site commits: a clap change that
+        // skipped the regeneration, or a hand edit past the do-not-edit
+        // marker, fails here instead of publishing a stale page.
+        let generated = page_markdown();
+        let committed = include_str!(
+            "../../../../docs/src/content/docs/vault/developer/reference/server-cli.md"
+        );
+        assert_eq!(
+            generated.trim_end(),
+            committed.trim_end(),
+            "run: cargo run -p message-vault-server -- dump-cli-docs --output docs/src/content/docs/vault/developer/reference/server-cli.md"
+        );
+    }
 }
