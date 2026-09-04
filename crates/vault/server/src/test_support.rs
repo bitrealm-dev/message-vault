@@ -306,9 +306,15 @@ pub async fn patch_failure(
     token: &str,
     body: serde_json::Value,
 ) -> (StatusCode, String) {
-    let response = request(state, reqwest::Method::PATCH, path, Some(token), Some(body)).await;
-    let status = response.status();
-    let body: serde_json::Value = response.json().await.unwrap();
+    let (status, text) = request(
+        state,
+        reqwest::Method::PATCH,
+        path,
+        Some(token),
+        Some(json_body(body)),
+    )
+    .await;
+    let body: serde_json::Value = serde_json::from_str(&text).unwrap();
     let sentence = body["error"].as_str().unwrap_or_default().to_string();
     (status, sentence)
 }
