@@ -85,12 +85,4 @@ curl -sS "http://127.0.0.1:8080/v1/auth/check" \
   -H "Authorization: Bearer <import-api-token-from-settings>"
 ```
 
-## Smoke tests
-
-```bash title="Smoke tests"
-./scripts/test/smoke-import-api.sh
-./scripts/test/smoke-vault-push.sh
-./scripts/test/smoke-export-api.sh
-```
-
 Health check: <http://127.0.0.1:8080/health>
