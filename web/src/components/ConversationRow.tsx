@@ -1,9 +1,7 @@
 import { type ReactNode, useId } from "react";
 import { formatDateSpan } from "../lib/formatDate";
-import { personDisplayLabel } from "../lib/nameAliases";
 import { listRowDivider } from "../lib/tw";
 import type { Conversation } from "../lib/types";
-import { useNameAliases } from "../lib/useNameAliases";
 import Checkbox from "./Checkbox";
 import { useColumnResizing } from "./columnResizeState";
 
@@ -45,56 +43,38 @@ function GroupIcon() {
   );
 }
 
-function participantLabel(
-  p: { name?: string | null; name_alias?: string | null; handle: string },
-  useAliases: boolean,
-): string {
-  return personDisplayLabel(
-    {
-      preferredName: p.name,
-      nameAlias: p.name_alias,
-      handle: p.handle,
-    },
-    useAliases,
-  );
-}
-
 /** Comma-separated names; each name stays whole; at most two lines then ellipsis. */
 function GroupNames({ conv }: { conv: Conversation }) {
-  const useAliases = useNameAliases();
   return (
     <span className="line-clamp-2 break-words leading-[1.35]">
-      {conv.participants.map((p, i) => {
-        const label = participantLabel(p, useAliases);
-        return (
-          <span key={p.handle}>
-            {i > 0 ? ", " : null}
-            <span className="whitespace-nowrap">{label}</span>
-          </span>
-        );
-      })}
+      {conv.participants.map((p, i) => (
+        <span key={p.handle}>
+          {i > 0 ? ", " : null}
+          <span className="whitespace-nowrap">{p.name}</span>
+        </span>
+      ))}
     </span>
   );
 }
 
-function titleContent(conv: Conversation, useAliases: boolean): ReactNode {
+function titleContent(conv: Conversation): ReactNode {
   if (conv.label) return conv.label;
   if (!conv.is_group) {
     const p = conv.participants[0];
     if (!p) return "(unknown)";
-    return participantLabel(p, useAliases);
+    return p.name;
   }
   return <GroupNames conv={conv} />;
 }
 
 /** Plain-text form of the row title, for the checkbox's accessible name. */
-function conversationTitleText(conv: Conversation, useAliases: boolean): string {
+function conversationTitleText(conv: Conversation): string {
   if (conv.label) return conv.label;
   if (!conv.is_group) {
     const p = conv.participants[0];
-    return p ? participantLabel(p, useAliases) : "(unknown)";
+    return p ? p.name : "(unknown)";
   }
-  return conv.participants.map((p) => participantLabel(p, useAliases)).join(", ");
+  return conv.participants.map((p) => p.name).join(", ");
 }
 
 /** Bottom-left for groups: service only (count sits upper-right). */
@@ -136,7 +116,6 @@ export default function ConversationRow({
 }) {
   const checkboxId = useId();
   const columnResizing = useColumnResizing();
-  const useAliases = useNameAliases();
   const isGroup = conversation.is_group;
   const wraps = isGroup && !conversation.label && !columnResizing;
   const dateSpan = formatDateSpan(
@@ -153,7 +132,7 @@ export default function ConversationRow({
             wraps ? "overflow-hidden" : "truncate"
           }`}
         >
-          {titleContent(conversation, useAliases)}
+          {titleContent(conversation)}
         </span>
         {isGroup ? <GroupParticipantCount count={conversation.participants.length} /> : null}
       </div>
@@ -195,7 +174,7 @@ export default function ConversationRow({
         <Checkbox
           id={checkboxId}
           checked={checked || false}
-          aria-label={`Select ${conversationTitleText(conversation, useAliases)}`}
+          aria-label={`Select ${conversationTitleText(conversation)}`}
           onChange={() => onCheckChange(conversation.id)}
           className="shrink-0"
         />

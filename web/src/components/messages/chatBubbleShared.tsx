@@ -1,8 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
 import { highlightText } from "../../lib/highlightText";
-import { personDisplayLabel } from "../../lib/nameAliases";
 import type { Message, MessageAttachment } from "../../lib/types";
-import { useNameAliases } from "../../lib/useNameAliases";
 
 type BubblePalette = "imessage" | "sms";
 
@@ -31,31 +29,14 @@ export function bubbleBody(body: string, highlight: string | undefined): ReactNo
   return highlight ? highlightText(body, highlight) : body;
 }
 
-/**
- * Takes the alias preference rather than reading it, so a thread does not do a
- * synchronous `localStorage` read once per message.
- */
-export function senderName(m: Message, useAliases: boolean): string {
+export function senderName(m: Message): string {
   if (m.is_from_me) return "Me";
-  const labelFor = (p: {
-    preferred_name?: string | null;
-    name_alias?: string | null;
-    handle: string;
-  }) =>
-    personDisplayLabel(
-      {
-        preferredName: p.preferred_name,
-        nameAlias: p.name_alias,
-        handle: p.handle,
-      },
-      useAliases,
-    );
   if (m.sender) {
     const p = m.conversation.participants.find((x) => x.handle === m.sender);
-    return p ? labelFor(p) : m.sender;
+    return p ? p.name : m.sender;
   }
   const p = m.conversation.participants[0];
-  return p ? labelFor(p) : "Unknown";
+  return p ? p.name : "Unknown";
 }
 
 export function isGroupConversation(m: Message): boolean {
@@ -194,7 +175,6 @@ export function ServiceBubbleShell({
   children: ReactNode;
 }) {
   const mine = message.is_from_me;
-  const useAliases = useNameAliases();
   return (
     <ServiceRow messageId={String(message.id)} isActive={isActive}>
       <div
@@ -206,7 +186,7 @@ export function ServiceBubbleShell({
           className={`text-[0.75rem] font-semibold ${senderClassName ?? ""}`}
           style={senderStyle}
         >
-          {senderName(message, useAliases)}
+          {senderName(message)}
         </span>
         <span className={timeClassName}>{formatMessageTime(message.timestamp)}</span>
         {headerExtra}

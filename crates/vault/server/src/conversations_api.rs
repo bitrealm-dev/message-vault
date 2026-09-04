@@ -6,12 +6,11 @@ use crate::extract::{Json, Path as AxumPath, Query};
 use axum::extract::State;
 use serde::{Deserialize, Serialize};
 use sqlx::AnyConnection;
-use sqlx::Row;
 
 use crate::db::dialect::engine_of;
+use crate::db::participant_names::{Participant, load_for_chat_handle, load_for_conversations};
 use crate::db::sql::{
-    SqlParam, bind_args, fold_in_id_chunks, group_rows_by_id, in_placeholders,
-    renumber_placeholders,
+    SqlParam, bind_args, fold_in_id_chunks, in_placeholders, renumber_placeholders,
 };
 use crate::paging::{DEFAULT_LIST_LIMIT, MAX_LIST_OFFSET, Page, page_params};
 use crate::server::{ApiError, AppState, FullAccess};
@@ -96,32 +95,13 @@ impl ConversationOrder {
     }
 }
 
-/// One participant with display name and handle.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct ConversationParticipant {
-    /// Display name from the import or the vault contact.
-    pub name: Option<String>,
-    /// Per service+identity alias from `contact_handles` when linked.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name_alias: Option<String>,
-    /// Raw handle value (phone, email, or username).
-    pub handle: String,
-    /// Platform service, e.g. `imessage`.
-    pub service: String,
-    /// Linked vault contact id, when the handle is linked. Matches the `id`
-    /// every other contact shape uses, so a caller can compare the two without
-    /// converting either.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub contact_id: Option<i64>,
-}
-
 /// Conversation row for the list: participants, counts, tags.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ConversationSummary {
     /// The conversation's id; search for it as `in:#<id>`.
     pub id: i64,
     /// Participants with names and handles.
-    pub participants: Vec<ConversationParticipant>,
+    pub participants: Vec<Participant>,
     /// Messages in the conversation (excluding hidden duplicates).
     pub message_count: u64,
     /// Timestamp of the last message.
@@ -244,7 +224,7 @@ pub async fn list_conversations_sorted(
         .collect();
 
     let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
-    let mut participants = load_participants(conn, &ids).await?;
+    let mut participants = load_for_conversations(conn, &ids).await?;
     let source_sets = load_conversation_sources(conn, &ids).await?;
     let mut tag_sets = crate::named_membership::names_for_items(
         crate::named_membership::tag_spec(),
@@ -270,7 +250,7 @@ pub async fn list_conversations_sorted(
         );
         let parts = participants.remove(&row.id).unwrap_or_default();
         let parts = if parts.is_empty() {
-            chat_handle_as_participant(conn, row.id).await?
+            load_for_chat_handle(conn, row.id).await?
         } else {
             parts
         };
@@ -296,92 +276,6 @@ pub async fn list_conversations_sorted(
         limit,
         offset,
     })
-}
-
-async fn chat_handle_as_participant(
-    conn: &mut AnyConnection,
-    conversation_id: i64,
-) -> Result<Vec<ConversationParticipant>, ApiError> {
-    let row: Option<(String, String, String)> = sqlx::query_as(
-        "SELECT h.raw,
-                h.service,
-                h.handle_type
-         FROM conversations c
-         JOIN handles h ON h.id = c.chat_handle_id
-         WHERE c.id = $1",
-    )
-    .bind(conversation_id)
-    .fetch_optional(&mut *conn)
-    .await?;
-    Ok(match row {
-        Some((handle, service, handle_type)) => vec![ConversationParticipant {
-            name: None,
-            name_alias: None,
-            handle,
-            service: if service.trim().is_empty() {
-                handle_type
-            } else {
-                service
-            },
-            contact_id: None,
-        }],
-        None => Vec::new(),
-    })
-}
-
-async fn load_participants(
-    conn: &mut AnyConnection,
-    conversation_ids: &[i64],
-) -> Result<HashMap<i64, Vec<ConversationParticipant>>, ApiError> {
-    // Join contact preferred_name / name_alias here so the list path does not
-    // issue one follow-up SELECT per participant. Contact fields apply only when
-    // `p.contact_id` links the same handle; otherwise residue `p.name_alias` is
-    // exposed as `name` and `name_alias` stays unset.
-    group_rows_by_id(
-        conn,
-        conversation_ids,
-        |placeholders| {
-            format!(
-                "SELECT p.conversation_id,
-                    CASE
-                      WHEN NULLIF(trim(c.preferred_name), '') IS NOT NULL
-                        THEN NULLIF(trim(c.preferred_name), '')
-                      ELSE NULLIF(trim(p.name_alias), '')
-                    END AS name,
-                    NULLIF(trim(ch.name_alias), '') AS name_alias,
-                    h.raw,
-                    coalesce(nullif(trim(h.service), ''), h.handle_type),
-                    p.contact_id
-             FROM participants p
-             JOIN handles h ON h.id = p.handle_id
-             JOIN conversations conv ON conv.id = p.conversation_id
-             LEFT JOIN contact_handles ch
-               ON ch.contact_id = p.contact_id
-              AND ch.account_id = conv.account_id
-              AND ch.handle_id = p.handle_id
-             LEFT JOIN contacts c
-               ON c.id = ch.contact_id AND c.account_id = conv.account_id
-             WHERE p.conversation_id IN ({placeholders})
-             ORDER BY p.conversation_id, p.id"
-            )
-        },
-        |row| {
-            let contact_id: Option<i64> = row.try_get(5)?;
-            Ok((
-                row.try_get::<i64, _>(0)?,
-                ConversationParticipant {
-                    name: row.try_get(1)?,
-                    name_alias: row.try_get(2)?,
-                    handle: row.try_get(3)?,
-                    service: row
-                        .try_get::<String, _>(4)
-                        .unwrap_or_else(|_| "unknown".into()),
-                    contact_id,
-                },
-            ))
-        },
-    )
-    .await
 }
 
 const IMESSAGE_SOURCE: &str = "imessage";
@@ -1213,160 +1107,87 @@ mod tests {
         assert!(groups.items[0].is_group);
     }
 
+    /// A newest-first page for `setup()`'s account, with the default query and
+    /// paging — what each of the three participant-naming tests below needs.
+    async fn list_conversations_page(
+        conn: &mut AnyConnection,
+        account_id: &str,
+    ) -> Page<ConversationSummary> {
+        list_conversations(conn, account_id, "", DEFAULT_LIST_LIMIT, 0)
+            .await
+            .unwrap()
+    }
+
+    fn find_participant<'a>(
+        page: &'a crate::paging::Page<ConversationSummary>,
+        handle: &str,
+    ) -> &'a Participant {
+        page.items
+            .iter()
+            .flat_map(|c| c.participants.iter())
+            .find(|p| p.handle == handle)
+            .expect("participant is in the page")
+    }
+
     #[tokio::test]
-    async fn list_conversations_enriches_participant_names_from_contact() {
+    async fn list_conversations_shows_the_contact_name() {
         let (pool, _dir, account) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
-        // setup() participant residue is name_alias 'Sam' on +15555550200.
-        sqlx::query(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Sam Preferred')",
+        let contact_id: i64 = sqlx::query_scalar(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Sam Preferred')
+             RETURNING id",
         )
         .bind(&account)
-        .execute(&mut *conn)
+        .fetch_one(&mut *conn)
         .await
         .unwrap();
-        let contact_id: i64 = sqlx::query_scalar("SELECT id FROM contacts WHERE account_id = $1")
-            .bind(&account)
-            .fetch_one(&mut *conn)
-            .await
-            .unwrap();
-        let peer_handle_id: i64 =
-            sqlx::query_scalar("SELECT id FROM handles WHERE account_id = $1 AND raw = $2")
-                .bind(&account)
-                .bind("+15555550200")
-                .fetch_one(&mut *conn)
-                .await
-                .unwrap();
-        sqlx::query(
-            "INSERT INTO contact_handles (account_id, handle_id, contact_id, name_alias)
-             VALUES ($1, $2, $3, 'Sammy')",
+        let handle_id: i64 = sqlx::query_scalar(
+            "SELECT id FROM handles WHERE account_id = $1 AND raw = '+15555550200'",
         )
         .bind(&account)
-        .bind(peer_handle_id)
-        .bind(contact_id)
-        .execute(&mut *conn)
+        .fetch_one(&mut *conn)
         .await
         .unwrap();
         sqlx::query(
-            "UPDATE participants SET contact_id = $1 WHERE conversation_id = 1 AND handle_id = $2",
+            "INSERT INTO contact_handles (account_id, handle_id, contact_id)
+             VALUES ($1, $2, $3)",
         )
+        .bind(&account)
+        .bind(handle_id)
         .bind(contact_id)
-        .bind(peer_handle_id)
         .execute(&mut *conn)
         .await
         .unwrap();
 
-        let page = list_conversations(&mut conn, &account, "", 10, 0)
-            .await
-            .unwrap();
-        assert_eq!(page.items.len(), 1);
-        let p = &page.items[0].participants[0];
-        assert_eq!(p.handle, "+15555550200");
-        assert_eq!(p.name.as_deref(), Some("Sam Preferred"));
-        assert_eq!(p.name_alias.as_deref(), Some("Sammy"));
+        let page = list_conversations_page(&mut conn, &account).await;
+        let p = find_participant(&page, "+15555550200");
+        assert_eq!(p.name, "Sam Preferred");
         assert_eq!(p.contact_id, Some(contact_id));
     }
 
     #[tokio::test]
-    async fn list_conversations_keeps_participant_residue_name_without_contact() {
+    async fn list_conversations_falls_back_to_the_backup_name() {
         let (pool, _dir, account) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
-        let page = list_conversations(&mut conn, &account, "", 10, 0)
-            .await
-            .unwrap();
-        let p = &page.items[0].participants[0];
-        // No contact_id → residue `participants.name_alias` is exposed as `name`.
-        assert_eq!(p.name.as_deref(), Some("Sam"));
-        assert_eq!(p.name_alias, None);
+        // setup() records the backup name 'Sam' on +15555550200 and links no
+        // contact, so the backup's name is what there is to show.
+        let page = list_conversations_page(&mut conn, &account).await;
+        let p = find_participant(&page, "+15555550200");
+        assert_eq!(p.name, "Sam");
         assert_eq!(p.contact_id, None);
     }
 
     #[tokio::test]
-    async fn list_conversations_keeps_residue_when_linked_contact_has_empty_preferred_name() {
+    async fn list_conversations_falls_back_to_the_handle() {
         let (pool, _dir, account) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
-        sqlx::query("INSERT INTO contacts (account_id, preferred_name) VALUES ($1, '')")
-            .bind(&account)
+        sqlx::query("UPDATE participants SET name_alias = NULL")
             .execute(&mut *conn)
             .await
             .unwrap();
-        let contact_id: i64 = sqlx::query_scalar("SELECT id FROM contacts WHERE account_id = $1")
-            .bind(&account)
-            .fetch_one(&mut *conn)
-            .await
-            .unwrap();
-        let peer_handle_id: i64 =
-            sqlx::query_scalar("SELECT id FROM handles WHERE account_id = $1 AND raw = $2")
-                .bind(&account)
-                .bind("+15555550200")
-                .fetch_one(&mut *conn)
-                .await
-                .unwrap();
-        sqlx::query(
-            "INSERT INTO contact_handles (account_id, handle_id, contact_id, name_alias)
-             VALUES ($1, $2, $3, 'Sammy')",
-        )
-        .bind(&account)
-        .bind(peer_handle_id)
-        .bind(contact_id)
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-        sqlx::query(
-            "UPDATE participants SET contact_id = $1 WHERE conversation_id = 1 AND handle_id = $2",
-        )
-        .bind(contact_id)
-        .bind(peer_handle_id)
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-
-        let page = list_conversations(&mut conn, &account, "", 10, 0)
-            .await
-            .unwrap();
-        let p = &page.items[0].participants[0];
-        assert_eq!(p.name.as_deref(), Some("Sam"));
-        assert_eq!(p.name_alias.as_deref(), Some("Sammy"));
-    }
-
-    #[tokio::test]
-    async fn list_conversations_matches_contact_preferred_name() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
-        sqlx::query(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Sam Preferred')",
-        )
-        .bind(&account)
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-        let contact_id: i64 = sqlx::query_scalar("SELECT id FROM contacts WHERE account_id = $1")
-            .bind(&account)
-            .fetch_one(&mut *conn)
-            .await
-            .unwrap();
-        let peer_handle_id: i64 =
-            sqlx::query_scalar("SELECT id FROM handles WHERE account_id = $1 AND raw = $2")
-                .bind(&account)
-                .bind("+15555550200")
-                .fetch_one(&mut *conn)
-                .await
-                .unwrap();
-        sqlx::query(
-            "UPDATE participants SET contact_id = $1, name_alias = NULL
-             WHERE conversation_id = '1' AND handle_id = $2",
-        )
-        .bind(contact_id)
-        .bind(peer_handle_id)
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-
-        let by_name = list_conversations(&mut conn, &account, "Sam Preferred", 10, 0)
-            .await
-            .unwrap();
-        assert_eq!(by_name.total, 1);
-        assert_eq!(by_name.items[0].id, 1);
+        let page = list_conversations_page(&mut conn, &account).await;
+        let p = find_participant(&page, "+15555550200");
+        assert_eq!(p.name, "+15555550200");
     }
 
     #[tokio::test]

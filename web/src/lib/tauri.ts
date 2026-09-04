@@ -166,7 +166,6 @@ export interface PushConfig {
   continue_on_error: boolean;
   skip_attachments: boolean;
   trust_export: boolean;
-  contact_name_mode?: string;
   import_id?: number;
 }
 
@@ -234,7 +233,6 @@ export async function invokePush(config: PushConfig): Promise<void> {
       continueOnError: config.continue_on_error,
       skipAttachments: config.skip_attachments,
       trustExport: config.trust_export,
-      contactNameMode: config.contact_name_mode ?? "fill_missing",
       importId: config.import_id ?? null,
     },
   });

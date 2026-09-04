@@ -144,6 +144,21 @@ fn free_text_match(out: &mut Sql, engine: DbEngine, column: &str, term: &TextTer
 const PARTICIPANT_NAME: &str =
     "coalesce(NULLIF(trim(pct.preferred_name), ''), NULLIF(trim(p.name_alias), ''), '')";
 
+/// FROM clause binding `p` to a participants row and `pct` to the Contact its
+/// handle is on, scoped to conversation `c`'s account.
+///
+/// The route is `participants → contact_handles → contacts`, the same one
+/// `db::participant_names` takes, because ADR-0006 says a handle counts as a
+/// Contact's the moment it is on the Contact.
+/// `participants.contact_id` is written once at import and never updated,
+/// while the link in `contact_handles` changes whenever a handle is linked,
+/// two contacts are merged, or an address book adopts someone. Joining on
+/// `participants.contact_id` therefore showed one name in the conversation
+/// list and found a different one with `name:`.
+const PARTICIPANTS_WITH_CONTACT: &str = "participants p \
+     LEFT JOIN contact_handles pch ON pch.handle_id = p.handle_id AND pch.account_id = c.account_id \
+     LEFT JOIN contacts pct ON pct.id = pch.contact_id AND pct.account_id = c.account_id";
+
 /// Free text: the row's own text, one meaning applied per row type.
 fn emit_text(ctx: &ListCtx<'_>, out: &mut Sql, term: &TextTerm) {
     let e = ctx.engine;
@@ -172,9 +187,9 @@ fn emit_text(ctx: &ListCtx<'_>, out: &mut Sql, term: &TextTerm) {
             // The handle join is a LEFT join: a source may name a participant
             // and record no address for them, and that person is searchable by
             // the name the source gave.
-            out.push(
-                ") OR EXISTS (SELECT 1 FROM participants p LEFT JOIN handles ph ON ph.id = p.handle_id LEFT JOIN contacts pct ON pct.id = p.contact_id WHERE p.conversation_id = c.id AND (",
-            );
+            out.push(&format!(
+                ") OR EXISTS (SELECT 1 FROM {PARTICIPANTS_WITH_CONTACT} LEFT JOIN handles ph ON ph.id = p.handle_id WHERE p.conversation_id = c.id AND ("
+            ));
             free_text_match(out, e, "coalesce(ph.raw, '')", term);
             out.push(" OR ");
             free_text_match(out, e, PARTICIPANT_NAME, term);
@@ -314,9 +329,9 @@ fn emit_text_word(
             result = text_match(out, e, "ct.preferred_name", term, v);
         }
         ("name", _) => ctx.conversation(out, |o| {
-            o.push(
-                "EXISTS (SELECT 1 FROM participants p LEFT JOIN contacts pct ON pct.id = p.contact_id WHERE p.conversation_id = c.id AND ",
-            );
+            o.push(&format!(
+                "EXISTS (SELECT 1 FROM {PARTICIPANTS_WITH_CONTACT} WHERE p.conversation_id = c.id AND "
+            ));
             result = text_match(o, e, PARTICIPANT_NAME, term, v);
             o.push(")");
         }),
@@ -385,8 +400,7 @@ fn emit_text_word(
 }
 
 /// The handle with id `handle_id_expr` belongs to the person `v`: by contact
-/// id, or by a contains-or-prefix match on the handle, the contact's name,
-/// or the participant alias recorded for that handle.
+/// id, or by a contains-or-prefix match on the handle or the contact's name.
 fn person_matches(
     out: &mut Sql,
     engine: DbEngine,
@@ -413,8 +427,6 @@ fn person_matches(
             like_contains(out, engine, "coalesce(hp.normalized, '')", t, prefix);
             out.push(" OR ");
             like_contains(out, engine, "coalesce(ctp.preferred_name, '')", t, prefix);
-            out.push(" OR ");
-            like_contains(out, engine, "coalesce(chp.name_alias, '')", t, prefix);
             out.push("))");
             Ok(())
         }
@@ -422,11 +434,13 @@ fn person_matches(
     }
 }
 
-/// The participant row `p` (with `pct` its linked contact, when any, in
-/// scope via `LEFT JOIN contacts pct ON pct.id = p.contact_id`) is itself
-/// the person `v`: by contact id, or by a contains-or-prefix match on their
-/// display name. This is how `with:` reaches a participant the source only
-/// named — `handle_id` NULL, so `person_matches` on it never sees them.
+/// The participant row `p` (with `pct` the Contact its handle is on, when
+/// any, in scope via [`PARTICIPANTS_WITH_CONTACT`]) is itself the person `v`:
+/// by contact id, or by a contains-or-prefix match on their display name.
+/// This is how `with:` reaches a participant the source only named —
+/// `handle_id` NULL, so `person_matches` on it never sees them, and neither
+/// does the `contact_handles` join, which leaves `pct` NULL and the name
+/// coming from `p.name_alias`.
 fn participant_matches(
     out: &mut Sql,
     engine: DbEngine,
@@ -461,9 +475,9 @@ fn with_person(
     ctx.conversation(out, |o| {
         o.push("(");
         result = person_matches(o, e, "c.chat_handle_id", term, v);
-        o.push(
-            " OR EXISTS (SELECT 1 FROM participants p LEFT JOIN contacts pct ON pct.id = p.contact_id WHERE p.conversation_id = c.id AND (",
-        );
+        o.push(&format!(
+            " OR EXISTS (SELECT 1 FROM {PARTICIPANTS_WITH_CONTACT} WHERE p.conversation_id = c.id AND ("
+        ));
         if result.is_ok() {
             result = person_matches(o, e, "p.handle_id", term, v);
         }

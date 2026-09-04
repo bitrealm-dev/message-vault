@@ -21,8 +21,7 @@ use crate::jsonl;
 use crate::models::{AttachmentRecord, ExportRecord, MessageRecord, clean_body};
 
 use super::contact_name::{
-    apply_contact_name_mode, contact_preferred_name, ensure_contact_for_handle,
-    resolve_incoming_sender_handle, resolve_name_only_participant, seed_contact_handle_alias,
+    ensure_contact_for_handle, resolve_incoming_sender_handle, resolve_name_only_participant,
 };
 use super::{ImportOptions, ImportStats};
 
@@ -497,8 +496,8 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
         stats.phones_needing_review += 1;
     }
     if !cached {
-        let _ =
-            ensure_contact_for_handle(tx, &stmts.account_id, chat_handle_id, &mut stats).await?;
+        let _ = ensure_contact_for_handle(tx, &stmts.account_id, chat_handle_id, None, &mut stats)
+            .await?;
     }
 
     let conversation_id: i64 = sqlx::query_scalar(INSERT_CONVERSATION)
@@ -543,17 +542,23 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
         if flagged {
             stats.phones_needing_review += 1;
         }
-        let contact_id =
-            ensure_contact_for_handle(tx, &stmts.account_id, handle_id, &mut stats).await?;
-        // Seed contact identity alias from the import display name (first wins).
-        seed_contact_handle_alias(tx, &stmts.account_id, handle_id, name_alias.as_deref()).await?;
-        let vault_name = contact_preferred_name(tx, &stmts.account_id, contact_id).await?;
-        let name_alias = apply_contact_name_mode(opts.contact_name_mode, name_alias, vault_name);
+        let backup_name = nonempty_str(name_alias.as_deref()).map(str::to_string);
+        let contact_id = ensure_contact_for_handle(
+            tx,
+            &stmts.account_id,
+            handle_id,
+            backup_name.as_deref(),
+            &mut stats,
+        )
+        .await?;
+        // `participants.name_alias` keeps what this backup called them in this
+        // conversation. It is the second clause of the naming rule, never the
+        // first.
         sqlx::query(INSERT_PARTICIPANT)
             .bind(conversation_id)
             .bind(handle_id)
             .bind(Some(contact_id))
-            .bind(name_alias)
+            .bind(backup_name)
             .execute(&mut *tx)
             .await?;
         stats.participants += 1;

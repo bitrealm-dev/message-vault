@@ -227,12 +227,14 @@ CREATE TABLE IF NOT EXISTS participants (
     -- Parent conversation (\`conversations.id\`).
     conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     -- Participant identity (\`handles.id\`).
-    handle_id INTEGER NOT NULL REFERENCES handles(id) ON DELETE CASCADE,
+    -- Participant identity. NULL when the source named this person and
+    -- recorded no address for them; \`contact_id\` then carries who they are.
+    handle_id INTEGER REFERENCES handles(id) ON DELETE CASCADE,
     -- Resolved address-book contact when known (\`contacts.id\`).
     contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
     -- Display name residue from the source for this participant.
     name_alias TEXT,
-    UNIQUE(conversation_id, handle_id)
+    UNIQUE(conversation_id, handle_id, contact_id)
 );
 
 CREATE INDEX IF NOT EXISTS ix_participants_handle_id ON participants (handle_id);
@@ -404,13 +406,14 @@ CREATE TABLE IF NOT EXISTS staging_participants (
     id INTEGER PRIMARY KEY,
     -- Parent staging conversation (\`staging_conversations.id\`).
     conversation_id INTEGER NOT NULL REFERENCES staging_conversations(id) ON DELETE CASCADE,
-    -- Participant identity handle id (resolved during staging).
-    handle_id INTEGER NOT NULL,
+    -- Participant identity handle id (resolved during staging). NULL when the
+    -- source named the person and recorded no address for them.
+    handle_id INTEGER,
     -- Optional contact id when already resolved during staging.
     contact_id INTEGER,
     -- Display name residue from the source for this participant.
     name_alias TEXT,
-    UNIQUE(conversation_id, handle_id)
+    UNIQUE(conversation_id, handle_id, contact_id)
 );
 
 -- Import scratch copy of messages (no content_key / duplicate_of until promote).
@@ -524,8 +527,14 @@ CREATE TABLE IF NOT EXISTS contacts (
     id INTEGER PRIMARY KEY,
     -- Owning vault account (\`accounts.id\`).
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    -- Display name shown in the UI (address-book preferred name only).
+    -- Display name shown in the UI. Empty until something supplies a name;
+    -- a contact with identities and no preferred name is Unknown.
     preferred_name TEXT NOT NULL,
+    -- Where this row came from: 'address_book', 'import', or 'user'. Loading
+    -- an address book replaces only the rows the address book owns.
+    origin TEXT NOT NULL DEFAULT 'user',
+    -- When the row was first recorded. Stored and queryable; not displayed.
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
     -- Address-book shape last changed (not message activity).
     last_modified TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -548,6 +557,12 @@ CREATE TABLE IF NOT EXISTS handles (
     handle_type TEXT NOT NULL,
     -- Platform identity: 'phone' | 'whatsapp' (not per-message SMS/iMessage/RCS).
     service TEXT NOT NULL,
+    -- Where this row came from: 'address_book', 'import', or 'user'.
+    origin TEXT NOT NULL DEFAULT 'import',
+    -- When the identity was first recorded. Queryable; not displayed.
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    -- When the identity last changed. Queryable; not displayed.
+    last_modified TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(account_id, normalized, handle_type, service)
 );
 
@@ -562,8 +577,8 @@ CREATE TABLE IF NOT EXISTS contact_handles (
     handle_id INTEGER NOT NULL REFERENCES handles(id) ON DELETE CASCADE,
     -- Address-book person that owns this handle (\`contacts.id\`).
     contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-    -- Name the source gave for this handle (may differ from preferred_name).
-    name_alias TEXT,
+    -- Where this link came from: 'address_book', 'import', or 'user'.
+    origin TEXT NOT NULL DEFAULT 'import',
     PRIMARY KEY (account_id, handle_id)
 );
 
@@ -578,6 +593,12 @@ CREATE TABLE IF NOT EXISTS contact_groups (
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     -- Group text unique per account.
     name TEXT NOT NULL,
+    -- How the row was born: 'manual' when a person made it, 'import' when the
+    -- server created it at the end of an import run. An import group is a
+    -- shortcut pointing at that run and the person may delete it; the run's own
+    -- record is permanent. Unknown is not stored here — its membership is
+    -- computed from contact state.
+    kind TEXT NOT NULL DEFAULT 'manual',
     UNIQUE(account_id, name)
 );
 

@@ -211,7 +211,8 @@ pub async fn contact_id_for_handle(
 /// Counts from loading an address book into the vault.
 #[derive(Debug, Default)]
 pub struct ContactLoadStats {
-    /// Contacts written.
+    /// Contacts the book supplied: one per card, whether the card joined a
+    /// contact the vault already had or created a new one.
     pub contacts: u64,
     /// Phone handles linked to contacts.
     pub phones: u64,
@@ -485,6 +486,51 @@ fn collapse_inner_whitespace(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// The contact this account already has for one of the card's phones, with
+/// where that contact came from.
+///
+/// A card and an existing contact that share a phone are the same person, so
+/// the book joins that contact rather than standing a second one beside it.
+/// That holds whether the import discovered the person or the person typed
+/// their name: adopting a `user` row keeps one person as one contact, so the
+/// card's phones and groups reach the real person instead of a second, unnamed
+/// row. Whether the book gets to rename what it adopts is a separate question,
+/// which the returned origin answers.
+///
+/// `address_book` rows are deliberately not matched: those are the book's own
+/// and are deleted and rebuilt on every load.
+///
+/// The identity stays the import's — `origin` is left alone — because the
+/// messages are what proved the person exists, and a later book that drops the
+/// card must not take them with it.
+async fn adoptable_contact_for_draft(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    phones: &[(String, Option<String>)],
+) -> Result<Option<(i64, String)>> {
+    for (phone, _note) in phones {
+        let found: Option<(i64, String)> = sqlx::query_as(
+            "SELECT ch.contact_id, c.origin
+             FROM contact_handles ch
+             JOIN handles h ON h.id = ch.handle_id
+             JOIN contacts c ON c.id = ch.contact_id
+             WHERE ch.account_id = $1
+               AND h.normalized = $2
+               AND h.handle_type = 'phone'
+               AND c.origin IN ('import', 'user')
+             LIMIT 1",
+        )
+        .bind(account_id)
+        .bind(phone)
+        .fetch_optional(&mut *conn)
+        .await?;
+        if found.is_some() {
+            return Ok(found);
+        }
+    }
+    Ok(None)
+}
+
 async fn insert_contact_drafts(
     conn: &mut AnyConnection,
     account_id: &str,
@@ -499,14 +545,41 @@ async fn insert_contact_drafts(
         // storing the literal word "Unknown" as someone's name; the contact is
         // then Unknown by the computed rule, which is the same thing said once.
         let preferred_name = draft.preferred_name.as_deref().unwrap_or("");
-        let contact_id: i64 = sqlx::query_scalar(
-            "INSERT INTO contacts (account_id, preferred_name, origin)
-             VALUES ($1, $2, 'address_book') RETURNING id",
-        )
-        .bind(account_id)
-        .bind(preferred_name)
-        .fetch_one(&mut *tx)
-        .await?;
+        let contact_id =
+            match adoptable_contact_for_draft(&mut *tx, account_id, &draft.phones).await? {
+                Some((existing, origin)) => {
+                    // A card that lists a number without a name has nothing to
+                    // say about who that person is, so it does not get to
+                    // unname them: only overwrite the imported name when the
+                    // book actually supplied one. A name the person typed
+                    // (`origin = 'user'`) outranks the book, so that row is
+                    // adopted and left named as they wrote it.
+                    if !preferred_name.is_empty() && origin == Origin::Import.as_str() {
+                        sqlx::query(
+                            "UPDATE contacts SET preferred_name = $1
+                             WHERE account_id = $2 AND id = $3",
+                        )
+                        .bind(preferred_name)
+                        .bind(account_id)
+                        .bind(existing)
+                        .execute(&mut *tx)
+                        .await?;
+                        touch_contact(&mut *tx, account_id, existing).await?;
+                    }
+                    existing
+                }
+                None => {
+                    let created: i64 = sqlx::query_scalar(
+                        "INSERT INTO contacts (account_id, preferred_name, origin)
+                         VALUES ($1, $2, 'address_book') RETURNING id",
+                    )
+                    .bind(account_id)
+                    .bind(preferred_name)
+                    .fetch_one(&mut *tx)
+                    .await?;
+                    created
+                }
+            };
         stats.contacts += 1;
 
         for (phone, note) in &draft.phones {

@@ -23,7 +23,6 @@ export function renderHandleTableRow(
   },
 ) {
   const convos = conversationCount(h);
-  const alias = h.name_alias?.trim() || "";
   const loading = opts.loading;
   return (
     <Row id={h.id} className="group/handle-row outline-none">
@@ -33,11 +32,6 @@ export function renderHandleTableRow(
       <Cell className={tdLeftClass}>
         <span className="break-all" title={h.handle}>
           {h.handle}
-        </span>
-      </Cell>
-      <Cell className={`${tdLeftClass} text-muted`}>
-        <span className="break-normal hyphens-none" title={alias || undefined}>
-          {loading ? "—" : alias || "—"}
         </span>
       </Cell>
       <Cell className={`${tdClass} whitespace-nowrap text-muted`}>
@@ -85,7 +79,6 @@ export function renderHandleSummaryRow(
   return (
     <Row id="handles-total" className="outline-none">
       <Cell className={`${tdLeftClass} font-semibold`}>Summary</Cell>
-      <Cell className={`${tdLeftClass} text-muted`}>—</Cell>
       <Cell className={`${tdLeftClass} text-muted`}>—</Cell>
       <Cell className={`${tdClass} whitespace-nowrap text-muted`}>
         {loading ? "—" : handleDateCell(totals.start_date)}

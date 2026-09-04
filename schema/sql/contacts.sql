@@ -54,8 +54,6 @@ CREATE TABLE IF NOT EXISTS contact_handles (
     handle_id INTEGER NOT NULL REFERENCES handles(id) ON DELETE CASCADE,
     -- Address-book person that owns this handle (`contacts.id`).
     contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-    -- Name the source gave for this handle (may differ from preferred_name).
-    name_alias TEXT,
     -- Where this link came from: 'address_book', 'import', or 'user'.
     origin TEXT NOT NULL DEFAULT 'import',
     PRIMARY KEY (account_id, handle_id)

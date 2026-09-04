@@ -81,16 +81,12 @@ export type ThreadParticipantPreviewSource = {
   /** As the vault sends it: a number. The UI carries contact ids as strings. */
   contact_id?: number | null;
   handle: string;
-  name?: string | null;
-  preferred_name?: string | null;
-  name_alias?: string | null;
+  name: string;
 };
 
-/** Preferred name, then identity alias, then handle — same order as chips with aliases off. */
+/** The participant's name, then handle — same order as chips. */
 function threadParticipantDisplayName(p: ThreadParticipantPreviewSource): string {
-  return (
-    (p.name ?? p.preferred_name)?.trim() || p.name_alias?.trim() || p.handle.trim() || "Contact"
-  );
+  return p.name.trim() || p.handle.trim() || "Contact";
 }
 
 export function contactPreviewFromThreadParticipants(
@@ -102,9 +98,7 @@ export function contactPreviewFromThreadParticipants(
   );
   if (matched.length === 0) return null;
   const handles = matched.map((p) => p.handle).filter((h) => h.length > 0);
-  const named = matched.find((p) =>
-    Boolean((p.name ?? p.preferred_name)?.trim() || p.name_alias?.trim()),
-  );
+  const named = matched.find((p) => Boolean(p.name.trim()));
   const uniqueCount = previewHandleStubRows(handles, undefined).length;
   return {
     id: contactId,
@@ -124,7 +118,6 @@ export function emptyHandleRow(handle: string): ContactHandle {
   return {
     handle,
     service: null,
-    name_alias: null,
     start_date: null,
     end_date: null,
     individual_conversations: 0,

@@ -52,8 +52,6 @@ export function sortValue(h: ContactHandle, col: string): string | number {
       return formatHandleServiceLabel(h.handle, h.service).toLowerCase();
     case "handle":
       return h.handle.toLowerCase();
-    case "name_alias":
-      return (h.name_alias ?? "").toLowerCase();
     case "start_date":
       return h.start_date ?? "";
     case "end_date":

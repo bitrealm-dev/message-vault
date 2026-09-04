@@ -147,7 +147,13 @@ fn participants_from_seed(seed: &ExportMessage) -> Vec<IrParticipant> {
     for p in &seed.conversation.participants {
         participants.push(IrParticipant {
             handle: Some(p.handle.clone()),
-            display_name: p.name_alias.clone(),
+            // `name` falls back to the raw handle when nothing names the
+            // person (ADR-0006). Carrying a bare handle through as a display
+            // name would let a later import write it onto a Contact as that
+            // person's name, turning a correctly nameless Contact into a
+            // wrongly-named one — so only a name distinct from the handle
+            // counts as a display name here.
+            display_name: (p.name != p.handle).then(|| p.name.clone()),
             handle_type: None,
         });
     }
@@ -296,7 +302,7 @@ mod tests {
                 group_title: None,
                 participants: vec![ExportParticipant {
                     handle: "+1".into(),
-                    name_alias: Some("Sam".into()),
+                    name: "Sam".into(),
                 }],
             },
             attachments: vec![],
@@ -306,5 +312,61 @@ mod tests {
         assert_eq!(ir.guid, "g1");
         assert_eq!(ir.text, "hi");
         assert_eq!(ir.service, IrService::IMessage);
+    }
+
+    /// A participant `name` distinct from the handle carries through as the
+    /// IR participant's display name.
+    #[test]
+    fn participants_from_seed_carries_a_real_name() {
+        let seed = seed_message_with_participant(ExportParticipant {
+            handle: "+1".into(),
+            name: "Sam".into(),
+        });
+        let participants = participants_from_seed(&seed);
+        assert_eq!(participants[0].handle.as_deref(), Some("+1"));
+        assert_eq!(participants[0].display_name.as_deref(), Some("Sam"));
+    }
+
+    /// When the vault has nothing to name the person, `name` falls back to
+    /// the handle (ADR-0006). That must not become a display name here — see
+    /// the comment on `participants_from_seed` for why.
+    #[test]
+    fn participants_from_seed_drops_a_name_that_is_just_the_handle() {
+        let seed = seed_message_with_participant(ExportParticipant {
+            handle: "+1".into(),
+            name: "+1".into(),
+        });
+        let participants = participants_from_seed(&seed);
+        assert_eq!(participants[0].display_name, None);
+    }
+
+    /// A minimal `ExportMessage` carrying exactly one conversation participant.
+    fn seed_message_with_participant(participant: ExportParticipant) -> ExportMessage {
+        ExportMessage {
+            id: 1,
+            source: "imessage".into(),
+            guid: Some("g1".into()),
+            timestamp: "2015-03-12T14:05:22-04:00".into(),
+            timestamp_utc: Some("2015-03-12T18:05:22Z".into()),
+            is_from_me: false,
+            sender: Some("+1".into()),
+            subject: None,
+            text: Some("hi".into()),
+            is_announcement: false,
+            is_reply: false,
+            thread_originator_guid: None,
+            thread_originator_part: None,
+            num_replies: 0,
+            conversation: ExportConversation {
+                id: 9,
+                chat_identifier: "+1".into(),
+                service: Some("iMessage".into()),
+                conversation_type: "individual".into(),
+                group_title: None,
+                participants: vec![participant],
+            },
+            attachments: vec![],
+            tapbacks: vec![],
+        }
     }
 }

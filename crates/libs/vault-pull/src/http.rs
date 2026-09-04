@@ -92,11 +92,13 @@ pub struct ExportConversation {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-/// One person in a conversation (handle plus optional display name).
+/// One person in a conversation. `name` is never empty: the vault falls
+/// back to `handle` when nothing else names the person, so it is not
+/// `#[serde(default)]` — a response missing it should fail loudly rather
+/// than silently becoming `None`.
 pub struct ExportParticipant {
     pub handle: String,
-    #[serde(default)]
-    pub name_alias: Option<String>,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

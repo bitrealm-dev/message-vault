@@ -25,8 +25,7 @@ Open **Settings** in the sidebar. Settings has four tabs:
 
 ## Appearance
 
-- Theme (light / dark / system)
-- Related display preferences for the website
+- **Theme** — light, dark, or follow the system setting
 
 ## Demo reset
 

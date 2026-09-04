@@ -3161,14 +3161,6 @@
               "type": "integer",
               "format": "int64"
             }
-          },
-          {
-            "name": "contact_name_mode",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
           }
         ],
         "requestBody": {
@@ -5377,13 +5369,6 @@
             "description": "Messages in 1:1 conversations involving this handle.",
             "minimum": 0
           },
-          "name_alias": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Per-service alias from the address book, when linked."
-          },
           "service": {
             "type": [
               "string",
@@ -5679,46 +5664,6 @@
           }
         }
       },
-      "ConversationParticipant": {
-        "type": "object",
-        "description": "One participant with display name and handle.",
-        "required": [
-          "handle",
-          "service"
-        ],
-        "properties": {
-          "contact_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Linked vault contact id, when the handle is linked. Matches the `id`\nevery other contact shape uses, so a caller can compare the two without\nconverting either."
-          },
-          "handle": {
-            "type": "string",
-            "description": "Raw handle value (phone, email, or username)."
-          },
-          "name": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Display name from the import or the vault contact."
-          },
-          "name_alias": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Per service+identity alias from `contact_handles` when linked."
-          },
-          "service": {
-            "type": "string",
-            "description": "Platform service, e.g. `imessage`."
-          }
-        }
-      },
       "ConversationSourceInfo": {
         "type": "object",
         "description": "One backup source with message counts and share.",
@@ -5824,7 +5769,7 @@
           "participants": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ConversationParticipant"
+              "$ref": "#/components/schemas/Participant"
             },
             "description": "Participants with names and handles."
           },
@@ -6224,7 +6169,7 @@
           "participants": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ExportParticipant"
+              "$ref": "#/components/schemas/Participant"
             },
             "description": "Participants of the conversation."
           }
@@ -6392,48 +6337,6 @@
               "null"
             ],
             "description": "UTC timestamp, when known."
-          }
-        }
-      },
-      "ExportParticipant": {
-        "type": "object",
-        "description": "One participant of an exported conversation.",
-        "required": [
-          "handle"
-        ],
-        "properties": {
-          "contact_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Linked contact id, when the handle is linked."
-          },
-          "handle": {
-            "type": "string",
-            "description": "Raw handle value."
-          },
-          "handle_type": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Handle type (`phone`, `email`, or username)."
-          },
-          "name_alias": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Per-service alias, when linked to a contact."
-          },
-          "preferred_name": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Vault contact display name, when linked."
           }
         }
       },
@@ -7244,7 +7147,7 @@
                 "participants": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/ConversationParticipant"
+                    "$ref": "#/components/schemas/Participant"
                   },
                   "description": "Participants with names and handles."
                 },
@@ -7439,6 +7342,37 @@
             "format": "int64",
             "description": "Rows matching the query across every page.",
             "minimum": 0
+          }
+        }
+      },
+      "Participant": {
+        "type": "object",
+        "description": "One participant of a conversation, carrying the name to show for them:\nthe Contact's name, else what that backup called them in that\nconversation, else the handle.",
+        "required": [
+          "name",
+          "handle",
+          "service"
+        ],
+        "properties": {
+          "contact_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Linked vault contact id, when the handle is on a Contact. Matches the\n`id` every other contact shape uses, so a caller can compare the two\nwithout converting either."
+          },
+          "handle": {
+            "type": "string",
+            "description": "Raw handle value (phone, email, or username)."
+          },
+          "name": {
+            "type": "string",
+            "description": "What to show for this person. Never empty: the rule ends at the handle."
+          },
+          "service": {
+            "type": "string",
+            "description": "Platform service, e.g. `imessage`."
           }
         }
       },

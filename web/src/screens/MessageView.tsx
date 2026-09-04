@@ -5,9 +5,7 @@ import {
   contactPreviewFromThreadParticipants,
 } from "../components/contactDrawer/contactDrawerTypes";
 import SourcesPanel from "../components/SourcesPanel";
-import { personDisplayLabel } from "../lib/nameAliases";
 import type { Conversation, MessageAttachment } from "../lib/types";
-import { useNameAliases } from "../lib/useNameAliases";
 import ConversationHeader from "./message/ConversationHeader";
 import MessageFindBar from "./message/MessageFindBar";
 import MessageThread from "./message/MessageThread";
@@ -76,34 +74,16 @@ export default function MessageView({
   }, [conversation.id]);
 
   /** Prefer list-API participants; fall back to the loaded page's conversation header. */
-  const useAliases = useNameAliases();
   const displayParticipants = useMemo(() => {
-    if (conversation.participants.length > 0) {
-      return conversation.participants.map((p) => ({
-        label: personDisplayLabel(
-          {
-            preferredName: p.name,
-            nameAlias: p.name_alias,
-            handle: p.handle,
-          },
-          useAliases,
-        ),
-        contact_id: p.contact_id == null ? null : String(p.contact_id),
-      }));
-    }
-    const fromMsg = messages[0]?.conversation.participants || [];
-    return fromMsg.map((p) => ({
-      label: personDisplayLabel(
-        {
-          preferredName: p.preferred_name,
-          nameAlias: p.name_alias,
-          handle: p.handle,
-        },
-        useAliases,
-      ),
+    const source =
+      conversation.participants.length > 0
+        ? conversation.participants
+        : messages[0]?.conversation.participants || [];
+    return source.map((p) => ({
+      label: p.name,
       contact_id: p.contact_id == null ? null : String(p.contact_id),
     }));
-  }, [conversation.participants, messages, useAliases]);
+  }, [conversation.participants, messages]);
 
   // Re-highlighting a whole thread is far more work than echoing a keystroke, so
   // the find bar stays on `findTerm` while the thread trails on the deferred one.

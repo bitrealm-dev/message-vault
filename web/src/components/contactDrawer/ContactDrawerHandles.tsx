@@ -51,13 +51,9 @@ type ColumnSize = {
   min: number;
 };
 
-function collectColumnWidths(
-  handleRows: ContactDetail["handles"],
-  loading: boolean,
-): {
+function collectColumnWidths(handleRows: ContactDetail["handles"]): {
   service: ColumnSize;
   handle: ColumnSize;
-  alias: ColumnSize;
   startDate: ColumnSize;
   endDate: ColumnSize;
   conversations: ColumnSize;
@@ -66,7 +62,6 @@ function collectColumnWidths(
 } {
   const serviceMin = headerLabelMinWidth("Service");
   const handleMin = headerLabelMinWidth("Identity");
-  const aliasMin = headerLabelMinWidth("Alias");
   const startMin = headerLabelMinWidth("First Seen");
   const endMin = headerLabelMinWidth("Last Seen");
   const threadsMin = headerLabelMinWidth("Threads");
@@ -88,12 +83,10 @@ function collectColumnWidths(
     ...handleRows.map((h) => formatHandleServiceLabel(h.handle, h.service)),
   ];
   const handleTexts = ["—", ...handleRows.map((h) => h.handle)];
-  const aliasTexts = ["—", ...handleRows.map((h) => (loading ? "—" : h.name_alias?.trim() || "—"))];
 
   return {
     service: { width: columnInitialWidth(serviceMin, serviceTexts), min: serviceMin },
     handle: { width: columnInitialWidth(handleMin, handleTexts), min: handleMin },
-    alias: { width: columnInitialWidth(aliasMin, aliasTexts), min: aliasMin },
     startDate: { width: dateCol, min: startMin },
     endDate: { width: dateCol, min: endMin },
     conversations: {
@@ -151,10 +144,7 @@ export function ContactDrawerHandles({
 
   const totals = sumHandleTotals(handleRows);
 
-  const columnWidths = useMemo(
-    () => collectColumnWidths(handleRows, loading),
-    [handleRows, loading],
-  );
+  const columnWidths = useMemo(() => collectColumnWidths(handleRows), [handleRows]);
   const sortedRows = useMemo(() => {
     type RowItem = ContactHandle & { id: string };
     const rows: RowItem[] = handleRows.map((h, i) => ({
@@ -229,14 +219,6 @@ export function ContactDrawerHandles({
               Identity
             </SortableColumn>
             <SortableColumn
-              id="name_alias"
-              allowsResizing
-              defaultWidth={columnWidths.alias.width}
-              minWidth={columnWidths.alias.min}
-            >
-              Alias
-            </SortableColumn>
-            <SortableColumn
               id="start_date"
               allowsResizing
               defaultWidth={columnWidths.startDate.width}
@@ -283,7 +265,6 @@ export function ContactDrawerHandles({
                 <Cell className={`${tdClass} !text-left text-muted`}>
                   {loading ? "Loading…" : "No handles"}
                 </Cell>
-                <Cell className={tdClass} />
                 <Cell className={tdClass} />
                 <Cell className={tdClass} />
                 <Cell className={tdClass} />
