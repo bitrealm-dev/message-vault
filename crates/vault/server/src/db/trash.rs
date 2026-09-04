@@ -142,24 +142,8 @@ pub async fn purge_account(conn: &mut AnyConnection, account_id: &str) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::schema;
-
     const ACCOUNT_A: &str = "00000000-0000-4000-8000-000000000001";
     const ACCOUNT_B: &str = "00000000-0000-4000-8000-000000000002";
-
-    async fn setup() -> (sqlx::AnyPool, tempfile::TempDir) {
-        let (pool, dir) = crate::db::engine::test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        schema::ensure_vault_schema(&mut conn).await.unwrap();
-        for account in [ACCOUNT_A, ACCOUNT_B] {
-            sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, $1)")
-                .bind(account)
-                .execute(&mut *conn)
-                .await
-                .unwrap();
-        }
-        (pool, dir)
-    }
 
     /// Insert a conversation owned by `account_id`, returning its id. Each
     /// call creates its own chat handle so repeat calls for the same
@@ -230,8 +214,11 @@ mod tests {
 
     #[tokio::test]
     async fn trash_conversation_marks_an_owned_row() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        for account in [ACCOUNT_A, ACCOUNT_B] {
+            vault.account_with_id(account, account).await;
+        }
+        let mut conn = vault.conn().await;
         let id = insert_conversation(&mut conn, ACCOUNT_A).await;
 
         assert!(trash_conversation(&mut conn, ACCOUNT_A, id).await.unwrap());
@@ -240,8 +227,11 @@ mod tests {
 
     #[tokio::test]
     async fn trash_conversation_twice_stays_one_row() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        for account in [ACCOUNT_A, ACCOUNT_B] {
+            vault.account_with_id(account, account).await;
+        }
+        let mut conn = vault.conn().await;
         let id = insert_conversation(&mut conn, ACCOUNT_A).await;
 
         assert!(trash_conversation(&mut conn, ACCOUNT_A, id).await.unwrap());
@@ -251,8 +241,11 @@ mod tests {
 
     #[tokio::test]
     async fn restore_conversation_removes_the_marker() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        for account in [ACCOUNT_A, ACCOUNT_B] {
+            vault.account_with_id(account, account).await;
+        }
+        let mut conn = vault.conn().await;
         let id = insert_conversation(&mut conn, ACCOUNT_A).await;
         trash_conversation(&mut conn, ACCOUNT_A, id).await.unwrap();
 
@@ -266,8 +259,11 @@ mod tests {
 
     #[tokio::test]
     async fn restore_conversation_not_trashed_is_a_noop() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        for account in [ACCOUNT_A, ACCOUNT_B] {
+            vault.account_with_id(account, account).await;
+        }
+        let mut conn = vault.conn().await;
         let id = insert_conversation(&mut conn, ACCOUNT_A).await;
 
         assert!(
@@ -280,8 +276,11 @@ mod tests {
 
     #[tokio::test]
     async fn conversation_operations_refuse_another_accounts_id() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        for account in [ACCOUNT_A, ACCOUNT_B] {
+            vault.account_with_id(account, account).await;
+        }
+        let mut conn = vault.conn().await;
         let id = insert_conversation(&mut conn, ACCOUNT_A).await;
 
         assert!(!trash_conversation(&mut conn, ACCOUNT_B, id).await.unwrap());
@@ -300,8 +299,11 @@ mod tests {
 
     #[tokio::test]
     async fn trash_contact_marks_an_owned_row() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        for account in [ACCOUNT_A, ACCOUNT_B] {
+            vault.account_with_id(account, account).await;
+        }
+        let mut conn = vault.conn().await;
         let id = insert_contact(&mut conn, ACCOUNT_A).await;
 
         assert!(trash_contact(&mut conn, ACCOUNT_A, id).await.unwrap());
@@ -310,8 +312,11 @@ mod tests {
 
     #[tokio::test]
     async fn trash_contact_twice_stays_one_row() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        for account in [ACCOUNT_A, ACCOUNT_B] {
+            vault.account_with_id(account, account).await;
+        }
+        let mut conn = vault.conn().await;
         let id = insert_contact(&mut conn, ACCOUNT_A).await;
 
         assert!(trash_contact(&mut conn, ACCOUNT_A, id).await.unwrap());
@@ -321,8 +326,11 @@ mod tests {
 
     #[tokio::test]
     async fn restore_contact_removes_the_marker() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        for account in [ACCOUNT_A, ACCOUNT_B] {
+            vault.account_with_id(account, account).await;
+        }
+        let mut conn = vault.conn().await;
         let id = insert_contact(&mut conn, ACCOUNT_A).await;
         trash_contact(&mut conn, ACCOUNT_A, id).await.unwrap();
 
@@ -332,8 +340,11 @@ mod tests {
 
     #[tokio::test]
     async fn restore_contact_not_trashed_is_a_noop() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        for account in [ACCOUNT_A, ACCOUNT_B] {
+            vault.account_with_id(account, account).await;
+        }
+        let mut conn = vault.conn().await;
         let id = insert_contact(&mut conn, ACCOUNT_A).await;
 
         assert!(restore_contact(&mut conn, ACCOUNT_A, id).await.unwrap());
@@ -342,8 +353,11 @@ mod tests {
 
     #[tokio::test]
     async fn contact_operations_refuse_another_accounts_id() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        for account in [ACCOUNT_A, ACCOUNT_B] {
+            vault.account_with_id(account, account).await;
+        }
+        let mut conn = vault.conn().await;
         let id = insert_contact(&mut conn, ACCOUNT_A).await;
 
         assert!(!trash_contact(&mut conn, ACCOUNT_B, id).await.unwrap());
@@ -357,8 +371,11 @@ mod tests {
 
     #[tokio::test]
     async fn purge_account_clears_only_that_accounts_trash() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        for account in [ACCOUNT_A, ACCOUNT_B] {
+            vault.account_with_id(account, account).await;
+        }
+        let mut conn = vault.conn().await;
         let conv_a = insert_conversation(&mut conn, ACCOUNT_A).await;
         let contact_a = insert_contact(&mut conn, ACCOUNT_A).await;
         let conv_b = insert_conversation(&mut conn, ACCOUNT_B).await;

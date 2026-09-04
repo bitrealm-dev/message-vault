@@ -35,11 +35,13 @@ desktop machine would otherwise have no terminal route for its data, and that
 they already worked and cost nothing to leave alone.
 
 That last claim did not survive checking. No workflow, script, or test has ever
-invoked either one as a command. `scripts/test/smoke-vault-push.sh` looks like
-the counterexample and is not: it starts the server and drives the HTTP API
-with `curl`, never touching the binary, and nothing runs it either. Keeping
-them would have preserved the appearance of a headless path rather than a
-working one, and drawn the line on a distinction the evidence did not support.
+invoked either one as a command. A shell smoke-test script looked like the
+counterexample and was not: it started the server and drove the HTTP API with
+`curl`, never touching the `vault-push` binary, and nothing ran the script
+either — which is also why it was later deleted rather than kept. Keeping the
+binaries would have preserved the appearance of a headless path
+rather than a working one, and drawn the line on a distinction the evidence
+did not support.
 
 Anyone re-proposing a command line should re-derive it from the audience, not
 from the observation that these crates are one `main.rs` away from being

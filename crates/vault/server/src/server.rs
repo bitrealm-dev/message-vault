@@ -501,9 +501,13 @@ pub(crate) fn http_app(state: AppState) -> Router {
         .route("/v1/{*rest}", axum::routing::any(api_not_found))
         .method_not_allowed_fallback(api_method_not_allowed)
         .fallback_service(ServeDir::new("static"))
-        .layer(build_cors_layer(&cors_origins))
         .layer(RequestBodyLimitLayer::new(state.max_body_bytes))
-        .layer(axum::middleware::map_response(json_body_limit_response));
+        // Rewrite the limit layer's plain-text 413 into `{error}` before CORS
+        // sees it, so the response a browser gets is both JSON and CORS-clean.
+        .layer(axum::middleware::map_response(json_body_limit_response))
+        // Outermost: every response, including one the limit layer answered
+        // itself, carries the CORS headers a browser needs to show it.
+        .layer(build_cors_layer(&cors_origins));
 
     if openapi_ui {
         api = api.merge(utoipa_swagger_ui::SwaggerUi::new("/docs").url("/openapi.json", spec));
@@ -815,7 +819,10 @@ pub(crate) async fn read_body_limited(
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| ApiError::BadRequest(format!("failed to read body: {e}")))?;
         if out.len().saturating_add(chunk.len()) > max_bytes {
-            return Err(ApiError::BadRequest("request body too large".into()));
+            return Err(ApiError::Status(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "request body too large".into(),
+            ));
         }
         out.extend_from_slice(&chunk);
     }
@@ -833,7 +840,10 @@ pub(crate) async fn discard_body(
         let chunk = chunk.map_err(|e| ApiError::BadRequest(format!("failed to read body: {e}")))?;
         seen = seen.saturating_add(chunk.len());
         if seen > max_body_bytes {
-            return Err(ApiError::BadRequest("request body too large".into()));
+            return Err(ApiError::Status(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "request body too large".into(),
+            ));
         }
     }
     Ok(())
@@ -862,7 +872,10 @@ pub(crate) async fn stream_body_to_file(
         let chunk = chunk.map_err(|e| ApiError::BadRequest(format!("failed to read body: {e}")))?;
         written = written.saturating_add(chunk.len() as u64);
         if written > max_body_bytes as u64 {
-            return Err(ApiError::BadRequest("request body too large".into()));
+            return Err(ApiError::Status(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "request body too large".into(),
+            ));
         }
         file.write_all(&chunk)
             .await
@@ -883,7 +896,10 @@ pub(crate) async fn stream_field_to_file(
     while let Some(chunk) = field
         .chunk()
         .await
-        .map_err(|e| ApiError::BadRequest(format!("multipart chunk: {e}")))?
+        // Axum's own status (413 over its inner ~2 MiB body limit, see
+        // issue #334) carries the meaning, so pass it through rather than
+        // flattening to 400. ADR-0005.
+        .map_err(|e| ApiError::Status(e.status(), e.body_text()))?
     {
         file.write_all(&chunk)
             .await
@@ -1159,7 +1175,7 @@ mod tests {
 
     #[tokio::test]
     async fn cors_preflight_allows_packaged_desktop_and_vite_origins() {
-        let (_tmp, state, _token, _import_id) = test_state().await;
+        let (_dir, state, _token, _import_id) = test_state().await;
         let origins = [
             "http://localhost:5173",
             "http://127.0.0.1:5173",
@@ -1182,7 +1198,7 @@ mod tests {
     /// to be configured.
     #[tokio::test]
     async fn cors_preflight_allows_packaged_desktop_without_configuration() {
-        let (_tmp, state, _token, _import_id) = test_state().await;
+        let (_dir, state, _token, _import_id) = test_state().await;
         for origin in PACKAGED_DESKTOP_ORIGINS {
             let response = cors_preflight(with_cors(state.clone(), &[]), origin).await;
             assert_eq!(
@@ -1196,14 +1212,14 @@ mod tests {
     /// Built in does not mean open: everything else still has to be listed.
     #[tokio::test]
     async fn cors_preflight_rejects_unknown_origin_without_configuration() {
-        let (_tmp, state, _token, _import_id) = test_state().await;
+        let (_dir, state, _token, _import_id) = test_state().await;
         let response = cors_preflight(with_cors(state, &[]), "https://evil.example").await;
         assert_eq!(allow_origin(&response), None);
     }
 
     #[tokio::test]
     async fn cors_preflight_rejects_unknown_origin() {
-        let (_tmp, state, _token, _import_id) = test_state().await;
+        let (_dir, state, _token, _import_id) = test_state().await;
         let response = cors_preflight(
             with_cors(state, &["tauri://localhost"]),
             "https://evil.example",
@@ -1214,7 +1230,7 @@ mod tests {
 
     #[tokio::test]
     async fn health_still_ok() {
-        let (_tmp, state, _token, _import_id) = test_state().await;
+        let (_dir, state, _token, _import_id) = test_state().await;
         let response = get_path(state, "/health").await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.text().await.unwrap(), "ok\n");
@@ -1222,7 +1238,7 @@ mod tests {
 
     #[tokio::test]
     async fn openapi_ui_off_does_not_serve_spec() {
-        let (_tmp, state, _token, _import_id) = test_state().await;
+        let (_dir, state, _token, _import_id) = test_state().await;
         assert!(!state.cfg.require_server().unwrap().openapi_ui);
         let response = get_path(state, "/openapi.json").await;
         assert_ne!(
@@ -1237,7 +1253,7 @@ mod tests {
 
     #[tokio::test]
     async fn openapi_ui_on_serves_spec_without_token() {
-        let (_tmp, mut state, _token, _import_id) = test_state().await;
+        let (_dir, mut state, _token, _import_id) = test_state().await;
         {
             let cfg = Arc::make_mut(&mut state.cfg);
             cfg.server.as_mut().unwrap().openapi_ui = true;
@@ -1249,7 +1265,7 @@ mod tests {
     }
 
     async fn auth_route_status(path: &str) -> StatusCode {
-        let (_tmp, state, _token, _import_id) = test_state().await;
+        let (_dir, state, _token, _import_id) = test_state().await;
         let app = auth_public_router().with_state(state);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -1270,7 +1286,7 @@ mod tests {
     async fn try_demo_route_is_gone() {
         // server.rs's own helper returns (TempDir, AppState, token, import_id).
         // The shared harness in test_support.rs does not exist until Task 4.
-        let (_tmp, state, _token, _import_id) = test_state().await;
+        let (_dir, state, _token, _import_id) = test_state().await;
         let response = get_path(state, "/v1/auth/try-demo").await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
@@ -1284,7 +1300,7 @@ mod tests {
 
     #[tokio::test]
     async fn imports_complete_and_detail_surface_timings_and_issues() {
-        let (_tmp, state, token, import_id) = test_state().await;
+        let (_dir, state, token, import_id) = test_state().await;
         let body = CompleteImportBody {
             ok: true,
             status: None,
@@ -1353,7 +1369,7 @@ mod tests {
 
     #[tokio::test]
     async fn imports_complete_stores_completed_with_issues_status() {
-        let (_tmp, state, token, import_id) = test_state().await;
+        let (_dir, state, token, import_id) = test_state().await;
         let body = CompleteImportBody {
             ok: true,
             status: Some("completed_with_issues".into()),
@@ -1381,7 +1397,7 @@ mod tests {
 
     #[tokio::test]
     async fn imports_complete_rejects_unknown_status() {
-        let (_tmp, state, token, import_id) = test_state().await;
+        let (_dir, state, token, import_id) = test_state().await;
         let body = CompleteImportBody {
             ok: true,
             status: Some("victorious".into()),
@@ -1418,7 +1434,7 @@ mod tests {
 
     #[tokio::test]
     async fn imports_complete_rejects_invalid_issue_kind_before_db_write() {
-        let (_tmp, state, token, import_id) = test_state().await;
+        let (_dir, state, token, import_id) = test_state().await;
         let body = CompleteImportBody {
             ok: true,
             status: None,
@@ -1465,7 +1481,7 @@ mod tests {
 
     #[tokio::test]
     async fn imports_get_handler_returns_not_found_for_missing_import() {
-        let (_tmp, state, token, import_id) = test_state().await;
+        let (_dir, state, token, import_id) = test_state().await;
         let err = imports_get_handler(
             State(state.clone()),
             import_access(&state, &token).await,
@@ -1485,7 +1501,7 @@ mod tests {
 
     #[tokio::test]
     async fn active_session_is_empty_then_reports_the_live_one() {
-        let (_tmp, state, token, import_id) = test_state().await;
+        let (_dir, state, token, import_id) = test_state().await;
 
         let body = CreateImportBody {
             source: "imessage".into(),
@@ -1535,7 +1551,7 @@ mod tests {
     /// client posts: the row outlives the run, and the secret must not.
     #[tokio::test]
     async fn a_stored_form_snapshot_drops_credentials() {
-        let (_tmp, state, token, import_id) = test_state().await;
+        let (_dir, state, token, import_id) = test_state().await;
         let _ = imports_discard_handler(
             State(state.clone()),
             import_access(&state, &token).await,
@@ -1594,7 +1610,7 @@ mod tests {
     /// so a resumed Gate 1 can show it without re-reading the backup.
     #[tokio::test]
     async fn imports_create_stores_source_identities() {
-        let (_tmp, state, token, import_id) = test_state().await;
+        let (_dir, state, token, import_id) = test_state().await;
         let _ = imports_discard_handler(
             State(state.clone()),
             import_access(&state, &token).await,
@@ -1636,7 +1652,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_second_session_is_refused_with_conflict() {
-        let (_tmp, state, token, _import_id) = test_state().await;
+        let (_dir, state, token, _import_id) = test_state().await;
         let body = CreateImportBody {
             source: "imessage".into(),
             mode: "append".into(),
@@ -1670,7 +1686,7 @@ mod tests {
 
     #[tokio::test]
     async fn stage_endpoint_advances_and_rejects_an_unknown_stage() {
-        let (_tmp, state, token, import_id) = test_state().await;
+        let (_dir, state, token, import_id) = test_state().await;
 
         let _ = imports_stage_handler(
             State(state.clone()),
@@ -1705,7 +1721,7 @@ mod tests {
 
     #[tokio::test]
     async fn discard_frees_the_slot() {
-        let (_tmp, state, token, import_id) = test_state().await;
+        let (_dir, state, token, import_id) = test_state().await;
         let _ = imports_discard_handler(
             State(state.clone()),
             import_access(&state, &token).await,
@@ -1726,7 +1742,7 @@ mod tests {
     /// this would come back 400 instead of 200.
     #[tokio::test]
     async fn active_route_is_not_captured_by_the_id_route() {
-        let (_tmp, state, token, _import_id) = test_state().await;
+        let (_dir, state, token, _import_id) = test_state().await;
         let status = crate::test_support::get_status(&state, "/v1/imports/active", &token).await;
         assert_eq!(status, StatusCode::OK);
     }
@@ -1867,5 +1883,47 @@ mod tests {
             StatusCode::OK,
             "can_export=true must allow GET /v1/export/messages/count"
         );
+    }
+
+    /// `RequestBodyLimitLayer` answers its own 413 the moment a `Content-Length`
+    /// announces an oversize body, without running any handler. That response
+    /// must still pass through the CORS layer, or a browser reports a CORS
+    /// failure instead of showing the 413 the vault sent.
+    #[tokio::test]
+    async fn the_fast_413_carries_cors_headers() {
+        let vault = crate::test_support::test_vault().await;
+        // The default test config's `cors_origins` is empty, which only
+        // allows the packaged desktop origins (`build_cors_layer`) — not the
+        // browser origin this test sends. Configure it explicitly so the
+        // assertion below tests CORS header propagation, not the allow list.
+        let mut state = with_cors(vault.state.clone(), &["https://app.example"]);
+        state.max_body_bytes = 1024;
+        let user = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+
+        let server = crate::test_support::serve(&state).await;
+        let response = reqwest::Client::new()
+            .post(format!(
+                "{}/v1/import?source=imessage&mode=append",
+                server.base()
+            ))
+            .bearer_auth(&user.token)
+            .header(header::ORIGIN, "https://app.example")
+            .header(header::CONTENT_TYPE, "application/x-ndjson")
+            // A sized body, so the limit layer answers from Content-Length alone.
+            .body(vec![b'x'; 4096])
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(
+            response
+                .headers()
+                .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+            "the fast 413 must carry CORS headers, got: {:?}",
+            response.headers()
+        );
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert!(body["error"].is_string(), "{body}");
     }
 }

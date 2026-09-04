@@ -828,6 +828,7 @@ async fn execute_batch(conn: &mut AnyConnection, batch: &str) -> Result<()> {
 mod tests {
     use super::*;
     use crate::db::engine::test_pool;
+    use crate::test_support::{SeedConversation, TestVault, seed_conversation, test_vault};
 
     const A1: &str = "11111111-1111-1111-1111-111111111111";
     const A2: &str = "22222222-2222-2222-2222-222222222222";
@@ -885,46 +886,33 @@ mod tests {
         .unwrap()
     }
 
-    async fn setup() -> (sqlx::AnyPool, tempfile::TempDir) {
-        let (pool, dir) = test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        ensure_vault_schema(&mut conn).await.unwrap();
+    /// A vault with schema applied, and two accounts (`A1`/alice, `A2`/bob)
+    /// each holding one individual conversation on `+15555550100` from
+    /// `t.json`, with no messages.
+    async fn seeded_schema_vault() -> (sqlx::AnyPool, TestVault) {
+        let vault = test_vault().await;
         for (id, user) in [(A1, "alice"), (A2, "bob")] {
-            sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, $2)")
-                .bind(id)
-                .bind(user)
-                .execute(&mut *conn)
-                .await
-                .unwrap();
-            let handle_id: i64 = sqlx::query_scalar(
-                "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-                 VALUES ($1, '+15555550100', '+15555550100', 'phone', 'phone')
-                 RETURNING id",
+            vault.account_with_id(id, user).await;
+            seed_conversation(
+                &vault.state,
+                &SeedConversation {
+                    account_id: id,
+                    handle: "+15555550100",
+                    conversation_type: "individual",
+                    group_title: None,
+                    source_file: "t.json",
+                    messages: &[],
+                },
             )
-            .bind(id)
-            .fetch_one(&mut *conn)
-            .await
-            .unwrap();
-            sqlx::query(
-                r#"
-                INSERT INTO conversations (
-                    account_id, chat_handle_id, conversation_type,
-                    group_title, exported_at, source_file
-                ) VALUES ($1, $2, 'individual', NULL, NULL, 't.json')
-                "#,
-            )
-            .bind(id)
-            .bind(handle_id)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
+            .await;
         }
-        (pool, dir)
+        let pool = vault.state.db.clone();
+        (pool, vault)
     }
 
     #[tokio::test]
     async fn promote_fts_indexing_covers_only_rows_inserted_by_this_promotion() {
-        let (pool, _dir) = setup().await;
+        let (pool, _vault) = seeded_schema_vault().await;
         let mut conn = pool.acquire().await.unwrap();
 
         // An earlier import already indexed this row through the insert trigger.
@@ -1124,7 +1112,7 @@ mod tests {
 
     #[tokio::test]
     async fn same_source_guid_allowed_across_accounts() {
-        let (pool, _dir) = setup().await;
+        let (pool, _vault) = seeded_schema_vault().await;
         let mut conn = pool.acquire().await.unwrap();
         for (conv, account) in [
             (conversation_id(&mut conn, A1).await, A1),
@@ -1153,7 +1141,7 @@ mod tests {
 
     #[tokio::test]
     async fn reset_staging_for_account_leaves_other_accounts() {
-        let (pool, _dir) = setup().await;
+        let (pool, _vault) = seeded_schema_vault().await;
         let mut conn = pool.acquire().await.unwrap();
         for account in [A1, A2] {
             let conversation_id: i64 = sqlx::query_scalar(
@@ -1264,7 +1252,7 @@ mod tests {
 
     #[tokio::test]
     async fn current_version_vault_keeps_data_across_reensure() {
-        let (pool, _dir) = setup().await;
+        let (pool, _vault) = seeded_schema_vault().await;
         let mut conn = pool.acquire().await.unwrap();
         ensure_vault_schema(&mut conn).await.unwrap();
         let accounts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts")
@@ -1279,7 +1267,7 @@ mod tests {
 
     #[tokio::test]
     async fn newer_version_vault_rebuilds_to_current() {
-        let (pool, _dir) = setup().await;
+        let (pool, _vault) = seeded_schema_vault().await;
         let mut conn = pool.acquire().await.unwrap();
         stamp_user_version(&mut conn, SCHEMA_VERSION + 1)
             .await
@@ -1370,7 +1358,7 @@ mod tests {
 
     #[tokio::test]
     async fn messages_fts_stays_in_sync() {
-        let (pool, _dir) = setup().await;
+        let (pool, _vault) = seeded_schema_vault().await;
         let mut conn = pool.acquire().await.unwrap();
         let conversation_id: i64 =
             sqlx::query_scalar("SELECT id FROM conversations WHERE account_id = $1")

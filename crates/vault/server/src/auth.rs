@@ -738,6 +738,41 @@ mod tests {
         assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
     }
 
+    /// `GET /v1/auth/check?account=` naming a different account is refused,
+    /// even with an otherwise valid token — the near-identical branch to
+    /// `POST /v1/import`'s account query, but with a longer sentence that
+    /// names the token's own user.
+    #[tokio::test]
+    async fn auth_check_refuses_an_account_query_naming_someone_else() {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let alice = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+        let bob = crate::test_support::register_via_api(&state, "bob", "hunter2hunter2").await;
+
+        let (status, text) = crate::test_support::get_raw(
+            &state,
+            &format!("/v1/auth/check?account={}", bob.username),
+            &alice.token,
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::FORBIDDEN, "{text}");
+        let err: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            err["error"],
+            "account query does not match token's account (token is for alice)"
+        );
+
+        // Positive control: naming her own account must succeed outright —
+        // unlike import, a GET has nothing left to fail on afterward.
+        let status = crate::test_support::get_status(
+            &state,
+            &format!("/v1/auth/check?account={}", alice.username),
+            &alice.token,
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::OK, "alice naming herself");
+    }
+
     #[tokio::test]
     async fn first_real_account_becomes_admin_and_second_does_not() {
         let (_dir, mut conn) = test_conn().await;

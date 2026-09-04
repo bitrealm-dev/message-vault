@@ -1281,26 +1281,11 @@ pub(crate) async fn contact_restore_handler(
 mod tests {
     use super::*;
 
-    use crate::db::{account_profile, engine, schema};
+    use crate::db::account_profile;
     use crate::test_support::{
         RegisteredAccount, TestVault, post_json, post_status, register_via_api, test_vault,
     };
     use axum::http::StatusCode;
-
-    async fn setup() -> (sqlx::AnyPool, tempfile::TempDir, String) {
-        let (pool, dir) = engine::test_pool().await;
-        schema::ensure_vault_schema(&mut pool.acquire().await.unwrap())
-            .await
-            .unwrap();
-        let account = "00000000-0000-4000-8000-0000000000c1".to_string();
-        let mut conn = pool.acquire().await.unwrap();
-        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'alice')")
-            .bind(&account)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        (pool, dir, account)
-    }
 
     /// A vault, a signed-in account, and `handles` linked as contacts (one
     /// contact per phone, named `Contact 0`, `Contact 1`, ...).
@@ -1459,8 +1444,11 @@ mod tests {
 
     #[tokio::test]
     async fn list_contacts_uses_preferred_name_and_handle_ids() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000c1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         let contact_id: i64 = sqlx::query_scalar(
             "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Pat') RETURNING id",
         )
@@ -1514,8 +1502,11 @@ mod tests {
 
     #[tokio::test]
     async fn list_contacts_filters_and_paginates() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000c1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         for (name, phone) in [
             ("Pat", "+15555550100"),
             ("Sam", "+15555550200"),
@@ -1588,8 +1579,11 @@ mod tests {
 
     #[tokio::test]
     async fn get_contact_detail_counts_direct_group_and_messages() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000c1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         let contact_id: i64 = sqlx::query_scalar(
             "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Sam') RETURNING id",
         )
@@ -1741,8 +1735,11 @@ mod tests {
 
     #[tokio::test]
     async fn get_contact_summaries_counts_two_contacts_in_one_query() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000c1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
 
         let sam_id: i64 = sqlx::query_scalar(
             "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Sam') RETURNING id",
@@ -1930,8 +1927,11 @@ mod tests {
 
     #[tokio::test]
     async fn mutate_contact_add_update_remove_handle_and_rename() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000c1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         let contact_id: i64 = sqlx::query_scalar(
             "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Sam') RETURNING id",
         )
@@ -2040,8 +2040,11 @@ mod tests {
 
     #[tokio::test]
     async fn mutate_contact_rejects_trashed_contact() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000c1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         let contact_id =
             insert_contact_with_handle(&mut conn, &account, "Trashed", "+15555550100").await;
         sqlx::query("INSERT INTO trashed_contacts (account_id, contact_id) VALUES ($1, $2)")
@@ -2107,8 +2110,11 @@ mod tests {
 
     #[tokio::test]
     async fn mutate_contact_bumps_last_modified_on_shape_changes() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000c1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         let contact_id: i64 = sqlx::query_scalar(
             "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Sam') RETURNING id",
         )
@@ -2321,8 +2327,11 @@ mod tests {
 
     #[tokio::test]
     async fn list_contacts_filters_has_messages_and_never_messaged() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000c1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         insert_contact_with_handle(&mut conn, &account, "Messaged", "+15555550100").await;
         insert_contact_with_handle(&mut conn, &account, "Silent", "+15555550200").await;
         insert_direct_conversation(
@@ -2364,8 +2373,11 @@ mod tests {
 
     #[tokio::test]
     async fn list_contacts_filters_no_handle() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000c1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         insert_contact_with_handle(&mut conn, &account, "WithHandle", "+15555550100").await;
         sqlx::query("INSERT INTO contacts (account_id, preferred_name) VALUES ($1, $2)")
             .bind(&account)
@@ -2391,8 +2403,11 @@ mod tests {
 
     #[tokio::test]
     async fn list_contacts_filters_service_or() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000c1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         insert_contact_with_handle(&mut conn, &account, "IMsg", "+15555550100").await;
         insert_contact_with_handle(&mut conn, &account, "Sms", "+15555550200").await;
         insert_contact_with_handle(&mut conn, &account, "Wa", "+15555550300").await;
@@ -2463,8 +2478,12 @@ mod tests {
 
     #[tokio::test]
     async fn an_address_book_renames_a_contact_an_import_named() {
-        let (pool, dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000c1", "alice")
+            .await;
+        let dir = vault.dir();
+        let mut conn = vault.conn().await;
 
         // What an import leaves behind: a contact named by the backup, holding
         // the phone, marked as the import's.
@@ -2476,7 +2495,7 @@ mod tests {
             .await
             .unwrap();
 
-        let book = dir.path().join("book.vcf");
+        let book = dir.join("book.vcf");
         std::fs::write(
             &book,
             "BEGIN:VCARD\nVERSION:3.0\nFN:Robert Smith\nN:Smith;Robert;;;\nTEL:+15551234567\nEND:VCARD\n",
@@ -2518,8 +2537,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_nameless_card_does_not_blank_an_imported_name() {
-        let (pool, dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000c1", "alice")
+            .await;
+        let dir = vault.dir();
+        let mut conn = vault.conn().await;
 
         // An import already named this person; the book only lists their
         // number, nothing more.
@@ -2531,7 +2554,7 @@ mod tests {
             .await
             .unwrap();
 
-        let book = dir.path().join("book.vcf");
+        let book = dir.join("book.vcf");
         std::fs::write(
             &book,
             "BEGIN:VCARD\nVERSION:3.0\nTEL:+15551234567\nEND:VCARD\n",
@@ -2560,8 +2583,12 @@ mod tests {
 
     #[tokio::test]
     async fn an_address_book_does_not_rename_a_contact_the_person_typed() {
-        let (pool, dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000c1", "alice")
+            .await;
+        let dir = vault.dir();
+        let mut conn = vault.conn().await;
 
         // An import discovered this person and gave them the name that backup
         // used, holding the phone the book is about to load a card for.
@@ -2607,7 +2634,7 @@ mod tests {
             .unwrap();
         assert_eq!(origin, "user", "naming someone makes the row the person's");
 
-        let book = dir.path().join("book.vcf");
+        let book = dir.join("book.vcf");
         std::fs::write(
             &book,
             "BEGIN:VCARD\nVERSION:3.0\nFN:Robert Smith\nN:Smith;Robert;;;\nTEL:+15551234567\nEND:VCARD\n",
@@ -2670,8 +2697,12 @@ mod tests {
 
     #[tokio::test]
     async fn loading_an_address_book_replaces_only_its_own_rows() {
-        let (pool, dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000c1", "alice")
+            .await;
+        let dir = vault.dir();
+        let mut conn = vault.conn().await;
 
         // An identity the vault learned from imported messages, and a Contact
         // Group the person built by hand.
@@ -2693,7 +2724,7 @@ mod tests {
         .await
         .unwrap();
 
-        let book = dir.path().join("book.vcf");
+        let book = dir.join("book.vcf");
         std::fs::write(
             &book,
             "BEGIN:VCARD\nVERSION:3.0\nFN:Ada Lovelace\nN:Lovelace;Ada;;;\nTEL:+15551234567\nEND:VCARD\n",
@@ -2705,7 +2736,7 @@ mod tests {
 
         // A second load of a book that dropped Ada removes her, because the
         // vault knows that row was the book's.
-        let book2 = dir.path().join("book2.vcf");
+        let book2 = dir.join("book2.vcf");
         std::fs::write(
             &book2,
             "BEGIN:VCARD\nVERSION:3.0\nFN:Grace Hopper\nN:Hopper;Grace;;;\nTEL:+15557654321\nEND:VCARD\n",
@@ -2751,8 +2782,11 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_group_collects_contacts_missing_a_name_or_an_identity() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000c1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
 
         // Knows who and how to reach them: not Unknown.
         insert_contact_with_handle(&mut conn, &account, "Ada", "+15555550100").await;
@@ -2807,8 +2841,11 @@ mod tests {
 
     #[tokio::test]
     async fn list_contacts_filters_by_group_and_no_group() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000c1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         let family = insert_contact_with_handle(&mut conn, &account, "Ada", "+15555550100").await;
         insert_contact_with_handle(&mut conn, &account, "Ben", "+15555550200").await;
         crate::named_membership::set_membership(
@@ -3207,5 +3244,31 @@ mod tests {
         )
         .await;
         assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    /// The conversations list refuses an offset past `MAX_LIST_OFFSET`
+    /// (conversations_api.rs). The contacts list shares `page_params` and must
+    /// answer the same way over HTTP.
+    #[tokio::test]
+    async fn the_contacts_route_refuses_an_offset_past_the_ceiling() {
+        let vault = crate::test_support::test_vault().await;
+        let user =
+            crate::test_support::register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+
+        let (status, text) =
+            crate::test_support::get_raw(&vault.state, "/v1/contacts?offset=50001", &user.token)
+                .await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST, "{text}");
+        let body: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert!(body["error"].is_string(), "{body}");
+
+        let ok =
+            crate::test_support::get_status(&vault.state, "/v1/contacts?offset=50000", &user.token)
+                .await;
+        assert_eq!(
+            ok,
+            axum::http::StatusCode::OK,
+            "the ceiling itself is allowed"
+        );
     }
 }

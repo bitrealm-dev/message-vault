@@ -1405,7 +1405,8 @@ pub(crate) async fn imports_discard_handler(
             status = 409,
             body = crate::server::ErrorBody,
             description = "The account already has an active import session"
-        )
+        ),
+        (status = 413, body = crate::server::ErrorBody)
     )
 )]
 pub(crate) async fn import_handler(
@@ -1434,7 +1435,10 @@ pub(crate) async fn import_handler(
     if is_multipart_content_type(ct) {
         let multipart = Multipart::from_request(request, &state)
             .await
-            .map_err(|e| ApiError::BadRequest(format!("invalid multipart body: {e}")))?;
+            // Axum already picked the right status (413 over the body limit,
+            // 400 for a missing boundary); keep it rather than flattening
+            // everything to 400, exactly as `extract::Json` does.
+            .map_err(|e| ApiError::Status(e.status(), e.body_text()))?;
         return import_multipart(state, query, multipart).await;
     }
 
@@ -1478,7 +1482,10 @@ async fn import_multipart(
     while let Some(mut field) = multipart
         .next_field()
         .await
-        .map_err(|e| ApiError::BadRequest(format!("multipart field error: {e}")))?
+        // Same rule as the extractor above: Axum's own status (413 over the
+        // body limit) carries the meaning, so pass it through rather than
+        // flattening to 400.
+        .map_err(|e| ApiError::Status(e.status(), e.body_text()))?
     {
         let name = field.name().unwrap_or("").to_string();
         match name.as_str() {
@@ -1508,7 +1515,7 @@ async fn import_multipart(
                 while let Some(chunk) = field
                     .chunk()
                     .await
-                    .map_err(|e| ApiError::BadRequest(format!("multipart chunk: {e}")))?
+                    .map_err(|e| ApiError::Status(e.status(), e.body_text()))?
                 {
                     let _ = chunk;
                 }
@@ -3045,5 +3052,131 @@ mod tests {
         let err: serde_json::Value = serde_json::from_str(&text)
             .unwrap_or_else(|_| panic!("expected a JSON error body, got: {text}"));
         assert_eq!(err["error"], "query param source is required");
+    }
+
+    /// A malformed multipart body keeps the status Axum picked, the way
+    /// `extract::Json` does. ADR-0005: the status carries the meaning.
+    #[tokio::test]
+    async fn a_malformed_multipart_body_answers_axums_status_as_json() {
+        let vault = crate::test_support::test_vault().await;
+        let user =
+            crate::test_support::register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+
+        // A multipart Content-Type with no boundary parameter: Axum's
+        // `Multipart` extractor rejects it before reading a byte.
+        let (status, text) = crate::test_support::post_raw(
+            &vault.state,
+            "/v1/import?source=imessage&mode=append",
+            &user.token,
+            "multipart/form-data",
+            "not really multipart",
+        )
+        .await;
+        let body: serde_json::Value =
+            serde_json::from_str(&text).unwrap_or_else(|_| panic!("non-JSON body: {text}"));
+        assert_eq!(
+            body["error"], "Invalid `boundary` for `multipart/form-data` request",
+            "the handler must pass Axum's own sentence through, not wrap it: {body}"
+        );
+        assert_eq!(
+            status,
+            axum::http::StatusCode::BAD_REQUEST,
+            "a missing boundary is Axum's 400: {text}"
+        );
+    }
+
+    /// A well-formed multipart body whose `jsonl` field data alone exceeds
+    /// Axum's inner ~2 MiB per-request body limit (see issue #334 — that cap
+    /// is an inherited `axum` default nobody chose, well below this crate's
+    /// configured 512 MiB `max_body_bytes`, and whether it should exist at
+    /// all is an open product question). This test pins today's
+    /// pass-through behaviour, not the ceiling: it exists to catch a
+    /// regression that re-flattens the status, not to defend 2 MiB as the
+    /// right limit. Whoever resolves #334 should update this test
+    /// deliberately, not treat a failure here as having broken it.
+    #[tokio::test]
+    async fn a_multipart_field_over_axums_body_limit_answers_413() {
+        let vault = crate::test_support::test_vault().await;
+        let user =
+            crate::test_support::register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+
+        let boundary = "MessageVaultTestBoundary";
+        let big = "a".repeat(3 * 1024 * 1024);
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"jsonl\"\r\n\r\n{big}\r\n--{boundary}--\r\n"
+        );
+        let content_type = format!("multipart/form-data; boundary={boundary}");
+
+        let (status, text) = crate::test_support::post_raw(
+            &vault.state,
+            "/v1/import?source=imessage&mode=append",
+            &user.token,
+            &content_type,
+            body,
+        )
+        .await;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&text).unwrap_or_else(|_| panic!("non-JSON body: {text}"));
+        assert_eq!(
+            status,
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+            "a field over axum's inner body limit is its own 413: {text}"
+        );
+        assert_eq!(parsed["error"], "Request payload is too large");
+    }
+
+    /// `?account=` naming a different account is refused, even with an
+    /// otherwise valid token: the account query on `POST /v1/import` is
+    /// bound to whoever the Bearer token belongs to
+    /// (`resolve_import_account` in `server.rs`), not a free choice of
+    /// tenant. This is the only test on that branch — a deleted smoke
+    /// script was the only thing checking it before.
+    #[tokio::test]
+    async fn http_import_refuses_an_account_query_naming_someone_else() {
+        let vault = crate::test_support::test_vault().await;
+        let alice =
+            crate::test_support::register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+        let bob =
+            crate::test_support::register_via_api(&vault.state, "bob", "hunter2hunter2").await;
+
+        let body = concat!(
+            r#"{"schema_version":4,"export":{"source":"imessage","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550123","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550123","display_name":null}],"stats":{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}"#,
+            "\n",
+            r#"{"guid":"g-cross-account","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"imessage","message_kind":"imessage","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"hi","attachments":[],"imessage":null,"source":null}"#,
+            "\n",
+        );
+
+        let (status, text) = crate::test_support::post_raw(
+            &vault.state,
+            &format!(
+                "/v1/import?source=imessage&mode=append&account={}",
+                bob.username
+            ),
+            &alice.token,
+            "application/jsonl",
+            body,
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::FORBIDDEN, "{text}");
+        let err: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(err["error"], "account query does not match token's account");
+
+        // Positive control: naming her own account must not be refused for
+        // the same reason. Without this, the assertion above would still
+        // pass if the route started refusing every import outright — it
+        // need not succeed, since a minimal body can still fail later for
+        // unrelated reasons, but it must not be 403.
+        let (status, text) = crate::test_support::post_raw(
+            &vault.state,
+            &format!(
+                "/v1/import?source=imessage&mode=append&account={}",
+                alice.username
+            ),
+            &alice.token,
+            "application/jsonl",
+            body,
+        )
+        .await;
+        assert_ne!(status, axum::http::StatusCode::FORBIDDEN, "{text}");
     }
 }

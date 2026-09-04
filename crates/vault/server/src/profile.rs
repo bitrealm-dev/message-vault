@@ -436,30 +436,16 @@ mod tests {
 
     use crate::db::api_tokens;
     use crate::db::permissions::Permissions;
-    use crate::db::{engine, schema};
     use crate::test_support::*;
     use axum::http::StatusCode;
 
-    async fn setup() -> (sqlx::AnyPool, tempfile::TempDir, String) {
-        let (pool, dir) = engine::test_pool().await;
-        schema::ensure_vault_schema(&mut pool.acquire().await.unwrap())
-            .await
-            .unwrap();
-        let account_id = "00000000-0000-4000-8000-000000000001".to_string();
-        let mut conn = pool.acquire().await.unwrap();
-        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, $2)")
-            .bind(&account_id)
-            .bind("alice")
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        (pool, dir, account_id)
-    }
-
     #[tokio::test]
     async fn apply_profile_update_sets_name_and_handles() {
-        let (pool, _dir, account_id) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = test_vault().await;
+        let account_id = vault
+            .account_with_id("00000000-0000-4000-8000-000000000001", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         apply_profile_update(
             &mut conn,
             &account_id,
@@ -502,8 +488,11 @@ mod tests {
 
     #[tokio::test]
     async fn apply_profile_update_removes_handles() {
-        let (pool, _dir, account_id) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = test_vault().await;
+        let account_id = vault
+            .account_with_id("00000000-0000-4000-8000-000000000001", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         apply_profile_update(
             &mut conn,
             &account_id,
@@ -549,8 +538,11 @@ mod tests {
 
     #[tokio::test]
     async fn profile_update_rolls_back_when_a_handle_service_is_unsupported() {
-        let (pool, _dir, account_id) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = test_vault().await;
+        let account_id = vault
+            .account_with_id("00000000-0000-4000-8000-000000000001", "alice")
+            .await;
+        let mut conn = vault.conn().await;
 
         let result = update_profile_on_conn(
             &mut conn,

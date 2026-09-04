@@ -812,7 +812,8 @@ pub(crate) async fn asset_get_handler(
         (status = 200, body = AssetPutResponse),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 413, body = crate::server::ErrorBody)
     )
 )]
 pub(crate) async fn asset_put_handler(
@@ -991,7 +992,8 @@ pub(crate) async fn asset_upload_start_handler(
         (status = 200, body = AssetUploadPartResponse),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 413, body = crate::server::ErrorBody)
     )
 )]
 pub(crate) async fn asset_upload_part_handler(
@@ -1549,5 +1551,102 @@ mod tests {
         let removed = gc_stale_incoming(root, 0).unwrap();
         assert_eq!(removed, 1);
         assert!(!session.exists());
+    }
+
+    #[tokio::test]
+    async fn an_asset_put_then_get_returns_the_same_bytes() {
+        let vault = crate::test_support::test_vault().await;
+        let user =
+            crate::test_support::register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+
+        // Arbitrary non-UTF-8 bytes, to prove the round trip preserves the
+        // raw content rather than only text that happens to decode.
+        let bytes: Vec<u8> = vec![0xff, 0x00, 0xde, 0xad, 0xbe, 0xef, b'\n', b'x'];
+        let sha = sha256_hex(&bytes);
+        let path = format!(
+            "/v1/assets/{sha}?source=sms-backup-restore&account={}",
+            user.username
+        );
+
+        let (status, text) = crate::test_support::put_raw(
+            &vault.state,
+            &path,
+            &user.token,
+            "application/octet-stream",
+            bytes.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{text}");
+
+        let server = crate::test_support::serve(&vault.state).await;
+        let response = reqwest::Client::new()
+            .get(format!("{}{path}", server.base()))
+            .bearer_auth(&user.token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let got = response.bytes().await.unwrap();
+        assert_eq!(got.as_ref(), bytes.as_slice(), "the bytes must round-trip");
+    }
+
+    #[tokio::test]
+    async fn an_asset_get_for_an_unknown_sha_is_a_json_404() {
+        let vault = crate::test_support::test_vault().await;
+        let user =
+            crate::test_support::register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+
+        let unknown = "0".repeat(64);
+        let (status, text) = crate::test_support::get_raw(
+            &vault.state,
+            &format!(
+                "/v1/assets/{unknown}?source=sms-backup-restore&account={}",
+                user.username
+            ),
+            &user.token,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{text}");
+        let body: serde_json::Value =
+            serde_json::from_str(&text).unwrap_or_else(|_| panic!("non-JSON body: {text}"));
+        assert!(body["error"].is_string(), "{body}");
+    }
+
+    /// A part body past `upload_limits.part_size` is a 413. This is the one
+    /// oversize check reachable over HTTP: the layer limit is `max_body_bytes`
+    /// (512 MiB by default) and the part limit is far smaller, so the handler's
+    /// own check is what answers. ADR-0005: the status carries the meaning.
+    #[tokio::test]
+    async fn an_upload_part_over_the_part_size_is_a_json_413() {
+        let vault = crate::test_support::test_vault().await;
+        let mut state = vault.state.clone();
+        // `UploadLimits` is `Copy` and `part_size` is public, so a test can lower
+        // it without rebuilding the config.
+        state.upload_limits.part_size = 16;
+        let user = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+
+        let sha = "0".repeat(64);
+        let (status, text) = crate::test_support::put_raw(
+            &state,
+            &format!(
+                "/v1/assets/{sha}/uploads/upload-1/parts/1?source=sms-backup-restore&account={}",
+                user.username
+            ),
+            &user.token,
+            "application/octet-stream",
+            vec![b'x'; 4096],
+        )
+        .await;
+        assert_eq!(
+            status,
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+            "a part over part_size must be 413, got: {text}"
+        );
+        let body: serde_json::Value =
+            serde_json::from_str(&text).unwrap_or_else(|_| panic!("non-JSON body: {text}"));
+        assert_eq!(
+            body["error"], "request body too large",
+            "the sentence must be the handler's own, proving the layer did not answer: {body}"
+        );
     }
 }

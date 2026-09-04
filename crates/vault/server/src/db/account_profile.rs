@@ -525,23 +525,11 @@ mod tests {
 
     const ACCOUNT_ID: &str = "00000000-0000-4000-8000-000000000001";
 
-    async fn setup() -> (sqlx::AnyPool, tempfile::TempDir) {
-        let (pool, dir) = crate::db::engine::test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        schema::ensure_vault_schema(&mut conn).await.unwrap();
-        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, $2)")
-            .bind(ACCOUNT_ID)
-            .bind("Alice")
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        (pool, dir)
-    }
-
     #[tokio::test]
     async fn resolve_by_username_case_insensitive() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        vault.account_with_id(ACCOUNT_ID, "Alice").await;
+        let mut conn = vault.conn().await;
         assert_eq!(
             resolve_account_ref(&mut conn, "alice").await.unwrap(),
             ACCOUNT_ID
@@ -554,8 +542,9 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_by_uuid() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        vault.account_with_id(ACCOUNT_ID, "Alice").await;
+        let mut conn = vault.conn().await;
         assert_eq!(
             resolve_account_ref(&mut conn, ACCOUNT_ID).await.unwrap(),
             ACCOUNT_ID
@@ -564,8 +553,9 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_username_errors() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        vault.account_with_id(ACCOUNT_ID, "Alice").await;
+        let mut conn = vault.conn().await;
         let err = resolve_account_ref(&mut conn, "nobody")
             .await
             .unwrap_err()
@@ -575,16 +565,18 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_uuid_passthrough() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        vault.account_with_id(ACCOUNT_ID, "Alice").await;
+        let mut conn = vault.conn().await;
         let id = "11111111-1111-4111-8111-111111111111";
         assert_eq!(resolve_account_ref(&mut conn, id).await.unwrap(), id);
     }
 
     #[tokio::test]
     async fn username_for_account_works() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        vault.account_with_id(ACCOUNT_ID, "Alice").await;
+        let mut conn = vault.conn().await;
         assert_eq!(
             username_for_account(&mut conn, ACCOUNT_ID)
                 .await
@@ -598,16 +590,18 @@ mod tests {
     async fn load_password_hash_returns_none_when_null() {
         // Demo (and any passwordless account) stores password_hash as SQL NULL.
         // Reading that column must not fail with "Invalid column type Null".
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        vault.account_with_id(ACCOUNT_ID, "Alice").await;
+        let mut conn = vault.conn().await;
         let hash = load_password_hash(&mut conn, ACCOUNT_ID).await.unwrap();
         assert_eq!(hash, None);
     }
 
     #[tokio::test]
     async fn load_password_hash_returns_set_value() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        vault.account_with_id(ACCOUNT_ID, "Alice").await;
+        let mut conn = vault.conn().await;
         update_password_hash(&mut conn, ACCOUNT_ID, "$argon2id$example")
             .await
             .unwrap();
@@ -617,8 +611,9 @@ mod tests {
 
     #[tokio::test]
     async fn load_profile_returns_linked_handles_and_preferred_name() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        vault.account_with_id(ACCOUNT_ID, "Alice").await;
+        let mut conn = vault.conn().await;
         let empty = load_account_profile(&mut conn, ACCOUNT_ID).await.unwrap();
         assert!(empty.phones.is_empty());
         assert!(empty.emails.is_empty());
@@ -645,8 +640,9 @@ mod tests {
 
     #[tokio::test]
     async fn link_account_handle_normalizes_and_dedupes() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        vault.account_with_id(ACCOUNT_ID, "Alice").await;
+        let mut conn = vault.conn().await;
         let a = link_account_handle(
             &mut conn,
             ACCOUNT_ID,
@@ -689,8 +685,9 @@ mod tests {
 
     #[tokio::test]
     async fn delete_all_messages_keeps_account_and_contacts() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        vault.account_with_id(ACCOUNT_ID, "Alice").await;
+        let mut conn = vault.conn().await;
         let handle_id =
             link_account_handle(&mut conn, ACCOUNT_ID, "+15555550100", HandleType::Phone)
                 .await
