@@ -415,9 +415,13 @@ The whole pull request is verified by four things:
 
 ```bash
 ls crates/vault/server/src | grep -E 'contact_groups_api|message_tags_api'   # nothing
-git diff main --stat -- docs/src/assets/openapi.json                          # nothing
-git diff main --stat -- web/src/lib/vaultApi.types.ts                         # nothing
+git diff origin/main --stat -- docs/src/assets/openapi.json                   # nothing
+git diff origin/main --stat -- web/src/lib/vaultApi.types.ts                  # nothing
 ./scripts/check-pr.sh                                                         # exit 0
 ```
+
+Compare against `origin/main`, not `main`. This repository's local `main` ref
+is stale — the checkout that owns it sits well behind the remote — so
+`git diff main` reports a large false difference in both generated files.
 
 The second and third are the ones that matter. Every route in this pull request already had tests and an entry in the committed document; if that document is byte-identical and the tests still pass, the twelve handlers behave as they did.
