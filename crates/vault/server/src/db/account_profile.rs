@@ -366,16 +366,9 @@ pub async fn delete_all_messages_for_account(
         .execute(&mut *conn)
         .await
         .with_context(|| format!("delete staging conversations for {account_id}"))?;
-    sqlx::query("DELETE FROM trashed_conversations WHERE account_id = $1")
-        .bind(account_id)
-        .execute(&mut *conn)
+    crate::db::trash::purge_account(conn, account_id)
         .await
-        .with_context(|| format!("delete trashed conversations for {account_id}"))?;
-    sqlx::query("DELETE FROM trashed_handles WHERE account_id = $1")
-        .bind(account_id)
-        .execute(&mut *conn)
-        .await
-        .with_context(|| format!("delete trashed handles for {account_id}"))?;
+        .with_context(|| format!("purge trash markers for {account_id}"))?;
     Ok(DeletedMessagesStats {
         conversations,
         attachments: u64::try_from(attachment_count).unwrap_or(0),
