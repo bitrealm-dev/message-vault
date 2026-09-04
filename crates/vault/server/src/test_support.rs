@@ -1,5 +1,6 @@
-//! Shared HTTP helpers for the server's own tests. Each call starts the real
-//! axum app on an ephemeral port, issues one request, and shuts it down.
+//! Shared HTTP helpers for the server's own tests. [`serve`] is the one place
+//! that binds a listener and spawns the app; every helper below issues one
+//! request through it, reads the whole response, and lets the server drop.
 //!
 //! Distinct from `server.rs`'s `test_state()`, which returns a four-tuple
 //! `(TempDir, AppState, String, i64)` for handler-level tests that call a
@@ -31,6 +32,46 @@ pub struct RegisteredAccount {
     pub token: String,
 }
 
+/// A running instance of the real axum app on an ephemeral port.
+///
+/// The task is aborted when this value drops, so it must stay alive until the
+/// response body has been read. Reading a body after the server task is gone
+/// truncates it whenever the response was not already buffered.
+pub struct TestServer {
+    base: String,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+impl TestServer {
+    /// `http://127.0.0.1:<port>`, to prefix a path with.
+    pub fn base(&self) -> &str {
+        &self.base
+    }
+}
+
+impl Drop for TestServer {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+
+/// Start the real axum app for `state` on an ephemeral port.
+///
+/// This is the one place in the test suite that binds a listener; every HTTP
+/// helper below goes through it.
+pub async fn serve(state: &AppState) -> TestServer {
+    let app = http_app(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    TestServer {
+        base: format!("http://{address}"),
+        handle,
+    }
+}
+
 /// An empty vault with schema applied and no accounts.
 pub async fn test_vault() -> TestVault {
     let (pool, tmp) = crate::db::engine::test_pool().await;
@@ -47,29 +88,44 @@ pub async fn test_vault() -> TestVault {
     TestVault { _tmp: tmp, state }
 }
 
+/// Issue one request against a freshly started app and read the whole
+/// response. `body` is a content type and the bytes to send with it.
 async fn request(
     state: &AppState,
     method: reqwest::Method,
     path: &str,
     token: Option<&str>,
-    body: Option<serde_json::Value>,
-) -> reqwest::Response {
-    let app = http_app(state.clone());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    let mut req = reqwest::Client::new().request(method, format!("http://{address}{path}"));
+    body: Option<(&str, reqwest::Body)>,
+) -> (StatusCode, String) {
+    let server = serve(state).await;
+    let mut req = reqwest::Client::new().request(method, format!("{}{path}", server.base()));
     if let Some(token) = token {
         req = req.bearer_auth(token);
     }
-    if let Some(body) = body {
-        req = req.json(&body);
+    if let Some((content_type, body)) = body {
+        req = req
+            .header(reqwest::header::CONTENT_TYPE, content_type)
+            .body(body);
     }
     let response = req.send().await.unwrap();
-    server.abort();
-    response
+    let status = response.status();
+    // Read the body before `server` drops and aborts the task.
+    let text = response.text().await.unwrap();
+    (status, text)
+}
+
+/// The JSON body every typed helper sends.
+fn json_body(value: serde_json::Value) -> (&'static str, reqwest::Body) {
+    (
+        "application/json",
+        reqwest::Body::from(serde_json::to_vec(&value).expect("test JSON always serializes")),
+    )
+}
+
+/// Decode a response the caller expects to be `200 OK` with a JSON body.
+fn expect_ok<T: DeserializeOwned>(what: &str, status: StatusCode, text: &str) -> T {
+    assert_eq!(status, StatusCode::OK, "{what} must succeed, got: {text}");
+    serde_json::from_str(text).unwrap_or_else(|e| panic!("{what} returned non-JSON ({e}): {text}"))
 }
 
 /// Register an account through the API and return it with a live token.
@@ -85,16 +141,17 @@ pub async fn register_via_api(
     username: &str,
     password: &str,
 ) -> RegisteredAccount {
-    let response = request(
+    let (status, text) = request(
         state,
         reqwest::Method::POST,
         "/v1/auth/register",
         None,
-        Some(serde_json::json!({ "username": username, "password": password })),
+        Some(json_body(
+            serde_json::json!({ "username": username, "password": password }),
+        )),
     )
     .await;
-    assert_eq!(response.status(), StatusCode::OK, "register must succeed");
-    let body: serde_json::Value = response.json().await.unwrap();
+    let body: serde_json::Value = expect_ok("register", status, &text);
     RegisteredAccount {
         account_id: body["account_id"].as_str().unwrap().to_string(),
         username: body["username"].as_str().unwrap().to_string(),
@@ -109,24 +166,25 @@ pub async fn login_status(state: &AppState, username: &str, password: &str) -> S
         reqwest::Method::POST,
         "/v1/auth/login",
         None,
-        Some(serde_json::json!({ "username": username, "password": password })),
+        Some(json_body(
+            serde_json::json!({ "username": username, "password": password }),
+        )),
     )
     .await
-    .status()
+    .0
 }
 
 /// GET a path with a Bearer token, returning only the status.
 pub async fn get_status(state: &AppState, path: &str, token: &str) -> StatusCode {
     request(state, reqwest::Method::GET, path, Some(token), None)
         .await
-        .status()
+        .0
 }
 
 /// GET a path with a Bearer token and decode the JSON body.
 pub async fn get_json<T: DeserializeOwned>(state: &AppState, path: &str, token: &str) -> T {
-    let response = request(state, reqwest::Method::GET, path, Some(token), None).await;
-    assert_eq!(response.status(), StatusCode::OK, "GET {path} must succeed");
-    response.json().await.unwrap()
+    let (status, text) = request(state, reqwest::Method::GET, path, Some(token), None).await;
+    expect_ok(&format!("GET {path}"), status, &text)
 }
 
 /// POST a JSON body with a Bearer token and decode the JSON response.
@@ -136,13 +194,15 @@ pub async fn post_json<T: DeserializeOwned>(
     token: &str,
     body: serde_json::Value,
 ) -> T {
-    let response = request(state, reqwest::Method::POST, path, Some(token), Some(body)).await;
-    assert_eq!(
-        response.status(),
-        StatusCode::OK,
-        "POST {path} must succeed"
-    );
-    response.json().await.unwrap()
+    let (status, text) = request(
+        state,
+        reqwest::Method::POST,
+        path,
+        Some(token),
+        Some(json_body(body)),
+    )
+    .await;
+    expect_ok(&format!("POST {path}"), status, &text)
 }
 
 /// POST a JSON body with a Bearer token, returning only the status.
@@ -152,9 +212,15 @@ pub async fn post_status(
     token: &str,
     body: serde_json::Value,
 ) -> StatusCode {
-    request(state, reqwest::Method::POST, path, Some(token), Some(body))
-        .await
-        .status()
+    request(
+        state,
+        reqwest::Method::POST,
+        path,
+        Some(token),
+        Some(json_body(body)),
+    )
+    .await
+    .0
 }
 
 /// PUT a JSON body with a Bearer token and decode the JSON response.
@@ -164,9 +230,15 @@ pub async fn put_json<T: DeserializeOwned>(
     token: &str,
     body: serde_json::Value,
 ) -> T {
-    let response = request(state, reqwest::Method::PUT, path, Some(token), Some(body)).await;
-    assert_eq!(response.status(), StatusCode::OK, "PUT {path} must succeed");
-    response.json().await.unwrap()
+    let (status, text) = request(
+        state,
+        reqwest::Method::PUT,
+        path,
+        Some(token),
+        Some(json_body(body)),
+    )
+    .await;
+    expect_ok(&format!("PUT {path}"), status, &text)
 }
 
 /// PUT a JSON body with a Bearer token, returning only the status.
@@ -176,9 +248,15 @@ pub async fn put_status(
     token: &str,
     body: serde_json::Value,
 ) -> StatusCode {
-    request(state, reqwest::Method::PUT, path, Some(token), Some(body))
-        .await
-        .status()
+    request(
+        state,
+        reqwest::Method::PUT,
+        path,
+        Some(token),
+        Some(json_body(body)),
+    )
+    .await
+    .0
 }
 
 /// PATCH a JSON body with a Bearer token, returning only the status.
@@ -188,9 +266,15 @@ pub async fn patch_status(
     token: &str,
     body: serde_json::Value,
 ) -> StatusCode {
-    request(state, reqwest::Method::PATCH, path, Some(token), Some(body))
-        .await
-        .status()
+    request(
+        state,
+        reqwest::Method::PATCH,
+        path,
+        Some(token),
+        Some(json_body(body)),
+    )
+    .await
+    .0
 }
 
 /// PATCH a JSON body with a Bearer token and decode the JSON response.
@@ -200,31 +284,28 @@ pub async fn patch_json<T: DeserializeOwned>(
     token: &str,
     body: serde_json::Value,
 ) -> T {
-    let response = request(state, reqwest::Method::PATCH, path, Some(token), Some(body)).await;
-    assert_eq!(
-        response.status(),
-        StatusCode::OK,
-        "PATCH {path} must succeed"
-    );
-    response.json().await.unwrap()
+    let (status, text) = request(
+        state,
+        reqwest::Method::PATCH,
+        path,
+        Some(token),
+        Some(json_body(body)),
+    )
+    .await;
+    expect_ok(&format!("PATCH {path}"), status, &text)
 }
 
 /// DELETE a path with a Bearer token, returning only the status.
 pub async fn delete_status(state: &AppState, path: &str, token: &str) -> StatusCode {
     request(state, reqwest::Method::DELETE, path, Some(token), None)
         .await
-        .status()
+        .0
 }
 
 /// DELETE a path with a Bearer token and decode the JSON response.
 pub async fn delete_json<T: DeserializeOwned>(state: &AppState, path: &str, token: &str) -> T {
-    let response = request(state, reqwest::Method::DELETE, path, Some(token), None).await;
-    assert_eq!(
-        response.status(),
-        StatusCode::OK,
-        "DELETE {path} must succeed"
-    );
-    response.json().await.unwrap()
+    let (status, text) = request(state, reqwest::Method::DELETE, path, Some(token), None).await;
+    expect_ok(&format!("DELETE {path}"), status, &text)
 }
 
 /// POST a body that is not JSON (JSONL, plain text, an empty body) with a
@@ -238,68 +319,28 @@ pub async fn post_raw(
     content_type: &str,
     body: impl Into<reqwest::Body>,
 ) -> (StatusCode, String) {
-    let app = http_app(state.clone());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    let response = reqwest::Client::new()
-        .post(format!("http://{address}{path}"))
-        .bearer_auth(token)
-        .header(reqwest::header::CONTENT_TYPE, content_type)
-        .body(body)
-        .send()
-        .await
-        .unwrap();
-    server.abort();
-    let status = response.status();
-    let text = response.text().await.unwrap();
-    (status, text)
+    request(
+        state,
+        reqwest::Method::POST,
+        path,
+        Some(token),
+        Some((content_type, body.into())),
+    )
+    .await
 }
 
 /// GET a path with a Bearer token, returning the status and the raw response
 /// text. For asserting on a non-JSON or malformed body, such as the error
 /// fallbacks' JSON that a plain `get_json` would panic decoding on failure.
 pub async fn get_raw(state: &AppState, path: &str, token: &str) -> (StatusCode, String) {
-    let app = http_app(state.clone());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    let response = reqwest::Client::new()
-        .get(format!("http://{address}{path}"))
-        .bearer_auth(token)
-        .send()
-        .await
-        .unwrap();
-    server.abort();
-    let status = response.status();
-    let text = response.text().await.unwrap();
-    (status, text)
+    request(state, reqwest::Method::GET, path, Some(token), None).await
 }
 
 /// DELETE a path with a Bearer token, returning the status and the raw
 /// response text. For asserting on the body of a fallback response, such as
 /// the JSON `{error}` a wrong method produces.
 pub async fn delete_raw(state: &AppState, path: &str, token: &str) -> (StatusCode, String) {
-    let app = http_app(state.clone());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    let response = reqwest::Client::new()
-        .delete(format!("http://{address}{path}"))
-        .bearer_auth(token)
-        .send()
-        .await
-        .unwrap();
-    server.abort();
-    let status = response.status();
-    let text = response.text().await.unwrap();
-    (status, text)
+    request(state, reqwest::Method::DELETE, path, Some(token), None).await
 }
 
 /// Give an account one conversation holding one message, so counts are non-zero.
@@ -339,4 +380,48 @@ pub async fn seed_one_message(state: &AppState, account_id: &str) {
     .execute(&mut *conn)
     .await
     .unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    // Enabled in Task 3, along with `use super::*;`:
+    // /// A body far larger than one TCP segment must come back whole. This
+    // /// pins the ordering in `request`: the response is read before the
+    // /// `TestServer` drops and aborts the task serving it.
+    // #[tokio::test]
+    // async fn a_large_response_body_is_read_before_the_server_stops() {
+    //     let vault = test_vault().await;
+    //     let user = register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+    //     for i in 0..300 {
+    //         seed_conversation(
+    //             &vault.state,
+    //             &SeedConversation {
+    //                 account_id: &user.account_id,
+    //                 handle: &format!("+1555000{i:04}"),
+    //                 conversation_type: "individual",
+    //                 group_title: None,
+    //                 source_file: "seed.jsonl",
+    //                 messages: &[SeedMessage {
+    //                     source: "imessage",
+    //                     timestamp: "2020-01-01T00:00:00Z",
+    //                     is_from_me: true,
+    //                     body: "hello, this is a message long enough to add up",
+    //                 }],
+    //             },
+    //         )
+    //         .await;
+    //     }
+    //
+    //     let (status, text) =
+    //         get_raw(&vault.state, "/v1/conversations?limit=300", &user.token).await;
+    //     assert_eq!(status, StatusCode::OK, "{text}");
+    //     assert!(
+    //         text.len() > 64 * 1024,
+    //         "the fixture must produce a body bigger than one segment, got {} bytes",
+    //         text.len()
+    //     );
+    //     let page: serde_json::Value = serde_json::from_str(&text)
+    //         .unwrap_or_else(|e| panic!("truncated body ({e}): {} bytes", text.len()));
+    //     assert_eq!(page["items"].as_array().unwrap().len(), 300);
+    // }
 }
