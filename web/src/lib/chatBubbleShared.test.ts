@@ -5,8 +5,9 @@ import {
   formatMessageTime,
   isGroupConversation,
   senderName,
+  tapbackGroups,
 } from "../components/messages/chatBubbleShared";
-import type { Message } from "./types";
+import type { Message, MessageTapback } from "./types";
 
 function message(partial: Partial<Message> & Pick<Message, "conversation">): Message {
   return {
@@ -124,5 +125,63 @@ describe("senderName / isGroupConversation", () => {
       },
     });
     expect(isGroupConversation(many)).toBe(true);
+  });
+});
+
+function tapback(partial: Partial<MessageTapback>): MessageTapback {
+  return {
+    emoji: null,
+    is_from_me: false,
+    kind: "loved",
+    part_index: 0,
+    sender: null,
+    ...partial,
+  };
+}
+
+const conversation = {
+  id: 1,
+  chat_identifier: "x",
+  conversation_type: "group",
+  group_title: null,
+  participants: [
+    { handle: "+1555", name: "Ada", contact_id: null },
+    { handle: "+1556", name: "Bob", contact_id: null },
+  ],
+};
+
+describe("tapbackGroups", () => {
+  it("maps an emoji-less iMessage kind to its fixed emoji", () => {
+    const m = message({ conversation, tapbacks: [tapback({ kind: "loved", sender: "+1555" })] });
+    expect(tapbackGroups(m)).toEqual([{ emoji: "❤️", count: 1, senderNames: ["Ada"] }]);
+  });
+
+  it("prefers the tapback's own emoji over the fixed kind mapping", () => {
+    const m = message({
+      conversation,
+      tapbacks: [tapback({ kind: "loved", emoji: "🔥", sender: "+1555" })],
+    });
+    expect(tapbackGroups(m)[0]?.emoji).toBe("🔥");
+  });
+
+  it("groups by emoji and counts one entry per reactor", () => {
+    const m = message({
+      conversation,
+      tapbacks: [
+        tapback({ kind: "loved", sender: "+1555" }),
+        tapback({ kind: "loved", sender: "+1556" }),
+      ],
+    });
+    expect(tapbackGroups(m)).toEqual([{ emoji: "❤️", count: 2, senderNames: ["Ada", "Bob"] }]);
+  });
+
+  it("names the account owner Me", () => {
+    const m = message({ conversation, tapbacks: [tapback({ kind: "liked", is_from_me: true })] });
+    expect(tapbackGroups(m)[0]?.senderNames).toEqual(["Me"]);
+  });
+
+  it("is empty when the message has no tapbacks", () => {
+    const m = message({ conversation, tapbacks: [] });
+    expect(tapbackGroups(m)).toEqual([]);
   });
 });

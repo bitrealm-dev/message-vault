@@ -1,6 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
 import { highlightText } from "../../lib/highlightText";
-import type { Message, MessageAttachment } from "../../lib/types";
+import type { Message, MessageAttachment, MessageTapback } from "../../lib/types";
 
 type BubblePalette = "imessage" | "sms";
 
@@ -44,6 +44,55 @@ export function senderName(m: Message): string {
 
 export function isGroupConversation(m: Message): boolean {
   return m.conversation.conversation_type === "group" || m.conversation.participants.length > 1;
+}
+
+/**
+ * iMessage's fixed tapback kinds carry no emoji of their own (the export
+ * sends `emoji: null` for them) — the client renders the emoji instead.
+ * A tapback with its own `emoji` (Discord, say) always wins over this.
+ */
+const TAPBACK_KIND_EMOJI: Record<string, string> = {
+  loved: "❤️",
+  liked: "👍",
+  disliked: "👎",
+  laughed: "😂",
+  emphasized: "‼️",
+  questioned: "❓",
+};
+
+/** Who left a tapback: "Me" for the account owner, else the matching participant's name. */
+function tapbackSenderName(m: Message, t: MessageTapback): string {
+  if (t.is_from_me) return "Me";
+  if (t.sender) {
+    const p = m.conversation.participants.find((x) => x.handle === t.sender);
+    if (p) return p.name;
+    return t.sender;
+  }
+  return "Someone";
+}
+
+type TapbackGroup = {
+  /** The emoji to show — the tapback's own, or the fixed kind's, or the raw kind as a last resort. */
+  emoji: string;
+  count: number;
+  senderNames: string[];
+};
+
+/** This message's tapbacks, grouped by the emoji they display, each with who sent it. */
+export function tapbackGroups(m: Message): TapbackGroup[] {
+  const groups = new Map<string, TapbackGroup>();
+  for (const t of m.tapbacks) {
+    const emoji = t.emoji || TAPBACK_KIND_EMOJI[t.kind] || t.kind;
+    const senderName = tapbackSenderName(m, t);
+    const existing = groups.get(emoji);
+    if (existing) {
+      existing.count += 1;
+      existing.senderNames.push(senderName);
+    } else {
+      groups.set(emoji, { emoji, count: 1, senderNames: [senderName] });
+    }
+  }
+  return [...groups.values()];
 }
 
 /** Bubble fill/text color per palette (theme vars switch with data-theme). */
