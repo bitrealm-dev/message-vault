@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { fetchConversationById } from "../lib/fetchConversationById";
+import { apiErrorMessage } from "../lib/apiErrorMessage";
 import { asMessagesLocationState } from "../lib/messagesLocationState";
-import type { Conversation } from "../lib/types";
+import { getConversation } from "../lib/vaultApi";
+import { keys } from "../lib/vaultKeys";
+import { useVaultQuery } from "../lib/vaultQuery";
 import ConversationList from "../screens/ConversationList";
 import MessageView from "../screens/MessageView";
 import ListColumn from "./ListColumn";
@@ -18,6 +19,9 @@ function positiveInteger(raw: string | undefined): number | null {
 export default function MessageRoute() {
   const { conversationId: conversationParam } = useParams<{ conversationId: string }>();
   const conversationId = positiveInteger(conversationParam);
+  // A param was given but isn't a positive integer (e.g. "/messages/abc"), as
+  // opposed to no id at all — the two render different panes below.
+  const malformedId = conversationParam !== undefined && conversationId === null;
   const location = useLocation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -27,50 +31,32 @@ export default function MessageRoute() {
   const query = conversationFilter || conversationSearch;
 
   const locationState = asMessagesLocationState(location.state);
+  // The router hands us whatever row the person clicked, which can be
+  // arbitrarily stale (a name from before a rename, a count from before an
+  // import). It seeds the first paint as `placeholderData`, never the source
+  // of truth, so the fetch below still runs and replaces it.
   const stateConversation = locationState?.conversation ?? null;
   const openContactId = locationState?.openContactId ?? null;
   const openContactPreview = locationState?.openContactPreview ?? null;
 
-  const [fetchedConversation, setFetchedConversation] = useState<Conversation | null>(null);
-  const [fetchLoading, setFetchLoading] = useState(false);
-  const [fetchError, setFetchError] = useState<string | null>(null);
+  // Detail queries are keyed by number; when there's no valid id the query is
+  // disabled below, so this placeholder id is never used to fetch or cache.
+  const detailId = conversationId ?? 0;
 
-  const conversation = stateConversation ?? fetchedConversation;
+  const {
+    data: conversation,
+    isLoading,
+    error,
+  } = useVaultQuery(
+    keys.conversations.detail(detailId),
+    (signal) => getConversation(detailId, { signal }),
+    {
+      enabled: conversationId !== null,
+      placeholderData: stateConversation ?? undefined,
+    },
+  );
 
-  useEffect(() => {
-    if (stateConversation || conversationId === null) {
-      setFetchedConversation(null);
-      setFetchLoading(false);
-      setFetchError(conversationParam === undefined ? null : "Conversation not found.");
-      return;
-    }
-
-    const controller = new AbortController();
-    setFetchLoading(true);
-    setFetchError(null);
-    setFetchedConversation(null);
-
-    void (async () => {
-      try {
-        const found = await fetchConversationById(conversationId, controller.signal);
-        if (controller.signal.aborted) return;
-        if (found) {
-          setFetchedConversation(found);
-        } else {
-          setFetchError("Conversation not found.");
-        }
-      } catch (e) {
-        if (controller.signal.aborted) return;
-        setFetchError(String(e));
-      } finally {
-        if (!controller.signal.aborted) {
-          setFetchLoading(false);
-        }
-      }
-    })();
-
-    return () => controller.abort();
-  }, [conversationId, conversationParam, stateConversation]);
+  const notFound = malformedId || error !== null;
 
   return (
     <>
@@ -100,13 +86,15 @@ export default function MessageRoute() {
                 });
               }}
             />
-          ) : fetchLoading ? (
+          ) : isLoading ? (
             <div className="flex h-full items-center justify-center text-[0.875rem] text-muted">
               Loading conversation…
             </div>
-          ) : fetchError ? (
+          ) : notFound ? (
             <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-              <p className="m-0 text-[0.875rem] text-danger">{fetchError}</p>
+              <p className="m-0 text-[0.875rem] text-danger">
+                {apiErrorMessage(error, "Conversation not found.")}
+              </p>
               <Link
                 to="/"
                 className="text-[0.875rem] text-accent underline-offset-2 hover:underline"
