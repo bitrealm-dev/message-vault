@@ -1010,5 +1010,13 @@ mod tests {
         .await;
         assert_eq!(page["total"], 0, "bob must see nothing of alice's: {page}");
         assert_eq!(page["items"].as_array().unwrap().len(), 0);
+
+        let mine: serde_json::Value = crate::test_support::get_json(
+            &vault.state,
+            "/v1/export/messages?q=&limit=50",
+            &alice.token,
+        )
+        .await;
+        assert_eq!(mine["total"], 1, "alice must see her own message: {mine}");
     }
 }
