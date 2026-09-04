@@ -1,21 +1,24 @@
 /** @vitest-environment jsdom */
 
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Message } from "../../lib/types";
-import { exportMessages } from "../../lib/vaultApi";
+import { listConversationMessages } from "../../lib/vaultApi";
+import { mockedAuth, VaultProviders } from "../../test/vaultProviders";
 import {
   buildFooterLabel,
   conversationYears,
   useConversationMessages,
 } from "./useConversationMessages";
 
+vi.mock("../../lib/auth", () => ({ useAuth: () => mockedAuth }));
+
 vi.mock("../../lib/vaultApi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lib/vaultApi")>()),
-  exportMessages: vi.fn(),
+  listConversationMessages: vi.fn(),
 }));
 
-const getMessages = vi.mocked(exportMessages);
+const getMessages = vi.mocked(listConversationMessages);
 
 function message(id: number): Message {
   return {
@@ -65,10 +68,10 @@ function page(items: Message[]): MessagePage {
 
 /** Route the mocked calls: conversation 1 hangs on `slow`, conversation 2 answers at once. */
 function routeGets(slow: Promise<MessagePage>) {
-  getMessages.mockImplementation(((params: { q: string }) =>
-    params.q.includes("in:#1")
+  getMessages.mockImplementation(((id: number) =>
+    id === 1
       ? slow
-      : Promise.resolve(page([message(2)]))) as unknown as typeof exportMessages);
+      : Promise.resolve(page([message(2)]))) as unknown as typeof listConversationMessages);
 }
 
 describe("useConversationMessages", () => {
@@ -82,38 +85,36 @@ describe("useConversationMessages", () => {
 
     const { result, rerender } = renderHook(
       ({ id }: { id: number }) => useConversationMessages(id),
-      { initialProps: { id: 1 } },
+      { initialProps: { id: 1 }, wrapper: VaultProviders },
     );
 
     rerender({ id: 2 });
     await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual([2]));
 
-    await act(async () => {
-      slow.resolve(page([message(1)]));
-      await slow.promise;
-    });
+    slow.resolve(page([message(1)]));
+    await slow.promise;
 
+    // Conversation 1's own cache entry now holds its answer, but the hook is
+    // reading conversation 2's entry, so its messages are untouched.
     expect(result.current.messages.map((m) => m.id)).toEqual([2]);
     expect(result.current.loading).toBe(false);
   });
 
-  it("keeps the current page when a superseded request rejects", async () => {
+  it("keeps the current page when a request rejects", async () => {
     const slow = deferred<MessagePage>();
     routeGets(slow.promise);
 
     const { result, rerender } = renderHook(
       ({ id }: { id: number }) => useConversationMessages(id),
-      { initialProps: { id: 1 } },
+      { initialProps: { id: 1 }, wrapper: VaultProviders },
     );
 
     rerender({ id: 2 });
     await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual([2]));
 
-    // The abort surfaces as a rejection; it must not blank B's messages.
-    await act(async () => {
-      slow.reject(new DOMException("aborted", "AbortError"));
-      await slow.promise.catch(() => {});
-    });
+    // Conversation 1's own entry fails; it must not touch conversation 2's.
+    slow.reject(new Error("boom"));
+    await slow.promise.catch(() => {});
 
     expect(result.current.messages.map((m) => m.id)).toEqual([2]);
     expect(result.current.loading).toBe(false);

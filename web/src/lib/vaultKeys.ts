@@ -33,6 +33,10 @@ export const keys = {
     lists: ["conversations", "list"] as const,
     list: ({ q, sort, order }: ConversationListKey) =>
       ["conversations", "list", q, sort, order] as const,
+    details: ["conversations", "detail"] as const,
+    detail: (id: number) => ["conversations", "detail", String(id)] as const,
+    messages: (id: number, p: { offset: number; limit: number; year: number | null }) =>
+      ["conversations", "messages", String(id), p.offset, p.limit, String(p.year)] as const,
     sources: (id: number | null) => ["conversations", "sources", String(id)] as const,
   },
   contactGroups: { all: ["contact-groups"] as const },
