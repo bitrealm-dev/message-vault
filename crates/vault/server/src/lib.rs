@@ -10,7 +10,6 @@ pub(crate) mod api_tokens_api;
 pub(crate) mod asset_uploads;
 pub(crate) mod assets;
 pub(crate) mod auth;
-pub(crate) mod contact_groups_api;
 pub(crate) mod contacts_api;
 pub(crate) mod conversations_api;
 pub(crate) mod db;
