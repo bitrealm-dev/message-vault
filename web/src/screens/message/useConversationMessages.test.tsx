@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Message } from "../../lib/types";
 import { listConversationMessages } from "../../lib/vaultApi";
@@ -118,6 +118,34 @@ describe("useConversationMessages", () => {
 
     expect(result.current.messages.map((m) => m.id)).toEqual([2]);
     expect(result.current.loading).toBe(false);
+  });
+
+  it("resets offset, activeYear, findTerm and activeMatch when the conversation changes", async () => {
+    getMessages.mockResolvedValue(page([message(1)]));
+
+    const { result, rerender } = renderHook(
+      ({ id }: { id: number }) => useConversationMessages(id),
+      { initialProps: { id: 1 }, wrapper: VaultProviders },
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    // Drive every reset-target away from its default before switching.
+    act(() => result.current.selectYear(2020));
+    act(() => result.current.fetchConversationPage(50));
+    act(() => result.current.setFindTerm("hello"));
+    act(() => result.current.setActiveMatch(3));
+
+    expect(result.current.activeYear).toBe(2020);
+    expect(result.current.offset).toBe(50);
+    expect(result.current.findTerm).toBe("hello");
+    expect(result.current.activeMatch).toBe(3);
+
+    rerender({ id: 2 });
+
+    expect(result.current.activeYear).toBeNull();
+    expect(result.current.offset).toBe(0);
+    expect(result.current.findTerm).toBe("");
+    expect(result.current.activeMatch).toBe(0);
   });
 });
 

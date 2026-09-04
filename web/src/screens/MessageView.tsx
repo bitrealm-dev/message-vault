@@ -34,6 +34,7 @@ export default function MessageView({
     activeMatch,
     setActiveMatch,
     loading,
+    error,
     fetchConversationPage,
     selectAllYears,
     selectYear,
@@ -147,6 +148,7 @@ export default function MessageView({
       <MessageThread
         messages={messages}
         loading={loading}
+        error={error}
         findTerm={deferredFindTerm}
         matchIds={matchIds}
         activeMatch={activeMatch}

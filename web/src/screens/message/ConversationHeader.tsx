@@ -52,7 +52,7 @@ export default function ConversationHeader({
           {conversation.label ||
             (conversation.is_group
               ? `${conversation.participants.length} participants`
-              : conversation.participants[0]?.name || conversation.participants[0]?.handle)}
+              : conversation.participants[0]?.name)}
         </span>
       </button>
 
