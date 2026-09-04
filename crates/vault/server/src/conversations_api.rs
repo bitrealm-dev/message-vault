@@ -10,11 +10,12 @@ use sqlx::AnyConnection;
 
 use crate::db::conversation_messages::{Message, load_messages};
 use crate::db::dialect::engine_of;
-use crate::db::participant_names::{Participant, load_for_chat_handle, load_for_conversations};
+use crate::db::ownership::owns_conversation;
+use crate::db::participant_names::{Participant, load_for_conversations};
 use crate::db::sql::{
     SqlParam, bind_args, fold_in_id_chunks, in_placeholders, renumber_placeholders,
 };
-use crate::db::trash::{restore_conversation, trash_conversation};
+use crate::db::trash::{Trashable, move_to_trash, restore};
 use crate::paging::{DEFAULT_LIST_LIMIT, MAX_LIST_OFFSET, Page, page_params};
 use crate::server::{ApiError, AppState, FullAccess};
 
@@ -297,11 +298,6 @@ async fn load_conversation_rows(
                 .unwrap_or(&[]),
         );
         let parts = participants.remove(&row.id).unwrap_or_default();
-        let parts = if parts.is_empty() {
-            load_for_chat_handle(conn, row.id).await?
-        } else {
-            parts
-        };
         out.push(ConversationSummary {
             id: row.id,
             participants: parts,
@@ -406,13 +402,7 @@ pub async fn list_conversation_source_stats(
     account_id: &str,
     conversation_id: i64,
 ) -> Result<Option<ConversationSourcesPage>, ApiError> {
-    let owned: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM conversations WHERE id = $1 AND account_id = $2")
-            .bind(conversation_id)
-            .bind(account_id)
-            .fetch_one(&mut *conn)
-            .await?;
-    if owned == 0 {
+    if !owns_conversation(conn, account_id, conversation_id).await? {
         return Ok(None);
     }
 
@@ -505,13 +495,7 @@ pub async fn get_conversation_messages(
     limit: usize,
     offset: usize,
 ) -> Result<Option<Page<Message>>, ApiError> {
-    let owned: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM conversations WHERE id = $1 AND account_id = $2")
-            .bind(conversation_id)
-            .bind(account_id)
-            .fetch_one(&mut *conn)
-            .await?;
-    if owned == 0 {
+    if !owns_conversation(conn, account_id, conversation_id).await? {
         return Ok(None);
     }
 
@@ -752,7 +736,13 @@ pub(crate) async fn conversation_trash_handler(
     AxumPath(conversation_id): AxumPath<i64>,
 ) -> Result<StatusCode, ApiError> {
     let mut conn = state.db.acquire().await?;
-    if trash_conversation(&mut conn, &auth.account_id, conversation_id).await? {
+    if move_to_trash(
+        &mut conn,
+        &auth.account_id,
+        Trashable::Conversation(conversation_id),
+    )
+    .await?
+    {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::NotFound("conversation not found".into()))
@@ -780,7 +770,13 @@ pub(crate) async fn conversation_restore_handler(
     AxumPath(conversation_id): AxumPath<i64>,
 ) -> Result<StatusCode, ApiError> {
     let mut conn = state.db.acquire().await?;
-    if restore_conversation(&mut conn, &auth.account_id, conversation_id).await? {
+    if restore(
+        &mut conn,
+        &auth.account_id,
+        Trashable::Conversation(conversation_id),
+    )
+    .await?
+    {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::NotFound("conversation not found".into()))
@@ -2813,6 +2809,59 @@ mod tests {
         assert_eq!(
             next_year["total"], 0,
             "31 Dec 23:59 local does not leak into the next year: {next_year}"
+        );
+    }
+
+    /// A backup that recorded the thread's address and nothing about who was
+    /// in it leaves no `participants` rows. The conversation list has always
+    /// named that person from the conversation's chat handle; while that
+    /// fallback lived in this file rather than in `db::participant_names`,
+    /// the message page for the same thread answered with an empty
+    /// participant list. Both read the person's name through one function
+    /// now, so both name them.
+    #[tokio::test]
+    async fn conversation_messages_name_the_person_a_thread_has_no_participants_row_for() {
+        let (vault, user, conversation_id) = conversation_messages_fixture().await;
+        let mut conn = vault.state.db.acquire().await.unwrap();
+        insert_message(
+            &mut conn,
+            conversation_id,
+            &user.account_id,
+            "2024-01-01T00:00:00Z",
+            0,
+            "hello",
+        )
+        .await;
+        let participants: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM participants WHERE conversation_id = $1")
+                .bind(conversation_id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!(participants, 0, "the fixture leaves no participants rows");
+        drop(conn);
+
+        let summary: serde_json::Value = crate::test_support::get_json(
+            &vault.state,
+            &format!("/v1/conversations/{conversation_id}"),
+            &user.token,
+        )
+        .await;
+        let page: serde_json::Value = crate::test_support::get_json(
+            &vault.state,
+            &format!("/v1/conversations/{conversation_id}/messages"),
+            &user.token,
+        )
+        .await;
+        let from_messages = &page["items"][0]["conversation"]["participants"];
+        assert_eq!(
+            from_messages, &summary["participants"],
+            "the message page names the same people the conversation does: {page}"
+        );
+        assert_eq!(
+            from_messages[0]["handle"].as_str().unwrap(),
+            format!("+1555{}", user.account_id),
+            "and names them by the thread's own address: {page}"
         );
     }
 

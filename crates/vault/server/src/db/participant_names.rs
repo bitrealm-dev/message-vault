@@ -21,11 +21,14 @@
 //! `contact_handles` to key on, so for that one case `participants.contact_id`
 //! is used instead, because it is the only link to the Contact that exists.
 //!
-//! [`load_for_chat_handle`] is the same rule for the one conversation shape
-//! that has no participants rows to read: a backup that recorded the thread's
-//! address and nothing about who was in it. It stands here rather than beside
-//! its caller so both naming paths sit under this doc comment and cannot
-//! drift apart.
+//! One conversation shape has no participants rows to read at all: a backup
+//! that recorded the thread's address and nothing about who was in it.
+//! [`load_for_conversations`] answers for that shape too, from the
+//! conversation's own chat handle, so a caller never has to know the shape
+//! exists or carry a second naming path of its own. Reading one conversation's
+//! messages and listing conversations therefore name the same person the same
+//! way; while the fallback lived beside the list, a message page showed no one
+//! at all for such a thread.
 
 use std::collections::HashMap;
 
@@ -66,6 +69,27 @@ pub struct Participant {
 ///
 /// Returns a database error when the query fails.
 pub async fn load_for_conversations(
+    conn: &mut AnyConnection,
+    conversation_ids: &[i64],
+) -> Result<HashMap<i64, Vec<Participant>>, sqlx::Error> {
+    let mut loaded = load_participant_rows(conn, conversation_ids).await?;
+    let without_rows: Vec<i64> = conversation_ids
+        .iter()
+        .copied()
+        .filter(|id| loaded.get(id).is_none_or(Vec::is_empty))
+        .collect();
+    if !without_rows.is_empty() {
+        for (id, participants) in load_from_chat_handle(conn, &without_rows).await? {
+            loaded.insert(id, participants);
+        }
+    }
+    Ok(loaded)
+}
+
+/// The `participants` rows themselves, with no fallback. Private: every
+/// caller wants the fallback, and one that did not would be a second naming
+/// path.
+async fn load_participant_rows(
     conn: &mut AnyConnection,
     conversation_ids: &[i64],
 ) -> Result<HashMap<i64, Vec<Participant>>, sqlx::Error> {
@@ -115,8 +139,8 @@ pub async fn load_for_conversations(
     .await
 }
 
-/// The conversation's chat handle as its sole participant, for a conversation
-/// that has no participants rows at all.
+/// The chat handle of each conversation in `conversation_ids` as its sole
+/// participant, for conversations that have no participants rows at all.
 ///
 /// Same rule, one clause shorter: with no participants row there is no
 /// per-conversation backup name, so it is the Contact's name, else the handle.
@@ -124,45 +148,47 @@ pub async fn load_for_conversations(
 /// person the vault has a name for is named here too and their row opens the
 /// contact drawer instead of showing a bare phone number.
 ///
-/// Returns an empty vector when the conversation has no chat handle row.
-///
-/// # Errors
-///
-/// Returns a database error when the query fails.
-pub async fn load_for_chat_handle(
+/// A conversation with no chat handle row is simply absent from the result.
+async fn load_from_chat_handle(
     conn: &mut AnyConnection,
-    conversation_id: i64,
-) -> Result<Vec<Participant>, sqlx::Error> {
+    conversation_ids: &[i64],
+) -> Result<HashMap<i64, Vec<Participant>>, sqlx::Error> {
     // `conv.chat_handle_id` is `NOT NULL`, so this join always matches and
-    // `handle`/`service` are never actually absent here — the tuple types
+    // `handle`/`service` are never actually absent here — the column types
     // just have to match `Participant`'s, which carry the address-less case
-    // that only `load_for_conversations` can produce.
-    let row: Option<(String, Option<String>, Option<String>, Option<i64>)> = sqlx::query_as(
-        "SELECT COALESCE(NULLIF(trim(c.preferred_name), ''), h.raw) AS name,
-                h.raw AS handle,
-                COALESCE(NULLIF(trim(h.service), ''), h.handle_type) AS service,
-                ch.contact_id
-         FROM conversations conv
-         JOIN handles h ON h.id = conv.chat_handle_id
-         LEFT JOIN contact_handles ch
-           ON ch.handle_id = h.id AND ch.account_id = conv.account_id
-         LEFT JOIN contacts c
-           ON c.id = ch.contact_id AND c.account_id = conv.account_id
-         WHERE conv.id = $1",
+    // that only a `participants` row can produce.
+    group_rows_by_id(
+        conn,
+        conversation_ids,
+        |placeholders| {
+            format!(
+                "SELECT conv.id,
+                        COALESCE(NULLIF(trim(c.preferred_name), ''), h.raw) AS name,
+                        h.raw AS handle,
+                        COALESCE(NULLIF(trim(h.service), ''), h.handle_type) AS service,
+                        ch.contact_id
+                 FROM conversations conv
+                 JOIN handles h ON h.id = conv.chat_handle_id
+                 LEFT JOIN contact_handles ch
+                   ON ch.handle_id = h.id AND ch.account_id = conv.account_id
+                 LEFT JOIN contacts c
+                   ON c.id = ch.contact_id AND c.account_id = conv.account_id
+                 WHERE conv.id IN ({placeholders})"
+            )
+        },
+        |row| {
+            Ok((
+                row.try_get::<i64, _>(0)?,
+                Participant {
+                    name: row.try_get(1)?,
+                    handle: row.try_get(2)?,
+                    service: row.try_get(3)?,
+                    contact_id: row.try_get(4)?,
+                },
+            ))
+        },
     )
-    .bind(conversation_id)
-    .fetch_optional(&mut *conn)
-    .await?;
-    Ok(row
-        .map(|(name, handle, service, contact_id)| {
-            vec![Participant {
-                name,
-                handle,
-                service,
-                contact_id,
-            }]
-        })
-        .unwrap_or_default())
+    .await
 }
 
 #[cfg(test)]
@@ -327,9 +353,10 @@ mod tests {
             .unwrap();
         let contact_id = link(&mut conn, handle_id, "Robert Smith").await;
 
-        let loaded = load_for_chat_handle(&mut conn, conversation_id)
+        let loaded = load_for_conversations(&mut conn, &[conversation_id])
             .await
             .unwrap();
+        let loaded = loaded.get(&conversation_id).expect("chat-handle fallback");
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].name, "Robert Smith");
         assert_eq!(loaded[0].handle, Some("+15555550500".to_string()));
@@ -350,9 +377,10 @@ mod tests {
             .await
             .unwrap();
 
-        let loaded = load_for_chat_handle(&mut conn, conversation_id)
+        let loaded = load_for_conversations(&mut conn, &[conversation_id])
             .await
             .unwrap();
+        let loaded = loaded.get(&conversation_id).expect("chat-handle fallback");
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].name, "+15555550600");
         assert_eq!(loaded[0].contact_id, None);

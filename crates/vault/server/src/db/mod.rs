@@ -8,6 +8,7 @@ pub mod conversation_messages;
 pub mod dialect;
 pub mod engine;
 pub mod handles;
+pub mod ownership;
 pub mod participant_names;
 pub mod permissions;
 pub(crate) mod pg_ddl;

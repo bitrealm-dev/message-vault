@@ -2,131 +2,123 @@
 //!
 //! A row in either table is a soft-delete flag; the conversation or contact
 //! it points at is untouched until [`purge_account`] (or account deletion,
-//! which cascades) removes it for good. Every operation here first checks
-//! that the target row belongs to `account_id` — explicitly, as its own
-//! query, rather than inferring ownership from whether an insert or delete
-//! affected a row. That is what lets `restore_conversation` (and
-//! `restore_contact`) tell "not this account's id" (`false`) apart from
-//! "this account's id, and it was not trashed" (`true`, a no-op): a `DELETE`
-//! that matches zero rows looks identical in both cases.
+//! which cascades) removes it for good. Both operations first check that the
+//! target row belongs to `account_id` — explicitly, through
+//! [`crate::db::ownership`], rather than inferring ownership from whether an
+//! insert or delete affected a row. That is what lets [`restore`] tell "not
+//! this account's id" (`false`) apart from "this account's id, and it was not
+//! trashed" (`true`, a no-op): a `DELETE` that matches zero rows looks
+//! identical in both cases.
 //!
 //! Trashing something already trashed, and restoring something not trashed,
-//! both return `true` — these operations are idempotent, per the HTTP
-//! routes built on top of them (Task 2).
+//! both return `true` — these operations are idempotent, per the HTTP routes
+//! built on top of them.
+//!
+//! A conversation and a contact are trashed the same way, so one pair of
+//! functions covers both and [`Trashable`] carries which is meant. The marker
+//! table and its id column come from that enum and nowhere else, so no part
+//! of a request reaches the SQL text.
 
 use sqlx::AnyConnection;
 
-/// True when `account_id` owns a `conversations` row with this id.
-async fn owns_conversation(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    id: i64,
-) -> Result<bool, sqlx::Error> {
-    let found: Option<i64> =
-        sqlx::query_scalar("SELECT 1 FROM conversations WHERE id = $1 AND account_id = $2")
-            .bind(id)
-            .bind(account_id)
-            .fetch_optional(&mut *conn)
-            .await?;
-    Ok(found.is_some())
+use crate::db::ownership::{owns_contact, owns_conversation};
+
+/// A thing that can be put in the trash, named by id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Trashable {
+    /// A row of `conversations`, marked in `trashed_conversations`.
+    Conversation(i64),
+    /// A row of `contacts`, marked in `trashed_contacts`.
+    Contact(i64),
 }
 
-/// True when `account_id` owns a `contacts` row with this id.
-async fn owns_contact(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    id: i64,
-) -> Result<bool, sqlx::Error> {
-    let found: Option<i64> =
-        sqlx::query_scalar("SELECT 1 FROM contacts WHERE id = $1 AND account_id = $2")
-            .bind(id)
-            .bind(account_id)
-            .fetch_optional(&mut *conn)
-            .await?;
-    Ok(found.is_some())
+impl Trashable {
+    /// The row id, whichever kind this is.
+    fn id(self) -> i64 {
+        match self {
+            Self::Conversation(id) | Self::Contact(id) => id,
+        }
+    }
+
+    /// The marker table and the column in it that carries the row id.
+    fn marker(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Conversation(_) => ("trashed_conversations", "conversation_id"),
+            Self::Contact(_) => ("trashed_contacts", "contact_id"),
+        }
+    }
+
+    /// True when `account_id` owns the row this names.
+    async fn is_owned(
+        self,
+        conn: &mut AnyConnection,
+        account_id: &str,
+    ) -> Result<bool, sqlx::Error> {
+        match self {
+            Self::Conversation(id) => owns_conversation(conn, account_id, id).await,
+            Self::Contact(id) => owns_contact(conn, account_id, id).await,
+        }
+    }
 }
 
-/// Mark a conversation trashed. Returns `false` when `id` is not
-/// `account_id`'s conversation; `true` (a no-op) when it is already trashed.
-pub async fn trash_conversation(
+/// Mark a conversation or contact trashed. Returns `false` when the id is not
+/// `account_id`'s; `true` (a no-op) when it is already trashed.
+///
+/// # Errors
+///
+/// Returns a database error when a statement fails.
+pub async fn move_to_trash(
     conn: &mut AnyConnection,
     account_id: &str,
-    id: i64,
+    target: Trashable,
 ) -> Result<bool, sqlx::Error> {
-    if !owns_conversation(conn, account_id, id).await? {
+    if !target.is_owned(conn, account_id).await? {
         return Ok(false);
     }
-    sqlx::query(
-        "INSERT INTO trashed_conversations (account_id, conversation_id) VALUES ($1, $2)
-         ON CONFLICT DO NOTHING",
-    )
+    let (table, id_column) = target.marker();
+    sqlx::query(&format!(
+        "INSERT INTO {table} (account_id, {id_column}) VALUES ($1, $2)
+         ON CONFLICT DO NOTHING"
+    ))
     .bind(account_id)
-    .bind(id)
+    .bind(target.id())
     .execute(&mut *conn)
     .await?;
     Ok(true)
 }
 
-/// Remove a conversation's trash marker, if any. Returns `false` when `id`
-/// is not `account_id`'s conversation; `true` (a no-op) when it was not
+/// Remove a conversation's or contact's trash marker, if any. Returns `false`
+/// when the id is not `account_id`'s; `true` (a no-op) when it was not
 /// trashed.
-pub async fn restore_conversation(
+///
+/// # Errors
+///
+/// Returns a database error when a statement fails.
+pub async fn restore(
     conn: &mut AnyConnection,
     account_id: &str,
-    id: i64,
+    target: Trashable,
 ) -> Result<bool, sqlx::Error> {
-    if !owns_conversation(conn, account_id, id).await? {
+    if !target.is_owned(conn, account_id).await? {
         return Ok(false);
     }
-    sqlx::query("DELETE FROM trashed_conversations WHERE account_id = $1 AND conversation_id = $2")
-        .bind(account_id)
-        .bind(id)
-        .execute(&mut *conn)
-        .await?;
-    Ok(true)
-}
-
-/// Mark a contact trashed. Returns `false` when `id` is not `account_id`'s
-/// contact; `true` (a no-op) when it is already trashed.
-pub async fn trash_contact(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    id: i64,
-) -> Result<bool, sqlx::Error> {
-    if !owns_contact(conn, account_id, id).await? {
-        return Ok(false);
-    }
-    sqlx::query(
-        "INSERT INTO trashed_contacts (account_id, contact_id) VALUES ($1, $2)
-         ON CONFLICT DO NOTHING",
-    )
+    let (table, id_column) = target.marker();
+    sqlx::query(&format!(
+        "DELETE FROM {table} WHERE account_id = $1 AND {id_column} = $2"
+    ))
     .bind(account_id)
-    .bind(id)
+    .bind(target.id())
     .execute(&mut *conn)
     .await?;
-    Ok(true)
-}
-
-/// Remove a contact's trash marker, if any. Returns `false` when `id` is not
-/// `account_id`'s contact; `true` (a no-op) when it was not trashed.
-pub async fn restore_contact(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    id: i64,
-) -> Result<bool, sqlx::Error> {
-    if !owns_contact(conn, account_id, id).await? {
-        return Ok(false);
-    }
-    sqlx::query("DELETE FROM trashed_contacts WHERE account_id = $1 AND contact_id = $2")
-        .bind(account_id)
-        .bind(id)
-        .execute(&mut *conn)
-        .await?;
     Ok(true)
 }
 
 /// Remove every trash marker `account_id` holds. Called when an account's
 /// conversations (and, by extension, whatever they trashed) are purged.
+///
+/// # Errors
+///
+/// Returns a database error when a statement fails.
 pub async fn purge_account(conn: &mut AnyConnection, account_id: &str) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM trashed_conversations WHERE account_id = $1")
         .bind(account_id)
@@ -221,7 +213,11 @@ mod tests {
         let mut conn = vault.conn().await;
         let id = insert_conversation(&mut conn, ACCOUNT_A).await;
 
-        assert!(trash_conversation(&mut conn, ACCOUNT_A, id).await.unwrap());
+        assert!(
+            move_to_trash(&mut conn, ACCOUNT_A, Trashable::Conversation(id))
+                .await
+                .unwrap()
+        );
         assert_eq!(trashed_conversation_count(&mut conn, ACCOUNT_A).await, 1);
     }
 
@@ -234,8 +230,16 @@ mod tests {
         let mut conn = vault.conn().await;
         let id = insert_conversation(&mut conn, ACCOUNT_A).await;
 
-        assert!(trash_conversation(&mut conn, ACCOUNT_A, id).await.unwrap());
-        assert!(trash_conversation(&mut conn, ACCOUNT_A, id).await.unwrap());
+        assert!(
+            move_to_trash(&mut conn, ACCOUNT_A, Trashable::Conversation(id))
+                .await
+                .unwrap()
+        );
+        assert!(
+            move_to_trash(&mut conn, ACCOUNT_A, Trashable::Conversation(id))
+                .await
+                .unwrap()
+        );
         assert_eq!(trashed_conversation_count(&mut conn, ACCOUNT_A).await, 1);
     }
 
@@ -247,10 +251,12 @@ mod tests {
         }
         let mut conn = vault.conn().await;
         let id = insert_conversation(&mut conn, ACCOUNT_A).await;
-        trash_conversation(&mut conn, ACCOUNT_A, id).await.unwrap();
+        move_to_trash(&mut conn, ACCOUNT_A, Trashable::Conversation(id))
+            .await
+            .unwrap();
 
         assert!(
-            restore_conversation(&mut conn, ACCOUNT_A, id)
+            restore(&mut conn, ACCOUNT_A, Trashable::Conversation(id))
                 .await
                 .unwrap()
         );
@@ -267,7 +273,7 @@ mod tests {
         let id = insert_conversation(&mut conn, ACCOUNT_A).await;
 
         assert!(
-            restore_conversation(&mut conn, ACCOUNT_A, id)
+            restore(&mut conn, ACCOUNT_A, Trashable::Conversation(id))
                 .await
                 .unwrap()
         );
@@ -283,14 +289,20 @@ mod tests {
         let mut conn = vault.conn().await;
         let id = insert_conversation(&mut conn, ACCOUNT_A).await;
 
-        assert!(!trash_conversation(&mut conn, ACCOUNT_B, id).await.unwrap());
+        assert!(
+            !move_to_trash(&mut conn, ACCOUNT_B, Trashable::Conversation(id))
+                .await
+                .unwrap()
+        );
         assert_eq!(trashed_conversation_count(&mut conn, ACCOUNT_A).await, 0);
         assert_eq!(trashed_conversation_count(&mut conn, ACCOUNT_B).await, 0);
 
         // Trash it as its rightful owner, then confirm B still can't restore it.
-        trash_conversation(&mut conn, ACCOUNT_A, id).await.unwrap();
+        move_to_trash(&mut conn, ACCOUNT_A, Trashable::Conversation(id))
+            .await
+            .unwrap();
         assert!(
-            !restore_conversation(&mut conn, ACCOUNT_B, id)
+            !restore(&mut conn, ACCOUNT_B, Trashable::Conversation(id))
                 .await
                 .unwrap()
         );
@@ -306,7 +318,11 @@ mod tests {
         let mut conn = vault.conn().await;
         let id = insert_contact(&mut conn, ACCOUNT_A).await;
 
-        assert!(trash_contact(&mut conn, ACCOUNT_A, id).await.unwrap());
+        assert!(
+            move_to_trash(&mut conn, ACCOUNT_A, Trashable::Contact(id))
+                .await
+                .unwrap()
+        );
         assert_eq!(trashed_contact_count(&mut conn, ACCOUNT_A).await, 1);
     }
 
@@ -319,8 +335,16 @@ mod tests {
         let mut conn = vault.conn().await;
         let id = insert_contact(&mut conn, ACCOUNT_A).await;
 
-        assert!(trash_contact(&mut conn, ACCOUNT_A, id).await.unwrap());
-        assert!(trash_contact(&mut conn, ACCOUNT_A, id).await.unwrap());
+        assert!(
+            move_to_trash(&mut conn, ACCOUNT_A, Trashable::Contact(id))
+                .await
+                .unwrap()
+        );
+        assert!(
+            move_to_trash(&mut conn, ACCOUNT_A, Trashable::Contact(id))
+                .await
+                .unwrap()
+        );
         assert_eq!(trashed_contact_count(&mut conn, ACCOUNT_A).await, 1);
     }
 
@@ -332,9 +356,15 @@ mod tests {
         }
         let mut conn = vault.conn().await;
         let id = insert_contact(&mut conn, ACCOUNT_A).await;
-        trash_contact(&mut conn, ACCOUNT_A, id).await.unwrap();
+        move_to_trash(&mut conn, ACCOUNT_A, Trashable::Contact(id))
+            .await
+            .unwrap();
 
-        assert!(restore_contact(&mut conn, ACCOUNT_A, id).await.unwrap());
+        assert!(
+            restore(&mut conn, ACCOUNT_A, Trashable::Contact(id))
+                .await
+                .unwrap()
+        );
         assert_eq!(trashed_contact_count(&mut conn, ACCOUNT_A).await, 0);
     }
 
@@ -347,7 +377,11 @@ mod tests {
         let mut conn = vault.conn().await;
         let id = insert_contact(&mut conn, ACCOUNT_A).await;
 
-        assert!(restore_contact(&mut conn, ACCOUNT_A, id).await.unwrap());
+        assert!(
+            restore(&mut conn, ACCOUNT_A, Trashable::Contact(id))
+                .await
+                .unwrap()
+        );
         assert_eq!(trashed_contact_count(&mut conn, ACCOUNT_A).await, 0);
     }
 
@@ -360,12 +394,22 @@ mod tests {
         let mut conn = vault.conn().await;
         let id = insert_contact(&mut conn, ACCOUNT_A).await;
 
-        assert!(!trash_contact(&mut conn, ACCOUNT_B, id).await.unwrap());
+        assert!(
+            !move_to_trash(&mut conn, ACCOUNT_B, Trashable::Contact(id))
+                .await
+                .unwrap()
+        );
         assert_eq!(trashed_contact_count(&mut conn, ACCOUNT_A).await, 0);
         assert_eq!(trashed_contact_count(&mut conn, ACCOUNT_B).await, 0);
 
-        trash_contact(&mut conn, ACCOUNT_A, id).await.unwrap();
-        assert!(!restore_contact(&mut conn, ACCOUNT_B, id).await.unwrap());
+        move_to_trash(&mut conn, ACCOUNT_A, Trashable::Contact(id))
+            .await
+            .unwrap();
+        assert!(
+            !restore(&mut conn, ACCOUNT_B, Trashable::Contact(id))
+                .await
+                .unwrap()
+        );
         assert_eq!(trashed_contact_count(&mut conn, ACCOUNT_A).await, 1);
     }
 
@@ -380,16 +424,16 @@ mod tests {
         let contact_a = insert_contact(&mut conn, ACCOUNT_A).await;
         let conv_b = insert_conversation(&mut conn, ACCOUNT_B).await;
         let contact_b = insert_contact(&mut conn, ACCOUNT_B).await;
-        trash_conversation(&mut conn, ACCOUNT_A, conv_a)
+        move_to_trash(&mut conn, ACCOUNT_A, Trashable::Conversation(conv_a))
             .await
             .unwrap();
-        trash_contact(&mut conn, ACCOUNT_A, contact_a)
+        move_to_trash(&mut conn, ACCOUNT_A, Trashable::Contact(contact_a))
             .await
             .unwrap();
-        trash_conversation(&mut conn, ACCOUNT_B, conv_b)
+        move_to_trash(&mut conn, ACCOUNT_B, Trashable::Conversation(conv_b))
             .await
             .unwrap();
-        trash_contact(&mut conn, ACCOUNT_B, contact_b)
+        move_to_trash(&mut conn, ACCOUNT_B, Trashable::Contact(contact_b))
             .await
             .unwrap();
 

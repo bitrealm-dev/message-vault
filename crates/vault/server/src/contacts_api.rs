@@ -16,7 +16,7 @@ use crate::db::contacts::{self, contact_id_for_handle};
 use crate::db::dialect::{engine_of, group_concat_unit_separator, order_by_name_ci};
 use crate::db::handles::{infer_handle_type_from_shape, normalize_handle};
 use crate::db::sql::{SqlParam, bind_args, in_placeholders, renumber_placeholders};
-use crate::db::trash::{restore_contact, trash_contact};
+use crate::db::trash::{Trashable, move_to_trash, restore};
 use crate::paging::{
     DEFAULT_LIST_LIMIT, MAX_CONTACT_SUMMARY_IDS, MAX_LIST_OFFSET, Page, PageQuery, page_params,
 };
@@ -1242,7 +1242,7 @@ pub(crate) async fn contact_trash_handler(
     AxumPath(contact_id): AxumPath<i64>,
 ) -> Result<StatusCode, ApiError> {
     let mut conn = state.db.acquire().await?;
-    if trash_contact(&mut conn, &auth.account_id, contact_id).await? {
+    if move_to_trash(&mut conn, &auth.account_id, Trashable::Contact(contact_id)).await? {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::NotFound("contact not found".into()))
@@ -1270,7 +1270,7 @@ pub(crate) async fn contact_restore_handler(
     AxumPath(contact_id): AxumPath<i64>,
 ) -> Result<StatusCode, ApiError> {
     let mut conn = state.db.acquire().await?;
-    if restore_contact(&mut conn, &auth.account_id, contact_id).await? {
+    if restore(&mut conn, &auth.account_id, Trashable::Contact(contact_id)).await? {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::NotFound("contact not found".into()))
