@@ -920,4 +920,95 @@ mod tests {
             );
         }
     }
+
+    /// The export route runs the search language, not a metadata subset. This
+    /// goes over HTTP rather than through the query builder, so a change to the
+    /// route's wiring is caught as well as a change to the compiler.
+    #[tokio::test]
+    async fn the_export_route_runs_the_search_language() {
+        let vault = crate::test_support::test_vault().await;
+        let user =
+            crate::test_support::register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+        crate::test_support::seed_conversation(
+            &vault.state,
+            &crate::test_support::SeedConversation {
+                account_id: &user.account_id,
+                handle: "+15555550100",
+                conversation_type: "individual",
+                group_title: None,
+                source_file: "backup-a.jsonl",
+                messages: &[
+                    crate::test_support::SeedMessage {
+                        source: "imessage",
+                        timestamp: "2020-01-01T00:00:00Z",
+                        is_from_me: true,
+                        body: "pizza tonight",
+                    },
+                    crate::test_support::SeedMessage {
+                        source: "imessage",
+                        timestamp: "2020-01-02T00:00:00Z",
+                        is_from_me: false,
+                        body: "salad tomorrow",
+                    },
+                ],
+            },
+        )
+        .await;
+
+        let page: serde_json::Value = crate::test_support::get_json(
+            &vault.state,
+            "/v1/export/messages?q=pizza&limit=10",
+            &user.token,
+        )
+        .await;
+        assert_eq!(page["total"], 1, "free text must match one message: {page}");
+        assert_eq!(page["items"][0]["text"], "pizza tonight");
+
+        let negated: serde_json::Value = crate::test_support::get_json(
+            &vault.state,
+            "/v1/export/messages?q=NOT%20pizza&limit=10",
+            &user.token,
+        )
+        .await;
+        assert_eq!(negated["total"], 1, "NOT must be honoured: {negated}");
+        assert_eq!(negated["items"][0]["text"], "salad tomorrow");
+    }
+
+    /// An unknown field is a 400 with a sentence, not an empty page.
+    #[tokio::test]
+    async fn the_export_route_refuses_a_word_the_language_does_not_have() {
+        let vault = crate::test_support::test_vault().await;
+        let user =
+            crate::test_support::register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+
+        let (status, text) = crate::test_support::get_raw(
+            &vault.state,
+            "/v1/export/messages?q=wibble:yes",
+            &user.token,
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST, "{text}");
+        let body: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert!(body["error"].is_string(), "{body}");
+    }
+
+    /// Export must never reach another account's messages, whatever the query.
+    #[tokio::test]
+    async fn the_export_route_does_not_leak_another_account() {
+        let vault = crate::test_support::test_vault().await;
+        let alice =
+            crate::test_support::register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+        let bob =
+            crate::test_support::register_via_api(&vault.state, "bob", "hunter2hunter2").await;
+        crate::test_support::seed_one_message(&vault.state, &alice.account_id).await;
+
+        let page: serde_json::Value = crate::test_support::get_json(
+            &vault.state,
+            "/v1/export/messages?q=&limit=50",
+            &bob.token,
+        )
+        .await;
+        assert_eq!(page["total"], 0, "bob must see nothing of alice's: {page}");
+        assert_eq!(page["items"].as_array().unwrap().len(), 0);
+    }
 }

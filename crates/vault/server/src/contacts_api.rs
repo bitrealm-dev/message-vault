@@ -3245,4 +3245,30 @@ mod tests {
         .await;
         assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
     }
+
+    /// The conversations list refuses an offset past `MAX_LIST_OFFSET`
+    /// (conversations_api.rs). The contacts list shares `page_params` and must
+    /// answer the same way over HTTP.
+    #[tokio::test]
+    async fn the_contacts_route_refuses_an_offset_past_the_ceiling() {
+        let vault = crate::test_support::test_vault().await;
+        let user =
+            crate::test_support::register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+
+        let (status, text) =
+            crate::test_support::get_raw(&vault.state, "/v1/contacts?offset=50001", &user.token)
+                .await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST, "{text}");
+        let body: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert!(body["error"].is_string(), "{body}");
+
+        let ok =
+            crate::test_support::get_status(&vault.state, "/v1/contacts?offset=50000", &user.token)
+                .await;
+        assert_eq!(
+            ok,
+            axum::http::StatusCode::OK,
+            "the ceiling itself is allowed"
+        );
+    }
 }
