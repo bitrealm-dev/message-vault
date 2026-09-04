@@ -53,18 +53,30 @@ A file the vault cannot read comes back as a 400 whose `error` names the line, o
 
 ## Search operators (`q`)
 
-Export uses a **metadata** search subset (sender, participants, contact `preferred_name`, attachment names/MIME, dates, source, group/direct, labels). It does **not** run the website full-text `messages_fts` path.
+`q` is the same search language the website uses — see [Search](/vault/user/how-to/search/) for the full grammar: quoting, `none`/`any`, date and size ranges, `-` to exclude, `or` and parentheses, `avoc*` prefixes. Export compiles `q` against the Messages list, with the same compiler Contacts and Conversations search use elsewhere in the vault, full-text index included for free text. These are the words the Messages list has:
 
-- Free text terms and `"quoted phrases"` (AND); `-term` / `-"phrase"` to exclude
-- `from:`, `with:` / `to:`, `subject:`, `has:attachment`
-- `after:YYYY-MM-DD`, `before:YYYY-MM-DD` (year-only `YYYY` → `YYYY-01-01`)
-- `source:`, `is:group`, `is:direct` (individual)
-- `people:` / `within:` / `label:` (threads that involve a contact group)
-- `-people:` (hide those threads)
-- `tag:` / `-tag:` (message tags; `tag:none` for untagged threads)
-- `trashed:` (`yes`, `no`, `any`) — export compiles as the Messages list, which answers all three
-- Trash is excluded by default; `trashed:yes` or `trashed:any` lifts that. Legacy `in:trash` is ignored
-- `search:contacts` on message export returns `400`
+- Free text and `"quoted phrases"` match the message body, the subject, and any attachment file name.
+- `body:`, `subject:` — text, `none`, `any`, restricted to that one field.
+- `name:`, `handle:` — a participant's name or handle; text, `none`, `any`.
+- `title:` — the conversation's title; text, `none`, `any`.
+- `with:` — a participant, by name, handle, or `#id`.
+- `from:`, `to:` — who sent it or who it went to; `me`, name, handle, or `#id`.
+- `in:` — this one conversation; title, handle, or `#id`.
+- `group:` — this Contact Group, on the contact or on a participant; name, `#id`, `none`, `unknown`.
+- `tag:` — this Message Tag; name, `#id`, `none`.
+- `kind:` — `direct` or `group`.
+- `service:` — `imessage`, `sms`, `mms`, `rcs`, `whatsapp`.
+- `source:` — the backup family it was imported from: `imessage`, `whatsapp`, `sms`.
+- `import:` — the Import Run that brought it in; `#id` or `last`.
+- `date:`, `first-message:`, `last-message:` — a day, month, year, or relative span, with comparisons and ranges.
+- `attachment:` — `image`, `video`, `audio`, `document`, `pdf`, `contact`, `other`, `any`, `none`.
+- `filename:` — an attachment's file name; text or a `pre*` prefix.
+- `size:` — an attachment's size, with comparisons and ranges.
+- `participants:` — how many people are in the conversation, with comparisons and ranges.
+- `attachments:` — how many attachments are on the message, with comparisons and ranges.
+- `trashed:` — `yes`, `no`, or `any`. Trash is excluded by default; `trashed:yes` or `trashed:any` lifts that.
+
+`messages:`, `conversations:`, and `groups:` belong to the Contacts and Conversations lists, not Messages, so export refuses them.
 
 ## Verify a token
 

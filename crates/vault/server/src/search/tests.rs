@@ -1744,46 +1744,163 @@ mod coverage {
 }
 
 mod docs {
-    use crate::search::fields::FIELDS;
+    use crate::search::ListKind;
+    use crate::search::fields::{FIELDS, for_list, lookup};
 
-    const PAGE: &str =
+    const SEARCH_PAGE: &str =
         include_str!("../../../../../docs/src/content/docs/vault/user/how-to/search.mdx");
+    const API_PAGE: &str =
+        include_str!("../../../../../docs/src/content/docs/vault/developer/reference/api.md");
 
-    /// The words the page's table lists: the first backticked `word:` in
-    /// each table row.
-    fn documented_words() -> Vec<String> {
-        PAGE.lines()
+    /// Every backticked `word:` token on `line`, in order. `search.mdx`
+    /// lists one per table row; `api.md`'s prose bullets often name several
+    /// before the dash (`` `date:`, `first-message:`, `last-message:` ``),
+    /// so both pages read through this rather than assuming one-per-line.
+    fn words_on_line(line: &str) -> impl Iterator<Item = String> + '_ {
+        line.split('`').filter_map(|token| {
+            let word = token.strip_suffix(':')?;
+            (!word.is_empty() && word.chars().all(|c| c.is_ascii_lowercase() || c == '-'))
+                .then(|| word.to_string())
+        })
+    }
+
+    /// The words `search.mdx`'s table lists, one row at a time.
+    fn search_page_words() -> Vec<String> {
+        SEARCH_PAGE
+            .lines()
             .filter(|l| l.starts_with("| `"))
-            .filter_map(|l| {
-                let cell = l.trim_start_matches("| `");
-                let token = cell.split('`').next()?;
-                let word = token
-                    .strip_suffix(':')
-                    .or_else(|| token.split(':').next())?;
-                if word.chars().all(|c| c.is_ascii_lowercase() || c == '-') && !word.is_empty() {
-                    Some(word.to_string())
-                } else {
-                    None
-                }
-            })
+            .flat_map(words_on_line)
+            .collect()
+    }
+
+    /// The words `api.md`'s bullets list, a bullet possibly naming several.
+    fn api_page_words() -> Vec<String> {
+        API_PAGE
+            .lines()
+            .filter(|l| l.trim_start().starts_with("- `"))
+            .flat_map(words_on_line)
             .collect()
     }
 
     #[test]
     fn the_page_lists_every_word_and_nothing_else() {
-        let documented = documented_words();
+        let documented = search_page_words();
         for spec in FIELDS {
             assert!(
                 documented.contains(&spec.word.to_string()),
-                "docs page is missing {}:",
+                "search.mdx is missing {}:",
                 spec.word
             );
         }
         for word in &documented {
             assert!(
                 FIELDS.iter().any(|f| f.word == word),
-                "docs page lists {word}:, which the language does not have"
+                "search.mdx lists {word}:, which the language does not have"
             );
+        }
+    }
+
+    /// `api.md` describes what `GET /v1/export/messages` accepts, which
+    /// compiles as the Messages list (`export_api::message_filter`). It
+    /// should name every word the registry marks for Messages, and no word
+    /// the registry does not have at all — the same shape of check as
+    /// `the_page_lists_every_word_and_nothing_else`, scoped to one list.
+    #[test]
+    fn the_api_reference_lists_every_messages_word_and_nothing_else() {
+        let documented = api_page_words();
+        let messages_words: Vec<&'static str> =
+            for_list(ListKind::Messages).map(|f| f.word).collect();
+        for word in &messages_words {
+            assert!(
+                documented.iter().any(|d| d == word),
+                "api.md is missing {word}:, which fields.rs marks for the Messages list"
+            );
+        }
+        for word in &documented {
+            assert!(
+                messages_words.contains(&word.as_str()),
+                "api.md lists {word}:, but fields.rs does not mark it for the Messages list \
+                 ({})",
+                match lookup(word) {
+                    Some(spec) => format!("it registers {word}: for {}", tiles_str(spec.lists)),
+                    None => format!("the language does not have {word}: at all"),
+                }
+            );
+        }
+    }
+
+    /// The tile letters `<ListTiles on="…" />` uses, as `search.mdx`'s own
+    /// intro states them: "C" Contacts, "V" Conversations, "M" Messages.
+    fn tile(letter: &str, line: &str) -> ListKind {
+        match letter {
+            "C" => ListKind::Contacts,
+            "V" => ListKind::Conversations,
+            "M" => ListKind::Messages,
+            other => panic!("search.mdx ListTiles has an unknown tile {other:?} in: {line}"),
+        }
+    }
+
+    /// The `ListKind`s named in one row's `<ListTiles on="…" />`.
+    fn row_tiles(line: &str) -> Vec<ListKind> {
+        let after_on = line
+            .split("on=\"")
+            .nth(1)
+            .unwrap_or_else(|| panic!("search.mdx row has no ListTiles on=\"…\": {line}"));
+        let letters = after_on
+            .split('"')
+            .next()
+            .unwrap_or_else(|| panic!("search.mdx row's ListTiles on=\"…\" never closes: {line}"));
+        letters.split_whitespace().map(|l| tile(l, line)).collect()
+    }
+
+    /// `lists`, rendered as the same letters `<ListTiles on="…" />` uses, in
+    /// Contacts/Conversations/Messages order, for an assertion message.
+    fn tiles_str(lists: &[ListKind]) -> String {
+        [
+            (ListKind::Contacts, "C"),
+            (ListKind::Conversations, "V"),
+            (ListKind::Messages, "M"),
+        ]
+        .into_iter()
+        .filter(|(kind, _)| lists.contains(kind))
+        .map(|(_, letter)| letter)
+        .collect::<Vec<_>>()
+        .join(" ")
+    }
+
+    fn is_same_lists(a: &[ListKind], b: &[ListKind]) -> bool {
+        let has = |lists: &[ListKind], kind: ListKind| lists.contains(&kind);
+        [
+            ListKind::Contacts,
+            ListKind::Conversations,
+            ListKind::Messages,
+        ]
+        .into_iter()
+        .all(|kind| has(a, kind) == has(b, kind))
+    }
+
+    /// Issue #328: the word-only check above says nothing about *which*
+    /// lists a row claims a word applies to. `trashed:` sat at `on="C V"`
+    /// after a pull request registered it for Messages too, with CI green
+    /// throughout, because nothing read the tile letters. This reads them
+    /// and compares against `fields.rs`.
+    #[test]
+    fn each_rows_list_tiles_match_the_registry() {
+        for line in SEARCH_PAGE.lines().filter(|l| l.starts_with("| `")) {
+            let word = words_on_line(line)
+                .next()
+                .unwrap_or_else(|| panic!("search.mdx row names no word: {line}"));
+            let spec = lookup(&word).unwrap_or_else(|| {
+                panic!("search.mdx lists {word}:, which the language does not have")
+            });
+            let page_lists = row_tiles(line);
+            if !is_same_lists(&page_lists, spec.lists) {
+                panic!(
+                    "search.mdx says {word}: applies to {}, but fields.rs registers it for {}",
+                    tiles_str(&page_lists),
+                    tiles_str(spec.lists),
+                );
+            }
         }
     }
 }
