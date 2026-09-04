@@ -47,6 +47,10 @@ fn error_sentence(body: &str, _status: u16) -> String {
 pub struct Message {
     pub id: i64,
     pub source: String,
+    /// Platform service, e.g. `imessage`. The vault sends it on the message,
+    /// not on the conversation.
+    #[serde(default)]
+    pub service: Option<String>,
     #[serde(default)]
     pub guid: Option<String>,
     pub timestamp: String,
@@ -82,27 +86,32 @@ pub struct Message {
 pub struct MessageConversation {
     pub id: i64,
     pub chat_identifier: String,
-    #[serde(default)]
-    pub service: Option<String>,
     pub conversation_type: String,
     #[serde(default)]
     pub group_title: Option<String>,
     #[serde(default)]
-    pub participants: Vec<ExportParticipant>,
+    pub participants: Vec<Participant>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-/// One person in a conversation. `name` is never empty: the vault falls
-/// back to `handle` when nothing else names the person, so it is not
-/// `#[serde(default)]` — a response missing it should fail loudly rather
-/// than silently becoming `None`.
-pub struct ExportParticipant {
-    pub handle: String,
+/// One person in a conversation, mirroring the vault's `Participant` schema.
+///
+/// `name` is never empty — the vault falls back to the handle when nothing
+/// else names the person — so it is not `#[serde(default)]`: a response
+/// missing it should fail loudly rather than silently becoming `None`.
+///
+/// `handle` is optional because the vault sends `"handle": null` for a
+/// participant a backup named without recording any address for them. It was
+/// once `String`, which made every page carrying such a person fail to
+/// deserialize and aborted the whole pull.
+pub struct Participant {
+    #[serde(default)]
+    pub handle: Option<String>,
     pub name: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-/// One attachment on an export message (path, fingerprint, size).
+/// One attachment on an export message (path, fingerprint, transcription).
 pub struct Attachment {
     #[serde(default)]
     pub path: Option<String>,
@@ -116,9 +125,6 @@ pub struct Attachment {
     pub is_sticker: bool,
     #[serde(default)]
     pub transcription: Option<String>,
-    /// Asset length in bytes when the vault echoes import metadata.
-    #[serde(default, alias = "size", alias = "bytes")]
-    pub size_bytes: Option<u64>,
     #[serde(default)]
     pub missing_reason: Option<String>,
 }
