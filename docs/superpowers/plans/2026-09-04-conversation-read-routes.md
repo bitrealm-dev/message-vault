@@ -65,7 +65,8 @@ contract; a 2000-message year costs four counts across four requests. Making the
 year a single unbounded response would be the alternative, and it trades a
 bounded request for an unbounded one. If the count cost shows up in practice,
 the fix is to skip the count when `offset > 0` and carry the first page's total,
-which is a later change, not this one.
+which is a later change, not this one. Recorded with its cost and four
+ways out in issue #323.
 
 ## File Structure
 
