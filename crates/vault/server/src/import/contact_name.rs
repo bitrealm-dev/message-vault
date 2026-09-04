@@ -76,26 +76,50 @@ pub(super) async fn resolve_name_only_participant(
     Ok((Some(contact_id), Some(name.to_string())))
 }
 
+/// What one message says about who sent it. Its own type because these four
+/// facts travel together and come from the message, while the connection,
+/// handle cache, account and stats around them belong to the import run.
+pub(super) struct IncomingSender<'a> {
+    /// True when the account owner sent it, in which case there is no sender
+    /// handle to resolve.
+    pub is_from_me: bool,
+    /// The sender's address as the backup recorded it, when it recorded one.
+    pub address: Option<&'a str>,
+    /// The address's type when the source stated it; inferred from the
+    /// address's shape when it did not.
+    pub handle_type: Option<HandleType>,
+    /// Platform service the message arrived on, e.g. `imessage`.
+    pub platform: &'a str,
+}
+
+/// The `handles` row for an incoming message's sender, creating it when this
+/// import is the first to meet that address. `None` for a message the account
+/// owner sent, and for one whose source recorded no sender address.
 pub(super) async fn resolve_incoming_sender_handle(
     tx: &mut AnyConnection,
     cache: &mut HandleIdCache,
     account_id: &str,
-    is_from_me: bool,
-    sender: Option<&str>,
-    handle_type: Option<HandleType>,
-    platform: &str,
+    sender: IncomingSender<'_>,
     stats: &mut ImportStats,
 ) -> Result<Option<i64>> {
-    if is_from_me {
+    if sender.is_from_me {
         return Ok(None);
     }
-    let Some(sender) = nonempty_str(sender) else {
+    let Some(address) = nonempty_str(sender.address) else {
         return Ok(None);
     };
-    let handle_type = handle_type.unwrap_or_else(|| infer_handle_type(sender));
-    let (handle_id, flagged, cached) =
-        upsert_handle_row_cached(tx, cache, account_id, sender, handle_type, Some(platform))
-            .await?;
+    let handle_type = sender
+        .handle_type
+        .unwrap_or_else(|| infer_handle_type(address));
+    let (handle_id, flagged, cached) = upsert_handle_row_cached(
+        tx,
+        cache,
+        account_id,
+        address,
+        handle_type,
+        Some(sender.platform),
+    )
+    .await?;
     if flagged {
         stats.phones_needing_review += 1;
     }

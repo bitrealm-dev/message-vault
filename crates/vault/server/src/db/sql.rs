@@ -218,7 +218,7 @@ mod tests {
         assert_eq!(max_rows_for_bind_limit(DbEngine::Postgres, 0), 0);
         // 70 columns: 65_535 / 70 = 936, so the bind cap wins over 1000.
         assert_eq!(max_rows_for_bind_limit(DbEngine::Postgres, 70), 936);
-        assert!(1000 * 18 < POSTGRES_MAX_VARIABLES);
+        const { assert!(1000 * 18 < POSTGRES_MAX_VARIABLES) };
     }
 
     #[test]

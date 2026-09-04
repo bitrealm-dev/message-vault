@@ -654,7 +654,7 @@ async fn insert_contact_drafts(
         // then Unknown by the computed rule, which is the same thing said once.
         let preferred_name = draft.preferred_name.as_deref().unwrap_or("");
         let contact_id =
-            match adoptable_contact_for_draft(&mut *tx, account_id, &draft.phones).await? {
+            match adoptable_contact_for_draft(&mut tx, account_id, &draft.phones).await? {
                 Some((existing, _origin)) => {
                     // A card that lists a number without a name has nothing to
                     // say about who that person is, and a name the person typed

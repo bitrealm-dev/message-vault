@@ -681,7 +681,7 @@ pub(crate) struct ConversationMessagesQuery {
         ("year" = Option<i32>, Query, description = "Narrow to one calendar year, in the vault's stored offset")
     ),
     responses(
-        (status = 200, body = crate::paging::Page<crate::db::conversation_messages::Message>),
+        (status = 200, body = crate::paging::Page<vault_api_types::Message>),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody),
