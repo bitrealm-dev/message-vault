@@ -2701,6 +2701,57 @@ mod tests {
         );
     }
 
+    /// `resolve_name_only_participant` returns `(None, None)` when the source
+    /// recorded neither an address nor a name for a participant, but the
+    /// insert that follows it in `staging.rs` runs unconditionally — so this
+    /// pins that a participant record carrying neither still cannot reach the
+    /// `participants` table with `handle_id` and `name_alias` both NULL, the
+    /// shape `participant_names::load_for_conversations`'s COALESCE-to-`''`
+    /// fallback assumes never exists.
+    #[tokio::test]
+    async fn a_participant_with_no_address_and_no_name_is_never_created() {
+        sqlx::any::install_default_drivers();
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("vault.db");
+        let assets = tmp.path().join("assets");
+        // Neither the roster entry nor the message's sender names this person
+        // or records any address for them.
+        let path = write_jsonl(
+            tmp.path(),
+            "nameless.jsonl",
+            r#"{"schema_version":4,"export":{"source":"openextract","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"Nameless_Chat","conversation_type":"individual","group_title":null,"participants":[{"display_name":null}],"stats":{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}
+{"guid":"g-nameless","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":null,"sender_display_name":null,"subject":null,"text":"hi","attachments":[],"imessage":null,"source":null}
+"#,
+        );
+        let opts = ImportOptions::fixed(FixedImportArgs {
+            assets_dir: &assets,
+            asset_root: tmp.path(),
+            contacts: None,
+            overwrite_contacts: false,
+            mode: ImportMode::Append,
+            source: "openextract",
+            account_id: TEST_ACCOUNT,
+            fill_content_keys: false,
+            import_id: None,
+        });
+        import_jsonl_files(&db, &[path], &opts).await.unwrap();
+
+        let (_pool, mut conn) = open_verify(&db).await;
+        let rows: Vec<(Option<i64>, Option<String>)> = sqlx::query_as(
+            "SELECT p.handle_id, p.name_alias FROM participants p
+             JOIN conversations c ON c.id = p.conversation_id
+             WHERE c.account_id = $1",
+        )
+        .bind(TEST_ACCOUNT)
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap();
+        assert!(
+            rows.iter().all(|(h, n)| h.is_some() || n.is_some()),
+            "expected no participant with both handle_id and name_alias NULL, got {rows:?}"
+        );
+    }
+
     #[tokio::test]
     async fn persists_missing_reason_with_null_sha256() {
         let tmp = TempDir::new().unwrap();

@@ -518,11 +518,17 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
             // participant is bound to one and carries no handle.
             let (contact_id, name_alias) =
                 resolve_name_only_participant(tx, &stmts.account_id, name_alias.as_deref()).await?;
+            // `resolve_name_only_participant` returns `(None, None)` when
+            // there is nothing to create and nothing to show; honor that here
+            // instead of inserting a row that names no one.
+            let (Some(contact_id), Some(name_alias)) = (contact_id, name_alias) else {
+                continue;
+            };
             sqlx::query(INSERT_PARTICIPANT)
                 .bind(conversation_id)
                 .bind(Option::<i64>::None)
-                .bind(contact_id)
-                .bind(name_alias)
+                .bind(Some(contact_id))
+                .bind(Some(name_alias))
                 .execute(&mut *tx)
                 .await?;
             stats.participants += 1;
