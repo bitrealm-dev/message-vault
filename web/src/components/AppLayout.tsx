@@ -124,6 +124,11 @@ export default function AppLayout() {
   const trashMode = mode === "trash";
   const searchQuery = trashMode ? trashSearch : contactsMode ? contactSearch : conversationSearch;
 
+  // `replace: true` is inherited from every other caller here and is
+  // deliberate: typing in a search box must not fill the history with one
+  // entry per keystroke. Trash's `tsel` selection goes through the same
+  // function and so is not undoable with Back, unlike selecting a
+  // conversation elsewhere, which navigates.
   function updateSearchParams(updates: Record<string, string>) {
     const next = new URLSearchParams(searchParams);
     for (const [k, v] of Object.entries(updates)) {
@@ -167,7 +172,10 @@ export default function AppLayout() {
 
   const handleSearchChange = (q: string) => {
     if (trashMode) {
-      updateSearchParams({ tq: q });
+      // Narrowing Trash can filter the selected row out of the left column, so
+      // the selection goes with the search rather than leaving the Restore
+      // panel pointed at a conversation the list no longer shows.
+      updateSearchParams({ tq: q, tsel: "" });
       return;
     }
     if (contactsMode) {
