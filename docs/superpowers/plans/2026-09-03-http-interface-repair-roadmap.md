@@ -17,15 +17,16 @@ the spec's wording; for everything else, the spec wins.
 | 2 | One shape for every route (ADR-0005) | Interface convention | merged, #317 |
 | 3 | An import names the Contact (ADR-0006) | Names | merged, #319 |
 | 4 | Conversation read routes; message screen on TanStack Query | Conversation read routes | merged, #325 |
-| 5 | Trash module and four routes | Trash | **next** |
-| 6 | One query builder on the web; shared example file | Query text on the web | queued |
+| 5 | Trash module and four routes | Trash | merged, #329 |
+| 6 | One query builder on the web; shared example file | Query text on the web | **next** |
 | 7 | One test fixture; route-level tests | Tests and fixtures | queued |
 | 8 | Named-set route files folded | Named sets | queued |
 
 Plans so far: `2026-09-03-import-failures-and-schema-docs.md` (PR 1),
 `2026-09-03-route-convention.md` (PR 2),
 `2026-09-03-an-import-names-the-contact.md` (PR 3),
-`2026-09-04-conversation-read-routes.md` (PR 4).
+`2026-09-04-conversation-read-routes.md` (PR 4),
+`2026-09-04-trash-routes.md` (PR 5).
 
 ## How a pull request is delivered
 
@@ -98,32 +99,31 @@ being met by accident.
 Left behind, with the reasoning: issue #326. The year-load decision it inherited
 stays open as issue #323.
 
-## PR 5: Trash
+## PR 5: Trash — merged, #329
 
-Spec section "Trash".
+Shipped in `d3235a8e`. Worth recording what the inventory found: until this pull
+request **nothing in the product could put anything in the trash**. Every
+`INSERT INTO trashed_*` in the tree was test code, so the search language
+answered `trashed:yes`, the lists filtered, the Trash screen counted, and none of
+it could ever have anything to count.
 
-Inventory before planning:
+Four idempotent routes over a `db/trash` module owning the marker tables and the
+account purge, answering 204 or 404 with no way to tell another account's id from
+one that never existed. `trashed_handles` deleted (schema 9). The Messages list
+answers `trashed:` like the other two, with the default unchanged so no export
+gained content silently. On the web, a `trash.ts` feature module, "Move to trash"
+on the conversation header and the contact drawer, and a Trash screen with a
+section for each kind.
 
-```
-grep -rln trashed_handles crates/vault/server
-grep -rn 'NOT trashed\|trashed:' crates/vault/server/src
-```
+Five defects the reviews caught: trashing a contact was a one-way door, because
+the plan specified an action with no inverse and a trashed contact cannot even be
+opened; the account purge never deleted `trashed_contacts`; registering
+`trashed:` on Messages needed an alias bridge or the SQL referenced an unbound
+alias; two cache-key prefixes were alive only on a prediction that this pull
+request would need them; and three published pages still described the pre-trash
+product, one telling people not to rely on restore.
 
-Done when: the four routes answer 204 (idempotent) or 404 with HTTP-level
-tests; `trashed_handles` is out of the schema and the first grep returns
-nothing; trash is a property of the Conversation applied by the
-Conversations and Contacts lists and ignored by the read route; the web has
-the two mutation pairs in `trash.ts`, "Move to trash" on the conversation
-header and contact drawer, and "Restore" on the Trash screen;
-`check-pr.sh` passes.
-
-Carried over: none. Permanent delete and Empty Trash stay in #314.
-
-Carried over from PR 4: `keys.conversations.messagesAll` and
-`keys.conversations.details` were added in `web/src/lib/vaultKeys.ts` as prefix
-handles and have no caller yet. Trashing a conversation is what needs them —
-invalidating `conversations.all` would throw away every message page as well,
-which is heavier than trash requires.
+Left behind, with the reasoning: issue #328.
 
 ## PR 6: Query text on the web
 
@@ -150,6 +150,13 @@ Carried over from the PR 2 review: `useSavedSearchWrite` in
 `web/src/lib/savedSearches.ts` returns `UseMutationResult<unknown, …>` for
 all three writes; give it a result type parameter so create and update
 stay typed as `SavedSearch`.
+
+Carried over from PR 5 (issue #328): nothing checks the operator table in
+`docs/src/content/docs/vault/user/how-to/search.mdx` against the field registry
+in `crates/vault/server/src/search/fields.rs`. It drifted on the first change
+that touched it, with CI green throughout. This pull request rewrites `api.md`
+from the registry and already adds a docs test; extending that test to cover the
+user page's table would close the same gap in the same pass.
 
 ## PR 7: Tests and fixtures
 
