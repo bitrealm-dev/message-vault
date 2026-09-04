@@ -337,12 +337,19 @@ invalidation, and a new one should be indistinguishable in shape.
 
 **Invalidate the right prefixes.** Trashing a conversation changes the
 conversations list, the trash count, and the contacts list (a contact's
-conversation counts move). Pull request 4 added `keys.conversations.messagesAll`
-and `keys.conversations.details` as prefix handles with no caller — this is what
-needs them, because invalidating `keys.conversations.all` would throw away every
-cached message page as well, which is heavier than trash requires. Use the
-narrowest prefix that is actually stale, and say in your report which you chose
-for each mutation and why.
+conversation counts move). Use the narrowest prefix that is actually stale, and
+say in your report which you chose for each mutation and why.
+
+> **Amended after the fact.** This paragraph originally claimed that
+> `keys.conversations.messagesAll` and `keys.conversations.details` — two prefix
+> handles pull request 4 added with no caller — were needed here. They were not,
+> and commit `7f30cb5a` deleted both. Trashing a conversation changes neither
+> its detail response nor its messages: `GET /v1/conversations/{id}` answers the
+> same summary whether or not the conversation is trashed, and the marker never
+> touches a message row. What the conversation pair actually invalidates is
+> `conversations.lists`, `trash.all` and `contacts.details`; the contact pair
+> invalidates `contacts.lists` and the one `contacts.detail(id)` it names. See
+> the comments in `web/src/lib/trash.ts` for the reasoning per prefix.
 
 - [ ] **Step 1: Add the four route functions and any missing key**
 
@@ -396,6 +403,33 @@ selected.
 **Product copy states what the product does; it does not warn or hedge.** Trash
 is reversible and permanent delete is a separate thing that does not exist yet
 (#314), so no copy here should suggest anything is about to be destroyed.
+
+> **Amended after the fact: this task specified an action with no inverse.**
+> Step 2 gave the contact drawer "Move to trash" while Step 3 defined the Trash
+> screen's unit as a selected trashed *conversation*, so nothing restored a
+> contact. `useRestoreContact` had no caller, and the drawer could not be the
+> way back either — `GET /v1/contacts/{id}` is trash-gated, so opening a trashed
+> contact 404s and the row found by searching `trashed:yes` on the Contacts list
+> led nowhere.
+>
+> The whole-branch review caught it and the fix wave closed it: the Trash screen
+> now has two sections. **Conversations** keeps the left column, the `tsel`
+> selection and the Restore panel unchanged. **Contacts** is a list in the pane
+> itself, one row per trashed contact with its own Restore, because a row is the
+> only surface a trash-gated detail route leaves available. Both sections read
+> the header search term. When neither holds anything the screen says "Trash is
+> empty." and shows no headings.
+>
+> The trashed contacts are a `useVaultQuery` over the contact list route with
+> `trashed:yes`, keyed as `keys.contacts.trashed(q)`. That key sits under the
+> `contacts.lists` prefix so `useRestoreContact`'s invalidation reaches it, but
+> it is deliberately not `keys.contacts.list(q)`: the contact list screen holds
+> that entry as paged `InfiniteData` and this one holds a single page, and two
+> shapes must not share a key.
+>
+> **The lesson for later plans in this series:** a task that adds a way to put
+> something into a state owes the same task a way out of it. Check the pair, not
+> the action.
 
 - [ ] **Step 4: Tests**
 
