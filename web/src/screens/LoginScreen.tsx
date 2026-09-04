@@ -58,15 +58,30 @@ export default function LoginScreen() {
   // settings screen asks explicitly, with Test.
   const health = useVaultHealth(state === "disconnected" ? address : null);
 
+  // Two connects can be in flight at once — the background self-heal for the
+  // address already saved, and the explicit reconnect for one just typed — so
+  // only the newest may write. An earlier slow probe that lands second would
+  // otherwise put its own address back in the box, and the address the person
+  // typed would disappear in front of them.
+  const connectRun = useRef(0);
+  const connectAbort = useRef<AbortController | null>(null);
   const connect = useCallback(
     async (url: string) => {
       const trimmed = url.trim();
+      const run = connectRun.current + 1;
+      connectRun.current = run;
+      // The superseded probe has nothing left to say, so stop waiting on it
+      // rather than holding the request open until it times out.
+      connectAbort.current?.abort();
+      const controller = new AbortController();
+      connectAbort.current = controller;
       setState("connecting");
       setBaseUrl(trimmed);
       // GET /health answers plain text, not JSON, so this probes it directly
       // rather than through apiClient (which always parses the body as
       // JSON). The body is discarded either way — only reachability matters.
-      const reachable = await checkVaultHealth(trimmed);
+      const reachable = await checkVaultHealth(trimmed, controller.signal);
+      if (connectRun.current !== run) return;
       if (reachable) {
         setAddress(trimmed);
         setDraft(trimmed);

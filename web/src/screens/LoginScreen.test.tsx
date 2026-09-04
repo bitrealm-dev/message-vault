@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -276,13 +276,9 @@ describe("LoginScreen", () => {
     // Only the address being typed answers healthy — the disconnected card's
     // own background self-heal probe (`useVaultHealth`) keeps polling the
     // blank address it was last on, a different host from the one typed
-    // below. A single always-ok mock would answer that stale background
-    // probe too, and under load it can win the race and reconnect with its
-    // own (blank) address before this explicit submit does — this is a real
-    // race in the screen's `connect()`, which unconditionally overwrites the
-    // draft address on any successful probe, not just its own. Keeping the
-    // stale address unreachable here is what this test is actually about:
-    // applying the address that was typed, not that race.
+    // below. Two hosts, two answers, so this test is about the one thing it
+    // names: applying the address that was typed. Which probe wins when both
+    // answer is the next test's subject.
     vi.stubGlobal(
       "fetch",
       vi.fn(
@@ -305,6 +301,57 @@ describe("LoginScreen", () => {
     await waitFor(() => {
       expect(setServer).toHaveBeenCalledWith("http://127.0.0.1:8080");
     });
+  });
+
+  it("keeps the typed address when a slow probe for the old one answers late", async () => {
+    // The card probes its saved address on mount. That probe is held open
+    // here, so it is still in flight while a different address is typed and
+    // submitted below — the two `connect()` calls the screen can have running
+    // at once. The saved address is blank (`useAuth` above), which probes the
+    // relative "/health"; the typed one is absolute, so the mock can tell them
+    // apart and answer them in the order this test needs.
+    let answerSavedAddress: (() => void) | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string): Promise<{ ok: boolean; text: () => Promise<string> }> => {
+        if (String(url).startsWith("http://127.0.0.1:8080")) {
+          return { ok: true, text: async () => "" };
+        }
+        return new Promise((resolve) => {
+          answerSavedAddress = () => resolve({ ok: true, text: async () => "" });
+        });
+      }),
+    );
+    const user = setupUser();
+    renderScreen();
+
+    expect(await screen.findByText("Connecting")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Change vault settings" }));
+    const field = screen.getByRole("textbox", { name: "Address" });
+    await user.clear(field);
+    await user.type(field, "http://127.0.0.1:8080");
+    await user.click(screen.getByRole("button", { name: "Change vault address" }));
+
+    await waitFor(() => {
+      expect(setServer).toHaveBeenCalledWith("http://127.0.0.1:8080");
+    });
+
+    // Now the saved address answers healthy, after the typed one has already
+    // been applied. It describes a vault this screen has moved on from, and a
+    // probe nobody is waiting on any more may not speak for the card. A real
+    // timer gives every pending microtask its chance to write first.
+    answerSavedAddress?.();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(setServer).not.toHaveBeenCalledWith("");
+    expect(setServer).toHaveBeenLastCalledWith("http://127.0.0.1:8080");
+
+    // Reopening reads the address back out of the card, which is what the
+    // late probe would have rewritten.
+    await user.click(screen.getByRole("button", { name: "Change vault settings" }));
+    expect(screen.getByRole("textbox", { name: "Address" })).toHaveValue("http://127.0.0.1:8080");
   });
 
   it("reconnects on its own once a probe finds the vault healthy again", async () => {
