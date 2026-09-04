@@ -35,11 +35,11 @@ desktop machine would otherwise have no terminal route for its data, and that
 they already worked and cost nothing to leave alone.
 
 That last claim did not survive checking. No workflow, script, or test has ever
-invoked either one as a command. A shell script under `scripts/test/` looked
-like the counterexample and was not: it started the server and drove the HTTP
-API with `curl`, never touching the `vault-push` binary, and nothing ran the
-script either — which is also why it was later deleted rather than kept.
-Keeping the binaries would have preserved the appearance of a headless path
+invoked either one as a command. A shell smoke-test script looked like the
+counterexample and was not: it started the server and drove the HTTP API with
+`curl`, never touching the `vault-push` binary, and nothing ran the script
+either — which is also why it was later deleted rather than kept. Keeping the
+binaries would have preserved the appearance of a headless path
 rather than a working one, and drawn the line on a distinction the evidence
 did not support.
 

@@ -3124,4 +3124,60 @@ mod tests {
         );
         assert_eq!(parsed["error"], "Request payload is too large");
     }
+
+    /// `?account=` naming a different account is refused, even with an
+    /// otherwise valid token: the account query on `POST /v1/import` is
+    /// bound to whoever the Bearer token belongs to
+    /// (`resolve_import_account` in `server.rs`), not a free choice of
+    /// tenant. This is the only test on that branch — a deleted smoke
+    /// script (`scripts/test/smoke-vault-push.sh`) was the only thing
+    /// checking it before.
+    #[tokio::test]
+    async fn http_import_refuses_an_account_query_naming_someone_else() {
+        let vault = crate::test_support::test_vault().await;
+        let alice =
+            crate::test_support::register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+        let bob =
+            crate::test_support::register_via_api(&vault.state, "bob", "hunter2hunter2").await;
+
+        let body = concat!(
+            r#"{"schema_version":4,"export":{"source":"imessage","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550123","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550123","display_name":null}],"stats":{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}"#,
+            "\n",
+            r#"{"guid":"g-cross-account","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"imessage","message_kind":"imessage","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"hi","attachments":[],"imessage":null,"source":null}"#,
+            "\n",
+        );
+
+        let (status, text) = crate::test_support::post_raw(
+            &vault.state,
+            &format!(
+                "/v1/import?source=imessage&mode=append&account={}",
+                bob.username
+            ),
+            &alice.token,
+            "application/jsonl",
+            body,
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::FORBIDDEN, "{text}");
+        let err: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(err["error"], "account query does not match token's account");
+
+        // Positive control: naming her own account must not be refused for
+        // the same reason. Without this, the assertion above would still
+        // pass if the route started refusing every import outright — it
+        // need not succeed, since a minimal body can still fail later for
+        // unrelated reasons, but it must not be 403.
+        let (status, text) = crate::test_support::post_raw(
+            &vault.state,
+            &format!(
+                "/v1/import?source=imessage&mode=append&account={}",
+                alice.username
+            ),
+            &alice.token,
+            "application/jsonl",
+            body,
+        )
+        .await;
+        assert_ne!(status, axum::http::StatusCode::FORBIDDEN, "{text}");
+    }
 }
