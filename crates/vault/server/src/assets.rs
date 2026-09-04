@@ -698,8 +698,7 @@ async fn resolve_asset_lookup(
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody),
-        (status = 413, body = crate::server::ErrorBody)
+        (status = 404, body = crate::server::ErrorBody)
     )
 )]
 pub(crate) async fn asset_head_handler(
@@ -734,8 +733,7 @@ pub(crate) async fn asset_head_handler(
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody),
-        (status = 413, body = crate::server::ErrorBody)
+        (status = 404, body = crate::server::ErrorBody)
     )
 )]
 pub(crate) async fn asset_get_handler(
@@ -931,8 +929,7 @@ pub(crate) struct AssetUploadPartResponse {
         (status = 200, body = AssetUploadStartResponse),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 413, body = crate::server::ErrorBody)
+        (status = 403, body = crate::server::ErrorBody)
     )
 )]
 pub(crate) async fn asset_upload_start_handler(
@@ -1044,8 +1041,7 @@ pub(crate) async fn asset_upload_part_handler(
         (status = 200, body = AssetPutResponse),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 413, body = crate::server::ErrorBody)
+        (status = 403, body = crate::server::ErrorBody)
     )
 )]
 pub(crate) async fn asset_upload_complete_handler(
