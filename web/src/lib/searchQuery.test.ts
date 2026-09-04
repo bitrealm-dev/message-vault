@@ -1,11 +1,15 @@
+import { readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   advancedContacts,
   advancedMessages,
+  type ContactsQueryInput,
   forContact,
   forGroup,
   forHandle,
   forTag,
+  type MessagesQueryInput,
   quote,
   suggestion,
   trashed,
@@ -211,5 +215,183 @@ describe("advancedContacts", () => {
         services: [],
       }),
     ).toBe("handle:ann@example.com");
+  });
+});
+
+// --- The fixture the vault's search tests read -----------------------
+//
+// This module is the only place the web composes a search query, and the
+// vault's search language (crates/vault/server/src/search/) is the only
+// thing that gets to say whether a query is valid. Nothing on this side
+// checks that agreement — a builder could emit a query the language refuses
+// and nothing here would notice until someone hit it at runtime.
+//
+// So this test calls every builder with a fixed set of inputs, including
+// the awkward ones that produced the quoting bugs this module was written
+// to fix (a name with a space, a name with a parenthesis, a name with a
+// quote), and writes one line per result to
+// tests/fixtures/search/web-queries.txt: the list the query is meant for,
+// a tab, then the query text. crates/vault/server/src/search/tests.rs reads
+// that file back and asserts every line parses on the list its first column
+// names.
+//
+// The committed file is generated, not authored — this test fails when it
+// drifts from what the builders produce today, the same way
+// scripts/check-generated-api-types.sh fails when vaultApi.types.ts drifts
+// from the OpenAPI spec.
+
+/** The vault's three searchable lists, spelled the way the fixture and the
+ * Rust `ListKind` enum both name them. */
+type ListName = "contacts" | "conversations" | "messages";
+
+/** Values chosen to be awkward for the quoter: plain, a space, a balanced
+ * parenthesis, an embedded quote (escaped by doubling), and a lone
+ * unmatched parenthesis. The first four are only ever *silently wrong* when
+ * left unquoted — the language still parses "group:Book Club" as two valid
+ * clauses, just not the one clause the person meant. The unmatched
+ * parenthesis is the one shape here the language actually refuses when
+ * unquoted (`Unbalanced`), which is what lets the Rust side of this fixture
+ * ever go red for a quoting regression rather than silently accepting a
+ * differently-wrong query. */
+const AWKWARD_NAMES = ["Ana", "Book Club", "Family (close)", 'Say "Hi"', "x)"];
+
+function addLines(lines: Set<string>, query: string, lists: readonly ListName[]): void {
+  for (const list of lists) lines.add(`${list}\t${query}`);
+}
+
+/** Every query every builder in searchQuery.ts can produce, tagged with the
+ * list(s) the vault's field registry (search/fields.rs) accepts each term
+ * on. Sorted so the fixture's diff is stable. */
+function buildFixtureLines(): string[] {
+  const lines = new Set<string>();
+  const everyList: readonly ListName[] = ["contacts", "conversations", "messages"];
+  // `with:` (forContact) is not a Contacts word — a contact can't be "with"
+  // itself.
+  const conversationsAndMessages: readonly ListName[] = ["conversations", "messages"];
+
+  for (const name of AWKWARD_NAMES) {
+    addLines(lines, forGroup(name), everyList);
+    addLines(lines, forTag(name), everyList);
+    addLines(lines, forHandle(name), everyList);
+    addLines(lines, suggestion("group", name), everyList);
+    addLines(lines, suggestion("tag", name), everyList);
+  }
+
+  for (const id of ["7", "42"]) {
+    addLines(lines, forContact(id), conversationsAndMessages);
+  }
+
+  // withKind composes a base term (from the contact drawer's "browse
+  // conversations" action) with the kind narrower, always onto the
+  // conversation list it navigates to.
+  for (const kind of ["all", "direct", "group"] as const) {
+    addLines(lines, withKind(forContact("42"), kind), ["conversations"]);
+    addLines(lines, withKind(forHandle("Book Club"), kind), ["conversations"]);
+  }
+  addLines(lines, withKind("", "group"), ["conversations"]);
+
+  // trashed: the term both Trash panes (contacts and conversations) append
+  // after trashed:yes. The search text itself is the person's own query,
+  // already valid syntax, not a raw value this builder quotes.
+  for (const search of ["", "  ada  ", '"guacamole night"']) {
+    addLines(lines, trashed(search), ["contacts", "conversations"]);
+  }
+
+  const messagesInputs: MessagesQueryInput[] = [
+    {
+      nameOrHandle: "",
+      handle: "",
+      msgType: "all",
+      participants: { comparator: "any", value: "" },
+    },
+    {
+      nameOrHandle: "ada",
+      handle: "Ann Lee",
+      msgType: "direct",
+      participants: { comparator: ">", value: "3" },
+    },
+    {
+      nameOrHandle: "",
+      handle: "Family (close)",
+      msgType: "group",
+      participants: { comparator: "=", value: "5" },
+    },
+    {
+      nameOrHandle: "",
+      handle: 'Say "Hi"',
+      msgType: "all",
+      participants: { comparator: "<", value: "2" },
+    },
+  ];
+  for (const input of messagesInputs) {
+    addLines(lines, advancedMessages(input), ["messages"]);
+  }
+
+  const contactsInputs: ContactsQueryInput[] = [
+    {
+      contactName: "",
+      handle: "",
+      firstMsgBound: { op: "any", start: "", end: "" },
+      lastMsgBound: { op: "any", start: "", end: "" },
+      activity: "any",
+      noPreferredName: false,
+      noHandle: false,
+      services: [],
+    },
+    {
+      contactName: "ada",
+      handle: "",
+      firstMsgBound: { op: "after", start: "2020-01-01", end: "" },
+      lastMsgBound: { op: "between", start: "2021-01-01", end: "2021-06-01" },
+      activity: "messages",
+      noPreferredName: true,
+      noHandle: false,
+      services: ["imessage", "sms"],
+    },
+    {
+      contactName: "",
+      handle: "Book Club",
+      firstMsgBound: { op: "before", start: "2022-01-01", end: "" },
+      lastMsgBound: { op: "any", start: "", end: "" },
+      activity: "no-messages",
+      noPreferredName: false,
+      noHandle: true,
+      services: [],
+    },
+    {
+      contactName: "",
+      handle: 'Say "Hi"',
+      firstMsgBound: { op: "any", start: "", end: "" },
+      lastMsgBound: { op: "any", start: "", end: "" },
+      activity: "any",
+      noPreferredName: false,
+      noHandle: false,
+      services: ["whatsapp"],
+    },
+  ];
+  for (const input of contactsInputs) {
+    addLines(lines, advancedContacts(input), ["contacts"]);
+  }
+
+  return [...lines].sort();
+}
+
+const FIXTURE_PATH = fileURLToPath(
+  new URL("../../../tests/fixtures/search/web-queries.txt", import.meta.url),
+);
+
+describe("the web-queries fixture", () => {
+  it("matches what today's builders produce", () => {
+    const want = `${buildFixtureLines().join("\n")}\n`;
+    if (process.env.UPDATE_FIXTURES) {
+      writeFileSync(FIXTURE_PATH, want);
+    }
+    const have = readFileSync(FIXTURE_PATH, "utf8");
+    expect(
+      have,
+      "tests/fixtures/search/web-queries.txt is out of date with the builders in " +
+        "searchQuery.ts.\nRegenerate with: (cd web && UPDATE_FIXTURES=1 npx vitest run " +
+        "src/lib/searchQuery.test.ts)",
+    ).toBe(want);
   });
 });

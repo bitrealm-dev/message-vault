@@ -1,0 +1,68 @@
+contacts	
+contacts	ada first-message:>=2020-01-01 last-message:2021-01-01..2021-06-01 messages:>0 name:none service:imessage,sms
+contacts	group:"Book Club"
+contacts	group:"Family (close)"
+contacts	group:"Say ""Hi"""
+contacts	group:"x)"
+contacts	group:Ana
+contacts	handle:"Book Club"
+contacts	handle:"Book Club" first-message:<2022-01-01 messages:0 handle:none
+contacts	handle:"Family (close)"
+contacts	handle:"Say ""Hi"""
+contacts	handle:"Say ""Hi""" service:whatsapp
+contacts	handle:"x)"
+contacts	handle:Ana
+contacts	tag:"Book Club"
+contacts	tag:"Family (close)"
+contacts	tag:"Say ""Hi"""
+contacts	tag:"x)"
+contacts	tag:Ana
+contacts	trashed:yes
+contacts	trashed:yes "guacamole night"
+contacts	trashed:yes ada
+conversations	group:"Book Club"
+conversations	group:"Family (close)"
+conversations	group:"Say ""Hi"""
+conversations	group:"x)"
+conversations	group:Ana
+conversations	handle:"Book Club"
+conversations	handle:"Book Club" kind:direct
+conversations	handle:"Book Club" kind:group
+conversations	handle:"Family (close)"
+conversations	handle:"Say ""Hi"""
+conversations	handle:"x)"
+conversations	handle:Ana
+conversations	kind:group
+conversations	tag:"Book Club"
+conversations	tag:"Family (close)"
+conversations	tag:"Say ""Hi"""
+conversations	tag:"x)"
+conversations	tag:Ana
+conversations	trashed:yes
+conversations	trashed:yes "guacamole night"
+conversations	trashed:yes ada
+conversations	with:#42
+conversations	with:#42 kind:direct
+conversations	with:#42 kind:group
+conversations	with:#7
+messages	
+messages	ada handle:"Ann Lee" kind:direct participants:>3
+messages	group:"Book Club"
+messages	group:"Family (close)"
+messages	group:"Say ""Hi"""
+messages	group:"x)"
+messages	group:Ana
+messages	handle:"Book Club"
+messages	handle:"Family (close)"
+messages	handle:"Family (close)" kind:group participants:=5
+messages	handle:"Say ""Hi"""
+messages	handle:"Say ""Hi""" participants:<2
+messages	handle:"x)"
+messages	handle:Ana
+messages	tag:"Book Club"
+messages	tag:"Family (close)"
+messages	tag:"Say ""Hi"""
+messages	tag:"x)"
+messages	tag:Ana
+messages	with:#42
+messages	with:#7
