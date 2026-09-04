@@ -611,6 +611,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/conversations/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A conversation's messages, ascending by timestamp then `sort_order`. The
+         *     read path a screen uses to open a thread: no search query to compose,
+         *     just the conversation id.
+         */
+        get: operations["conversation_messages_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/conversations/{id}/sources": {
         parameters: {
             query?: never;
@@ -4188,6 +4209,67 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConversationSummary"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    conversation_messages_handler: {
+        parameters: {
+            query?: {
+                /** @description Page size, default 40, max 500 */
+                limit?: number;
+                /** @description Page offset, max 50000 */
+                offset?: number;
+                /** @description Narrow to one calendar year, in the vault's stored offset */
+                year?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Conversation id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Message"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
             401: {

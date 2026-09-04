@@ -7,6 +7,7 @@ use axum::extract::State;
 use serde::{Deserialize, Serialize};
 use sqlx::AnyConnection;
 
+use crate::db::conversation_messages::{Message, load_messages};
 use crate::db::dialect::engine_of;
 use crate::db::participant_names::{Participant, load_for_chat_handle, load_for_conversations};
 use crate::db::sql::{
@@ -446,6 +447,92 @@ pub async fn list_conversation_source_stats(
     Ok(Some(ConversationSourcesPage { items: sources }))
 }
 
+/// The `WHERE` a conversation's message page and its `total` share: the
+/// conversation itself, the account scope, Export's not-duplicate filter
+/// (`ListKind::Messages`'s default in `search::emit::compile`), and — when
+/// `year` is given — the same calendar-year bounds `date:YYYY` matches in
+/// the search language, computed by the same
+/// [`crate::search::value::parse_date_span`] the search compiler calls, so a
+/// day cannot fall inside the year for one and outside it for the other.
+/// Trash plays no part here: reading one conversation's messages is not
+/// gated by trash, the same rule [`get_conversation_summary`] follows for
+/// the conversation itself.
+///
+/// # Errors
+///
+/// `BadRequest` when `year` is not a four-digit year.
+fn conversation_messages_where(
+    conversation_id: i64,
+    account_id: &str,
+    year: Option<i32>,
+) -> Result<(String, Vec<SqlParam>), ApiError> {
+    let mut sql =
+        "m.conversation_id = ? AND m.account_id = ? AND m.duplicate_of IS NULL".to_string();
+    let mut params = vec![
+        SqlParam::Int(conversation_id),
+        SqlParam::Text(account_id.to_string()),
+    ];
+    if let Some(year) = year {
+        // `today` only matters to the relative-span forms (`7d`, `1y`, …)
+        // `parse_date_span` also understands; a bare `YYYY` ignores it.
+        let today = chrono::Local::now().date_naive();
+        let span = crate::search::value::parse_date_span(&year.to_string(), today)
+            .ok_or_else(|| ApiError::BadRequest("year must be a four-digit year".into()))?;
+        sql.push_str(" AND m.timestamp >= ? AND m.timestamp < ?");
+        params.push(SqlParam::Text(crate::search::value::ymd(span.start)));
+        params.push(SqlParam::Text(crate::search::value::ymd(span.end)));
+    }
+    Ok((sql, params))
+}
+
+/// One page of a conversation's messages, ascending by timestamp then
+/// `sort_order`. `None` when the conversation does not exist or belongs to
+/// another account — checked before the message query runs, so an unknown id
+/// and another account's conversation id are indistinguishable from the
+/// outside, the same guarantee [`get_conversation_summary`] gives.
+///
+/// # Errors
+///
+/// `BadRequest` when `year` is not a four-digit year; `Internal` when a
+/// statement fails.
+pub async fn get_conversation_messages(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    conversation_id: i64,
+    year: Option<i32>,
+    limit: usize,
+    offset: usize,
+) -> Result<Option<Page<Message>>, ApiError> {
+    let owned: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM conversations WHERE id = $1 AND account_id = $2")
+            .bind(conversation_id)
+            .bind(account_id)
+            .fetch_one(&mut *conn)
+            .await?;
+    if owned == 0 {
+        return Ok(None);
+    }
+
+    let (where_sql, params) = conversation_messages_where(conversation_id, account_id, year)?;
+
+    let count_sql = renumber_placeholders(&format!(
+        "SELECT COUNT(*) FROM messages m WHERE {where_sql}"
+    ));
+    let total: i64 = sqlx::query_scalar_with(&count_sql, bind_args(&params))
+        .fetch_one(&mut *conn)
+        .await?;
+    let total = total.max(0) as u64;
+
+    let items = load_messages(conn, &where_sql, &params, limit as u32, offset as u32).await?;
+
+    Ok(Some(Page {
+        items,
+        total,
+        limit,
+        offset,
+    }))
+}
+
 /// Query string for the conversation list.
 ///
 /// Its own type rather than [`crate::paging::PageQuery`] because `sort` and
@@ -577,6 +664,68 @@ pub(crate) async fn conversation_sources_handler(
     let mut conn = state.db.acquire().await?;
     let page = list_conversation_source_stats(&mut conn, &auth.account_id, conversation_id).await?;
     page.map(Json)
+        .ok_or_else(|| ApiError::NotFound("conversation not found".into()))
+}
+
+/// Query string for a conversation's messages.
+#[derive(Debug, Deserialize)]
+pub(crate) struct ConversationMessagesQuery {
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    offset: Option<usize>,
+    /// Narrow to one calendar year in the vault's stored offset — the same
+    /// year `date:YYYY` matches in the search language.
+    #[serde(default)]
+    year: Option<i32>,
+}
+
+/// A conversation's messages, ascending by timestamp then `sort_order`. The
+/// read path a screen uses to open a thread: no search query to compose,
+/// just the conversation id.
+#[utoipa::path(
+    get,
+    path = "/v1/conversations/{id}/messages",
+    tag = "Conversations",
+    security(("bearer" = [])),
+    params(
+        ("id" = i64, Path, description = "Conversation id"),
+        ("limit" = Option<usize>, Query, description = "Page size, default 40, max 500"),
+        ("offset" = Option<usize>, Query, description = "Page offset, max 50000"),
+        ("year" = Option<i32>, Query, description = "Narrow to one calendar year, in the vault's stored offset")
+    ),
+    responses(
+        (status = 200, body = crate::paging::Page<crate::db::conversation_messages::Message>),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn conversation_messages_handler(
+    State(state): State<AppState>,
+    FullAccess(auth): FullAccess,
+    AxumPath(conversation_id): AxumPath<i64>,
+    Query(query): Query<ConversationMessagesQuery>,
+) -> Result<Json<Page<Message>>, ApiError> {
+    let mut conn = state.db.acquire().await?;
+    let page = page_params(
+        query.limit,
+        query.offset,
+        DEFAULT_LIST_LIMIT,
+        Some(MAX_LIST_OFFSET),
+    )?;
+    let result = get_conversation_messages(
+        &mut conn,
+        &auth.account_id,
+        conversation_id,
+        query.year,
+        page.limit,
+        page.offset,
+    )
+    .await?;
+    result
+        .map(Json)
         .ok_or_else(|| ApiError::NotFound("conversation not found".into()))
 }
 
@@ -2112,5 +2261,326 @@ mod tests {
         )
         .await;
         assert_eq!(status, axum::http::StatusCode::OK);
+    }
+
+    /// A signed-in account and one conversation with no messages yet, for
+    /// tests that seed their own message rows with specific timestamps and
+    /// `sort_order`.
+    async fn conversation_messages_fixture() -> (TestVault, RegisteredAccount, i64) {
+        let vault = crate::test_support::test_vault().await;
+        let state = vault.state.clone();
+        let user = crate::test_support::register_via_api(&state, "alice", "hunter2hunter2").await;
+        let mut conn = state.db.acquire().await.unwrap();
+        let handle_id: i64 = sqlx::query_scalar(
+            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+             VALUES ($1, $2, $2, 'phone', 'phone') RETURNING id",
+        )
+        .bind(&user.account_id)
+        .bind(format!("+1555{}", user.account_id))
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let conversation_id: i64 = sqlx::query_scalar(
+            "INSERT INTO conversations (account_id, chat_handle_id, conversation_type, source_file)
+             VALUES ($1, $2, 'individual', 'seed.jsonl') RETURNING id",
+        )
+        .bind(&user.account_id)
+        .bind(handle_id)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        (vault, user, conversation_id)
+    }
+
+    /// Insert one message row with an explicit `timestamp` and `sort_order`,
+    /// the control the JSON-import path does not give.
+    async fn insert_message(
+        conn: &mut AnyConnection,
+        conversation_id: i64,
+        account_id: &str,
+        timestamp: &str,
+        sort_order: i64,
+        body: &str,
+    ) -> i64 {
+        sqlx::query_scalar(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
+             ) VALUES ($1, $2, 'imessage', $3, 1, $4, $5) RETURNING id",
+        )
+        .bind(conversation_id)
+        .bind(account_id)
+        .bind(timestamp)
+        .bind(sort_order)
+        .bind(body)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn conversation_messages_are_ascending_by_timestamp_then_sort_order() {
+        let (vault, user, conversation_id) = conversation_messages_fixture().await;
+        let mut conn = vault.state.db.acquire().await.unwrap();
+        // Deliberately inserted out of order: the third-in-time message
+        // first, and two same-timestamp messages ordered only by sort_order.
+        insert_message(
+            &mut conn,
+            conversation_id,
+            &user.account_id,
+            "2024-01-03T00:00:00Z",
+            0,
+            "third",
+        )
+        .await;
+        insert_message(
+            &mut conn,
+            conversation_id,
+            &user.account_id,
+            "2024-01-01T00:00:00Z",
+            5,
+            "second",
+        )
+        .await;
+        insert_message(
+            &mut conn,
+            conversation_id,
+            &user.account_id,
+            "2024-01-01T00:00:00Z",
+            1,
+            "first",
+        )
+        .await;
+        drop(conn);
+
+        let page: serde_json::Value = crate::test_support::get_json(
+            &vault.state,
+            &format!("/v1/conversations/{conversation_id}/messages"),
+            &user.token,
+        )
+        .await;
+        let texts: Vec<&str> = page["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["text"].as_str().unwrap())
+            .collect();
+        assert_eq!(texts, vec!["first", "second", "third"]);
+    }
+
+    #[tokio::test]
+    async fn conversation_messages_page_and_total_is_the_whole_count() {
+        let (vault, user, conversation_id) = conversation_messages_fixture().await;
+        let mut conn = vault.state.db.acquire().await.unwrap();
+        for day in 1..=5 {
+            insert_message(
+                &mut conn,
+                conversation_id,
+                &user.account_id,
+                &format!("2024-01-0{day}T00:00:00Z"),
+                0,
+                &format!("msg{day}"),
+            )
+            .await;
+        }
+        drop(conn);
+
+        let page: serde_json::Value = crate::test_support::get_json(
+            &vault.state,
+            &format!("/v1/conversations/{conversation_id}/messages?limit=2&offset=1"),
+            &user.token,
+        )
+        .await;
+        assert_eq!(
+            page["total"], 5,
+            "total is the whole count, not the page's length: {page}"
+        );
+        assert_eq!(page["items"].as_array().unwrap().len(), 2);
+        assert_eq!(page["limit"], 2);
+        assert_eq!(page["offset"], 1);
+        let texts: Vec<&str> = page["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["text"].as_str().unwrap())
+            .collect();
+        assert_eq!(texts, vec!["msg2", "msg3"]);
+    }
+
+    #[tokio::test]
+    async fn conversation_messages_year_narrows_and_total_is_the_years_count() {
+        let (vault, user, conversation_id) = conversation_messages_fixture().await;
+        let mut conn = vault.state.db.acquire().await.unwrap();
+        for day in 1..=2 {
+            insert_message(
+                &mut conn,
+                conversation_id,
+                &user.account_id,
+                &format!("2023-06-0{day}T00:00:00Z"),
+                0,
+                "in 2023",
+            )
+            .await;
+        }
+        for day in 1..=3 {
+            insert_message(
+                &mut conn,
+                conversation_id,
+                &user.account_id,
+                &format!("2024-06-0{day}T00:00:00Z"),
+                0,
+                "in 2024",
+            )
+            .await;
+        }
+        drop(conn);
+
+        let page: serde_json::Value = crate::test_support::get_json(
+            &vault.state,
+            &format!("/v1/conversations/{conversation_id}/messages?year=2024"),
+            &user.token,
+        )
+        .await;
+        assert_eq!(page["total"], 3, "total is the year's count: {page}");
+        assert!(
+            page["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|m| m["text"] == "in 2024"),
+            "only 2024 messages: {page}"
+        );
+
+        let whole: serde_json::Value = crate::test_support::get_json(
+            &vault.state,
+            &format!("/v1/conversations/{conversation_id}/messages"),
+            &user.token,
+        )
+        .await;
+        assert_eq!(whole["total"], 5, "no year= is the whole conversation");
+    }
+
+    #[tokio::test]
+    async fn a_message_at_31_december_2359_local_is_in_that_year_not_the_next() {
+        let (vault, user, conversation_id) = conversation_messages_fixture().await;
+        let mut conn = vault.state.db.acquire().await.unwrap();
+        // Local offset -05:00: 2024-12-31 23:59 local is 2025-01-01 04:59
+        // UTC (`timestamp_utc`, set explicitly here). A boundary computed
+        // against UTC would place this message in 2025; the search
+        // language's date:2024 compares the local `timestamp` text as a
+        // prefix, so it must stay in 2024. That is the boundary this route
+        // must also use.
+        sqlx::query(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, timestamp, timestamp_utc,
+                is_from_me, sort_order, body
+             ) VALUES ($1, $2, 'imessage', $3, $4, 1, 0, 'new year''s eve')",
+        )
+        .bind(conversation_id)
+        .bind(&user.account_id)
+        .bind("2024-12-31T23:59:00-05:00")
+        .bind("2025-01-01T04:59:00Z")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        let this_year: serde_json::Value = crate::test_support::get_json(
+            &vault.state,
+            &format!("/v1/conversations/{conversation_id}/messages?year=2024"),
+            &user.token,
+        )
+        .await;
+        assert_eq!(
+            this_year["total"], 1,
+            "31 Dec 23:59 local belongs to its own year: {this_year}"
+        );
+
+        let next_year: serde_json::Value = crate::test_support::get_json(
+            &vault.state,
+            &format!("/v1/conversations/{conversation_id}/messages?year=2025"),
+            &user.token,
+        )
+        .await;
+        assert_eq!(
+            next_year["total"], 0,
+            "31 Dec 23:59 local does not leak into the next year: {next_year}"
+        );
+    }
+
+    #[tokio::test]
+    async fn conversation_messages_404s_for_an_unknown_id() {
+        let (vault, user, _conversation_id) = conversation_messages_fixture().await;
+        let status = crate::test_support::get_status(
+            &vault.state,
+            "/v1/conversations/999999/messages",
+            &user.token,
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn conversation_messages_404s_for_another_accounts_conversation() {
+        let (vault, _alice, alice_conversation_id) = conversation_messages_fixture().await;
+        let bob =
+            crate::test_support::register_via_api(&vault.state, "bob", "hunter2hunter2").await;
+        crate::test_support::seed_one_message(&vault.state, &bob.account_id).await;
+
+        let status = crate::test_support::get_status(
+            &vault.state,
+            &format!("/v1/conversations/{alice_conversation_id}/messages"),
+            &bob.token,
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn conversation_messages_reads_a_trashed_conversations_messages() {
+        let (vault, user, conversation_id) = conversation_messages_fixture().await;
+        let mut conn = vault.state.db.acquire().await.unwrap();
+        insert_message(
+            &mut conn,
+            conversation_id,
+            &user.account_id,
+            "2024-01-01T00:00:00Z",
+            0,
+            "still here",
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO trashed_conversations (account_id, conversation_id) VALUES ($1, $2)",
+        )
+        .bind(&user.account_id)
+        .bind(conversation_id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        let page: serde_json::Value = crate::test_support::get_json(
+            &vault.state,
+            &format!("/v1/conversations/{conversation_id}/messages"),
+            &user.token,
+        )
+        .await;
+        assert_eq!(
+            page["total"], 1,
+            "a trashed conversation's messages are readable: {page}"
+        );
+    }
+
+    #[tokio::test]
+    async fn conversation_messages_bad_limit_is_refused_like_other_paged_routes() {
+        let (vault, user, conversation_id) = conversation_messages_fixture().await;
+
+        for path in [
+            format!("/v1/conversations/{conversation_id}/messages?limit=501"),
+            format!("/v1/conversations/{conversation_id}/messages?limit=0"),
+            format!("/v1/conversations/{conversation_id}/messages?offset=50001"),
+        ] {
+            let status = crate::test_support::get_status(&vault.state, &path, &user.token).await;
+            assert_eq!(status, axum::http::StatusCode::BAD_REQUEST, "{path}");
+        }
     }
 }
