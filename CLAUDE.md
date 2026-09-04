@@ -31,7 +31,6 @@ vendor backup (chat.db, SMS XML, WhatsApp crypt15, …)
 - **`src-tauri/`** is **not a workspace member** (own `Cargo.toml`, listed in the root workspace `exclude`). Its `commands/` wrap the exporter crates and push/pull for the desktop app. Format/build it with `--manifest-path`.
 - **`web/src/lib/api.ts`** is the vault API client; `web/src/lib/tauri.ts` wraps desktop-only commands; `desktopFeatures.ts` gates them. Tests sit next to sources as `*.test.ts(x)` (Vitest + Testing Library).
 - **Not the product path**: `web-next/` (legacy Next.js browse UI). New features go in `web/` + `src-tauri/` + `crates/vault/server/`. The old Slint GUI is gone; its screens are recorded in `docs/superpowers/reference/legacy-slint-gui.md`.
-- Design specs and implementation plans live in `docs/superpowers/specs/` and `docs/superpowers/plans/` — check them before starting work that overlaps.
 
 ## Commands
 

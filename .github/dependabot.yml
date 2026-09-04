@@ -25,8 +25,7 @@ updates:
       interval: weekly
 
   # web-next/ is intentionally excluded: legacy Next.js browse UI, not in CI
-  # and not served (see docs/superpowers/reports/2026-08-23-full-stack-assessment.md).
-  # Re-add it here if that tree is ever revived.
+  # and not served. Re-add it here if that tree is ever revived.
 
   # CI workflows
   - package-ecosystem: github-actions
