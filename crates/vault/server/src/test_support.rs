@@ -88,6 +88,35 @@ pub async fn test_vault() -> TestVault {
     TestVault { _tmp: tmp, state }
 }
 
+impl TestVault {
+    /// A connection from this vault's pool, for a test that seeds or asserts
+    /// with SQL directly.
+    pub async fn conn(&self) -> sqlx::pool::PoolConnection<sqlx::Any> {
+        self.state.db.acquire().await.unwrap()
+    }
+
+    /// Insert an `accounts` row with a chosen id, for a test that asserts on
+    /// the id itself. Returns the id it was given, so a caller can bind the
+    /// result rather than repeat the literal.
+    pub async fn account_with_id(&self, id: &str, username: &str) -> String {
+        let mut conn = self.conn().await;
+        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, $2)")
+            .bind(id)
+            .bind(username)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        id.to_string()
+    }
+
+    /// Insert an `accounts` row under a generated id, for a test that only
+    /// needs an account to exist.
+    pub async fn account(&self, username: &str) -> String {
+        let id = uuid::Uuid::new_v4().to_string();
+        self.account_with_id(&id, username).await
+    }
+}
+
 /// Issue one request against a freshly started app and read the whole
 /// response. `body` is a content type and the bytes to send with it.
 async fn request(
@@ -384,6 +413,28 @@ pub async fn seed_one_message(state: &AppState, account_id: &str) {
 
 #[cfg(test)]
 mod tests {
+    use super::test_vault;
+
+    #[tokio::test]
+    async fn the_fixture_makes_an_account_with_the_id_a_test_asks_for() {
+        let vault = test_vault().await;
+        let id = vault
+            .account_with_id("00000000-0000-4000-8000-00000000000f", "alice")
+            .await;
+        assert_eq!(id, "00000000-0000-4000-8000-00000000000f");
+
+        let mut conn = vault.conn().await;
+        let username: String = sqlx::query_scalar("SELECT username FROM accounts WHERE id = $1")
+            .bind(&id)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(username, "alice");
+
+        let other = vault.account("bob").await;
+        assert_ne!(other, id, "each account must get its own id");
+    }
+
     // Enabled in Task 3, along with `use super::*;`:
     // /// A body far larger than one TCP segment must come back whole. This
     // /// pins the ordering in `request`: the response is read before the

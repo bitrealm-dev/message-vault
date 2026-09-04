@@ -393,25 +393,13 @@ fn validate_api_token_label(label: &str) -> Result<&str, ApiTokenLabelError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::schema;
-
-    async fn setup() -> (sqlx::AnyPool, tempfile::TempDir, String) {
-        let (pool, dir) = crate::db::engine::test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        schema::ensure_accounts_schema(&mut conn).await.unwrap();
-        let account_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'alice')")
-            .bind(account_id)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        (pool, dir, account_id.to_string())
-    }
-
     #[tokio::test]
     async fn create_list_lookup_delete() {
-        let (pool, _dir, account_id) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        let account_id = vault
+            .account_with_id("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         let created = create_api_token(
             &mut conn,
             &account_id,
@@ -501,8 +489,11 @@ mod tests {
 
     #[tokio::test]
     async fn empty_label_rejected() {
-        let (pool, _dir, account_id) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        let account_id = vault
+            .account_with_id("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         assert!(
             create_api_token(&mut conn, &account_id, "  ", Permissions::all(), None)
                 .await
@@ -512,8 +503,11 @@ mod tests {
 
     #[tokio::test]
     async fn rename_label() {
-        let (pool, _dir, account_id) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        let account_id = vault
+            .account_with_id("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         let id = create_api_token(&mut conn, &account_id, "old name", Permissions::all(), None)
             .await
             .unwrap()
@@ -548,8 +542,11 @@ mod tests {
 
     #[tokio::test]
     async fn label_validation_errors_are_typed() {
-        let (pool, _dir, account_id) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        let account_id = vault
+            .account_with_id("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "alice")
+            .await;
+        let mut conn = vault.conn().await;
 
         let err = create_api_token(&mut conn, &account_id, "  ", Permissions::all(), None)
             .await

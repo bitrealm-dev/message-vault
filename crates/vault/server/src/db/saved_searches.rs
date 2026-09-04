@@ -310,28 +310,13 @@ pub async fn create_for_import(
 mod tests {
     use super::*;
 
-    use crate::db::engine;
-    use crate::db::schema;
-
-    async fn setup() -> (sqlx::AnyPool, tempfile::TempDir, String) {
-        let (pool, dir) = engine::test_pool().await;
-        schema::ensure_vault_schema(&mut pool.acquire().await.unwrap())
-            .await
-            .unwrap();
-        let account = "00000000-0000-4000-8000-0000000000e1".to_string();
-        let mut conn = pool.acquire().await.unwrap();
-        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'alice')")
-            .bind(&account)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        (pool, dir, account)
-    }
-
     #[tokio::test]
     async fn create_trims_and_defaults_to_manual() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000e1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         let made = create(
             &mut conn,
             &account,
@@ -348,8 +333,11 @@ mod tests {
 
     #[tokio::test]
     async fn list_is_alphabetical_not_insertion_order() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000e1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         for name in ["zeta", "Alpha", "middle"] {
             create(
                 &mut conn,
@@ -372,8 +360,11 @@ mod tests {
 
     #[tokio::test]
     async fn names_collide_case_insensitively_within_an_account() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000e1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         create(
             &mut conn,
             &account,
@@ -397,8 +388,11 @@ mod tests {
 
     #[tokio::test]
     async fn saved_searches_are_scoped_per_account() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000e1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         let other = "00000000-0000-4000-8000-0000000000e2".to_string();
         sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'bob')")
             .bind(&other)
@@ -435,8 +429,11 @@ mod tests {
 
     #[tokio::test]
     async fn update_replaces_both_fields_and_keeps_id_and_kind() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000e1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         let made = create_for_import(&mut conn, &account, 7, "imessage", "2026-08-30")
             .await
             .unwrap();
@@ -451,8 +448,11 @@ mod tests {
 
     #[tokio::test]
     async fn update_allows_a_row_to_keep_or_recase_its_own_name() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000e1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         let made = create(
             &mut conn,
             &account,
@@ -474,8 +474,11 @@ mod tests {
 
     #[tokio::test]
     async fn update_rejects_a_name_another_row_already_uses() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000e1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         create(
             &mut conn,
             &account,
@@ -502,8 +505,11 @@ mod tests {
 
     #[tokio::test]
     async fn empty_name_or_query_is_rejected() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000e1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         let err = create(
             &mut conn,
             &account,
@@ -528,8 +534,11 @@ mod tests {
 
     #[tokio::test]
     async fn names_over_max_len_are_rejected() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000e1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         let long = "a".repeat(MAX_NAME_LEN + 1);
         let err = create(
             &mut conn,
@@ -548,8 +557,11 @@ mod tests {
 
     #[tokio::test]
     async fn any_query_string_is_stored_verbatim() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000e1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         // Nonsense in both grammars. The vault stores it anyway: the two
         // parsers disagree about what is legal, so nothing validates here.
         let made = create(
@@ -566,8 +578,11 @@ mod tests {
 
     #[tokio::test]
     async fn import_saved_search_is_named_and_marked() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000e1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         let made = create_for_import(&mut conn, &account, 42, "imessage", "2026-08-30")
             .await
             .unwrap();
@@ -578,8 +593,11 @@ mod tests {
 
     #[tokio::test]
     async fn repeat_imports_on_one_day_get_numbered_names() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000e1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         let first = create_for_import(&mut conn, &account, 1, "imessage", "2026-08-30")
             .await
             .unwrap();
@@ -597,8 +615,11 @@ mod tests {
 
     #[tokio::test]
     async fn deleting_a_saved_search_leaves_the_import_record() {
-        let (pool, _dir, account) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let vault = crate::test_support::test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000e1", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         sqlx::query(
             "INSERT INTO vault_imports
              (id, account_id, source, mode, status, started_at, message_count)
