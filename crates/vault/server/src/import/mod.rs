@@ -3130,8 +3130,7 @@ mod tests {
     /// bound to whoever the Bearer token belongs to
     /// (`resolve_import_account` in `server.rs`), not a free choice of
     /// tenant. This is the only test on that branch — a deleted smoke
-    /// script (`scripts/test/smoke-vault-push.sh`) was the only thing
-    /// checking it before.
+    /// script was the only thing checking it before.
     #[tokio::test]
     async fn http_import_refuses_an_account_query_naming_someone_else() {
         let vault = crate::test_support::test_vault().await;

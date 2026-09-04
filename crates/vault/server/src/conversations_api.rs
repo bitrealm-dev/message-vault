@@ -792,7 +792,7 @@ mod tests {
     use super::*;
     use message_ir::HandleType;
 
-    use crate::db::{account_profile, engine, schema, vault_imports};
+    use crate::db::{account_profile, vault_imports};
     use crate::test_support::{
         RegisteredAccount, TestVault, register_via_api, seed_one_message, test_vault,
     };
@@ -957,7 +957,7 @@ mod tests {
     async fn list_conversations_finds_a_handle_across_platforms() {
         let (pool, _vault, account) = conversations_setup().await;
         let mut conn = pool.acquire().await.unwrap();
-        // setup() already has phone:+15555550200 as conversation 1.
+        // conversations_setup() already has phone:+15555550200 as conversation 1.
         let wa = account_profile::link_account_handle_with_service(
             &mut conn,
             &account,
@@ -1363,7 +1363,7 @@ mod tests {
         assert!(groups.items[0].is_group);
     }
 
-    /// A newest-first page for `setup()`'s account, with the default query and
+    /// A newest-first page for `conversations_setup()`'s account, with the default query and
     /// paging — what each of the three participant-naming tests below needs.
     async fn list_conversations_page(
         conn: &mut AnyConnection,
@@ -1425,7 +1425,7 @@ mod tests {
     async fn list_conversations_falls_back_to_the_backup_name() {
         let (pool, _vault, account) = conversations_setup().await;
         let mut conn = pool.acquire().await.unwrap();
-        // setup() records the backup name 'Sam' on +15555550200 and links no
+        // conversations_setup() records the backup name 'Sam' on +15555550200 and links no
         // contact, so the backup's name is what there is to show.
         let page = list_conversations_page(&mut conn, &account).await;
         let p = find_participant(&page, "+15555550200");
@@ -1450,7 +1450,7 @@ mod tests {
     async fn list_conversations_filters_by_participant_count() {
         let (pool, _vault, account) = conversations_setup().await;
         let mut conn = pool.acquire().await.unwrap();
-        // setup() has conversation 1 with 1 participant.
+        // conversations_setup() has conversation 1 with 1 participant.
 
         let p2 = account_profile::link_account_handle(
             &mut conn,
@@ -1533,7 +1533,7 @@ mod tests {
     async fn list_conversations_participants_eq_three_on_built_fixture() {
         let (pool, _vault, account) = conversations_setup().await;
         let mut conn = pool.acquire().await.unwrap();
-        // setup() already owns conversation 1 with 1 participant, which the
+        // conversations_setup() already owns conversation 1 with 1 participant, which the
         // `=3` filter below must exclude.
 
         let p2 = account_profile::link_account_handle(
@@ -1611,11 +1611,9 @@ mod tests {
 
     #[tokio::test]
     async fn list_conversations_filters_by_import_id() {
-        // Fresh db (setup() already owns conversation 1, which this test inserts itself).
-        let (pool, _dir) = engine::test_pool().await;
-        schema::ensure_vault_schema(&mut pool.acquire().await.unwrap())
-            .await
-            .unwrap();
+        // Fresh db (conversations_setup() already owns conversation 1, which this test inserts itself).
+        let vault = test_vault().await;
+        let pool = vault.state.db.clone();
         let account = "00000000-0000-4000-8000-0000000000c2".to_string();
         let mut conn = pool.acquire().await.unwrap();
         sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'alice')")
@@ -1821,10 +1819,8 @@ mod tests {
         // duplicate. Those threads are only listed under an `import:` filter,
         // which is the one path where NULL ordering is observable — and the two
         // engines disagree about it unless the query says where NULLs go.
-        let (pool, _dir) = engine::test_pool().await;
-        schema::ensure_vault_schema(&mut pool.acquire().await.unwrap())
-            .await
-            .unwrap();
+        let vault = test_vault().await;
+        let pool = vault.state.db.clone();
         let account = "00000000-0000-4000-8000-0000000000c2".to_string();
         let mut conn = pool.acquire().await.unwrap();
         sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'alice')")
@@ -1944,12 +1940,10 @@ mod tests {
 
     #[tokio::test]
     async fn list_conversations_import_id_includes_duplicate_only_thread() {
-        // Fresh db: setup() would add a second non-duplicate conversation,
+        // Fresh db: conversations_setup() would add a second non-duplicate conversation,
         // which breaks the "all" total assertion below.
-        let (pool, _dir) = engine::test_pool().await;
-        schema::ensure_vault_schema(&mut pool.acquire().await.unwrap())
-            .await
-            .unwrap();
+        let vault = test_vault().await;
+        let pool = vault.state.db.clone();
         let account = "00000000-0000-4000-8000-0000000000c2".to_string();
         let mut conn = pool.acquire().await.unwrap();
         sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'alice')")
