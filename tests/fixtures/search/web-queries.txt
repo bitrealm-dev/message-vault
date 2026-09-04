@@ -20,6 +20,8 @@ contacts	tag:Ana
 contacts	trashed:yes
 contacts	trashed:yes "guacamole night"
 contacts	trashed:yes ada
+conversations	
+conversations	ada handle:"Ann Lee" kind:direct participants:>3
 conversations	group:"Book Club"
 conversations	group:"Family (close)"
 conversations	group:"Say ""Hi"""
@@ -29,7 +31,9 @@ conversations	handle:"Book Club"
 conversations	handle:"Book Club" kind:direct
 conversations	handle:"Book Club" kind:group
 conversations	handle:"Family (close)"
+conversations	handle:"Family (close)" kind:group participants:=5
 conversations	handle:"Say ""Hi"""
+conversations	handle:"Say ""Hi""" participants:<2
 conversations	handle:"x)"
 conversations	handle:Ana
 conversations	kind:group
@@ -45,8 +49,8 @@ conversations	with:#42
 conversations	with:#42 kind:direct
 conversations	with:#42 kind:group
 conversations	with:#7
-messages	
-messages	ada handle:"Ann Lee" kind:direct participants:>3
+messages	from:#42
+messages	from:#7
 messages	group:"Book Club"
 messages	group:"Family (close)"
 messages	group:"Say ""Hi"""
@@ -54,9 +58,7 @@ messages	group:"x)"
 messages	group:Ana
 messages	handle:"Book Club"
 messages	handle:"Family (close)"
-messages	handle:"Family (close)" kind:group participants:=5
 messages	handle:"Say ""Hi"""
-messages	handle:"Say ""Hi""" participants:<2
 messages	handle:"x)"
 messages	handle:Ana
 messages	tag:"Book Club"
@@ -64,5 +66,7 @@ messages	tag:"Family (close)"
 messages	tag:"Say ""Hi"""
 messages	tag:"x)"
 messages	tag:Ana
+messages	to:#42
+messages	to:#7
 messages	with:#42
 messages	with:#7

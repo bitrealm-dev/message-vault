@@ -1,5 +1,3 @@
-import type { Key } from "react-aria-components";
-
 /**
  * Every place in the app that composes a vault search string, in one leaf
  * module.
@@ -43,9 +41,16 @@ export function forHandle(handle: string): string {
   return `handle:${quote(handle.trim())}`;
 }
 
-/** A contact-id term, e.g. `with:#42`. The id is numeric, so it never needs quoting. */
-export function forContact(id: string): string {
-  return `with:#${id}`;
+/**
+ * A Person word pointing at one contact by id, e.g. `with:#42` or `from:#7`.
+ *
+ * `word` is any of the language's Person words (`with`, `from`, `to` today);
+ * callers read it from the field registry rather than hard-coding the set, so
+ * a new Person word works without a change here. The id is numeric, so it
+ * never needs quoting.
+ */
+export function forPerson(word: string, id: string): string {
+  return `${word}:#${id}`;
 }
 
 /** `all`, `direct`, or `group` — the same three ways a set of conversations narrows by kind. */
@@ -110,7 +115,7 @@ export type ContactsQueryInput = {
   activity: ActivityFilter;
   noPreferredName: boolean;
   noHandle: boolean;
-  services: Key[];
+  services: readonly (string | number)[];
 };
 
 export function composeCountComparison(input: CountFilterInput): string | null {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { type SearchField, type SearchList, useSearchFields } from "./searchFields";
-import { suggestion as suggestionTerm } from "./searchQuery";
+import { forPerson, suggestion as suggestionTerm } from "./searchQuery";
 import { listContacts } from "./vaultApi";
 
 interface ContactName {
@@ -37,18 +37,19 @@ export function buildSearchSuggestions(args: {
         id: c.id,
         label: c.name,
         // #id survives names with spaces and renames.
-        insert: `${word}:#${c.id} `,
+        insert: `${forPerson(word, c.id)} `,
       }));
     }
     const field = args.fields.find((f) => f.word === word);
     if (!field) return [];
     return field.values
       .filter((v) => v.startsWith(typed))
-      .map((v) => ({
-        id: `${word}:${v}`,
-        label: `${word}:${v}`,
-        insert: `${suggestionTerm(word, v)} `,
-      }));
+      .map((v) => {
+        // The label is the term itself, so a value that needs quoting shows
+        // the quotes the row will actually type.
+        const term = suggestionTerm(word, v);
+        return { id: term, label: term, insert: `${term} ` };
+      });
   }
   if (args.lastToken.length === 0) return [];
   const typed = args.lastToken.replace(/^-/, "").toLowerCase();

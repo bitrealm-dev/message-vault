@@ -5,9 +5,9 @@ import {
   advancedContacts,
   advancedMessages,
   type ContactsQueryInput,
-  forContact,
   forGroup,
   forHandle,
+  forPerson,
   forTag,
   type MessagesQueryInput,
   quote,
@@ -91,9 +91,11 @@ describe("forHandle", () => {
   });
 });
 
-describe("forContact", () => {
-  it("builds a with:#id term", () => {
-    expect(forContact("42")).toBe("with:#42");
+describe("forPerson", () => {
+  it("builds a word:#id term for each Person word", () => {
+    expect(forPerson("with", "42")).toBe("with:#42");
+    expect(forPerson("from", "7")).toBe("from:#7");
+    expect(forPerson("to", "7")).toBe("to:#7");
   });
 });
 
@@ -265,9 +267,6 @@ function addLines(lines: Set<string>, query: string, lists: readonly ListName[])
 function buildFixtureLines(): string[] {
   const lines = new Set<string>();
   const everyList: readonly ListName[] = ["contacts", "conversations", "messages"];
-  // `with:` (forContact) is not a Contacts word — a contact can't be "with"
-  // itself.
-  const conversationsAndMessages: readonly ListName[] = ["conversations", "messages"];
 
   for (const name of AWKWARD_NAMES) {
     addLines(lines, forGroup(name), everyList);
@@ -277,15 +276,27 @@ function buildFixtureLines(): string[] {
     addLines(lines, suggestion("tag", name), everyList);
   }
 
-  for (const id of ["7", "42"]) {
-    addLines(lines, forContact(id), conversationsAndMessages);
+  // forPerson: the search box's contact autocomplete builds one of these for
+  // whichever Person word the person typed, so the lists come from the field
+  // registry (search/fields.rs): `with` is a Conversations and Messages word,
+  // `from` and `to` are Messages only. `with:` is not a Contacts word — a
+  // contact can't be "with" itself.
+  const personWordLists: Record<string, readonly ListName[]> = {
+    with: ["conversations", "messages"],
+    from: ["messages"],
+    to: ["messages"],
+  };
+  for (const [word, lists] of Object.entries(personWordLists)) {
+    for (const id of ["7", "42"]) {
+      addLines(lines, forPerson(word, id), lists);
+    }
   }
 
   // withKind composes a base term (from the contact drawer's "browse
   // conversations" action) with the kind narrower, always onto the
   // conversation list it navigates to.
   for (const kind of ["all", "direct", "group"] as const) {
-    addLines(lines, withKind(forContact("42"), kind), ["conversations"]);
+    addLines(lines, withKind(forPerson("with", "42"), kind), ["conversations"]);
     addLines(lines, withKind(forHandle("Book Club"), kind), ["conversations"]);
   }
   addLines(lines, withKind("", "group"), ["conversations"]);
@@ -323,8 +334,16 @@ function buildFixtureLines(): string[] {
       participants: { comparator: "<", value: "2" },
     },
   ];
+  // Tagged "conversations", not "messages": the Advanced Search messages form
+  // and the messages-mode search bar both run on the Conversations list.
+  // AppHeader gives that bar `list: "conversations"`, and AppLayout's
+  // handleSearch sends what it builds to `/?q=`, which conversations_api.rs
+  // reads as ListKind::Conversations. Every word this form emits today is
+  // valid on both lists, so tagging it "messages" would pass while proving
+  // nothing; add a Messages-only word to the form (`attachments:>0`,
+  // `from:me`) and this fixture is the thing that catches the 400.
   for (const input of messagesInputs) {
-    addLines(lines, advancedMessages(input), ["messages"]);
+    addLines(lines, advancedMessages(input), ["conversations"]);
   }
 
   const contactsInputs: ContactsQueryInput[] = [
