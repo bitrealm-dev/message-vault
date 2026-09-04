@@ -1,4 +1,7 @@
+import { useNavigate } from "react-router-dom";
+import { apiErrorMessage } from "../../lib/apiErrorMessage";
 import { formatMonthYear } from "../../lib/formatDate";
+import { useTrashConversation } from "../../lib/trash";
 import type { Conversation } from "../../lib/types";
 import YearChipBar from "./YearChipBar";
 
@@ -27,6 +30,15 @@ export default function ConversationHeader({
   onOpenContact?: (contactId: string) => void;
   onShowSources: () => void;
 }) {
+  const navigate = useNavigate();
+  const trashConversation = useTrashConversation();
+
+  // The conversation just left the list this thread was opened from, so go
+  // back to it rather than leave the person on a thread that has quietly gone.
+  const handleMoveToTrash = () => {
+    trashConversation.mutate(conversation.id, { onSuccess: () => navigate("/") });
+  };
+
   return (
     <div className="border-b border-border bg-elevated px-6 py-3">
       <button
@@ -110,7 +122,21 @@ export default function ConversationHeader({
         >
           Sources
         </button>
+        <button
+          type="button"
+          onClick={handleMoveToTrash}
+          disabled={trashConversation.isPending}
+          className="cursor-pointer rounded-full border border-border bg-panel px-2 py-0.5 text-[0.75rem] text-accent disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {trashConversation.isPending ? "Moving to trash…" : "Move to trash"}
+        </button>
       </div>
+
+      {trashConversation.error && (
+        <div className="mt-3 rounded border border-danger-soft-border bg-danger-soft-bg px-3 py-2 text-[0.75rem] text-danger">
+          {apiErrorMessage(trashConversation.error, "Could not move this conversation to trash.")}
+        </div>
+      )}
 
       <YearChipBar
         years={years}
