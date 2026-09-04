@@ -1159,7 +1159,7 @@ mod tests {
 
     #[tokio::test]
     async fn cors_preflight_allows_packaged_desktop_and_vite_origins() {
-        let (_tmp, state, _token, _import_id) = test_state().await;
+        let (_dir, state, _token, _import_id) = test_state().await;
         let origins = [
             "http://localhost:5173",
             "http://127.0.0.1:5173",
@@ -1182,7 +1182,7 @@ mod tests {
     /// to be configured.
     #[tokio::test]
     async fn cors_preflight_allows_packaged_desktop_without_configuration() {
-        let (_tmp, state, _token, _import_id) = test_state().await;
+        let (_dir, state, _token, _import_id) = test_state().await;
         for origin in PACKAGED_DESKTOP_ORIGINS {
             let response = cors_preflight(with_cors(state.clone(), &[]), origin).await;
             assert_eq!(
@@ -1196,14 +1196,14 @@ mod tests {
     /// Built in does not mean open: everything else still has to be listed.
     #[tokio::test]
     async fn cors_preflight_rejects_unknown_origin_without_configuration() {
-        let (_tmp, state, _token, _import_id) = test_state().await;
+        let (_dir, state, _token, _import_id) = test_state().await;
         let response = cors_preflight(with_cors(state, &[]), "https://evil.example").await;
         assert_eq!(allow_origin(&response), None);
     }
 
     #[tokio::test]
     async fn cors_preflight_rejects_unknown_origin() {
-        let (_tmp, state, _token, _import_id) = test_state().await;
+        let (_dir, state, _token, _import_id) = test_state().await;
         let response = cors_preflight(
             with_cors(state, &["tauri://localhost"]),
             "https://evil.example",
@@ -1214,7 +1214,7 @@ mod tests {
 
     #[tokio::test]
     async fn health_still_ok() {
-        let (_tmp, state, _token, _import_id) = test_state().await;
+        let (_dir, state, _token, _import_id) = test_state().await;
         let response = get_path(state, "/health").await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.text().await.unwrap(), "ok\n");
@@ -1222,7 +1222,7 @@ mod tests {
 
     #[tokio::test]
     async fn openapi_ui_off_does_not_serve_spec() {
-        let (_tmp, state, _token, _import_id) = test_state().await;
+        let (_dir, state, _token, _import_id) = test_state().await;
         assert!(!state.cfg.require_server().unwrap().openapi_ui);
         let response = get_path(state, "/openapi.json").await;
         assert_ne!(
@@ -1237,7 +1237,7 @@ mod tests {
 
     #[tokio::test]
     async fn openapi_ui_on_serves_spec_without_token() {
-        let (_tmp, mut state, _token, _import_id) = test_state().await;
+        let (_dir, mut state, _token, _import_id) = test_state().await;
         {
             let cfg = Arc::make_mut(&mut state.cfg);
             cfg.server.as_mut().unwrap().openapi_ui = true;
@@ -1249,7 +1249,7 @@ mod tests {
     }
 
     async fn auth_route_status(path: &str) -> StatusCode {
-        let (_tmp, state, _token, _import_id) = test_state().await;
+        let (_dir, state, _token, _import_id) = test_state().await;
         let app = auth_public_router().with_state(state);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -1270,7 +1270,7 @@ mod tests {
     async fn try_demo_route_is_gone() {
         // server.rs's own helper returns (TempDir, AppState, token, import_id).
         // The shared harness in test_support.rs does not exist until Task 4.
-        let (_tmp, state, _token, _import_id) = test_state().await;
+        let (_dir, state, _token, _import_id) = test_state().await;
         let response = get_path(state, "/v1/auth/try-demo").await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
@@ -1284,7 +1284,7 @@ mod tests {
 
     #[tokio::test]
     async fn imports_complete_and_detail_surface_timings_and_issues() {
-        let (_tmp, state, token, import_id) = test_state().await;
+        let (_dir, state, token, import_id) = test_state().await;
         let body = CompleteImportBody {
             ok: true,
             status: None,
@@ -1353,7 +1353,7 @@ mod tests {
 
     #[tokio::test]
     async fn imports_complete_stores_completed_with_issues_status() {
-        let (_tmp, state, token, import_id) = test_state().await;
+        let (_dir, state, token, import_id) = test_state().await;
         let body = CompleteImportBody {
             ok: true,
             status: Some("completed_with_issues".into()),
@@ -1381,7 +1381,7 @@ mod tests {
 
     #[tokio::test]
     async fn imports_complete_rejects_unknown_status() {
-        let (_tmp, state, token, import_id) = test_state().await;
+        let (_dir, state, token, import_id) = test_state().await;
         let body = CompleteImportBody {
             ok: true,
             status: Some("victorious".into()),
@@ -1418,7 +1418,7 @@ mod tests {
 
     #[tokio::test]
     async fn imports_complete_rejects_invalid_issue_kind_before_db_write() {
-        let (_tmp, state, token, import_id) = test_state().await;
+        let (_dir, state, token, import_id) = test_state().await;
         let body = CompleteImportBody {
             ok: true,
             status: None,
@@ -1465,7 +1465,7 @@ mod tests {
 
     #[tokio::test]
     async fn imports_get_handler_returns_not_found_for_missing_import() {
-        let (_tmp, state, token, import_id) = test_state().await;
+        let (_dir, state, token, import_id) = test_state().await;
         let err = imports_get_handler(
             State(state.clone()),
             import_access(&state, &token).await,
@@ -1485,7 +1485,7 @@ mod tests {
 
     #[tokio::test]
     async fn active_session_is_empty_then_reports_the_live_one() {
-        let (_tmp, state, token, import_id) = test_state().await;
+        let (_dir, state, token, import_id) = test_state().await;
 
         let body = CreateImportBody {
             source: "imessage".into(),
@@ -1535,7 +1535,7 @@ mod tests {
     /// client posts: the row outlives the run, and the secret must not.
     #[tokio::test]
     async fn a_stored_form_snapshot_drops_credentials() {
-        let (_tmp, state, token, import_id) = test_state().await;
+        let (_dir, state, token, import_id) = test_state().await;
         let _ = imports_discard_handler(
             State(state.clone()),
             import_access(&state, &token).await,
@@ -1594,7 +1594,7 @@ mod tests {
     /// so a resumed Gate 1 can show it without re-reading the backup.
     #[tokio::test]
     async fn imports_create_stores_source_identities() {
-        let (_tmp, state, token, import_id) = test_state().await;
+        let (_dir, state, token, import_id) = test_state().await;
         let _ = imports_discard_handler(
             State(state.clone()),
             import_access(&state, &token).await,
@@ -1636,7 +1636,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_second_session_is_refused_with_conflict() {
-        let (_tmp, state, token, _import_id) = test_state().await;
+        let (_dir, state, token, _import_id) = test_state().await;
         let body = CreateImportBody {
             source: "imessage".into(),
             mode: "append".into(),
@@ -1670,7 +1670,7 @@ mod tests {
 
     #[tokio::test]
     async fn stage_endpoint_advances_and_rejects_an_unknown_stage() {
-        let (_tmp, state, token, import_id) = test_state().await;
+        let (_dir, state, token, import_id) = test_state().await;
 
         let _ = imports_stage_handler(
             State(state.clone()),
@@ -1705,7 +1705,7 @@ mod tests {
 
     #[tokio::test]
     async fn discard_frees_the_slot() {
-        let (_tmp, state, token, import_id) = test_state().await;
+        let (_dir, state, token, import_id) = test_state().await;
         let _ = imports_discard_handler(
             State(state.clone()),
             import_access(&state, &token).await,
@@ -1726,7 +1726,7 @@ mod tests {
     /// this would come back 400 instead of 200.
     #[tokio::test]
     async fn active_route_is_not_captured_by_the_id_route() {
-        let (_tmp, state, token, _import_id) = test_state().await;
+        let (_dir, state, token, _import_id) = test_state().await;
         let status = crate::test_support::get_status(&state, "/v1/imports/active", &token).await;
         assert_eq!(status, StatusCode::OK);
     }

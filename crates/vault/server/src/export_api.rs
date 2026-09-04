@@ -291,7 +291,7 @@ pub(crate) async fn export_messages_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{engine, schema};
+    use crate::test_support::{SeedConversation, TestVault, seed_conversation, test_vault};
 
     #[tokio::test]
     async fn export_takes_the_search_language() {
@@ -342,57 +342,62 @@ mod tests {
         assert!(matches!(err, ApiError::BadRequest(_)));
     }
 
-    async fn setup() -> (sqlx::AnyPool, tempfile::TempDir) {
-        let (pool, dir) = engine::test_pool().await;
-        schema::ensure_vault_schema(&mut pool.acquire().await.unwrap())
-            .await
-            .unwrap();
-        let mut conn = pool.acquire().await.unwrap();
-        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'alice')")
-            .bind("a1")
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        // Create handles and conversations using chat_handle_id (FK to handles).
-        for (cid, phone) in [(1, "+1555"), (2, "+1666")] {
-            sqlx::query(
-                "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-                 VALUES ($1, $2, $2, 'phone', 'phone')",
-            )
-            .bind("a1")
-            .bind(phone)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-            let handle_id: i64 = sqlx::query_scalar("SELECT last_insert_rowid()")
-                .fetch_one(&mut *conn)
-                .await
-                .unwrap();
-            sqlx::query(
-                "INSERT INTO conversations (id, account_id, chat_handle_id, conversation_type, source_file)
-                 VALUES ($1, 'a1', $2, 'individual', 'backup-a.jsonl')",
-            )
-            .bind(cid)
-            .bind(handle_id)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        }
+    /// A vault with account `a1` and two individual conversations
+    /// (`+1555`, `+1666`), each holding one SMS message ("hello one" in the
+    /// first, "hello two" in the second). Returns the conversation ids the
+    /// seeder made, since several tests below assert on them (`in:#<id>`
+    /// queries, `trashed_conversations` rows).
+    ///
+    /// The messages are seeded with an explicit SQL insert rather than
+    /// through `seed_conversation`, because `SeedMessage` has no `service`
+    /// field and several tests assert `message.service == Some("sms")`.
+    async fn seeded_export_vault() -> (TestVault, i64, i64) {
+        let vault = test_vault().await;
+        let account = vault.account_with_id("a1", "alice").await;
+        let conv1 = seed_conversation(
+            &vault.state,
+            &SeedConversation {
+                account_id: &account,
+                handle: "+1555",
+                conversation_type: "individual",
+                group_title: None,
+                source_file: "backup-a.jsonl",
+                messages: &[],
+            },
+        )
+        .await;
+        let conv2 = seed_conversation(
+            &vault.state,
+            &SeedConversation {
+                account_id: &account,
+                handle: "+1666",
+                conversation_type: "individual",
+                group_title: None,
+                source_file: "backup-a.jsonl",
+                messages: &[],
+            },
+        )
+        .await;
+
+        let mut conn = vault.conn().await;
         sqlx::query(
             "INSERT INTO messages (id, conversation_id, account_id, source, service, timestamp, is_from_me, sort_order, body)
-             VALUES (1, 1, 'a1', 'sms', 'sms', '2020-01-01T00:00:00Z', 0, 0, 'hello one'),
-                    (2, 2, 'a1', 'sms', 'sms', '2020-01-02T00:00:00Z', 0, 0, 'hello two')",
+             VALUES (1, $1, 'a1', 'sms', 'sms', '2020-01-01T00:00:00Z', 0, 0, 'hello one'),
+                    (2, $2, 'a1', 'sms', 'sms', '2020-01-02T00:00:00Z', 0, 0, 'hello two')",
         )
+        .bind(conv1)
+        .bind(conv2)
         .execute(&mut *conn)
         .await
         .unwrap();
-        (pool, dir)
+
+        (vault, conv1, conv2)
     }
 
     #[tokio::test]
     async fn export_includes_attachment_missing_reason() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let (vault, conv1, _conv2) = seeded_export_vault().await;
+        let mut conn = vault.conn().await;
         sqlx::query(
             "INSERT INTO attachments (
                 message_id, path, original_name, mime_type, sha256, is_sticker,
@@ -403,11 +408,12 @@ mod tests {
         .await
         .unwrap();
 
+        let query = format!("in:#{conv1}");
         let res = export_messages(
             &mut conn,
             ExportPageOpts {
                 account_id: "a1",
-                query: "in:#1",
+                query: &query,
                 limit: 100,
                 offset: 0,
                 today: crate::search::tests::today(),
@@ -426,14 +432,15 @@ mod tests {
 
     #[tokio::test]
     async fn conversation_filter_scopes_messages() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let (vault, conv1, conv2) = seeded_export_vault().await;
+        let mut conn = vault.conn().await;
 
+        let query1 = format!("in:#{conv1}");
         let res = export_messages(
             &mut conn,
             ExportPageOpts {
                 account_id: "a1",
-                query: "in:#1",
+                query: &query1,
                 limit: 100,
                 offset: 0,
                 today: crate::search::tests::today(),
@@ -445,11 +452,12 @@ mod tests {
         assert_eq!(res.items[0].id, 1);
         assert_eq!(res.items[0].service.as_deref(), Some("sms"));
 
+        let query2 = format!("in:#{conv2}");
         let res = export_messages(
             &mut conn,
             ExportPageOpts {
                 account_id: "a1",
-                query: "in:#2",
+                query: &query2,
                 limit: 100,
                 offset: 0,
                 today: crate::search::tests::today(),
@@ -477,19 +485,15 @@ mod tests {
 
     #[tokio::test]
     async fn export_message_count_supports_handle_filters() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
-        sqlx::query(
+        let (vault, conv1, _conv2) = seeded_export_vault().await;
+        let mut conn = vault.conn().await;
+        let sender_id: i64 = sqlx::query_scalar(
             "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-             VALUES ('a1', 'alice', 'alice', 'other', 'other')",
+             VALUES ('a1', 'alice', 'alice', 'other', 'other') RETURNING id",
         )
-        .execute(&mut *conn)
+        .fetch_one(&mut *conn)
         .await
         .unwrap();
-        let sender_id: i64 = sqlx::query_scalar("SELECT last_insert_rowid()")
-            .fetch_one(&mut *conn)
-            .await
-            .unwrap();
         sqlx::query("UPDATE messages SET sender_handle_id = $1 WHERE id = 1")
             .bind(sender_id)
             .execute(&mut *conn)
@@ -497,8 +501,9 @@ mod tests {
             .unwrap();
         sqlx::query(
             "UPDATE handles SET raw = 'alice-chat', normalized = 'alice-chat'
-             WHERE id = (SELECT chat_handle_id FROM conversations WHERE id = 1)",
+             WHERE id = (SELECT chat_handle_id FROM conversations WHERE id = $1)",
         )
+        .bind(conv1)
         .execute(&mut *conn)
         .await
         .unwrap();
@@ -530,8 +535,8 @@ mod tests {
 
     #[tokio::test]
     async fn free_text_matches_message_body_via_fts() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let (vault, _conv1, _conv2) = seeded_export_vault().await;
+        let mut conn = vault.conn().await;
         let res = export_messages(
             &mut conn,
             ExportPageOpts {
@@ -551,8 +556,8 @@ mod tests {
 
     #[tokio::test]
     async fn export_boolean_query_preserves_or() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let (vault, conv1, _conv2) = seeded_export_vault().await;
+        let mut conn = vault.conn().await;
         sqlx::query("UPDATE messages SET body = 'foo' WHERE id = 1")
             .execute(&mut *conn)
             .await
@@ -566,10 +571,11 @@ mod tests {
                 id, conversation_id, account_id, source, service, timestamp,
                 is_from_me, sort_order, body
              ) VALUES (
-                3, 1, 'a1', 'sms', 'sms', '2020-01-03T00:00:00Z',
+                3, $1, 'a1', 'sms', 'sms', '2020-01-03T00:00:00Z',
                 0, 0, 'foo bar'
              )",
         )
+        .bind(conv1)
         .execute(&mut *conn)
         .await
         .unwrap();
@@ -592,8 +598,9 @@ mod tests {
 
     #[tokio::test]
     async fn export_boolean_query_preserves_and_and_not() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let (vault, conv1, _conv2) = seeded_export_vault().await;
+        let pool = vault.state.db.clone();
+        let mut conn = vault.conn().await;
         sqlx::query("UPDATE messages SET body = 'foo' WHERE id = 1")
             .execute(&mut *conn)
             .await
@@ -607,10 +614,11 @@ mod tests {
                 id, conversation_id, account_id, source, service, timestamp,
                 is_from_me, sort_order, body
              ) VALUES (
-                3, 1, 'a1', 'sms', 'sms', '2020-01-03T00:00:00Z',
+                3, $1, 'a1', 'sms', 'sms', '2020-01-03T00:00:00Z',
                 0, 0, 'foo bar'
              )",
         )
+        .bind(conv1)
         .execute(&mut *conn)
         .await
         .unwrap();
@@ -646,8 +654,9 @@ mod tests {
 
     #[tokio::test]
     async fn export_boolean_query_combines_body_phrases_prefixes_and_nesting() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let (vault, _conv1, conv2) = seeded_export_vault().await;
+        let pool = vault.state.db.clone();
+        let mut conn = vault.conn().await;
         sqlx::query("UPDATE messages SET body = 'alpha phrase at sunrise' WHERE id = 1")
             .execute(&mut *conn)
             .await
@@ -706,8 +715,9 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO trashed_conversations (account_id, conversation_id)
-             VALUES ('a1', 2)",
+             VALUES ('a1', $1)",
         )
+        .bind(conv2)
         .execute(&mut *conn)
         .await
         .unwrap();
@@ -716,8 +726,8 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_an_oversized_query() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let (vault, _conv1, _conv2) = seeded_export_vault().await;
+        let mut conn = vault.conn().await;
         let huge = "x".repeat(crate::search::lex::MAX_QUERY_BYTES + 1);
         let err = export_messages(
             &mut conn,
@@ -739,23 +749,16 @@ mod tests {
 
     #[tokio::test]
     async fn export_does_not_leak_other_account_messages() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
-        sqlx::query("INSERT INTO accounts (id, username) VALUES ('a2', 'bob')")
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        sqlx::query(
+        let (vault, _conv1, _conv2) = seeded_export_vault().await;
+        vault.account_with_id("a2", "bob").await;
+        let mut conn = vault.conn().await;
+        let bob_handle: i64 = sqlx::query_scalar(
             "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-             VALUES ('a2', '+1777', '+1777', 'phone', 'phone')",
+             VALUES ('a2', '+1777', '+1777', 'phone', 'phone') RETURNING id",
         )
-        .execute(&mut *conn)
+        .fetch_one(&mut *conn)
         .await
         .unwrap();
-        let bob_handle: i64 = sqlx::query_scalar("SELECT last_insert_rowid()")
-            .fetch_one(&mut *conn)
-            .await
-            .unwrap();
         sqlx::query(
             "INSERT INTO conversations (id, account_id, chat_handle_id, conversation_type, source_file)
              VALUES (99, 'a2', $1, 'individual', 'bob.jsonl')",
@@ -803,17 +806,19 @@ mod tests {
 
     #[tokio::test]
     async fn export_pages_by_offset_and_reports_the_total() {
-        let (pool, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
+        let (vault, conv1, _conv2) = seeded_export_vault().await;
+        let pool = vault.state.db.clone();
+        let mut conn = vault.conn().await;
         sqlx::query(
             "INSERT INTO messages (
                 id, conversation_id, account_id, source, service, timestamp,
                 is_from_me, sort_order, body
              ) VALUES (
-                3, 1, 'a1', 'sms', 'sms', '2020-01-03T00:00:00Z',
+                3, $1, 'a1', 'sms', 'sms', '2020-01-03T00:00:00Z',
                 0, 0, 'third'
              )",
         )
+        .bind(conv1)
         .execute(&mut *conn)
         .await
         .unwrap();
@@ -888,8 +893,8 @@ mod tests {
     /// placeholders must be exactly `1..=params.len()` in bind order.
     #[tokio::test]
     async fn export_sql_placeholders_match_params_order() {
-        let (pool, _dir) = setup().await;
-        let conn = pool.acquire().await.unwrap();
+        let (vault, _conv1, _conv2) = seeded_export_vault().await;
+        let conn = vault.conn().await;
         let filter = message_filter(
             engine_of(&conn),
             "a1",

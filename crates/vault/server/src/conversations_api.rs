@@ -850,18 +850,23 @@ mod tests {
         assert_eq!(status, axum::http::StatusCode::OK);
     }
 
-    async fn setup() -> (sqlx::AnyPool, tempfile::TempDir, String) {
-        let (pool, dir) = engine::test_pool().await;
-        schema::ensure_vault_schema(&mut pool.acquire().await.unwrap())
-            .await
-            .unwrap();
-        let account = "00000000-0000-4000-8000-0000000000c2".to_string();
-        let mut conn = pool.acquire().await.unwrap();
-        sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'alice')")
-            .bind(&account)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
+    /// A vault with account `00000000-0000-4000-8000-0000000000c2` and one
+    /// conversation (id 1) on a handle linked through the account profile,
+    /// with one participant and one message.
+    ///
+    /// The peer handle goes through `account_profile::link_account_handle`
+    /// rather than `seed_conversation`, because the participant-naming query
+    /// reads the `account_handles` link that call creates and
+    /// `seed_conversation`'s bare `handles` insert does not make one; the
+    /// `participants` row (`name_alias`) that query also reads has no
+    /// counterpart in the seeder at all. So this stays as explicit SQL
+    /// rather than using the shared seeder.
+    async fn conversations_setup() -> (sqlx::AnyPool, TestVault, String) {
+        let vault = test_vault().await;
+        let account = vault
+            .account_with_id("00000000-0000-4000-8000-0000000000c2", "alice")
+            .await;
+        let mut conn = vault.conn().await;
         let peer = account_profile::link_account_handle(
             &mut conn,
             &account,
@@ -897,12 +902,13 @@ mod tests {
         .execute(&mut *conn)
         .await
         .unwrap();
-        (pool, dir, account)
+        let pool = vault.state.db.clone();
+        (pool, vault, account)
     }
 
     #[tokio::test]
     async fn list_conversations_returns_summary() {
-        let (pool, _dir, account) = setup().await;
+        let (pool, _vault, account) = conversations_setup().await;
         let mut conn = pool.acquire().await.unwrap();
         let page = list_conversations(&mut conn, &account, "", DEFAULT_LIST_LIMIT, 0)
             .await
@@ -921,7 +927,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_conversations_filters_by_handle() {
-        let (pool, _dir, account) = setup().await;
+        let (pool, _vault, account) = conversations_setup().await;
         let mut conn = pool.acquire().await.unwrap();
         let hit = list_conversations(
             &mut conn,
@@ -949,7 +955,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_conversations_finds_a_handle_across_platforms() {
-        let (pool, _dir, account) = setup().await;
+        let (pool, _vault, account) = conversations_setup().await;
         let mut conn = pool.acquire().await.unwrap();
         // setup() already has phone:+15555550200 as conversation 1.
         let wa = account_profile::link_account_handle_with_service(
@@ -1008,7 +1014,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_conversations_sorts_by_date_or_message_count() {
-        let (pool, _dir, account) = setup().await;
+        let (pool, _vault, account) = conversations_setup().await;
         let mut conn = pool.acquire().await.unwrap();
 
         // Conversation 1 (from setup) gets two more *older* messages, so it is
@@ -1104,7 +1110,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_conversations_paginates() {
-        let (pool, _dir, account) = setup().await;
+        let (pool, _vault, account) = conversations_setup().await;
         let mut conn = pool.acquire().await.unwrap();
         // Second conversation + message.
         let peer2 = account_profile::link_account_handle(
@@ -1161,7 +1167,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_queries_enforce_search_limits() {
-        let (pool, _dir, account) = setup().await;
+        let (pool, _vault, account) = conversations_setup().await;
         let mut conn = pool.acquire().await.unwrap();
         let oversized = "x".repeat(2_049);
         let too_many_terms = (0..33)
@@ -1199,7 +1205,7 @@ mod tests {
 
     #[tokio::test]
     async fn malformed_boolean_queries_are_bad_requests_for_export() {
-        let (pool, _dir, account) = setup().await;
+        let (pool, _vault, account) = conversations_setup().await;
         let mut conn = pool.acquire().await.unwrap();
 
         for query in ["foo OR", "(foo OR bar", "foo OR bar)"] {
@@ -1219,7 +1225,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_conversations_filters_by_contact_and_type() {
-        let (pool, _dir, account) = setup().await;
+        let (pool, _vault, account) = conversations_setup().await;
         let mut conn = pool.acquire().await.unwrap();
         // Link peer handle to a contact.
         sqlx::query("INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Sam')")
@@ -1381,7 +1387,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_conversations_shows_the_contact_name() {
-        let (pool, _dir, account) = setup().await;
+        let (pool, _vault, account) = conversations_setup().await;
         let mut conn = pool.acquire().await.unwrap();
         let contact_id: i64 = sqlx::query_scalar(
             "INSERT INTO contacts (account_id, preferred_name) VALUES ($1, 'Sam Preferred')
@@ -1417,7 +1423,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_conversations_falls_back_to_the_backup_name() {
-        let (pool, _dir, account) = setup().await;
+        let (pool, _vault, account) = conversations_setup().await;
         let mut conn = pool.acquire().await.unwrap();
         // setup() records the backup name 'Sam' on +15555550200 and links no
         // contact, so the backup's name is what there is to show.
@@ -1429,7 +1435,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_conversations_falls_back_to_the_handle() {
-        let (pool, _dir, account) = setup().await;
+        let (pool, _vault, account) = conversations_setup().await;
         let mut conn = pool.acquire().await.unwrap();
         sqlx::query("UPDATE participants SET name_alias = NULL")
             .execute(&mut *conn)
@@ -1442,7 +1448,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_conversations_filters_by_participant_count() {
-        let (pool, _dir, account) = setup().await;
+        let (pool, _vault, account) = conversations_setup().await;
         let mut conn = pool.acquire().await.unwrap();
         // setup() has conversation 1 with 1 participant.
 
@@ -1525,7 +1531,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_conversations_participants_eq_three_on_built_fixture() {
-        let (pool, _dir, account) = setup().await;
+        let (pool, _vault, account) = conversations_setup().await;
         let mut conn = pool.acquire().await.unwrap();
         // setup() already owns conversation 1 with 1 participant, which the
         // `=3` filter below must exclude.
@@ -2087,7 +2093,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_conversations_filters_by_tag_and_people() {
-        let (pool, _dir, account) = setup().await;
+        let (pool, _vault, account) = conversations_setup().await;
         let mut conn = pool.acquire().await.unwrap();
         crate::named_membership::set_membership(
             crate::named_membership::tag_spec(),

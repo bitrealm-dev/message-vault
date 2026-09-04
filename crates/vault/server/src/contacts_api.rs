@@ -2482,7 +2482,7 @@ mod tests {
         let account = vault
             .account_with_id("00000000-0000-4000-8000-0000000000c1", "alice")
             .await;
-        let dir = &vault._tmp;
+        let dir = vault.dir();
         let mut conn = vault.conn().await;
 
         // What an import leaves behind: a contact named by the backup, holding
@@ -2495,7 +2495,7 @@ mod tests {
             .await
             .unwrap();
 
-        let book = dir.path().join("book.vcf");
+        let book = dir.join("book.vcf");
         std::fs::write(
             &book,
             "BEGIN:VCARD\nVERSION:3.0\nFN:Robert Smith\nN:Smith;Robert;;;\nTEL:+15551234567\nEND:VCARD\n",
@@ -2541,7 +2541,7 @@ mod tests {
         let account = vault
             .account_with_id("00000000-0000-4000-8000-0000000000c1", "alice")
             .await;
-        let dir = &vault._tmp;
+        let dir = vault.dir();
         let mut conn = vault.conn().await;
 
         // An import already named this person; the book only lists their
@@ -2554,7 +2554,7 @@ mod tests {
             .await
             .unwrap();
 
-        let book = dir.path().join("book.vcf");
+        let book = dir.join("book.vcf");
         std::fs::write(
             &book,
             "BEGIN:VCARD\nVERSION:3.0\nTEL:+15551234567\nEND:VCARD\n",
@@ -2587,7 +2587,7 @@ mod tests {
         let account = vault
             .account_with_id("00000000-0000-4000-8000-0000000000c1", "alice")
             .await;
-        let dir = &vault._tmp;
+        let dir = vault.dir();
         let mut conn = vault.conn().await;
 
         // An import discovered this person and gave them the name that backup
@@ -2634,7 +2634,7 @@ mod tests {
             .unwrap();
         assert_eq!(origin, "user", "naming someone makes the row the person's");
 
-        let book = dir.path().join("book.vcf");
+        let book = dir.join("book.vcf");
         std::fs::write(
             &book,
             "BEGIN:VCARD\nVERSION:3.0\nFN:Robert Smith\nN:Smith;Robert;;;\nTEL:+15551234567\nEND:VCARD\n",
@@ -2701,7 +2701,7 @@ mod tests {
         let account = vault
             .account_with_id("00000000-0000-4000-8000-0000000000c1", "alice")
             .await;
-        let dir = &vault._tmp;
+        let dir = vault.dir();
         let mut conn = vault.conn().await;
 
         // An identity the vault learned from imported messages, and a Contact
@@ -2724,7 +2724,7 @@ mod tests {
         .await
         .unwrap();
 
-        let book = dir.path().join("book.vcf");
+        let book = dir.join("book.vcf");
         std::fs::write(
             &book,
             "BEGIN:VCARD\nVERSION:3.0\nFN:Ada Lovelace\nN:Lovelace;Ada;;;\nTEL:+15551234567\nEND:VCARD\n",
@@ -2736,7 +2736,7 @@ mod tests {
 
         // A second load of a book that dropped Ada removes her, because the
         // vault knows that row was the book's.
-        let book2 = dir.path().join("book2.vcf");
+        let book2 = dir.join("book2.vcf");
         std::fs::write(
             &book2,
             "BEGIN:VCARD\nVERSION:3.0\nFN:Grace Hopper\nN:Hopper;Grace;;;\nTEL:+15557654321\nEND:VCARD\n",

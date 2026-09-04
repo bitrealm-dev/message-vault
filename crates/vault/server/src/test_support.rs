@@ -17,7 +17,7 @@ use crate::server::{AppState, http_app};
 /// A vault plus its temp directory. Drop the `TempDir` last.
 pub struct TestVault {
     /// Keeps the temp directory alive for the test's lifetime.
-    pub _tmp: TempDir,
+    pub tmp: TempDir,
     /// The server state every helper drives.
     pub state: AppState,
 }
@@ -85,7 +85,7 @@ pub async fn test_vault() -> TestVault {
             .unwrap();
     }
     let state = crate::server::test_app_state(pool, tmp.path()).await;
-    TestVault { _tmp: tmp, state }
+    TestVault { tmp, state }
 }
 
 impl TestVault {
@@ -93,6 +93,11 @@ impl TestVault {
     /// with SQL directly.
     pub async fn conn(&self) -> sqlx::pool::PoolConnection<sqlx::Any> {
         self.state.db.acquire().await.unwrap()
+    }
+
+    /// The vault's temp directory, for a test that needs a real path on disk.
+    pub fn dir(&self) -> &std::path::Path {
+        self.tmp.path()
     }
 
     /// Insert an `accounts` row with a chosen id, for a test that asserts on
@@ -372,48 +377,113 @@ pub async fn delete_raw(state: &AppState, path: &str, token: &str) -> (StatusCod
     request(state, reqwest::Method::DELETE, path, Some(token), None).await
 }
 
-/// Give an account one conversation holding one message, so counts are non-zero.
+/// One message to seed into a conversation.
+pub struct SeedMessage<'a> {
+    /// The `messages.source` slug, such as `imessage`.
+    pub source: &'a str,
+    /// RFC 3339 timestamp, stored as text the way the importer writes it.
+    pub timestamp: &'a str,
+    /// Whether the account sent it.
+    pub is_from_me: bool,
+    /// The message text.
+    pub body: &'a str,
+}
+
+/// A conversation to seed, with its messages in order.
+pub struct SeedConversation<'a> {
+    /// The account that owns it.
+    pub account_id: &'a str,
+    /// The peer handle, created as a `handles` row. Must be unique per
+    /// account: `handles` is keyed on the normalized value.
+    pub handle: &'a str,
+    /// `individual` or `group`.
+    pub conversation_type: &'a str,
+    /// The group's title, for a group conversation.
+    pub group_title: Option<&'a str>,
+    /// The `conversations.source_file` value.
+    pub source_file: &'a str,
+    /// Messages, seeded with `sort_order` following this order.
+    pub messages: &'a [SeedMessage<'a>],
+}
+
+/// Seed one conversation and its messages, returning the new
+/// `conversations.id`.
 ///
 /// `messages.conversation_id` and `conversations.chat_handle_id` are integer
-/// foreign keys, so this first creates a `handles` row (the way every real
-/// importer does) rather than binding a string straight into `chat_handle_id`.
-pub async fn seed_one_message(state: &AppState, account_id: &str) {
+/// foreign keys, so this first creates a `handles` row the way every real
+/// importer does rather than binding a string straight into `chat_handle_id`.
+pub async fn seed_conversation(state: &AppState, c: &SeedConversation<'_>) -> i64 {
     let mut conn = state.db.acquire().await.unwrap();
     let handle_id: i64 = sqlx::query_scalar(
         "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
          VALUES ($1, $2, $2, 'phone', 'phone') RETURNING id",
     )
-    .bind(account_id)
-    .bind(format!("+1555{account_id}"))
+    .bind(c.account_id)
+    .bind(c.handle)
     .fetch_one(&mut *conn)
     .await
     .unwrap();
 
     let conversation_id: i64 = sqlx::query_scalar(
-        "INSERT INTO conversations (account_id, chat_handle_id, conversation_type, source_file)
-         VALUES ($1, $2, 'individual', 'seed.jsonl') RETURNING id",
+        "INSERT INTO conversations (
+            account_id, chat_handle_id, conversation_type, group_title, source_file
+         ) VALUES ($1, $2, $3, $4, $5) RETURNING id",
     )
-    .bind(account_id)
+    .bind(c.account_id)
     .bind(handle_id)
+    .bind(c.conversation_type)
+    .bind(c.group_title)
+    .bind(c.source_file)
     .fetch_one(&mut *conn)
     .await
     .unwrap();
 
-    sqlx::query(
-        "INSERT INTO messages (
-            conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
-         ) VALUES ($1, $2, 'imessage', '2020-01-01T00:00:00Z', 1, 0, 'hello')",
+    for (index, message) in c.messages.iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(conversation_id)
+        .bind(c.account_id)
+        .bind(message.source)
+        .bind(message.timestamp)
+        .bind(i64::from(message.is_from_me))
+        .bind(index as i64)
+        .bind(message.body)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    }
+
+    conversation_id
+}
+
+/// Give an account one conversation holding one message, so counts are
+/// non-zero.
+pub async fn seed_one_message(state: &AppState, account_id: &str) {
+    seed_conversation(
+        state,
+        &SeedConversation {
+            account_id,
+            handle: &format!("+1555{account_id}"),
+            conversation_type: "individual",
+            group_title: None,
+            source_file: "seed.jsonl",
+            messages: &[SeedMessage {
+                source: "imessage",
+                timestamp: "2020-01-01T00:00:00Z",
+                is_from_me: true,
+                body: "hello",
+            }],
+        },
     )
-    .bind(conversation_id)
-    .bind(account_id)
-    .execute(&mut *conn)
-    .await
-    .unwrap();
+    .await;
 }
 
 #[cfg(test)]
 mod tests {
-    use super::test_vault;
+    use super::*;
 
     #[tokio::test]
     async fn the_fixture_makes_an_account_with_the_id_a_test_asks_for() {
@@ -435,44 +505,92 @@ mod tests {
         assert_ne!(other, id, "each account must get its own id");
     }
 
-    // Enabled in Task 3, along with `use super::*;`:
-    // /// A body far larger than one TCP segment must come back whole. This
-    // /// pins the ordering in `request`: the response is read before the
-    // /// `TestServer` drops and aborts the task serving it.
-    // #[tokio::test]
-    // async fn a_large_response_body_is_read_before_the_server_stops() {
-    //     let vault = test_vault().await;
-    //     let user = register_via_api(&vault.state, "alice", "hunter2hunter2").await;
-    //     for i in 0..300 {
-    //         seed_conversation(
-    //             &vault.state,
-    //             &SeedConversation {
-    //                 account_id: &user.account_id,
-    //                 handle: &format!("+1555000{i:04}"),
-    //                 conversation_type: "individual",
-    //                 group_title: None,
-    //                 source_file: "seed.jsonl",
-    //                 messages: &[SeedMessage {
-    //                     source: "imessage",
-    //                     timestamp: "2020-01-01T00:00:00Z",
-    //                     is_from_me: true,
-    //                     body: "hello, this is a message long enough to add up",
-    //                 }],
-    //             },
-    //         )
-    //         .await;
-    //     }
-    //
-    //     let (status, text) =
-    //         get_raw(&vault.state, "/v1/conversations?limit=300", &user.token).await;
-    //     assert_eq!(status, StatusCode::OK, "{text}");
-    //     assert!(
-    //         text.len() > 64 * 1024,
-    //         "the fixture must produce a body bigger than one segment, got {} bytes",
-    //         text.len()
-    //     );
-    //     let page: serde_json::Value = serde_json::from_str(&text)
-    //         .unwrap_or_else(|e| panic!("truncated body ({e}): {} bytes", text.len()));
-    //     assert_eq!(page["items"].as_array().unwrap().len(), 300);
-    // }
+    #[tokio::test]
+    async fn the_seeder_returns_the_conversation_id_it_made() {
+        let vault = test_vault().await;
+        let account = vault.account("alice").await;
+        let id = seed_conversation(
+            &vault.state,
+            &SeedConversation {
+                account_id: &account,
+                handle: "+15555550100",
+                conversation_type: "group",
+                group_title: Some("Book Club"),
+                source_file: "backup-a.jsonl",
+                messages: &[
+                    SeedMessage {
+                        source: "imessage",
+                        timestamp: "2020-01-01T00:00:00Z",
+                        is_from_me: true,
+                        body: "first",
+                    },
+                    SeedMessage {
+                        source: "imessage",
+                        timestamp: "2020-01-02T00:00:00Z",
+                        is_from_me: false,
+                        body: "second",
+                    },
+                ],
+            },
+        )
+        .await;
+
+        let mut conn = vault.conn().await;
+        let title: String =
+            sqlx::query_scalar("SELECT group_title FROM conversations WHERE id = $1")
+                .bind(id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!(title, "Book Club");
+
+        let bodies: Vec<String> = sqlx::query_scalar(
+            "SELECT body FROM messages WHERE conversation_id = $1 ORDER BY sort_order",
+        )
+        .bind(id)
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(bodies, vec!["first".to_string(), "second".to_string()]);
+    }
+
+    /// A body far larger than one TCP segment must come back whole. This
+    /// pins the ordering in `request`: the response is read before the
+    /// `TestServer` drops and aborts the task serving it.
+    #[tokio::test]
+    async fn a_large_response_body_is_read_before_the_server_stops() {
+        let vault = test_vault().await;
+        let user = register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+        for i in 0..300 {
+            seed_conversation(
+                &vault.state,
+                &SeedConversation {
+                    account_id: &user.account_id,
+                    handle: &format!("+1555000{i:04}"),
+                    conversation_type: "individual",
+                    group_title: None,
+                    source_file: "seed.jsonl",
+                    messages: &[SeedMessage {
+                        source: "imessage",
+                        timestamp: "2020-01-01T00:00:00Z",
+                        is_from_me: true,
+                        body: "hello, this is a message long enough to add up",
+                    }],
+                },
+            )
+            .await;
+        }
+
+        let (status, text) =
+            get_raw(&vault.state, "/v1/conversations?limit=300", &user.token).await;
+        assert_eq!(status, StatusCode::OK, "{text}");
+        assert!(
+            text.len() > 64 * 1024,
+            "the fixture must produce a body bigger than one segment, got {} bytes",
+            text.len()
+        );
+        let page: serde_json::Value = serde_json::from_str(&text)
+            .unwrap_or_else(|e| panic!("truncated body ({e}): {} bytes", text.len()));
+        assert_eq!(page["items"].as_array().unwrap().len(), 300);
+    }
 }
