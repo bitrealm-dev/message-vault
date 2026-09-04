@@ -15,15 +15,16 @@ the spec's wording; for everything else, the spec wins.
 | --- | --- | --- | --- |
 | 1 | Import failures typed; `source` contract; schema docs say 4 | Import failures | merged, #316 |
 | 2 | One shape for every route (ADR-0005) | Interface convention | merged, #317 |
-| 3 | An import names the Contact (ADR-0006) | Names | **next** |
-| 4 | Conversation read routes; message screen on TanStack Query | Conversation read routes | queued |
+| 3 | An import names the Contact (ADR-0006) | Names | merged, #319 |
+| 4 | Conversation read routes; message screen on TanStack Query | Conversation read routes | **next** |
 | 5 | Trash module and four routes | Trash | queued |
 | 6 | One query builder on the web; shared example file | Query text on the web | queued |
 | 7 | One test fixture; route-level tests | Tests and fixtures | queued |
 | 8 | Named-set route files folded | Named sets | queued |
 
 Plans so far: `2026-09-03-import-failures-and-schema-docs.md` (PR 1),
-`2026-09-03-route-convention.md` (PR 2).
+`2026-09-03-route-convention.md` (PR 2),
+`2026-09-03-an-import-names-the-contact.md` (PR 3).
 
 ## How a pull request is delivered
 
@@ -48,26 +49,26 @@ Plans so far: `2026-09-03-import-failures-and-schema-docs.md` (PR 1),
 
 Done when step 6 is committed on main.
 
-## PR 3: Names (ADR-0006)
+## PR 3: Names (ADR-0006) — merged, #319
 
-Spec section "Names (ADR-0006)"; `docs/adr/0006-an-import-names-the-contact.md`.
+Shipped in `61ce1621`. One `db/participant_names` module owns the naming query
+and every route that names a participant calls it; `ConversationParticipant` and
+`ExportParticipant` are one `Participant {name, handle, service, contact_id}`;
+`contact_handles.name_alias` is gone (schema 8) along with `contact_name_mode`,
+the web's own naming rule, its browser-storage preference, the Appearance
+toggle, and the contact drawer's Alias column. An address-book load adopts the
+Contact an import made rather than standing a nameless duplicate beside it.
 
-Nothing in this section has shipped. Inventory before planning:
+Four defects the reviews caught and the pull request fixed: `vault-push`'s
+sibling `vault-pull` kept its own copy of the Export shape with
+`#[serde(default)]` on the removed field, so participants pulled vault-to-vault
+would have arrived nameless with no error; an address book overwrote a name the
+person typed, because nothing set `origin = 'user'` on rename; `search/emit.rs`
+kept a second naming rule joining through `participants.contact_id`, a column
+written once at import and never updated; and a participant-less conversation
+named itself by its raw handle.
 
-```
-grep -rln 'name_alias\|contact_name_mode\|ContactNameMode' crates/vault/server/src crates/libs/vault-push/src src-tauri/src
-grep -rn 'seed_contact_handle_alias\|ensure_contact_for_handle' crates/vault/server/src
-```
-
-Done when: the first grep returns only the participant loader's use of
-`participants.name_alias`; one `db/participant_names` module owns the
-naming query and every route that names a participant calls it;
-`ConversationParticipant` and `ExportParticipant` are one
-`{name, handle, service, contact_id}` type; the contact drawer shows the
-Contact's name and the handle with no Alias column; the address-book rule
-from #286 still holds and is tested; `check-pr.sh` passes.
-
-Carried over: none.
+Left behind, with the reasoning: issue #320.
 
 ## PR 4: Conversation read routes
 
@@ -101,6 +102,11 @@ the server's sentence; tapbacks render; the nine phantom fields are out of
 Carried over from the PR 2 review: every Export page now runs `COUNT(*)`
 before its row query, so the read route should take `total` from one
 count per request and never per page of a year walk.
+
+Carried over from PR 3 (issue #320, item 1): `load_for_conversations` inner-joins
+`handles`, so a participant the source named without recording an address never
+appears in a conversation. Fixing it means deciding what `handle` and `service`
+mean for someone with no address, which is this pull request's call to make.
 
 ## PR 5: Trash
 
