@@ -76,8 +76,9 @@ After `web/` UI changes, verify in the browser with the Playwright MCP (`plugin-
 
 ## Style
 
-Write instructions and commit messages in plain, direct English (see AGENTS.md for the full communication rules).
-The full voice guide — docs, product copy, commit messages, and the fixed product vocabulary — is `docs/agents/writing-style.md`.
+Write instructions and commit messages in plain, direct English. The full voice
+guide — documents, product copy, commit messages, and the fixed product
+vocabulary — is `docs/agents/writing-style.md`.
 
 ## Agent skills
 

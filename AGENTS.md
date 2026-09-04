@@ -2,11 +2,12 @@
 
 ## Communication Style
 
-- Write instructions in plain, direct English at high school reading level.
-- Avoid jargon, obtuse language, and clever diction.
-- Explain what you're doing and why in simple terms.
-- If something is complex, break it into clear steps.
-- Use concrete examples instead of abstract descriptions.
+Write in plain, direct English. Explain what changed and why, break a complex
+change into steps, and prefer a concrete example over an abstract description.
+
+`docs/agents/writing-style.md` is the full guide. It governs documents, product
+copy, commit messages, and pull request descriptions, and it holds the fixed
+product vocabulary.
 
 ## Git Workflow
 
