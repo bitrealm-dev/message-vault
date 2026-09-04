@@ -1,9 +1,10 @@
 import { useCallback, useState } from "react";
 import { Outlet, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { contactBrowseQuery } from "../lib/contactBrowseQuery";
 import { groupFromSlug } from "../lib/contactGroups";
 import { asMessagesLocationState } from "../lib/messagesLocationState";
 import { tagFromSlug, tagListQuery } from "../lib/messageTags";
-import { forContact, forHandle, trashed, withKind } from "../lib/searchQuery";
+import { trashed } from "../lib/searchQuery";
 import type { Conversation } from "../lib/types";
 import { useContactGroups } from "../lib/useContactGroups";
 import { useMessageTags } from "../lib/useMessageTags";
@@ -25,12 +26,6 @@ import LeftPanel from "./LeftPanel";
 import ListColumn from "./ListColumn";
 import RightPane from "./RightPane";
 import { RightToolbarProvider } from "./RightToolbarContext";
-
-/** Search query used when browsing a contact's conversations from the drawer. */
-function contactBrowseQuery(contactId: string, kind: ContactBrowseKind, handle?: string): string {
-  const h = handle?.trim();
-  return withKind(h ? forHandle(h) : forContact(contactId), kind);
-}
 
 type ColumnMode = "conversations" | "contacts" | "trash" | "import" | "export" | "settings";
 

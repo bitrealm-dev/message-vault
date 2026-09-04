@@ -22,4 +22,8 @@ describe("tagListQuery", () => {
     expect(tagListQuery("none", "")).toBe("tag:none");
     expect(tagListQuery("Work Friends", "ada")).toBe('tag:"Work Friends" ada');
   });
+
+  it("quotes a name with parentheses, since the language reads them as grouping", () => {
+    expect(tagListQuery("Book Club (Tuesdays)", "")).toBe('tag:"Book Club (Tuesdays)"');
+  });
 });

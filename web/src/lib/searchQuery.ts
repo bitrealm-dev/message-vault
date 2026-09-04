@@ -113,7 +113,7 @@ export type ContactsQueryInput = {
   services: Key[];
 };
 
-function composeCountComparison(input: CountFilterInput): string | null {
+export function composeCountComparison(input: CountFilterInput): string | null {
   if (input.comparator === "any") return null;
   const value = input.value.trim();
   if (!/^\d+$/.test(value)) return null;

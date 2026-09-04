@@ -1,5 +1,7 @@
 import type { Key } from "react-aria-components";
-import { advancedContacts, advancedMessages } from "../../lib/searchQuery";
+import { advancedContacts, advancedMessages, composeCountComparison } from "../../lib/searchQuery";
+
+export { composeCountComparison };
 
 export type AdvancedSearchMode = "messages" | "contacts";
 
@@ -25,13 +27,6 @@ export type DateBoundFilter = {
 
 export const EMPTY_COUNT: CountFilterInput = { comparator: "any", value: "" };
 export const EMPTY_DATE_BOUND: DateBoundFilter = { op: "any", start: "", end: "" };
-
-export function composeCountComparison(input: CountFilterInput): string | null {
-  if (input.comparator === "any") return null;
-  const value = input.value.trim();
-  if (!/^\d+$/.test(value)) return null;
-  return `${input.comparator}${value}`;
-}
 
 export function dateBoundHasValue(bound: DateBoundFilter): boolean {
   if (bound.op === "any") return false;
