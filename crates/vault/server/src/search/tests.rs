@@ -1751,6 +1751,8 @@ mod docs {
         include_str!("../../../../../docs/src/content/docs/vault/user/how-to/search.mdx");
     const API_PAGE: &str =
         include_str!("../../../../../docs/src/content/docs/vault/developer/reference/api.md");
+    const BROWSE_PAGE: &str =
+        include_str!("../../../../../docs/src/content/docs/vault/user/browse-your-messages.md");
 
     /// Every backticked `word:` token on `line`, in order. `search.mdx`
     /// lists one per table row; `api.md`'s prose bullets often name several
@@ -1774,12 +1776,77 @@ mod docs {
     }
 
     /// The words `api.md`'s bullets list, a bullet possibly naming several.
+    ///
+    /// Only the bullets under the "Search operators" heading count. The page has
+    /// backticked `word:` bullets elsewhere — the two `Content-Type:` lines
+    /// under "Import body" — and reading the whole file would report them as
+    /// search words the language does not have, which is a confusing way for
+    /// this test to fail.
     fn api_page_words() -> Vec<String> {
         API_PAGE
             .lines()
+            .skip_while(|l| *l != SEARCH_SECTION)
+            .skip(1)
+            .take_while(|l| !l.starts_with("## "))
             .filter(|l| l.trim_start().starts_with("- `"))
             .flat_map(words_on_line)
             .collect()
+    }
+
+    /// The heading `api_page_words` scans between. A rename in `api.md`
+    /// empties that scan, so this test asserts the heading is still there.
+    const SEARCH_SECTION: &str = "## Search operators (`q`)";
+
+    #[test]
+    fn the_api_reference_still_has_a_search_operators_section() {
+        assert!(
+            API_PAGE.lines().any(|l| l == SEARCH_SECTION),
+            "api.md no longer has a {SEARCH_SECTION:?} heading, so \
+             the_api_reference_lists_every_messages_word_and_nothing_else \
+             would scan nothing"
+        );
+    }
+
+    /// The word in front of the colon in every backticked `word:value` token
+    /// in `page`. `words_on_line` only sees a token that *ends* in a colon,
+    /// which is how a reference table names a word; a page writing prose
+    /// names one by spelling out a whole term instead.
+    ///
+    /// Tokens holding a `/` or a space are skipped, so a URL, a file path, or
+    /// a header (`http://127.0.0.1:8080`, `crates/…/lib.rs:7`) does not read
+    /// as a search word.
+    fn prose_words(page: &str) -> Vec<String> {
+        page.split('`')
+            .skip(1)
+            .step_by(2)
+            .filter(|token| !token.contains('/') && !token.contains(' '))
+            .filter_map(|token| {
+                let word = token.split_once(':')?.0;
+                (!word.is_empty() && word.chars().all(|c| c.is_ascii_lowercase() || c == '-'))
+                    .then(|| word.to_string())
+            })
+            .collect()
+    }
+
+    /// The tour page names its search words in prose rather than in a table,
+    /// so `the_page_lists_every_word_and_nothing_else` never read it. It told
+    /// people to search `is:group` for years — an operator the language has
+    /// never had. This is the check that would have caught it.
+    #[test]
+    fn the_browse_page_names_only_words_the_language_has() {
+        let words = prose_words(BROWSE_PAGE);
+        assert!(
+            !words.is_empty(),
+            "browse-your-messages.md names no search word at all, so this test \
+             is no longer reading what it thinks it is"
+        );
+        for word in &words {
+            assert!(
+                lookup(word).is_some(),
+                "browse-your-messages.md tells people to search {word}:, which \
+                 the language does not have"
+            );
+        }
     }
 
     #[test]

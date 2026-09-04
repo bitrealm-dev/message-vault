@@ -5,7 +5,7 @@ description: Open Conversations after the first import — the same website in t
 
 After Import finishes, open **Conversations** in the sidebar (browser at **http://localhost:8080** or the desktop app). Select a thread to read messages and view attachments.
 
-Group chats appear in the same list as one-to-one threads. Search with `is:group` when you only want multi-party conversations — [Search](/vault/user/how-to/search/).
+Group chats appear in the same list as one-to-one threads. Search with `kind:group` when you only want multi-party conversations — [Search](/vault/user/how-to/search/).
 
 ## Sidebar
 
