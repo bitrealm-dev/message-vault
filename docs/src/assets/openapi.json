@@ -7271,7 +7271,7 @@
               "string",
               "null"
             ],
-            "description": "Platform service, e.g. `imessage`, when known."
+            "description": "Platform service, e.g. `imessage`, when known. It rides on the\nmessage, never on the conversation."
           },
           "sort_order": {
             "type": "integer",
@@ -7677,7 +7677,7 @@
                     "string",
                     "null"
                   ],
-                  "description": "Platform service, e.g. `imessage`, when known."
+                  "description": "Platform service, e.g. `imessage`, when known. It rides on the\nmessage, never on the conversation."
                 },
                 "sort_order": {
                   "type": "integer",
@@ -7770,7 +7770,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "Linked vault contact id: when the handle is on a Contact, or — for a\nparticipant with no handle — the contact `resolve_name_only_participant`\nbound the name to directly, since that is the only place the link is\nrecorded for them. Matches the `id` every other contact shape uses, so\na caller can compare the two without converting either."
+            "description": "Linked vault contact id: when the handle is on a Contact, or — for a\nparticipant with no handle — the contact the vault bound the name to\ndirectly, since that is the only place the link is recorded for\nthem. Matches the `id` every other contact shape uses, so a caller\ncan compare the two without converting either."
           },
           "handle": {
             "type": [
@@ -7781,7 +7781,7 @@
           },
           "name": {
             "type": "string",
-            "description": "What to show for this person. Never empty — but the query's own\n`COALESCE` ends at `''`, not at the handle, since a handle-less\nparticipant has no handle to end at. What keeps it non-empty is the\nimport invariant described in this module's doc comment."
+            "description": "What to show for this person. Never empty — the vault falls back to\nthe handle when nothing else names them, and to the name alone for\nsomeone a backup named without recording any address."
           },
           "service": {
             "type": [

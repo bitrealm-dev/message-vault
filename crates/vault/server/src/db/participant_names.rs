@@ -32,35 +32,11 @@
 
 use std::collections::HashMap;
 
-use serde::Serialize;
 use sqlx::{AnyConnection, Row};
 
-use crate::db::sql::group_rows_by_id;
+pub use vault_api_types::Participant;
 
-/// One participant of a conversation, carrying the name to show for them:
-/// the Contact's name, else what that backup called them in that
-/// conversation, else the handle.
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
-pub struct Participant {
-    /// What to show for this person. Never empty — but the query's own
-    /// `COALESCE` ends at `''`, not at the handle, since a handle-less
-    /// participant has no handle to end at. What keeps it non-empty is the
-    /// import invariant described in this module's doc comment.
-    pub name: String,
-    /// Raw handle value (phone, email, or username). `None` when the source
-    /// named this person without recording any address for them.
-    pub handle: Option<String>,
-    /// Platform service, e.g. `imessage`. `None` for the same reason as
-    /// `handle`: with no address there is nothing to carry a service on.
-    pub service: Option<String>,
-    /// Linked vault contact id: when the handle is on a Contact, or — for a
-    /// participant with no handle — the contact `resolve_name_only_participant`
-    /// bound the name to directly, since that is the only place the link is
-    /// recorded for them. Matches the `id` every other contact shape uses, so
-    /// a caller can compare the two without converting either.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub contact_id: Option<i64>,
-}
+use crate::db::sql::group_rows_by_id;
 
 /// Participants of each conversation in `conversation_ids`, ordered by
 /// participant id within a conversation.

@@ -6,15 +6,19 @@
 //! [`auth_check`], share [`truncate`] for error snippets, and classify
 //! retryable failures through `classify_retry` / `with_retries`.
 //! [`AuthError`] and [`AuthInfo`] live here so both crates — and the desktop
-//! app through their re-exports — share one auth surface.
+//! app through their re-exports — share one auth surface, and [`ok_json`]
+//! reads every vault answer, so the vault's `{error}` failure body is
+//! understood in one place rather than in each client.
 
 #![warn(missing_docs)]
 
 mod auth_error;
+mod response;
 mod retry;
 mod session;
 
 pub use auth_error::AuthError;
+pub use response::{error_sentence, ok_json};
 pub use retry::{RetryKind, VaultHttpError, classify_retry, with_retries};
 pub use session::{HttpSession, auth_check, bearer_header, looks_like_html, trim_base_url};
 

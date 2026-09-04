@@ -1901,6 +1901,7 @@ dependencies = [
  "utoipa-axum",
  "utoipa-swagger-ui",
  "uuid",
+ "vault-api-types",
 ]
 
 [[package]]
@@ -3738,6 +3739,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vault-api-types"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "utoipa",
+]
+
+[[package]]
 name = "vault-http"
 version = "0.1.0"
 dependencies = [
@@ -3764,6 +3774,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "vault-api-types",
  "vault-http",
 ]
 

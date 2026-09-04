@@ -1943,7 +1943,10 @@ export interface components {
             num_replies: number;
             /** @description Sender handle for incoming messages. */
             sender?: string | null;
-            /** @description Platform service, e.g. `imessage`, when known. */
+            /**
+             * @description Platform service, e.g. `imessage`, when known. It rides on the
+             *     message, never on the conversation.
+             */
             service?: string | null;
             /**
              * Format: int64
@@ -2102,7 +2105,10 @@ export interface components {
                 num_replies: number;
                 /** @description Sender handle for incoming messages. */
                 sender?: string | null;
-                /** @description Platform service, e.g. `imessage`, when known. */
+                /**
+                 * @description Platform service, e.g. `imessage`, when known. It rides on the
+                 *     message, never on the conversation.
+                 */
                 service?: string | null;
                 /**
                  * Format: int64
@@ -2148,10 +2154,10 @@ export interface components {
             /**
              * Format: int64
              * @description Linked vault contact id: when the handle is on a Contact, or — for a
-             *     participant with no handle — the contact `resolve_name_only_participant`
-             *     bound the name to directly, since that is the only place the link is
-             *     recorded for them. Matches the `id` every other contact shape uses, so
-             *     a caller can compare the two without converting either.
+             *     participant with no handle — the contact the vault bound the name to
+             *     directly, since that is the only place the link is recorded for
+             *     them. Matches the `id` every other contact shape uses, so a caller
+             *     can compare the two without converting either.
              */
             contact_id?: number | null;
             /**
@@ -2160,10 +2166,9 @@ export interface components {
              */
             handle?: string | null;
             /**
-             * @description What to show for this person. Never empty — but the query's own
-             *     `COALESCE` ends at `''`, not at the handle, since a handle-less
-             *     participant has no handle to end at. What keeps it non-empty is the
-             *     import invariant described in this module's doc comment.
+             * @description What to show for this person. Never empty — the vault falls back to
+             *     the handle when nothing else names them, and to the name alone for
+             *     someone a backup named without recording any address.
              */
             name: string;
             /**

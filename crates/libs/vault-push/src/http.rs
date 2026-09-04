@@ -11,8 +11,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 use reqwest::Method;
 use serde::Deserialize;
-use serde::de::DeserializeOwned;
-use vault_http::{VaultHttpError, looks_like_html, trim_base_url};
+use vault_http::{VaultHttpError, error_sentence, looks_like_html, ok_json, trim_base_url};
 
 pub use vault_http::HttpSession;
 
@@ -93,35 +92,6 @@ struct UploadStartResponse {
     already_present: bool,
 }
 
-/// The vault's failure body: `{error}`.
-#[derive(Debug, Deserialize)]
-struct ErrorBody {
-    #[serde(default)]
-    error: Option<String>,
-}
-
-/// Parse a vault JSON response body, or bail with the server's error text.
-///
-/// A 2xx status is a success and the body is `T`. Anything else is a
-/// [`VaultHttpError`] carrying the body's `error` sentence when it has one,
-/// else `HTTP {status}: {body}`.
-fn ok_json<T: DeserializeOwned>(status: reqwest::StatusCode, text: &str) -> Result<T> {
-    if status.is_success() {
-        return serde_json::from_str::<T>(text).map_err(|e| {
-            VaultHttpError::new(
-                status.as_u16(),
-                format!("could not read the vault's answer ({e}): {text}"),
-            )
-            .into()
-        });
-    }
-    let message = match serde_json::from_str::<ErrorBody>(text) {
-        Ok(ErrorBody { error: Some(m) }) if !m.trim().is_empty() => m,
-        _ => format!("HTTP {status}: {text}"),
-    };
-    Err(VaultHttpError::new(status.as_u16(), message).into())
-}
-
 /// True for HTTP 413 or a proxy HTML page that says the body was too large.
 fn looks_like_payload_too_large(status: reqwest::StatusCode, body: &str) -> bool {
     status.as_u16() == 413
@@ -200,7 +170,10 @@ pub fn head_asset(
         let text = response.text().unwrap_or_default();
         return Err(VaultHttpError::new(
             status.as_u16(),
-            format!("asset HEAD failed (HTTP {status}): {text}"),
+            format!(
+                "asset HEAD failed (HTTP {status}): {}",
+                error_sentence(&text)
+            ),
         )
         .into());
     }
@@ -265,7 +238,7 @@ pub fn put_asset(http: &HttpSession, request: AssetPutRequest<'_>) -> Result<Ass
         )
         .into());
     }
-    ok_json::<AssetPutResponse>(status, &text)
+    ok_json::<AssetPutResponse>("asset upload", status, &text)
 }
 
 /// Upload a large file as several parts, then complete the upload.
@@ -305,7 +278,7 @@ fn put_asset_multipart(
         )
         .into());
     }
-    let started: UploadStartResponse = ok_json(start_status, &start_text)?;
+    let started: UploadStartResponse = ok_json("asset upload start", start_status, &start_text)?;
     if started.already_present {
         return Ok(AssetPutResponse {
             already_present: true,
@@ -378,7 +351,10 @@ fn put_asset_multipart(
             abort(&upload_id);
             return Err(VaultHttpError::new(
                 status.as_u16(),
-                format!("asset part {part} failed (HTTP {status}): {text}"),
+                format!(
+                    "asset part {part} failed (HTTP {status}): {}",
+                    error_sentence(&text)
+                ),
             )
             .into());
         }
@@ -399,7 +375,7 @@ fn put_asset_multipart(
         .with_context(|| format!("POST {complete_url}"))?;
     let status = response.status();
     let text = response.text().context("read upload complete response")?;
-    let completed = ok_json::<AssetPutResponse>(status, &text);
+    let completed = ok_json::<AssetPutResponse>("asset upload complete", status, &text);
     if completed.is_err() {
         abort(&upload_id);
     }
@@ -453,7 +429,7 @@ pub fn post_import(http: &HttpSession, args: PostImportArgs<'_>) -> Result<Impor
             VaultHttpError::new(413, payload_too_large_message("import", Some(body_len))).into(),
         );
     }
-    ok_json::<ImportResponse>(status, &text)
+    ok_json::<ImportResponse>("import batch", status, &text)
 }
 
 #[derive(Debug, Deserialize)]
@@ -498,7 +474,7 @@ pub fn start_import(
         return Ok(None);
     }
     let text = response.text().context("read start-import response")?;
-    let parsed: ImportSessionResponse = ok_json(status, &text)?;
+    let parsed: ImportSessionResponse = ok_json("import session", status, &text)?;
     Ok(parsed.id)
 }
 
@@ -542,7 +518,7 @@ pub fn complete_import(http: &HttpSession, args: CompleteImportArgs<'_>) -> Resu
         return Ok(());
     }
     let text = response.text().context("read complete-import response")?;
-    let _: ImportSessionResponse = ok_json(status, &text)?;
+    let _: ImportSessionResponse = ok_json("import session complete", status, &text)?;
     Ok(())
 }
 
@@ -572,40 +548,5 @@ mod tests {
             url.as_str(),
             "http://127.0.0.1:8080/v1/assets/abc123/uploads/up%201?source=sms+backup&account=alice"
         );
-    }
-
-    #[test]
-    fn ok_json_prefers_the_body_error_sentence() {
-        let err = ok_json::<AssetPutResponse>(
-            reqwest::StatusCode::BAD_REQUEST,
-            r#"{"error":"sha mismatch"}"#,
-        )
-        .unwrap_err();
-        assert_eq!(err.to_string(), "sha mismatch");
-    }
-
-    #[test]
-    fn ok_json_falls_back_to_status_and_body() {
-        let err = ok_json::<AssetPutResponse>(reqwest::StatusCode::BAD_GATEWAY, "{}").unwrap_err();
-        assert!(err.to_string().starts_with("HTTP 502"));
-        let err = ok_json::<AssetPutResponse>(reqwest::StatusCode::BAD_GATEWAY, "gateway text")
-            .unwrap_err();
-        assert!(err.to_string().contains("gateway text"));
-    }
-
-    #[test]
-    fn ok_json_trusts_the_status_not_a_flag() {
-        let parsed = ok_json::<AssetPutResponse>(
-            reqwest::StatusCode::OK,
-            r#"{"sha256":"abc","assets_path":"a/b","already_present":true}"#,
-        )
-        .unwrap();
-        assert!(parsed.already_present);
-        assert!(
-            ok_json::<AssetPutResponse>(reqwest::StatusCode::INTERNAL_SERVER_ERROR, "{}").is_err()
-        );
-        // A success whose body cannot be read is a failure that names the problem.
-        let err = ok_json::<AssetPutResponse>(reqwest::StatusCode::OK, "not json").unwrap_err();
-        assert!(err.to_string().contains("not json"));
     }
 }
