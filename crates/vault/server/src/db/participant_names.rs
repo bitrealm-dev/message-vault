@@ -3,9 +3,12 @@
 //! ADR-0006: the Contact's name, else what that backup called them in that
 //! conversation, else the handle. Every route that names a participant calls
 //! [`load_for_conversations`], so one person cannot show two names on one
-//! screen. `participants.contact_id` is deliberately not consulted — a handle
-//! counts as a Contact's the moment it is on the Contact, which is what makes
-//! naming someone rename them everywhere at once.
+//! screen. `participants.contact_id` is not consulted for naming a
+//! participant who has a handle — that always routes through
+//! `contact_handles`, which is what makes renaming a Contact reach every
+//! conversation at once. A handle-less participant has no handle for
+//! `contact_handles` to key on, so for that one case `participants.contact_id`
+//! is used instead, because it is the only link to the Contact that exists.
 //!
 //! [`load_for_chat_handle`] is the same rule for the one conversation shape
 //! that has no participants rows to read: a backup that recorded the thread's
@@ -63,6 +66,12 @@ pub async fn load_for_conversations(
                                  h.raw, '') AS name,
                         h.raw AS handle,
                         COALESCE(NULLIF(trim(h.service), ''), h.handle_type) AS service,
+                        -- A handle-less participant's Contact link lives on
+                        -- p.contact_id (contact_handles has no handle to key
+                        -- on for them); a handle-bearing one's link is always
+                        -- ch.contact_id, never p.contact_id. Same rule below
+                        -- for joining contacts, so a renamed Contact reaches
+                        -- a handle-less participant's name too.
                         CASE WHEN p.handle_id IS NULL THEN p.contact_id ELSE ch.contact_id END
                           AS contact_id
                  FROM participants p
@@ -71,7 +80,8 @@ pub async fn load_for_conversations(
                  LEFT JOIN contact_handles ch
                    ON ch.handle_id = p.handle_id AND ch.account_id = conv.account_id
                  LEFT JOIN contacts c
-                   ON c.id = ch.contact_id AND c.account_id = conv.account_id
+                   ON c.id = CASE WHEN p.handle_id IS NULL THEN p.contact_id ELSE ch.contact_id END
+                  AND c.account_id = conv.account_id
                  WHERE p.conversation_id IN ({placeholders})
                  ORDER BY p.conversation_id, p.id"
             )
@@ -418,5 +428,40 @@ mod tests {
         assert_eq!(participants[1].handle, None);
         assert_eq!(participants[1].service, None);
         assert_eq!(participants[1].contact_id, Some(address_less_contact));
+    }
+
+    /// The module's founding guarantee — naming a Contact renames them in
+    /// every conversation at once — has to hold for a handle-less
+    /// participant too, even though nothing ever rewrites
+    /// `participants.name_alias` after import (ADR-0006 keeps it as the
+    /// backup's own record). The only way a rename can reach them is if the
+    /// `contacts` join keys on `p.contact_id` for this case, exactly as the
+    /// `contact_id` column already does.
+    #[tokio::test]
+    async fn renaming_the_contact_renames_an_address_less_participant_too() {
+        let (pool, _dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let (conversation_id, _handle_id) = seed(&mut conn, "+15555550900", None).await;
+        sqlx::query("DELETE FROM participants WHERE conversation_id = $1")
+            .bind(conversation_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let contact_id = seed_address_less(&mut conn, conversation_id, "Sarah Vale").await;
+
+        sqlx::query("UPDATE contacts SET preferred_name = 'Sarah Connor' WHERE id = $1")
+            .bind(contact_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let loaded = load_for_conversations(&mut conn, &[conversation_id])
+            .await
+            .unwrap();
+        assert_eq!(
+            loaded[&conversation_id][0].name, "Sarah Connor",
+            "the Contact's new name never reaches an address-less participant \
+             unless the contacts join keys on p.contact_id for them"
+        );
     }
 }
