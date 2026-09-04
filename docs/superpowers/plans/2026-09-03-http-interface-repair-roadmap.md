@@ -20,7 +20,7 @@ the spec's wording; for everything else, the spec wins.
 | 5 | Trash module and four routes | Trash | merged, #329 |
 | 6 | One query builder on the web; shared example file | Query text on the web | merged, #332 |
 | 7 | One test fixture; route-level tests | Tests and fixtures | merged, #341 |
-| 8 | Named-set route files folded | Named sets | **next** |
+| 8 | Named-set route files folded | Named sets | merged, #347 |
 
 Plans so far: `2026-09-03-import-failures-and-schema-docs.md` (PR 1),
 `2026-09-03-route-convention.md` (PR 2),
@@ -28,7 +28,11 @@ Plans so far: `2026-09-03-import-failures-and-schema-docs.md` (PR 1),
 `2026-09-04-conversation-read-routes.md` (PR 4),
 `2026-09-04-trash-routes.md` (PR 5),
 `2026-09-04-web-query-builder.md` (PR 6),
-`2026-09-04-tests-and-fixtures.md` (PR 7).
+`2026-09-04-tests-and-fixtures.md` (PR 7),
+`2026-09-04-named-sets.md` (PR 8).
+
+**All eight have shipped. This roadmap is finished**; what is left of the
+repair lives in the issues named below, not in a next pull request.
 
 ## How a pull request is delivered
 
@@ -194,41 +198,54 @@ handler's own body-reading code produces it** — `read_body_limited`,
 `extract::Json` applies uniformly to every body-carrying route and is a
 transport concern, not a route's contract.
 
-## PR 8: Named sets
+## PR 8: Named sets — merged, #347
 
-Spec section "Named sets".
+Spec section "Named sets". Plan:
+`docs/superpowers/plans/2026-09-04-named-sets.md`.
 
-Inventory before planning:
+`contact_groups_api.rs` and `message_tags_api.rs` are gone. Their twelve
+handlers come from one `named_set_routes!` macro in `named_set_api.rs`, which
+is now the whole HTTP surface for both collections. `docs/src/assets/openapi.json`
+and `web/src/lib/vaultApi.types.ts` are byte-identical to what they were
+before, which is the check that proves no route moved: `operationId` comes
+from a handler's function name and `summary` from its doc comment's first
+line, so any drift shows up in the generated document immediately.
 
-```
-ls crates/vault/server/src | grep -E 'contact_groups_api|message_tags_api|named_set_api'
-```
+Two things learned that the next macro-shaped job in this crate will want:
 
-Done when: `contact_groups_api.rs` and `message_tags_api.rs` are gone, the
-routes and their OpenAPI operations are unchanged
-(`git diff main -- docs/src/assets/openapi.json` shows nothing), and
-issue #281 is closed by the pull request; `check-pr.sh` passes.
+- `#[utoipa::path]` does survive `macro_rules!` expansion, and
+  `utoipa_axum::routes!` resolves the type it generates from another module.
+- `path = concat!("/v1/", $base)` does not work — utoipa parses the attribute
+  before `concat!` would expand — so a macro like this takes every path
+  spelled out rather than composing it.
 
-What PR 8 inherits:
+Issue #281 said to unify only when a third named-set collection appeared,
+because at two copies a macro costs more clarity than it saves. That was
+right for the code it was written against; by the time this pull request
+started, earlier work in this roadmap had already moved the DTOs and the six
+operations into `named_set_api.rs`, so the two files held nothing a macro
+could obscure. Closed by #347.
 
-- `crates/vault/server/src/test_support.rs` is the fixture. New tests use
-  `serve()`, `test_vault()`, `TestVault::account()`, and
-  `seed_conversation`; do not add a `fn setup()` and do not bind a listener.
-  Three helpers in `server.rs` still bind their own — `get_path`,
-  `cors_preflight`, and `auth_route_status` — tracked as #340, not PR 8's
-  work.
-- The routes are unchanged, so `docs/src/assets/openapi.json` must not move.
-  If it does, the fold changed a route and the fold is wrong. Regenerate and
-  diff rather than trusting the annotations to be untouched.
-- `openapi::tests::committed_openapi_matches_dump` pins the JSON to the
-  annotations, and `scripts/check-generated-api-types.sh` pins
-  `web/src/lib/vaultApi.types.ts` to the JSON. Both must stay green with an
-  empty diff.
-- Open against the vault server but not PR 8's to fix: #334 (multipart
-  imports capped at 2 MiB by Axum's inherited `DefaultBodyLimit`), #337 (the
-  multipart import success path has no test and possibly no caller), #339
-  (`db/engine.rs` `test_pool()` is hard-wired to SQLite, so the Postgres CI
-  job runs almost the whole suite on SQLite), and #340.
+## What the repair did not finish
+
+The eight pull requests are done. These are open against the vault server and
+were found along the way rather than planned:
+
+- **#334** — multipart imports are capped at 2 MiB by Axum's inherited
+  `DefaultBodyLimit` while the configured limit is 512 MiB. The JSONL path is
+  unaffected.
+- **#337** — the multipart import success path has no test and possibly no
+  caller: the push client posts raw JSONL and the web app never sends
+  `FormData`. Cross-linked to #334, because retiring that branch would settle
+  the cap question.
+- **#339** — `db/engine.rs` `test_pool()` is hard-wired to SQLite and never
+  reads `MV_TEST_POSTGRES_URL`, so the Postgres CI job runs almost the whole
+  suite on SQLite. A green tick there is a build-and-compile signal, not a
+  portability check.
+- **#340** — `get_path`, `cors_preflight` and `auth_route_status` in
+  `server.rs` still bind their own listeners. Finishing the consolidation
+  needs `serve()` to accept a `Router`, since `auth_route_status` serves
+  `auth_public_router()`.
 
 ## Out of scope
 
