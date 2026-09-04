@@ -1076,6 +1076,23 @@ export interface components {
             sha256?: string | null;
             upload_id?: string | null;
         };
+        /** @description One attachment of an exported message. */
+        Attachment: {
+            /** @description True for sticker files. */
+            is_sticker?: boolean;
+            /** @description MIME type, when known. */
+            mime_type?: string | null;
+            /** @description Why the file is missing, when it is. */
+            missing_reason?: string | null;
+            /** @description File name from the export. */
+            original_name?: string | null;
+            /** @description Path inside the export. */
+            path?: string | null;
+            /** @description Content fingerprint of the stored bytes. */
+            sha256?: string | null;
+            /** @description OCR/ASR transcription, when processed. */
+            transcription?: string | null;
+        };
         /** @description Token check result: account, username, sources. */
         AuthCheckResponse: {
             account_id?: string | null;
@@ -1498,39 +1515,6 @@ export interface components {
             /** @description Human-readable description of the failure. */
             error: string;
         };
-        /** @description One attachment of an exported message. */
-        ExportAttachment: {
-            /** @description True for sticker files. */
-            is_sticker?: boolean;
-            /** @description MIME type, when known. */
-            mime_type?: string | null;
-            /** @description Why the file is missing, when it is. */
-            missing_reason?: string | null;
-            /** @description File name from the export. */
-            original_name?: string | null;
-            /** @description Path inside the export. */
-            path?: string | null;
-            /** @description Content fingerprint of the stored bytes. */
-            sha256?: string | null;
-            /** @description OCR/ASR transcription, when processed. */
-            transcription?: string | null;
-        };
-        /** @description The conversation a message belongs to. */
-        ExportConversation: {
-            /** @description Original chat id from the export. */
-            chat_identifier: string;
-            /** @description `individual` or `group`. */
-            conversation_type: string;
-            /** @description Group label, when set. */
-            group_title?: string | null;
-            /**
-             * Format: int64
-             * @description Conversation row id.
-             */
-            id: number;
-            /** @description Participants of the conversation. */
-            participants: components["schemas"]["Participant"][];
-        };
         /** @description Match counts for an export query. */
         ExportCountResponse: {
             /**
@@ -1553,75 +1537,6 @@ export interface components {
              * @description Sum of known `size_bytes` for those unique fingerprints (unknown sizes omitted).
              */
             total_bytes: number;
-        };
-        /** @description One exported message. */
-        ExportMessage: {
-            /** @description Attachments on this message. */
-            attachments: components["schemas"]["ExportAttachment"][];
-            /** @description The conversation this message belongs to. */
-            conversation: components["schemas"]["ExportConversation"];
-            /** @description Export GUID for replies and grouping. */
-            guid?: string | null;
-            /**
-             * Format: int64
-             * @description Message row id.
-             */
-            id: number;
-            /** @description True for group announcements. */
-            is_announcement: boolean;
-            /** @description True for messages sent by the account owner. */
-            is_from_me: boolean;
-            /** @description True when part of a reply thread. */
-            is_reply: boolean;
-            /**
-             * Format: int64
-             * @description Replies in this thread.
-             */
-            num_replies: number;
-            /** @description Sender handle for incoming messages. */
-            sender?: string | null;
-            /** @description Platform service, e.g. `imessage`, when known. */
-            service?: string | null;
-            /**
-             * Format: int64
-             * @description Ordering key within the conversation.
-             */
-            sort_order: number;
-            /** @description Import source id. */
-            source: string;
-            /** @description Subject line, when set. */
-            subject?: string | null;
-            /** @description Reactions on this message. */
-            tapbacks: components["schemas"]["ExportTapback"][];
-            /** @description Body text, when present. */
-            text?: string | null;
-            /** @description GUID of the message this replies to. */
-            thread_originator_guid?: string | null;
-            /**
-             * Format: int64
-             * @description Part index of the originator (for tapbacks).
-             */
-            thread_originator_part?: number | null;
-            /** @description Message timestamp (local). */
-            timestamp: string;
-            /** @description UTC timestamp, when known. */
-            timestamp_utc?: string | null;
-        };
-        /** @description One tapback reaction on an exported message. */
-        ExportTapback: {
-            /** @description Emoji form of the reaction, when one exists. */
-            emoji?: string | null;
-            /** @description True when the account owner reacted. */
-            is_from_me: boolean;
-            /** @description Reaction type, e.g. `love`. */
-            kind: string;
-            /**
-             * Format: int64
-             * @description Attachment part the reaction applies to.
-             */
-            part_index: number;
-            /** @description Reactor handle for incoming reactions. */
-            sender?: string | null;
         };
         /** @description One word as the web and the docs see it. */
         FieldDoc: {
@@ -1878,6 +1793,75 @@ export interface components {
             add?: number[];
             remove?: number[];
         };
+        /** @description One exported message. */
+        Message: {
+            /** @description Attachments on this message. */
+            attachments: components["schemas"]["Attachment"][];
+            /** @description The conversation this message belongs to. */
+            conversation: components["schemas"]["MessageConversation"];
+            /** @description Export GUID for replies and grouping. */
+            guid?: string | null;
+            /**
+             * Format: int64
+             * @description Message row id.
+             */
+            id: number;
+            /** @description True for group announcements. */
+            is_announcement: boolean;
+            /** @description True for messages sent by the account owner. */
+            is_from_me: boolean;
+            /** @description True when part of a reply thread. */
+            is_reply: boolean;
+            /**
+             * Format: int64
+             * @description Replies in this thread.
+             */
+            num_replies: number;
+            /** @description Sender handle for incoming messages. */
+            sender?: string | null;
+            /** @description Platform service, e.g. `imessage`, when known. */
+            service?: string | null;
+            /**
+             * Format: int64
+             * @description Ordering key within the conversation.
+             */
+            sort_order: number;
+            /** @description Import source id. */
+            source: string;
+            /** @description Subject line, when set. */
+            subject?: string | null;
+            /** @description Reactions on this message. */
+            tapbacks: components["schemas"]["Tapback"][];
+            /** @description Body text, when present. */
+            text?: string | null;
+            /** @description GUID of the message this replies to. */
+            thread_originator_guid?: string | null;
+            /**
+             * Format: int64
+             * @description Part index of the originator (for tapbacks).
+             */
+            thread_originator_part?: number | null;
+            /** @description Message timestamp (local). */
+            timestamp: string;
+            /** @description UTC timestamp, when known. */
+            timestamp_utc?: string | null;
+        };
+        /** @description The conversation a message belongs to. */
+        MessageConversation: {
+            /** @description Original chat id from the export. */
+            chat_identifier: string;
+            /** @description `individual` or `group`. */
+            conversation_type: string;
+            /** @description Group label, when set. */
+            group_title?: string | null;
+            /**
+             * Format: int64
+             * @description Conversation row id.
+             */
+            id: number;
+            /** @description Participants of the conversation. */
+            participants: components["schemas"]["Participant"][];
+        };
         /** @description One Contact Group or Message Tag: its id and name. */
         NamedSet: {
             /** Format: int64 */
@@ -1967,13 +1951,13 @@ export interface components {
             total: number;
         };
         /** @description One page of a list. */
-        Page_ExportMessage: {
+        Page_Message: {
             /** @description The rows on this page. */
             items: {
                 /** @description Attachments on this message. */
-                attachments: components["schemas"]["ExportAttachment"][];
+                attachments: components["schemas"]["Attachment"][];
                 /** @description The conversation this message belongs to. */
-                conversation: components["schemas"]["ExportConversation"];
+                conversation: components["schemas"]["MessageConversation"];
                 /** @description Export GUID for replies and grouping. */
                 guid?: string | null;
                 /**
@@ -2006,7 +1990,7 @@ export interface components {
                 /** @description Subject line, when set. */
                 subject?: string | null;
                 /** @description Reactions on this message. */
-                tapbacks: components["schemas"]["ExportTapback"][];
+                tapbacks: components["schemas"]["Tapback"][];
                 /** @description Body text, when present. */
                 text?: string | null;
                 /** @description GUID of the message this replies to. */
@@ -2144,6 +2128,22 @@ export interface components {
         SetPasswordRequest: {
             /** @description The new password. Must satisfy the vault's password policy. */
             password: string;
+        };
+        /** @description One tapback reaction on an exported message. */
+        Tapback: {
+            /** @description Emoji form of the reaction, when one exists. */
+            emoji?: string | null;
+            /** @description True when the account owner reacted. */
+            is_from_me: boolean;
+            /** @description Reaction type, e.g. `love`. */
+            kind: string;
+            /**
+             * Format: int64
+             * @description Attachment part the reaction applies to.
+             */
+            part_index: number;
+            /** @description Reactor handle for incoming reactions. */
+            sender?: string | null;
         };
         /** @description One of an account's largest attachments by byte size. */
         TopAttachment: {
@@ -4207,7 +4207,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Page_ExportMessage"];
+                    "application/json": components["schemas"]["Page_Message"];
                 };
             };
             400: {

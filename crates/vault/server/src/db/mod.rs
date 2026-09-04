@@ -4,6 +4,7 @@
 pub mod account_profile;
 pub mod api_tokens;
 pub mod contacts;
+pub mod conversation_messages;
 pub mod dialect;
 pub mod engine;
 pub mod handles;

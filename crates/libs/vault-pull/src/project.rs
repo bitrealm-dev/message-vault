@@ -12,17 +12,17 @@ use message_ir::{
 };
 use serde_json::{Value, json};
 
-use crate::http::{ExportAttachment, ExportMessage, ExportTapback};
+use crate::http::{Attachment, Message, Tapback};
 
 /// Grouping key so messages from the same chat and backup source stay together.
-pub fn conversation_key(msg: &ExportMessage) -> String {
+pub fn conversation_key(msg: &Message) -> String {
     format!("{}::{}", msg.source, msg.conversation.chat_identifier)
 }
 
 /// Build one conversation document from a seed message and the mapped rows.
 pub fn build_document(
     source: &str,
-    seed: &ExportMessage,
+    seed: &Message,
     messages: Vec<IrMessage>,
 ) -> ConversationDocument {
     let conversation_type = IrConversationType::parse(&seed.conversation.conversation_type);
@@ -67,7 +67,7 @@ pub fn build_document(
 /// # Errors
 ///
 /// Returns an error when the timestamp cannot be parsed.
-pub fn to_ir_message(msg: &ExportMessage, skip_attachments: bool) -> Result<IrMessage> {
+pub fn to_ir_message(msg: &Message, skip_attachments: bool) -> Result<IrMessage> {
     let timestamp_unix_ms = parse_timestamp_unix_ms(
         msg.timestamp_utc
             .as_deref()
@@ -142,7 +142,7 @@ pub fn to_ir_message(msg: &ExportMessage, skip_attachments: bool) -> Result<IrMe
 }
 
 /// Copy participant handles and display names from the seed export message.
-fn participants_from_seed(seed: &ExportMessage) -> Vec<IrParticipant> {
+fn participants_from_seed(seed: &Message) -> Vec<IrParticipant> {
     let mut participants = Vec::with_capacity(seed.conversation.participants.len());
     for p in &seed.conversation.participants {
         participants.push(IrParticipant {
@@ -161,7 +161,7 @@ fn participants_from_seed(seed: &ExportMessage) -> Vec<IrParticipant> {
 }
 
 /// Map one vault attachment record onto the shared attachment type.
-fn to_ir_attachment(att: &ExportAttachment) -> IrAttachment {
+fn to_ir_attachment(att: &Attachment) -> IrAttachment {
     let path = att
         .path
         .clone()
@@ -181,7 +181,7 @@ fn to_ir_attachment(att: &ExportAttachment) -> IrAttachment {
 }
 
 /// JSON array of tapbacks (reactions), or `None` when the message has none.
-fn tapbacks_json(tapbacks: &[ExportTapback]) -> Option<Value> {
+fn tapbacks_json(tapbacks: &[Tapback]) -> Option<Value> {
     if tapbacks.is_empty() {
         return None;
     }
@@ -199,7 +199,7 @@ fn tapbacks_json(tapbacks: &[ExportTapback]) -> Option<Value> {
 }
 
 /// Choose SMS, MMS, iMessage, or announcement from service and attachments.
-fn infer_kind(msg: &ExportMessage, service: IrService) -> IrMessageKind {
+fn infer_kind(msg: &Message, service: IrService) -> IrMessageKind {
     if msg.is_announcement {
         return IrMessageKind::Announcement;
     }
@@ -269,7 +269,7 @@ fn parse_timestamp_unix_ms(raw: &str) -> Result<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::http::{ExportConversation, ExportParticipant};
+    use crate::http::{ExportParticipant, MessageConversation};
 
     #[test]
     fn parses_rfc3339() {
@@ -279,7 +279,7 @@ mod tests {
 
     #[test]
     fn maps_basic_message() {
-        let msg = ExportMessage {
+        let msg = Message {
             id: 1,
             source: "imessage".into(),
             guid: Some("g1".into()),
@@ -294,7 +294,7 @@ mod tests {
             thread_originator_guid: None,
             thread_originator_part: None,
             num_replies: 0,
-            conversation: ExportConversation {
+            conversation: MessageConversation {
                 id: 9,
                 chat_identifier: "+1".into(),
                 service: Some("iMessage".into()),
@@ -340,9 +340,9 @@ mod tests {
         assert_eq!(participants[0].display_name, None);
     }
 
-    /// A minimal `ExportMessage` carrying exactly one conversation participant.
-    fn seed_message_with_participant(participant: ExportParticipant) -> ExportMessage {
-        ExportMessage {
+    /// A minimal `Message` carrying exactly one conversation participant.
+    fn seed_message_with_participant(participant: ExportParticipant) -> Message {
+        Message {
             id: 1,
             source: "imessage".into(),
             guid: Some("g1".into()),
@@ -357,7 +357,7 @@ mod tests {
             thread_originator_guid: None,
             thread_originator_part: None,
             num_replies: 0,
-            conversation: ExportConversation {
+            conversation: MessageConversation {
                 id: 9,
                 chat_identifier: "+1".into(),
                 service: Some("iMessage".into()),

@@ -9,7 +9,7 @@ pub mod journal;
 mod project;
 mod run;
 
-pub use http::ExportMessage;
+pub use http::Message;
 pub use journal::{PULL_JOURNAL_NAME, PullJournalEvent, PullJournalState, journal_path};
 pub use run::{
     DEFAULT_ASSET_DOWNLOAD_WORKERS, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, ProgressEvent, ProgressFn,

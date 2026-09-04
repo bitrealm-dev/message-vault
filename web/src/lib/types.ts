@@ -19,13 +19,13 @@ export type Conversation = Schema["ConversationSummary"];
 export type MessageParticipant = Schema["Participant"];
 
 /** The conversation a message belongs to, as the Export routes return it. */
-export type MessageConversation = Schema["ExportConversation"];
+export type MessageConversation = Schema["MessageConversation"];
 
 /** One attachment on a message. */
-export type MessageAttachment = Schema["ExportAttachment"];
+export type MessageAttachment = Schema["Attachment"];
 
 /** One tapback reaction on a message. */
-export type MessageTapback = Schema["ExportTapback"];
+export type MessageTapback = Schema["Tapback"];
 
 export interface Reaction {
   emoji: string;
@@ -61,7 +61,7 @@ export interface EditEntry {
  * are kept typed rather than deleted so that removing those branches stays a
  * separate, reviewable change.
  */
-export type Message = Schema["ExportMessage"] & {
+export type Message = Schema["Message"] & {
   reactions?: Reaction[]; // iMessage tapbacks, Discord reactions
   reply_to_message?: MessageRef; // WhatsApp reply chains
   embeds?: Embed[]; // Discord embeds

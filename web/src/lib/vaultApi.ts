@@ -233,8 +233,8 @@ export function getConversationSources(
 export function exportMessages(
   params: { q: string; offset?: number; limit?: number },
   opts?: VaultRequestOptions,
-): Promise<Schema["Page_ExportMessage"]> {
-  return apiClient.get<Schema["Page_ExportMessage"]>(
+): Promise<Schema["Page_Message"]> {
+  return apiClient.get<Schema["Page_Message"]>(
     withQuery("/v1/export/messages", query(params)),
     opts,
   );

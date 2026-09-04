@@ -19,7 +19,7 @@ pub use vault_http::HttpSession;
 #[derive(Debug, Deserialize)]
 pub struct ExportMessagesPage {
     #[serde(default)]
-    pub items: Vec<ExportMessage>,
+    pub items: Vec<Message>,
     #[serde(default)]
     pub total: u64,
 }
@@ -44,7 +44,7 @@ fn error_sentence(body: &str, _status: u16) -> String {
 
 #[derive(Debug, Clone, Deserialize)]
 /// One message row from the vault export API.
-pub struct ExportMessage {
+pub struct Message {
     pub id: i64,
     pub source: String,
     #[serde(default)]
@@ -70,16 +70,16 @@ pub struct ExportMessage {
     pub thread_originator_part: Option<i64>,
     #[serde(default)]
     pub num_replies: i64,
-    pub conversation: ExportConversation,
+    pub conversation: MessageConversation,
     #[serde(default)]
-    pub attachments: Vec<ExportAttachment>,
+    pub attachments: Vec<Attachment>,
     #[serde(default)]
-    pub tapbacks: Vec<ExportTapback>,
+    pub tapbacks: Vec<Tapback>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 /// Chat metadata attached to each export message.
-pub struct ExportConversation {
+pub struct MessageConversation {
     pub id: i64,
     pub chat_identifier: String,
     #[serde(default)]
@@ -103,7 +103,7 @@ pub struct ExportParticipant {
 
 #[derive(Debug, Clone, Deserialize)]
 /// One attachment on an export message (path, fingerprint, size).
-pub struct ExportAttachment {
+pub struct Attachment {
     #[serde(default)]
     pub path: Option<String>,
     #[serde(default)]
@@ -125,7 +125,7 @@ pub struct ExportAttachment {
 
 #[derive(Debug, Clone, Deserialize)]
 /// One reaction (tapback) on an export message.
-pub struct ExportTapback {
+pub struct Tapback {
     #[serde(default)]
     pub part_index: i64,
     pub kind: String,
