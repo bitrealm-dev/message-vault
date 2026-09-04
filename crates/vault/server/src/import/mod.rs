@@ -1435,7 +1435,10 @@ pub(crate) async fn import_handler(
     if is_multipart_content_type(ct) {
         let multipart = Multipart::from_request(request, &state)
             .await
-            .map_err(|e| ApiError::BadRequest(format!("invalid multipart body: {e}")))?;
+            // Axum already picked the right status (413 over the body limit,
+            // 400 for a missing boundary); keep it rather than flattening
+            // everything to 400, exactly as `extract::Json` does.
+            .map_err(|e| ApiError::Status(e.status(), e.body_text()))?;
         return import_multipart(state, query, multipart).await;
     }
 
@@ -3046,5 +3049,40 @@ mod tests {
         let err: serde_json::Value = serde_json::from_str(&text)
             .unwrap_or_else(|_| panic!("expected a JSON error body, got: {text}"));
         assert_eq!(err["error"], "query param source is required");
+    }
+
+    /// A malformed multipart body keeps the status Axum picked, the way
+    /// `extract::Json` does. ADR-0005: the status carries the meaning.
+    #[tokio::test]
+    async fn a_malformed_multipart_body_answers_axums_status_as_json() {
+        let vault = crate::test_support::test_vault().await;
+        let user =
+            crate::test_support::register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+
+        // A multipart Content-Type with no boundary parameter: Axum's
+        // `Multipart` extractor rejects it before reading a byte.
+        let (status, text) = crate::test_support::post_raw(
+            &vault.state,
+            "/v1/import?source=imessage&mode=append",
+            &user.token,
+            "multipart/form-data",
+            "not really multipart",
+        )
+        .await;
+        let body: serde_json::Value =
+            serde_json::from_str(&text).unwrap_or_else(|_| panic!("non-JSON body: {text}"));
+        assert!(body["error"].is_string(), "{body}");
+        assert!(
+            !body["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("invalid multipart body:"),
+            "the handler must pass Axum's own sentence through, not wrap it: {body}"
+        );
+        assert_eq!(
+            status,
+            axum::http::StatusCode::BAD_REQUEST,
+            "a missing boundary is Axum's 400: {text}"
+        );
     }
 }
