@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::extract::{Json, Path as AxumPath, Query};
-use anyhow::{Result as AnyResult, bail};
+use anyhow::Result as AnyResult;
 use axum::extract::State;
 use axum::http::StatusCode;
 use message_ir::HandleType;
@@ -893,6 +893,55 @@ async fn contact_exists(
     Ok(found.is_some())
 }
 
+/// Why a contact edit did not happen.
+///
+/// The two cases answer with different statuses and the difference is not one
+/// a message can be read for, so it is carried in the type. It used to be
+/// guessed: `mutate_contact` returned `anyhow` and the handler downcast the
+/// error, calling it a 400 unless it found a `sqlx::Error` underneath. That
+/// made "not a database error" mean "the person's fault", so any other
+/// internal failure — one wrapped in `context`, one from a helper — reached
+/// the person as a 400 wearing an internal sentence.
+#[derive(Debug)]
+pub enum ContactEditError {
+    /// The request asks for something the vault will not do, and the person
+    /// can fix it by changing the request. The sentence is written for them.
+    Refused(String),
+    /// Something failed that changing the request would not help. The cause
+    /// goes to the log, not to the person.
+    Failed(anyhow::Error),
+}
+
+impl From<sqlx::Error> for ContactEditError {
+    fn from(error: sqlx::Error) -> Self {
+        Self::Failed(error.into())
+    }
+}
+
+/// Anything a helper hands back through `?` is a failure, not a refusal: a
+/// refusal is raised deliberately, here, as [`ContactEditError::Refused`].
+impl From<anyhow::Error> for ContactEditError {
+    fn from(error: anyhow::Error) -> Self {
+        Self::Failed(error)
+    }
+}
+
+impl From<ContactEditError> for ApiError {
+    fn from(error: ContactEditError) -> Self {
+        match error {
+            ContactEditError::Refused(message) => Self::BadRequest(message),
+            ContactEditError::Failed(cause) => Self::Internal(format!("{cause:#}")),
+        }
+    }
+}
+
+/// Shorthand for the eight things a contact edit refuses.
+macro_rules! refuse {
+    ($($arg:tt)*) => {
+        return Err(ContactEditError::Refused(format!($($arg)*)))
+    };
+}
+
 /// Apply a contact mutation. Returns false when the contact is missing.
 ///
 /// # Errors
@@ -903,7 +952,7 @@ pub async fn mutate_contact(
     account_id: &str,
     contact_id: i64,
     body: &ContactMutationBody,
-) -> AnyResult<bool> {
+) -> Result<bool, ContactEditError> {
     if !contact_exists(conn, account_id, contact_id).await? {
         return Ok(false);
     }
@@ -918,13 +967,13 @@ pub async fn mutate_contact(
     .filter(|b| *b)
     .count();
     if set_count != 1 {
-        bail!("exactly one of name, add_handle, update_handle, remove_handle is required");
+        refuse!("exactly one of name, add_handle, update_handle, remove_handle is required");
     }
 
     if let Some(name) = body.name.as_ref() {
         let name = name.trim();
         if name.is_empty() {
-            bail!("name must not be empty");
+            refuse!("name must not be empty");
         }
         // Typing a name in the drawer is the most deliberate naming act in
         // the product, so the row stops being the import's and becomes the
@@ -937,7 +986,7 @@ pub async fn mutate_contact(
     if let Some(add) = body.add_handle.as_ref() {
         let raw = add.handle.trim();
         if raw.is_empty() {
-            bail!("handle must not be empty");
+            refuse!("handle must not be empty");
         }
         let handle_id = ensure_handle_row(conn, account_id, raw, add.service.as_deref()).await?;
         // One contact per handle (PK on contact_handles.handle_id + account).
@@ -958,20 +1007,20 @@ pub async fn mutate_contact(
             crate::db::contacts::Origin::User,
         )
         .await?;
-        return touch_ok(conn, account_id, contact_id).await;
+        return Ok(touch_ok(conn, account_id, contact_id).await?);
     }
 
     if let Some(upd) = body.update_handle.as_ref() {
         let prev = upd.previous_handle.trim();
         let next = upd.handle.trim();
         if prev.is_empty() || next.is_empty() {
-            bail!("previous_handle and handle must not be empty");
+            refuse!("previous_handle and handle must not be empty");
         }
         let Some(old_id) =
             find_contact_handle_id(conn, account_id, contact_id, prev, upd.service.as_deref())
                 .await?
         else {
-            bail!("previous handle not found on contact");
+            refuse!("previous handle not found on contact");
         };
         let new_id = ensure_handle_row(conn, account_id, next, upd.service.as_deref()).await?;
         if old_id == new_id {
@@ -986,7 +1035,7 @@ pub async fn mutate_contact(
                     .bind(new_id)
                     .execute(&mut *conn)
                     .await?;
-                return touch_ok(conn, account_id, contact_id).await;
+                return Ok(touch_ok(conn, account_id, contact_id).await?);
             }
             return Ok(true);
         }
@@ -1004,7 +1053,7 @@ pub async fn mutate_contact(
             .bind(old_id)
             .execute(&mut *conn)
             .await?;
-            return touch_ok(conn, account_id, contact_id).await;
+            return Ok(touch_ok(conn, account_id, contact_id).await?);
         }
         sqlx::query(
             "UPDATE contact_handles SET handle_id = $1
@@ -1016,19 +1065,19 @@ pub async fn mutate_contact(
         .bind(old_id)
         .execute(&mut *conn)
         .await?;
-        return touch_ok(conn, account_id, contact_id).await;
+        return Ok(touch_ok(conn, account_id, contact_id).await?);
     }
 
     if let Some(rem) = body.remove_handle.as_ref() {
         let raw = rem.handle.trim();
         if raw.is_empty() {
-            bail!("handle must not be empty");
+            refuse!("handle must not be empty");
         }
         let Some(handle_id) =
             find_contact_handle_id(conn, account_id, contact_id, raw, rem.service.as_deref())
                 .await?
         else {
-            bail!("handle not found on contact");
+            refuse!("handle not found on contact");
         };
         sqlx::query(
             "DELETE FROM contact_handles
@@ -1039,7 +1088,7 @@ pub async fn mutate_contact(
         .bind(handle_id)
         .execute(&mut *conn)
         .await?;
-        return touch_ok(conn, account_id, contact_id).await;
+        return Ok(touch_ok(conn, account_id, contact_id).await?);
     }
 
     Ok(true)
@@ -1050,12 +1099,12 @@ async fn require_handle_available(
     account_id: &str,
     handle_id: i64,
     contact_id: i64,
-) -> AnyResult<Option<i64>> {
+) -> Result<Option<i64>, ContactEditError> {
     let existing = contact_id_for_handle(conn, account_id, handle_id).await?;
     if let Some(other) = existing
         && other != contact_id
     {
-        bail!("handle already linked to another contact");
+        refuse!("handle already linked to another contact");
     }
     Ok(existing)
 }
@@ -1166,20 +1215,6 @@ pub(crate) async fn contact_detail_handler(
         .ok_or_else(|| ApiError::NotFound("contact not found".into()))
 }
 
-/// Turn a contact edit's error into the HTTP failure a caller should see.
-///
-/// `mutate_contact` returns `anyhow` so that its validation messages ("handle
-/// already linked to another contact") reach the person. A database error
-/// is not something the person can fix by changing the request, so it is a
-/// 500 with the cause on stderr rather than a 400 wearing sqlx's words.
-fn classify_mutation_error(err: anyhow::Error) -> ApiError {
-    if err.downcast_ref::<sqlx::Error>().is_some() {
-        ApiError::Internal(format!("{err:#}"))
-    } else {
-        ApiError::BadRequest(err.to_string())
-    }
-}
-
 /// Rename a contact or change its linked handles.
 #[utoipa::path(
     patch,
@@ -1205,7 +1240,7 @@ pub(crate) async fn contact_mutate_handler(
     let mut conn = state.db.acquire().await?;
     match mutate_contact(&mut conn, &auth.account_id, contact_id, &body).await {
         Ok(false) => Err(ApiError::NotFound("contact not found".into())),
-        Err(e) => Err(classify_mutation_error(e)),
+        Err(e) => Err(e.into()),
         Ok(true) => get_contact_detail(&mut conn, &auth.account_id, contact_id)
             .await?
             .ok_or_else(|| ApiError::Internal("contact missing after mutate".into()))
@@ -1416,6 +1451,41 @@ mod tests {
         let response =
             post_json::<serde_json::Value>(&vault.state, "/v1/contacts/match", &token, body).await;
         assert_eq!(response["unknown"], serde_json::json!(["+15550100"]));
+    }
+
+    /// A refusal reaches the person as a 400 carrying the sentence written
+    /// for them, and a request that names no edit at all is refused the same
+    /// way. Both went through a downcast on the error's type before
+    /// `ContactEditError` existed.
+    #[tokio::test]
+    async fn a_refused_contact_edit_answers_400_with_the_persons_sentence() {
+        let (vault, token, account) = contacts_fixture_with_handles(&[]).await;
+        let mut conn = vault.state.db.acquire().await.unwrap();
+        let first =
+            insert_contact_with_handle(&mut conn, &account.account_id, "Ada", "+15555550100").await;
+        insert_contact_with_handle(&mut conn, &account.account_id, "Grace", "+15555550200").await;
+        drop(conn);
+
+        // Taking a handle that is already another contact's.
+        let (status, sentence) = crate::test_support::patch_failure(
+            &vault.state,
+            &format!("/v1/contacts/{first}"),
+            &token,
+            serde_json::json!({ "add_handle": { "handle": "+15555550200" } }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(sentence, "handle already linked to another contact");
+
+        // No edit named at all.
+        let status = crate::test_support::patch_status(
+            &vault.state,
+            &format!("/v1/contacts/{first}"),
+            &token,
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
@@ -2938,22 +3008,21 @@ mod tests {
     }
 
     #[test]
-    fn a_database_error_while_editing_a_contact_is_internal() {
-        let err = anyhow::Error::from(sqlx::Error::PoolClosed).context("update contact");
-        match super::classify_mutation_error(err) {
-            crate::server::ApiError::Internal(_) => {}
-            other => panic!("expected Internal, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn a_validation_error_while_editing_a_contact_is_bad_request() {
-        let err = anyhow::anyhow!("handle already linked to another contact");
-        match super::classify_mutation_error(err) {
-            crate::server::ApiError::BadRequest(m) => {
-                assert_eq!(m, "handle already linked to another contact");
-            }
+    fn a_refusal_is_the_persons_sentence_and_anything_else_is_internal() {
+        match ApiError::from(ContactEditError::Refused(
+            "handle already linked to another contact".into(),
+        )) {
+            ApiError::BadRequest(m) => assert_eq!(m, "handle already linked to another contact"),
             other => panic!("expected BadRequest, got {other:?}"),
+        }
+        // A database error reaches this type through `?`, so it is a failure
+        // by construction rather than by inspection of its message.
+        let failed: ContactEditError = anyhow::Error::from(sqlx::Error::PoolClosed)
+            .context("update contact")
+            .into();
+        match ApiError::from(failed) {
+            ApiError::Internal(_) => {}
+            other => panic!("expected Internal, got {other:?}"),
         }
     }
 

@@ -294,6 +294,25 @@ pub async fn patch_status(
     .0
 }
 
+/// PATCH a JSON body expecting a failure: the status and the `{error}`
+/// sentence the vault answered with.
+///
+/// A route test asserting only a status cannot tell a refusal the person can
+/// act on from a different refusal with the same status, so a route that
+/// starts answering the wrong sentence stays green.
+pub async fn patch_failure(
+    state: &AppState,
+    path: &str,
+    token: &str,
+    body: serde_json::Value,
+) -> (StatusCode, String) {
+    let response = request(state, reqwest::Method::PATCH, path, Some(token), Some(body)).await;
+    let status = response.status();
+    let body: serde_json::Value = response.json().await.unwrap();
+    let sentence = body["error"].as_str().unwrap_or_default().to_string();
+    (status, sentence)
+}
+
 /// PATCH a JSON body with a Bearer token and decode the JSON response.
 pub async fn patch_json<T: DeserializeOwned>(
     state: &AppState,
