@@ -253,6 +253,16 @@ export function getConversationSources(
   );
 }
 
+/** Put a conversation in the trash. Idempotent: trashing an already-trashed one still answers. */
+export function trashConversation(conversationId: number): Promise<void> {
+  return apiClient.post<void>(`/v1/conversations/${conversationId}/trash`, {});
+}
+
+/** Take a conversation out of the trash. Idempotent: restoring one that was not trashed still answers. */
+export function restoreConversation(conversationId: number): Promise<void> {
+  return apiClient.post<void>(`/v1/conversations/${conversationId}/restore`, {});
+}
+
 // ── Contacts ────────────────────────────────────────────────────────────────
 
 export type ContactListParams = { q?: string; limit?: number; offset?: number };
@@ -308,6 +318,16 @@ export function loadAddressBook(
   body: Schema["AddressBookBody"],
 ): Promise<Schema["AddressBookLoadResponse"]> {
   return apiClient.post<Schema["AddressBookLoadResponse"]>("/v1/contacts/address-book", body);
+}
+
+/** Put a contact in the trash. Idempotent: trashing an already-trashed one still answers. */
+export function trashContact(contactId: string | number): Promise<void> {
+  return apiClient.post<void>(`/v1/contacts/${encodeURIComponent(String(contactId))}/trash`, {});
+}
+
+/** Take a contact out of the trash. Idempotent: restoring one that was not trashed still answers. */
+export function restoreContact(contactId: string | number): Promise<void> {
+  return apiClient.post<void>(`/v1/contacts/${encodeURIComponent(String(contactId))}/restore`, {});
 }
 
 // ── Contact Groups ──────────────────────────────────────────────────────────
