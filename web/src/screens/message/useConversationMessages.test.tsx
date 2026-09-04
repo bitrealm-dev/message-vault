@@ -120,6 +120,49 @@ describe("useConversationMessages", () => {
     expect(result.current.loading).toBe(false);
   });
 
+  it("asks for a year with year=, and walks its pages until the total is covered", async () => {
+    // Page one of the unfiltered view, then a two-page year.
+    getMessages
+      .mockResolvedValueOnce(page([message(9)]))
+      .mockResolvedValueOnce({ items: [message(1), message(2)], total: 3, limit: 500, offset: 0 })
+      .mockResolvedValueOnce({ items: [message(3)], total: 3, limit: 500, offset: 2 });
+
+    const { result } = renderHook(({ id }: { id: number }) => useConversationMessages(id), {
+      initialProps: { id: 7 },
+      wrapper: VaultProviders,
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    // Browsing all years carries no year at all.
+    expect(getMessages).toHaveBeenNthCalledWith(
+      1,
+      7,
+      { offset: 0, limit: 50 },
+      expect.objectContaining({ signal: expect.anything() }),
+    );
+
+    act(() => result.current.selectYear(2020));
+    await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual([1, 2, 3]));
+
+    // The year is a `year=` parameter on the conversation's own messages
+    // route, asked for a whole page at a time, and paged until the vault's
+    // total is covered — not a `date:2020` term in a search query.
+    expect(getMessages).toHaveBeenNthCalledWith(
+      2,
+      7,
+      { offset: 0, limit: 500, year: 2020 },
+      expect.objectContaining({ signal: expect.anything() }),
+    );
+    expect(getMessages).toHaveBeenNthCalledWith(
+      3,
+      7,
+      { offset: 2, limit: 500, year: 2020 },
+      expect.objectContaining({ signal: expect.anything() }),
+    );
+    expect(getMessages).toHaveBeenCalledTimes(3);
+    expect(result.current.total).toBe(3);
+  });
+
   it("resets offset, activeYear, findTerm and activeMatch when the conversation changes", async () => {
     getMessages.mockResolvedValue(page([message(1)]));
 
