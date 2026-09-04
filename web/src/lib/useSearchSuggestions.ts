@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { type SearchField, type SearchList, useSearchFields } from "./searchFields";
+import { suggestion as suggestionTerm } from "./searchQuery";
 import { listContacts } from "./vaultApi";
 
 interface ContactName {
@@ -43,7 +44,11 @@ export function buildSearchSuggestions(args: {
     if (!field) return [];
     return field.values
       .filter((v) => v.startsWith(typed))
-      .map((v) => ({ id: `${word}:${v}`, label: `${word}:${v}`, insert: `${word}:${v} ` }));
+      .map((v) => ({
+        id: `${word}:${v}`,
+        label: `${word}:${v}`,
+        insert: `${suggestionTerm(word, v)} `,
+      }));
   }
   if (args.lastToken.length === 0) return [];
   const typed = args.lastToken.replace(/^-/, "").toLowerCase();

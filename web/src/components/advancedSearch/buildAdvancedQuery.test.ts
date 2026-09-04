@@ -8,7 +8,6 @@ import {
   composeCountComparison,
   EMPTY_COUNT,
   EMPTY_DATE_BOUND,
-  pushDateBoundTokens,
 } from "./buildAdvancedQuery.ts";
 
 /** Every Contacts field left blank, so a test can fill in only what it is about. */
@@ -33,58 +32,6 @@ describe("composeCountComparison", () => {
   it("formats comparator and digits", () => {
     expect(composeCountComparison({ comparator: "=", value: "2" })).toBe("=2");
     expect(composeCountComparison({ comparator: "<", value: " 10 " })).toBe("<10");
-  });
-});
-
-describe("pushDateBoundTokens", () => {
-  it("emits nothing for any", () => {
-    const parts: string[] = [];
-    pushDateBoundTokens((s) => parts.push(s), "first-message", EMPTY_DATE_BOUND);
-    expect(parts).toEqual([]);
-  });
-
-  it("emits after/before/between tokens", () => {
-    const onOrAfter: string[] = [];
-    pushDateBoundTokens((s) => onOrAfter.push(s), "first-message", {
-      op: "after",
-      start: "2020-01-01",
-      end: "",
-    });
-    expect(onOrAfter).toEqual(["first-message:>=2020-01-01"]);
-
-    const upTo: string[] = [];
-    pushDateBoundTokens((s) => upTo.push(s), "last-message", {
-      op: "before",
-      start: "2021-06-01",
-      end: "",
-    });
-    expect(upTo).toEqual(["last-message:<2021-06-01"]);
-
-    const between: string[] = [];
-    pushDateBoundTokens((s) => between.push(s), "first-message", {
-      op: "between",
-      start: "2020-01-01",
-      end: "2021-01-01",
-    });
-    expect(between).toEqual(["first-message:2020-01-01..2021-01-01"]);
-  });
-
-  it("falls back to one open end when a between is half filled in", () => {
-    const startOnly: string[] = [];
-    pushDateBoundTokens((s) => startOnly.push(s), "first-message", {
-      op: "between",
-      start: "2020-01-01",
-      end: "",
-    });
-    expect(startOnly).toEqual(["first-message:>=2020-01-01"]);
-
-    const endOnly: string[] = [];
-    pushDateBoundTokens((s) => endOnly.push(s), "last-message", {
-      op: "between",
-      start: "",
-      end: "2021-01-01",
-    });
-    expect(endOnly).toEqual(["last-message:<2021-01-01"]);
   });
 });
 

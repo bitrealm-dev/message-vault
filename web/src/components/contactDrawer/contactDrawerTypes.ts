@@ -1,5 +1,6 @@
 import type { ContactDetail, ContactHandle } from "../../lib/contactDetail";
 import { formatIsoDateOnly } from "../../lib/formatDate";
+import type { ConversationKind } from "../../lib/searchQuery";
 
 export type {
   ContactIdentityService,
@@ -36,7 +37,8 @@ export type ContactListPreviewSource = {
   groups?: string[];
 };
 
-export type ContactBrowseKind = "all" | "direct" | "group";
+/** Same three ways a set of conversations narrows by kind, named for this drawer. */
+export type ContactBrowseKind = ConversationKind;
 
 export function contactPreviewFromListRow(c: ContactListPreviewSource): ContactPreview {
   return {

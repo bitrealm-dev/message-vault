@@ -3,6 +3,7 @@ import {
   useNameCollectionActions,
   useSetNamedSetMembers,
 } from "./nameCollection";
+import { forGroup } from "./searchQuery";
 import {
   createContactGroup,
   deleteContactGroup,
@@ -87,7 +88,7 @@ export const contactGroups = createNameCollection({
     { key: keys.contacts.details, field: "groups", shape: "row" },
   ],
   label: "group",
-  queryToken: "group",
+  forName: forGroup,
   reservedNames: RESERVED_GROUP_NAMES,
   reservedError: reservedGroupError,
 });
