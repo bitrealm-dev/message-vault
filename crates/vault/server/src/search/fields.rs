@@ -256,7 +256,7 @@ pub(crate) static FIELDS: &[FieldSpec] = &[
     FieldSpec {
         word: "trashed",
         value_type: ValueType::Flag,
-        lists: &[C, V],
+        lists: &[C, V, M],
         values: &["yes", "no", "any"],
         help: "in the trash",
         example: "trashed:yes",
