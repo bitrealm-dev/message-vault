@@ -85,22 +85,18 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(crate::contacts_api::contact_restore_handler))
         .routes(routes!(crate::contacts_api::contact_match_handler))
         .routes(routes!(crate::contacts_api::address_book_load_handler))
-        .routes(routes!(crate::contact_groups_api::contact_groups_list))
-        .routes(routes!(crate::contact_groups_api::contact_groups_create))
-        .routes(routes!(crate::contact_groups_api::contact_groups_update))
-        .routes(routes!(crate::contact_groups_api::contact_groups_delete))
-        .routes(routes!(
-            crate::contact_groups_api::contact_group_members_list
-        ))
-        .routes(routes!(
-            crate::contact_groups_api::contact_group_members_update
-        ))
-        .routes(routes!(crate::message_tags_api::message_tags_list))
-        .routes(routes!(crate::message_tags_api::message_tags_create))
-        .routes(routes!(crate::message_tags_api::message_tags_update))
-        .routes(routes!(crate::message_tags_api::message_tags_delete))
-        .routes(routes!(crate::message_tags_api::message_tag_members_list))
-        .routes(routes!(crate::message_tags_api::message_tag_members_update))
+        .routes(routes!(crate::named_set_api::contact_groups_list))
+        .routes(routes!(crate::named_set_api::contact_groups_create))
+        .routes(routes!(crate::named_set_api::contact_groups_update))
+        .routes(routes!(crate::named_set_api::contact_groups_delete))
+        .routes(routes!(crate::named_set_api::contact_group_members_list))
+        .routes(routes!(crate::named_set_api::contact_group_members_update))
+        .routes(routes!(crate::named_set_api::message_tags_list))
+        .routes(routes!(crate::named_set_api::message_tags_create))
+        .routes(routes!(crate::named_set_api::message_tags_update))
+        .routes(routes!(crate::named_set_api::message_tags_delete))
+        .routes(routes!(crate::named_set_api::message_tag_members_list))
+        .routes(routes!(crate::named_set_api::message_tag_members_update))
         .routes(routes!(
             crate::saved_searches_api::saved_searches_list_handler
         ))

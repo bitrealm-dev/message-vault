@@ -2,16 +2,19 @@
 //!
 //! Both are a named set the account owns plus a membership of contact or
 //! conversation ids. The request and response types and the six operations
-//! live here once, over [`MembershipSpec`]; `contact_groups_api.rs` and
-//! `message_tags_api.rs` keep one three-line handler per route so every path
-//! stays greppable and utoipa has a concrete function to describe.
+//! live here once, over [`MembershipSpec`]; the `named_set_routes!` macro
+//! stamps out both collections' twelve route handlers from them, one
+//! `#[utoipa::path]` function per route, because utoipa needs a concrete
+//! function with literal strings to describe each route and cannot see
+//! through a generic or a `concat!`. The two invocations below name every
+//! path, so both collections' routes stay greppable here.
 
 use crate::extract::Json;
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 
 use crate::named_membership::{self, MembershipSpec};
-use crate::server::{ApiError, AppState};
+use crate::server::{ApiError, AppState, ErrorBody, FullAccess};
 
 /// One Contact Group or Message Tag: its id and name.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -140,6 +143,213 @@ pub(crate) async fn members_update(
         named_membership::patch_members(spec, &mut conn, account_id, id, &body.add, &body.remove)
             .await?;
     Ok(Json(MembersChanged { added, removed }))
+}
+
+/// One collection's six HTTP handlers.
+///
+/// Contact Groups and Message Tags are the same six operations over
+/// [`MembershipSpec`]; what differs is the paths, the tag, the noun in the
+/// prose, and which spec function to call. utoipa needs a concrete function
+/// per route with literal strings in its attribute — it cannot describe a
+/// generic, and it cannot see through `concat!` — so the handlers are stamped
+/// out here rather than written twice.
+///
+/// The function names and doc comments are load-bearing: `operationId` comes
+/// from the name and `summary` from the first line of the doc, so both appear
+/// in `docs/src/assets/openapi.json`.
+///
+/// Adding a third collection is this macro invoked a third time, plus a
+/// `MembershipSpec` for it in `named_membership.rs` and six
+/// `.routes(routes!(..))` lines in `openapi.rs` — `utoipa_axum` needs each
+/// route named there and that cannot be folded in here.
+///
+/// The formatting is pinned because rustfmt reindents an attribute body
+/// inside a macro arm to three times the depth of the code around it.
+#[rustfmt::skip]
+macro_rules! named_set_routes {
+    (
+        spec: $spec:path,
+        tag: $tag:literal,
+        id_description: $id_description:literal,
+        root_path: $root_path:literal,
+        id_path: $id_path:literal,
+        members_path: $members_path:literal,
+        list: $list_fn:ident, $list_doc:literal,
+        create: $create_fn:ident, $create_doc:literal,
+        update: $update_fn:ident, $update_doc:literal,
+        delete: $delete_fn:ident, $delete_doc:literal,
+        members_list: $members_list_fn:ident, $members_list_doc:literal,
+        members_update: $members_update_fn:ident, $members_update_doc:literal,
+    ) => {
+        #[doc = $list_doc]
+        #[utoipa::path(
+            get,
+            path = $root_path,
+            tag = $tag,
+            security(("bearer" = [])),
+            responses(
+                (status = 200, body = NamedSetList),
+                (status = 401, body = ErrorBody),
+                (status = 403, body = ErrorBody)
+            )
+        )]
+        pub(crate) async fn $list_fn(
+            axum::extract::State(state): axum::extract::State<AppState>,
+            FullAccess(auth): FullAccess,
+        ) -> Result<Json<NamedSetList>, ApiError> {
+            list($spec(), &state, &auth.account_id).await
+        }
+
+        #[doc = $create_doc]
+        #[utoipa::path(
+            post,
+            path = $root_path,
+            tag = $tag,
+            security(("bearer" = [])),
+            request_body = NamedSetBody,
+            responses(
+                (status = 200, body = NamedSet),
+                (status = 400, body = ErrorBody),
+                (status = 401, body = ErrorBody),
+                (status = 403, body = ErrorBody),
+                (status = 409, body = ErrorBody)
+            )
+        )]
+        pub(crate) async fn $create_fn(
+            axum::extract::State(state): axum::extract::State<AppState>,
+            FullAccess(auth): FullAccess,
+            Json(body): Json<NamedSetBody>,
+        ) -> Result<Json<NamedSet>, ApiError> {
+            create($spec(), &state, &auth.account_id, body).await
+        }
+
+        #[doc = $update_doc]
+        #[utoipa::path(
+            patch,
+            path = $id_path,
+            tag = $tag,
+            security(("bearer" = [])),
+            params(("id" = i64, Path, description = $id_description)),
+            request_body = NamedSetBody,
+            responses(
+                (status = 200, body = NamedSet),
+                (status = 400, body = ErrorBody),
+                (status = 401, body = ErrorBody),
+                (status = 403, body = ErrorBody),
+                (status = 404, body = ErrorBody),
+                (status = 409, body = ErrorBody)
+            )
+        )]
+        pub(crate) async fn $update_fn(
+            axum::extract::State(state): axum::extract::State<AppState>,
+            FullAccess(auth): FullAccess,
+            crate::extract::Path(id): crate::extract::Path<i64>,
+            Json(body): Json<NamedSetBody>,
+        ) -> Result<Json<NamedSet>, ApiError> {
+            update($spec(), &state, &auth.account_id, id, body).await
+        }
+
+        #[doc = $delete_doc]
+        #[utoipa::path(
+            delete,
+            path = $id_path,
+            tag = $tag,
+            security(("bearer" = [])),
+            params(("id" = i64, Path, description = $id_description)),
+            responses(
+                (status = 204),
+                (status = 401, body = ErrorBody),
+                (status = 403, body = ErrorBody),
+                (status = 404, body = ErrorBody)
+            )
+        )]
+        pub(crate) async fn $delete_fn(
+            axum::extract::State(state): axum::extract::State<AppState>,
+            FullAccess(auth): FullAccess,
+            crate::extract::Path(id): crate::extract::Path<i64>,
+        ) -> Result<StatusCode, ApiError> {
+            delete($spec(), &state, &auth.account_id, id).await
+        }
+
+        #[doc = $members_list_doc]
+        #[utoipa::path(
+            get,
+            path = $members_path,
+            tag = $tag,
+            security(("bearer" = [])),
+            params(("id" = i64, Path, description = $id_description)),
+            responses(
+                (status = 200, body = MemberIdList),
+                (status = 401, body = ErrorBody),
+                (status = 403, body = ErrorBody),
+                (status = 404, body = ErrorBody)
+            )
+        )]
+        pub(crate) async fn $members_list_fn(
+            axum::extract::State(state): axum::extract::State<AppState>,
+            FullAccess(auth): FullAccess,
+            crate::extract::Path(id): crate::extract::Path<i64>,
+        ) -> Result<Json<MemberIdList>, ApiError> {
+            members_list($spec(), &state, &auth.account_id, id).await
+        }
+
+        #[doc = $members_update_doc]
+        #[utoipa::path(
+            patch,
+            path = $members_path,
+            tag = $tag,
+            security(("bearer" = [])),
+            params(("id" = i64, Path, description = $id_description)),
+            request_body = MembersPatch,
+            responses(
+                (status = 200, body = MembersChanged),
+                (status = 400, body = ErrorBody),
+                (status = 401, body = ErrorBody),
+                (status = 403, body = ErrorBody),
+                (status = 404, body = ErrorBody)
+            )
+        )]
+        pub(crate) async fn $members_update_fn(
+            axum::extract::State(state): axum::extract::State<AppState>,
+            FullAccess(auth): FullAccess,
+            crate::extract::Path(id): crate::extract::Path<i64>,
+            Json(body): Json<MembersPatch>,
+        ) -> Result<Json<MembersChanged>, ApiError> {
+            members_update($spec(), &state, &auth.account_id, id, body).await
+        }
+    };
+}
+
+named_set_routes! {
+    spec: crate::named_membership::group_spec,
+    tag: "Contacts",
+    id_description: "Contact Group id",
+    root_path: "/v1/contact-groups",
+    id_path: "/v1/contact-groups/{id}",
+    members_path: "/v1/contact-groups/{id}/members",
+    list: contact_groups_list, "The account's Contact Groups, A–Z.",
+    create: contact_groups_create, "Create a Contact Group.",
+    update: contact_groups_update, "Rename a Contact Group.",
+    delete: contact_groups_delete, "Delete a Contact Group and its memberships.",
+    members_list: contact_group_members_list, "Contact ids in one Contact Group.",
+    members_update: contact_group_members_update,
+        "Put contacts in and take contacts out of one Contact Group.",
+}
+
+named_set_routes! {
+    spec: crate::named_membership::tag_spec,
+    tag: "Message tags",
+    id_description: "Message Tag id",
+    root_path: "/v1/message-tags",
+    id_path: "/v1/message-tags/{id}",
+    members_path: "/v1/message-tags/{id}/members",
+    list: message_tags_list, "The account's Message Tags, A–Z.",
+    create: message_tags_create, "Create a Message Tag.",
+    update: message_tags_update, "Rename a Message Tag.",
+    delete: message_tags_delete, "Delete a Message Tag and its memberships.",
+    members_list: message_tag_members_list, "Conversation ids in one Message Tag.",
+    members_update: message_tag_members_update,
+        "Put conversations in and take conversations out of one Message Tag.",
 }
 
 #[cfg(test)]
