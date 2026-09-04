@@ -5,7 +5,13 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Conversation } from "../lib/types";
-import { getConversation, listConversations, restoreConversation } from "../lib/vaultApi";
+import {
+  getConversation,
+  listContacts,
+  listConversations,
+  restoreContact,
+  restoreConversation,
+} from "../lib/vaultApi";
 import { mockedAuth, VaultProviders } from "../test/vaultProviders";
 import TrashScreen from "./TrashScreen";
 
@@ -14,13 +20,17 @@ vi.mock("../lib/auth", () => ({ useAuth: () => mockedAuth }));
 vi.mock("../lib/vaultApi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/vaultApi")>()),
   listConversations: vi.fn(),
+  listContacts: vi.fn(),
   getConversation: vi.fn(),
   restoreConversation: vi.fn(),
+  restoreContact: vi.fn(),
 }));
 
 const listConversationsMock = vi.mocked(listConversations);
+const listContactsMock = vi.mocked(listContacts);
 const getConversationMock = vi.mocked(getConversation);
 const restoreConversationMock = vi.mocked(restoreConversation);
+const restoreContactMock = vi.mocked(restoreContact);
 
 function conversation(overrides: Partial<Conversation> = {}): Conversation {
   return {
@@ -38,6 +48,15 @@ function conversation(overrides: Partial<Conversation> = {}): Conversation {
   };
 }
 
+/** One trashed contact as `GET /v1/contacts?q=trashed:yes` returns it. */
+function contact(id: number, name: string) {
+  return { id, name, handle_count: 1, last_modified: "2026-09-04T00:00:00Z" };
+}
+
+function contactPage(items: ReturnType<typeof contact>[]) {
+  return { items, total: items.length, limit: 100, offset: 0 };
+}
+
 function renderAt(path: string) {
   return render(
     <VaultProviders>
@@ -51,11 +70,15 @@ function renderAt(path: string) {
 describe("TrashScreen", () => {
   beforeEach(() => {
     listConversationsMock.mockReset();
+    listContactsMock.mockReset();
     getConversationMock.mockReset();
     restoreConversationMock.mockReset();
+    restoreContactMock.mockReset();
     listConversationsMock.mockResolvedValue({ items: [], total: 1, limit: 1, offset: 0 });
+    listContactsMock.mockResolvedValue(contactPage([]));
     getConversationMock.mockResolvedValue(conversation());
     restoreConversationMock.mockResolvedValue(undefined);
+    restoreContactMock.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -74,6 +97,8 @@ describe("TrashScreen", () => {
     renderAt("/trash");
 
     expect(await screen.findByText("Trash is empty.")).toBeTruthy();
+    expect(screen.queryByText("Conversations")).toBeNull();
+    expect(screen.queryByText("Contacts")).toBeNull();
   });
 
   it("shows Restore for a selected trashed conversation and calls the restore mutation", async () => {
@@ -116,5 +141,89 @@ describe("TrashScreen", () => {
 
     expect(await screen.findByText("Could not restore this conversation.")).toBeTruthy();
     expect(screen.getByText("Ada Lovelace")).toBeTruthy();
+  });
+
+  describe("trashed contacts", () => {
+    it("lists trashed contacts, asking the vault for them with trashed:yes", async () => {
+      listContactsMock.mockResolvedValue(contactPage([contact(7, "Grace Hopper")]));
+      renderAt("/trash");
+
+      expect(await screen.findByText("Grace Hopper")).toBeTruthy();
+      expect(listContactsMock).toHaveBeenCalledWith(
+        expect.objectContaining({ q: "trashed:yes" }),
+        expect.anything(),
+      );
+    });
+
+    it("restores a contact from its row and drops it from the list", async () => {
+      const user = userEvent.setup();
+      // The vault, modelled: restoring takes the contact out of the trash, so
+      // the refetch the mutation triggers answers with an empty page.
+      let trashed = [contact(7, "Grace Hopper")];
+      listContactsMock.mockImplementation(async () => contactPage(trashed));
+      restoreContactMock.mockImplementation(async () => {
+        trashed = [];
+      });
+      renderAt("/trash");
+
+      await user.click(await screen.findByRole("button", { name: "Restore Grace Hopper" }));
+
+      await waitFor(() => {
+        expect(restoreContactMock).toHaveBeenCalledWith(7, expect.anything());
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByText("Grace Hopper")).toBeNull();
+      });
+      expect(screen.getByText("No contacts in Trash.")).toBeTruthy();
+    });
+
+    it("says so when conversations are in the trash but no contacts are", async () => {
+      renderAt("/trash");
+
+      expect(await screen.findByText("No contacts in Trash.")).toBeTruthy();
+      expect(screen.getByText(/in Trash\. Select one on the left to view it\./)).toBeTruthy();
+    });
+
+    it("shows both sections when the trash holds conversations and contacts", async () => {
+      listContactsMock.mockResolvedValue(contactPage([contact(7, "Grace Hopper")]));
+      renderAt("/trash");
+
+      expect(await screen.findByText("Grace Hopper")).toBeTruthy();
+      expect(screen.getByText("Conversations")).toBeTruthy();
+      expect(screen.getByText("Contacts")).toBeTruthy();
+    });
+
+    it("keeps the contacts section when only contacts are in the trash", async () => {
+      listConversationsMock.mockResolvedValue({ items: [], total: 0, limit: 1, offset: 0 });
+      listContactsMock.mockResolvedValue(contactPage([contact(7, "Grace Hopper")]));
+      renderAt("/trash");
+
+      expect(await screen.findByText("Grace Hopper")).toBeTruthy();
+      expect(screen.getByText("No conversations in Trash.")).toBeTruthy();
+    });
+
+    it("shows an error when restoring a contact fails", async () => {
+      restoreContactMock.mockRejectedValue(new Error("Could not restore this contact."));
+      listContactsMock.mockResolvedValue(contactPage([contact(7, "Grace Hopper")]));
+      const user = userEvent.setup();
+      renderAt("/trash");
+
+      await user.click(await screen.findByRole("button", { name: "Restore Grace Hopper" }));
+
+      expect(await screen.findByText("Could not restore this contact.")).toBeTruthy();
+      expect(screen.getByText("Grace Hopper")).toBeTruthy();
+    });
+
+    it("narrows both kinds with the header search term", async () => {
+      listContactsMock.mockResolvedValue(contactPage([]));
+      renderAt("/trash?tq=ada");
+
+      expect(await screen.findByText("No contacts match this search.")).toBeTruthy();
+      expect(listContactsMock).toHaveBeenCalledWith(
+        expect.objectContaining({ q: "trashed:yes ada" }),
+        expect.anything(),
+      );
+    });
   });
 });

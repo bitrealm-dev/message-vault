@@ -27,6 +27,17 @@ export const keys = {
     details: ["contacts", "detail"] as const,
     /** Ids arrive as numbers from the vault and as strings from the router. */
     detail: (id: string | number) => ["contacts", "detail", String(id)] as const,
+    /**
+     * The trashed contacts the Trash screen lists.
+     *
+     * A builder of its own rather than `list("trashed:yes …")` because the
+     * contact list screen holds that entry as TanStack Query's paged
+     * `InfiniteData` and the Trash screen holds a single page, and two shapes
+     * must not share a key. It still sits under the `lists` prefix, so the
+     * contact trash mutations mark it stale along with everything else that
+     * lists contacts.
+     */
+    trashed: (q: string) => ["contacts", "list", "trashed", q] as const,
   },
   conversations: {
     all: ["conversations"] as const,
@@ -56,5 +67,12 @@ export const keys = {
   trash: {
     all: ["trash"] as const,
     count: (q: string) => ["trash", "count", q] as const,
+    /**
+     * Stands in for the conversation-detail key while nothing is selected in
+     * Trash. The query is disabled either way, but naming a real conversation
+     * id — `detail(0)` — would put an entry in the cache that looks like a
+     * conversation nobody asked for.
+     */
+    noSelection: ["trash", "no-selection"] as const,
   },
 };
