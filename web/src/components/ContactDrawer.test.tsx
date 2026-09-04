@@ -31,9 +31,12 @@ function seed(detail: ContactDetail): void {
 const get = vi.fn();
 const post = vi.fn();
 
+const trash = vi.fn();
+
 vi.mock("../lib/vaultApi", () => ({
   getContact: (...args: unknown[]) => get(...args),
   updateContact: (...args: unknown[]) => post(...args),
+  trashContact: (...args: unknown[]) => trash(...args),
 }));
 function detail(id: number, overrides: Partial<ContactDetail> = {}): ContactDetail {
   return {
@@ -69,6 +72,8 @@ describe("ContactDrawer", () => {
     get.mockReset();
     post.mockReset();
     post.mockResolvedValue(undefined);
+    trash.mockReset();
+    trash.mockResolvedValue(undefined);
     client = new QueryClient({
       // Seeded entries have no observer until the drawer opens that contact, so
       // they must survive collection to stand in for an earlier open.
@@ -597,5 +602,66 @@ describe("ContactDrawer", () => {
     const headers = screen.getAllByRole("columnheader");
     const groupIndex = headers.findIndex((h) => /Group Messages/i.test(h.textContent ?? ""));
     expect(groupIndex).toBe(headers.length - 1);
+  });
+
+  it("moves the contact to trash and closes the drawer", async () => {
+    get.mockResolvedValue(detail(1));
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+
+    render(
+      <ContactDrawer
+        variant="docked"
+        contactId="1"
+        preview={{
+          id: "1",
+          name: "Contact a",
+          handles: ["+1555000a"],
+          groups: [],
+        }}
+        onClose={onClose}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Contact a" })).toBeTruthy();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Move to trash" }));
+
+    await waitFor(() => {
+      expect(trash).toHaveBeenCalledWith("1", expect.anything());
+      expect(onClose).toHaveBeenCalled();
+    });
+  });
+
+  it("shows an error and leaves the drawer open when trashing fails", async () => {
+    get.mockResolvedValue(detail(1));
+    trash.mockRejectedValue(new Error("Could not move this contact."));
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+
+    render(
+      <ContactDrawer
+        variant="docked"
+        contactId="1"
+        preview={{
+          id: "1",
+          name: "Contact a",
+          handles: ["+1555000a"],
+          groups: [],
+        }}
+        onClose={onClose}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Contact a" })).toBeTruthy();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Move to trash" }));
+
+    expect(await screen.findByText("Could not move this contact.")).toBeTruthy();
+    expect(onClose).not.toHaveBeenCalled();
   });
 });
