@@ -2,9 +2,12 @@
 //!
 //! Both are a named set the account owns plus a membership of contact or
 //! conversation ids. The request and response types and the six operations
-//! live here once, over [`MembershipSpec`]; `contact_groups_api.rs` and
-//! `message_tags_api.rs` keep one three-line handler per route so every path
-//! stays greppable and utoipa has a concrete function to describe.
+//! live here once, over [`MembershipSpec`]; the `named_set_routes!` macro
+//! stamps out both collections' twelve route handlers from them, one
+//! `#[utoipa::path]` function per route, because utoipa needs a concrete
+//! function with literal strings to describe each route and cannot see
+//! through a generic or a `concat!`. The two invocations below name every
+//! path, so both collections' routes stay greppable here.
 
 use crate::extract::Json;
 use axum::http::StatusCode;
@@ -142,6 +145,7 @@ pub(crate) async fn members_update(
     Ok(Json(MembersChanged { added, removed }))
 }
 
+#[rustfmt::skip]
 /// One collection's six HTTP handlers.
 ///
 /// Contact Groups and Message Tags are the same six operations over
@@ -171,16 +175,16 @@ macro_rules! named_set_routes {
     ) => {
         #[doc = $list_doc]
         #[utoipa::path(
-                                    get,
-                                    path = $root_path,
-                                    tag = $tag,
-                                    security(("bearer" = [])),
-                                    responses(
-                                        (status = 200, body = NamedSetList),
-                                        (status = 401, body = ErrorBody),
-                                        (status = 403, body = ErrorBody)
-                                    )
-                                )]
+            get,
+            path = $root_path,
+            tag = $tag,
+            security(("bearer" = [])),
+            responses(
+                (status = 200, body = NamedSetList),
+                (status = 401, body = ErrorBody),
+                (status = 403, body = ErrorBody)
+            )
+        )]
         pub(crate) async fn $list_fn(
             axum::extract::State(state): axum::extract::State<AppState>,
             FullAccess(auth): FullAccess,
@@ -190,19 +194,19 @@ macro_rules! named_set_routes {
 
         #[doc = $create_doc]
         #[utoipa::path(
-                                    post,
-                                    path = $root_path,
-                                    tag = $tag,
-                                    security(("bearer" = [])),
-                                    request_body = NamedSetBody,
-                                    responses(
-                                        (status = 200, body = NamedSet),
-                                        (status = 400, body = ErrorBody),
-                                        (status = 401, body = ErrorBody),
-                                        (status = 403, body = ErrorBody),
-                                        (status = 409, body = ErrorBody)
-                                    )
-                                )]
+            post,
+            path = $root_path,
+            tag = $tag,
+            security(("bearer" = [])),
+            request_body = NamedSetBody,
+            responses(
+                (status = 200, body = NamedSet),
+                (status = 400, body = ErrorBody),
+                (status = 401, body = ErrorBody),
+                (status = 403, body = ErrorBody),
+                (status = 409, body = ErrorBody)
+            )
+        )]
         pub(crate) async fn $create_fn(
             axum::extract::State(state): axum::extract::State<AppState>,
             FullAccess(auth): FullAccess,
@@ -213,21 +217,21 @@ macro_rules! named_set_routes {
 
         #[doc = $update_doc]
         #[utoipa::path(
-                                    patch,
-                                    path = $id_path,
-                                    tag = $tag,
-                                    security(("bearer" = [])),
-                                    params(("id" = i64, Path, description = $id_description)),
-                                    request_body = NamedSetBody,
-                                    responses(
-                                        (status = 200, body = NamedSet),
-                                        (status = 400, body = ErrorBody),
-                                        (status = 401, body = ErrorBody),
-                                        (status = 403, body = ErrorBody),
-                                        (status = 404, body = ErrorBody),
-                                        (status = 409, body = ErrorBody)
-                                    )
-                                )]
+            patch,
+            path = $id_path,
+            tag = $tag,
+            security(("bearer" = [])),
+            params(("id" = i64, Path, description = $id_description)),
+            request_body = NamedSetBody,
+            responses(
+                (status = 200, body = NamedSet),
+                (status = 400, body = ErrorBody),
+                (status = 401, body = ErrorBody),
+                (status = 403, body = ErrorBody),
+                (status = 404, body = ErrorBody),
+                (status = 409, body = ErrorBody)
+            )
+        )]
         pub(crate) async fn $update_fn(
             axum::extract::State(state): axum::extract::State<AppState>,
             FullAccess(auth): FullAccess,
@@ -239,18 +243,18 @@ macro_rules! named_set_routes {
 
         #[doc = $delete_doc]
         #[utoipa::path(
-                                    delete,
-                                    path = $id_path,
-                                    tag = $tag,
-                                    security(("bearer" = [])),
-                                    params(("id" = i64, Path, description = $id_description)),
-                                    responses(
-                                        (status = 204),
-                                        (status = 401, body = ErrorBody),
-                                        (status = 403, body = ErrorBody),
-                                        (status = 404, body = ErrorBody)
-                                    )
-                                )]
+            delete,
+            path = $id_path,
+            tag = $tag,
+            security(("bearer" = [])),
+            params(("id" = i64, Path, description = $id_description)),
+            responses(
+                (status = 204),
+                (status = 401, body = ErrorBody),
+                (status = 403, body = ErrorBody),
+                (status = 404, body = ErrorBody)
+            )
+        )]
         pub(crate) async fn $delete_fn(
             axum::extract::State(state): axum::extract::State<AppState>,
             FullAccess(auth): FullAccess,
@@ -261,18 +265,18 @@ macro_rules! named_set_routes {
 
         #[doc = $members_list_doc]
         #[utoipa::path(
-                                    get,
-                                    path = $members_path,
-                                    tag = $tag,
-                                    security(("bearer" = [])),
-                                    params(("id" = i64, Path, description = $id_description)),
-                                    responses(
-                                        (status = 200, body = MemberIdList),
-                                        (status = 401, body = ErrorBody),
-                                        (status = 403, body = ErrorBody),
-                                        (status = 404, body = ErrorBody)
-                                    )
-                                )]
+            get,
+            path = $members_path,
+            tag = $tag,
+            security(("bearer" = [])),
+            params(("id" = i64, Path, description = $id_description)),
+            responses(
+                (status = 200, body = MemberIdList),
+                (status = 401, body = ErrorBody),
+                (status = 403, body = ErrorBody),
+                (status = 404, body = ErrorBody)
+            )
+        )]
         pub(crate) async fn $members_list_fn(
             axum::extract::State(state): axum::extract::State<AppState>,
             FullAccess(auth): FullAccess,
@@ -283,20 +287,20 @@ macro_rules! named_set_routes {
 
         #[doc = $members_update_doc]
         #[utoipa::path(
-                                    patch,
-                                    path = $members_path,
-                                    tag = $tag,
-                                    security(("bearer" = [])),
-                                    params(("id" = i64, Path, description = $id_description)),
-                                    request_body = MembersPatch,
-                                    responses(
-                                        (status = 200, body = MembersChanged),
-                                        (status = 400, body = ErrorBody),
-                                        (status = 401, body = ErrorBody),
-                                        (status = 403, body = ErrorBody),
-                                        (status = 404, body = ErrorBody)
-                                    )
-                                )]
+            patch,
+            path = $members_path,
+            tag = $tag,
+            security(("bearer" = [])),
+            params(("id" = i64, Path, description = $id_description)),
+            request_body = MembersPatch,
+            responses(
+                (status = 200, body = MembersChanged),
+                (status = 400, body = ErrorBody),
+                (status = 401, body = ErrorBody),
+                (status = 403, body = ErrorBody),
+                (status = 404, body = ErrorBody)
+            )
+        )]
         pub(crate) async fn $members_update_fn(
             axum::extract::State(state): axum::extract::State<AppState>,
             FullAccess(auth): FullAccess,
@@ -322,6 +326,22 @@ named_set_routes! {
     members_list: contact_group_members_list, "Contact ids in one Contact Group.",
     members_update: contact_group_members_update,
         "Put contacts in and take contacts out of one Contact Group.",
+}
+
+named_set_routes! {
+    spec: crate::named_membership::tag_spec,
+    tag: "Message tags",
+    id_description: "Message Tag id",
+    root_path: "/v1/message-tags",
+    id_path: "/v1/message-tags/{id}",
+    members_path: "/v1/message-tags/{id}/members",
+    list: message_tags_list, "The account's Message Tags, A–Z.",
+    create: message_tags_create, "Create a Message Tag.",
+    update: message_tags_update, "Rename a Message Tag.",
+    delete: message_tags_delete, "Delete a Message Tag and its memberships.",
+    members_list: message_tag_members_list, "Conversation ids in one Message Tag.",
+    members_update: message_tag_members_update,
+        "Put conversations in and take conversations out of one Message Tag.",
 }
 
 #[cfg(test)]
