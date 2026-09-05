@@ -300,7 +300,13 @@ impl<'a> OwnedSession<'a> {
             Ok(stats) => CompleteImportArgs::succeeded(stats.messages, stats.attachments),
             Err(_) => CompleteImportArgs::failed(),
         };
-        vault_imports::complete_import_or_warn(conn, self.account_id, self.id, &outcome).await;
+        // The import itself is done either way; a failure to record that is
+        // worth a log line, not an error the caller would have to unwind.
+        if let Err(error) =
+            vault_imports::complete_import(conn, self.account_id, self.id, &outcome).await
+        {
+            tracing::warn!(import_id = self.id, error = %error, "complete_import failed");
+        }
     }
 }
 
