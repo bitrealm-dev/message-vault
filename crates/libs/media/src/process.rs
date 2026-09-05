@@ -942,6 +942,7 @@ mod tests {
 
     #[test]
     fn compress_keeps_the_original_jpeg_when_the_re_encode_is_not_smaller() {
+        let _tools = crate::tools::tools_test_lock();
         if !ffmpeg_available() {
             return;
         }
@@ -984,6 +985,7 @@ mod tests {
 
     #[test]
     fn transcode_file_writes_the_derivative_and_leaves_the_original_alone() {
+        let _tools = crate::tools::tools_test_lock();
         if !ffmpeg_available() {
             return;
         }
@@ -1031,6 +1033,7 @@ mod tests {
 
     #[test]
     fn derivative_name_matches_what_the_media_step_actually_produces() {
+        let _tools = crate::tools::tools_test_lock();
         if !ffmpeg_available() {
             return;
         }
@@ -1227,6 +1230,7 @@ mod tests {
     }
     #[test]
     fn process_attachment_files_touches_only_the_listed_files() {
+        let _tools = crate::tools::tools_test_lock();
         if !ffmpeg_available() {
             return;
         }
