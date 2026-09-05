@@ -237,9 +237,12 @@ fn group_chat_id(others: &[String]) -> (String, String) {
     (key, title)
 }
 
-/// Parse an already-loaded flat SMS Backup+ EML (avoids a second disk read).
+/// One SMS Backup+ "flat" EML (one text per file) as a message, or `None`
+/// when the file is not one, has no readable date, or names nobody.
 ///
-/// `owner_emails` must already be trimmed + lowercased.
+/// # Errors
+///
+/// Returns an error when an attachment cannot be extracted.
 pub(crate) fn parse_flat_eml_mail(
     path: &Path,
     mail: &ParsedMail<'_>,
@@ -250,127 +253,151 @@ pub(crate) fn parse_flat_eml_mail(
     if !is_single_sms_eml(headers) {
         return Ok(None);
     }
-
-    let Some(ts) = timestamp_seconds(headers) else {
+    let Some(timestamp_secs) = timestamp_seconds(headers) else {
         return Ok(None);
     };
-
-    let subject_name = contact_name_from_subject(&headers.subject);
-    let mut addr_raw = headers.smssync_address.clone();
-    if addr_raw.is_empty()
-        && let Some(ref name) = subject_name
-    {
-        addr_raw = name.clone();
-    }
-    let participant_numbers = smssync_participant_numbers(&addr_raw);
-    let addr = participant_numbers
-        .first()
-        .cloned()
-        .or_else(|| sanitize_number(&addr_raw))
-        .unwrap_or_default();
-    if addr.is_empty() && addr_raw.is_empty() {
+    let name_alias = contact_name_from_subject(&headers.subject);
+    let addresses = FlatAddresses::from_headers(headers, name_alias.as_deref(), owner_digits);
+    if addresses.is_blank() {
         return Ok(None);
     }
-
-    let name_alias = subject_name.clone();
     let sent = is_sent(headers, owner_emails);
-    let body = extract_plain_text_body(mail);
+    let Some(conversation) = addresses.conversation(headers, sent, name_alias.as_deref()) else {
+        return Ok(None);
+    };
 
     let file_key = hex::encode(Sha256::digest(path.to_string_lossy().as_bytes()));
-    let file_key = &file_key[..12.min(file_key.len())];
-    let attachments = extract_attachments(mail, ts * 1000.0, Some(file_key));
-
-    let non_owner: Vec<String> = participant_numbers
-        .iter()
-        .filter(|n| !owner_digits.contains(*n))
-        .cloned()
-        .collect();
-
-    if non_owner.len() >= 2 {
-        let (is_from_me, sender_digits) = if sent {
-            (true, None)
-        } else {
-            // Prefer From header digits among participants
-            let from_nums = smssync_participant_numbers(&headers.from);
-            let sender = from_nums
-                .into_iter()
-                .find(|n| !owner_digits.contains(n) && non_owner.contains(n))
-                .or_else(|| non_owner.first().cloned());
-            (false, sender)
-        };
-        let (chat_key, title) = group_chat_id(&non_owner);
-        let participant_digits: Vec<_> = non_owner.into_iter().map(|d| (d, None)).collect();
-        let smssync_id = if headers.smssync_id.is_empty() {
-            None
-        } else {
-            Some(headers.smssync_id.clone())
-        };
-        return Ok(Some(ParsedMessage {
-            chat_key,
-            conversation_type: "group".into(),
-            group_title: Some(title),
-            participant_digits,
-            timestamp_secs: ts,
-            is_from_me,
-            sender_digits,
-            text: body,
-            attachments,
-            name_alias,
-            smssync_id,
-            source_kind: "flat".into(),
-            android_type: headers.smssync_type.clone(),
-            eml_path: String::new(),
-        }));
-    }
-
-    // Prefer the first non-owner address (groups already use this rule). An
-    // owner-first `owner~peer` list must not key the CSV to the owner's number.
-    let conv_number = if let Some(peer) = non_owner.first() {
-        peer.clone()
-    } else if !addr.is_empty() {
-        addr.clone()
-    } else {
-        sanitize_number(&addr_raw).unwrap_or_default()
-    };
-    // Keep an empty chat_key when a display name exists so contacts reverse-lookup can fill it.
-    if conv_number.is_empty()
-        && name_alias
-            .as_ref()
-            .map(|s| s.trim().is_empty())
-            .unwrap_or(true)
-    {
-        return Ok(None);
-    }
-
-    let smssync_id = if headers.smssync_id.is_empty() {
-        None
-    } else {
-        Some(headers.smssync_id.clone())
-    };
+    let attachments = extract_attachments(
+        mail,
+        timestamp_secs * 1000.0,
+        Some(&file_key[..12.min(file_key.len())]),
+    );
     Ok(Some(ParsedMessage {
-        chat_key: conv_number.clone(),
-        conversation_type: "individual".into(),
-        group_title: None,
-        participant_digits: if conv_number.is_empty() {
-            vec![]
-        } else {
-            vec![(conv_number.clone(), name_alias.clone())]
-        },
-        timestamp_secs: ts,
+        chat_key: conversation.chat_key,
+        conversation_type: conversation.conversation_type.into(),
+        group_title: conversation.group_title,
+        participant_digits: conversation.participant_digits,
+        timestamp_secs,
         is_from_me: sent,
-        sender_digits: if sent || conv_number.is_empty() {
-            None
-        } else {
-            Some(conv_number)
-        },
-        text: body,
+        sender_digits: conversation.sender_digits,
+        text: extract_plain_text_body(mail),
         attachments,
         name_alias,
-        smssync_id,
+        smssync_id: (!headers.smssync_id.is_empty()).then(|| headers.smssync_id.clone()),
         source_kind: "flat".into(),
         android_type: headers.smssync_type.clone(),
         eml_path: String::new(),
     }))
+}
+
+/// The numbers on a flat EML: everyone in the SMS Backup+ address header (or
+/// the subject's name when that header is blank), the first of them as the
+/// address, and those that are not the owner's.
+struct FlatAddresses {
+    /// The header text the numbers were read from.
+    raw: String,
+    /// The first participant number, or the raw text sanitized, or blank.
+    first: String,
+    non_owner: Vec<String>,
+}
+
+/// Where a flat EML lands and who sent it.
+struct FlatConversation {
+    chat_key: String,
+    conversation_type: &'static str,
+    group_title: Option<String>,
+    participant_digits: Vec<(String, Option<String>)>,
+    sender_digits: Option<String>,
+}
+
+impl FlatAddresses {
+    fn from_headers(
+        headers: &MailHeaders,
+        subject_name: Option<&str>,
+        owner_digits: &HashSet<String>,
+    ) -> Self {
+        let raw = if headers.smssync_address.is_empty() {
+            subject_name.unwrap_or_default().to_string()
+        } else {
+            headers.smssync_address.clone()
+        };
+        let numbers = smssync_participant_numbers(&raw);
+        let first = numbers
+            .first()
+            .cloned()
+            .or_else(|| sanitize_number(&raw))
+            .unwrap_or_default();
+        let non_owner = numbers
+            .into_iter()
+            .filter(|n| !owner_digits.contains(n))
+            .collect();
+        Self {
+            raw,
+            first,
+            non_owner,
+        }
+    }
+
+    /// Nothing at all to key a conversation on.
+    fn is_blank(&self) -> bool {
+        self.first.is_empty() && self.raw.is_empty()
+    }
+
+    /// A group when two or more peers are named, else the one-to-one chat
+    /// with the peer. `None` when nothing identifies the other party and no
+    /// display name exists for the contacts lookup to fill it in.
+    fn conversation(
+        &self,
+        headers: &MailHeaders,
+        sent: bool,
+        name_alias: Option<&str>,
+    ) -> Option<FlatConversation> {
+        if self.non_owner.len() >= 2 {
+            let (chat_key, title) = group_chat_id(&self.non_owner);
+            return Some(FlatConversation {
+                chat_key,
+                conversation_type: "group",
+                group_title: Some(title),
+                participant_digits: self.non_owner.iter().map(|d| (d.clone(), None)).collect(),
+                sender_digits: if sent {
+                    None
+                } else {
+                    self.group_sender(headers)
+                },
+            });
+        }
+        // Prefer the first non-owner address (groups already use this rule). An
+        // owner-first `owner~peer` list must not key the CSV to the owner's number.
+        let peer = self
+            .non_owner
+            .first()
+            .cloned()
+            .unwrap_or_else(|| self.first.clone());
+        // Keep an empty chat_key when a display name exists so contacts reverse-lookup can fill it.
+        if peer.is_empty() && name_alias.map(str::trim).unwrap_or_default().is_empty() {
+            return None;
+        }
+        Some(FlatConversation {
+            chat_key: peer.clone(),
+            conversation_type: "individual",
+            group_title: None,
+            participant_digits: if peer.is_empty() {
+                vec![]
+            } else {
+                vec![(peer.clone(), name_alias.map(str::to_string))]
+            },
+            sender_digits: (!sent && !peer.is_empty()).then_some(peer),
+        })
+    }
+
+    /// The sender of an incoming group message: the `From` header's number
+    /// when it is one of the peers, else the first peer.
+    fn group_sender(&self, headers: &MailHeaders) -> Option<String> {
+        smssync_participant_numbers(&headers.from)
+            .into_iter()
+            .find(|n| self.non_owner.contains(n))
+            .or_else(|| self.non_owner.first().cloned())
+    }
 }
 
 /// Classify whether this EML looks like a consolidated archive thread.
