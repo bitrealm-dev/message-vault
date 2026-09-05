@@ -12,7 +12,7 @@
     "@astrojs/markdown-satteri": "0.3.8",
     "@astrojs/starlight": "^0.41.9",
     "@scalar/api-reference": "^1.66.1",
-    "astro": "^7.2.9",
+    "astro": "^7.2.10",
     "astro-mermaid": "^2.1.0",
     "mermaid": "^11.17.2",
     "starlight-sidebar-topics": "^0.8.0"
