@@ -318,18 +318,7 @@ impl<'a> OwnedSession<'a> {
     ) -> std::result::Result<Self, vault_imports::StartImportError> {
         let id = vault_imports::start_import(
             conn,
-            &vault_imports::StartImportArgs {
-                account_id,
-                source,
-                mode: mode.as_str(),
-                tool: Some(tool),
-                stage: vault_imports::ImportStage::Parse,
-                staging_dir: None,
-                device_id: None,
-                form_json: None,
-                source_fingerprint: None,
-                source_identities: None,
-            },
+            &vault_imports::StartImportArgs::new(account_id, source, mode.as_str(), Some(tool)),
         )
         .await?;
         Ok(Self { account_id, id })

@@ -623,18 +623,12 @@ async fn promote_stamps_messages_with_import_id() {
         .unwrap();
     let import_id = crate::db::vault_imports::start_import(
         &mut conn,
-        &crate::db::vault_imports::StartImportArgs {
-            account_id: TEST_ACCOUNT,
-            source: "imessage",
-            mode: "append",
-            tool: Some("test"),
-            stage: crate::db::vault_imports::ImportStage::Parse,
-            staging_dir: None,
-            device_id: None,
-            form_json: None,
-            source_fingerprint: None,
-            source_identities: None,
-        },
+        &crate::db::vault_imports::StartImportArgs::new(
+            TEST_ACCOUNT,
+            "imessage",
+            "append",
+            Some("test"),
+        ),
     )
     .await
     .unwrap();
@@ -724,18 +718,12 @@ async fn run_import_path_refuses_a_second_session_with_conflict() {
             .unwrap();
         crate::db::vault_imports::start_import(
             &mut conn,
-            &crate::db::vault_imports::StartImportArgs {
-                account_id: TEST_ACCOUNT,
-                source: "imessage",
-                mode: "append",
-                tool: Some("test"),
-                stage: crate::db::vault_imports::ImportStage::Parse,
-                staging_dir: None,
-                device_id: None,
-                form_json: None,
-                source_fingerprint: None,
-                source_identities: None,
-            },
+            &crate::db::vault_imports::StartImportArgs::new(
+                TEST_ACCOUNT,
+                "imessage",
+                "append",
+                Some("test"),
+            ),
         )
         .await
         .unwrap();

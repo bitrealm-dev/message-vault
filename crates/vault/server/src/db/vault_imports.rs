@@ -65,7 +65,6 @@ impl ImportStage {
 
 #[derive(Debug, Clone, Serialize)]
 /// One row of `vault_imports`: a per-account import session record.
-#[allow(dead_code)]
 pub struct VaultImportRow {
     /// Import session id.
     pub id: i64,
@@ -289,6 +288,28 @@ pub struct StartImportArgs<'a> {
     pub source_fingerprint: Option<&'a str>,
     /// Backup device identity list as JSON.
     pub source_identities: Option<&'a str>,
+}
+
+impl<'a> StartImportArgs<'a> {
+    /// A session opening at [`ImportStage::Parse`] with nothing recorded
+    /// about the client: no staging folder, device, form snapshot,
+    /// fingerprint, or identities. The CLI importer and most tests start
+    /// here; a caller with more to record uses struct update syntax on
+    /// top of it.
+    pub fn new(account_id: &'a str, source: &'a str, mode: &'a str, tool: Option<&'a str>) -> Self {
+        Self {
+            account_id,
+            source,
+            mode,
+            tool,
+            stage: ImportStage::Parse,
+            staging_dir: None,
+            device_id: None,
+            form_json: None,
+            source_fingerprint: None,
+            source_identities: None,
+        }
+    }
 }
 
 /// Why a session could not be started.
@@ -813,7 +834,6 @@ pub async fn list_imports(
 }
 
 /// List imports for an account, newest first.
-#[allow(dead_code)] // used by unit tests; storage UI queries SQLite from Next.js
 pub async fn list_imports_for_account(
     conn: &mut AnyConnection,
     account_id: &str,
@@ -969,18 +989,7 @@ mod tests {
     /// A default session-open for tests that only care that a running
     /// import exists, not about its stage or session fields.
     fn default_start_args(account_id: &str) -> StartImportArgs<'_> {
-        StartImportArgs {
-            account_id,
-            source: "ios",
-            mode: "append",
-            tool: Some("message-vault-io"),
-            stage: ImportStage::Parse,
-            staging_dir: None,
-            device_id: None,
-            form_json: None,
-            source_fingerprint: None,
-            source_identities: None,
-        }
+        StartImportArgs::new(account_id, "ios", "append", Some("message-vault-io"))
     }
 
     #[tokio::test]
@@ -1236,16 +1245,11 @@ mod tests {
         );
 
         let args = StartImportArgs {
-            account_id: account,
-            source: "imessage",
-            mode: "append",
-            tool: Some("message-vault-io"),
-            stage: ImportStage::Parse,
             staging_dir: Some("/home/u/message-vault/staging-iphone-260830"),
             device_id: Some("device-a"),
             form_json: Some(r#"{"source":"imessage-ios"}"#),
             source_fingerprint: Some(r#"{"path":"/b","size_bytes":10}"#),
-            source_identities: None,
+            ..StartImportArgs::new(account, "imessage", "append", Some("message-vault-io"))
         };
         let id = start_import(&mut conn, &args).await.unwrap();
 
@@ -1279,18 +1283,7 @@ mod tests {
         let (pool, _dir) = setup_accounts_only().await;
         let mut conn = pool.acquire().await.unwrap();
         let account = ACCOUNT_ID;
-        let args = StartImportArgs {
-            account_id: account,
-            source: "imessage",
-            mode: "append",
-            tool: None,
-            stage: ImportStage::Parse,
-            staging_dir: None,
-            device_id: None,
-            form_json: None,
-            source_fingerprint: None,
-            source_identities: None,
-        };
+        let args = StartImportArgs::new(account, "imessage", "append", None);
         let id = start_import(&mut conn, &args).await.unwrap();
 
         set_import_stage(&mut conn, account, id, ImportStage::Pushing, None)
@@ -1325,18 +1318,7 @@ mod tests {
         let (pool, _dir) = setup_accounts_only().await;
         let mut conn = pool.acquire().await.unwrap();
         let account = ACCOUNT_ID;
-        let args = StartImportArgs {
-            account_id: account,
-            source: "imessage",
-            mode: "append",
-            tool: None,
-            stage: ImportStage::Parse,
-            staging_dir: None,
-            device_id: None,
-            form_json: None,
-            source_fingerprint: None,
-            source_identities: None,
-        };
+        let args = StartImportArgs::new(account, "imessage", "append", None);
         let id = start_import(&mut conn, &args).await.unwrap();
         complete_import(
             &mut conn,
