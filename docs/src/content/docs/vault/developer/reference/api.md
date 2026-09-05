@@ -42,8 +42,7 @@ Bulk `POST /v1/import` opens its own SQLite connection so it does not hold the s
 
 ## Import body
 
-- `Content-Type: application/jsonl` or `application/x-ndjson` — body only; attachments already uploaded by SHA-256
-- `Content-Type: multipart/form-data` — field `jsonl` plus `file` parts (relative paths such as `attachments/photo.jpg`)
+- `Content-Type: application/jsonl` or `application/x-ndjson` — body only; attachments already uploaded by SHA-256 through `/v1/assets`. Any other media type is refused with 415.
 
 Request body limit matches `[server] asset_max_bytes` (default 512 MiB).
 

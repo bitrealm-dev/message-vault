@@ -704,7 +704,7 @@ async fn promote_stamps_messages_with_import_id() {
     );
 }
 
-/// `run_import_path` (the raw-body/multipart `POST /v1/import` path) opens
+/// `run_import_path` (the `POST /v1/import` path) opens
 /// a one-shot session the same way `imports_create_handler` does when the
 /// caller does not pass `import_id`. It must map the same
 /// `StartImportError::AlreadyActive` collision to `ApiError::Conflict`,
@@ -754,9 +754,7 @@ async fn run_import_path_refuses_a_second_session_with_conflict() {
     // file is opened.
     let jsonl_path = tmp.path().join("unused.jsonl");
 
-    let err = run_import_path(state, query, jsonl_path, None)
-        .await
-        .unwrap_err();
+    let err = run_import_path(state, query, jsonl_path).await.unwrap_err();
     let ApiError::Conflict(message) = &err else {
         panic!("expected Conflict, got {err:?}");
     };
@@ -1344,62 +1342,25 @@ async fn http_import_without_source_is_a_json_400() {
     assert_eq!(err["error"], "query param source is required");
 }
 
-/// A malformed multipart body keeps the status Axum picked, the way
-/// `extract::Json` does. ADR-0005: the status carries the meaning.
+/// The import body is JSON Lines and nothing else. `multipart/form-data`
+/// used to be accepted (a `jsonl` field plus `file` parts) but nothing
+/// sent it: vault-push posts JSON Lines and uploads attachments through
+/// `/v1/assets`. The wrong media type is a 415, not a 400: the request is
+/// well formed, it is simply not something this route reads.
 #[tokio::test]
-async fn a_malformed_multipart_body_answers_axums_status_as_json() {
-    let vault = crate::test_support::test_vault().await;
-    let user = crate::test_support::register_via_api(&vault.state, "alice", "hunter2hunter2").await;
-
-    // A multipart Content-Type with no boundary parameter: Axum's
-    // `Multipart` extractor rejects it before reading a byte.
-    let (status, text) = crate::test_support::post_raw(
-        &vault.state,
-        "/v1/import?source=imessage&mode=append",
-        &user.token,
-        "multipart/form-data",
-        "not really multipart",
-    )
-    .await;
-    let body: serde_json::Value =
-        serde_json::from_str(&text).unwrap_or_else(|_| panic!("non-JSON body: {text}"));
-    assert_eq!(
-        body["error"], "Invalid `boundary` for `multipart/form-data` request",
-        "the handler must pass Axum's own sentence through, not wrap it: {body}"
-    );
-    assert_eq!(
-        status,
-        axum::http::StatusCode::BAD_REQUEST,
-        "a missing boundary is Axum's 400: {text}"
-    );
-}
-
-/// A well-formed multipart body whose `jsonl` field data alone exceeds
-/// Axum's inner ~2 MiB per-request body limit (see issue #334 — that cap
-/// is an inherited `axum` default nobody chose, well below this crate's
-/// configured 512 MiB `max_body_bytes`, and whether it should exist at
-/// all is an open product question). This test pins today's
-/// pass-through behaviour, not the ceiling: it exists to catch a
-/// regression that re-flattens the status, not to defend 2 MiB as the
-/// right limit. Whoever resolves #334 should update this test
-/// deliberately, not treat a failure here as having broken it.
-#[tokio::test]
-async fn a_multipart_field_over_axums_body_limit_answers_413() {
+async fn a_multipart_body_is_an_unsupported_media_type() {
     let vault = crate::test_support::test_vault().await;
     let user = crate::test_support::register_via_api(&vault.state, "alice", "hunter2hunter2").await;
 
     let boundary = "MessageVaultTestBoundary";
-    let big = "a".repeat(3 * 1024 * 1024);
     let body = format!(
-        "--{boundary}\r\nContent-Disposition: form-data; name=\"jsonl\"\r\n\r\n{big}\r\n--{boundary}--\r\n"
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"jsonl\"\r\n\r\n{{}}\r\n--{boundary}--\r\n"
     );
-    let content_type = format!("multipart/form-data; boundary={boundary}");
-
     let (status, text) = crate::test_support::post_raw(
         &vault.state,
         "/v1/import?source=imessage&mode=append",
         &user.token,
-        &content_type,
+        &format!("multipart/form-data; boundary={boundary}"),
         body,
     )
     .await;
@@ -1407,10 +1368,13 @@ async fn a_multipart_field_over_axums_body_limit_answers_413() {
         serde_json::from_str(&text).unwrap_or_else(|_| panic!("non-JSON body: {text}"));
     assert_eq!(
         status,
-        axum::http::StatusCode::PAYLOAD_TOO_LARGE,
-        "a field over axum's inner body limit is its own 413: {text}"
+        axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        "{text}"
     );
-    assert_eq!(parsed["error"], "Request payload is too large");
+    assert_eq!(
+        parsed["error"],
+        "Content-Type must be application/x-ndjson or application/jsonl"
+    );
 }
 
 /// `?account=` naming a different account is refused, even with an

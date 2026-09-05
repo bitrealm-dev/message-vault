@@ -19,7 +19,7 @@ use sqlx::Connection;
 use tempfile::TempDir;
 
 use crate::extract::{Json, Path as AxumPath, Query};
-use axum::extract::{FromRequest, Multipart, Request, State};
+use axum::extract::{Request, State};
 use axum::http::HeaderMap;
 use tokio::sync::Mutex;
 
@@ -46,8 +46,7 @@ use crate::dedupe;
 use crate::import::{self};
 use crate::server::{
     ApiError, AppState, ImportAccess, content_type_base, is_jsonl_content_type,
-    is_multipart_content_type, resolve_import_account, safe_rel_path, stream_body_to_file,
-    stream_field_to_file,
+    resolve_import_account, stream_body_to_file,
 };
 
 /// What happens to a source's messages that were imported before.
@@ -1481,7 +1480,7 @@ pub(crate) async fn imports_discard_handler(
     }))
 }
 
-/// Import one message-ir JSONL body (raw or multipart) into the vault.
+/// Import one message-ir JSONL body into the vault.
 #[utoipa::path(
     post,
     path = "/v1/import",
@@ -1497,10 +1496,9 @@ pub(crate) async fn imports_discard_handler(
     request_body(
         content(
             ("application/x-ndjson"),
-            ("application/jsonl"),
-            ("multipart/form-data")
+            ("application/jsonl")
         ),
-        description = "message-ir JSONL. application/x-ndjson, application/jsonl, and multipart/form-data (field jsonl plus file parts) are accepted."
+        description = "message-ir JSONL as application/x-ndjson or application/jsonl. Attachments are uploaded first by SHA-256 through /v1/assets."
     ),
     responses(
         (status = 200, body = ImportResponse),
@@ -1513,7 +1511,12 @@ pub(crate) async fn imports_discard_handler(
             body = crate::server::ErrorBody,
             description = "The account already has an active import session"
         ),
-        (status = 413, body = crate::server::ErrorBody)
+        (status = 413, body = crate::server::ErrorBody),
+        (
+            status = 415,
+            body = crate::server::ErrorBody,
+            description = "The body is not JSON Lines (multipart/form-data is not accepted)"
+        )
     )
 )]
 pub(crate) async fn import_handler(
@@ -1525,8 +1528,7 @@ pub(crate) async fn import_handler(
 ) -> Result<Json<ImportResponse>, ApiError> {
     let Some(ct) = content_type_base(&headers) else {
         return Err(ApiError::BadRequest(
-            "Content-Type required (application/x-ndjson, application/jsonl, or multipart/form-data)"
-                .into(),
+            "Content-Type required (application/x-ndjson or application/jsonl)".into(),
         ));
     };
 
@@ -1538,16 +1540,6 @@ pub(crate) async fn import_handler(
     validate_source_id(&query.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
     let account = resolve_import_account(&auth, query.account.as_deref(), &state.db).await?;
     query.account = Some(account);
-
-    if is_multipart_content_type(ct) {
-        let multipart = Multipart::from_request(request, &state)
-            .await
-            // Axum already picked the right status (413 over the body limit,
-            // 400 for a missing boundary); keep it rather than flattening
-            // everything to 400, exactly as `extract::Json` does.
-            .map_err(|e| ApiError::Status(e.status(), e.body_text()))?;
-        return import_multipart(state, query, multipart).await;
-    }
 
     if is_jsonl_content_type(ct) {
         let temp = tempfile::tempdir().map_err(|e| ApiError::Internal(format!("temp dir: {e}")))?;
@@ -1561,7 +1553,7 @@ pub(crate) async fn import_handler(
         // import cannot stall unrelated requests.
         let handle = tokio::runtime::Handle::current();
         let response = tokio::task::spawn_blocking(move || {
-            handle.block_on(run_import_path(state, query, jsonl_path, None))
+            handle.block_on(run_import_path(state, query, jsonl_path))
         })
         .await
         .map_err(|e| ApiError::Internal(format!("import task failed: {e}")))?;
@@ -1569,83 +1561,13 @@ pub(crate) async fn import_handler(
         return response;
     }
 
-    Err(ApiError::BadRequest(
-        "Content-Type must be application/x-ndjson, application/jsonl, or multipart/form-data"
-            .into(),
+    // Only JSON Lines is an import body. Attachments never travel with it:
+    // they are uploaded first, by SHA-256, through `/v1/assets`. A body in
+    // another type is the wrong media type, not a malformed request.
+    Err(ApiError::Status(
+        axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        "Content-Type must be application/x-ndjson or application/jsonl".into(),
     ))
-}
-
-async fn import_multipart(
-    state: AppState,
-    query: ImportQuery,
-    mut multipart: Multipart,
-) -> Result<Json<ImportResponse>, ApiError> {
-    let temp = tempfile::tempdir().map_err(|e| ApiError::Internal(format!("temp dir: {e}")))?;
-    let asset_root = temp.path().to_path_buf();
-    let jsonl_path = asset_root.join("_import.jsonl");
-    let mut have_jsonl = false;
-    let mut file_count = 0u64;
-
-    while let Some(mut field) = multipart
-        .next_field()
-        .await
-        // Same rule as the extractor above: Axum's own status (413 over the
-        // body limit) carries the meaning, so pass it through rather than
-        // flattening to 400.
-        .map_err(|e| ApiError::Status(e.status(), e.body_text()))?
-    {
-        let name = field.name().unwrap_or("").to_string();
-        match name.as_str() {
-            "jsonl" => {
-                let n = stream_field_to_file(field, &jsonl_path).await?;
-                if n == 0 {
-                    return Err(ApiError::BadRequest("jsonl part is empty".into()));
-                }
-                have_jsonl = true;
-            }
-            "file" => {
-                let filename = match field.file_name() {
-                    Some(name) if !name.is_empty() => name.to_string(),
-                    _ => {
-                        return Err(ApiError::BadRequest(
-                            "file part missing filename (use relative path e.g. attachments/a.jpg)"
-                                .into(),
-                        ));
-                    }
-                };
-                let rel = safe_rel_path(&filename)?;
-                let dest = asset_root.join(&rel);
-                stream_field_to_file(field, &dest).await?;
-                file_count += 1;
-            }
-            other => {
-                while let Some(chunk) = field
-                    .chunk()
-                    .await
-                    .map_err(|e| ApiError::Status(e.status(), e.body_text()))?
-                {
-                    let _ = chunk;
-                }
-                eprintln!("import: ignoring unknown multipart field {other:?}");
-            }
-        }
-    }
-
-    if !have_jsonl {
-        return Err(ApiError::BadRequest(
-            "multipart missing required field 'jsonl'".into(),
-        ));
-    }
-    eprintln!("import: multipart jsonl + {file_count} file(s)");
-
-    let handle = tokio::runtime::Handle::current();
-    let response = tokio::task::spawn_blocking(move || {
-        handle.block_on(run_import_path(state, query, jsonl_path, Some(asset_root)))
-    })
-    .await
-    .map_err(|e| ApiError::Internal(format!("import task failed: {e}")))?;
-    drop(temp);
-    response
 }
 
 /// Bound on concurrent HTTP imports: each import holds one pooled connection
@@ -1677,7 +1599,6 @@ async fn run_import_path(
     state: AppState,
     query: ImportQuery,
     jsonl_path: PathBuf,
-    asset_root_override: Option<PathBuf>,
 ) -> Result<Json<ImportResponse>, ApiError> {
     // An import holds one pooled connection for its whole run (JSONL parse,
     // asset IO, promote). Bound concurrent imports here so they can never
@@ -1722,10 +1643,9 @@ async fn run_import_path(
         .await?;
     }
 
+    // Attachment paths resolve only through assets already uploaded by
+    // SHA-256; the import body never carries files of its own.
     let assets_dir = cfg.paths.assets_dir_for_account(&account, &source_id);
-    // Raw body imports resolve attachment paths only via pre-uploaded sha256 assets.
-    // Multipart supplies a temp asset_root for relative file parts.
-    let asset_root_owned = asset_root_override.unwrap_or_else(|| assets_dir.clone());
 
     // A client session (vault-push) is closed by the client. Otherwise open
     // one of our own so the Settings import table records curl and
@@ -1741,7 +1661,7 @@ async fn run_import_path(
 
     let opts = ImportOptions::fixed(FixedImportArgs {
         assets_dir: &assets_dir,
-        asset_root: &asset_root_owned,
+        asset_root: &assets_dir,
         contacts: None,
         overwrite_contacts: false,
         mode,

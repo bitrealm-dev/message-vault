@@ -775,7 +775,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Import one message-ir JSONL body (raw or multipart) into the vault. */
+        /** Import one message-ir JSONL body into the vault. */
         post: operations["import_handler"];
         delete?: never;
         options?: never;
@@ -4742,12 +4742,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        /** @description message-ir JSONL. application/x-ndjson, application/jsonl, and multipart/form-data (field jsonl plus file parts) are accepted. */
+        /** @description message-ir JSONL as application/x-ndjson or application/jsonl. Attachments are uploaded first by SHA-256 through /v1/assets. */
         requestBody?: {
             content: {
                 "application/jsonl": unknown;
                 "application/x-ndjson": unknown;
-                "multipart/form-data": unknown;
             };
         };
         responses: {
@@ -4801,6 +4800,15 @@ export interface operations {
                 };
             };
             413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The body is not JSON Lines (multipart/form-data is not accepted) */
+            415: {
                 headers: {
                     [name: string]: unknown;
                 };
