@@ -338,19 +338,24 @@ pub(crate) fn probe_video(path: &std::path::Path) -> Result<Probe> {
     })
 }
 
+/// Serialize every test that reads or changes the process-global tools
+/// directory. The tests in this module point it at empty and mock
+/// directories; a test elsewhere in the crate that needs the real ffmpeg
+/// must hold this lock too, or it can observe a directory with no tools
+/// in it for the instant between a set and its restore.
+#[cfg(test)]
+pub(crate) fn tools_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use std::sync::Mutex;
-
-    fn tools_state_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("tools test state lock")
-    }
 
     struct RestoreToolsDir(Option<PathBuf>);
 
@@ -386,7 +391,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn probe_folder_requires_both_tools() {
-        let _guard = tools_state_lock();
+        let _guard = tools_test_lock();
         let _restore = RestoreToolsDir::capture();
         let dir = tempfile::tempdir().unwrap();
         write_mock_tool(&dir.path().join("ffmpeg"));
@@ -400,7 +405,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn set_tools_dir_overrides_and_clears_cache() {
-        let _guard = tools_state_lock();
+        let _guard = tools_test_lock();
         let _restore = RestoreToolsDir::capture();
         let dir = tempfile::tempdir().unwrap();
         for name in ["ffmpeg", "ffprobe"] {
@@ -422,7 +427,7 @@ mod tests {
         // — which reads as a problem with the user's file, not the missing
         // tool. `ffprobe_command` must fail before that, with a message that
         // names ffprobe.
-        let _guard = tools_state_lock();
+        let _guard = tools_test_lock();
         let _restore = RestoreToolsDir::capture();
         let empty = tempfile::tempdir().unwrap();
         set_tools_dir(Some(empty.path().to_path_buf()));
@@ -438,7 +443,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn probe_candidate_folder_does_not_change_override() {
-        let _guard = tools_state_lock();
+        let _guard = tools_test_lock();
         let _restore = RestoreToolsDir::capture();
         let live = tempfile::tempdir().unwrap();
         for name in ["ffmpeg", "ffprobe"] {
@@ -456,7 +461,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn find_tool_prefers_message_vault_io_bin() {
-        let _guard = tools_state_lock();
+        let _guard = tools_test_lock();
         let _restore = RestoreToolsDir::capture();
         set_tools_dir(None);
         let dir = tempfile::tempdir().unwrap();
