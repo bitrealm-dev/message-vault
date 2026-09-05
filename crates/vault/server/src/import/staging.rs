@@ -238,8 +238,11 @@ impl StagingInserts {
     }
 }
 
+/// One participant as the conversation header records it: handle, the name
+/// this backup used for them, and the handle type when the source said.
+type StagedParticipant = (Option<String>, Option<String>, Option<HandleType>);
+
 /// chat_identifier, platform_service, conversation_type, group_title, exported_at, participants, source
-/// Participants are (handle, name_alias, handle_type).
 /// `platform_service` is `phone` | `whatsapp` for handle rows.
 type ConversationHeader = (
     String,
@@ -247,7 +250,7 @@ type ConversationHeader = (
     String,
     Option<String>,
     Option<String>,
-    Vec<(Option<String>, Option<String>, Option<HandleType>)>,
+    Vec<StagedParticipant>,
     String,
 );
 
@@ -454,33 +457,12 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
 
     let assets_dir = assets_dir_for_source(opts, &source)?;
     let mut stats = ImportStats::default();
-    let kept_participants = participants;
+    let platform = platform_for(platform_service.as_deref(), &source);
 
-    // Platform for chat/participant handles: conversation hint, else export source.
-    let platform = platform_service
-        .as_deref()
-        .map(HandleService::parse)
-        .unwrap_or_else(|| {
-            if source.eq_ignore_ascii_case("whatsapp") {
-                HandleService::Whatsapp
-            } else {
-                HandleService::Phone
-            }
-        });
-    let platform_str = platform.as_str();
-
-    let mut prepared_messages = Vec::with_capacity(messages.len());
-    for mut msg in messages {
-        let attachments = prepare_attachments(
-            opts.asset_root,
-            &assets_dir,
-            std::mem::take(&mut msg.attachments),
-            asset_stats,
-            opts.media,
-            media_work,
-        )?;
-        prepared_messages.push((msg, attachments));
-    }
+    // Copy or convert media first: it needs no database rows, and a failure
+    // here leaves nothing half-written.
+    let prepared_messages =
+        prepare_message_attachments(opts, &assets_dir, messages, asset_stats, media_work)?;
 
     // Conversation identity: the chat handle, typed from its shape (Phone for
     // SMS/iMessage/WhatsApp numbers, Email for `@`, Other for group ids).
@@ -490,7 +472,7 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
         &stmts.account_id,
         &chat_identifier,
         infer_handle_type(&chat_identifier),
-        Some(platform_str),
+        Some(platform.as_str()),
     )
     .await?;
     if flagged {
@@ -500,7 +482,6 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
         let _ = ensure_contact_for_handle(tx, &stmts.account_id, chat_handle_id, None, &mut stats)
             .await?;
     }
-
     let conversation_id: i64 = sqlx::query_scalar(INSERT_CONVERSATION)
         .bind(&stmts.account_id)
         .bind(chat_handle_id)
@@ -512,73 +493,172 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
         .await?;
     stats.conversations = 1;
 
-    for (handle, name_alias, handle_type) in kept_participants {
-        let Some(handle) = handle else {
-            // The source named this person and recorded no address for them.
-            // Nothing but a contact can hold a name with no identity, so the
-            // participant is bound to one and carries no handle.
-            let (contact_id, name_alias) =
-                resolve_name_only_participant(tx, &stmts.account_id, name_alias.as_deref()).await?;
-            // `resolve_name_only_participant` returns `(None, None)` when
-            // there is nothing to create and nothing to show; honor that here
-            // instead of inserting a row that names no one.
-            let (Some(contact_id), Some(name_alias)) = (contact_id, name_alias) else {
-                continue;
-            };
-            sqlx::query(INSERT_PARTICIPANT)
-                .bind(conversation_id)
-                .bind(Option::<i64>::None)
-                .bind(Some(contact_id))
-                .bind(Some(name_alias))
-                .execute(&mut *tx)
-                .await?;
-            stats.participants += 1;
-            continue;
-        };
-        // Prefer the source-provided type; fall back to shape inference.
-        let handle_type = handle_type.unwrap_or_else(|| infer_handle_type(&handle));
-        let (handle_id, flagged, _cached) = upsert_handle_row_cached(
+    for participant in participants {
+        insert_participant(
             tx,
-            &mut stmts.handles,
-            &stmts.account_id,
-            &handle,
-            handle_type,
-            Some(platform_str),
-        )
-        .await?;
-        if flagged {
-            stats.phones_needing_review += 1;
-        }
-        let backup_name = nonempty_str(name_alias.as_deref()).map(str::to_string);
-        let contact_id = ensure_contact_for_handle(
-            tx,
-            &stmts.account_id,
-            handle_id,
-            backup_name.as_deref(),
+            stmts,
+            conversation_id,
+            participant,
+            platform,
             &mut stats,
         )
         .await?;
-        // `participants.name_alias` keeps what this backup called them in this
-        // conversation. It is the second clause of the naming rule, never the
-        // first.
+    }
+
+    let pending_rows =
+        resolve_message_rows(tx, stmts, prepared_messages, platform, &mut stats).await?;
+    let engine = dialect::engine_of(tx);
+    let msg_chunk = max_rows_for_bind_limit(engine, MESSAGE_BIND_COLUMNS).max(1);
+    for chunk in pending_rows.chunks(msg_chunk) {
+        flush_staging_message_chunk(
+            tx,
+            stmts,
+            &mut stats,
+            conversation_id,
+            &source,
+            &assets_dir,
+            chunk,
+        )
+        .await?;
+    }
+    Ok(stats)
+}
+
+/// Platform for chat and participant handles: the conversation's own hint,
+/// else WhatsApp for a WhatsApp export, else phone.
+fn platform_for(platform_service: Option<&str>, source: &str) -> HandleService {
+    platform_service
+        .map(HandleService::parse)
+        .unwrap_or_else(|| {
+            if source.eq_ignore_ascii_case("whatsapp") {
+                HandleService::Whatsapp
+            } else {
+                HandleService::Phone
+            }
+        })
+}
+
+/// Stage every message's attachments on disk, pairing each message with what
+/// was kept.
+///
+/// # Errors
+///
+/// Returns an error when a media file cannot be copied or converted.
+fn prepare_message_attachments(
+    opts: &ImportOptions<'_>,
+    assets_dir: &Path,
+    messages: Vec<MessageRecord>,
+    asset_stats: &mut AssetStats,
+    media_work: &Path,
+) -> Result<Vec<(MessageRecord, Vec<PreparedAttachment>)>> {
+    let mut prepared = Vec::with_capacity(messages.len());
+    for mut msg in messages {
+        let attachments = prepare_attachments(
+            opts.asset_root,
+            assets_dir,
+            std::mem::take(&mut msg.attachments),
+            asset_stats,
+            opts.media,
+            media_work,
+        )?;
+        prepared.push((msg, attachments));
+    }
+    Ok(prepared)
+}
+
+/// Insert one participant row, bound to a handle when the source recorded an
+/// address and to a name-only contact when it did not.
+///
+/// # Errors
+///
+/// Returns an error when a handle or contact row cannot be written.
+async fn insert_participant(
+    tx: &mut AnyConnection,
+    stmts: &mut StagingInserts,
+    conversation_id: i64,
+    (handle, name_alias, handle_type): StagedParticipant,
+    platform: HandleService,
+    stats: &mut ImportStats,
+) -> Result<()> {
+    let Some(handle) = handle else {
+        // The source named this person and recorded no address for them.
+        // Nothing but a contact can hold a name with no identity, so the
+        // participant is bound to one and carries no handle.
+        let (contact_id, name_alias) =
+            resolve_name_only_participant(tx, &stmts.account_id, name_alias.as_deref()).await?;
+        // `resolve_name_only_participant` returns `(None, None)` when
+        // there is nothing to create and nothing to show; honor that here
+        // instead of inserting a row that names no one.
+        let (Some(contact_id), Some(name_alias)) = (contact_id, name_alias) else {
+            return Ok(());
+        };
         sqlx::query(INSERT_PARTICIPANT)
             .bind(conversation_id)
-            .bind(handle_id)
+            .bind(Option::<i64>::None)
             .bind(Some(contact_id))
-            .bind(backup_name)
+            .bind(Some(name_alias))
             .execute(&mut *tx)
             .await?;
         stats.participants += 1;
+        return Ok(());
+    };
+    // Prefer the source-provided type; fall back to shape inference.
+    let handle_type = handle_type.unwrap_or_else(|| infer_handle_type(&handle));
+    let (handle_id, flagged, _cached) = upsert_handle_row_cached(
+        tx,
+        &mut stmts.handles,
+        &stmts.account_id,
+        &handle,
+        handle_type,
+        Some(platform.as_str()),
+    )
+    .await?;
+    if flagged {
+        stats.phones_needing_review += 1;
     }
+    let backup_name = nonempty_str(name_alias.as_deref()).map(str::to_string);
+    let contact_id = ensure_contact_for_handle(
+        tx,
+        &stmts.account_id,
+        handle_id,
+        backup_name.as_deref(),
+        stats,
+    )
+    .await?;
+    // `participants.name_alias` keeps what this backup called them in this
+    // conversation. It is the second clause of the naming rule, never the
+    // first.
+    sqlx::query(INSERT_PARTICIPANT)
+        .bind(conversation_id)
+        .bind(handle_id)
+        .bind(Some(contact_id))
+        .bind(backup_name)
+        .execute(&mut *tx)
+        .await?;
+    stats.participants += 1;
+    Ok(())
+}
 
-    let mut pending_rows = Vec::with_capacity(prepared_messages.len());
-    for (sort_order, (msg, attachments)) in prepared_messages.into_iter().enumerate() {
+/// Resolve each message's body text and sender handle into a row ready for
+/// the bulk staging insert.
+///
+/// # Errors
+///
+/// Returns an error when a sender handle cannot be written.
+async fn resolve_message_rows(
+    tx: &mut AnyConnection,
+    stmts: &mut StagingInserts,
+    prepared: Vec<(MessageRecord, Vec<PreparedAttachment>)>,
+    platform: HandleService,
+    stats: &mut ImportStats,
+) -> Result<Vec<PendingStagingMessage>> {
+    let mut rows = Vec::with_capacity(prepared.len());
+    for (sort_order, (msg, attachments)) in prepared.into_iter().enumerate() {
         let body = if msg.is_announcement {
             clean_body(msg.announcement.as_deref()).or_else(|| clean_body(msg.text.as_deref()))
         } else {
             clean_body(msg.text.as_deref())
         };
-
         let sender_platform = msg
             .service
             .as_deref()
@@ -594,10 +674,10 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
                 handle_type: msg.sender_handle_type,
                 platform: sender_platform.as_str(),
             },
-            &mut stats,
+            stats,
         )
         .await?;
-        pending_rows.push(PendingStagingMessage {
+        rows.push(PendingStagingMessage {
             msg,
             attachments,
             sender_handle_id,
@@ -606,23 +686,7 @@ async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Res
             sort_order: sort_order as i64,
         });
     }
-
-    let engine = dialect::engine_of(tx);
-    let msg_chunk = max_rows_for_bind_limit(engine, MESSAGE_BIND_COLUMNS).max(1);
-    for chunk in pending_rows.chunks(msg_chunk) {
-        flush_staging_message_chunk(
-            tx,
-            stmts,
-            &mut stats,
-            conversation_id,
-            &source,
-            &assets_dir,
-            chunk,
-        )
-        .await?;
-    }
-
-    Ok(stats)
+    Ok(rows)
 }
 
 struct PendingStagingMessage {

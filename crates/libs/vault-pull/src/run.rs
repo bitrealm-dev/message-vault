@@ -135,40 +135,9 @@ pub fn run(
     if cfg.out_dir.as_os_str().is_empty() {
         bail!("output directory is required");
     }
-
-    let auth = authenticate(&cfg.base_url, &cfg.key, &cfg.username)
-        .map_err(|e| anyhow::anyhow!("{}", e.detail()))?;
-    let account = auth.account_id.clone();
-    let username = auth.username.clone().unwrap_or_else(|| account.clone());
-    emit(
-        &mut on_progress,
-        ProgressEvent::Auth {
-            account_id: account.clone(),
-            username: username.clone(),
-        },
-    );
-    emit(
-        &mut on_progress,
-        ProgressEvent::Log(format!("Authenticated as {username} ({account})")),
-    );
-
-    let q = cfg.query.trim().to_string();
-    emit(
-        &mut on_progress,
-        ProgressEvent::Log(if q.is_empty() {
-            "Backup query: (all messages)".into()
-        } else {
-            format!("Backup query: {q}")
-        }),
-    );
-
+    let pull = Pull::login(cfg, &mut on_progress)?;
     prepare_out_dir(&cfg.out_dir, cfg.skip_attachments)?;
-
-    // Load the local skip log so a later run does not re-download files already on disk.
-    let journal_path = crate::journal::journal_path(&cfg.out_dir);
-    let journal_state = crate::journal::load(&journal_path, &cfg.base_url, &username)?;
-
-    if journal_state.backup_complete {
+    if pull.journal.backup_complete {
         emit(
             &mut on_progress,
             ProgressEvent::Log(
@@ -177,175 +146,28 @@ pub fn run(
         );
     }
 
-    let session = HttpSession::new()?;
-    let mut offset = 0usize;
-    let mut by_conv: BTreeMap<String, (Message, Vec<message_ir::IrMessage>)> = BTreeMap::new();
-    // sha256 -> (source, relative path under out_dir)
-    let mut assets: HashMap<String, (String, String)> = HashMap::new();
-    let mut total_messages = 0u64;
-
-    loop {
-        check_cancel(cfg.cancel.as_ref())?;
-        let page = with_retries(MAX_RETRIES, || {
-            crate::http::export_messages(
-                &session,
-                ExportMessagesArgs {
-                    base_url: &cfg.base_url,
-                    key: &cfg.key,
-                    q: &q,
-                    limit: cfg.page_limit.clamp(1, MAX_PAGE_LIMIT),
-                    offset,
-                    account: &account,
-                },
-            )
-        })?;
-        let fetched = page.items.len();
-        total_messages += fetched as u64;
-        emit(
-            &mut on_progress,
-            ProgressEvent::Page {
-                messages: fetched,
-                total_so_far: total_messages,
-            },
-        );
-
-        for msg in page.items {
-            if !cfg.skip_attachments {
-                for att in &msg.attachments {
-                    if let Some(sha) = att
-                        .sha256
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty())
-                    {
-                        let rel = att
-                            .path
-                            .as_deref()
-                            .map(str::trim)
-                            .filter(|s| !s.is_empty())
-                            .map(|p| p.trim_start_matches('/').to_string())
-                            .unwrap_or_else(|| format!("attachments/{sha}"));
-                        assets
-                            .entry(sha.to_string())
-                            .or_insert_with(|| (msg.source.clone(), rel));
-                    }
-                }
-            }
-            let key = conversation_key(&msg);
-            let ir = to_ir_message(&msg, cfg.skip_attachments)?;
-            let entry = by_conv
-                .entry(key)
-                .or_insert_with(|| (msg.clone(), Vec::new()));
-            // Keep first message as seed for conversation metadata.
-            entry.1.push(ir);
-        }
-
-        match next_offset(offset, fetched, page.total) {
-            Some(next) => offset = next,
-            None => break,
-        }
-    }
-
-    let mut attachments_downloaded = 0u64;
-    let mut attachments_skipped = 0u64;
-
-    if !cfg.skip_attachments {
-        let to_download = assets_needing_download(&assets, &journal_state.assets, &cfg.out_dir);
-        let skipped_by_journal = assets.len() as u64 - to_download.len() as u64;
-
-        if !to_download.is_empty() {
-            emit(
-                &mut on_progress,
-                ProgressEvent::Log(format!(
-                    "Downloading {} unique asset(s) with {} worker(s) ({} skipped from journal)…",
-                    to_download.len(),
-                    cfg.asset_download_workers,
-                    skipped_by_journal
-                )),
-            );
-            let dl_stats = download_assets_parallel(DownloadAssetsParallelArgs {
-                session: &session,
-                base_url: &cfg.base_url,
-                key: &cfg.key,
-                account: &account,
-                assets: &to_download,
-                out_dir: &cfg.out_dir,
-                workers: cfg.asset_download_workers,
-                cancel: cfg.cancel.as_ref(),
-            })?;
-            attachments_downloaded = dl_stats.downloaded;
-            attachments_skipped = dl_stats.skipped + skipped_by_journal;
-
-            // Journal each successfully present asset (downloaded or already on disk)
-            // so a resume skips it.
-            for sha in to_download.keys() {
-                if !journal_state.assets.contains(sha) {
-                    let event = crate::journal::PullJournalEvent::AssetOk {
-                        url: cfg.base_url.clone(),
-                        username: username.clone(),
-                        sha256: sha.clone(),
-                        path: String::new(),
-                        size_bytes: 0,
-                    };
-                    let _ = crate::journal::append(&journal_path, &event);
-                }
-            }
-
-            emit(
-                &mut on_progress,
-                ProgressEvent::Log(format!(
-                    "Assets: {} downloaded, {} skipped ({} total bytes)",
-                    attachments_downloaded,
-                    attachments_skipped,
-                    format_bytes_human(dl_stats.bytes)
-                )),
-            );
-        } else {
-            attachments_skipped = skipped_by_journal;
-        }
-    }
-
-    let mut conversations = 0u64;
-    for (_key, (seed, messages)) in by_conv {
-        let source = seed.source.clone();
-        let mut doc = build_document(&source, &seed, messages);
-        // Disambiguate same chat across sources.
-        if !doc.export.source.trim().is_empty() {
-            doc.packaging_stem_suffix =
-                Some(format!("__{}", sanitize_source_suffix(&doc.export.source)));
-        }
-        write_conversation_jsonl(&cfg.out_dir, &doc)?;
-        conversations += 1;
-    }
-
-    // Record that this download finished, then rewrite the journal in its shortest form.
-    let event = crate::journal::PullJournalEvent::BackupComplete {
-        url: cfg.base_url.clone(),
-        username: username.clone(),
+    let fetched = pull.fetch_all_messages(&mut on_progress)?;
+    let assets = if cfg.skip_attachments {
+        AssetCounts::default()
+    } else {
+        pull.download_assets(&fetched.assets, &mut on_progress)?
+    };
+    let conversations = pull.write_conversations(fetched.by_conv)?;
+    pull.finish_journal(
         conversations,
-        messages: total_messages,
-        assets: attachments_downloaded + attachments_skipped,
-    };
-    crate::journal::append(&journal_path, &event)?;
-    // Rewrite the journal in its shortest form now that the run finished cleanly.
-    // Every asset this run saw is on disk: it was downloaded above, or an earlier
-    // run had already fetched it.
-    let mut recorded_assets = journal_state.assets;
-    recorded_assets.extend(assets.into_keys());
-    let final_state = crate::journal::PullJournalState {
-        assets: recorded_assets,
-        backup_complete: true,
-    };
-    let _ = crate::journal::compact(&journal_path, &cfg.base_url, &username, &final_state);
+        fetched.total_messages,
+        &assets,
+        fetched.assets,
+    );
 
     let report = PullReport {
         ok: true,
-        account,
-        query: q,
+        account: pull.account,
+        query: pull.query,
         conversations,
-        messages: total_messages,
-        attachments_downloaded,
-        attachments_skipped,
+        messages: fetched.total_messages,
+        attachments_downloaded: assets.downloaded,
+        attachments_skipped: assets.skipped,
         out_dir: cfg.out_dir.display().to_string(),
     };
     emit(
@@ -357,6 +179,292 @@ pub fn run(
     );
     emit(&mut on_progress, ProgressEvent::Done(report.clone()));
     Ok(report)
+}
+
+/// Everything the vault handed back while paging: messages grouped by
+/// conversation, the attachments they reference, and the running count.
+struct Fetched {
+    /// Conversation key → (first message as the metadata seed, converted messages).
+    by_conv: BTreeMap<String, (Message, Vec<message_ir::IrMessage>)>,
+    /// sha256 → (source, relative path under the output folder).
+    assets: HashMap<String, (String, String)>,
+    total_messages: u64,
+}
+
+/// Attachment outcome counts for the report.
+#[derive(Debug, Default, Clone, Copy)]
+struct AssetCounts {
+    downloaded: u64,
+    skipped: u64,
+}
+
+/// One authenticated download run: the connection, the account it resolved
+/// to, and the local journal of files already on disk.
+struct Pull<'a> {
+    cfg: &'a VaultPullConfig,
+    session: HttpSession,
+    account: String,
+    username: String,
+    /// The search query with surrounding whitespace removed.
+    query: String,
+    journal_path: PathBuf,
+    journal: crate::journal::PullJournalState,
+}
+
+impl<'a> Pull<'a> {
+    /// Check the key, announce the account and query, and load the journal.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when login fails or the journal cannot be read.
+    fn login(cfg: &'a VaultPullConfig, out: &mut Option<&mut ProgressFn<'_>>) -> Result<Self> {
+        let auth = authenticate(&cfg.base_url, &cfg.key, &cfg.username)
+            .map_err(|e| anyhow::anyhow!("{}", e.detail()))?;
+        let account = auth.account_id.clone();
+        let username = auth.username.clone().unwrap_or_else(|| account.clone());
+        emit(
+            out,
+            ProgressEvent::Auth {
+                account_id: account.clone(),
+                username: username.clone(),
+            },
+        );
+        emit(
+            out,
+            ProgressEvent::Log(format!("Authenticated as {username} ({account})")),
+        );
+        let query = cfg.query.trim().to_string();
+        emit(
+            out,
+            ProgressEvent::Log(if query.is_empty() {
+                "Backup query: (all messages)".into()
+            } else {
+                format!("Backup query: {query}")
+            }),
+        );
+        // Load the local skip log so a later run does not re-download files already on disk.
+        let journal_path = crate::journal::journal_path(&cfg.out_dir);
+        let journal = crate::journal::load(&journal_path, &cfg.base_url, &username)?;
+        Ok(Self {
+            cfg,
+            session: HttpSession::new()?,
+            account,
+            username,
+            query,
+            journal_path,
+            journal,
+        })
+    }
+
+    /// Page through every matching message, grouping by conversation and
+    /// noting which attachments they reference.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a page fails after retries, a message cannot be
+    /// converted, or the run is cancelled.
+    fn fetch_all_messages(&self, out: &mut Option<&mut ProgressFn<'_>>) -> Result<Fetched> {
+        let cfg = self.cfg;
+        let mut fetched = Fetched {
+            by_conv: BTreeMap::new(),
+            assets: HashMap::new(),
+            total_messages: 0,
+        };
+        let mut offset = 0usize;
+        loop {
+            check_cancel(cfg.cancel.as_ref())?;
+            let page = with_retries(MAX_RETRIES, || {
+                crate::http::export_messages(
+                    &self.session,
+                    ExportMessagesArgs {
+                        base_url: &cfg.base_url,
+                        key: &cfg.key,
+                        q: &self.query,
+                        limit: cfg.page_limit.clamp(1, MAX_PAGE_LIMIT),
+                        offset,
+                        account: &self.account,
+                    },
+                )
+            })?;
+            let count = page.items.len();
+            fetched.total_messages += count as u64;
+            emit(
+                out,
+                ProgressEvent::Page {
+                    messages: count,
+                    total_so_far: fetched.total_messages,
+                },
+            );
+            for msg in page.items {
+                if !cfg.skip_attachments {
+                    note_asset_refs(&msg, &mut fetched.assets);
+                }
+                let ir = to_ir_message(&msg, cfg.skip_attachments)?;
+                fetched
+                    .by_conv
+                    .entry(conversation_key(&msg))
+                    // Keep first message as seed for conversation metadata.
+                    .or_insert_with(|| (msg.clone(), Vec::new()))
+                    .1
+                    .push(ir);
+            }
+            match next_offset(offset, count, page.total) {
+                Some(next) => offset = next,
+                None => break,
+            }
+        }
+        Ok(fetched)
+    }
+
+    /// Download every referenced attachment the journal does not already
+    /// have, and journal each one that is now on disk so a resume skips it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a download fails after retries or the run is cancelled.
+    fn download_assets(
+        &self,
+        assets: &HashMap<String, (String, String)>,
+        out: &mut Option<&mut ProgressFn<'_>>,
+    ) -> Result<AssetCounts> {
+        let cfg = self.cfg;
+        let to_download = assets_needing_download(assets, &self.journal.assets, &cfg.out_dir);
+        let skipped_by_journal = assets.len() as u64 - to_download.len() as u64;
+        if to_download.is_empty() {
+            return Ok(AssetCounts {
+                downloaded: 0,
+                skipped: skipped_by_journal,
+            });
+        }
+        emit(
+            out,
+            ProgressEvent::Log(format!(
+                "Downloading {} unique asset(s) with {} worker(s) ({} skipped from journal)…",
+                to_download.len(),
+                cfg.asset_download_workers,
+                skipped_by_journal
+            )),
+        );
+        let stats = download_assets_parallel(DownloadAssetsParallelArgs {
+            session: &self.session,
+            base_url: &cfg.base_url,
+            key: &cfg.key,
+            account: &self.account,
+            assets: &to_download,
+            out_dir: &cfg.out_dir,
+            workers: cfg.asset_download_workers,
+            cancel: cfg.cancel.as_ref(),
+        })?;
+        let counts = AssetCounts {
+            downloaded: stats.downloaded,
+            skipped: stats.skipped + skipped_by_journal,
+        };
+        for sha in to_download.keys() {
+            if !self.journal.assets.contains(sha) {
+                let event = crate::journal::PullJournalEvent::AssetOk {
+                    url: cfg.base_url.clone(),
+                    username: self.username.clone(),
+                    sha256: sha.clone(),
+                    path: String::new(),
+                    size_bytes: 0,
+                };
+                let _ = crate::journal::append(&self.journal_path, &event);
+            }
+        }
+        emit(
+            out,
+            ProgressEvent::Log(format!(
+                "Assets: {} downloaded, {} skipped ({} total bytes)",
+                counts.downloaded,
+                counts.skipped,
+                format_bytes_human(stats.bytes)
+            )),
+        );
+        Ok(counts)
+    }
+
+    /// Write one JSON Lines file per conversation and return how many.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a file cannot be written.
+    fn write_conversations(
+        &self,
+        by_conv: BTreeMap<String, (Message, Vec<message_ir::IrMessage>)>,
+    ) -> Result<u64> {
+        let mut conversations = 0u64;
+        for (_key, (seed, messages)) in by_conv {
+            let mut doc = build_document(&seed.source, &seed, messages);
+            // Disambiguate same chat across sources.
+            if !doc.export.source.trim().is_empty() {
+                doc.packaging_stem_suffix =
+                    Some(format!("__{}", sanitize_source_suffix(&doc.export.source)));
+            }
+            write_conversation_jsonl(&self.cfg.out_dir, &doc)?;
+            conversations += 1;
+        }
+        Ok(conversations)
+    }
+
+    /// Record that this download finished, then rewrite the journal in its
+    /// shortest form. Every asset this run saw is on disk: it was downloaded
+    /// above, or an earlier run had already fetched it. Best effort: a journal
+    /// write failure does not fail a run whose files are already written.
+    fn finish_journal(
+        &self,
+        conversations: u64,
+        messages: u64,
+        assets: &AssetCounts,
+        seen_assets: HashMap<String, (String, String)>,
+    ) {
+        let event = crate::journal::PullJournalEvent::BackupComplete {
+            url: self.cfg.base_url.clone(),
+            username: self.username.clone(),
+            conversations,
+            messages,
+            assets: assets.downloaded + assets.skipped,
+        };
+        let _ = crate::journal::append(&self.journal_path, &event);
+        let mut recorded_assets = self.journal.assets.clone();
+        recorded_assets.extend(seen_assets.into_keys());
+        let final_state = crate::journal::PullJournalState {
+            assets: recorded_assets,
+            backup_complete: true,
+        };
+        let _ = crate::journal::compact(
+            &self.journal_path,
+            &self.cfg.base_url,
+            &self.username,
+            &final_state,
+        );
+    }
+}
+
+/// Remember where each attachment a message references should land on disk.
+///
+/// The first message to mention a sha256 decides the source and path; the
+/// vault stores one blob per fingerprint, so later mentions are the same file.
+fn note_asset_refs(msg: &Message, assets: &mut HashMap<String, (String, String)>) {
+    for att in &msg.attachments {
+        let Some(sha) = att
+            .sha256
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
+            continue;
+        };
+        let rel = att
+            .path
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|p| p.trim_start_matches('/').to_string())
+            .unwrap_or_else(|| format!("attachments/{sha}"));
+        assets
+            .entry(sha.to_string())
+            .or_insert_with(|| (msg.source.clone(), rel));
+    }
 }
 
 struct AssetDownloadJob {
