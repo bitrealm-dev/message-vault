@@ -378,7 +378,7 @@ async fn run_dedupe(args: DedupeArgs) -> Result<()> {
 
     println!("Cross-source dedupe on {target}");
     println!("  config:       {}", args.config.display());
-    println!("  account:      {}", account);
+    println!("  account:      {account}");
     println!("  window_secs:  {}", args.window_secs);
     println!(
         "  priority:     {}",
@@ -415,7 +415,7 @@ async fn run_import_contacts(args: ImportContactsArgs) -> Result<()> {
 
     println!("Imported contacts into {}", db.display());
     println!("  config:       {}", args.config.display());
-    println!("  account:      {}", account);
+    println!("  account:      {account}");
     println!("  contacts:     {}", args.contacts.display());
     println!("  rows:         {}", stats.contacts);
     println!("  phones:       {}", stats.phones);

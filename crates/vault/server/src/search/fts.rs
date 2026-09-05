@@ -30,8 +30,8 @@ pub(crate) fn leaf(out: &mut Sql, engine: DbEngine, term: &TextTerm) {
                 TextTerm::Term {
                     text,
                     prefix: false,
-                } => fts5_literal(text),
-                TextTerm::Phrase(text) => fts5_literal(text),
+                }
+                | TextTerm::Phrase(text) => fts5_literal(text),
             };
             out.push(
                 "EXISTS (SELECT 1 FROM messages_fts fts WHERE fts.rowid = m.id AND messages_fts MATCH ",

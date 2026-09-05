@@ -31,13 +31,11 @@ pub struct VcfCard {
 pub fn parse_vcf(path: &Path) -> Result<Vec<VcfCard>> {
     let text = fs::read_to_string(path)
         .with_context(|| format!("failed to read VCF {}", path.display()))?;
-    parse_vcf_str(&text)
+    Ok(parse_vcf_str(&text))
 }
 
 /// Parse VCF text into cards (unfolded lines).
-///
-/// The `Result` is for a stable API; parsing text currently always returns `Ok`.
-fn parse_vcf_str(text: &str) -> Result<Vec<VcfCard>> {
+fn parse_vcf_str(text: &str) -> Vec<VcfCard> {
     let lines = unfold_lines(text);
     let mut cards = Vec::new();
     let mut current: Option<VcfCard> = None;
@@ -59,7 +57,7 @@ fn parse_vcf_str(text: &str) -> Result<Vec<VcfCard>> {
         apply_line(card, &line);
     }
 
-    Ok(cards)
+    cards
 }
 
 /// Join vCard continuation lines (starting with a space or tab) onto the line before.
@@ -218,7 +216,7 @@ mod tests {
         let text = "BEGIN:VCARD\nVERSION:3.0\nFN:Ada Lovelace\nN:Lovelace;Ada;Augusta;;\n\
              TEL:+15551234567\nEMAIL:ada@example.com\nCATEGORIES:Family,Friends\nCATEGORIES:Work\n\
              CATEGORIES:family\nEND:VCARD\n";
-        let cards = parse_vcf_str(text).unwrap();
+        let cards = parse_vcf_str(text);
         assert_eq!(cards.len(), 1);
         assert_eq!(cards[0].n_middle, "Augusta");
         assert_eq!(cards[0].email.as_deref(), Some("ada@example.com"));

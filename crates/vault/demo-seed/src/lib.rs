@@ -551,7 +551,7 @@ fn write_readme(
 ) -> Result<()> {
     let path = out.join("README.md");
     let body = format!(
-        r#"# Message Vault demo dataset
+        r"# Message Vault demo dataset
 
 Generated message-ir JSONL bundle for local browsing without a real phone backup.
 `staging/` is written by `demo-seed` / `reset-demo` and is not stored in git.
@@ -606,7 +606,7 @@ Prejudice ({corpus_sentences} sentences) under `crates/vault/demo-seed/data/corp
 - **Group Chats** — membership mean ~5 groups/contact; size mean ~4; at least 10 groups with 8–20 participants; bursty days (several / none / a lot)
 - **Replies, tapbacks, attachments** — including one intentionally missing file
 - **orphaned.jsonl** — synthetic orphaned conversation
-"#,
+",
         seed = cfg.seed,
         corpus_sentences = corpus_sentences,
         contact_count = stats.contacts,

@@ -346,13 +346,13 @@ pub async fn delete_all_messages_for_account(
 ) -> Result<DeletedMessagesStats> {
     schema::ensure_vault_schema(conn).await?;
     let attachment_count: i64 = sqlx::query_scalar(
-        r#"
+        r"
         SELECT COUNT(*)
         FROM attachments a
         JOIN messages m ON m.id = a.message_id
         JOIN conversations c ON c.id = m.conversation_id
         WHERE c.account_id = $1
-        "#,
+        ",
     )
     .bind(account_id)
     .fetch_one(&mut *conn)

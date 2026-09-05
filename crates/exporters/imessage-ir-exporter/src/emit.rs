@@ -700,14 +700,18 @@ fn participants_for(session: &MailSession, chatroom: &Chat) -> (Vec<Participant>
 /// Human-readable text for a group announcement (rename, add, leave, and similar).
 fn announcement_text(session: &MailSession, msg: &Message) -> Option<String> {
     let announcement = msg.get_announcement()?;
-    let mut who = session.who(msg.handle_id, msg.is_from_me(), &msg.destination_caller_id);
+    let mut who = session.who(
+        msg.handle_id,
+        msg.is_from_me(),
+        msg.destination_caller_id.as_deref(),
+    );
     if who == ME {
         who = YOU;
     }
     let participant_name = match &announcement {
         Announcement::GroupAction(
             GroupAction::ParticipantAdded(handle) | GroupAction::ParticipantRemoved(handle),
-        ) => session.who(Some(*handle), false, &msg.destination_caller_id),
+        ) => session.who(Some(*handle), false, msg.destination_caller_id.as_deref()),
         _ => "someone",
     };
 

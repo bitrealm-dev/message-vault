@@ -102,12 +102,11 @@ pub(crate) fn parse_xml_str(text: &str) -> Result<(Vec<XmlMessage>, XmlParseStat
             stats.skipped_invalid_date += 1;
             continue;
         };
-        let timestamp_secs = match date_ms.parse::<f64>() {
-            Ok(ms) => ms / 1000.0,
-            Err(_) => {
-                stats.skipped_invalid_date += 1;
-                continue;
-            }
+        let timestamp_secs = if let Ok(ms) = date_ms.parse::<f64>() {
+            ms / 1000.0
+        } else {
+            stats.skipped_invalid_date += 1;
+            continue;
         };
         let typ = fields
             .get("type")

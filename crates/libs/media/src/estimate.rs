@@ -154,7 +154,7 @@ fn untouched_by(ext: &str, mode: MediaMode) -> bool {
     }
     matches!(
         (ext, mode),
-        ("gif", _) | ("jpg" | "jpeg", MediaMode::Convert) | ("mp3", MediaMode::Convert)
+        ("gif", _) | ("jpg" | "jpeg" | "mp3", MediaMode::Convert)
     )
 }
 

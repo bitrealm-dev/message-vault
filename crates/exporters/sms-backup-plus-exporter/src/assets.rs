@@ -6,9 +6,9 @@ use message_vault_io_core::attachments::digest_prefix;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
-static SAFE_RE: OnceLock<Regex> = OnceLock::new();
+static SAFE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^\w.\-]+").expect("safe"));
 
 /// The file name trimmed, unless blank or a literal `null`/`none`.
 fn valid_filename(name: Option<&str>) -> Option<String> {
@@ -52,8 +52,7 @@ const MAX_BASENAME_BYTES: usize = 160;
 
 /// A file name with unsafe characters replaced by `_`, never empty.
 fn safe_basename(name: &str) -> String {
-    let re = SAFE_RE.get_or_init(|| Regex::new(r"[^\w.\-]+").expect("safe"));
-    let cleaned = re.replace_all(name, "_");
+    let cleaned = SAFE_RE.replace_all(name, "_");
     let trimmed = cleaned.trim_matches(|c| c == '.' || c == '_');
     if trimmed.is_empty() {
         return "attachment".into();

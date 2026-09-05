@@ -1,20 +1,21 @@
 //! Decode Go SMS Pro emoji codes like `+g1f602` into Unicode.
 
 use regex::Regex;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
-static EMOJI_RE: OnceLock<Regex> = OnceLock::new();
+static EMOJI_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\+g([0-9a-fA-F]+)").expect("emoji regex"));
 
 /// Replace Go SMS Pro `+g` hex codes with the matching Unicode characters.
 ///
 /// Codes that are not valid Unicode stay unchanged. For example, `+g1f602`
 /// becomes 😂.
 pub fn decode_gosms_emojis(text: &str) -> String {
-    let re = EMOJI_RE.get_or_init(|| Regex::new(r"\+g([0-9a-fA-F]+)").expect("emoji regex"));
-    re.replace_all(text, |caps: &regex::Captures| {
-        hex_code_to_char(&caps[1]).unwrap_or_else(|| caps[0].to_string())
-    })
-    .into_owned()
+    EMOJI_RE
+        .replace_all(text, |caps: &regex::Captures| {
+            hex_code_to_char(&caps[1]).unwrap_or_else(|| caps[0].to_string())
+        })
+        .into_owned()
 }
 
 /// Parse a hex code point into a one-character string.

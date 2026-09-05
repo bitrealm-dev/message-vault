@@ -69,18 +69,14 @@ pub(crate) fn convert_json(
             // Reserved / system keys if any.
             continue;
         }
-        match ingest_chat(
+        if let Some((chat_id, convo)) = ingest_chat(
             &jid,
             &chat,
             copy_attachments,
             media_search_roots,
             &mut report,
         ) {
-            Ok(Some((chat_id, convo))) => {
-                conversations.insert(chat_id, convo);
-            }
-            Ok(None) => {}
-            Err(e) => report.errors.push(format!("{jid}: {e:#}")),
+            conversations.insert(chat_id, convo);
         }
     }
 
@@ -128,7 +124,7 @@ fn ingest_chat(
     copy_attachments: bool,
     media_search_roots: &[PathBuf],
     report: &mut ExportReport,
-) -> Result<Option<(String, PendingConversation)>> {
+) -> Option<(String, PendingConversation)> {
     let group = is_group_jid(jid);
     let chat_id = chat_id_from_jid(jid);
     let group_title = if group {
@@ -195,7 +191,7 @@ fn ingest_chat(
             extra: {
                 let mut e = BTreeMap::new();
                 e.insert("key_id".into(), key_id_string(msg));
-                e.insert("reply_json".into(), optional_json(&msg.reply));
+                e.insert("reply_json".into(), optional_json(msg.reply.as_ref()));
                 e.insert("reactions_json".into(), reactions_json(&msg.reactions));
                 e.insert(
                     "is_sticker".into(),
@@ -210,11 +206,11 @@ fn ingest_chat(
     }
 
     if pending.messages.is_empty() {
-        return Ok(None);
+        return None;
     }
 
     pending.participant_e164s = peer_phones.into_iter().collect();
-    Ok(Some((chat_id, pending)))
+    Some((chat_id, pending))
 }
 
 /// Sender handle and display name for a WhatsApp message (empty when from me).
@@ -271,12 +267,11 @@ fn queue_media(
     if !copy_attachments {
         return (vec![pending], None);
     }
-    match resolve_media_file(src, media_base, media_search_roots) {
-        Some(src_path) => (vec![pending], Some(src_path)),
-        None => {
-            report.bump("attachments_missing", 1);
-            (Vec::new(), None)
-        }
+    if let Some(src_path) = resolve_media_file(src, media_base, media_search_roots) {
+        (vec![pending], Some(src_path))
+    } else {
+        report.bump("attachments_missing", 1);
+        (Vec::new(), None)
     }
 }
 
@@ -368,7 +363,7 @@ fn key_id_string(msg: &MessageJson) -> String {
 }
 
 /// Compact JSON cell, or empty when `None` / null.
-fn optional_json(v: &Option<serde_json::Value>) -> String {
+fn optional_json(v: Option<&serde_json::Value>) -> String {
     match v {
         Some(val) if !val.is_null() => json_cell(val),
         _ => String::new(),

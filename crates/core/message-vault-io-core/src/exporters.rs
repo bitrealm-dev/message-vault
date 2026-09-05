@@ -372,7 +372,7 @@ impl Form {
         ExporterConfig {
             inputs: input.into_iter().collect(),
             output: PathBuf::from(self.output.trim()),
-            timezone: timezone.clone(),
+            timezone,
             obfuscate,
             media,
             cancel: None,

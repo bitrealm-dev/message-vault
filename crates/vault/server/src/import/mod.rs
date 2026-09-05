@@ -767,7 +767,7 @@ fn validate_complete_import_issues(issues: &[CompleteImportIssueBody]) -> Result
 
 fn validate_import_status(status: Option<&str>) -> Result<(), ApiError> {
     match status {
-        None | Some("completed") | Some("completed_with_issues") | Some("failed") => Ok(()),
+        None | Some("completed" | "completed_with_issues" | "failed") => Ok(()),
         Some(other) => Err(ApiError::BadRequest(format!(
             "invalid import status '{other}'; expected 'completed', 'completed_with_issues', or 'failed'"
         ))),
@@ -1636,12 +1636,11 @@ async fn run_import_path(
     // A client session (vault-push) is closed by the client. Otherwise open
     // one of our own so the Settings import table records curl and
     // single-POST runs too.
-    let owned = match query_import_id {
-        Some(_) => None,
-        None => {
-            crate::db::account_profile::ensure_account_row(&mut conn, &account).await?;
-            Some(OwnedSession::start(&mut conn, &account, &source_id, mode, "http").await?)
-        }
+    let owned = if query_import_id.is_some() {
+        None
+    } else {
+        crate::db::account_profile::ensure_account_row(&mut conn, &account).await?;
+        Some(OwnedSession::start(&mut conn, &account, &source_id, mode, "http").await?)
     };
     let import_id = query_import_id.or_else(|| owned.as_ref().map(|session| session.id));
 

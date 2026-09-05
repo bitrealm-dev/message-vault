@@ -336,9 +336,9 @@ fn to_document(
         .iter()
         .map(|message| {
             if message.is_from_me {
-                report.sent += 1
+                report.sent += 1;
             } else {
-                report.received += 1
+                report.received += 1;
             }
             ir_message(id, message, &owner)
         })

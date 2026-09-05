@@ -388,7 +388,7 @@ async fn discover_source_ids(
 ) -> Result<Vec<String>> {
     let mut ids = std::collections::BTreeSet::new();
     let rows = sqlx::query_scalar::<_, String>(
-        r#"
+        r"
         SELECT DISTINCT m.source
         FROM messages m
         JOIN conversations c ON c.id = m.conversation_id
@@ -396,7 +396,7 @@ async fn discover_source_ids(
           AND m.source IS NOT NULL
           AND TRIM(m.source) != ''
         ORDER BY m.source
-        "#,
+        ",
     )
     .bind(account_id)
     .fetch_all(&mut *conn)
@@ -444,7 +444,7 @@ async fn list_attachments(
             Option<String>,
         ),
     >(
-        r#"
+        r"
         SELECT
             a.sha256,
             a.assets_path,
@@ -461,7 +461,7 @@ async fn list_attachments(
           AND a.assets_path IS NOT NULL AND a.assets_path != ''
         GROUP BY a.sha256, a.assets_path
         ORDER BY a.sha256
-        "#,
+        ",
     )
     .bind(source_id)
     .bind(account_id)
@@ -494,7 +494,7 @@ async fn update_derived(
     blob: &DerivedBlob,
 ) -> Result<()> {
     sqlx::query(
-        r#"
+        r"
         UPDATE attachments
         SET derived_sha256 = $1, derived_assets_path = $2, derived_mime_type = $3
         WHERE sha256 = $4
@@ -503,7 +503,7 @@ async fn update_derived(
             JOIN conversations c ON c.id = m.conversation_id
             WHERE m.source = $5 AND c.account_id = $6
           )
-        "#,
+        ",
     )
     .bind(&blob.sha256)
     .bind(&blob.assets_path)

@@ -57,7 +57,7 @@ pub fn mail_message_from_eml_bytes(bytes: &[u8]) -> Result<MailMessage> {
     let export_tool_version = header_or(headers, hn::EXPORT_TOOL_VERSION, "");
 
     let text = extract_text_body(&mail).unwrap_or_default();
-    let attachments = merge_attachments(&mail, headers)?;
+    let attachments = merge_attachments(&mail, headers);
 
     let source = {
         let android_type =
@@ -278,10 +278,7 @@ fn trim_body(s: &str) -> String {
 }
 
 /// Attachments from the MIME parts, matched to the metadata header by position.
-fn merge_attachments(
-    mail: &ParsedMail<'_>,
-    headers: &[MailHeader<'_>],
-) -> Result<Vec<MailAttachment>> {
+fn merge_attachments(mail: &ParsedMail<'_>, headers: &[MailHeader<'_>]) -> Vec<MailAttachment> {
     let meta: Vec<AttachmentMetaCell> = optional_header(headers, hn::ATTACHMENT_META)
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_default();
@@ -310,7 +307,7 @@ fn merge_attachments(
             sticker_effect: m.and_then(|c| c.sticker_effect.clone()),
         });
     }
-    Ok(out)
+    out
 }
 
 /// Collect every attachment part's bytes, file name, and MIME type.

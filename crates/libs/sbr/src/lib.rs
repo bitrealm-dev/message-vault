@@ -145,7 +145,7 @@ impl SbrBackupWriter {
             );
             writeln!(
                 out,
-                r#"<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>"#
+                r"<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>"
             )?;
             writeln!(out, r#"<smses count="{}">"#, self.count)?;
             out.write_all(&body_bytes)?;

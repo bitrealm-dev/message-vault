@@ -17,15 +17,33 @@ use quick_xml::events::Event;
 use regex::Regex;
 use regex::bytes::Regex as BytesRegex;
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
-static PDU_FILENAME_RE: OnceLock<Regex> = OnceLock::new();
-static PLMN_RE: OnceLock<BytesRegex> = OnceLock::new();
-static TEXT_CONTENT_RE: OnceLock<BytesRegex> = OnceLock::new();
-static MMS_PART_JUNK_RE: OnceLock<Regex> = OnceLock::new();
-static PRINTABLE_RUN_RE: OnceLock<BytesRegex> = OnceLock::new();
-static TRAILING_GARBAGE_RE: OnceLock<Regex> = OnceLock::new();
-static TEXT_PART_NAME_RE: OnceLock<Regex> = OnceLock::new();
+/// `I_<ts>_...` PDU file name.
+static PDU_FILENAME_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^I_(?P<ts>\d+)_").expect("pdu name"));
+/// `+<digits>/TYPE=PLMN` phone numbers in raw bytes.
+static PLMN_RE: LazyLock<BytesRegex> =
+    LazyLock::new(|| BytesRegex::new(r"\+(\d{10,15})/TYPE=PLMN").expect("plmn"));
+/// A `text.txt` / `text_N.txt` content marker in raw bytes.
+static TEXT_CONTENT_RE: LazyLock<BytesRegex> =
+    LazyLock::new(|| BytesRegex::new(r"(?-u)\x8etext(?:_\d+)?\.txt\x00").expect("txt"));
+/// Text that is only a part name or reference, not a message body.
+static MMS_PART_JUNK_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"(?i)^(?:text_\d+\.txt|"?<text_\d+>?|"<\d+>|"<text_\d+\.txt>|IMG_\d+\.[A-Za-z]{3,4})$"#,
+    )
+    .expect("junk")
+});
+/// A run of at least eight printable ASCII bytes.
+static PRINTABLE_RUN_RE: LazyLock<BytesRegex> =
+    LazyLock::new(|| BytesRegex::new(r"(?-u)[\x20-\x7e\n\r\t]{8,}").expect("run"));
+/// Body text ending in `!!` followed by up to twelve bytes of junk.
+static TRAILING_GARBAGE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(.+!!)[^\w\s]{0,12}$").expect("trail"));
+/// `text.txt` or `text_N.txt`, the message body part name.
+static TEXT_PART_NAME_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)^text(?:_\d+)?\.txt$").expect("text name"));
 
 const TEXT_PART_END_MARKERS: &[&[u8]] = &[
     b"\x8c",
@@ -102,18 +120,17 @@ struct SmilRefs {
 
 /// Unix timestamp from a GO SMS Pro PDU file name (`I_<ts>_...`).
 fn timestamp_from_filename(name: &str) -> Option<i64> {
-    let re = PDU_FILENAME_RE.get_or_init(|| Regex::new(r"^I_(?P<ts>\d+)_").expect("pdu name"));
-    re.captures(name)
+    PDU_FILENAME_RE
+        .captures(name)
         .and_then(|c| c.name("ts"))
         .and_then(|m| m.as_str().parse().ok())
 }
 
 /// Phone numbers found as `+<digits>/TYPE=PLMN` anywhere in the raw bytes, in order, once each.
 fn extract_plmn_numbers(data: &[u8]) -> Vec<String> {
-    let re = PLMN_RE.get_or_init(|| BytesRegex::new(r"\+(\d{10,15})/TYPE=PLMN").expect("plmn"));
     let mut seen = std::collections::HashSet::new();
     let mut numbers = Vec::new();
-    for caps in re.captures_iter(data) {
+    for caps in PLMN_RE.captures_iter(data) {
         let digits = String::from_utf8_lossy(&caps[1]).into_owned();
         if seen.insert(digits.clone()) {
             numbers.push(digits);
@@ -145,9 +162,7 @@ fn participants_from_structured(msg: &StructuredMms) -> Vec<String> {
 
 /// True for `text.txt` or `text_N.txt`, the message body part.
 fn is_text_part_name(name: &str) -> bool {
-    let re = TEXT_PART_NAME_RE
-        .get_or_init(|| Regex::new(r"(?i)^text(?:_\d+)?\.txt$").expect("text name"));
-    re.is_match(name)
+    TEXT_PART_NAME_RE.is_match(name)
 }
 
 /// The body text of a part, decoded by charset, with binary tail junk removed.
@@ -441,8 +456,7 @@ fn parse_smil_refs(data: &[u8]) -> SmilRefs {
                     }
                 }
             }
-            Ok(Event::Eof) => break,
-            Err(_) => break,
+            Ok(Event::Eof) | Err(_) => break,
             _ => {}
         }
         buf.clear();
@@ -458,9 +472,7 @@ fn truncate_mms_binary_tail(text: &str) -> String {
     {
         text.truncate(img_idx);
     }
-    let trailing =
-        TRAILING_GARBAGE_RE.get_or_init(|| Regex::new(r"^(.+!!)[^\w\s]{0,12}$").expect("trail"));
-    if let Some(caps) = trailing.captures(&text) {
+    if let Some(caps) = TRAILING_GARBAGE_RE.captures(&text) {
         text = caps[1].to_string();
     }
     for (index, ch) in text.char_indices() {
@@ -477,13 +489,7 @@ fn truncate_mms_binary_tail(text: &str) -> String {
 
 /// True for text that is only a part name or reference, not a message body.
 fn is_mms_part_junk(text: &str) -> bool {
-    let re = MMS_PART_JUNK_RE.get_or_init(|| {
-        Regex::new(
-            r#"(?i)^(?:text_\d+\.txt|"?<text_\d+>?|"<\d+>|"<text_\d+\.txt>|IMG_\d+\.[A-Za-z]{3,4})$"#,
-        )
-        .expect("junk")
-    });
-    re.is_match(text)
+    MMS_PART_JUNK_RE.is_match(text)
 }
 
 /// Text from `start` up to the first known part boundary.
@@ -507,11 +513,9 @@ fn find_bytes(haystack: &[u8], needle: &[u8], start: usize) -> Option<usize> {
 
 /// Last-resort body when Content-Location / multipart text is missing.
 fn extract_wap_text_body_fallback(data: &[u8]) -> String {
-    let re = TEXT_CONTENT_RE
-        .get_or_init(|| BytesRegex::new(r"(?-u)\x8etext(?:_\d+)?\.txt\x00").expect("txt"));
     let mut texts = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    for m in re.find_iter(data) {
+    for m in TEXT_CONTENT_RE.find_iter(data) {
         let text = extract_text_after_marker(data, m.end());
         if !text.is_empty() && seen.insert(text.clone()) {
             texts.push(text);
@@ -523,9 +527,7 @@ fn extract_wap_text_body_fallback(data: &[u8]) -> String {
 
     if let Some(smil_end) = find_bytes(data, b"</smil>", 0) {
         let tail = &data[smil_end + 7..];
-        let run_re = PRINTABLE_RUN_RE
-            .get_or_init(|| BytesRegex::new(r"(?-u)[\x20-\x7e\n\r\t]{8,}").expect("run"));
-        if let Some(m) = run_re.find(tail) {
+        if let Some(m) = PRINTABLE_RUN_RE.find(tail) {
             let text = String::from_utf8_lossy(m.as_bytes()).trim().to_string();
             if !text.is_empty() && !text.starts_with('<') && !is_mms_part_junk(&text) {
                 return decode_gosms_emojis(&text);
@@ -667,36 +669,48 @@ fn resolve_timestamp(filename_ts: i64, structured: &StructuredMms) -> (i64, Fiel
 }
 
 /// Insert `key` when the value is present and non-empty.
-fn insert_nonempty(fields: &mut BTreeMap<String, String>, key: &str, value: &Option<String>) {
+fn insert_nonempty(fields: &mut BTreeMap<String, String>, key: &str, value: Option<&str>) {
     if let Some(v) = value
         && !v.is_empty()
     {
-        fields.insert(key.into(), v.clone());
+        fields.insert(key.into(), v.to_string());
     }
 }
 
 /// The decoded headers as string fields for the vendor `source` bag.
 fn pdu_fields_from_structured(msg: &StructuredMms) -> BTreeMap<String, String> {
     let mut fields = BTreeMap::new();
-    insert_nonempty(&mut fields, "subject", &msg.subject);
-    insert_nonempty(&mut fields, "message_id", &msg.message_id);
-    insert_nonempty(&mut fields, "delivery_report", &msg.delivery_report);
-    insert_nonempty(&mut fields, "read_report", &msg.read_report);
-    insert_nonempty(&mut fields, "priority", &msg.priority);
-    insert_nonempty(&mut fields, "message_type", &msg.message_type);
-    insert_nonempty(&mut fields, "delivery_time", &msg.delivery_time);
-    insert_nonempty(&mut fields, "expiry", &msg.expiry);
-    insert_nonempty(&mut fields, "message_class", &msg.message_class);
-    insert_nonempty(&mut fields, "mms_version", &msg.mms_version);
+    insert_nonempty(&mut fields, "subject", msg.subject.as_deref());
+    insert_nonempty(&mut fields, "message_id", msg.message_id.as_deref());
+    insert_nonempty(
+        &mut fields,
+        "delivery_report",
+        msg.delivery_report.as_deref(),
+    );
+    insert_nonempty(&mut fields, "read_report", msg.read_report.as_deref());
+    insert_nonempty(&mut fields, "priority", msg.priority.as_deref());
+    insert_nonempty(&mut fields, "message_type", msg.message_type.as_deref());
+    insert_nonempty(&mut fields, "delivery_time", msg.delivery_time.as_deref());
+    insert_nonempty(&mut fields, "expiry", msg.expiry.as_deref());
+    insert_nonempty(&mut fields, "message_class", msg.message_class.as_deref());
+    insert_nonempty(&mut fields, "mms_version", msg.mms_version.as_deref());
     if let Some(sz) = msg.message_size {
         fields.insert("message_size".into(), sz.to_string());
     }
-    insert_nonempty(&mut fields, "report_allowed", &msg.report_allowed);
-    insert_nonempty(&mut fields, "response_status", &msg.response_status);
-    insert_nonempty(&mut fields, "response_text", &msg.response_text);
-    insert_nonempty(&mut fields, "sender_visibility", &msg.sender_visibility);
-    insert_nonempty(&mut fields, "status", &msg.status);
-    insert_nonempty(&mut fields, "transaction_id", &msg.transaction_id);
+    insert_nonempty(&mut fields, "report_allowed", msg.report_allowed.as_deref());
+    insert_nonempty(
+        &mut fields,
+        "response_status",
+        msg.response_status.as_deref(),
+    );
+    insert_nonempty(&mut fields, "response_text", msg.response_text.as_deref());
+    insert_nonempty(
+        &mut fields,
+        "sender_visibility",
+        msg.sender_visibility.as_deref(),
+    );
+    insert_nonempty(&mut fields, "status", msg.status.as_deref());
+    insert_nonempty(&mut fields, "transaction_id", msg.transaction_id.as_deref());
     if !msg.bcc.is_empty() {
         fields.insert("bcc".into(), msg.bcc.join(","));
     }

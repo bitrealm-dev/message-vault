@@ -583,20 +583,15 @@ impl Ingest<'_> {
                 return;
             }
         };
-        match queue_pdu_attachments(&parsed, self.copy_attachments, &mut self.blob_bytes) {
-            Ok(atts) => add_pdu_message(
-                &mut self.conversations,
-                parsed,
-                atts,
-                self.owners,
-                &mut self.report,
-                &mut self.skips,
-            ),
-            Err(err) => self
-                .report
-                .errors
-                .push(format!("{}: {err:#}", pdu_path.display())),
-        }
+        let atts = queue_pdu_attachments(&parsed, self.copy_attachments, &mut self.blob_bytes);
+        add_pdu_message(
+            &mut self.conversations,
+            parsed,
+            atts,
+            self.owners,
+            &mut self.report,
+            &mut self.skips,
+        );
     }
 }
 

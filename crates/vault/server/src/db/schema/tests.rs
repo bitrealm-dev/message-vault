@@ -7,12 +7,12 @@ const A2: &str = "22222222-2222-2222-2222-222222222222";
 
 async fn insert_message(conn: &mut AnyConnection, id: i64, guid: &str, body: &str) {
     sqlx::query(
-        r#"
+        r"
         INSERT INTO messages (
             id, conversation_id, account_id, source, guid,
             timestamp, is_from_me, sort_order, body
         ) VALUES ($1, 1, $2, 'imessage', $3, '2020-01-01T00:00:00Z', 0, 0, $4)
-        "#,
+        ",
     )
     .bind(id)
     .bind(A1)
@@ -103,13 +103,13 @@ async fn promote_fts_indexing_covers_only_rows_inserted_by_this_promotion() {
     // of more than one staging row.
     execute_batch(
         &mut conn,
-        r#"
+        r"
         CREATE TEMP TABLE _promote_msg_map (
             staging_id INTEGER PRIMARY KEY,
             prod_id INTEGER NOT NULL
         );
         INSERT INTO _promote_msg_map (staging_id, prod_id) VALUES (1, 10), (2, 11), (3, 11);
-        "#,
+        ",
     )
     .await
     .unwrap();
@@ -295,11 +295,11 @@ async fn same_source_guid_allowed_across_accounts() {
         (conversation_id(&mut conn, A2).await, A2),
     ] {
         sqlx::query(
-            r#"
+            r"
             INSERT INTO messages (
                 conversation_id, account_id, source, guid, timestamp, is_from_me, sort_order
             ) VALUES ($1, $2, 'sms', 'same-guid', '2020-01-01T00:00:00Z', 0, 0)
-            "#,
+            ",
         )
         .bind(conv)
         .bind(account)
@@ -320,24 +320,24 @@ async fn reset_staging_for_account_leaves_other_accounts() {
     let mut conn = pool.acquire().await.unwrap();
     for account in [A1, A2] {
         let conversation_id: i64 = sqlx::query_scalar(
-            r#"
+            r"
             INSERT INTO staging_conversations (
                 account_id, chat_handle_id, conversation_type,
                 group_title, exported_at, source_file
             ) VALUES ($1, 1, 'individual', NULL, NULL, 't.json')
             RETURNING id
-            "#,
+            ",
         )
         .bind(account)
         .fetch_one(&mut *conn)
         .await
         .unwrap();
         sqlx::query(
-            r#"
+            r"
             INSERT INTO staging_messages (
                 conversation_id, account_id, source, guid, timestamp, is_from_me, sort_order
             ) VALUES ($1, $2, 'sms', 'g1', '2020-01-01T00:00:00Z', 0, 0)
-            "#,
+            ",
         )
         .bind(conversation_id)
         .bind(account)
@@ -476,12 +476,12 @@ async fn one_running_import_per_account() {
         .await
         .unwrap();
 
-    let insert = r#"
+    let insert = r"
         INSERT INTO vault_imports (
             account_id, source, mode, status, started_at,
             message_count, attachment_count, bytes_uploaded
         ) VALUES ('acct', 'imessage', 'append', $1, '2026-08-30T00:00:00Z', 0, 0, 0)
-    "#;
+    ";
 
     sqlx::query(insert)
         .bind("running")
@@ -551,13 +551,13 @@ async fn messages_fts_stays_in_sync() {
             .await
             .unwrap();
     let message_id: i64 = sqlx::query_scalar(
-        r#"
+        r"
         INSERT INTO messages (
             conversation_id, account_id, source, guid, timestamp,
             is_from_me, sort_order, body, subject
         ) VALUES ($1, $2, 'sms', 'g1', '2020-01-01T00:00:00Z', 0, 0, 'hello vault', NULL)
         RETURNING id
-        "#,
+        ",
     )
     .bind(conversation_id)
     .bind(A1)
@@ -645,13 +645,13 @@ async fn messages_fts_stays_in_sync_pg() {
     .await
     .unwrap();
     let conversation_id: i64 = sqlx::query_scalar(
-        r#"
+        r"
         INSERT INTO conversations (
             account_id, chat_handle_id, conversation_type,
             group_title, exported_at, source_file
         ) VALUES ($1, $2, 'individual', NULL, NULL, 't.json')
         RETURNING id
-        "#,
+        ",
     )
     .bind(A1)
     .bind(handle_id)
@@ -659,13 +659,13 @@ async fn messages_fts_stays_in_sync_pg() {
     .await
     .unwrap();
     let message_id: i64 = sqlx::query_scalar(
-        r#"
+        r"
         INSERT INTO messages (
             conversation_id, account_id, source, guid, timestamp,
             is_from_me, sort_order, body, subject
         ) VALUES ($1, $2, 'sms', 'g1', '2020-01-01T00:00:00Z', 0, 0, 'hello vault', NULL)
         RETURNING id
-        "#,
+        ",
     )
     .bind(conversation_id)
     .bind(A1)

@@ -353,7 +353,7 @@ fn scan_one_attachment(
     let digest = ctx
         .digests
         .resolve(&abs, claimed, att.size_bytes, name, rel, &mut |warning| {
-            scan.warnings.push(warning)
+            scan.warnings.push(warning);
         })?;
     scan.unique
         .entry(digest.clone())

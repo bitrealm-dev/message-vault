@@ -267,9 +267,9 @@ impl HandleService {
     pub fn parse(s: &str) -> Self {
         match s.trim().to_ascii_lowercase().as_str() {
             "whatsapp" | "wa" => Self::Whatsapp,
-            // Phone-platform aliases (SMS/iMessage/RCS are transports, not platforms).
-            "phone" | "sms" | "mms" | "sms/mms" | "imessage" | "ios" | "rcs" | "text message"
-            | "text_message" | "textmessage" => Self::Phone,
+            // Everything else, including the phone-platform aliases (`phone`,
+            // `sms`, `mms`, `imessage`, `ios`, `rcs`, `text message`), is the
+            // phone platform: SMS/iMessage/RCS are transports, not platforms.
             _ => Self::Phone,
         }
     }
@@ -1018,7 +1018,7 @@ mod conversation_stem_tests {
 
     #[test]
     fn untitled_group_over_ten_appends_hash() {
-        let peers: Vec<String> = (1..=13).map(|i| format!("+1555555{:04}", i)).collect();
+        let peers: Vec<String> = (1..=13).map(|i| format!("+1555555{i:04}")).collect();
         let stem = conversation_stem("group", "chat-x", None, &peers, None);
         assert!(stem.starts_with("group_+15555550001_"));
         assert!(stem.contains("+15555550010_"));

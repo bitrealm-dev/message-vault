@@ -931,7 +931,7 @@ mod tests {
         );
         let mid = headers.get_first_value("Message-ID").unwrap();
         assert!(mid.contains("aabbccddeeff00112233445566778899@message-vault-io.local"));
-        assert!(!headers.get_first_value("In-Reply-To").is_some());
+        assert!(headers.get_first_value("In-Reply-To").is_none());
         let from = headers.get_first_value("From").unwrap();
         assert!(from.contains("Sam"), "From was {from}");
         assert!(from.contains("+15555550101@sms.local"), "From was {from}");
@@ -1233,7 +1233,7 @@ mod tests {
         b.message.timestamp_unix_ms = 1_400_773_361_000;
 
         let tmp = tempfile::tempdir().unwrap();
-        let path = write_conversation_mbox(tmp.path(), &[b.clone(), a.clone()]).unwrap();
+        let path = write_conversation_mbox(tmp.path(), &[b, a]).unwrap();
         assert_eq!(path.file_name().unwrap(), "+15555550101.mbox");
 
         let text = fs::read_to_string(&path).unwrap();

@@ -60,8 +60,9 @@ impl AuthIdentity {
     /// What this credential may do, account and token already intersected.
     pub fn permissions(&self) -> Permissions {
         match self.capability {
-            AuthCapability::Session { permissions, .. } => permissions,
-            AuthCapability::ApiToken(permissions) => permissions,
+            AuthCapability::Session { permissions, .. } | AuthCapability::ApiToken(permissions) => {
+                permissions
+            }
         }
     }
 
@@ -693,6 +694,15 @@ pub async fn resolve_auth(headers: &HeaderMap, state: &AppState) -> Result<AuthI
     resolve_auth_on_conn(&mut conn, &token).await
 }
 
+/// Credential-specific bit not yet folded into `AuthCapability`: a session
+/// carries no extra state, an API token carries its own (pre-intersection)
+/// permissions. Both kinds load `AccountAuth` the same way so the disabled
+/// check in [`resolve_auth_on_conn`] runs exactly once.
+enum Credential {
+    Session,
+    ApiToken(Permissions),
+}
+
 /// Resolve a Bearer credential on an existing connection.
 ///
 /// # Errors
@@ -704,15 +714,6 @@ pub async fn resolve_auth_on_conn(
     token: &str,
 ) -> Result<AuthIdentity, ApiError> {
     schema::ensure_accounts_schema(conn).await?;
-
-    // Credential-specific bit not yet folded into `AuthCapability`: a session
-    // carries no extra state, an API token carries its own (pre-intersection)
-    // permissions. Both branches load `AccountAuth` the same way so the
-    // disabled check below runs exactly once, regardless of credential kind.
-    enum Credential {
-        Session,
-        ApiToken(Permissions),
-    }
 
     let resolved = if let Some(account_id) =
         session_tokens::lookup_account_for_token(&mut *conn, token).await?

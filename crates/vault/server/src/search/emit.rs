@@ -751,13 +751,12 @@ fn emit_import(
         out.push("EXISTS (SELECT 1 FROM messages mi WHERE mi.conversation_id = c.id AND ");
     }
     out.push(&format!("{alias}.import_id = "));
-    match run {
-        Some(id) => out.bind_int(id),
-        None => {
-            out.push("(SELECT MAX(vi.id) FROM vault_imports vi WHERE vi.account_id = ");
-            out.bind_text(ctx.account_id.to_string());
-            out.push(")");
-        }
+    if let Some(id) = run {
+        out.bind_int(id)
+    } else {
+        out.push("(SELECT MAX(vi.id) FROM vault_imports vi WHERE vi.account_id = ");
+        out.bind_text(ctx.account_id.to_string());
+        out.push(")");
     }
     if !on_messages {
         out.push(")");

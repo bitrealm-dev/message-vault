@@ -32,7 +32,10 @@
 //!   [`StructuredMms::application_headers`] and CSV as `app:<name>` (see
 //!   <https://bitrealm.io/vault/developer/formats/go-sms-pro/mapping/>).
 
-use crate::decoders::*;
+use crate::decoders::{
+    Cursor, apply_mms_header_field, decode_content_type_value, decode_mms_header_field,
+    decode_multipart_body, trim_encoded_string_junk,
+};
 use std::collections::BTreeMap;
 
 /// Well-known MMS field names (WAP-209 table 8). Stored as short-integer values
@@ -664,6 +667,7 @@ pub(crate) fn extension_for_content_type(content_type: &str) -> Option<&'static 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decoders::{decode_uint_var, decode_value_length};
     use std::path::PathBuf;
 
     #[test]

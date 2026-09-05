@@ -442,20 +442,19 @@ fn inject_attachment_data(
             // of consuming another part's attachment.
             continue;
         }
-        let index = match by_digest.get(digest.as_deref().unwrap_or("")).copied() {
-            Some(index) => Some(index),
-            None => {
-                // No exact digest match (attachment rewritten by a media
-                // transform, or attachment list shorter than the part list).
-                while next_unconsumed < attachments.len() && consumed[next_unconsumed] {
-                    next_unconsumed += 1;
-                }
-                (next_unconsumed < attachments.len()).then(|| {
-                    let index = next_unconsumed;
-                    next_unconsumed += 1;
-                    index
-                })
+        let index = if let Some(index) = by_digest.get(digest.as_deref().unwrap_or("")).copied() {
+            Some(index)
+        } else {
+            // No exact digest match (attachment rewritten by a media
+            // transform, or attachment list shorter than the part list).
+            while next_unconsumed < attachments.len() && consumed[next_unconsumed] {
+                next_unconsumed += 1;
             }
+            (next_unconsumed < attachments.len()).then(|| {
+                let index = next_unconsumed;
+                next_unconsumed += 1;
+                index
+            })
         };
         let Some(index) = index else {
             continue;

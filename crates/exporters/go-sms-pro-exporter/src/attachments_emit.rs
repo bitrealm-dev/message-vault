@@ -1,6 +1,5 @@
 //! Attachment helpers for the emitter.
 
-use anyhow::Result;
 use go_sms_mms::ParsedPdu;
 use message_ir::PendingAttachment;
 use message_vault_io_core::digest_prefix;
@@ -13,7 +12,7 @@ pub(super) fn queue_pdu_attachments(
     parsed: &ParsedPdu,
     copy_attachments: bool,
     blob_bytes: &mut HashMap<String, Vec<u8>>,
-) -> Result<Vec<PendingAttachment>> {
+) -> Vec<PendingAttachment> {
     let mut out = Vec::new();
     for (idx, att) in parsed.attachments.iter().enumerate() {
         let digest_hex = hex::encode(Sha256::digest(&att.data));
@@ -38,5 +37,5 @@ pub(super) fn queue_pdu_attachments(
             name_hint: att.smil_name.clone().or(Some(name)),
         });
     }
-    Ok(out)
+    out
 }
