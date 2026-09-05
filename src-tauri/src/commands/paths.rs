@@ -44,17 +44,18 @@ pub struct PathStat {
     pub modified_unix_ms: Option<i64>,
 }
 
-/// Stat a path without canonicalizing it (the path may not exist yet).
-pub(crate) fn path_stat_inner(path: &str) -> Result<PathStat, String> {
+/// Stat a path without canonicalizing it (the path may not exist yet). A
+/// path that cannot be read is reported as absent rather than as an error.
+pub(crate) fn path_stat_inner(path: &str) -> PathStat {
     let trimmed = path.trim();
     if trimmed.is_empty() {
-        return Ok(PathStat {
+        return PathStat {
             exists: false,
             is_file: false,
             is_directory: false,
             size_bytes: 0,
             modified_unix_ms: None,
-        });
+        };
     }
     let path = Path::new(trimmed);
     let meta = std::fs::metadata(path).ok();
@@ -63,31 +64,30 @@ pub(crate) fn path_stat_inner(path: &str) -> Result<PathStat, String> {
         .and_then(|m| m.modified().ok())
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .and_then(|d| i64::try_from(d.as_millis()).ok());
-    Ok(PathStat {
+    PathStat {
         exists: path.exists(),
         is_file: path.is_file(),
         is_directory: path.is_dir(),
         size_bytes: meta.as_ref().map(std::fs::Metadata::len).unwrap_or(0),
         modified_unix_ms,
-    })
+    }
 }
 
 /// Return whether a path exists and whether it is a file or directory.
 #[tauri::command]
-pub fn path_stat(path: String) -> Result<PathStat, String> {
+pub fn path_stat(path: String) -> PathStat {
     path_stat_inner(&path)
 }
 
-/// Read `Manifest.plist` and return whether an iOS backup folder is encrypted.
+/// Read `Manifest.plist` and return whether an iOS backup folder is
+/// encrypted. `None` when the path is blank or is not an iOS backup.
 #[tauri::command]
-pub fn ios_backup_encrypted(path: String) -> Result<Option<bool>, String> {
+pub fn ios_backup_encrypted(path: String) -> Option<bool> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
-        return Ok(None);
+        return None;
     }
-    Ok(imessage_ir_exporter::ios_backup_encrypted_flag(Path::new(
-        trimmed,
-    )))
+    imessage_ir_exporter::ios_backup_encrypted_flag(Path::new(trimmed))
 }
 
 /// Addresses an iMessage backup's device sent from, for the Import
@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn path_stat_missing() {
-        let stat = path_stat_inner("/no/such/message-vault-path-stat").unwrap();
+        let stat = path_stat_inner("/no/such/message-vault-path-stat");
         assert!(!stat.exists);
         assert!(!stat.is_file);
         assert!(!stat.is_directory);
@@ -401,15 +401,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("chat.db");
         fs::write(&file, b"sqlite").unwrap();
-        let file_stat = path_stat_inner(file.to_str().unwrap()).unwrap();
+        let file_stat = path_stat_inner(file.to_str().unwrap());
         assert!(file_stat.exists && file_stat.is_file && !file_stat.is_directory);
-        let dir_stat = path_stat_inner(dir.path().to_str().unwrap()).unwrap();
+        let dir_stat = path_stat_inner(dir.path().to_str().unwrap());
         assert!(dir_stat.exists && dir_stat.is_directory && !dir_stat.is_file);
     }
 
     #[test]
     fn blank_path_is_missing() {
-        let stat = path_stat_inner("  ").unwrap();
+        let stat = path_stat_inner("  ");
         assert!(!stat.exists);
     }
 
@@ -422,7 +422,7 @@ mod tests {
         let file = dir.path().join("chat.db");
         fs::write(&file, b"sqlite").unwrap();
 
-        let stat = path_stat_inner(file.to_str().unwrap()).unwrap();
+        let stat = path_stat_inner(file.to_str().unwrap());
         assert_eq!(stat.size_bytes, 6);
 
         let expected_ms = fs::metadata(&file)
@@ -454,10 +454,10 @@ mod tests {
     /// tell apart from a real failure.
     #[test]
     fn path_stat_missing_has_no_size_or_modified_time() {
-        let stat = path_stat_inner("/no/such/message-vault-path-stat").unwrap();
+        let stat = path_stat_inner("/no/such/message-vault-path-stat");
         assert_eq!(stat.size_bytes, 0);
         assert_eq!(stat.modified_unix_ms, None);
-        let blank = path_stat_inner("  ").unwrap();
+        let blank = path_stat_inner("  ");
         assert_eq!(blank.size_bytes, 0);
         assert_eq!(blank.modified_unix_ms, None);
     }
