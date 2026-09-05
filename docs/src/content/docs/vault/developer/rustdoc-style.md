@@ -25,7 +25,7 @@ Give every module a `//!` intro that states its responsibility or invariants. Ke
 
 Include a concrete example or quantified rationale whenever a field, constant, or parser behaves non-obviously. Name the exact values involved.
 
-- `src-tauri/src/commands/extract.rs:490` — "True for backup-setup lines like `[1/5] Deriving backup keys...`. Those counts are setup steps, not message progress, so they must not move the progress bar." — Good: a concrete example plus the reason the fiddly parser exists.
+- `crates/core/message-vault-io-core/src/progress.rs` — "A setup step before any message is read, such as decrypting an iOS backup or caching chat tables. `step` of `total`, with a short label for the person watching ("Deriving backup keys")." — Good: a concrete example of the value, and the reason the variant is separate from message counts.
 - `crates/libs/vault-push/src/run.rs:63` — "Kept far under Cloudflare's ~100 MiB upload cap so a large group chat is split into several requests instead of one giant one that gets rejected." — Good: names the external constraint behind the chosen value.
 - `crates/libs/media/src/lib.rs:132` — "Build compress options from CLI-style fields (min_size like `20M`)." — Bad: waves at four parameters as "CLI-style fields" without naming them or documenting the error case.
 

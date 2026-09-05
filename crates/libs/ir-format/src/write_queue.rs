@@ -26,8 +26,8 @@ use anyhow::{Context, Result};
 use media::{CompressOptions, MediaMode};
 use message_ir::{ConversationDocument, IrAttachment};
 use message_vault_io_core::{
-    AttachmentJob, CancelFlag, LogSink, MediaConfig, OutputFormat, attachment_size_hint, emit_log,
-    run_attachment_jobs,
+    AttachmentJob, CancelFlag, LogSink, MediaConfig, OutputFormat, ProgressEvent, ProgressSink,
+    attachment_size_hint, emit_log, emit_progress, run_attachment_jobs,
 };
 
 use crate::transcode::{TranscodeOptions, transcode_staged};
@@ -203,12 +203,14 @@ pub fn drain_write_queue_with_loader(
     options: &WriteQueueOptions,
     load: &mut AttachmentLoader<'_>,
     log: Option<&LogSink>,
+    progress: Option<&ProgressSink>,
     cancel: Option<&CancelFlag>,
 ) -> Result<WriteQueueReport> {
     check_headroom(output_dir, &units)?;
     let attachments_dir = output_dir.join("attachments");
     let mut report = WriteQueueReport::default();
 
+    let unit_count = units.len();
     let total: usize = units.iter().map(|u| u.attachments.len()).sum();
     let bytes_total_base: u64 = units
         .iter()
@@ -216,7 +218,7 @@ pub fn drain_write_queue_with_loader(
         .filter_map(|a| a.size_hint)
         .sum();
 
-    announce_start(log, units.len());
+    announce_start(log, progress, unit_count);
 
     let done = Cell::new(0usize);
     let bytes_done = Cell::new(0u64);
@@ -225,15 +227,13 @@ pub fn drain_write_queue_with_loader(
         done.set(done.get() + p.done);
         bytes_done.set(bytes_done.get() + p.bytes_done);
         bytes_total.set(bytes_total.get() + p.bytes_total);
-        emit_log(
+        report_attachments(
             log,
-            format!(
-                "  attachments {}/{} {}/{}",
-                done.get(),
-                total,
-                bytes_done.get(),
-                bytes_total.get()
-            ),
+            progress,
+            done.get(),
+            total,
+            bytes_done.get(),
+            bytes_total.get(),
         );
     };
 
@@ -253,9 +253,16 @@ pub fn drain_write_queue_with_loader(
         } else {
             report.conversations_skipped += 1;
         }
+        emit_progress(
+            progress,
+            ProgressEvent::Prepare {
+                done: report.conversations_written + report.conversations_skipped,
+                total: unit_count,
+            },
+        );
     }
 
-    report.media = run_media_post_pass(output_dir, options, log, cancel)?;
+    report.media = run_media_post_pass(output_dir, options, log, progress, cancel)?;
     announce_finish(log, &report, options.resume);
     Ok(report)
 }
@@ -277,10 +284,11 @@ pub fn drain_units(
     units: Vec<ConversationUnit>,
     options: &WriteQueueOptions,
     log: Option<&LogSink>,
+    progress: Option<&ProgressSink>,
     cancel: Option<&CancelFlag>,
     report: &mut message_vault_io_core::ExportReport,
 ) -> Result<crate::FormatSinkResult> {
-    let queue_report = drain_write_queue(output_dir, units, options, log, cancel)?;
+    let queue_report = drain_write_queue(output_dir, units, options, log, progress, cancel)?;
     report.conversations +=
         (queue_report.conversations_written + queue_report.conversations_skipped) as u64;
     report.attachments_saved += queue_report.attachments_saved as u64;
@@ -306,6 +314,7 @@ pub fn drain_write_queue(
     units: Vec<ConversationUnit>,
     options: &WriteQueueOptions,
     log: Option<&LogSink>,
+    progress: Option<&ProgressSink>,
     cancel: Option<&CancelFlag>,
 ) -> Result<WriteQueueReport> {
     check_headroom(output_dir, &units)?;
@@ -324,7 +333,7 @@ pub fn drain_write_queue(
         .filter_map(|a| a.size_hint)
         .sum();
 
-    announce_start(log, unit_count);
+    announce_start(log, progress, unit_count);
 
     let done = AtomicUsize::new(0);
     let bytes_done = AtomicU64::new(0);
@@ -332,6 +341,7 @@ pub fn drain_write_queue(
     let attachments_saved = AtomicUsize::new(0);
     let written = AtomicUsize::new(0);
     let skipped = AtomicUsize::new(0);
+    let units_done = AtomicUsize::new(0);
     let abort = AtomicBool::new(false);
     let first_error: Mutex<Option<String>> = Mutex::new(None);
     let queue: Mutex<VecDeque<ConversationUnit>> = Mutex::new(VecDeque::from(units));
@@ -340,7 +350,7 @@ pub fn drain_write_queue(
         let d = done.fetch_add(p.done, Ordering::Relaxed) + p.done;
         let bd = bytes_done.fetch_add(p.bytes_done, Ordering::Relaxed) + p.bytes_done;
         let bt = bytes_total.fetch_add(p.bytes_total, Ordering::Relaxed) + p.bytes_total;
-        emit_log(log, format!("  attachments {d}/{total} {bd}/{bt}"));
+        report_attachments(log, progress, d, total, bd, bt);
     };
 
     let writer_count = if options.writer_count == 0 {
@@ -396,6 +406,14 @@ pub fn drain_write_queue(
                             } else {
                                 skipped.fetch_add(1, Ordering::Relaxed);
                             }
+                            let finished = units_done.fetch_add(1, Ordering::Relaxed) + 1;
+                            emit_progress(
+                                progress,
+                                ProgressEvent::Prepare {
+                                    done: finished,
+                                    total: unit_count,
+                                },
+                            );
                         }
                         Err(err) => {
                             let mut slot = first_error.lock().expect("write queue error slot");
@@ -421,7 +439,7 @@ pub fn drain_write_queue(
         attachments_saved: attachments_saved.load(Ordering::Relaxed),
         media: media::MediaReport::default(),
     };
-    report.media = run_media_post_pass(output_dir, options, log, cancel)?;
+    report.media = run_media_post_pass(output_dir, options, log, progress, cancel)?;
     announce_finish(log, &report, options.resume);
     Ok(report)
 }
@@ -436,6 +454,7 @@ fn run_media_post_pass(
     output_dir: &Path,
     options: &WriteQueueOptions,
     log: Option<&LogSink>,
+    progress: Option<&ProgressSink>,
     cancel: Option<&CancelFlag>,
 ) -> Result<media::MediaReport> {
     if !matches!(options.media, MediaMode::Convert | MediaMode::Compress) {
@@ -451,11 +470,17 @@ fn run_media_post_pass(
         // Clone and converts on its own.
         asset_max_bytes: u64::MAX,
     };
-    // Deliberately inert to the desktop's log scraper: no `attachments`
-    // prefix and no `preparing` keyword. The desktop never runs this branch;
-    // the CLI just prints it.
+    // The desktop never runs this branch (it stages with Clone and converts
+    // on its own after the gate); the events are for any other consumer.
     let report = transcode_staged(output_dir, &transcode_options, cancel, &mut |p| {
         emit_log(log, format!("  media {}/{}", p.done, p.total));
+        emit_progress(
+            progress,
+            ProgressEvent::Media {
+                done: p.done,
+                total: p.total,
+            },
+        );
     })?;
 
     let mut media = media::MediaReport {
@@ -527,10 +552,43 @@ fn headroom_shortfall(needed: u64, available: u64) -> Option<String> {
     ))
 }
 
-/// Log that the write queue is starting on `units` conversations.
-fn announce_start(log: Option<&LogSink>, units: usize) {
+/// Say that the write queue is starting on `units` conversations: a log
+/// line for people and a zero-of-`units` prepare event for the bar.
+fn announce_start(log: Option<&LogSink>, progress: Option<&ProgressSink>, units: usize) {
     emit_log(log, "");
     emit_log(log, format!("Preparing {units} conversation file(s)..."));
+    emit_progress(
+        progress,
+        ProgressEvent::Prepare {
+            done: 0,
+            total: units,
+        },
+    );
+}
+
+/// Report the queue's running attachment totals: a log line for people and
+/// an [`ProgressEvent::Attachments`] for the bar.
+fn report_attachments(
+    log: Option<&LogSink>,
+    progress: Option<&ProgressSink>,
+    done: usize,
+    total: usize,
+    bytes_done: u64,
+    bytes_total: u64,
+) {
+    emit_log(
+        log,
+        format!("  attachments {done}/{total} {bytes_done}/{bytes_total}"),
+    );
+    emit_progress(
+        progress,
+        ProgressEvent::Attachments {
+            done,
+            total,
+            bytes_done,
+            bytes_total,
+        },
+    );
 }
 
 /// Log the write queue's totals, noting resumed work.
@@ -742,7 +800,15 @@ mod tests {
         units: Vec<ConversationUnit>,
         options: &WriteQueueOptions,
     ) -> anyhow::Result<WriteQueueReport> {
-        drain_write_queue_with_loader(dir, units, options, &mut load_attachment_source, None, None)
+        drain_write_queue_with_loader(
+            dir,
+            units,
+            options,
+            &mut load_attachment_source,
+            None,
+            None,
+            None,
+        )
     }
 
     #[test]
@@ -818,6 +884,7 @@ mod tests {
             build(),
             &options(MediaMode::Clone, true),
             &mut never,
+            None,
             None,
             None,
         )
@@ -929,6 +996,7 @@ mod tests {
             &mut load_attachment_source,
             Some(&sink),
             None,
+            None,
         )
         .unwrap();
 
@@ -968,7 +1036,7 @@ mod tests {
         let mut options = options(MediaMode::Clone, false);
         options.writer_count = 4;
 
-        let report = drain_write_queue(&out, units, &options, None, None).unwrap();
+        let report = drain_write_queue(&out, units, &options, None, None, None).unwrap();
 
         assert_eq!(report.conversations_written, 12);
         assert_eq!(report.attachments_saved, 12);
@@ -1002,11 +1070,122 @@ mod tests {
         let mut options = options(MediaMode::Clone, false);
         options.writer_count = 2;
 
-        let err = drain_write_queue(&out, units, &options, None, None).unwrap_err();
+        let err = drain_write_queue(&out, units, &options, None, None, None).unwrap_err();
         assert!(
             format!("{err:#}").contains(&blocked),
             "the error should name the conversation that failed: {err:#}"
         );
+    }
+
+    #[test]
+    fn typed_progress_covers_prepare_and_attachments_across_units() {
+        // The desktop's progress bar reads these events and nothing else, so
+        // the drain must say how many conversation files it will write
+        // before the first one lands, count attachments to the full total,
+        // and end with every unit prepared.
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tmp.path().join("out");
+        let units: Vec<_> = (1..=4)
+            .map(|i| {
+                unit_from(
+                    doc_with(&format!("+1555000000{i}"), 1),
+                    vec![AttachmentSource::Bytes(b"x".to_vec())],
+                )
+            })
+            .collect();
+        let mut options = options(MediaMode::Clone, false);
+        options.writer_count = 2;
+
+        let seen = Arc::new(Mutex::new(Vec::<ProgressEvent>::new()));
+        let sink_seen = Arc::clone(&seen);
+        let sink = ProgressSink::new(move |event| sink_seen.lock().unwrap().push(event));
+
+        drain_write_queue(&out, units, &options, None, Some(&sink), None).unwrap();
+
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(
+            seen.first(),
+            Some(&ProgressEvent::Prepare { done: 0, total: 4 }),
+            "the unit count is announced before any file is written"
+        );
+        // Two writers report concurrently, so emission order is not count
+        // order; the high-water marks are what must be right.
+        let attachments_high = seen
+            .iter()
+            .filter_map(|event| match event {
+                ProgressEvent::Attachments {
+                    done,
+                    total,
+                    bytes_done,
+                    bytes_total,
+                } => Some((*done, *total, *bytes_done, *bytes_total)),
+                _ => None,
+            })
+            .max()
+            .unwrap();
+        assert_eq!(attachments_high, (4, 4, 4, 4));
+        let prepared_high = seen
+            .iter()
+            .filter_map(|event| match event {
+                ProgressEvent::Prepare { done, total } => Some((*done, *total)),
+                _ => None,
+            })
+            .max()
+            .unwrap();
+        assert_eq!(prepared_high, (4, 4));
+        assert!(
+            !seen
+                .iter()
+                .any(|event| matches!(event, ProgressEvent::Media { .. })),
+            "clone mode runs no media pass"
+        );
+    }
+
+    #[test]
+    fn sequential_drain_reports_prepare_in_order_and_counts_resumed_units() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tmp.path().join("out");
+        fs::create_dir_all(&out).unwrap();
+        let build = || {
+            vec![
+                unit_from(
+                    doc_with("+15550000001", 1),
+                    vec![AttachmentSource::Bytes(b"a".to_vec())],
+                ),
+                unit_from(
+                    doc_with("+15550000002", 1),
+                    vec![AttachmentSource::Bytes(b"b".to_vec())],
+                ),
+            ]
+        };
+        drain(&out, build(), &options(MediaMode::Clone, false)).unwrap();
+
+        // A resumed run finds both files and skips them; progress still
+        // describes the whole import, so it walks 0 -> 1 -> 2 of 2.
+        let seen = Arc::new(Mutex::new(Vec::<ProgressEvent>::new()));
+        let sink_seen = Arc::clone(&seen);
+        let sink = ProgressSink::new(move |event| sink_seen.lock().unwrap().push(event));
+        drain_write_queue_with_loader(
+            &out,
+            build(),
+            &options(MediaMode::Clone, true),
+            &mut load_attachment_source,
+            None,
+            Some(&sink),
+            None,
+        )
+        .unwrap();
+
+        let prepared: Vec<(usize, usize)> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| match event {
+                ProgressEvent::Prepare { done, total } => Some((*done, *total)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(prepared, [(0, 2), (1, 2), (2, 2)]);
     }
 
     #[test]
@@ -1029,6 +1208,7 @@ mod tests {
             units,
             &options(MediaMode::Clone, false),
             Some(&sink),
+            None,
             None,
         )
         .unwrap();

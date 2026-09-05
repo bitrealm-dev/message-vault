@@ -13,7 +13,7 @@
 // session and deletes the staging folder. Every push assertion below goes
 // through approveGate first, because there is no other way to reach it.
 
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ActiveImportSession } from "../../lib/importSession";
 import type {
@@ -351,6 +351,49 @@ describe("useImportJob wiring", () => {
     expect(result.current.phase).toBe("gate_1");
     // "Copy to staging" is row 1 in every mode (attachments/prepare share it).
     expect(result.current.steps[1]?.detail).toBe("Preparing 50/200");
+  });
+
+  it("narrates a setup step on the read row without marking it done", async () => {
+    // An encrypted iPhone backup spends its first minutes deriving keys and
+    // decrypting databases before a single message count arrives. The
+    // exporter reports those as typed `setup` events; the read row shows the
+    // step's label and stays active, so the screen never looks frozen and
+    // never claims the backup is read before it is.
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // Replace beforeEach's canned extract run with one that reports a
+    // setup step and then waits, so the row can be read mid-run.
+    runMock.mockReset();
+    runMock.mockImplementationOnce(
+      async (
+        fn: () => Promise<unknown>,
+        options?: { onProgress?: (event: ImportProgressEvent) => void },
+      ) => {
+        await fn();
+        options?.onProgress?.({
+          step: "setup",
+          done: 5,
+          total: 5,
+          status: "Decrypting contacts database",
+        });
+        await held;
+        return EXTRACT_RESULT;
+      },
+    );
+    const { result } = renderHook(() => useImportJob());
+    let started: Promise<void> = Promise.resolve();
+    act(() => {
+      started = result.current.startImport(form({ attachmentMedia: "copy" }));
+    });
+    await waitFor(() =>
+      expect(result.current.steps[0]?.detail).toBe("Decrypting contacts database (5/5)"),
+    );
+    expect(result.current.steps[0]?.status).toBe("active");
+    release();
+    await act(() => started);
+    expect(result.current.phase).toBe("gate_1");
   });
 
   it("uploads straight from the first gate under copy, because there is no second one", async () => {

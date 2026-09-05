@@ -4,6 +4,7 @@ import {
   attachmentDoneDetail,
   isProgressStepComplete,
   progressHeading,
+  setupDetail,
   stepIndexFor,
   stepsFor,
 } from "./importProgressState";
@@ -19,6 +20,24 @@ describe("isProgressStepComplete", () => {
     expect(isProgressStepComplete("prepare", 1, 1)).toBe(true);
     expect(isProgressStepComplete("upload", 2, 2)).toBe(true);
     expect(isProgressStepComplete("parse", 3, 10)).toBe(false);
+  });
+
+  it("never completes the read row on a setup step, even the last one", () => {
+    // "5/5" here means the fifth decrypt step, not the last message; the
+    // messages have not been read yet when it arrives.
+    expect(isProgressStepComplete("setup", 5, 5)).toBe(false);
+  });
+});
+
+describe("setupDetail", () => {
+  it("shows the step label with its position", () => {
+    expect(setupDetail({ done: 1, total: 5, status: "Deriving backup keys" })).toBe(
+      "Deriving backup keys (1/5)",
+    );
+  });
+
+  it("falls back to a plain label when the event carries none", () => {
+    expect(setupDetail({ done: 0, total: 0 })).toBe("Preparing");
   });
 });
 
@@ -71,6 +90,11 @@ describe("stepsFor", () => {
 });
 
 describe("stepIndexFor", () => {
+  it("puts setup steps on the read row, since they are part of reading the backup", () => {
+    expect(stepIndexFor("setup", "convert")).toBe(0);
+    expect(stepIndexFor("setup", "copy")).toBe(0);
+  });
+
   it("puts writing conversation files on the staging step", () => {
     // "prepare" is the pipeline's name for writing conversation files. From
     // the user's side that is part of staging, not a step of its own.

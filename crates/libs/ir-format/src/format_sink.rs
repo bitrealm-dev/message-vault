@@ -221,33 +221,39 @@ fn remove_staged_attachments(output_dir: &Path) -> Result<()> {
 }
 
 /// Write every document through the sink with the shared "Preparing N
-/// conversation file(s)" progress log, bumping `report.conversations` per
-/// document, then finish the sink. The shared tail of every exporter's
-/// non-queue arm.
+/// conversation file(s)" log line and [`ProgressEvent::Prepare`] events,
+/// bumping `report.conversations` per document, then finish the sink. The
+/// shared tail of every exporter's non-queue arm.
 pub fn write_documents_through_sink(
     documents: Vec<message_ir::ConversationDocument>,
     mut sink: FormatSink,
     log: Option<&message_vault_io_core::LogSink>,
+    progress: Option<&message_vault_io_core::ProgressSink>,
     cancel: Option<&message_vault_io_core::CancelFlag>,
     report: &mut message_vault_io_core::ExportReport,
 ) -> anyhow::Result<FormatSinkResult> {
-    use message_vault_io_core::emit_log;
-    let total_conversations = documents.len() as u64;
+    use message_vault_io_core::{ProgressEvent, emit_log, emit_progress};
+    let total = documents.len();
     emit_log(log, "");
-    emit_log(
-        log,
-        format!("Preparing {total_conversations} conversation file(s)..."),
-    );
-    let mut written = 0u64;
+    emit_log(log, format!("Preparing {total} conversation file(s)..."));
+    emit_progress(progress, ProgressEvent::Prepare { done: 0, total });
+    let mut written = 0usize;
     for doc in documents {
         message_vault_io_core::check_cancel(cancel)?;
         written += 1;
         sink.write_document(doc)?;
         report.conversations += 1;
-        // `%` instead of `u64::is_multiple_of`: that method needs Rust 1.87.
+        // `%` instead of `usize::is_multiple_of`: that method needs Rust 1.87.
         #[allow(clippy::manual_is_multiple_of)]
-        if written % 100 == 0 || written == total_conversations {
-            emit_log(log, format!("  preparing {written}/{total_conversations}"));
+        if written % 100 == 0 || written == total {
+            emit_log(log, format!("  preparing {written}/{total}"));
+            emit_progress(
+                progress,
+                ProgressEvent::Prepare {
+                    done: written,
+                    total,
+                },
+            );
         }
     }
     sink.finish()
@@ -259,6 +265,39 @@ mod tests {
     use media::MediaMode;
     use message_ir::IrAttachment;
     use std::fs;
+
+    #[test]
+    fn write_documents_through_sink_reports_prepare_progress() {
+        use message_vault_io_core::{ExportReport, ProgressEvent, ProgressSink};
+        use std::sync::{Arc, Mutex};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let sink =
+            FormatSink::open(tmp.path(), OutputFormat::Json, ExportTransforms::none()).unwrap();
+        let seen = Arc::new(Mutex::new(Vec::<ProgressEvent>::new()));
+        let sink_seen = Arc::clone(&seen);
+        let progress = ProgressSink::new(move |event| sink_seen.lock().unwrap().push(event));
+        let mut report = ExportReport::default();
+
+        write_documents_through_sink(
+            vec![message_ir::testutil::sample_document("hello")],
+            sink,
+            None,
+            Some(&progress),
+            None,
+            &mut report,
+        )
+        .unwrap();
+
+        assert_eq!(report.conversations, 1);
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            [
+                ProgressEvent::Prepare { done: 0, total: 1 },
+                ProgressEvent::Prepare { done: 1, total: 1 },
+            ]
+        );
+    }
 
     #[test]
     fn format_sink_csv_writes_per_conversation() {

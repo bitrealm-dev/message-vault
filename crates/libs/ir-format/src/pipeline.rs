@@ -21,9 +21,7 @@ pub fn run_pipeline(
 ) -> anyhow::Result<RunResult> {
     check_cancel(config.cancel.as_ref())?;
     let mut messages = Vec::new();
-    let mut transforms = ExportTransforms::from_configs(&config.media, &config.obfuscate);
-    transforms.log = config.log.clone();
-    let (report, sink) = convert(transforms)?;
+    let (report, sink) = convert(ExportTransforms::from_config(config))?;
     if !sink.media.errors.is_empty() && sink.media.processed == 0 && config.media.mode.needs_tools()
     {
         anyhow::bail!("media processing failed for all candidate files");

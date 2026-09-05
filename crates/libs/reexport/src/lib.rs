@@ -73,8 +73,7 @@ fn convert_export(input_dir: &Path, config: &ExporterConfig) -> Result<ReexportR
     }
 
     let detected = detect_ir_export(input_dir)?;
-    let mut transforms = ExportTransforms::from_configs(&config.media, &config.obfuscate);
-    transforms.log = config.log.clone();
+    let transforms = ExportTransforms::from_config(config);
     let copy_attachments = transforms.copies_attachments();
 
     fs::create_dir_all(&config.output)
@@ -182,6 +181,7 @@ fn load_documents(
                 },
                 compress: CompressOptions::default(),
                 log: None,
+                progress: None,
                 cancel: config.cancel.as_ref(),
             },
         )?;
@@ -470,6 +470,7 @@ mod tests {
             media: MediaConfig::default(),
             cancel: None,
             log: None,
+            progress: None,
             output_format,
             resume: false,
             source: SourceConfig::Format(FormatConfig {}),

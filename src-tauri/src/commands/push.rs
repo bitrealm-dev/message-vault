@@ -199,31 +199,10 @@ fn forward_push_event(app: &tauri::AppHandle, event: ProgressEvent) {
             );
         }
         ProgressEvent::Finished(report) => {
-            emit_conversation_issues(app, &report);
             let (progress, summary) = finished_push_events(&report);
             let _ = app.emit("extract:progress", progress);
             let _ = app.emit("extract:finished", summary.to_string());
         }
-    }
-}
-
-/// Report each failed or skipped conversation as an issue chip.
-fn emit_conversation_issues(app: &tauri::AppHandle, report: &vault_push::PushReport) {
-    for result in &report.results {
-        let (kind, fallback) = match result.status.as_str() {
-            "failed" => ("error", "upload failed"),
-            "skipped" => ("skip", "already imported or skipped"),
-            _ => continue,
-        };
-        let _ = app.emit(
-            "extract:issue",
-            serde_json::json!({
-                "kind": kind,
-                "step": "upload",
-                "item": result.file,
-                "reason": result.error.as_deref().unwrap_or(fallback),
-            }),
-        );
     }
 }
 

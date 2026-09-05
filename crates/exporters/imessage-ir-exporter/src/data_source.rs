@@ -81,11 +81,10 @@ impl DataSource {
             Platform::iOS => match decrypt_backup(options)? {
                 Some(backup) => {
                     let messages_db = TempDatabase::new(
-                        get_decrypted_message_database(&backup, log.as_ref())?,
+                        get_decrypted_message_database(&backup, options)?,
                         log.clone(),
                     );
-                    let contacts_path = match get_decrypted_contacts_database(&backup, log.as_ref())
-                    {
+                    let contacts_path = match get_decrypted_contacts_database(&backup, options) {
                         Ok(path) => Some(path),
                         Err(e) => {
                             emit_log(

@@ -9,8 +9,9 @@ use message_ir::{
     IrService, IrSource, SCHEMA_VERSION, owner_sender,
 };
 use message_vault_io_core::{
-    CancelFlag, LogSink, MediaConfig, attachment_jobs, check_cancel, clear_attachment_bytes,
-    discover_files, is_cancelled, log_attachment_progress, run_attachment_jobs,
+    CancelFlag, LogSink, MediaConfig, ProgressSink, attachment_jobs, check_cancel,
+    clear_attachment_bytes, discover_files, is_cancelled, report_attachment_progress,
+    run_attachment_jobs,
 };
 use phone::OwnerHandleSet;
 use sbr::{
@@ -76,8 +77,10 @@ pub struct SbrReadOptions<'a> {
     pub media: MediaMode,
     /// Image/video compress settings used when `media` converts or compresses.
     pub compress: CompressOptions,
-    /// Optional progress log (attachment lines for the desktop app).
+    /// Human-readable notes and warnings while reading.
     pub log: Option<&'a LogSink>,
+    /// Typed progress events while staging attachments.
+    pub progress: Option<&'a ProgressSink>,
     /// Cancellation flag checked between files.
     pub cancel: Option<&'a CancelFlag>,
 }
@@ -192,7 +195,7 @@ fn stage_read_attachments(
             compress: options.compress.clone(),
         },
         |i| Ok(payloads.get(i).cloned().flatten()),
-        log_attachment_progress(options.log),
+        report_attachment_progress(options.log, options.progress),
         options.log,
         options.cancel.map(|flag| flag.as_ref()),
     )
@@ -578,6 +581,7 @@ mod tests {
             },
             compress: CompressOptions::default(),
             log: None,
+            progress: None,
             cancel: None,
         }
     }

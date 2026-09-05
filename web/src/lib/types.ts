@@ -71,8 +71,14 @@ export interface ExtractErrorEvent {
   user_message?: string;
 }
 
+/**
+ * One typed progress event from the desktop backend (`extract:progress`).
+ * `setup` is a numbered step before any message is read (decrypting an
+ * iPhone backup, caching chat tables); its label arrives as `status` and
+ * `done`/`total` are the step's position, not message counts.
+ */
 export interface ImportProgressEvent {
-  step: "parse" | "attachments" | "prepare" | "media" | "upload";
+  step: "setup" | "parse" | "attachments" | "prepare" | "media" | "upload";
   done: number;
   total: number;
   bytes_done?: number;

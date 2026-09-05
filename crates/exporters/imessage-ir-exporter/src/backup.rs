@@ -14,7 +14,6 @@ use crabapple::{
     error::BackupError,
 };
 use imessage_database::{tables::table::DEFAULT_PATH_IOS, util::platform::Platform};
-use message_vault_io_core::{LogSink, emit_log};
 
 use crate::{
     contacts,
@@ -26,6 +25,10 @@ use crate::{
 };
 
 const MAX_IN_MEMORY_DECRYPT: u64 = 25 * 1024 * 1024;
+
+/// Setup steps an encrypted iOS backup goes through before parse: keys, then
+/// the messages database, then the contacts database.
+const DECRYPT_STEPS: usize = 5;
 
 /// Process-unique suffix (PID + timestamp + counter) so concurrent exports
 /// never share the same `/tmp` file name. The counter covers same-process
@@ -86,7 +89,7 @@ pub(crate) fn decrypt_backup(options: &MailOptions) -> Result<Option<Backup>, Ru
     let password = password_for_encrypted_backup(options.cleartext_password.as_deref())?;
 
     options.emit_log("Decrypting iOS backup...");
-    options.emit_log("  [1/5] Deriving backup keys...");
+    options.setup_step(1, DECRYPT_STEPS, "Deriving backup keys");
     let backup = match Backup::open(options.db_path.clone(), &Authentication::Password(password)) {
         Ok(backup) => backup,
         Err(BackupError::PasswordOrKeyIncorrect) => {
@@ -147,10 +150,10 @@ fn reject_leftover_password(
 /// Returns an error when the file is missing from the backup or cannot be written.
 pub(crate) fn get_decrypted_message_database(
     backup: &Backup,
-    log: Option<&LogSink>,
+    options: &MailOptions,
 ) -> Result<PathBuf, RuntimeError> {
     let (_, file_id) = DEFAULT_PATH_IOS.split_at(3);
-    emit_log(log, "  [2/5] Resolving messages database...");
+    options.setup_step(2, DECRYPT_STEPS, "Resolving messages database");
     let file = match backup.get_file(file_id) {
         Ok(file) => file,
         Err(BackupError::FileNotFoundInBackup(_)) => {
@@ -166,7 +169,7 @@ pub(crate) fn get_decrypted_message_database(
     let mut file = File::create(&tmp_path)?;
     restrict_permissions(&file)?;
 
-    emit_log(log, "  [3/5] Decrypting messages database...");
+    options.setup_step(3, DECRYPT_STEPS, "Decrypting messages database");
     copy(&mut decrypted_chat_db, &mut file)?;
     Ok(tmp_path)
 }
@@ -178,10 +181,10 @@ pub(crate) fn get_decrypted_message_database(
 /// Returns an error when the file is missing from the backup or cannot be written.
 pub(crate) fn get_decrypted_contacts_database(
     backup: &Backup,
-    log: Option<&LogSink>,
+    options: &MailOptions,
 ) -> Result<PathBuf, RuntimeError> {
     let (_, file_id) = contacts::DEFAULT_PATH_IOS.split_at(3);
-    emit_log(log, "  [4/5] Resolving contacts database...");
+    options.setup_step(4, DECRYPT_STEPS, "Resolving contacts database");
     let file = backup.get_file(file_id)?;
     let mut decrypted_contacts_db = backup.decrypt_entry_stream(&file)?;
 
@@ -189,7 +192,7 @@ pub(crate) fn get_decrypted_contacts_database(
     let mut file = File::create(&tmp_path)?;
     restrict_permissions(&file)?;
 
-    emit_log(log, "  [5/5] Decrypting contacts database...");
+    options.setup_step(5, DECRYPT_STEPS, "Decrypting contacts database");
     copy(&mut decrypted_contacts_db, &mut file)?;
 
     Ok(tmp_path)

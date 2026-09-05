@@ -7,7 +7,9 @@ use imessage_database::{
     util::{platform::Platform, query_context::QueryContext},
 };
 use message_ir_format::ExportTransforms;
-use message_vault_io_core::{CancelFlag, LogSink, OutputFormat, emit_log};
+use message_vault_io_core::{
+    CancelFlag, LogSink, OutputFormat, ProgressEvent, ProgressSink, emit_log, emit_progress,
+};
 
 use crate::error::RuntimeError;
 
@@ -59,8 +61,10 @@ pub(crate) struct MailOptions {
     pub transforms: ExportTransforms,
     /// CSV, EML, MBOX, JSON, or JSON Lines (one JSON object per line).
     pub output_format: OutputFormat,
-    /// Mid-run progress / warnings (GUI sink or stderr).
+    /// Human-readable mid-run notes and warnings (desktop sink or stderr).
     pub log: Option<LogSink>,
+    /// Typed progress events for the desktop's progress bar.
+    pub progress: Option<ProgressSink>,
     /// Cooperative cancel flag, checked periodically inside long loops.
     pub cancel: Option<CancelFlag>,
     /// Continue an interrupted export: keep previous output and skip the
@@ -80,5 +84,22 @@ impl MailOptions {
     /// Write one log line when a log sink is configured.
     pub fn emit_log(&self, line: impl AsRef<str>) {
         emit_log(self.log.as_ref(), line);
+    }
+
+    /// Send one typed progress event when a progress sink is configured.
+    pub fn emit_progress(&self, event: ProgressEvent) {
+        emit_progress(self.progress.as_ref(), event);
+    }
+
+    /// Announce a numbered setup step (decrypting a backup, caching a table):
+    /// a `[step/total] label...` log line for people and a
+    /// [`ProgressEvent::Setup`] for the progress bar.
+    pub fn setup_step(&self, step: usize, total: usize, label: &str) {
+        self.emit_log(format!("  [{step}/{total}] {label}..."));
+        self.emit_progress(ProgressEvent::Setup {
+            label: label.to_string(),
+            step,
+            total,
+        });
     }
 }

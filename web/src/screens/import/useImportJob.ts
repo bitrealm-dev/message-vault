@@ -55,6 +55,7 @@ import {
   type ImportPhase,
   type ImportStep,
   isProgressStepComplete,
+  setupDetail,
   stepIndexFor,
   stepsFor,
 } from "./importProgressState";
@@ -140,10 +141,11 @@ function stagingMediaFields(
 }
 
 /** Present-tense verb for every step but `media` (which needs the mode —
- * see `mediaVerb`), keyed by step name so a step added to the wire union
+ * see `mediaVerb`) and `setup` (which carries its own label — see
+ * `setupDetail`), keyed by step name so a step added to the wire union
  * without an entry here is a compile error rather than a silent fallback.
  */
-const STEP_VERB: Record<Exclude<ImportProgressEvent["step"], "media">, string> = {
+const STEP_VERB: Record<Exclude<ImportProgressEvent["step"], "media" | "setup">, string> = {
   parse: "Reading",
   attachments: "Copied",
   prepare: "Preparing",
@@ -155,7 +157,10 @@ const STEP_VERB: Record<Exclude<ImportProgressEvent["step"], "media">, string> =
  * verb for a step string this build doesn't recognise — the event comes
  * off the wire unvalidated.
  */
-function progressVerb(step: ImportProgressEvent["step"], mode: AttachmentMediaMode): string {
+function progressVerb(
+  step: Exclude<ImportProgressEvent["step"], "setup">,
+  mode: AttachmentMediaMode,
+): string {
   if (step === "media") return mediaVerb(mode);
   return STEP_VERB[step] ?? "Working";
 }
@@ -484,7 +489,11 @@ export function useImportJob() {
   function applyProgress(event: ImportProgressEvent): void {
     const now = performance.now();
 
-    if (event.step === "parse") {
+    if (event.step === "setup") {
+      // Decrypting and caching are the start of reading the backup, so the
+      // read timer starts here rather than at the first message count.
+      timingRef.current.parseStartedAt ??= now;
+    } else if (event.step === "parse") {
       timingRef.current.parseStartedAt ??= now;
       countsRef.current.messagesParsed =
         event.total > 0 && event.done >= event.total ? event.total : event.done;
@@ -507,24 +516,11 @@ export function useImportJob() {
     // the wire) — leave activeStepRef pointing at whatever step actually has
     // a row, so a dropped event here never mislabels the next error.
     if (stepIndex < 0) return;
-    activeStepRef.current = event.step;
+    // An issue raised during setup is a problem reading the backup, which is
+    // what "parse" names in the Import Errors list.
+    activeStepRef.current = event.step === "setup" ? "parse" : event.step;
 
-    let rawDetail = `${event.done}/${event.total}`;
-    if (event.status) {
-      rawDetail = `${event.done}/${event.total} (${event.status})`;
-    }
-
-    const lastAttachment = lastAttachmentProgressRef.current;
-    const detail =
-      event.step === "attachments"
-        ? formatAttachmentProgress({
-            mode: extractMediaModeRef.current,
-            done: event.done,
-            total: event.total,
-            bytesDone: event.bytes_done ?? lastAttachment?.bytesDone ?? 0,
-            bytesTotal: event.bytes_total ?? lastAttachment?.bytesTotal ?? 0,
-          })
-        : `${progressVerb(event.step, attachmentModeRef.current)} ${rawDetail}`;
+    const detail = progressDetail(event);
     const done = isProgressStepComplete(event.step, event.done, event.total);
 
     setSteps((current) =>
@@ -540,6 +536,25 @@ export function useImportJob() {
         };
       }),
     );
+  }
+
+  /** The row's detail line for one progress event. */
+  function progressDetail(event: ImportProgressEvent): string {
+    if (event.step === "setup") return setupDetail(event);
+    if (event.step === "attachments") {
+      const lastAttachment = lastAttachmentProgressRef.current;
+      return formatAttachmentProgress({
+        mode: extractMediaModeRef.current,
+        done: event.done,
+        total: event.total,
+        bytesDone: event.bytes_done ?? lastAttachment?.bytesDone ?? 0,
+        bytesTotal: event.bytes_total ?? lastAttachment?.bytesTotal ?? 0,
+      });
+    }
+    const counts = event.status
+      ? `${event.done}/${event.total} (${event.status})`
+      : `${event.done}/${event.total}`;
+    return `${progressVerb(event.step, attachmentModeRef.current)} ${counts}`;
   }
 
   function recordIssue(issue: ImportIssueEvent): void {

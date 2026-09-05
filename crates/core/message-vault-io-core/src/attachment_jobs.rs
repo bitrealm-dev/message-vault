@@ -4,6 +4,7 @@ use crate::attachments::attachment_dest_name;
 use crate::config::MediaConfig;
 use crate::pipeline::ExportReport;
 use crate::process::{CancelFlag, LogSink, emit_log};
+use crate::progress::{ProgressEvent, ProgressSink, emit_progress};
 use media::MediaMode;
 use message_ir::{ConversationDocument, IrAttachment};
 use sha2::{Digest, Sha256};
@@ -146,9 +147,10 @@ pub fn run_attachment_jobs(
 ///
 /// The shared non-queue staging step every exporter used to copy: assemble
 /// one [`AttachmentJob`] per attachment across `documents` (in document
-/// order), run [`run_attachment_jobs`] with the standard progress log line,
-/// count staged files into `report.attachments_saved`, and clear any
-/// in-memory `bytes` left on the attachments.
+/// order), run [`run_attachment_jobs`] with the standard progress report
+/// (a log line for people and an [`ProgressEvent::Attachments`] for the
+/// progress bar), count staged files into `report.attachments_saved`, and
+/// clear any in-memory `bytes` left on the attachments.
 ///
 /// `load(i)` is the per-exporter payload hook: `i` is the flat attachment
 /// index in document order. `Ok(None)` (or a non-cancel `Err`) marks that
@@ -163,12 +165,16 @@ pub fn run_attachment_jobs(
 ///
 /// Returns `"canceled"` when the user cancels, or an I/O / convert error
 /// string when the staging directory cannot be used.
+// Every argument is one of the run's hooks or one of its inputs; folding
+// them into a struct would only move the same eight names one level down.
+#[allow(clippy::too_many_arguments)]
 pub fn stage_conversation_attachments(
     documents: &mut [ConversationDocument],
     attachments_dir: &Path,
     media: &MediaConfig,
     load: impl FnMut(usize) -> Result<Option<Vec<u8>>, String>,
     log: Option<&LogSink>,
+    progress: Option<&ProgressSink>,
     cancel: Option<&CancelFlag>,
     report: &mut ExportReport,
 ) -> Result<(), String> {
@@ -178,7 +184,7 @@ pub fn stage_conversation_attachments(
         attachments_dir,
         media,
         load,
-        log_attachment_progress(log),
+        report_attachment_progress(log, progress),
         log,
         cancel.map(|flag| flag.as_ref()),
     )?;
@@ -222,17 +228,22 @@ pub fn attachment_jobs(documents: &mut [ConversationDocument]) -> Vec<Attachment
     jobs
 }
 
-/// The progress line every attachment run logs: files done of total, bytes
-/// done of total.
-pub fn log_attachment_progress(log: Option<&LogSink>) -> impl FnMut(AttachmentProgress) + '_ {
-    move |progress| {
+/// The progress report every attachment run makes: a log line (files done
+/// of total, bytes done of total) for people, and a typed
+/// [`ProgressEvent::Attachments`] for the progress bar.
+pub fn report_attachment_progress<'a>(
+    log: Option<&'a LogSink>,
+    progress: Option<&'a ProgressSink>,
+) -> impl FnMut(AttachmentProgress) + 'a {
+    move |counts| {
         emit_log(
             log,
             format!(
                 "  attachments {}/{} {}/{}",
-                progress.done, progress.total, progress.bytes_done, progress.bytes_total
+                counts.done, counts.total, counts.bytes_done, counts.bytes_total
             ),
         );
+        emit_progress(progress, ProgressEvent::from(counts));
     }
 }
 

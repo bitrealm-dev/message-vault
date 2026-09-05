@@ -56,6 +56,8 @@ pub async fn format(
             log: Some(LogSink::new(move |line: &str| {
                 let _ = log_app.emit("extract:log", line.to_string());
             })),
+            // The Format screen shows a log, not a progress bar.
+            progress: None,
             output_format: fmt,
             resume: false,
             source: SourceConfig::Format(FormatConfig {}),
