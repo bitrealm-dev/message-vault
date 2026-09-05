@@ -17,27 +17,43 @@ use crate::report::{FileResult, PushReport, UploadProfile, elapsed_ms, format_pr
 /// Events the GUI/CLI can show while a push is running.
 #[derive(Debug, Clone)]
 pub enum ProgressEvent {
+    /// One line for the log panel.
     Log(String),
+    /// The key was accepted; the run knows which account it imports into.
     Auth {
+        /// Account id the key resolved to.
         account_id: String,
+        /// Username the vault reports for that account, else the account id.
         username: String,
     },
+    /// Work on one conversation file began.
     FileStart {
+        /// Position of this file in the run, starting at 1.
         index: usize,
+        /// Files in the run.
         total: usize,
+        /// File name relative to the input folder.
         file: String,
     },
+    /// Work on one conversation file ended.
     FileDone {
+        /// File name relative to the input folder.
         file: String,
+        /// `ok`, `failed`, or `skipped`.
         status: String,
     },
     /// Structured skip/error for Import Errors (e.g. oversized attachment).
     Issue {
+        /// `skip` when the item was left out, `error` when it failed.
         kind: String,
+        /// Pipeline step that raised it, e.g. `upload`.
         step: String,
+        /// What was affected: an attachment path or a conversation file.
         item: String,
+        /// Why, in one sentence.
         reason: String,
     },
+    /// The run finished; the report is final.
     Finished(PushReport),
 }
 

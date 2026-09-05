@@ -166,7 +166,7 @@ fn split_categories(raw: &str) -> Vec<String> {
     out
 }
 
-/// Extract `[Tag]` values from a string and return (stripped_text, tags).
+/// Extract `[Tag]` values from a string and return (`stripped_text`, tags).
 pub fn extract_tags(raw: &str) -> (String, Vec<String>) {
     let mut tags = Vec::new();
     let mut out = String::new();

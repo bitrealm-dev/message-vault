@@ -285,7 +285,7 @@ fn try_remux_replace(path: &Path, commit: Commit<'_>) -> Result<Option<PathBuf>>
 }
 
 /// Media [`Kind`] of a file, from its extension via the shared
-/// extension table in [`crate::mime`]; `None` for unrecognized extensions
+/// extension table in `crate::mime`; `None` for unrecognized extensions
 /// and for this crate's own in-progress temp files.
 pub fn classify(path: &Path) -> Option<Kind> {
     if is_msgmedia_temp(path) {

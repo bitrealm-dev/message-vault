@@ -30,14 +30,22 @@ const MAX_RETRIES: u32 = 3;
 /// Settings for one download run (output folder, URL, search, flags).
 #[derive(Debug, Clone)]
 pub struct VaultPullConfig {
+    /// Folder the JSON Lines files and attachments are written into.
     pub out_dir: PathBuf,
+    /// Vault base URL, e.g. `http://127.0.0.1:8080`.
     pub base_url: String,
+    /// Account username, recorded in the journal and progress events.
     pub username: String,
+    /// API token or session token for the vault.
     pub key: String,
     /// A query in the vault's search language (may be empty).
     pub query: String,
+    /// Write messages only; download no attachments.
     pub skip_attachments: bool,
+    /// Messages per `GET /v1/export/messages` page, clamped to
+    /// `1..=MAX_PAGE_LIMIT`.
     pub page_limit: usize,
+    /// Checked between pages and downloads; set it to stop the run early.
     pub cancel: Option<CancelFlag>,
     /// Number of parallel asset download workers (default 8).
     pub asset_download_workers: usize,
@@ -46,31 +54,48 @@ pub struct VaultPullConfig {
 /// Final summary of a download (conversations, messages, attachment counts).
 #[derive(Debug, Clone, Serialize)]
 pub struct PullReport {
+    /// Always `true`: a run that fails returns an error instead of a report.
     pub ok: bool,
+    /// Account id the key resolved to.
     pub account: String,
+    /// The query the run asked the vault for.
     pub query: String,
+    /// Conversations written.
     pub conversations: u64,
+    /// Messages written.
     pub messages: u64,
+    /// Attachments fetched this run.
     pub attachments_downloaded: u64,
+    /// Attachments already on disk according to the journal.
     pub attachments_skipped: u64,
+    /// The output folder, as given.
     pub out_dir: String,
 }
 
 /// Live progress sent to the CLI or desktop app during a query or download.
 #[derive(Debug, Clone)]
 pub enum ProgressEvent {
+    /// One line for the log panel.
     Log(String),
+    /// The key was accepted; the run knows whose vault it is reading.
     Auth {
+        /// Account id the key resolved to.
         account_id: String,
+        /// Username the vault reports for that account, else the account id.
         username: String,
     },
+    /// One page of messages arrived.
     Page {
+        /// Messages on this page.
         messages: usize,
+        /// Messages fetched so far, this page included.
         total_so_far: u64,
     },
+    /// The run finished; the report is final.
     Done(PullReport),
 }
 
+/// Callback type for live progress (CLI stderr, desktop log panel, tests).
 pub type ProgressFn<'a> = dyn FnMut(ProgressEvent) + 'a;
 
 /// Send one event to the caller's progress callback when it supplied one.

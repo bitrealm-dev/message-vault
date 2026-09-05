@@ -41,10 +41,15 @@ enum SourceFlavor {
 /// Counts of contacts, conversations, messages, and attachments written this run.
 #[derive(Debug, Default)]
 pub struct GenStats {
+    /// Contacts invented.
     pub contacts: usize,
+    /// Conversation files written across every backup folder.
     pub conversation_files: usize,
+    /// Messages written.
     pub messages: usize,
+    /// Attachment references written into messages.
     pub attachment_refs: usize,
+    /// Group conversations written.
     pub groups: usize,
 }
 

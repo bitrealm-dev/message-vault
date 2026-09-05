@@ -1,3 +1,6 @@
+//! The `message-vault-server` binary: parses the command line and runs it on
+//! a Tokio runtime. Everything else lives in the library crate.
+
 use anyhow::Result;
 use clap::Parser;
 

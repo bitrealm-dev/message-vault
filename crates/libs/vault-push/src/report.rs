@@ -12,13 +12,18 @@ use serde::{Deserialize, Serialize};
 /// Per-conversation outcome written into the final report JSON.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileResult {
+    /// File name relative to the input folder.
     pub file: String,
     /// `ok`, `failed`, or `skipped`.
     pub status: String,
+    /// The failure, when `status` is `failed`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Messages sent to the vault from this file.
     pub messages: u64,
+    /// Attachments uploaded for this file.
     pub attachments: u64,
+    /// Timings and sizes, when profiling was on for the run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<UploadProfile>,
 }
@@ -55,29 +60,46 @@ impl FileResult {
 /// hashing/scanning attachments, uploading media, or importing messages.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UploadProfile {
+    /// Reading and parsing the JSON Lines file.
     pub read_ms: u64,
+    /// Finding attachments on disk and hashing them.
     pub attachment_scan_hash_ms: u64,
+    /// Uploading attachment bytes.
     pub asset_upload_ms: u64,
+    /// Posting the message batches.
     pub message_import_ms: u64,
+    /// The whole file, start to finish.
     pub total_ms: u64,
+    /// Distinct attachments by fingerprint.
     pub unique_assets: u64,
+    /// Bytes across those distinct attachments.
     pub asset_bytes: u64,
 }
 
 /// Final summary of a whole push (also written to disk as the report file).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PushReport {
+    /// `true` when no conversation failed and the run was not cancelled.
     pub ok: bool,
+    /// Account id the key resolved to.
     pub account: String,
+    /// Username the vault reports for that account, else the account id.
     pub username: String,
+    /// `append` or `replace`.
     pub mode: String,
+    /// Unix seconds when the run started, as a string.
     pub started_at: String,
+    /// Unix seconds when the run finished, as a string.
     pub finished_at: String,
     /// Wall-clock time from start of auth through the last import.
     pub elapsed_ms: u64,
+    /// Conversation files the run found.
     pub conversations_total: u64,
+    /// Files imported without error.
     pub conversations_ok: u64,
+    /// Files that failed.
     pub conversations_failed: u64,
+    /// Files the journal said were already imported.
     pub conversations_skipped: u64,
     /// Messages placed in HTTP import request bodies.
     #[serde(default)]
@@ -93,9 +115,13 @@ pub struct PushReport {
     pub messages_failed: u64,
     /// Legacy successful-request count. Equal to attempted minus failed.
     pub messages: u64,
+    /// Attachments whose bytes went up this run.
     pub assets_uploaded: u64,
+    /// Attachments the vault already had, by fingerprint.
     pub assets_skipped: u64,
+    /// Bytes uploaded.
     pub assets_bytes: u64,
+    /// One row per conversation file.
     pub results: Vec<FileResult>,
 }
 

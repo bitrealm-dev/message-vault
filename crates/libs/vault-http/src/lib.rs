@@ -39,7 +39,7 @@ const POOL_MAX_IDLE_PER_HOST: usize = 64;
 /// Build the shared blocking reqwest client.
 ///
 /// One client per `HttpSession`; the connection pool keeps
-/// [`POOL_MAX_IDLE_PER_HOST`] idle connections per host for the worker threads.
+/// `POOL_MAX_IDLE_PER_HOST` idle connections per host for the worker threads.
 ///
 /// # Errors
 ///

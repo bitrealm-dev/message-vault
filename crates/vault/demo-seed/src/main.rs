@@ -12,7 +12,7 @@ use demo_seed::SeedConfig;
     about = "Generate the demo message dataset (iMessage, SMS Backup & Restore, WhatsApp) for Message Vault"
 )]
 struct Cli {
-    /// Path to the demo_seed.toml settings file
+    /// Path to the `demo_seed.toml` settings file
     #[arg(long, default_value_t = SeedConfig::default_path().display().to_string())]
     config: String,
 

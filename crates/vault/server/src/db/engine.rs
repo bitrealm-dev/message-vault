@@ -28,7 +28,7 @@ pub fn detect_engine(url: &str) -> Result<DbEngine> {
 
 /// The vault's historical pragma set, applied to each new connection:
 /// busy timeout first (overlapping auth and UI writes wait), foreign keys on,
-/// synchronous NORMAL, temp_store MEMORY, cache_size -200000.
+/// synchronous NORMAL, `temp_store` MEMORY, `cache_size` -200000.
 fn with_vault_pragmas(pool: AnyPoolOptions) -> AnyPoolOptions {
     pool.after_connect(|conn, _meta| {
         Box::pin(async move {

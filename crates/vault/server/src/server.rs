@@ -245,7 +245,7 @@ pub struct AppState {
     /// Per-account import mutex: same-account imports stay serialized so staging
     /// rows (the temporary import area) for that tenant are not wiped mid-run.
     /// Different accounts may overlap at the lock layer; SQLite write-ahead
-    /// logging plus busy_timeout serialize writers.
+    /// logging plus `busy_timeout` serialize writers.
     pub(crate) account_import_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     /// Serialize multipart complete per (account, sha256) so two clients cannot
     /// race `store_verified` on the same SHA-256 fingerprint.
@@ -439,7 +439,7 @@ async fn api_method_not_allowed(method: axum::http::Method, uri: axum::http::Uri
     ApiError::MethodNotAllowed(format!("{method} is not allowed at {}", uri.path()))
 }
 
-/// tower_http's `RequestBodyLimitLayer` answers a plain-text `413` itself,
+/// `tower_http`'s `RequestBodyLimitLayer` answers a plain-text `413` itself,
 /// bypassing every extractor, the moment a `Content-Length` header already
 /// announces a payload over the limit — `extract::Json`'s own 413 handling
 /// only ever sees a body that had to be read to discover it was too long.
