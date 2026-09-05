@@ -304,11 +304,10 @@ pub(crate) fn decode_bytes_with_charset(bytes: &[u8], charset: Option<u64>) -> S
     let bytes = bytes.strip_suffix(&[0]).unwrap_or(bytes);
     let text = match charset {
         Some(CHARSET_UCS2) if !bytes.is_empty() => {
-            let even = &bytes[..bytes.len() - (bytes.len() % 2)];
-            let mut units = Vec::with_capacity(even.len() / 2);
-            for chunk in even.chunks_exact(2) {
-                units.push(u16::from_be_bytes([chunk[0], chunk[1]]));
-            }
+            // as_chunks drops a trailing odd byte, like the manual
+            // even-length truncation it replaces.
+            let (pairs, _) = bytes.as_chunks::<2>();
+            let units: Vec<u16> = pairs.iter().map(|&pair| u16::from_be_bytes(pair)).collect();
             String::from_utf16_lossy(&units)
         }
         _ => String::from_utf8_lossy(bytes).into_owned(),

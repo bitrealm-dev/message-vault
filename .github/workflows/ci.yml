@@ -1,29 +1,18 @@
 name: CI
 
+# Every job runs on every pull request and reports a result, so all of them
+# can be required by the ruleset on main. Path filtering happens inside the
+# workflow (the `changes` job), not on the trigger: a workflow that never
+# starts reports nothing, and a required check that never reports holds the
+# pull request pending forever. A job skipped by its `if:` counts as passed.
+# Why: docs/adr/0007-ci-is-the-only-gate.md.
+
 on:
   push:
     branches: [main]
     tags: ['v*']
-    # Tag pushes still run (path filters do not apply to tags). Skip the
-    # full Rust workspace on docs-only / markdown-only commits to main.
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
-      - ".github/ISSUE_TEMPLATE/**"
-      - ".github/pull_request_template.md"
-      - ".cursor/**"
-      - "LICENSE*"
-      - ".gitignore"
   pull_request:
     branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
-      - ".github/ISSUE_TEMPLATE/**"
-      - ".github/pull_request_template.md"
-      - ".cursor/**"
-      - "LICENSE*"
-      - ".gitignore"
   workflow_dispatch:
 
 # A new push to the same branch cancels the previous run. That stops
@@ -37,9 +26,57 @@ permissions:
   packages: write
 
 jobs:
-  # ── Always: rustfmt ───────────────────────────────────────────────────
+  # ── Always: classify what the change touches ──────────────────────────
+  # On anything but a pull request there is no base to diff against, so
+  # every output is true and everything runs.
+  changes:
+    name: Classify changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      rust: ${{ steps.classify.outputs.rust }}
+      web: ${{ steps.classify.outputs.web }}
+      docs: ${{ steps.classify.outputs.docs }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" != "pull_request" ]]; then
+            printf 'rust=true\nweb=true\ndocs=true\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --quiet origin "$BASE"
+          rust=false web=false docs=false
+          while IFS= read -r f; do
+            case "$f" in
+              # The committed OpenAPI document feeds the web app's generated
+              # types, so a change to it must run the web job.
+              docs/src/assets/openapi.json) docs=true; web=true ;;
+              docs/*) docs=true ;;
+              web/*) web=true ;;
+              web-next/*) ;;                # legacy tree, not the product path
+              .github/workflows/*) rust=true; web=true; docs=true ;;
+              .github/*|.cursor/*|.gitignore|LICENSE*) ;;
+              *.md) ;;
+              *) rust=true ;;               # crates, src-tauri, vendor, schema,
+            esac                            # docker, scripts, Cargo.* — Rust CI
+          done < <(git diff --name-only "origin/$BASE...HEAD")
+          printf 'rust=%s\nweb=%s\ndocs=%s\n' "$rust" "$web" "$docs" >> "$GITHUB_OUTPUT"
+          echo "rust=$rust web=$web docs=$docs"
+
+  # ── Rust: rustfmt ─────────────────────────────────────────────────────
   fmt:
     name: rustfmt
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -55,11 +92,64 @@ jobs:
           cargo fmt --all -- --check
           cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 
-  # ── Always: build + test ──────────────────────────────────────────────
-  test:
-    name: Build & Test (Rust)
+  # ── Rust: Clippy on the workspace ─────────────────────────────────────
+  # src-tauri Clippy lives in check-tauri, which already installs the
+  # webkit/gtk system packages its build needs.
+  clippy:
+    name: Clippy (workspace)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-clippy-
+
+      - name: Clippy workspace
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # ── Rust: build + test, with the Postgres-gated suites live ───────────
+  # The gated tests (search parity, FTS, promote) skip themselves unless
+  # MV_TEST_POSTGRES_URL is set; the service makes them run here.
+  test:
+    name: Build & Test (Rust)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: vault
+          POSTGRES_PASSWORD: vault
+          POSTGRES_DB: vault
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vault"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v7
 
@@ -85,73 +175,21 @@ jobs:
       - name: Build workspace
         run: cargo build --workspace
 
+      # GitHub publishes service ports on localhost; the hostname `postgres`
+      # only resolves when the job itself runs in a container.
       - name: Test workspace
-        run: cargo test --workspace
-
-  # ── Always: Postgres-gated server tests ───────────────────────────────
-  # Runs the search-parity and FTS suites against a real Postgres 16 service
-  # (the gated tests skip themselves unless MV_TEST_POSTGRES_URL is set).
-  test-postgres:
-    name: Build & Test (Rust, Postgres)
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: vault
-          POSTGRES_PASSWORD: vault
-          POSTGRES_DB: vault
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U vault"
-          --health-interval 2s
-          --health-timeout 2s
-          --health-retries 10
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-
-      - uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      # Job runs on the Ubuntu VM, not in a job container. GitHub publishes
-      # service ports on localhost. The hostname `postgres` only resolves when
-      # the job itself is a container on the same Docker network.
-      - name: Test message-vault-server against Postgres
         env:
           MV_TEST_POSTGRES_URL: postgres://vault:vault@127.0.0.1:5432/vault
-        run: cargo test -p message-vault-server
+        run: cargo test --workspace
 
-  # ── Always: cargo-deny advisories ─────────────────────────────────────
-  deny:
-    name: cargo-deny (advisories)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check advisories
-
-  # ── Always: check, lint, and test src-tauri ───────────────────────────
-  # src-tauri is not a workspace member, so the workspace build above skips
+  # ── Rust: check, lint, and test src-tauri ─────────────────────────────
+  # src-tauri is not a workspace member, so the workspace jobs above skip
   # it; this is its compile, lint, and test gate. Same system packages as
   # the release job's Linux installer build.
   check-tauri:
     name: Check, lint, and test (src-tauri)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -194,11 +232,15 @@ jobs:
       - name: Test src-tauri
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
-  # ── Always: web Biome (lint + format) + TypeScript ────────────────────
-  web-lint:
-    name: Lint (web)
+  # ── Web: lint, generated types, type-check + bundle, tests ────────────
+  # `npm run build` is typecheck (both tsconfigs) plus the Vite bundle, so
+  # this job catches what a release build would otherwise find first.
+  web:
+    name: Lint, test, and build (web)
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -209,66 +251,61 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - name: Lint, format-check, and type-check web frontend
-        run: |
-          cd web
-          npm ci
-          npx biome ci .
-          npx tsc --noEmit
+      - name: Install dependencies
+        run: cd web && npm ci
 
-  # ── Always: web Vitest ────────────────────────────────────────────────
-  web-test:
-    name: Test (web)
+      - name: Lint and format-check
+        run: cd web && npx biome ci .
+
+      - name: Generated vault API types match the OpenAPI document
+        run: ./scripts/check-generated-api-types.sh
+
+      - name: Type-check and build bundle
+        run: cd web && npm run build
+
+      - name: Test
+        run: cd web && npm test
+
+  # ── Docs: Astro check + build ─────────────────────────────────────────
+  # The site build without rustdoc: copying prebuilt rustdoc HTML into
+  # public/ cannot change whether Astro builds, and cargo doc failures are
+  # compile failures the test job already catches. The full build with
+  # rustdoc, and the deploy, stay in docs.yml on push to main.
+  docs:
+    name: Check and build (docs)
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
       - name: Install Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: docs/package-lock.json
 
-      - name: Test web frontend
-        run: |
-          cd web
-          npm ci
-          npm test
+      - name: Install dependencies
+        working-directory: docs
+        run: npm ci
 
-  # ── Always: npm audit (web + docs) ────────────────────────────────────
-  npm-audit:
-    name: Audit npm deps
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
+      - name: Copy HTTP API catalog into rustdoc
+        run: bash docs/scripts/copy-http-api-reference.sh
 
-      - name: Install Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            web/package-lock.json
-            docs/package-lock.json
+      - name: Check
+        working-directory: docs
+        run: npm run check
 
-      - name: Audit web frontend
-        run: |
-          cd web
-          npm ci
-          npm audit --audit-level=high
-
-      - name: Audit docs site
-        run: |
-          cd docs
-          npm ci
-          npm audit --audit-level=high
+      - name: Build
+        working-directory: docs
+        run: npm run build
 
   # ── Always: license consistency ───────────────────────────────────────
   license:
     name: License consistency
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -280,6 +317,7 @@ jobs:
   # ── Always: release Dockerfile copies [patch.crates-io] path crates ──
   docker-context:
     name: Docker rust-builder context
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -289,10 +327,12 @@ jobs:
         run: ./scripts/check-docker-context.sh
 
   # ── Tag only: Docker image → DockerHub ────────────────────────────────
+  # On a tag the changes job reports everything true, so every job above
+  # actually runs; nothing ships unless all of them are green.
   docker:
     name: Docker image
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [fmt, test, test-postgres, check-tauri]
+    needs: [changes, fmt, clippy, test, check-tauri, web, docs, license, docker-context]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -342,7 +382,7 @@ jobs:
   release:
     name: Desktop App (${{ matrix.label }})
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [fmt, test, test-postgres, check-tauri]
+    needs: [changes, fmt, clippy, test, check-tauri, web, docs, license, docker-context]
     timeout-minutes: 90
     strategy:
       fail-fast: false
