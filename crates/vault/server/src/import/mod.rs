@@ -265,23 +265,14 @@ pub async fn import_export(args: &ImportExportArgs<'_>) -> Result<ImportStats> {
     schema::ensure_vault_schema(&mut conn).await?;
     crate::db::account_profile::ensure_account_row(&mut conn, args.account_id).await?;
 
-    let import_id = vault_imports::start_import(
+    let session = OwnedSession::start(
         &mut conn,
-        &vault_imports::StartImportArgs {
-            account_id: args.account_id,
-            source: args.source,
-            mode: args.mode.as_str(),
-            tool: Some("message-vault-server"),
-            stage: vault_imports::ImportStage::Parse,
-            staging_dir: None,
-            device_id: None,
-            form_json: None,
-            source_fingerprint: None,
-            source_identities: None,
-        },
+        args.account_id,
+        args.source,
+        args.mode,
+        "message-vault-server",
     )
     .await?;
-
     let result = import_jsonl_files_on_conn(
         &mut conn,
         &paths,
@@ -294,20 +285,69 @@ pub async fn import_export(args: &ImportExportArgs<'_>) -> Result<ImportStats> {
             source: args.source,
             account_id: args.account_id,
             fill_content_keys: true,
-            import_id: Some(import_id),
+            import_id: Some(session.id),
         }),
         ImportSchemaMode::AssumeReady,
     )
     .await;
-
-    let complete_args = match &result {
-        Ok(stats) => CompleteImportArgs::succeeded(stats.messages, stats.attachments),
-        Err(_) => CompleteImportArgs::failed(),
-    };
-    vault_imports::complete_import_or_warn(&mut conn, args.account_id, import_id, &complete_args)
-        .await;
-
+    session.finish(&mut conn, &result).await;
     result
+}
+
+/// An import session this process opened for one run, as opposed to one a
+/// client (vault-push) owns and closes itself. Whoever starts one must
+/// finish it whatever the import does, so the Settings import table never
+/// shows a run stuck in progress.
+pub(crate) struct OwnedSession<'a> {
+    account_id: &'a str,
+    /// The `vault_imports` row id; the import stamps it on every message.
+    pub id: i64,
+}
+
+impl<'a> OwnedSession<'a> {
+    /// Record a session at the parse stage. Nothing client-side (staging
+    /// folder, device, form) is known for a run started here.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the account already has a live session or the
+    /// row cannot be inserted.
+    pub(crate) async fn start(
+        conn: &mut AnyConnection,
+        account_id: &'a str,
+        source: &str,
+        mode: ImportMode,
+        tool: &str,
+    ) -> std::result::Result<Self, vault_imports::StartImportError> {
+        let id = vault_imports::start_import(
+            conn,
+            &vault_imports::StartImportArgs {
+                account_id,
+                source,
+                mode: mode.as_str(),
+                tool: Some(tool),
+                stage: vault_imports::ImportStage::Parse,
+                staging_dir: None,
+                device_id: None,
+                form_json: None,
+                source_fingerprint: None,
+                source_identities: None,
+            },
+        )
+        .await?;
+        Ok(Self { account_id, id })
+    }
+
+    /// Mark the session succeeded with the run's counts, or failed. Not
+    /// being able to record the outcome is a warning on stderr, never an
+    /// error: the import's own result is what the caller returns.
+    pub(crate) async fn finish(self, conn: &mut AnyConnection, result: &Result<ImportStats>) {
+        let outcome = match result {
+            Ok(stats) => CompleteImportArgs::succeeded(stats.messages, stats.attachments),
+            Err(_) => CompleteImportArgs::failed(),
+        };
+        vault_imports::complete_import_or_warn(conn, self.account_id, self.id, &outcome).await;
+    }
 }
 
 /// Whether import should run DDL/schema ensure on the connection.
@@ -1666,9 +1706,12 @@ async fn run_import_path(
     };
     let _guard = account_lock.lock().await;
 
+    // One pooled connection held for the whole import; the import semaphore
+    // taken above keeps enough of the pool free for other requests.
+    let mut conn = state.db.acquire().await?;
+
     // Validate client-owned sessions before staging work so bad ids return 400.
     if let Some(id) = query_import_id {
-        let mut conn = state.db.acquire().await?;
         crate::db::vault_imports::require_reusable_import(
             &mut conn,
             &account,
@@ -1684,31 +1727,17 @@ async fn run_import_path(
     // Multipart supplies a temp asset_root for relative file parts.
     let asset_root_owned = asset_root_override.unwrap_or_else(|| assets_dir.clone());
 
-    // Client session (vault-push): ownership/status already checked above.
-    // Otherwise start a one-shot vault_imports row so Storage history works for curl / single POSTs.
-    let (import_id, owns_session) = if let Some(id) = query_import_id {
-        (Some(id), false)
-    } else {
-        let mut conn = state.db.acquire().await?;
-        crate::db::account_profile::ensure_account_row(&mut conn, &account).await?;
-        let id = crate::db::vault_imports::start_import(
-            &mut conn,
-            &crate::db::vault_imports::StartImportArgs {
-                account_id: &account,
-                source: &source_id,
-                mode: mode.as_str(),
-                tool: Some("http"),
-                stage: crate::db::vault_imports::ImportStage::Parse,
-                staging_dir: None,
-                device_id: None,
-                form_json: None,
-                source_fingerprint: None,
-                source_identities: None,
-            },
-        )
-        .await?;
-        (Some(id), true)
+    // A client session (vault-push) is closed by the client. Otherwise open
+    // one of our own so the Settings import table records curl and
+    // single-POST runs too.
+    let owned = match query_import_id {
+        Some(_) => None,
+        None => {
+            crate::db::account_profile::ensure_account_row(&mut conn, &account).await?;
+            Some(OwnedSession::start(&mut conn, &account, &source_id, mode, "http").await?)
+        }
     };
+    let import_id = query_import_id.or_else(|| owned.as_ref().map(|session| session.id));
 
     let opts = ImportOptions::fixed(FixedImportArgs {
         assets_dir: &assets_dir,
@@ -1721,9 +1750,6 @@ async fn run_import_path(
         fill_content_keys: do_dedupe,
         import_id,
     });
-    // One pooled connection held for the whole import; the import semaphore
-    // taken above keeps enough of the pool free for other requests.
-    let mut conn = state.db.acquire().await?;
     let import_result = import::import_jsonl_files_on_conn(
         &mut conn,
         &[jsonl_path],
@@ -1731,17 +1757,8 @@ async fn run_import_path(
         import::ImportSchemaMode::AssumeReady,
     )
     .await;
-
-    if owns_session && let Some(id) = import_id {
-        let complete_args = match &import_result {
-            Ok(stats) => crate::db::vault_imports::CompleteImportArgs::succeeded(
-                stats.messages,
-                stats.attachments,
-            ),
-            Err(_) => crate::db::vault_imports::CompleteImportArgs::failed(),
-        };
-        crate::db::vault_imports::complete_import_or_warn(&mut conn, &account, id, &complete_args)
-            .await;
+    if let Some(session) = owned {
+        session.finish(&mut conn, &import_result).await;
     }
     let stats = import_result.map_err(classify_import_error)?;
     let dedupe_stats = if do_dedupe {

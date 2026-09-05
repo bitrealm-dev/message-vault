@@ -1173,10 +1173,7 @@ fn imessage_bag(
 
 /// The string trimmed, or `None` when blank.
 fn trimmed(s: Option<String>) -> Option<String> {
-    s.as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(str::to_string)
+    s.as_deref().and_then(message_ir::nonempty)
 }
 
 /// The items as a JSON array, or `None` when there are none.
