@@ -21,7 +21,6 @@ pub(crate) mod import_media;
 pub(crate) mod jsonl;
 pub(crate) mod keyed_locks;
 pub mod logging;
-pub(crate) mod media_tools;
 pub(crate) mod messages_api;
 pub(crate) mod models;
 pub(crate) mod named_membership;
