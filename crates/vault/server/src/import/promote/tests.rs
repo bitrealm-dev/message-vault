@@ -13,18 +13,19 @@ async fn pg_fts_hits(conn: &mut AnyConnection, needle: &str) -> i64 {
     .unwrap()
 }
 
-/// Manual ANALYZE count and last_analyze on public.messages.
+/// Manual ANALYZE count and last_analyze on this connection's `messages`
+/// table: the test schema the pool created, not `public`.
 async fn pg_messages_analyze_stat(conn: &mut AnyConnection) -> (i64, Option<String>) {
     let analyze_count: i64 = sqlx::query_scalar(
         "SELECT analyze_count FROM pg_stat_user_tables
-         WHERE schemaname = 'public' AND relname = 'messages'",
+         WHERE schemaname = current_schema() AND relname = 'messages'",
     )
     .fetch_one(&mut *conn)
     .await
     .unwrap();
     let last_analyze: Option<String> = sqlx::query_scalar(
         "SELECT last_analyze::text FROM pg_stat_user_tables
-         WHERE schemaname = 'public' AND relname = 'messages'",
+         WHERE schemaname = current_schema() AND relname = 'messages'",
     )
     .fetch_one(&mut *conn)
     .await
@@ -376,22 +377,15 @@ async fn promote_analyzes_import_tables_before_begin() {
 /// last_analyze before a second promote begins (stop/restart in miniature).
 #[tokio::test]
 async fn promote_analyzes_import_tables_before_begin_pg() {
-    let Some(url) = crate::pg_test_url() else {
+    if crate::pg_test_url().is_none() {
         return;
-    };
-    let _pg_guard = crate::acquire_pg_test_lock().await;
-    sqlx::any::install_default_drivers();
-    let pool = sqlx::any::AnyPoolOptions::new()
-        .connect(&url)
-        .await
-        .unwrap();
+    }
+    // A schema of this test's own (db::engine::test_pool on Postgres), so
+    // nothing an earlier run left in staging can make this one promote the
+    // wrong rows, and no lock is needed against the other gated tests (#394).
+    let (pool, _dir) = crate::db::engine::test_pool().await;
     let mut conn = pool.acquire().await.unwrap();
     schema::ensure_vault_schema(&mut conn).await.unwrap();
-    sqlx::query("DELETE FROM accounts WHERE id = $1")
-        .bind(TEST_ACCOUNT)
-        .execute(&mut *conn)
-        .await
-        .unwrap();
     sqlx::query("INSERT INTO accounts (id, username) VALUES ($1, 'promote-analyze-pg')")
         .bind(TEST_ACCOUNT)
         .execute(&mut *conn)
@@ -437,7 +431,20 @@ async fn promote_analyzes_import_tables_before_begin_pg() {
         .await
         .unwrap();
     assert_eq!(first.messages, 1);
-    let (analyze_after, last_analyze) = pg_messages_analyze_stat(&mut conn).await;
+    // Since Postgres 15 the cumulative statistics live in shared memory and
+    // a backend's pending counters reach them at transaction end or after
+    // PGSTAT_MIN_INTERVAL (one second), read by others through a snapshot.
+    // The ANALYZE ran; its count can lag this read by up to that interval,
+    // so wait for it rather than assert on the first look (#394).
+    let mut analyze_after = analyze_before;
+    let mut last_analyze = None;
+    for _ in 0..50 {
+        (analyze_after, last_analyze) = pg_messages_analyze_stat(&mut conn).await;
+        if analyze_after > analyze_before {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
     assert!(
         analyze_after > analyze_before,
         "ANALYZE before BEGIN must increment analyze_count on messages (before={analyze_before}, after={analyze_after}, last_analyze_before={last_analyze_before:?})"

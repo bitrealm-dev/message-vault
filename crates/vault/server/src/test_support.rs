@@ -58,10 +58,18 @@ impl Drop for TestServer {
 
 /// Start the real axum app for `state` on an ephemeral port.
 ///
-/// This is the one place in the test suite that binds a listener; every HTTP
-/// helper below goes through it.
+/// Every HTTP helper below goes through this; a test that serves a router
+/// other than `http_app` (the public auth router on its own, say) takes
+/// [`serve_router`] directly.
 pub async fn serve(state: &AppState) -> TestServer {
-    let app = http_app(state.clone());
+    serve_router(http_app(state.clone())).await
+}
+
+/// Start `app` on an ephemeral port.
+///
+/// This is the one place in the test suite that binds a listener. The server
+/// task is aborted when the returned [`TestServer`] drops.
+pub async fn serve_router(app: axum::Router) -> TestServer {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let handle = tokio::spawn(async move {

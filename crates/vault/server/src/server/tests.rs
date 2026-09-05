@@ -172,19 +172,12 @@ async fn import_access(state: &AppState, token: &str) -> ImportAccess {
 }
 
 async fn get_path(state: AppState, path: &str) -> reqwest::Response {
-    let app = http_app(state);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    let response = reqwest::Client::new()
-        .get(format!("http://{address}{path}"))
+    let server = crate::test_support::serve(&state).await;
+    reqwest::Client::new()
+        .get(format!("{}{path}", server.base()))
         .send()
         .await
-        .unwrap();
-    server.abort();
-    response
+        .unwrap()
 }
 
 fn with_cors(mut state: AppState, origins: &[&str]) -> AppState {
@@ -195,22 +188,18 @@ fn with_cors(mut state: AppState, origins: &[&str]) -> AppState {
 }
 
 async fn cors_preflight(state: AppState, origin: &str) -> reqwest::Response {
-    let app = http_app(state);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    let response = reqwest::Client::new()
-        .request(reqwest::Method::OPTIONS, format!("http://{address}/health"))
+    let server = crate::test_support::serve(&state).await;
+    reqwest::Client::new()
+        .request(
+            reqwest::Method::OPTIONS,
+            format!("{}/health", server.base()),
+        )
         .header("Origin", origin)
         .header("Access-Control-Request-Method", "GET")
         .header("Access-Control-Request-Headers", "content-type")
         .send()
         .await
-        .unwrap();
-    server.abort();
-    response
+        .unwrap()
 }
 
 fn allow_origin(response: &reqwest::Response) -> Option<&str> {
@@ -313,20 +302,15 @@ async fn openapi_ui_on_serves_spec_without_token() {
 
 async fn auth_route_status(path: &str) -> StatusCode {
     let (_dir, state, _token, _import_id) = test_state().await;
-    let app = auth_public_router().with_state(state);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    let response = reqwest::Client::new()
-        .post(format!("http://{address}{path}"))
+    // The public auth router on its own, not http_app: the point is that
+    // these routes are gone from that router, whatever the full app does.
+    let server = crate::test_support::serve_router(auth_public_router().with_state(state)).await;
+    reqwest::Client::new()
+        .post(format!("{}{path}", server.base()))
         .send()
         .await
-        .unwrap();
-    server.abort();
-    response.status()
+        .unwrap()
+        .status()
 }
 
 #[tokio::test]
