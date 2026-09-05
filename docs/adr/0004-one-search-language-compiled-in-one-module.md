@@ -28,8 +28,11 @@ The rules of the language:
   subquery. Its tests run query strings against a seeded test vault and
   assert which rows come back.
 
-The full word table, value rules, interface, and tests are in
-`docs/superpowers/specs/2026-09-02-search-language-design.md`.
+The word table is `crates/vault/server/src/search/fields.rs`, the registry
+every list compiles against and the source the API reference is generated
+from. The grammar a person reads is
+`docs/src/content/docs/vault/user/how-to/search.mdx`; the words each list
+accepts are in the [HTTP API reference](/vault/developer/reference/api/).
 
 ## Why
 
