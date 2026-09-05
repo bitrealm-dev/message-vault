@@ -220,6 +220,39 @@ fn remove_staged_attachments(output_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Write every document through the sink with the shared "Preparing N
+/// conversation file(s)" progress log, bumping `report.conversations` per
+/// document, then finish the sink. The shared tail of every exporter's
+/// non-queue arm.
+pub fn write_documents_through_sink(
+    documents: Vec<message_ir::ConversationDocument>,
+    mut sink: FormatSink,
+    log: Option<&message_vault_io_core::LogSink>,
+    cancel: Option<&message_vault_io_core::CancelFlag>,
+    report: &mut message_vault_io_core::ExportReport,
+) -> anyhow::Result<FormatSinkResult> {
+    use message_vault_io_core::emit_log;
+    let total_conversations = documents.len() as u64;
+    emit_log(log, "");
+    emit_log(
+        log,
+        format!("Preparing {total_conversations} conversation file(s)..."),
+    );
+    let mut written = 0u64;
+    for doc in documents {
+        message_vault_io_core::check_cancel(cancel)?;
+        written += 1;
+        sink.write_document(doc)?;
+        report.conversations += 1;
+        // `%` instead of `u64::is_multiple_of`: that method needs Rust 1.87.
+        #[allow(clippy::manual_is_multiple_of)]
+        if written % 100 == 0 || written == total_conversations {
+            emit_log(log, format!("  preparing {written}/{total_conversations}"));
+        }
+    }
+    sink.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -373,37 +406,4 @@ mod tests {
             "and the attachments they point at"
         );
     }
-}
-
-/// Write every document through the sink with the shared "Preparing N
-/// conversation file(s)" progress log, bumping `report.conversations` per
-/// document, then finish the sink. The shared tail of every exporter's
-/// non-queue arm.
-pub fn write_documents_through_sink(
-    documents: Vec<message_ir::ConversationDocument>,
-    mut sink: FormatSink,
-    log: Option<&message_vault_io_core::LogSink>,
-    cancel: Option<&message_vault_io_core::CancelFlag>,
-    report: &mut message_vault_io_core::ExportReport,
-) -> anyhow::Result<FormatSinkResult> {
-    use message_vault_io_core::emit_log;
-    let total_conversations = documents.len() as u64;
-    emit_log(log, "");
-    emit_log(
-        log,
-        format!("Preparing {total_conversations} conversation file(s)..."),
-    );
-    let mut written = 0u64;
-    for doc in documents {
-        message_vault_io_core::check_cancel(cancel)?;
-        written += 1;
-        sink.write_document(doc)?;
-        report.conversations += 1;
-        // `%` instead of `u64::is_multiple_of`: that method needs Rust 1.87.
-        #[allow(clippy::manual_is_multiple_of)]
-        if written % 100 == 0 || written == total_conversations {
-            emit_log(log, format!("  preparing {written}/{total_conversations}"));
-        }
-    }
-    sink.finish()
 }

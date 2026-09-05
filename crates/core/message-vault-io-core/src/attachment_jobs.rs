@@ -1,9 +1,10 @@
 //! Copy, convert, or skip attachment files after parse.
 
 use crate::attachments::attachment_dest_name;
+use crate::config::MediaConfig;
 use crate::pipeline::ExportReport;
 use crate::process::{CancelFlag, LogSink, emit_log};
-use media::{CompressOptions, MediaMode};
+use media::MediaMode;
 use message_ir::{ConversationDocument, IrAttachment};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -49,8 +50,7 @@ pub struct AttachmentJob<'a> {
 pub fn run_attachment_jobs(
     jobs: &mut [AttachmentJob<'_>],
     attachments_dir: &Path,
-    mode: MediaMode,
-    compress: &CompressOptions,
+    media: &MediaConfig,
     mut load: impl FnMut(usize) -> Result<Option<Vec<u8>>, String>,
     mut on_progress: impl FnMut(AttachmentProgress),
     log: Option<&LogSink>,
@@ -66,7 +66,7 @@ pub fn run_attachment_jobs(
         });
         return Ok(());
     }
-    if matches!(mode, MediaMode::Disabled) {
+    if matches!(media.mode, MediaMode::Disabled) {
         for job in jobs.iter_mut() {
             job.attachment.missing_reason = Some("not_copied".into());
         }
@@ -126,11 +126,11 @@ pub fn run_attachment_jobs(
         });
     }
 
-    if matches!(mode, MediaMode::Convert | MediaMode::Compress) {
+    if matches!(media.mode, MediaMode::Convert | MediaMode::Compress) {
         if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
             return Err("canceled".into());
         }
-        apply_convert_or_compress(jobs, attachments_dir, mode, compress, log)?;
+        apply_convert_or_compress(jobs, attachments_dir, media, log)?;
         on_progress(AttachmentProgress {
             done: total,
             total,
@@ -163,12 +163,10 @@ pub fn run_attachment_jobs(
 ///
 /// Returns `"canceled"` when the user cancels, or an I/O / convert error
 /// string when the staging directory cannot be used.
-#[allow(clippy::too_many_arguments)]
 pub fn stage_conversation_attachments(
     documents: &mut [ConversationDocument],
     attachments_dir: &Path,
-    mode: MediaMode,
-    compress: &CompressOptions,
+    media: &MediaConfig,
     load: impl FnMut(usize) -> Result<Option<Vec<u8>>, String>,
     log: Option<&LogSink>,
     cancel: Option<&CancelFlag>,
@@ -193,8 +191,7 @@ pub fn stage_conversation_attachments(
     run_attachment_jobs(
         &mut jobs,
         attachments_dir,
-        mode,
-        compress,
+        media,
         load,
         |progress| {
             emit_log(
@@ -262,8 +259,7 @@ fn persist_clone(
 fn apply_convert_or_compress(
     jobs: &mut [AttachmentJob<'_>],
     attachments_dir: &Path,
-    mode: MediaMode,
-    compress: &CompressOptions,
+    media: &MediaConfig,
     log: Option<&LogSink>,
 ) -> Result<(), String> {
     let Some(output_dir) = attachments_dir.parent() else {
@@ -271,9 +267,14 @@ fn apply_convert_or_compress(
     };
     let files = media::collect_media_files(attachments_dir).map_err(|e| e.to_string())?;
     let mut emit = |line: &str| emit_log(log, line);
-    let (report, remap) =
-        media::process_attachment_files(output_dir, &files, mode, compress, Some(&mut emit))
-            .map_err(|e| e.to_string())?;
+    let (report, remap) = media::process_attachment_files(
+        output_dir,
+        &files,
+        media.mode,
+        &media.compress,
+        Some(&mut emit),
+    )
+    .map_err(|e| e.to_string())?;
     apply_remap_to_jobs(jobs, &remap, output_dir);
     for err in &report.errors {
         mark_convert_error(jobs, err);
@@ -357,6 +358,13 @@ fn extension_from_name(original_name: Option<&str>) -> String {
 mod tests {
     use super::*;
     use media::{CompressOptions, MediaMode};
+
+    fn media_cfg(mode: MediaMode) -> MediaConfig {
+        MediaConfig {
+            mode,
+            compress: CompressOptions::default(),
+        }
+    }
     use message_ir::IrAttachment;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -393,8 +401,7 @@ mod tests {
             run_attachment_jobs(
                 &mut jobs,
                 &att_dir,
-                MediaMode::Clone,
-                &CompressOptions::default(),
+                &media_cfg(MediaMode::Clone),
                 |_| Ok(Some(bytes.to_vec())),
                 |p| progress.lock().unwrap().push(p),
                 None,
@@ -429,8 +436,7 @@ mod tests {
             run_attachment_jobs(
                 &mut jobs,
                 &att_dir,
-                MediaMode::Disabled,
-                &CompressOptions::default(),
+                &media_cfg(MediaMode::Disabled),
                 |_| {
                     loaded.store(true, Ordering::SeqCst);
                     Ok(Some(b"x".to_vec()))
@@ -470,8 +476,7 @@ mod tests {
             run_attachment_jobs(
                 &mut jobs,
                 &att_dir,
-                MediaMode::Clone,
-                &CompressOptions::default(),
+                &media_cfg(MediaMode::Clone),
                 |i| {
                     if i == 0 {
                         Ok(None)
@@ -512,8 +517,7 @@ mod tests {
             run_attachment_jobs(
                 &mut jobs,
                 &att_dir,
-                MediaMode::Clone,
-                &CompressOptions::default(),
+                &media_cfg(MediaMode::Clone),
                 |i| {
                     if i == 0 {
                         Err("permission denied".into())
@@ -546,8 +550,7 @@ mod tests {
             run_attachment_jobs(
                 &mut jobs,
                 &att_dir,
-                MediaMode::Clone,
-                &CompressOptions::default(),
+                &media_cfg(MediaMode::Clone),
                 |_| Err("canceled".into()),
                 |_| {},
                 None,
@@ -582,8 +585,7 @@ mod tests {
             run_attachment_jobs(
                 &mut jobs,
                 &att_dir,
-                MediaMode::Clone,
-                &CompressOptions::default(),
+                &media_cfg(MediaMode::Clone),
                 |i| {
                     if i == 0 {
                         cancel.store(true, Ordering::SeqCst);
@@ -609,8 +611,7 @@ mod tests {
         run_attachment_jobs(
             &mut [],
             &att_dir,
-            MediaMode::Clone,
-            &CompressOptions::default(),
+            &media_cfg(MediaMode::Clone),
             |_| Ok(None),
             |p| progress.lock().unwrap().push(p),
             None,
@@ -687,8 +688,7 @@ mod tests {
             run_attachment_jobs(
                 &mut jobs,
                 &att_dir,
-                MediaMode::Clone,
-                &CompressOptions::default(),
+                &media_cfg(MediaMode::Clone),
                 |_| Ok(Some(bytes.to_vec())),
                 |_| {},
                 Some(&sink),

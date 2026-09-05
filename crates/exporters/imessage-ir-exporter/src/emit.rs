@@ -30,7 +30,7 @@ use message_ir_format::{
     AttachmentSource, ConversationUnit, ExportWriter, ExportWriterParts, FormatSinkResult,
     WriteQueueOptions,
 };
-use message_vault_io_core::{AttachmentJob, OutputFormat, run_attachment_jobs};
+use message_vault_io_core::{AttachmentJob, MediaConfig, OutputFormat, run_attachment_jobs};
 
 use crate::{
     attachments::read_resolved_attachment,
@@ -388,8 +388,10 @@ fn stage_conversation_attachments(
     conversations: &mut BTreeMap<String, PendingConversation>,
     attachments_dir: &Path,
 ) -> Result<(), RuntimeError> {
-    let mode = session.options.transforms.media;
-    let compress = session.options.transforms.compress.clone();
+    let media = MediaConfig {
+        mode: session.options.transforms.media,
+        compress: session.options.transforms.compress.clone(),
+    };
     let cancel = session.options.cancel.as_ref().map(|flag| flag.as_ref());
 
     let mut loads = Vec::new();
@@ -416,8 +418,7 @@ fn stage_conversation_attachments(
     run_attachment_jobs(
         &mut jobs,
         attachments_dir,
-        mode,
-        &compress,
+        &media,
         |i| match loads.get(i) {
             Some(AttachmentLoad::Path { path, .. }) => {
                 let bytes = read_resolved_attachment(session, path).map_err(|e| {

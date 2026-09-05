@@ -26,7 +26,7 @@ use anyhow::{Context, Result};
 use media::{CompressOptions, MediaMode};
 use message_ir::ConversationDocument;
 use message_vault_io_core::{
-    AttachmentJob, CancelFlag, LogSink, OutputFormat, emit_log, run_attachment_jobs,
+    AttachmentJob, CancelFlag, LogSink, MediaConfig, OutputFormat, emit_log, run_attachment_jobs,
 };
 
 use crate::transcode::{TranscodeOptions, transcode_staged};
@@ -168,6 +168,10 @@ struct UnitOutcome {
     attachments_saved: usize,
 }
 
+/// Loads one attachment's bytes by source; `Ok(None)` marks it missing.
+pub type AttachmentLoader<'a> =
+    dyn FnMut(&mut AttachmentSource) -> Result<Option<Vec<u8>>, String> + 'a;
+
 /// Drain `units` with a caller-supplied loader.
 ///
 /// Exporters whose attachment loader cannot cross threads — an encrypted iOS
@@ -182,7 +186,7 @@ pub fn drain_write_queue_with_loader(
     output_dir: &Path,
     units: Vec<ConversationUnit>,
     options: &WriteQueueOptions,
-    load: &mut dyn FnMut(&mut AttachmentSource) -> Result<Option<Vec<u8>>, String>,
+    load: &mut AttachmentLoader<'_>,
     log: Option<&LogSink>,
     cancel: Option<&CancelFlag>,
 ) -> Result<WriteQueueReport> {
@@ -557,7 +561,7 @@ fn write_one_unit(
     attachments_dir: &Path,
     unit: ConversationUnit,
     options: &WriteQueueOptions,
-    load: &mut dyn FnMut(&mut AttachmentSource) -> Result<Option<Vec<u8>>, String>,
+    load: &mut AttachmentLoader<'_>,
     on_progress: &dyn Fn(UnitProgress),
     cancel: Option<&CancelFlag>,
 ) -> Result<UnitOutcome> {
@@ -627,8 +631,10 @@ fn write_one_unit(
         run_attachment_jobs(
             &mut jobs,
             attachments_dir,
-            stage_mode,
-            &options.compress,
+            &MediaConfig {
+                mode: stage_mode,
+                compress: options.compress.clone(),
+            },
             |i| match sources.get_mut(i) {
                 Some(source) => load(source),
                 None => Ok(None),

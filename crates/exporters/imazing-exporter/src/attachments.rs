@@ -6,13 +6,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[cfg(test)]
-use media::{CompressOptions, MediaMode};
 #[cfg(test)]
 use message_ir::IrAttachment;
 #[cfg(test)]
-use message_vault_io_core::{
-    AttachmentJob, CancelFlag, ExportReport, LogSink, emit_log, run_attachment_jobs,
-};
+use message_vault_io_core::{AttachmentJob, ExportReport, MediaConfig, run_attachment_jobs};
 
 /// Maximum directory depth for attachment discovery. iMazing export trees are
 /// only a few levels deep; this bounds any pathological nesting.
@@ -239,10 +236,7 @@ pub(crate) fn stage_path_attachments(
     sources: &[Option<PathBuf>],
     timestamps: &[i64],
     attachments_dir: &Path,
-    mode: MediaMode,
-    compress: &CompressOptions,
-    log: Option<&LogSink>,
-    cancel: Option<&CancelFlag>,
+    media: &MediaConfig,
     report: &mut ExportReport,
 ) -> Result<(), String> {
     if attachments.is_empty() {
@@ -266,25 +260,16 @@ pub(crate) fn stage_path_attachments(
     run_attachment_jobs(
         &mut jobs,
         attachments_dir,
-        mode,
-        compress,
+        media,
         |i| {
             let Some(path) = sources.get(i).and_then(|p| p.as_ref()) else {
                 return Ok(None);
             };
             std::fs::read(path).map(Some).or(Ok(None))
         },
-        |progress| {
-            emit_log(
-                log,
-                format!(
-                    "  attachments {}/{} {}/{}",
-                    progress.done, progress.total, progress.bytes_done, progress.bytes_total
-                ),
-            );
-        },
-        log,
-        cancel.map(|flag| flag.as_ref()),
+        |_| {},
+        None,
+        None,
     )?;
     for job in &jobs {
         if job.attachment.path.is_some() && job.attachment.digest_sha256.is_some() {
@@ -355,10 +340,7 @@ mod tests {
             &[Some(source)],
             &[1_600_000_000_000],
             &attachments,
-            MediaMode::Clone,
-            &CompressOptions::default(),
-            None,
-            None,
+            &MediaConfig::default(),
             &mut report,
         )
         .unwrap();

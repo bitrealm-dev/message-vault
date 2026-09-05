@@ -77,11 +77,14 @@ pub(super) enum AttachmentLoad {
 ///
 /// Returns an error when attachments cannot be loaded from the database or
 /// decrypted from an iOS backup.
+/// Parts, kept attachments, and deferred file loads for one message.
+pub(super) type MailPartsAndLoads = (Vec<PartRecord>, Vec<MailAttachment>, Vec<AttachmentLoad>);
+
 pub(super) fn collect_mail_parts_and_attachments(
     session: &MailSession,
     message: &Message,
     defer_file_bytes: bool,
-) -> Result<(Vec<PartRecord>, Vec<MailAttachment>, Vec<AttachmentLoad>), RuntimeError> {
+) -> Result<MailPartsAndLoads, RuntimeError> {
     let mut attachments = Attachment::from_message(session.data_source.db(), message)?;
     let referenced = referenced_attachment_indices(message, &attachments);
     let index_by_full: std::collections::HashMap<usize, usize> = referenced

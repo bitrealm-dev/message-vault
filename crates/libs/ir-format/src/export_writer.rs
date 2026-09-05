@@ -208,8 +208,10 @@ impl ExportWriter {
         message_vault_io_core::stage_conversation_attachments(
             &mut documents,
             &self.attachments_dir,
-            self.media_mode,
-            &self.compress,
+            &message_vault_io_core::MediaConfig {
+                mode: self.media_mode,
+                compress: self.compress.clone(),
+            },
             |i| match sources.get_mut(i) {
                 Some(source) => load_attachment_source(source),
                 None => Ok(None),

@@ -9,8 +9,8 @@ use message_ir::{
     IrService, IrSource, SCHEMA_VERSION, owner_sender,
 };
 use message_vault_io_core::{
-    AttachmentJob, CancelFlag, LogSink, check_cancel, discover_files, emit_log, is_cancelled,
-    run_attachment_jobs,
+    AttachmentJob, CancelFlag, LogSink, MediaConfig, check_cancel, discover_files, emit_log,
+    is_cancelled, run_attachment_jobs,
 };
 use phone::OwnerHandleSet;
 use sbr::{
@@ -199,8 +199,10 @@ fn stage_read_attachments(
     run_attachment_jobs(
         &mut jobs,
         attachments_dir,
-        mode,
-        &options.compress,
+        &MediaConfig {
+            mode,
+            compress: options.compress.clone(),
+        },
         |i| Ok(payloads.get(i).cloned().flatten()),
         |progress| {
             emit_log(

@@ -67,14 +67,6 @@ impl Name {
         u8::from(!self.first.is_empty()) + u8::from(!self.last.is_empty())
     }
 
-    /// `true` when any display field contains the provided string.
-    pub fn contains(&self, s: &str) -> bool {
-        self.first.contains(s)
-            || self.last.contains(s)
-            || self.full.contains(s)
-            || self.details.contains(s)
-    }
-
     /// Return the full name, falling back to handle details.
     pub fn get_display_name(&self) -> &str {
         if self.full.is_empty() {
