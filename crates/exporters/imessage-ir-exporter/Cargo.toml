@@ -3,30 +3,27 @@ name = "imessage-ir-exporter"
 version = "0.1.0"
 edition = "2024"
 license = "LicenseRef-FCL-1.0-ALv2"
-description = "Export iMessage data to per-conversation CSV / EML / MBOX / JSON via message-ir"
+description = "Export Apple Messages to per-conversation JSON Lines / JSON / CSV / EML / MBOX via message-ir, reading the database through the imessage-reader helper process"
 repository = "https://github.com/bitrealm-io/message-vault"
 
 [lib]
 name = "imessage_ir_exporter"
 path = "src/lib.rs"
 
+# No GPL code here. Reading chat.db is the job of the `imessage-reader`
+# program (crates/helpers/imessage-reader, GPL-3.0-or-later), which this crate
+# starts as a separate process. The two share only the wire types in
+# `imessage-reader-protocol` (MIT OR Apache-2.0). Why: docs/agents/licences.md.
 [dependencies]
 anyhow = "1.0.103"
-chrono = "0.4.44"
-crabapple = { version = "=0.4.7" }
-hex = "0.4.3"
-imessage-database = "4.2.0"
-message-csv = { path = "../../libs/csv" }
+imessage-reader-protocol = { path = "../../helpers/imessage-reader-protocol" }
 message-vault-io-core = { path = "../../core/message-vault-io-core" }
 message-ir = { path = "../../libs/ir" }
 message-ir-format = { path = "../../libs/ir-format" }
-media = { path = "../../libs/media" }
-mail = { path = "../../libs/mail" }
 plist = "1.9.0"
-rusqlite = { version = "=0.40.0", features = ["blob", "bundled"] }
-serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.11.0"
+tempfile = "3.27.0"
 
 [dev-dependencies]
-tempfile = "3.27.0"
+rusqlite = { version = "=0.40.0", features = ["bundled"] }
+serde_json = "1"

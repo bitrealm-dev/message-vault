@@ -7,25 +7,24 @@ use std::{
 
 use crabapple::Backup;
 use imessage_database::{tables::table::get_connection, util::platform::Platform};
-use message_vault_io_core::{LogSink, emit_log};
 use rusqlite::Connection;
 
 use crate::{
     backup::{decrypt_backup, get_decrypted_contacts_database, get_decrypted_message_database},
     contacts::{ContactsIndex, DEFAULT_PATH_IOS},
     error::RuntimeError,
-    options::MailOptions,
+    log::emit_log,
+    options::ReaderOptions,
 };
 
 struct TempDatabase {
     path: PathBuf,
-    log: Option<LogSink>,
 }
 
 impl TempDatabase {
     /// Remember a temp database path so [`Drop`] can delete it.
-    fn new(path: PathBuf, log: Option<LogSink>) -> Self {
-        Self { path, log }
+    fn new(path: PathBuf) -> Self {
+        Self { path }
     }
 
     /// Path of the temp database file.
@@ -37,13 +36,10 @@ impl TempDatabase {
 impl Drop for TempDatabase {
     fn drop(&mut self) {
         if let Err(why) = remove_file(&self.path) {
-            emit_log(
-                self.log.as_ref(),
-                format!(
-                    "warning: failed to remove temporary messages database at {}: {why}",
-                    self.path.display(),
-                ),
-            );
+            emit_log(format!(
+                "warning: failed to remove temporary messages database at {}: {why}",
+                self.path.display(),
+            ));
         }
     }
 }
@@ -62,14 +58,12 @@ impl DataSource {
     ///
     /// Returns an error when the backup cannot be decrypted or `chat.db` cannot
     /// be opened.
-    pub fn from(options: &MailOptions) -> Result<Self, RuntimeError> {
-        let log = options.log.clone();
+    pub fn from(options: &ReaderOptions) -> Result<Self, RuntimeError> {
         match options.platform {
             Platform::macOS => {
                 let messages_path = options.get_db_path();
                 let contacts_index =
-                    Self::get_contacts_index(options.contacts_path.as_deref(), log.as_ref())
-                        .unwrap_or_default();
+                    Self::get_contacts_index(options.contacts_path.as_deref()).unwrap_or_default();
 
                 Ok(Self {
                     messages_connection: Some(get_connection(&messages_path)?),
@@ -78,49 +72,37 @@ impl DataSource {
                     temp_messages_db: None,
                 })
             }
-            Platform::iOS => {
-                if let Some(backup) = decrypt_backup(options)? {
-                    let messages_db = TempDatabase::new(
-                        get_decrypted_message_database(&backup, options)?,
-                        log.clone(),
-                    );
+            Platform::iOS => match decrypt_backup(options)? {
+                Some(backup) => {
+                    let messages_db =
+                        TempDatabase::new(get_decrypted_message_database(&backup, options)?);
                     let contacts_path = match get_decrypted_contacts_database(&backup, options) {
                         Ok(path) => Some(path),
                         Err(e) => {
-                            emit_log(
-                                log.as_ref(),
-                                format!(
-                                    "Could not decrypt Contacts database from iOS backup: {e:#}; \
-                                 continuing without contacts"
-                                ),
-                            );
+                            emit_log(format!(
+                                "Could not decrypt Contacts database from iOS backup: {e:#}; \
+                                     continuing without contacts"
+                            ));
                             None
                         }
                     };
 
-                    emit_log(
-                        log.as_ref(),
-                        format!(
-                            "Decrypted iOS backup: {} (version {})\n",
-                            backup.lockdown().device_name,
-                            backup.lockdown().product_version,
-                        ),
-                    );
+                    emit_log(format!(
+                        "Decrypted iOS backup: {} (version {})\n",
+                        backup.lockdown().device_name,
+                        backup.lockdown().product_version,
+                    ));
 
                     let contacts_index =
-                        Self::get_contacts_index(contacts_path.as_deref(), log.as_ref())
-                            .unwrap_or_default();
+                        Self::get_contacts_index(contacts_path.as_deref()).unwrap_or_default();
 
                     if let Some(ref cp) = contacts_path
                         && let Err(e) = remove_file(cp)
                     {
-                        emit_log(
-                            log.as_ref(),
-                            format!(
-                                "warning: failed to remove temporary contacts database at {}: {e}",
-                                cp.display()
-                            ),
-                        );
+                        emit_log(format!(
+                            "warning: failed to remove temporary contacts database at {}: {e}",
+                            cp.display()
+                        ));
                     }
 
                     let messages_connection = get_connection(messages_db.path())?;
@@ -130,13 +112,12 @@ impl DataSource {
                         backup: Some(backup),
                         temp_messages_db: Some(messages_db),
                     })
-                } else {
+                }
+                None => {
                     let messages_path = options.get_db_path();
-                    let contacts_index = Self::get_contacts_index(
-                        Some(&options.db_path.join(DEFAULT_PATH_IOS)),
-                        log.as_ref(),
-                    )
-                    .unwrap_or_default();
+                    let contacts_index =
+                        Self::get_contacts_index(Some(&options.db_path.join(DEFAULT_PATH_IOS)))
+                            .unwrap_or_default();
 
                     Ok(Self {
                         messages_connection: Some(get_connection(&messages_path)?),
@@ -145,24 +126,26 @@ impl DataSource {
                         temp_messages_db: None,
                     })
                 }
-            }
+            },
         }
     }
 
     /// Build a contacts index, or `None` (with a log line) when that fails.
-    fn get_contacts_index(path: Option<&Path>, log: Option<&LogSink>) -> Option<ContactsIndex> {
+    fn get_contacts_index(path: Option<&Path>) -> Option<ContactsIndex> {
         match ContactsIndex::build(path) {
             Ok(index) => Some(index),
             Err(e) => {
-                emit_log(
-                    log,
-                    format!(
-                        "Unable to build contacts index: {e}\nContinuing without contact names..."
-                    ),
-                );
+                emit_log(format!(
+                    "Unable to build contacts index: {e}\nContinuing without contact names..."
+                ));
                 None
             }
         }
+    }
+
+    /// Whether attachment paths need this process to decrypt them.
+    pub fn is_encrypted(&self) -> bool {
+        self.backup.as_ref().is_some_and(|b| b.is_encrypted())
     }
 
     /// Open SQLite connection to the Messages database.

@@ -88,7 +88,7 @@ The product has two pieces:
 | Node                   | Node.js 22+ for `web/`, `docs/`, and Docker frontend builds.                                                                      |
 | Docs site              | Astro 7 + Starlight, published to GitHub Pages at bitrealm.io on each `v*` release tag.                                            |
 | Packaging              | Docker (Node 22 + Rust image). GitHub Actions on `v*` tags builds the image and Tauri installers.                                 |
-| Helpers on PATH        | `ffmpeg` / `ffprobe` for media. `wtsexporter` (Python) for WhatsApp. `gh` for GitHub.                                             |
+| Helpers on PATH        | `ffmpeg` / `ffprobe` for media. `wtsexporter` (Python) for WhatsApp. `gh` for GitHub. `imessage-reader` is bundled beside the app, not on PATH (`src-tauri/build.rs` builds it). |
 | Not the product path   | Restored Next.js 16 browse app (`web-next/`), an HTTP client of the vault `/v1` API for evaluating its screens. Kept on purpose; see CLAUDE.md before proposing its removal. |
 
 ### Directory map (`tree -L 2 message-vault`)
@@ -99,6 +99,7 @@ message-vault
 ├── crates/                 # Rust workspace (src-tauri is excluded)
 │   ├── core/               # shared form model, jobs, export.ini
 │   ├── exporters/          # backup parsers (iMessage, WhatsApp, SMS, experimental)
+│   ├── helpers/            # imessage-reader (GPL helper process the app spawns) and its protocol
 │   ├── libs/               # shared libraries (ir, ir-format, reexport, contacts, media,
 │   │                       #   vault-push, vault-pull, …)
 │   └── vault/              # message-vault-server (HTTP API + SQLite) and demo-seed

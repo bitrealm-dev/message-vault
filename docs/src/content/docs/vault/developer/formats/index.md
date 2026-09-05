@@ -42,7 +42,7 @@ All converters build a **common message** per conversation (`ConversationDocumen
 | **OpenExtract** | No media extraction; no groups; thin source format; name-only chats common without a good VCF |
 | **iMazing** | Reactions/replies are free text; WhatsApp groups lack full roster; naive dates need `--timezone` |
 | **WhatsApp** | Requires external `wtsexporter` (pip or bundled binary); LID / non-phone JIDs stay raw; full group roster depends on upstream JSON |
-| **iMessage** (`imessage-ir-exporter`) | No WhatsApp; links GPL `imessage-database` (combined binaries must satisfy the GPL); needs Mac/`chat.db` or iOS backup; no TXT/HTML |
+| **iMessage** (`imessage-ir-exporter`) | No WhatsApp; reads the database through the separate `imessage-reader` program (GPL, shipped beside the app) because `imessage-database` is GPL and the app is not; needs Mac/`chat.db` or iOS backup; no TXT/HTML |
 
 ## Other dimensions
 

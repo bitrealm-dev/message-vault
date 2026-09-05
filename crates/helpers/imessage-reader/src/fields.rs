@@ -1,6 +1,5 @@
 //! Structured helpers for mail headers (parts, edits, balloons).
 //!
-//! Ported from `imessage-vault-io` CSV `data.rs` so this crate stays independent.
 
 use imessage_database::{
     message_types::{
@@ -459,7 +458,7 @@ pub(crate) fn balloon_summary(app: &Value, fallback_text: Option<&str>) -> Strin
     {
         return t.to_string();
     }
-    if let Some(t) = fallback_text.and_then(message_ir::trimmed) {
+    if let Some(t) = fallback_text.map(str::trim).filter(|t| !t.is_empty()) {
         return t.to_string();
     }
     match app.get("kind").and_then(|v| v.as_str()) {

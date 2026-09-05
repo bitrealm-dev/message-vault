@@ -6,6 +6,12 @@ name: Audit
 # config moves — which is every Dependabot PR) and on a weekly schedule that
 # catches newly published advisories on main. These checks are deliberately
 # not in the ruleset's required list. Why: docs/adr/0007-ci-is-the-only-gate.md.
+#
+# The same trigger runs the licence policy (docs/agents/licences.md): every
+# crate in the workspace and in the desktop app must carry a permissive
+# licence, and the two GPL readers of Apple Messages may appear only under
+# the imessage-reader helper program. A new dependency is a lockfile change,
+# so a GPL crate added to a Fair Core License crate fails here.
 
 on:
   pull_request:
@@ -15,6 +21,7 @@ on:
       - "Cargo.toml"
       - "deny.toml"
       - "src-tauri/Cargo.toml"
+      - "src-tauri/Cargo.lock"
       - "web/package-lock.json"
       - "web/package.json"
       - "docs/package-lock.json"
@@ -30,15 +37,26 @@ permissions:
 
 jobs:
   deny:
-    name: cargo-deny (advisories)
+    name: cargo-deny (advisories, licences, bans)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - name: Workspace
+        uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          command: check advisories
+          command: check advisories licenses bans
+
+      # src-tauri is its own workspace, so its graph is checked on its own.
+      # This is the graph the installers ship, and the one that must hold no
+      # GPL code.
+      - name: Desktop app
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: src-tauri/Cargo.toml
+          arguments: --config deny.toml
+          command: check licenses bans
 
   npm-audit:
     name: Audit npm deps

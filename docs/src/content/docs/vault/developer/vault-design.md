@@ -34,10 +34,15 @@ message-vault
 
 `cargo build --workspace` produces these commands. `src-tauri/` is the desktop window. It is not a workspace member. The same exporter libraries run inside that app.
 
-Two binaries are built: `message-vault-server` from `crates/vault/server/`, and
-`demo-seed` from `crates/vault/demo-seed/`. Everything else is a library the
-desktop app links directly — the exporters have no command line. Why:
-[ADR 0001](https://github.com/bitrealm-io/message-vault/blob/main/docs/adr/0001-no-command-line-except-the-vault-server.md).
+Three binaries are built: `message-vault-server` from `crates/vault/server/`,
+`demo-seed` from `crates/vault/demo-seed/`, and `imessage-reader` from
+`crates/helpers/imessage-reader/`. The last is not a command line. It reads
+Apple Messages for the desktop app as a separate process, because the library
+that parses `chat.db` is GPL and the app is under the Fair Core License; the
+app starts it and speaks JSON lines to it over pipes. Everything else is a
+library the desktop app links directly — the exporters have no command line.
+Why: [ADR 0001](https://github.com/bitrealm-io/message-vault/blob/main/docs/adr/0001-no-command-line-except-the-vault-server.md)
+and its amendment.
 
 | Library | Comes from | Job |
 |--------|------------|-----|

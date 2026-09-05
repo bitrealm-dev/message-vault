@@ -2,21 +2,17 @@
 //!
 //! The Import screen's identity check calls [`backup_identities`] right after
 //! the user starts an iMessage import, before the import session is created.
-//! It opens the source through the same [`DataSource`] the real run uses, so
-//! every method (Mac `chat.db`, iPhone backup folder, jailbreak `sms.db`) and
-//! both encryption states go through one code path.
+//! The raw column values come from the `imessage-reader` program, which opens
+//! the source the same way the real run does, so every method (Mac
+//! `chat.db`, iPhone backup folder, jailbreak `sms.db`) and both encryption
+//! states go through one code path. Cleaning and deduplication happen here.
 
 use std::{collections::HashSet, fs::File, path::Path};
 
-use imessage_database::util::{platform::Platform, query_context::QueryContext};
-use message_ir_format::ExportTransforms;
-use message_vault_io_core::OutputFormat;
-use rusqlite::Connection;
+use anyhow::bail;
+use imessage_reader_protocol::{Event, Platform, Request, Source};
 
-use crate::{
-    data_source::DataSource,
-    options::{AttachmentEmbed, MailOptions},
-};
+use crate::helper::Helper;
 
 /// `Info.plist` → `Phone Number` from an iOS backup folder.
 ///
@@ -36,47 +32,35 @@ pub fn ios_backup_phone_number(backup_root: &Path) -> Option<String> {
 /// `chat.account_login`, `message.destination_caller_id`, and (for iOS
 /// backups) `Info.plist` → `Phone Number`, cleaned and deduplicated.
 ///
-/// Each per-column query falls back to an empty list when the table or
-/// column is missing, so an unusual schema degrades to fewer signals rather
-/// than an error.
-///
 /// # Errors
 ///
 /// Returns an error when the source cannot be opened: missing database,
-/// missing or wrong backup password, not an iPhone backup.
+/// missing or wrong backup password, not an iPhone backup, or no
+/// `imessage-reader` program to open it with.
 pub fn backup_identities(
     db_path: &Path,
     ios: bool,
     backup_password: Option<&str>,
 ) -> anyhow::Result<Vec<String>> {
-    let options = MailOptions {
+    let request = Request::Identities(Source {
         db_path: db_path.to_path_buf(),
-        attachment_root: None,
-        export_path: std::path::PathBuf::new(),
-        query_context: QueryContext::default(),
-        use_caller_id: true,
-        platform: if ios { Platform::iOS } else { Platform::macOS },
-        cleartext_password: backup_password.map(str::to_string),
-        contacts_path: None,
-        attachment_embed: AttachmentEmbed::Disabled,
-        transforms: ExportTransforms::default(),
-        output_format: OutputFormat::Jsonl,
-        log: None,
-        progress: None,
-        cancel: None,
-        resume: false,
+        platform: if ios { Platform::Ios } else { Platform::MacOs },
+        backup_password: backup_password.map(str::to_string),
+    });
+    let mut helper = Helper::spawn(&request, None, None)?;
+    let mut raw = match helper.next_event()? {
+        Event::Identities { values } => values,
+        other => bail!("expected the identities answer, got {other:?}"),
     };
-    let data_source = DataSource::from(&options)?;
-
-    let mut raw = distinct_texts(data_source.db(), "SELECT DISTINCT account_login FROM chat");
-    raw.extend(distinct_texts(
-        data_source.db(),
-        "SELECT DISTINCT destination_caller_id FROM message",
-    ));
+    helper.finish()?;
     if ios {
         raw.extend(ios_backup_phone_number(db_path));
     }
+    Ok(clean_and_dedupe(raw))
+}
 
+/// Strip prefixes, drop blanks, and keep the first spelling of each address.
+fn clean_and_dedupe(raw: Vec<String>) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut identities = Vec::new();
     for value in raw {
@@ -89,18 +73,7 @@ pub fn backup_identities(
         }
         identities.push(cleaned);
     }
-    Ok(identities)
-}
-
-/// One column's distinct values; empty on any query error (older schemas).
-fn distinct_texts(db: &Connection, sql: &str) -> Vec<String> {
-    let Ok(mut stmt) = db.prepare(sql) else {
-        return Vec::new();
-    };
-    let Ok(rows) = stmt.query_map([], |row| row.get::<_, Option<String>>(0)) else {
-        return Vec::new();
-    };
-    rows.flatten().flatten().collect()
+    identities
 }
 
 /// Strip the `P:` / `E:` / `tel:` prefix and drop what is then empty.
@@ -138,8 +111,7 @@ fn identity_key(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{backup_identities, clean_identity, identity_key, ios_backup_phone_number};
-    use rusqlite::Connection;
+    use super::{clean_and_dedupe, clean_identity, identity_key, ios_backup_phone_number};
 
     #[test]
     fn clean_identity_strips_prefixes_and_drops_empties() {
@@ -167,6 +139,24 @@ mod tests {
     }
 
     #[test]
+    fn clean_and_dedupe_keeps_the_first_spelling() {
+        let raw = vec![
+            "P:+15550001111".to_string(),
+            "E:".to_string(),
+            "E:Owner@Example.com".to_string(),
+            "+15550001111".to_string(),
+            "tel:+15550001111".to_string(),
+            "owner@example.com".to_string(),
+        ];
+        let mut identities = clean_and_dedupe(raw);
+        identities.sort();
+        assert_eq!(
+            identities,
+            vec!["+15550001111".to_string(), "Owner@Example.com".to_string()]
+        );
+    }
+
+    #[test]
     fn info_plist_phone_number_reads_string() {
         let dir = tempfile::tempdir().unwrap();
         let body = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -186,42 +176,5 @@ mod tests {
 
         let missing = tempfile::tempdir().unwrap();
         assert_eq!(ios_backup_phone_number(missing.path()), None);
-    }
-
-    #[test]
-    fn backup_identities_cleans_and_dedupes() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("chat.db");
-        let db = Connection::open(&db_path).unwrap();
-        db.execute_batch(
-            "CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, account_login TEXT);
-             CREATE TABLE message (ROWID INTEGER PRIMARY KEY, destination_caller_id TEXT);
-             INSERT INTO chat (account_login) VALUES
-                 ('P:+15550001111'), ('E:'), ('E:Owner@Example.com');
-             INSERT INTO message (destination_caller_id) VALUES
-                 ('+15550001111'), ('tel:+15550001111'), ('owner@example.com'), (NULL);",
-        )
-        .unwrap();
-        drop(db);
-
-        let mut identities = backup_identities(&db_path, false, None).unwrap();
-        identities.sort();
-        assert_eq!(
-            identities,
-            vec!["+15550001111".to_string(), "Owner@Example.com".to_string()]
-        );
-    }
-
-    #[test]
-    fn backup_identities_survives_missing_columns() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("chat.db");
-        let db = Connection::open(&db_path).unwrap();
-        db.execute_batch("CREATE TABLE chat (ROWID INTEGER PRIMARY KEY);")
-            .unwrap();
-        drop(db);
-
-        let identities = backup_identities(&db_path, false, None).unwrap();
-        assert!(identities.is_empty());
     }
 }

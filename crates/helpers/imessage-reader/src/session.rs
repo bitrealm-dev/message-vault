@@ -16,14 +16,14 @@ use imessage_database::{
     util::dates::get_offset,
 };
 
-use crate::{contacts::Name, data_source::DataSource, error::RuntimeError, options::MailOptions};
+use crate::{contacts::Name, data_source::DataSource, error::RuntimeError, options::ReaderOptions};
 
 /// Setup steps `MailSession::new` runs before any message is read.
-const CACHE_STEPS: usize = 4;
+const CACHE_STEPS: u64 = 4;
 
 /// Cached chats, handles, contacts, and tapbacks for one conversion run.
 pub(crate) struct MailSession {
-    pub options: MailOptions,
+    pub options: ReaderOptions,
     pub offset: i64,
     pub data_source: DataSource,
     pub chatrooms: HashMap<i32, Chat>,
@@ -44,7 +44,7 @@ impl MailSession {
     ///
     /// Returns an error when the data source cannot be opened or a cache query
     /// fails.
-    pub fn new(options: MailOptions) -> Result<Self, RuntimeError> {
+    pub fn new(options: ReaderOptions) -> Result<Self, RuntimeError> {
         let data_source = DataSource::from(&options)?;
 
         options.emit_log("Building cache...");
