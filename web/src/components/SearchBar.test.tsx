@@ -103,7 +103,7 @@ describe("SearchBar", () => {
     // Two recents, then the advanced row.
     await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{Enter}");
 
-    expect(screen.getByTestId("advanced-form")).toBeTruthy();
+    expect(await screen.findByTestId("advanced-form")).toBeTruthy();
   });
 
   it("wraps from the last row back to the first", async () => {
