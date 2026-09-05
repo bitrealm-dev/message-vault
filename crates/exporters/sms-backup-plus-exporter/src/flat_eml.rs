@@ -190,53 +190,6 @@ pub(crate) fn is_flat_sms_eml(headers: &MailHeaders) -> bool {
     is_single_sms_eml(headers)
 }
 
-/// Format digit strings as E.164 when unambiguous, then join with `", "`.
-fn join_usa_phones(digits: &[String]) -> String {
-    digits
-        .iter()
-        .map(|d| phone::normalize_digits_us(d).unwrap_or_default())
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// Length-prefix each number so `["12","34"]` and `["123","4"]` cannot both
-/// become `12_34`.
-fn group_id_slug(digits: &[String]) -> String {
-    digits
-        .iter()
-        .map(|d| format!("{}:{}", d.len(), d))
-        .collect::<Vec<_>>()
-        .join("_")
-}
-
-/// Group chat id (`group-…`) and display title from non-owner participant digits.
-fn group_chat_id(others: &[String]) -> (String, String) {
-    let mut sorted = others.to_vec();
-    sorted.sort();
-    sorted.dedup();
-    let title = if sorted.is_empty() {
-        "Group".to_string()
-    } else if sorted.len() <= 4 {
-        format!("Group: {}", join_usa_phones(&sorted))
-    } else {
-        format!(
-            "Group: {}, and {} others",
-            join_usa_phones(&sorted[..4]),
-            sorted.len() - 4
-        )
-    };
-    // Length-prefix each number so `["12","34"]` and `["123","4"]` cannot
-    // both become `group-12_34`.
-    let key = format!("group-{}", group_id_slug(&sorted));
-    let key = if key.len() > 180 {
-        let digest = hex::encode(Sha256::digest(key.as_bytes()));
-        format!("group-{}", &digest[..16])
-    } else {
-        key
-    };
-    (key, title)
-}
-
 /// One SMS Backup+ "flat" EML (one text per file) as a message, or `None`
 /// when the file is not one, has no readable date, or names nobody.
 ///
@@ -353,7 +306,7 @@ impl FlatAddresses {
         name_alias: Option<&str>,
     ) -> Option<FlatConversation> {
         if self.non_owner.len() >= 2 {
-            let (chat_key, title) = group_chat_id(&self.non_owner);
+            let (chat_key, title) = phone::group_chat_id("group-", &self.non_owner);
             return Some(FlatConversation {
                 chat_key,
                 conversation_type: "group",
@@ -532,8 +485,8 @@ old message\r\n"
 
     #[test]
     fn group_chat_id_does_not_collide_on_digit_split() {
-        let (k1, _) = group_chat_id(&["12".to_string(), "34".to_string()]);
-        let (k2, _) = group_chat_id(&["123".to_string(), "4".to_string()]);
+        let (k1, _) = phone::group_chat_id("group-", &["12".to_string(), "34".to_string()]);
+        let (k2, _) = phone::group_chat_id("group-", &["123".to_string(), "4".to_string()]);
         assert_ne!(k1, k2);
         assert_eq!(k1, "group-2:12_2:34");
         assert_eq!(k2, "group-3:123_1:4");

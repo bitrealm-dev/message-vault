@@ -3,8 +3,6 @@
 use anyhow::{Context, Result, bail};
 use message_csv::{col, field};
 use message_vault_io_core::discover_files;
-use std::fs::File;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,23 +76,7 @@ fn is_conversation_csv(path: &Path) -> bool {
 
 /// Read every row of one OpenExtract CSV, stripping a UTF-8 BOM first.
 pub(crate) fn parse_csv_file(path: &Path) -> Result<Vec<RawRow>> {
-    let mut file = File::open(path).with_context(|| format!("open {}", path.display()))?;
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
-        .with_context(|| format!("read {}", path.display()))?;
-    // Strip UTF-8 BOM if present.
-    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        bytes.drain(..3);
-    }
-    let mut rdr = csv::ReaderBuilder::new()
-        .flexible(true)
-        .from_reader(bytes.as_slice());
-    let headers = rdr
-        .headers()
-        .with_context(|| format!("headers {}", path.display()))?
-        .iter()
-        .map(|h| h.trim().to_ascii_lowercase())
-        .collect::<Vec<_>>();
+    let (mut rdr, headers) = message_csv::open_csv_lowercase(path)?;
 
     let date_i = col(&headers, "date")?;
     let sender_i = col(&headers, "sender")?;

@@ -92,20 +92,9 @@ impl ContactsBook {
         let rows = read_vcard_csv_rows(path)?;
         let mut book = Self::empty();
         for row in rows {
-            let mut name_parts = Vec::new();
-            if !row.first.is_empty() {
-                name_parts.push(row.first.as_str());
-            }
-            if !row.middle.is_empty() {
-                name_parts.push(row.middle.as_str());
-            }
-            if !row.last.is_empty() {
-                name_parts.push(row.last.as_str());
-            }
-            let display = collapse_inner_whitespace(&name_parts.join(" "));
-            if display.is_empty() {
+            let Some(display) = row.display_name() else {
                 continue;
-            }
+            };
 
             let mut phones = Vec::new();
             for p in &row.phones {

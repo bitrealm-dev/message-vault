@@ -7,6 +7,7 @@ use std::fmt;
 
 use anyhow::{Context, Result, bail};
 use message_ir::HandleType;
+use sha2::{Digest, Sha256};
 
 /// Minimum digit length after stripping formatting.
 ///
@@ -302,6 +303,55 @@ fn phone_digits_if_phone(value: &str, handle_type: HandleType) -> Option<String>
         return None;
     }
     Some(sanitize_number(value).unwrap_or_else(|| value.to_string()))
+}
+
+/// A group chat's id and display title from the digits of its non-owner
+/// participants. The id is `prefix` plus a length-prefixed slug of the
+/// sorted, deduplicated numbers, so `["12","34"]` and `["123","4"]` cannot
+/// collide, hashed when it would pass 180 bytes so it stays a safe file
+/// name. The title names up to four numbers in E.164 when unambiguous.
+pub fn group_chat_id(prefix: &str, others: &[String]) -> (String, String) {
+    let mut sorted = others.to_vec();
+    sorted.sort();
+    sorted.dedup();
+    let title = if sorted.is_empty() {
+        "Group".to_string()
+    } else if sorted.len() <= 4 {
+        format!("Group: {}", join_e164_phones(&sorted))
+    } else {
+        format!(
+            "Group: {}, and {} others",
+            join_e164_phones(&sorted[..4]),
+            sorted.len() - 4
+        )
+    };
+    let id = format!("{prefix}{}", group_id_slug(&sorted));
+    let id = if id.len() > 180 {
+        let digest = hex::encode(Sha256::digest(id.as_bytes()));
+        format!("{prefix}{}", &digest[..16])
+    } else {
+        id
+    };
+    (id, title)
+}
+
+/// Digit strings as E.164 when unambiguous, joined with `", "`.
+fn join_e164_phones(digits: &[String]) -> String {
+    digits
+        .iter()
+        .map(|d| normalize_digits_us(d).unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Length-prefix each number so `["12","34"]` and `["123","4"]` cannot both
+/// become `12_34`.
+fn group_id_slug(digits: &[String]) -> String {
+    digits
+        .iter()
+        .map(|d| format!("{}:{}", d.len(), d))
+        .collect::<Vec<_>>()
+        .join("_")
 }
 
 #[cfg(test)]

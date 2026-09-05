@@ -30,6 +30,21 @@ pub struct ContactCsvRow {
     pub notes: Option<String>,
 }
 
+impl ContactCsvRow {
+    /// The name the cells spell: first, middle, and last joined by a space
+    /// with inner whitespace collapsed; `None` when all three are blank.
+    pub fn display_name(&self) -> Option<String> {
+        let joined = [&self.first, &self.middle, &self.last]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let display = crate::name::collapse_inner_whitespace(&joined);
+        (!display.is_empty()).then_some(display)
+    }
+}
+
 /// Normalize a Contacts CSV header the same way book/validate loaders do.
 pub(crate) fn normalize_vcard_csv_header(h: &str) -> String {
     h.trim()
