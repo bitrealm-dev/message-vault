@@ -15,11 +15,16 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# A new push to the same branch cancels the previous run. That stops
-# queued Rust jobs from sitting until the 6-hour default timeout.
+# A new push to a pull request cancels its previous run, so queued Rust
+# jobs do not sit until the 6-hour default timeout on a branch nobody is
+# waiting for any more. Pushes to main and tags are never cancelled: the
+# ruleset checks each pull request against the main it branched from, not
+# the main it lands on, so two green pull requests can merge into a red
+# main. The run on each main commit is the only thing that reports that,
+# and it has to finish to do so.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: write
