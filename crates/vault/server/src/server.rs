@@ -22,6 +22,8 @@ use tokio::io::AsyncWriteExt;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::services::ServeDir;
+use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
+use tracing::Level;
 
 use crate::asset_uploads;
 use crate::config::Config;
@@ -330,7 +332,7 @@ impl IntoResponse for ApiError {
             Self::ServiceUnavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, m),
             Self::Internal(m) => {
                 // Keep diagnostics server-side; clients only see a stable message.
-                eprintln!("{}", internal_error_log_line(&m));
+                tracing::error!(error = %error_chain(&m), "internal server error");
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "internal server error".into(),
@@ -342,10 +344,11 @@ impl IntoResponse for ApiError {
     }
 }
 
-/// The stderr line for an internal error: the whole context chain, outermost
-/// first, so the operator sees the sqlx or io failure under the step that hit it.
-fn internal_error_log_line(err: &anyhow::Error) -> String {
-    format!("internal error: {err:#}")
+/// An error's whole context chain on one line, outermost first, so the log
+/// shows the sqlx or io failure under the step that hit it. `Display` alone
+/// would print only the outermost message.
+pub(crate) fn error_chain(err: &anyhow::Error) -> String {
+    format!("{err:#}")
 }
 
 impl From<crate::db::vault_imports::ImportLookupError> for ApiError {
@@ -538,7 +541,16 @@ pub(crate) fn http_app(state: AppState) -> Router {
         .layer(axum::middleware::map_response(json_body_limit_response))
         // Outermost: every response, including one the limit layer answered
         // itself, carries the CORS headers a browser needs to show it.
-        .layer(build_cors_layer(&cors_origins));
+        .layer(build_cors_layer(&cors_origins))
+        // One `info` line per response (method, path, status, latency), and an
+        // `error` line for a 5xx. Runs outside CORS so the status it logs is
+        // the one the client receives. The span carries method and path; its
+        // level must match the line's or the default `info` filter drops it.
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        );
 
     if openapi_ui {
         api = api.merge(utoipa_swagger_ui::SwaggerUi::new("/docs").url("/openapi.json", spec));

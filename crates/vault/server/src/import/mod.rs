@@ -1048,9 +1048,11 @@ async fn create_import_saved_search(
     )
     .await
     {
-        eprintln!(
-            "warning: import {} stored {} messages but its saved search could not be created: {e:?}",
-            row.id, row.message_count
+        tracing::warn!(
+            import_id = row.id,
+            messages = row.message_count,
+            error = ?e,
+            "the import's saved search could not be created"
         );
     }
 }
@@ -1165,9 +1167,10 @@ async fn create_import_contact_group(
             Ok(ids) if ids.is_empty() => return,
             Ok(ids) => ids,
             Err(e) => {
-                eprintln!(
-                    "warning: import {} could not list the contacts it touched: {e:?}",
-                    row.id
+                tracing::warn!(
+                    import_id = row.id,
+                    error = %crate::server::error_chain(&e),
+                    "the import could not list the contacts it touched"
                 );
                 return;
             }
@@ -1183,17 +1186,19 @@ async fn create_import_contact_group(
     )
     .await
     {
-        eprintln!(
-            "warning: import {} stored {} contacts but its Contact Group could not be created: {e:?}",
-            row.id,
-            touched.len()
+        tracing::warn!(
+            import_id = row.id,
+            contacts = touched.len(),
+            error = ?e,
+            "the import's Contact Group could not be created"
         );
         return;
     }
     if let Err(e) = crate::db::contacts::set_group_kind(conn, account_id, &name, "import").await {
-        eprintln!(
-            "warning: import {}'s Contact Group was created but not marked as import-made: {e:?}",
-            row.id
+        tracing::warn!(
+            import_id = row.id,
+            error = %crate::server::error_chain(&e),
+            "the import's Contact Group was created but not marked as import-made"
         );
     }
 }

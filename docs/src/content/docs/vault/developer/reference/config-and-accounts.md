@@ -45,6 +45,10 @@ The environment variable `VAULT_ASSET_PART_SIZE` can override the advertised par
 
 Web env overrides (optional): `VAULT_DB`, `VAULT_DATA_DIR`.
 
+### Logging
+
+The server writes its log to stderr through `tracing`: one `INFO` line per HTTP response with the method, path, status and latency, an `ERROR` line with the full cause chain behind every `500`, and `WARN` lines for work the server could not complete but did not fail the request over. `RUST_LOG` sets the level and accepts the usual filter syntax, for example `RUST_LOG=debug` or `RUST_LOG=message_vault_server=debug,tower_http=info`. Unset, the level is `info`. The `import`, `dedupe`, `process-assets` and `reset-demo` subcommands print their progress to stdout as before; that is their output, not the log.
+
 ## Per-account asset files
 
 Created on first use if missing:
