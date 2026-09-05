@@ -8,6 +8,8 @@ Releasing is a maintainer task. One product version ([Semantic Versioning](https
 - The vault image `bitrealm/message-vault:<version>` on Docker Hub (also `<major>.<minor>`, `latest`, and `sha-…`). The Docker tag has no `v` prefix (`0.8.0`, not `v0.8.0`).
 - Unsigned desktop installers on [GitHub Releases](https://github.com/bitrealm-io/message-vault/releases): Linux `.deb` and AppImage, Windows `.msi`, macOS `.dmg`.
 
+The same tag publishes this documentation site to bitrealm.io, so the site always describes the released version.
+
 Nothing is published to npm or PyPI. Pushing the git tag `v<version>` is what runs the release jobs. A merge to `main` does not ship.
 
 The JSONL schema version 4 is independent of the product version. Version 3 is refused, never upgraded. Leave other `Cargo.toml` files at `0.1.0`, and don't bump `web-next/` for a product release.
@@ -26,6 +28,6 @@ The JSONL schema version 4 is independent of the product version. Version 3 is r
 
 ## After tagging
 
-GitHub Actions builds the image and the installers and opens a GitHub Release named `Message Vault v0.8.0`. The installers are not code-signed, so users may see SmartScreen or Gatekeeper warnings.
+GitHub Actions builds the image and the installers, opens a GitHub Release named `Message Vault v0.8.0`, and publishes the documentation site. The installers are not code-signed, so users may see SmartScreen or Gatekeeper warnings.
 
 Don't create or push a tag unless a release should ship.

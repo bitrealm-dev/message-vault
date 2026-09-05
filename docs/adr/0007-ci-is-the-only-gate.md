@@ -36,7 +36,16 @@ The docs build on a pull request is the `docs` job in `ci.yml`, not a trigger
 on `docs.yml` — a required check that lives in a path-filtered workflow
 deadlocks every pull request that misses the filter, exactly like
 `paths-ignore`. `docs.yml` keeps the full build with rustdoc and the Pages
-deploy, on push to `main` only.
+deploy, and runs on the `v*` tag that ships a release, or by hand.
+
+The site publishes on a release, not on a merge. bitrealm.io describes the
+product people can install, and between releases that is the tagged version,
+not the tip of `main`; a page that documents a screen nobody can download yet
+is wrong for every reader who arrives from the download link. Publishing on
+merge also did real work for nothing: a burst of twelve squash merges on
+2026-09-05 produced twelve Pages runs, eleven of them cancelled by the next,
+each after a full `cargo doc`. `workflow_dispatch` stays for a docs-only
+correction that should not wait for the next tag.
 
 On a `v*` tag the `docker` and `release` jobs depend on every job in `ci.yml`.
 Nothing ships unless everything is green.
