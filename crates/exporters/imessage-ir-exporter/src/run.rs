@@ -8,7 +8,7 @@ use imessage_database::{
     util::{dirs::default_db_path, platform::Platform, query_context::QueryContext},
 };
 use message_ir_format::ExportTransforms;
-use message_vault_io_core::{ApplePlatform, ExporterConfig, RunResult, SourceConfig};
+use message_vault_io_core::{AppleConfig, ApplePlatform, ExporterConfig, RunResult, SourceConfig};
 
 use crate::{
     backup::ios_backup_encrypted_flag,
@@ -70,84 +70,32 @@ fn options_from_export_config(config: &ExporterConfig) -> Result<MailOptions, Ru
         ));
     };
 
-    let query_context = QueryContext::default();
-
     let db_path = match config.primary_input() {
         Some(path) if !path.as_os_str().is_empty() => path.to_path_buf(),
         _ => default_db_path(),
     };
-    let platform = match source.platform {
-        Some(ApplePlatform::MacOs) => Platform::from_cli("macOS").ok_or_else(|| {
-            RuntimeError::InvalidOptions(
-                "macOS is not a valid platform! Must be one of <macOS, iOS>".to_string(),
-            )
-        })?,
-        Some(ApplePlatform::Ios) => Platform::from_cli("iOS").ok_or_else(|| {
-            RuntimeError::InvalidOptions(
-                "iOS is not a valid platform! Must be one of <macOS, iOS>".to_string(),
-            )
-        })?,
-        Some(ApplePlatform::Auto) | None => Platform::determine(&db_path)?,
-    };
+    let platform = platform_for(source, &db_path)?;
 
-    if source.backup_password.is_some() && !matches!(platform, Platform::iOS) {
+    if source.backup_password.is_some() && platform != Platform::iOS {
         return Err(RuntimeError::InvalidOptions(
             "backup password is enabled; it can only be used with iOS backups.".to_string(),
         ));
     }
-
-    if let Some(path) = &source.attachment_root {
-        if !Path::new(path).exists() {
-            return Err(RuntimeError::InvalidOptions(
-                ATTACHMENT_FOLDER_MISSING.to_string(),
-            ));
-        }
-        if platform == Platform::iOS {
-            config.emit_log(format!(
-                "Option attachment-root is enabled, but the platform is {}, so the root will have no effect!",
-                Platform::iOS
-            ));
-        }
-    }
-
-    if let Some(path) = &source.apple_contacts {
-        if !path.exists() {
-            return Err(RuntimeError::InvalidOptions(
-                APPLE_CONTACTS_MISSING.to_string(),
-            ));
-        }
-        if platform == Platform::iOS {
-            config.emit_log(format!(
-                "Option contacts path is enabled, but the platform is {}, so the path will have no effect!",
-                Platform::iOS
-            ));
-        }
-    }
-
-    match platform {
-        Platform::macOS => {
-            if !db_path.is_file() {
-                return Err(RuntimeError::InvalidOptions(
-                    MESSAGES_DATABASE_MISSING.to_string(),
-                ));
-            }
-        }
-        Platform::iOS => {
-            let manifest = db_path.join("Manifest.plist");
-            if !db_path.is_dir() || !manifest.is_file() {
-                return Err(RuntimeError::InvalidOptions(
-                    NOT_AN_IPHONE_BACKUP.to_string(),
-                ));
-            }
-            if ios_backup_encrypted_flag(&db_path) == Some(false)
-                && !db_path.join(DEFAULT_PATH_IOS).is_file()
-            {
-                return Err(RuntimeError::InvalidOptions(
-                    NOT_AN_IPHONE_BACKUP.to_string(),
-                ));
-            }
-        }
-    }
+    check_macos_only_path(
+        config,
+        &platform,
+        source.attachment_root.as_deref().map(Path::new),
+        ATTACHMENT_FOLDER_MISSING,
+        "Option attachment-root is enabled, but the platform is iOS, so the root will have no effect!",
+    )?;
+    check_macos_only_path(
+        config,
+        &platform,
+        source.apple_contacts.as_deref(),
+        APPLE_CONTACTS_MISSING,
+        "Option contacts path is enabled, but the platform is iOS, so the path will have no effect!",
+    )?;
+    check_db_path(&platform, &db_path)?;
 
     let attachment_embed = attachment_embed_from_copy_method(&source.copy_method)?;
 
@@ -160,7 +108,7 @@ fn options_from_export_config(config: &ExporterConfig) -> Result<MailOptions, Ru
         db_path,
         attachment_root: source.attachment_root.clone(),
         export_path,
-        query_context,
+        query_context: QueryContext::default(),
         use_caller_id: source.use_caller_id,
         platform,
         cleartext_password: source.backup_password.clone(),
@@ -176,6 +124,76 @@ fn options_from_export_config(config: &ExporterConfig) -> Result<MailOptions, Ru
         cancel: config.cancel.clone(),
         resume: config.resume,
     })
+}
+
+/// The platform the source names, or the one the backup's layout shows.
+fn platform_for(source: &AppleConfig, db_path: &Path) -> Result<Platform, RuntimeError> {
+    match source.platform {
+        Some(ApplePlatform::MacOs) => named_platform("macOS"),
+        Some(ApplePlatform::Ios) => named_platform("iOS"),
+        Some(ApplePlatform::Auto) | None => Ok(Platform::determine(db_path)?),
+    }
+}
+
+/// The platform `imessage-database` knows by that name.
+fn named_platform(name: &str) -> Result<Platform, RuntimeError> {
+    Platform::from_cli(name).ok_or_else(|| {
+        RuntimeError::InvalidOptions(format!(
+            "{name} is not a valid platform! Must be one of <macOS, iOS>"
+        ))
+    })
+}
+
+/// A path option that only a macOS export reads: refused when it points
+/// nowhere, and noted in the log as having no effect on an iOS backup.
+fn check_macos_only_path(
+    config: &ExporterConfig,
+    platform: &Platform,
+    path: Option<&Path>,
+    missing: &str,
+    ignored_on_ios: &str,
+) -> Result<(), RuntimeError> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    if !path.exists() {
+        return Err(RuntimeError::InvalidOptions(missing.to_string()));
+    }
+    if *platform == Platform::iOS {
+        config.emit_log(ignored_on_ios);
+    }
+    Ok(())
+}
+
+/// The backup must be laid out as the platform expects: a messages
+/// database file on macOS; on iOS a backup folder with its manifest and,
+/// when the backup is not encrypted, the database at its hashed path.
+fn check_db_path(platform: &Platform, db_path: &Path) -> Result<(), RuntimeError> {
+    match platform {
+        Platform::macOS => {
+            if !db_path.is_file() {
+                return Err(RuntimeError::InvalidOptions(
+                    MESSAGES_DATABASE_MISSING.to_string(),
+                ));
+            }
+        }
+        Platform::iOS => {
+            let manifest = db_path.join("Manifest.plist");
+            if !db_path.is_dir() || !manifest.is_file() {
+                return Err(RuntimeError::InvalidOptions(
+                    NOT_AN_IPHONE_BACKUP.to_string(),
+                ));
+            }
+            if ios_backup_encrypted_flag(db_path) == Some(false)
+                && !db_path.join(DEFAULT_PATH_IOS).is_file()
+            {
+                return Err(RuntimeError::InvalidOptions(
+                    NOT_AN_IPHONE_BACKUP.to_string(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

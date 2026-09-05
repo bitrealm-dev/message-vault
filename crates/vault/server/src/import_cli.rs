@@ -9,7 +9,6 @@ use crate::config::{Config, validate_source_id};
 use crate::db::account_profile;
 use crate::db::engine::DbTarget;
 use crate::db::schema;
-use crate::db::vault_imports;
 use crate::dedupe::{self, DedupeStats};
 use crate::import::{self, ImportMode, ImportOptions, ImportStats};
 use crate::import_media::MediaMode;
@@ -188,20 +187,12 @@ async fn import_under_session(
         cfg.paths
             .assets_dir_for_account(account_id, plan.sources.first().expect("sources non-empty"))
     });
-    let import_id = vault_imports::start_import(
+    let session = import::OwnedSession::start(
         conn,
-        &vault_imports::StartImportArgs {
-            account_id,
-            source: &plan.sources.join(","),
-            mode: opts.mode.as_str(),
-            tool: Some("message-vault-server"),
-            stage: vault_imports::ImportStage::Parse,
-            staging_dir: None,
-            device_id: None,
-            form_json: None,
-            source_fingerprint: None,
-            source_identities: None,
-        },
+        account_id,
+        &plan.sources.join(","),
+        opts.mode,
+        "message-vault-server",
     )
     .await?;
 
@@ -214,7 +205,7 @@ async fn import_under_session(
         source: opts.source_override.as_deref().unwrap_or(""),
         account_id,
         fill_content_keys: true,
-        import_id: Some(import_id),
+        import_id: Some(session.id),
         source_from_jsonl: plan.from_jsonl,
         paths: plan.from_jsonl.then_some(&cfg.paths),
         media: opts.media,
@@ -227,14 +218,7 @@ async fn import_under_session(
         import::ImportSchemaMode::AssumeReady,
     )
     .await;
-
-    let complete_args = match &result {
-        Ok(stats) => {
-            vault_imports::CompleteImportArgs::succeeded(stats.messages, stats.attachments)
-        }
-        Err(_) => vault_imports::CompleteImportArgs::failed(),
-    };
-    vault_imports::complete_import_or_warn(conn, account_id, import_id, &complete_args).await;
+    session.finish(conn, &result).await;
     result
 }
 

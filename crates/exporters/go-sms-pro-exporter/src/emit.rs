@@ -122,7 +122,16 @@ fn is_empty_pdu(parsed: &ParsedPdu) -> bool {
         && !parsed.has_to
 }
 
-/// Append one parsed PDU (binary SMS/MMS) to the matching conversation(s).
+/// The chat a PDU message lands in.
+struct PduTarget {
+    chat_id: String,
+    is_group: bool,
+    group_title: Option<String>,
+    /// The non-owner peers of a group; empty for an individual chat.
+    peers: Vec<String>,
+}
+
+/// Append one parsed PDU (binary SMS/MMS) to the conversation it belongs to.
 fn add_pdu_message(
     conversations: &mut BTreeMap<String, PendingConversation>,
     parsed: ParsedPdu,
@@ -142,45 +151,78 @@ fn add_pdu_message(
         );
         return;
     }
-
-    let targets: Vec<(String, bool, Option<String>, Vec<String>)> = {
-        let others: Vec<_> = parsed
-            .participants
-            .iter()
-            .filter(|p| !p.is_empty() && !owners.is_owner(p, HandleType::Phone))
-            .cloned()
-            .collect();
-        if others.is_empty() {
-            report.bump("skipped_no_other_party", 1);
-            push_skip_detail(
-                &mut skips.no_party,
-                &mut skips.no_party_more,
-                SkippedNoPartyDetail {
-                    pdu_filename: pdu_basename(&parsed),
-                    participants: parsed.participants.join(";"),
-                    is_sent: parsed.is_sent,
-                    has_from: parsed.has_from,
-                    has_to: parsed.has_to,
-                },
-            );
-            return;
-        }
-        // Treat multi-peer MMS as a group even when the PDU flag is unset.
-        if parsed.is_group || others.len() >= 2 {
-            let (id, title) = chat_id_group(&parsed.participants, owners);
-            let peers: Vec<String> = others.iter().map(|d| guarded_phone(d)).collect();
-            vec![(id, true, Some(title), peers)]
-        } else {
-            let other = &others[0];
-            vec![(chat_id_individual(other), false, None, Vec::new())]
-        }
+    let Some(target) = pdu_target(&parsed, owners, report, skips) else {
+        return;
     };
-
     report.bump("pdu_messages", 1);
-    if targets.iter().any(|(_, is_group, _, _)| *is_group) {
+    if target.is_group {
         report.bump("pdu_group_messages", 1);
     }
+    let pending = pdu_pending_message(parsed, attachments);
+    let convo = ensure_conversation(
+        conversations,
+        &target.chat_id,
+        target.is_group,
+        target.group_title,
+        target.peers,
+    );
+    convo.messages.push(pending);
+}
 
+/// The chat the PDU belongs to, from the participants that are not the
+/// owner: a group when the PDU says so or when there are two or more of
+/// them, else the one other party. `None`, counted and detailed as a skip,
+/// when nobody but the owner is on it.
+fn pdu_target(
+    parsed: &ParsedPdu,
+    owners: &OwnerHandleSet,
+    report: &mut ExportReport,
+    skips: &mut SkipDetails,
+) -> Option<PduTarget> {
+    let others: Vec<_> = parsed
+        .participants
+        .iter()
+        .filter(|p| !p.is_empty() && !owners.is_owner(p, HandleType::Phone))
+        .cloned()
+        .collect();
+    if others.is_empty() {
+        report.bump("skipped_no_other_party", 1);
+        push_skip_detail(
+            &mut skips.no_party,
+            &mut skips.no_party_more,
+            SkippedNoPartyDetail {
+                pdu_filename: pdu_basename(parsed),
+                participants: parsed.participants.join(";"),
+                is_sent: parsed.is_sent,
+                has_from: parsed.has_from,
+                has_to: parsed.has_to,
+            },
+        );
+        return None;
+    }
+    // Treat multi-peer MMS as a group even when the PDU flag is unset.
+    if parsed.is_group || others.len() >= 2 {
+        let (chat_id, title) = chat_id_group(&parsed.participants, owners);
+        Some(PduTarget {
+            chat_id,
+            is_group: true,
+            group_title: Some(title),
+            peers: others.iter().map(|d| guarded_phone(d)).collect(),
+        })
+    } else {
+        Some(PduTarget {
+            chat_id: chat_id_individual(&others[0]),
+            is_group: false,
+            group_title: None,
+            peers: Vec::new(),
+        })
+    }
+}
+
+/// The pending message for a PDU. Its `extra` map carries the dedupe key
+/// (time, direction, body, attachment digests) and the PDU diagnostics the
+/// projection reads back into the IR source fields.
+fn pdu_pending_message(parsed: ParsedPdu, attachments: Vec<PendingAttachment>) -> PendingMessage {
     let att_names: Vec<String> = attachments
         .iter()
         .map(|a| a.digest_sha256.clone().unwrap_or_default())
@@ -192,49 +234,33 @@ fn add_pdu_message(
         parsed.body,
         att_names.join(",")
     );
-
-    let pdu_filename = parsed
-        .path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("")
-        .to_string();
-
-    let sender_digits = if parsed.is_sent || parsed.sender_number.is_empty() {
-        None
+    let sender_handle = if parsed.is_sent || parsed.sender_number.is_empty() {
+        String::new()
     } else {
-        Some(parsed.sender_number.clone())
+        parsed.sender_number.clone()
     };
-
-    let pending = PendingMessage {
+    let mut extra = BTreeMap::new();
+    extra.insert("dedupe_key".into(), dedupe_key);
+    extra.insert("source_kind".into(), "pdu".to_string());
+    extra.insert("android_type".into(), String::new());
+    extra.insert("date_ms".into(), String::new());
+    extra.insert("contact_name".into(), String::new());
+    extra.insert("pdu_filename".into(), pdu_basename(&parsed));
+    extra.insert("pdu_decode".into(), parsed.decode_quality.to_string());
+    if !parsed.pdu_fields.is_empty() {
+        extra.insert(
+            "pdu_fields".into(),
+            serde_json::to_string(&parsed.pdu_fields).unwrap_or_default(),
+        );
+    }
+    PendingMessage {
         sort_key: parsed.timestamp,
         is_from_me: parsed.is_sent,
-        sender_handle: sender_digits.unwrap_or_default(),
+        sender_handle,
         sender_display_name: None,
-        text: parsed.body.clone(),
+        text: parsed.body,
         attachments,
-        extra: {
-            let mut e = BTreeMap::new();
-            e.insert("dedupe_key".into(), dedupe_key);
-            e.insert("source_kind".into(), "pdu".to_string());
-            e.insert("android_type".into(), String::new());
-            e.insert("date_ms".into(), String::new());
-            e.insert("contact_name".into(), String::new());
-            e.insert("pdu_filename".into(), pdu_filename);
-            e.insert("pdu_decode".into(), parsed.decode_quality.to_string());
-            if !parsed.pdu_fields.is_empty() {
-                e.insert(
-                    "pdu_fields".into(),
-                    serde_json::to_string(&parsed.pdu_fields).unwrap_or_default(),
-                );
-            }
-            e
-        },
-    };
-
-    for (chat_id, is_group, group_title, peers) in targets {
-        let convo = ensure_conversation(conversations, &chat_id, is_group, group_title, peers);
-        convo.messages.push(pending.clone());
+        extra,
     }
 }
 
