@@ -18,7 +18,9 @@ use crate::db::handles::{
 use crate::db::sql::{max_rows_for_bind_limit, values_tuples};
 use crate::import_media::{self, MediaMode};
 use crate::jsonl;
-use crate::models::{AttachmentRecord, ExportRecord, MessageRecord, clean_body};
+use crate::models::{
+    AttachmentRecord, ConversationRecord, ExportRecord, MessageRecord, clean_body,
+};
 
 use super::contact_name::{
     IncomingSender, ensure_contact_for_handle, resolve_incoming_sender_handle,
@@ -249,18 +251,6 @@ impl StagingInserts {
 /// this backup used for them, and the handle type when the source said.
 type StagedParticipant = (Option<String>, Option<String>, Option<HandleType>);
 
-/// chat_identifier, platform_service, conversation_type, group_title, exported_at, participants, source
-/// `platform_service` is `phone` | `whatsapp` for handle rows.
-type ConversationHeader = (
-    String,
-    Option<String>,
-    String,
-    Option<String>,
-    Option<String>,
-    Vec<StagedParticipant>,
-    String,
-);
-
 /// The source id for a conversation: its header's `export.source` when sources come from the files, else the fixed override.
 fn resolve_conversation_source(
     opts: &ImportOptions<'_>,
@@ -308,6 +298,11 @@ pub fn is_orphaned_export(path: &Path) -> bool {
 }
 
 /// Stage one JSON Lines file: its conversation header and messages, or its orphaned messages.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read, a message precedes its
+/// header, or a conversation cannot be staged.
 pub(super) async fn import_file_to_staging(
     tx: &mut AnyConnection,
     stmts: &mut StagingInserts,
@@ -316,34 +311,28 @@ pub(super) async fn import_file_to_staging(
     asset_stats: &mut AssetStats,
     media_work: &Path,
 ) -> Result<ImportStats> {
-    let source_file = match path.file_name().and_then(|name| name.to_str()) {
-        Some(name) => name.to_string(),
-        None => "unknown.jsonl".to_string(),
+    let mut staging = FileStaging {
+        tx,
+        stmts,
+        opts,
+        source_file: path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("unknown.jsonl")
+            .to_string(),
+        asset_stats,
+        media_work,
+        stats: ImportStats::default(),
     };
     let is_orphaned = is_orphaned_export(path);
-
-    let records = jsonl::read_records(path)?;
-    let mut stats = ImportStats::default();
-    let mut pending: Option<ConversationHeader> = None;
+    let mut pending: Option<StagedConversation> = None;
     let mut messages: Vec<MessageRecord> = Vec::new();
 
-    for record in records {
+    for record in jsonl::read_records(path)? {
         match record {
             ExportRecord::Conversation(c) => {
                 if let Some(header) = pending.take() {
-                    stats.merge_file(
-                        &import_conversation_to_staging(ImportConversationArgs {
-                            tx,
-                            stmts,
-                            opts,
-                            source_file: &source_file,
-                            conversation: header,
-                            messages: std::mem::take(&mut messages),
-                            asset_stats,
-                            media_work,
-                        })
-                        .await?,
-                    );
+                    staging.stage(header, std::mem::take(&mut messages)).await?;
                 }
                 let source = resolve_conversation_source(
                     opts,
@@ -351,18 +340,7 @@ pub(super) async fn import_file_to_staging(
                     &c.chat_identifier,
                     c.export_source.as_deref(),
                 )?;
-                pending = Some((
-                    c.chat_identifier,
-                    c.service,
-                    c.conversation_type,
-                    c.group_title,
-                    c.exported_at,
-                    c.participants
-                        .into_iter()
-                        .map(|p| (p.handle, p.name_alias, p.handle_type))
-                        .collect(),
-                    source,
-                ));
+                pending = Some(StagedConversation::from_record(c, source));
             }
             ExportRecord::Message(m) => {
                 if pending.is_none() && !is_orphaned {
@@ -376,168 +354,183 @@ pub(super) async fn import_file_to_staging(
         }
     }
 
-    if let Some(header) = pending.take() {
-        stats.merge_file(
-            &import_conversation_to_staging(ImportConversationArgs {
-                tx,
-                stmts,
-                opts,
-                source_file: &source_file,
-                conversation: header,
-                messages,
-                asset_stats,
-                media_work,
-            })
-            .await?,
-        );
-    } else if is_orphaned {
-        if opts.source_from_jsonl {
-            bail!(
-                "{}: orphaned.jsonl without a conversation header cannot supply export.source",
-                path.display()
-            );
+    match pending.take() {
+        Some(header) => staging.stage(header, messages).await?,
+        None if is_orphaned => {
+            if opts.source_from_jsonl {
+                bail!(
+                    "{}: orphaned.jsonl without a conversation header cannot supply export.source",
+                    path.display()
+                );
+            }
+            staging
+                .stage(StagedConversation::orphaned(opts.source), messages)
+                .await?;
         }
-        stats.merge_file(
-            &import_conversation_to_staging(ImportConversationArgs {
-                tx,
-                stmts,
-                opts,
-                source_file: &source_file,
-                conversation: (
-                    "orphaned".to_string(),
-                    None,
-                    "orphaned".to_string(),
-                    None,
-                    None,
-                    Vec::new(),
-                    opts.source.to_string(),
-                ),
-                messages,
-                asset_stats,
-                media_work,
-            })
-            .await?,
-        );
-    } else if messages.is_empty() {
-        bail!(
+        None if messages.is_empty() => bail!(
             "{} has no conversation header and no messages",
             path.display()
-        );
-    } else {
-        bail!(
+        ),
+        None => bail!(
             "{} is missing a conversation header (expected first record)",
             path.display()
-        );
+        ),
     }
-
-    Ok(stats)
+    Ok(staging.stats)
 }
 
-struct ImportConversationArgs<'a> {
+/// A conversation header as read from the file, with the source it resolved to.
+struct StagedConversation {
+    chat_identifier: String,
+    /// `phone` | `whatsapp` for handle rows, when the header says.
+    platform_service: Option<String>,
+    conversation_type: String,
+    group_title: Option<String>,
+    exported_at: Option<String>,
+    participants: Vec<StagedParticipant>,
+    source: String,
+}
+
+impl StagedConversation {
+    fn from_record(record: ConversationRecord, source: String) -> Self {
+        Self {
+            chat_identifier: record.chat_identifier,
+            platform_service: record.service,
+            conversation_type: record.conversation_type,
+            group_title: record.group_title,
+            exported_at: record.exported_at,
+            participants: record
+                .participants
+                .into_iter()
+                .map(|p| (p.handle, p.name_alias, p.handle_type))
+                .collect(),
+            source,
+        }
+    }
+
+    /// The header for `orphaned.jsonl`: messages with no conversation of their own.
+    fn orphaned(source: &str) -> Self {
+        Self {
+            chat_identifier: "orphaned".to_string(),
+            platform_service: None,
+            conversation_type: "orphaned".to_string(),
+            group_title: None,
+            exported_at: None,
+            participants: Vec::new(),
+            source: source.to_string(),
+        }
+    }
+}
+
+/// One JSON Lines file being staged: the connection and prepared statements,
+/// the options, the counters its conversations add to, and the file's name
+/// for the conversation rows.
+struct FileStaging<'a> {
     tx: &'a mut AnyConnection,
     stmts: &'a mut StagingInserts,
     opts: &'a ImportOptions<'a>,
-    source_file: &'a str,
-    conversation: ConversationHeader,
-    messages: Vec<MessageRecord>,
+    source_file: String,
     asset_stats: &'a mut AssetStats,
     media_work: &'a Path,
+    stats: ImportStats,
 }
 
-/// Stage one conversation: its media on disk, then its handle, conversation
-/// row, participants, and message rows in the staging tables.
-///
-/// # Errors
-///
-/// Returns an error when a media file cannot be stored or a row cannot be written.
-async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Result<ImportStats> {
-    let ImportConversationArgs {
-        tx,
-        stmts,
-        opts,
-        source_file,
-        conversation,
-        messages,
-        asset_stats,
-        media_work,
-    } = args;
-    let (
-        chat_identifier,
-        platform_service,
-        conversation_type,
-        group_title,
-        exported_at,
-        participants,
-        source,
-    ) = conversation;
+impl FileStaging<'_> {
+    /// Stage one conversation: its media on disk, then its handle, conversation
+    /// row, participants, and message rows in the staging tables.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a media file cannot be stored or a row cannot be written.
+    async fn stage(
+        &mut self,
+        conversation: StagedConversation,
+        messages: Vec<MessageRecord>,
+    ) -> Result<()> {
+        let assets_dir = assets_dir_for_source(self.opts, &conversation.source)?;
+        let mut stats = ImportStats::default();
+        let platform = platform_for(
+            conversation.platform_service.as_deref(),
+            &conversation.source,
+        );
 
-    let assets_dir = assets_dir_for_source(opts, &source)?;
-    let mut stats = ImportStats::default();
-    let platform = platform_for(platform_service.as_deref(), &source);
-
-    // Copy or convert media first: it needs no database rows, and a failure
-    // here leaves nothing half-written.
-    let prepared_messages =
-        prepare_message_attachments(opts, &assets_dir, messages, asset_stats, media_work)?;
-
-    // Conversation identity: the chat handle, typed from its shape (Phone for
-    // SMS/iMessage/WhatsApp numbers, Email for `@`, Other for group ids).
-    let (chat_handle_id, flagged, cached) = upsert_handle_row_cached(
-        tx,
-        &mut stmts.handles,
-        &stmts.account_id,
-        &chat_identifier,
-        infer_handle_type(&chat_identifier),
-        Some(platform.as_str()),
-    )
-    .await?;
-    if flagged {
-        stats.phones_needing_review += 1;
-    }
-    if !cached {
-        let _ = ensure_contact_for_handle(tx, &stmts.account_id, chat_handle_id, None, &mut stats)
-            .await?;
-    }
-    let conversation_id: i64 = sqlx::query_scalar(INSERT_CONVERSATION)
-        .bind(&stmts.account_id)
-        .bind(chat_handle_id)
-        .bind(conversation_type)
-        .bind(group_title)
-        .bind(exported_at)
-        .bind(source_file)
-        .fetch_one(&mut *tx)
-        .await?;
-    stats.conversations = 1;
-
-    for participant in participants {
-        insert_participant(
-            tx,
-            stmts,
-            conversation_id,
-            participant,
-            platform,
-            &mut stats,
-        )
-        .await?;
-    }
-
-    let pending_rows =
-        resolve_message_rows(tx, stmts, prepared_messages, platform, &mut stats).await?;
-    let engine = dialect::engine_of(tx);
-    let msg_chunk = max_rows_for_bind_limit(engine, MESSAGE_BIND_COLUMNS).max(1);
-    for chunk in pending_rows.chunks(msg_chunk) {
-        flush_staging_message_chunk(
-            tx,
-            stmts,
-            &mut stats,
-            conversation_id,
-            &source,
+        // Copy or convert media first: it needs no database rows, and a failure
+        // here leaves nothing half-written.
+        let prepared_messages = prepare_message_attachments(
+            self.opts,
             &assets_dir,
-            chunk,
+            messages,
+            self.asset_stats,
+            self.media_work,
+        )?;
+
+        // Conversation identity: the chat handle, typed from its shape (Phone for
+        // SMS/iMessage/WhatsApp numbers, Email for `@`, Other for group ids).
+        let (chat_handle_id, flagged, cached) = upsert_handle_row_cached(
+            self.tx,
+            &mut self.stmts.handles,
+            &self.stmts.account_id,
+            &conversation.chat_identifier,
+            infer_handle_type(&conversation.chat_identifier),
+            Some(platform.as_str()),
         )
         .await?;
+        if flagged {
+            stats.phones_needing_review += 1;
+        }
+        if !cached {
+            let _ = ensure_contact_for_handle(
+                self.tx,
+                &self.stmts.account_id,
+                chat_handle_id,
+                None,
+                &mut stats,
+            )
+            .await?;
+        }
+        let conversation_id: i64 = sqlx::query_scalar(INSERT_CONVERSATION)
+            .bind(&self.stmts.account_id)
+            .bind(chat_handle_id)
+            .bind(conversation.conversation_type)
+            .bind(conversation.group_title)
+            .bind(conversation.exported_at)
+            .bind(&self.source_file)
+            .fetch_one(&mut *self.tx)
+            .await?;
+        stats.conversations = 1;
+
+        for participant in conversation.participants {
+            insert_participant(
+                self.tx,
+                self.stmts,
+                conversation_id,
+                participant,
+                platform,
+                &mut stats,
+            )
+            .await?;
+        }
+
+        let pending_rows =
+            resolve_message_rows(self.tx, self.stmts, prepared_messages, platform, &mut stats)
+                .await?;
+        let engine = dialect::engine_of(self.tx);
+        let msg_chunk = max_rows_for_bind_limit(engine, MESSAGE_BIND_COLUMNS).max(1);
+        for chunk in pending_rows.chunks(msg_chunk) {
+            flush_staging_message_chunk(
+                self.tx,
+                self.stmts,
+                &mut stats,
+                conversation_id,
+                &conversation.source,
+                &assets_dir,
+                chunk,
+            )
+            .await?;
+        }
+        self.stats.merge_file(&stats);
+        Ok(())
     }
-    Ok(stats)
 }
 
 /// Platform for chat and participant handles: the conversation's own hint,

@@ -337,44 +337,78 @@ async fn insert_content_key_rows(conn: &mut AnyConnection, keys: &[(i64, String)
     Ok(())
 }
 
-/// Fill `messages.content_key` for this account, every row or only the empty ones. Returns how many were written.
+/// Compute and store content keys for the account's messages: every message,
+/// or only those without a key. Returns how many were written.
+///
+/// # Errors
+///
+/// Returns an error when a query fails or the hashing task panics.
 async fn recompute_content_keys(
     conn: &mut AnyConnection,
     missing_only: bool,
     account_id: &str,
 ) -> Result<u64> {
-    let filter = if missing_only {
-        "WHERE (m.content_key IS NULL OR m.content_key = '') AND c.account_id = $1"
-    } else {
-        "WHERE c.account_id = $1"
-    };
-    let sql = format!(
-        r#"
-        SELECT m.id, m.conversation_id, h.normalized, c.conversation_type,
-               m.is_from_me, m.timestamp_utc, m.timestamp, m.body,
-               hs.normalized
-        FROM messages m
-        JOIN conversations c ON c.id = m.conversation_id
-        JOIN handles h ON h.id = c.chat_handle_id
-        LEFT JOIN handles hs ON hs.id = m.sender_handle_id
-        {filter}
-        ORDER BY m.id
-        "#
-    );
-    let rows: Vec<ContentKeyRow> = sqlx::query_as(&sql)
-        .bind(account_id)
-        .fetch_all(&mut *conn)
-        .await?;
-
-    if rows.is_empty() {
+    let Some(inputs) = ContentKeyInputs::load(conn, account_id, missing_only).await? else {
         return Ok(0);
-    }
+    };
+    println!(
+        "  sql:      hashing content keys ({} messages)…",
+        inputs.rows.len()
+    );
+    let _ = io::stdout().flush();
+    let keys = tokio::task::spawn_blocking(move || inputs.hash())
+        .await
+        .context("content-key hash task panicked")?;
+    let filled = keys.len() as u64;
+    apply_content_keys(conn, &keys).await?;
+    Ok(filled)
+}
 
-    // Sorted participant handles per group conversation (one shared identity
-    // across import sources).
-    let mut group_handles: HashMap<i64, Vec<String>> = HashMap::new();
-    {
-        let p_rows: Vec<(i64, String)> = sqlx::query_as(
+/// Everything the content-key hash reads, loaded in three queries so the
+/// hashing runs off the database thread with no lookups of its own.
+struct ContentKeyInputs {
+    rows: Vec<ContentKeyRow>,
+    /// Sorted participant handles per group conversation: one shared identity
+    /// across import sources.
+    group_handles: HashMap<i64, Vec<String>>,
+    /// Attachment digests per message.
+    shas_by_msg: HashMap<i64, Vec<String>>,
+}
+
+impl ContentKeyInputs {
+    /// `None` when no message needs a key.
+    async fn load(
+        conn: &mut AnyConnection,
+        account_id: &str,
+        missing_only: bool,
+    ) -> Result<Option<Self>> {
+        let filter = if missing_only {
+            "WHERE (m.content_key IS NULL OR m.content_key = '') AND c.account_id = $1"
+        } else {
+            "WHERE c.account_id = $1"
+        };
+        let sql = format!(
+            r#"
+            SELECT m.id, m.conversation_id, h.normalized, c.conversation_type,
+                   m.is_from_me, m.timestamp_utc, m.timestamp, m.body,
+                   hs.normalized
+            FROM messages m
+            JOIN conversations c ON c.id = m.conversation_id
+            JOIN handles h ON h.id = c.chat_handle_id
+            LEFT JOIN handles hs ON hs.id = m.sender_handle_id
+            {filter}
+            ORDER BY m.id
+            "#
+        );
+        let rows: Vec<ContentKeyRow> = sqlx::query_as(&sql)
+            .bind(account_id)
+            .fetch_all(&mut *conn)
+            .await?;
+        if rows.is_empty() {
+            return Ok(None);
+        }
+
+        let participant_rows: Vec<(i64, String)> = sqlx::query_as(
             r#"
             SELECT p.conversation_id, h.normalized
             FROM participants p
@@ -388,19 +422,17 @@ async fn recompute_content_keys(
         .bind(account_id)
         .fetch_all(&mut *conn)
         .await?;
-        for (conversation_id, handle) in p_rows {
+        let mut group_handles: HashMap<i64, Vec<String>> = HashMap::new();
+        for (conversation_id, handle) in participant_rows {
             group_handles
                 .entry(conversation_id)
                 .or_default()
                 .push(handle);
         }
-    }
 
-    // One scan for attachment hashes belonging to this account's message id range.
-    let min_id = rows.first().map(|r| r.0).unwrap_or(0);
-    let max_id = rows.last().map(|r| r.0).unwrap_or(0);
-    let mut shas_by_msg: HashMap<i64, Vec<String>> = HashMap::new();
-    {
+        // One scan for attachment hashes belonging to this account's message id range.
+        let min_id = rows.first().map(|r| r.0).unwrap_or(0);
+        let max_id = rows.last().map(|r| r.0).unwrap_or(0);
         let att_rows: Vec<(i64, String)> = sqlx::query_as(
             r#"
             SELECT a.message_id, a.sha256
@@ -418,23 +450,27 @@ async fn recompute_content_keys(
         .bind(max_id)
         .fetch_all(&mut *conn)
         .await?;
+        let mut shas_by_msg: HashMap<i64, Vec<String>> = HashMap::new();
         for (message_id, sha) in att_rows {
             shas_by_msg.entry(message_id).or_default().push(sha);
         }
+
+        Ok(Some(Self {
+            rows,
+            group_handles,
+            shas_by_msg,
+        }))
     }
 
-    println!(
-        "  sql:      hashing content keys ({} messages)…",
-        rows.len()
-    );
-    let _ = io::stdout().flush();
+    /// `(message id, content key)` for every row, hashed in parallel.
+    fn hash(&self) -> Vec<(i64, String)> {
+        hash_content_keys(&self.rows, &self.group_handles, &self.shas_by_msg)
+    }
+}
 
-    let keys =
-        tokio::task::spawn_blocking(move || hash_content_keys(&rows, &group_handles, &shas_by_msg))
-            .await
-            .context("content-key hash task panicked")?;
-
-    let filled = keys.len() as u64;
+/// Write the keys onto `messages` through the `_content_keys` temp table,
+/// which is dropped again afterwards.
+async fn apply_content_keys(conn: &mut AnyConnection, keys: &[(i64, String)]) -> Result<()> {
     for stmt in schema::split_ddl(
         r#"
         CREATE TEMP TABLE IF NOT EXISTS _content_keys (
@@ -446,7 +482,7 @@ async fn recompute_content_keys(
     ) {
         sqlx::query(&stmt).execute(&mut *conn).await?;
     }
-    insert_content_key_rows(conn, &keys).await?;
+    insert_content_key_rows(conn, keys).await?;
     sqlx::query(
         r#"
         UPDATE messages AS m
@@ -457,11 +493,10 @@ async fn recompute_content_keys(
     )
     .execute(&mut *conn)
     .await?;
-    for stmt in schema::split_ddl("DROP TABLE IF EXISTS _content_keys;") {
-        sqlx::query(&stmt).execute(&mut *conn).await?;
-    }
-
-    Ok(filled)
+    sqlx::query("DROP TABLE IF EXISTS _content_keys")
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
 }
 
 #[derive(Clone)]
