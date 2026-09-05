@@ -1549,22 +1549,37 @@ name = "imessage-ir-exporter"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "chrono",
- "crabapple",
- "hex",
- "imessage-database",
- "mail",
- "media",
- "message-csv",
+ "imessage-reader-protocol",
  "message-ir",
  "message-ir-format",
  "message-vault-io-core",
  "plist",
  "rusqlite",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "imessage-reader"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "crabapple",
+ "imessage-database",
+ "imessage-reader-protocol",
+ "plist",
+ "rusqlite",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "tempfile",
+]
+
+[[package]]
+name = "imessage-reader-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-//! Errors for the thin iMessage → mail archive exporter.
+//! Errors while opening a Messages source or reading rows out of it.
 
 use std::{
     error::Error,
@@ -18,12 +18,6 @@ pub const UNENCRYPTED_BACKUP_CLEAR_PASSWORD: &str =
     "This backup is not encrypted. Clear Encryption password.";
 /// User-facing copy when the supplied iOS backup password is wrong.
 pub const IOS_BACKUP_PASSWORD_INCORRECT: &str = "The iOS backup password was incorrect.";
-/// User-facing copy when a custom attachment folder is missing.
-pub const ATTACHMENT_FOLDER_MISSING: &str = "Attachment folder does not exist.";
-/// User-facing copy when a supplied Apple Contacts file is missing.
-pub const APPLE_CONTACTS_MISSING: &str = "Apple Contacts file does not exist.";
-/// User-facing copy when the macOS Messages database file is missing.
-pub const MESSAGES_DATABASE_MISSING: &str = "Messages database does not exist.";
 /// User-facing copy when the folder is not an iPhone backup (or Messages is missing).
 pub const NOT_AN_IPHONE_BACKUP: &str =
     "This folder is not an iPhone backup, or Messages is missing from it.";

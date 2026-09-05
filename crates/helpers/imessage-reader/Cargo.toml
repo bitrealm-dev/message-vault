@@ -1,0 +1,31 @@
+[package]
+name = "imessage-reader"
+version = "0.1.0"
+edition = "2024"
+# GPL because it links imessage-database and crabapple, both GPL-3.0-or-later.
+# This is the only crate in the repository under a copyleft licence, and the
+# desktop app never links it: it runs the built binary as a separate process
+# and talks to it over pipes (see crates/helpers/imessage-reader-protocol).
+# Why: docs/agents/licences.md.
+license = "GPL-3.0-or-later"
+description = "Reads Apple Messages (chat.db or an iPhone backup) for the Message Vault desktop app, as a separate process"
+repository = "https://github.com/bitrealm-io/message-vault"
+# Every other workspace crate is a library (docs/adr/0001). This one is a
+# program because a process boundary is what keeps the GPL on this side of it.
+
+[[bin]]
+name = "imessage-reader"
+path = "src/main.rs"
+
+[dependencies]
+chrono = "0.4.44"
+crabapple = { version = "=0.4.7" }
+imessage-database = "4.2.0"
+imessage-reader-protocol = { path = "../imessage-reader-protocol" }
+plist = "1.9.0"
+rusqlite = { version = "=0.40.0", features = ["blob", "bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3.27.0"
