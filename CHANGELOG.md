@@ -40,6 +40,7 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ### Changed
 
+- 2026-09-05: Release builds of the vault server and the desktop app use whole-program optimisation and stripped symbols. Shared Rust dependencies are declared once in the workspace; `quick-xml` is on one version.
 - 2026-09-05: The import mode (`replace` or `append`) is one shared type across the HTTP API, the `import` command, `vault-push` and the desktop push command. A mode that is not one of the two is refused at the edge with the same message everywhere.
 - 2026-09-05: The nine hand-written error types across the vault server, io-core, contacts and vault-http derive `thiserror::Error`; messages and source chains are unchanged.
 - 2026-09-05: The desktop app reads Apple Messages through a separate program, `imessage-reader`, which the installer ships beside the app. The parser it uses (`imessage-database`) is GPL and the app is under the Fair Core License, so the two can no longer be one binary. Nothing changes on screen. A dependency-licence policy (`docs/agents/licences.md`) and a `cargo deny` licence check in the Audit workflow enforce the boundary.

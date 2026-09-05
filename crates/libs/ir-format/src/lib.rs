@@ -9,8 +9,6 @@
 //! Directory convert lives in `message-reexport`. Schema types live in
 //! `message-ir`.
 
-#![warn(missing_docs)]
-
 mod clean;
 mod export_transforms;
 mod export_writer;

@@ -24,8 +24,6 @@
 //! This crate carries no logic beyond the type definitions and their serde
 //! shapes. It is MIT OR Apache-2.0 so that both sides can link it.
 
-#![warn(missing_docs)]
-
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};

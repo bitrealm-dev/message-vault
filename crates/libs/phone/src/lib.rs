@@ -1,7 +1,5 @@
 //! Shared US-centric phone-number parsing for message converters.
 
-#![warn(missing_docs)]
-
 use std::collections::HashSet;
 use std::fmt;
 

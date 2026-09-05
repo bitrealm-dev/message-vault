@@ -437,12 +437,12 @@ fn parse_smil_refs(data: &[u8]) -> SmilRefs {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e) | Event::Empty(e)) => {
-                let tag = String::from_utf8_lossy(e.name().as_ref()).to_ascii_lowercase();
+                let tag = e.name().as_ref().to_ascii_lowercase();
                 let mut src = None;
                 for attr in e.attributes().flatten() {
-                    let key = String::from_utf8_lossy(attr.key.as_ref()).to_ascii_lowercase();
+                    let key = attr.key.as_ref().to_ascii_lowercase();
                     if key == "src" {
-                        src = Some(String::from_utf8_lossy(&attr.value).into_owned());
+                        src = Some(attr.value.to_string());
                     }
                 }
                 if let Some(s) = src {

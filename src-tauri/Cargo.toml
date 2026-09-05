@@ -40,3 +40,18 @@ vault-pull = { path = "../crates/libs/vault-pull" }
 
 [dev-dependencies]
 tempfile = "3"
+
+# Mirrors the workspace lints in the root Cargo.toml; this crate is outside
+# the workspace and cannot inherit them.
+[lints.rust]
+missing_docs = "warn"
+
+[lints.clippy]
+str_to_string = "allow"
+redundant_pub_crate = "allow"
+
+# Same release profile as the workspace root.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true

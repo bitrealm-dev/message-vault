@@ -1,7 +1,5 @@
 //! Convert an existing Message Vault output directory to another format.
 
-#![warn(missing_docs)]
-
 use anyhow::{Context, Result, bail};
 use media::{CompressOptions, MediaMode};
 use message_ir::ConversationDocument;

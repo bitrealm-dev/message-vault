@@ -10,8 +10,6 @@
 //! reads every vault answer, so the vault's `{error}` failure body is
 //! understood in one place rather than in each client.
 
-#![warn(missing_docs)]
-
 mod auth_error;
 mod response;
 mod retry;
