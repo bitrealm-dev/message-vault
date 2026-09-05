@@ -1,0 +1,100 @@
+name: Coverage
+
+# Test coverage for the Rust workspace, measured by cargo-llvm-cov through
+# scripts/coverage.sh. Coverage is a report, not a gate: nothing here fails
+# a pull request, so it lives outside ci.yml, whose every job the ruleset
+# on main requires. It runs on each push to main, so the trend is visible
+# commit by commit, and on demand. Why: docs/adr/0007-ci-is-the-only-gate.md.
+# The HTML and lcov reports are kept as a workflow artifact and the summary
+# table lands on the run's summary page.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    name: Coverage (Rust workspace)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Same Postgres service as the test job in ci.yml, so the gated server
+    # suites count towards the numbers instead of skipping themselves.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: vault
+          POSTGRES_PASSWORD: vault
+          POSTGRES_DB: vault
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vault"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      # The instrumented build goes under target/llvm-cov-target, so this
+      # cache is separate from the ci.yml build cache on purpose.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-llvm-cov-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-llvm-cov-
+
+      - name: Measure coverage
+        env:
+          MV_TEST_POSTGRES_URL: postgres://vault:vault@127.0.0.1:5432/vault
+        run: ./scripts/coverage.sh
+
+      - name: Publish summary
+        run: |
+          {
+            echo '## Coverage (Rust workspace)'
+            echo
+            echo 'Function coverage is the number to chase. The full list of'
+            echo 'uncovered functions is in the artifact.'
+            echo
+            echo '```'
+            cat target/llvm-cov/functions.txt
+            echo '```'
+            echo
+            echo '<details><summary>Per-file table (regions, functions, lines)</summary>'
+            echo
+            echo '```'
+            cat target/llvm-cov/summary.txt
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload reports
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-${{ github.sha }}
+          path: |
+            target/llvm-cov/html
+            target/llvm-cov/lcov.info
+            target/llvm-cov/summary.txt
+            target/llvm-cov/functions.txt
+            target/llvm-cov/uncovered-functions.txt
+          retention-days: 30

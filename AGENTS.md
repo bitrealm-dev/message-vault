@@ -178,6 +178,7 @@ nvm use 22
 sudo apt install -y pipx && pipx ensurepath
 pipx install 'whatsapp-chat-exporter[android_backup,crypt15]'   # wtsexporter
 pipx install sqlite-web                                          # --sqlweb on port 8081
+cargo install cargo-llvm-cov --locked                             # ./scripts/coverage.sh
 ```
 
 **5. Clone and install the frontend**
@@ -268,7 +269,15 @@ cargo build --manifest-path src-tauri/Cargo.toml
 # minutes against the compose service; without the variable it is SQLite.
 docker compose -f docker-compose.pg.yml up -d
 MV_TEST_POSTGRES_URL=postgres://vault:vault@127.0.0.1:5432/vault cargo test -p message-vault-server
+
+# Test coverage for the workspace (cargo-llvm-cov). Ends with the count of
+# functions no test calls and the files with the most; every one is named
+# in target/llvm-cov/uncovered-functions.txt. HTML report at
+# target/llvm-cov/html/index.html; --open shows it.
+./scripts/coverage.sh
 ```
+
+Coverage is a report, not a gate, and function coverage is the number worth chasing: a function no test calls is the finding, while uncovered lines inside a called function are not a target. `scripts/coverage.sh` needs `cargo-llvm-cov`, the `llvm-tools` component that `rust-toolchain.toml` installs, and `python3`; it leaves test code out of the numbers and does not measure `src-tauri`. The `Coverage` workflow (`coverage.yml`) runs the same script on every push to `main`, puts the function headline on the run's summary page, and keeps the reports and the uncovered-functions list as a workflow artifact for 30 days.
 
 #### Frontend
 
