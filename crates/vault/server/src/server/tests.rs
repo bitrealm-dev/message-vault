@@ -133,18 +133,12 @@ async fn test_state() -> (TempDir, AppState, String, i64) {
     .unwrap();
     let import_id = crate::db::vault_imports::start_import(
         &mut pool.acquire().await.unwrap(),
-        &crate::db::vault_imports::StartImportArgs {
-            account_id: TEST_ACCOUNT,
-            source: "ios",
-            mode: "append",
-            tool: Some("message-vault-server"),
-            stage: crate::db::vault_imports::ImportStage::Parse,
-            staging_dir: None,
-            device_id: None,
-            form_json: None,
-            source_fingerprint: None,
-            source_identities: None,
-        },
+        &crate::db::vault_imports::StartImportArgs::new(
+            TEST_ACCOUNT,
+            "ios",
+            "append",
+            Some("message-vault-server"),
+        ),
     )
     .await
     .unwrap();

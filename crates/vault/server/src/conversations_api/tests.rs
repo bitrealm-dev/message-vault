@@ -814,18 +814,7 @@ async fn list_conversations_filters_by_import_id() {
 
     let import_a = vault_imports::start_import(
         &mut conn,
-        &vault_imports::StartImportArgs {
-            account_id: &account,
-            source: "imessage-ios",
-            mode: "append",
-            tool: Some("test"),
-            stage: vault_imports::ImportStage::Parse,
-            staging_dir: None,
-            device_id: None,
-            form_json: None,
-            source_fingerprint: None,
-            source_identities: None,
-        },
+        &vault_imports::StartImportArgs::new(&account, "imessage-ios", "append", Some("test")),
     )
     .await
     .unwrap();
@@ -841,18 +830,7 @@ async fn list_conversations_filters_by_import_id() {
     .unwrap();
     let import_b = vault_imports::start_import(
         &mut conn,
-        &vault_imports::StartImportArgs {
-            account_id: &account,
-            source: "imessage-ios",
-            mode: "append",
-            tool: Some("test"),
-            stage: vault_imports::ImportStage::Parse,
-            staging_dir: None,
-            device_id: None,
-            form_json: None,
-            source_fingerprint: None,
-            source_identities: None,
-        },
+        &vault_imports::StartImportArgs::new(&account, "imessage-ios", "append", Some("test")),
     )
     .await
     .unwrap();
@@ -1020,18 +998,7 @@ async fn duplicate_only_threads_sort_last_in_either_date_direction() {
 
     let import_a = vault_imports::start_import(
         &mut conn,
-        &vault_imports::StartImportArgs {
-            account_id: &account,
-            source: "imessage-ios",
-            mode: "append",
-            tool: Some("test"),
-            stage: vault_imports::ImportStage::Parse,
-            staging_dir: None,
-            device_id: None,
-            form_json: None,
-            source_fingerprint: None,
-            source_identities: None,
-        },
+        &vault_imports::StartImportArgs::new(&account, "imessage-ios", "append", Some("test")),
     )
     .await
     .unwrap();
@@ -1137,18 +1104,7 @@ async fn list_conversations_import_id_includes_duplicate_only_thread() {
 
     let import_a = vault_imports::start_import(
         &mut conn,
-        &vault_imports::StartImportArgs {
-            account_id: &account,
-            source: "imessage-ios",
-            mode: "append",
-            tool: Some("test"),
-            stage: vault_imports::ImportStage::Parse,
-            staging_dir: None,
-            device_id: None,
-            form_json: None,
-            source_fingerprint: None,
-            source_identities: None,
-        },
+        &vault_imports::StartImportArgs::new(&account, "imessage-ios", "append", Some("test")),
     )
     .await
     .unwrap();

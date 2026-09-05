@@ -31,7 +31,7 @@ function session(overrides: Partial<ActiveImportSession> = {}): ActiveImportSess
 
 describe("ResumeImportPanel", () => {
   it("renders nothing when there is no session to decide about", () => {
-    const decision: ResumeDecision = { kind: "none", canResume: false, session: null };
+    const decision: ResumeDecision = { kind: "none", session: null };
     const { container } = render(
       <ResumeImportPanel decision={decision} onResume={vi.fn()} onDiscard={vi.fn()} />,
     );
@@ -42,7 +42,7 @@ describe("ResumeImportPanel", () => {
     const user = userEvent.setup();
     const onResume = vi.fn();
     const onDiscard = vi.fn();
-    const decision: ResumeDecision = { kind: "resume_push", canResume: true, session: session() };
+    const decision: ResumeDecision = { kind: "resume_push", session: session() };
     render(<ResumeImportPanel decision={decision} onResume={onResume} onDiscard={onDiscard} />);
 
     expect(screen.getByText("Finish your last import")).toBeInTheDocument();
@@ -66,7 +66,6 @@ describe("ResumeImportPanel", () => {
     const onDiscard = vi.fn();
     const decision: ResumeDecision = {
       kind: "restart",
-      canResume: false,
       session: session({ stage: "write" }),
     };
     render(<ResumeImportPanel decision={decision} onResume={onResume} onDiscard={onDiscard} />);
@@ -91,7 +90,6 @@ describe("ResumeImportPanel", () => {
     const onDiscard = vi.fn();
     const decision: ResumeDecision = {
       kind: "resume_gate",
-      canResume: true,
       session: session({ stage: "awaiting_gate_1" }),
     };
     render(<ResumeImportPanel decision={decision} onResume={onResume} onDiscard={onDiscard} />);
@@ -116,7 +114,6 @@ describe("ResumeImportPanel", () => {
     const onDiscard = vi.fn();
     const decision: ResumeDecision = {
       kind: "resume_media",
-      canResume: true,
       session: session({ stage: "transcode" }),
     };
     render(<ResumeImportPanel decision={decision} onResume={onResume} onDiscard={onDiscard} />);
@@ -141,7 +138,6 @@ describe("ResumeImportPanel", () => {
     const onDiscard = vi.fn();
     const decision: ResumeDecision = {
       kind: "folder_missing",
-      canResume: false,
       session: session({ staging_dir: "/home/u/message-vault/staging-260830" }),
     };
     render(<ResumeImportPanel decision={decision} onResume={onResume} onDiscard={onDiscard} />);
@@ -168,7 +164,6 @@ describe("ResumeImportPanel", () => {
     // raw POST /v1/import — stores a null staging_dir.
     const decision: ResumeDecision = {
       kind: "folder_missing",
-      canResume: false,
       session: session({ staging_dir: null }),
     };
     render(<ResumeImportPanel decision={decision} onResume={onResume} onDiscard={onDiscard} />);
@@ -187,13 +182,35 @@ describe("ResumeImportPanel", () => {
     expect(onResume).not.toHaveBeenCalled();
   });
 
+  it("says the folder could not be checked rather than calling it gone", async () => {
+    const user = userEvent.setup();
+    const onResume = vi.fn();
+    const onDiscard = vi.fn();
+    const decision: ResumeDecision = {
+      kind: "folder_unknown",
+      session: session({ staging_dir: "/home/u/message-vault/staging-260830" }),
+    };
+    render(<ResumeImportPanel decision={decision} onResume={onResume} onDiscard={onDiscard} />);
+
+    expect(screen.getByText("The staged files could not be checked")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Message Vault could not check /home/u/message-vault/staging-260830. Open Import again to check once more, or discard this import to start a new one.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/gone/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Discard this import" }));
+    expect(onDiscard).toHaveBeenCalledTimes(1);
+    expect(onResume).not.toHaveBeenCalled();
+  });
+
   it("offers discard alone when the session belongs to another install", async () => {
     const user = userEvent.setup();
     const onResume = vi.fn();
     const onDiscard = vi.fn();
     const decision: ResumeDecision = {
       kind: "other_device",
-      canResume: false,
       session: session({ device_id: "other-device" }),
     };
     render(<ResumeImportPanel decision={decision} onResume={onResume} onDiscard={onDiscard} />);
@@ -216,7 +233,6 @@ describe("ResumeImportPanel", () => {
     const onDiscard = vi.fn();
     const decision: ResumeDecision = {
       kind: "settings_unreadable",
-      canResume: false,
       session: session(),
     };
     render(<ResumeImportPanel decision={decision} onResume={onResume} onDiscard={onDiscard} />);
@@ -238,7 +254,6 @@ describe("ResumeImportPanel", () => {
   it("says nothing extra when there is no error to report", () => {
     const decision: ResumeDecision = {
       kind: "resume_gate",
-      canResume: true,
       session: session({ stage: "awaiting_gate_1" }),
     };
     render(<ResumeImportPanel decision={decision} onResume={vi.fn()} onDiscard={vi.fn()} />);
@@ -250,7 +265,6 @@ describe("ResumeImportPanel", () => {
     const onResume = vi.fn();
     const decision: ResumeDecision = {
       kind: "resume_gate",
-      canResume: true,
       session: session({ stage: "awaiting_gate_1" }),
     };
     render(
@@ -275,7 +289,6 @@ describe("ResumeImportPanel", () => {
     const onDiscard = vi.fn();
     const decision: ResumeDecision = {
       kind: "resume_write",
-      canResume: true,
       session: session({ stage: "write" }),
     };
     render(<ResumeImportPanel decision={decision} onResume={onResume} onDiscard={onDiscard} />);
@@ -300,7 +313,6 @@ describe("ResumeImportPanel", () => {
     const onDiscard = vi.fn();
     const decision: ResumeDecision = {
       kind: "source_changed",
-      canResume: false,
       session: session({
         stage: "write",
         source_fingerprint: {
@@ -327,7 +339,6 @@ describe("ResumeImportPanel", () => {
   it("says the backup changed without a path when the session recorded none", () => {
     const decision: ResumeDecision = {
       kind: "source_changed",
-      canResume: false,
       session: session({ stage: "write" }),
     };
     render(<ResumeImportPanel decision={decision} onResume={vi.fn()} onDiscard={vi.fn()} />);

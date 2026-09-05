@@ -26,7 +26,7 @@ describe("resumeDecisionFor", () => {
       resumeDecisionFor({
         session: null,
         deviceId: "this-device",
-        folderExists: false,
+        folder: "missing",
         fingerprint: "unknown",
       }).kind,
     ).toBe("none");
@@ -36,33 +36,56 @@ describe("resumeDecisionFor", () => {
     const decision = resumeDecisionFor({
       session: session({ device_id: "other-device" }),
       deviceId: "this-device",
-      folderExists: true,
+      folder: "present",
       fingerprint: "unknown",
     });
     expect(decision.kind).toBe("other_device");
-    expect(decision.canResume).toBe(false);
   });
 
   it("offers discard alone when the staging folder is gone", () => {
     const decision = resumeDecisionFor({
       session: session(),
       deviceId: "this-device",
-      folderExists: false,
+      folder: "missing",
       fingerprint: "unknown",
     });
     expect(decision.kind).toBe("folder_missing");
-    expect(decision.canResume).toBe(false);
+  });
+
+  it("says the folder could not be checked when the stat itself failed", () => {
+    // An IPC error is not evidence the folder is gone: the panel must not
+    // offer to discard staged work on the strength of one.
+    for (const stage of ["pushing", "awaiting_gate_1", "transcode", "write", "parse"] as const) {
+      expect(
+        resumeDecisionFor({
+          session: session({ stage }),
+          deviceId: "this-device",
+          folder: "unknown",
+          fingerprint: "unknown",
+        }).kind,
+      ).toBe("folder_unknown");
+    }
+  });
+
+  it("puts a session that never recorded a folder ahead of the folder check", () => {
+    expect(
+      resumeDecisionFor({
+        session: session({ staging_dir: null }),
+        deviceId: "this-device",
+        folder: "unknown",
+        fingerprint: "unknown",
+      }).kind,
+    ).toBe("folder_missing");
   });
 
   it("resumes the upload when a push was interrupted", () => {
     const decision = resumeDecisionFor({
       session: session({ stage: "pushing" }),
       deviceId: "this-device",
-      folderExists: true,
+      folder: "present",
       fingerprint: "unknown",
     });
     expect(decision.kind).toBe("resume_push");
-    expect(decision.canResume).toBe(true);
   });
 
   it("restarts when the run died before it had written anything", () => {
@@ -72,7 +95,7 @@ describe("resumeDecisionFor", () => {
       resumeDecisionFor({
         session: session({ stage: "parse" }),
         deviceId: "this-device",
-        folderExists: true,
+        folder: "present",
         fingerprint: "match",
       }).kind,
     ).toBe("restart");
@@ -83,11 +106,10 @@ describe("resumeDecisionFor", () => {
       const decision = resumeDecisionFor({
         session: session({ stage }),
         deviceId: "this-device",
-        folderExists: true,
+        folder: "present",
         fingerprint: "unknown",
       });
       expect(decision.kind).toBe("resume_gate");
-      expect(decision.canResume).toBe(true);
     }
   });
 
@@ -95,11 +117,10 @@ describe("resumeDecisionFor", () => {
     const decision = resumeDecisionFor({
       session: session({ stage: "transcode" }),
       deviceId: "this-device",
-      folderExists: true,
+      folder: "present",
       fingerprint: "unknown",
     });
     expect(decision.kind).toBe("resume_media");
-    expect(decision.canResume).toBe(true);
   });
 
   it("still offers discard only when the folder is gone at a gate", () => {
@@ -110,7 +131,7 @@ describe("resumeDecisionFor", () => {
         resumeDecisionFor({
           session: session({ stage }),
           deviceId: "this-device",
-          folderExists: false,
+          folder: "missing",
           fingerprint: "unknown",
         }).kind,
       ).toBe("folder_missing");
@@ -122,7 +143,7 @@ describe("resumeDecisionFor", () => {
       resumeDecisionFor({
         session: session({ device_id: null }),
         deviceId: "this-device",
-        folderExists: true,
+        folder: "present",
         fingerprint: "unknown",
       }).kind,
     ).toBe("resume_push");
@@ -131,11 +152,10 @@ describe("resumeDecisionFor", () => {
     const decision = resumeDecisionFor({
       session: session({ stage: "write" }),
       deviceId: "this-device",
-      folderExists: true,
+      folder: "present",
       fingerprint: "match",
     });
     expect(decision.kind).toBe("resume_write");
-    expect(decision.canResume).toBe(true);
   });
 
   it("still offers to pick up when the backup cannot be checked", () => {
@@ -143,7 +163,7 @@ describe("resumeDecisionFor", () => {
       resumeDecisionFor({
         session: session({ stage: "write" }),
         deviceId: "this-device",
-        folderExists: true,
+        folder: "present",
         fingerprint: "unknown",
       }).kind,
     ).toBe("resume_write");
@@ -154,11 +174,10 @@ describe("resumeDecisionFor", () => {
       const decision = resumeDecisionFor({
         session: session({ stage: "write" }),
         deviceId: "this-device",
-        folderExists: true,
+        folder: "present",
         fingerprint,
       });
       expect(decision.kind).toBe("source_changed");
-      expect(decision.canResume).toBe(false);
     }
   });
 
@@ -167,7 +186,7 @@ describe("resumeDecisionFor", () => {
       resumeDecisionFor({
         session: session({ stage: "parse" }),
         deviceId: "this-device",
-        folderExists: true,
+        folder: "present",
         fingerprint: "mismatch",
       }).kind,
     ).toBe("restart");
@@ -180,7 +199,7 @@ describe("resumeDecisionFor", () => {
       resumeDecisionFor({
         session: session({ stage: "pushing" }),
         deviceId: "this-device",
-        folderExists: true,
+        folder: "present",
         fingerprint: "mismatch",
       }).kind,
     ).toBe("resume_push");
@@ -191,7 +210,7 @@ describe("resumeDecisionFor", () => {
       resumeDecisionFor({
         session: session({ stage: "write" }),
         deviceId: "this-device",
-        folderExists: false,
+        folder: "missing",
         fingerprint: "match",
       }).kind,
     ).toBe("folder_missing");

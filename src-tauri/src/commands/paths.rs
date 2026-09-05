@@ -412,4 +412,53 @@ mod tests {
         let stat = path_stat_inner("  ").unwrap();
         assert!(!stat.exists);
     }
+
+    /// The fingerprint a resumed import compares against is built from these
+    /// two fields, so the byte count must be the file's own and the modified
+    /// time must be the filesystem's, in milliseconds.
+    #[test]
+    fn path_stat_reports_size_and_modified_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("chat.db");
+        fs::write(&file, b"sqlite").unwrap();
+
+        let stat = path_stat_inner(file.to_str().unwrap()).unwrap();
+        assert_eq!(stat.size_bytes, 6);
+
+        let expected_ms = fs::metadata(&file)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        assert_eq!(
+            stat.modified_unix_ms,
+            Some(i64::try_from(expected_ms).unwrap())
+        );
+        // A seconds or nanoseconds value would be off by a factor of a
+        // thousand either way; this pins the unit against the clock.
+        let now_ms = i64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+        )
+        .unwrap();
+        let modified = stat.modified_unix_ms.unwrap();
+        assert!((now_ms - modified).abs() < 60_000, "{modified} vs {now_ms}");
+    }
+
+    /// A path that is not there has nothing to measure: zero bytes and no
+    /// modified time, rather than an error the resume screen would have to
+    /// tell apart from a real failure.
+    #[test]
+    fn path_stat_missing_has_no_size_or_modified_time() {
+        let stat = path_stat_inner("/no/such/message-vault-path-stat").unwrap();
+        assert_eq!(stat.size_bytes, 0);
+        assert_eq!(stat.modified_unix_ms, None);
+        let blank = path_stat_inner("  ").unwrap();
+        assert_eq!(blank.size_bytes, 0);
+        assert_eq!(blank.modified_unix_ms, None);
+    }
 }

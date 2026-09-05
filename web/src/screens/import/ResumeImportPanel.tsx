@@ -69,6 +69,14 @@ const COPY: Record<ResumableKind, PanelCopy> = {
         : "This import did not record a staged folder, so there is nothing here to carry on from. Discarding it lets you start a new one.",
     primary: { label: "Discard this import", action: "discard" },
   },
+  // The stat of the staging folder failed, which says nothing about whether
+  // the folder is there, so the copy says that rather than calling it gone.
+  folder_unknown: {
+    heading: () => "The staged files could not be checked",
+    body: (session) =>
+      `Message Vault could not check ${session.staging_dir ?? "this import's folder"}. Open Import again to check once more, or discard this import to start a new one.`,
+    primary: { label: "Discard this import", action: "discard" },
+  },
   other_device: {
     heading: () => "This import belongs to another computer",
     body: () =>

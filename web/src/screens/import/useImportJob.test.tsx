@@ -23,6 +23,7 @@ import type {
   TauriJobResult,
 } from "../../lib/tauri";
 import type { AttachmentMediaMode, ImportIssueEvent, ImportProgressEvent } from "../../lib/types";
+import { restoreFormFromSnapshot } from "./formSnapshot";
 import { gateDelta } from "./gateDelta";
 
 const createImportMock = vi.fn();
@@ -123,9 +124,7 @@ vi.mock("../../lib/importSession", async (importOriginal) => {
 });
 
 // Imported after the mocks above so useImportJob picks up the mocked modules.
-const { useImportJob, restoreFormFromSnapshot, parseStoredStagingSummary } = await import(
-  "./useImportJob"
-);
+const { useImportJob, parseStoredStagingSummary } = await import("./useImportJob");
 
 /**
  * `runMock` stands in for `useTauriJob().run`, which always calls the

@@ -46,6 +46,7 @@ import { completeImport, createImport } from "../../lib/vaultApi";
 import { importSessionCreateBody } from "../../lib/vaultSource";
 import { whatsappExtractFields } from "../../lib/whatsappExtractFields";
 import { isWhatsappMethod } from "../../lib/whatsappImport";
+import { formSnapshot, isStringArray } from "./formSnapshot";
 import { gateDelta as computeGateDelta, type GateDelta } from "./gateDelta";
 import { mediaJobVerb } from "./gateForecast";
 import { importOutcome } from "./importOutcome";
@@ -263,77 +264,6 @@ export type ResumePush = {
    * `completed_with_issues` for exactly the interrupted-and-resumed case. */
   approved?: StagingSummary;
 };
-
-const ATTACHMENT_MEDIA_MODES: readonly AttachmentMediaMode[] = [
-  "copy",
-  "convert",
-  "compress",
-  "skip",
-];
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
-}
-
-/**
- * Rebuild form values from a session's stored snapshot.
- *
- * The snapshot omits `backupPassword` and `whatsappKey`, defaulted to ""
- * here: the resume path never re-runs extract, and the push only reads
- * `force` and `attachmentMedia`, both present in the snapshot.
- *
- * The snapshot came from the database, not from this session's own state,
- * so its shape is checked field by field rather than trusted. Returns
- * null for anything that doesn't match, instead of throwing.
- */
-export function restoreFormFromSnapshot(raw: unknown): ImportJobFormValues | null {
-  if (typeof raw !== "object" || raw === null) return null;
-  const r = raw as Record<string, unknown>;
-  if (typeof r.source !== "string") return null;
-  if (typeof r.backupPath !== "string") return null;
-  if (
-    typeof r.attachmentMedia !== "string" ||
-    !ATTACHMENT_MEDIA_MODES.includes(r.attachmentMedia as AttachmentMediaMode)
-  ) {
-    return null;
-  }
-  if (typeof r.maxResolution !== "string") return null;
-  if (typeof r.maxFps !== "string") return null;
-  if (typeof r.minSizeMb !== "string") return null;
-  if (!isStringArray(r.ownerPhones)) return null;
-  // Snapshots written before SMS Backup+ had an email field carry none.
-  const ownerEmails = isStringArray(r.ownerEmails) ? r.ownerEmails : [];
-  if (typeof r.force !== "boolean") return null;
-  if (typeof r.obfuscate !== "boolean") return null;
-  if (typeof r.isAndroidSms !== "boolean") return null;
-  if (typeof r.attachmentRoot !== "string") return null;
-  if (typeof r.appleContacts !== "string") return null;
-  if (typeof r.whatsappWa !== "string") return null;
-  if (typeof r.whatsappMedia !== "string") return null;
-  if (typeof r.whatsappDb !== "string") return null;
-  if (typeof r.whatsappBusiness !== "boolean") return null;
-
-  return {
-    source: r.source,
-    backupPath: r.backupPath,
-    backupPassword: "",
-    attachmentMedia: r.attachmentMedia as AttachmentMediaMode,
-    maxResolution: r.maxResolution,
-    maxFps: r.maxFps,
-    minSizeMb: r.minSizeMb,
-    ownerPhones: r.ownerPhones,
-    ownerEmails,
-    force: r.force,
-    obfuscate: r.obfuscate,
-    isAndroidSms: r.isAndroidSms,
-    attachmentRoot: r.attachmentRoot,
-    appleContacts: r.appleContacts,
-    whatsappKey: "",
-    whatsappWa: r.whatsappWa,
-    whatsappMedia: r.whatsappMedia,
-    whatsappDb: r.whatsappDb,
-    whatsappBusiness: r.whatsappBusiness,
-  };
-}
 
 const SIZE_VERDICTS: readonly SizeVerdict[] = [
   "fits_as_is",
@@ -568,12 +498,6 @@ export function useImportJob() {
     } finally {
       unlisten();
     }
-  }
-
-  /** Form snapshot for the session record, without the secrets. */
-  function formSnapshot(form: ImportJobFormValues): Record<string, unknown> {
-    const { backupPassword: _backupPassword, whatsappKey: _whatsappKey, ...rest } = form;
-    return rest;
   }
 
   /**
@@ -950,7 +874,6 @@ export function useImportJob() {
     setMediaPartiallyRan(false);
     setResumeError(null);
     setComputingSummary(false);
-    setSteps(initialSteps("active", form.attachmentMedia));
 
     let sessionId: number | null = null;
 
@@ -982,6 +905,10 @@ export function useImportJob() {
         await runPush(form, sessionId, outputDir, resume.approved);
         return;
       }
+
+      // Only a run that extracts starts from the fresh list; the resume
+      // above built its own, so setting this first would be overwritten.
+      setSteps(initialSteps("active", form.attachmentMedia));
 
       let outputDir: string;
       if (resumeWrite) {
