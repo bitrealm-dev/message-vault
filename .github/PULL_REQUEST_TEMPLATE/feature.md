@@ -23,8 +23,8 @@
 
 ## Database Changes
 
-- [ ] No database changes
-- [ ] Migration included and tested
+- [ ] No schema changes
+- [ ] `schema/sql/*.sql` changed and `SCHEMA_VERSION` bumped (every vault rebuilds empty and re-imports)
 
 ## How to Test
 
@@ -40,7 +40,7 @@
 - [ ] Added integration tests where applicable
 - [ ] Existing tests pass locally
 - [ ] Updated documentation
-- [ ] Backwards compatible (or migration plan documented)
+- [ ] `./scripts/check-pr.sh` passes and formatter rewrites are committed
 
 ## Related Issues
 

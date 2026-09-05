@@ -26,8 +26,8 @@ This is the same family of files that [SMS Backup & Restore](https://www.synctec
 | Piece | Crate / API |
 |-------|-------------|
 | XML codec (streaming read/write, SMIL, MMS media) | [`message-sbr`](https://github.com/bitrealm-io/message-vault/blob/main/crates/libs/sbr/) |
-| SBR → common message | [`message_ir_format::read_sbr_documents`](../../../crates/libs/ir-format/src/read_sbr.rs) |
-| Common message → SBR + export sink | [`message_ir_format::FormatSink`](../../../crates/libs/ir-format/) (XML uses `SbrBackupSession` internally) |
+| SBR → common message | [`message_ir_format::read_sbr_documents`](https://github.com/bitrealm-io/message-vault/blob/main/crates/libs/ir-format/src/read_sbr.rs) |
+| Common message → SBR + export sink | [`message_ir_format::FormatSink`](https://github.com/bitrealm-io/message-vault/tree/main/crates/libs/ir-format) (XML uses `SbrBackupSession` internally) |
 | CLI / GUI | `--format xml` / `OutputFormat::Xml` |
 
 Exporters use `FormatSink::open` → `write_document` per conversation → `finish`. Do **not** call `write_format(..., Xml, …)` (returns an error — a single shared file cannot be safely rewritten per chat).

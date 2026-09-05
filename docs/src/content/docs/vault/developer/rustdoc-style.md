@@ -81,6 +81,6 @@ Document the reason behind non-obvious choices — ordering, omitted files, perf
 
 Point doc links at existing documentation and use [`Item`] rustdoc references. Never use stale relative paths or plain-text mentions.
 
-- `crates/libs/ir/src/lib.rs:7` — "See the [message-ir architecture](../../../docs/maintainers/architecture/message-ir.md)." — Bad: broken link; the target moved to the docs site, and rustdoc warns on the unresolved relative link.
+- `crates/libs/ir/src/lib.rs:7` — `"See the [message-ir architecture](../../../docs/maintainers/architecture/message-ir.md)."` — Bad: broken link; the target moved to the docs site, and rustdoc warns on the unresolved relative link.
 - `crates/core/message-vault-io-core/src/exporters.rs:262` — "Matching `message-media` mode used by FormatSink." — Bad: names a flag that does not exist (the flag is `--media-mode`) and leaves FormatSink as plain text instead of a [`FormatSink`] link.
 - `crates/core/message-vault-io-core/src/config.rs:20` — "Per-conversation folder of `.eml` files (see https://bitrealm.io/vault/developer/formats/mail-archive/)." — Good: points at real documentation instead of restating the variant name.

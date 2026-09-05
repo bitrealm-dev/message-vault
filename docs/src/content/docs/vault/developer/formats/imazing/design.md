@@ -19,7 +19,7 @@ Discovery walks the selected path recursively without following directory symbol
 
 ## Output policy
 
-- Pipeline: iMazing CSV → `ConversationDocument` → [`message_ir_format::FormatSink`](../../../libs/ir-format/src/format_sink.rs) (`--format csv|eml|mbox|json|jsonl|xml`). Shared header: [`CSV_HEADERS`](https://github.com/bitrealm-io/message-vault/blob/main/crates/libs/ir-format/src/write.rs) / [CSV columns](/vault/developer/reference/csv-columns/).
+- Pipeline: iMazing CSV → `ConversationDocument` → [`message_ir_format::FormatSink`](https://github.com/bitrealm-io/message-vault/blob/main/crates/libs/ir-format/src/format_sink.rs) (`--format csv|eml|mbox|json|jsonl|xml`). Shared header: [`CSV_HEADERS`](https://github.com/bitrealm-io/message-vault/blob/main/crates/libs/ir-format/src/write.rs) / [CSV columns](/vault/developer/reference/csv-columns/).
 - SMS + iMessage for the same peer merge into one conversation (Messages family).
 - WhatsApp for the same peer is a **separate** file (`…__whatsapp.csv` / matching stem suffix for other formats).
 - Notification rows keep `imazing_type=Notification` in `source_fields_json`; direction is emitted as `incoming`.
@@ -69,6 +69,6 @@ Non-senders are invisible in the CSV.
 
 ## Related docs
 
-- Input format and source limitations: [`INPUT_FORMAT.md`](INPUT_FORMAT.md)
-- Contacts helper: [`../../../libs/contacts/README.md`](../../../libs/contacts/README.md)
+- Input format and source limitations: [iMazing input format](/vault/developer/formats/imazing/input/)
+- Contacts helper: [`crates/libs/contacts`](https://github.com/bitrealm-io/message-vault/tree/main/crates/libs/contacts)
 - Shared model and output contracts: [message-ir architecture](/vault/developer/architecture/common-message/), [export structure](/vault/developer/reference/export-structure/), [CSV columns](/vault/developer/reference/csv-columns/)
