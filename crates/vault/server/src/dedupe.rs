@@ -764,24 +764,11 @@ async fn apply_duplicate_flags(
 /// selects the engine and wins over `db_path`, mirroring
 /// [`crate::import_cli`]'s pool choice.
 pub async fn run_dedupe(
-    db_path: &std::path::Path,
+    target: crate::db::engine::DbTarget<'_>,
     account_id: &str,
     near_window_secs: i64,
-    db_url: Option<&str>,
 ) -> Result<DedupeStats> {
-    let pool = match db_url {
-        Some(url) => crate::db::engine::open_pool_from_url(url)
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to open database at {}",
-                    crate::import_cli::redact_db_url(url)
-                )
-            })?,
-        None => crate::db::engine::open_pool_for_path(db_path)
-            .await
-            .with_context(|| format!("failed to open database {}", db_path.display()))?,
-    };
+    let pool = target.open().await?;
     let mut conn = pool.acquire().await?;
     crate::db::schema::ensure_vault_schema(&mut conn).await?;
     dedupe_cross_source(&mut conn, account_id, None, near_window_secs).await

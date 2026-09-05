@@ -131,7 +131,8 @@ async fn dedupe_and_process_assets(
     account_id: &str,
     db_url: Option<&str>,
 ) -> Result<(dedupe::DedupeStats, process_assets::ProcessAssetsStats)> {
-    let dedupe_stats = dedupe::run_dedupe(db_path, account_id, 2, db_url).await?;
+    let target = engine::DbTarget::new(db_url, db_path);
+    let dedupe_stats = dedupe::run_dedupe(target, account_id, 2).await?;
     println!("Reset demo — processing prepared assets");
     let process_stats = process_assets::run(
         cfg,
@@ -286,7 +287,7 @@ fn refuse_url_config_without_flag(cfg: &Config, db_url: Option<&str>) -> Result<
     if let Some(url) = cfg.database.url.as_deref() {
         bail!(
             "reset-demo replaces the on-disk vault at paths.db, but this config serves the database from {}; URL-served databases cannot be reset this way — run reset-demo on the host that owns the database file",
-            crate::import_cli::redact_db_url(url)
+            crate::db::engine::redact_db_url(url)
         );
     }
     Ok(())
@@ -353,7 +354,7 @@ async fn reset_prepared_bundle_at_url(
     print_reset_header(
         account_id,
         &prepared,
-        &crate::import_cli::redact_db_url(db_url),
+        &crate::db::engine::redact_db_url(db_url),
     );
 
     seed_demo_account_at_url(db_url, account_id, &prepared.seed).await?;
@@ -1117,18 +1118,18 @@ async fn wipe_demo_account(cfg: &Config, account_id: &str) -> Result<()> {
 async fn wipe_demo_account_at_url(cfg: &Config, account_id: &str, db_url: &str) -> Result<()> {
     println!(
         "Reset demo — clearing account data in {}",
-        crate::import_cli::redact_db_url(db_url)
+        crate::db::engine::redact_db_url(db_url)
     );
     let pool = engine::open_pool_from_url(db_url).await.with_context(|| {
         format!(
             "open {} for demo account wipe",
-            crate::import_cli::redact_db_url(db_url)
+            crate::db::engine::redact_db_url(db_url)
         )
     })?;
     let mut conn = pool.acquire().await.with_context(|| {
         format!(
             "open {} for demo account wipe",
-            crate::import_cli::redact_db_url(db_url)
+            crate::db::engine::redact_db_url(db_url)
         )
     })?;
     schema::ensure_vault_schema(&mut conn).await?;

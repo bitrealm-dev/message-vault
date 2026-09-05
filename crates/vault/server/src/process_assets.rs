@@ -87,20 +87,14 @@ impl AssetRow {
 /// Returns an error when the database is missing, a conversion tool fails, or
 /// a derived file cannot be written.
 pub async fn run(cfg: &Config, opts: &ProcessAssetsOptions) -> Result<ProcessAssetsStats> {
-    let pool = match opts.db_url.as_deref() {
-        Some(url) => engine::open_pool_from_url(url)
-            .await
-            .with_context(|| format!("open database {}", crate::import_cli::redact_db_url(url)))?,
-        None => {
-            let db_path = opts.db.as_ref().unwrap_or(&cfg.paths.db);
-            if !db_path.is_file() {
-                bail!("database not found: {}", db_path.display());
-            }
-            engine::open_pool_for_path(db_path)
-                .await
-                .with_context(|| format!("open database {}", db_path.display()))?
-        }
-    };
+    let db_path = opts.db.as_ref().unwrap_or(&cfg.paths.db);
+    let target = engine::DbTarget::new(opts.db_url.as_deref(), db_path);
+    if let engine::DbTarget::Path(path) = target
+        && !path.is_file()
+    {
+        bail!("database not found: {}", path.display());
+    }
+    let pool = target.open().await?;
     let mut conn = pool.acquire().await?;
     schema::ensure_vault_schema(&mut conn).await?;
 
