@@ -16,3 +16,12 @@ export function canUseImportExportWithProfile(
   }
   return canUseImportExport(isTauriApp);
 }
+
+/**
+ * Convert (Settings → Convert) rewrites a folder of exported files and never
+ * reads a backup or the vault, so it needs the desktop app and nothing else:
+ * no profile, no import or export permission.
+ */
+export function canUseConvert(isTauriApp: boolean): boolean {
+  return isTauriApp;
+}

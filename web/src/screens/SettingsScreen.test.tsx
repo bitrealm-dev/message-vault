@@ -18,8 +18,18 @@ const profileState = vi.hoisted(() => ({
   profile: null as { username: string; is_admin?: boolean } | null,
 }));
 
+const tauriState = vi.hoisted(() => ({ isTauri: false }));
+
 vi.mock("../lib/useAccountProfile", () => ({
   useAccountProfile: () => ({ profile: profileState.profile }),
+}));
+
+vi.mock("../lib/tauri-check", () => ({
+  isTauri: () => tauriState.isTauri,
+}));
+
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open: vi.fn(),
 }));
 
 vi.mock("../lib/auth", () => ({
@@ -39,6 +49,7 @@ afterEach(() => {
 beforeEach(() => {
   apiGet.mockReset();
   apiGet.mockResolvedValue({ items: [] });
+  tauriState.isTauri = false;
 });
 
 function baseProfile(overrides: Partial<{ is_admin: boolean }>) {
@@ -96,5 +107,37 @@ describe("SettingsScreen admin gate", () => {
     // Wait for the panel itself, not merely for the request to go out.
     expect(await screen.findByText(/Everyone with an account on this vault/)).toBeInTheDocument();
     expect(apiGet).toHaveBeenCalled();
+  });
+});
+
+/**
+ * Convert runs `message-reexport` inside the desktop process, so the tab is a
+ * desktop-only tool. In a browser the tab must not exist and `?tab=convert`
+ * must fall back to Account, the same way the admin gate treats Users.
+ */
+describe("SettingsScreen convert gate", () => {
+  it("hides the Convert tab in the browser and falls ?tab=convert back to Account", () => {
+    profileState.profile = baseProfile({ is_admin: false });
+    renderSettings(["/settings?tab=convert"]);
+
+    expect(screen.queryByRole("tab", { name: "Convert" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Account" })).toHaveAttribute("aria-selected", "true");
+    expect(
+      screen.getByText(/Manage your account, profile, storage, system, and appearance\./),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the Convert tab and tool in the desktop app", () => {
+    tauriState.isTauri = true;
+    profileState.profile = baseProfile({ is_admin: false });
+    renderSettings(["/settings?tab=convert"]);
+
+    expect(screen.getByRole("tab", { name: "Convert" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByLabelText("Input folder")).toBeInTheDocument();
+    expect(screen.getByLabelText("Output folder")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Convert" })).toBeDisabled();
+    expect(
+      screen.getByText(/Manage your account, profile, storage, system, convert, and appearance\./),
+    ).toBeInTheDocument();
   });
 });

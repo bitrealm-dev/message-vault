@@ -54,6 +54,7 @@ const userGuideItems = [
       'vault/user/how-to/trash',
       'vault/user/how-to/settings',
       'vault/user/how-to/export-from-the-vault',
+      'vault/user/how-to/convert-formats',
       'vault/user/how-to/media-and-privacy',
       { slug: 'vault/user/how-to/rescue-imports', badge: limitedBadge },
       'vault/user/how-to/update',
@@ -140,10 +141,6 @@ export default defineConfig({
   site: 'https://bitrealm.io',
   redirects: {
     '/vault/developer/docker-compose/': '/vault/developer/docker/',
-    // Same content, new path. The command-line reference pages that were
-    // removed alongside this one get no redirect: those commands no longer
-    // exist, so a 404 is the honest answer. See docs/adr/0001.
-    '/vault/user/how-to/convert-formats/': '/vault/developer/reference/export-formats/',
   },
   markdown: {
     processor: satteri({ hastPlugins: [wrapTables] }),

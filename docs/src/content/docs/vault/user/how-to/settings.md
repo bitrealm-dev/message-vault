@@ -1,9 +1,10 @@
 ---
 title: Settings
-description: Account, profile, storage, and appearance settings.
+description: Account, profile, storage, system, convert, and appearance settings.
 ---
 
-Open **Settings** in the sidebar. Settings has four tabs:
+Open **Settings** in the sidebar. Settings has a tab for each area below.
+Administrators also see a **Users** tab, and the desktop app adds **System** and **Convert**.
 
 ## Account
 
@@ -22,6 +23,20 @@ Open **Settings** in the sidebar. Settings has four tabs:
 - **Usage** — attachment storage for this account
 - **Largest attachments** — top attachments by file size
 - Import history may also appear here when available
+
+## System
+
+Desktop app only.
+
+- **Staging directory** — where Import and Export write their temporary files, `~/message-vault` by default
+- **Remember importer paths** — Import restores the last backup path for each import source
+- **ffmpeg directory** — a folder holding `ffmpeg` and `ffprobe` when they aren't on the system PATH. See [Media and privacy](/vault/user/how-to/media-and-privacy/)
+
+## Convert
+
+Desktop app only.
+Convert rewrites a folder of exported files into another format, without reading a backup or the vault: an input folder, a different output folder, and the output format.
+Steps and the formats it reads and writes: [Convert formats](/vault/user/how-to/convert-formats/).
 
 ## Appearance
 

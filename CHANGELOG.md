@@ -11,6 +11,10 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ## [Unreleased]
 
+### Added
+
+- 2026-09-05: Settings → Convert, a desktop-only tool that rewrites a folder of exported files into another format (JSON Lines, JSON, CSV, EML, MBOX, or Android XML) without reading a backup or the vault. The input format is detected from the folder; the output folder must differ from the input, and the screen says so before a run starts.
+
 ### Removed
 
 - 2026-09-03: The export cursor, the `source=` parameter on `GET /v1/export/messages` and `/count` (write `source:imessage` in the query instead), the `savedSearches` and `savedSearch` fields, the `ok` and `account_ok` flags, and `vault-pull`'s unused `compose_query`.

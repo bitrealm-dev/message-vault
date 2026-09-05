@@ -1,34 +1,58 @@
 import { SelectionIndicator, Tab, TabList, TabPanel, Tabs } from "react-aria-components";
 import { useSearchParams } from "react-router-dom";
+import { canUseConvert } from "../lib/desktopFeatures";
 import { parseSelectKey } from "../lib/selectKey";
+import { isTauri } from "../lib/tauri-check";
 import { useAccountProfile } from "../lib/useAccountProfile";
 import { AccountSettingsPanel } from "./settings/AccountSettingsPanel";
 import { AdminUsersPanel } from "./settings/AdminUsersPanel";
 import { AppearanceSection } from "./settings/AppearanceSection";
+import { ConvertSection } from "./settings/ConvertSection";
 import { ProfileSettingsPanel } from "./settings/ProfileSettingsPanel";
 import { StorageSection } from "./settings/StorageSection";
 import { SystemSection } from "./settings/SystemSection";
 
-const BASE_TABS = ["account", "profile", "storage", "system", "appearance"] as const;
-const ADMIN_TABS = ["account", "profile", "users", "storage", "system", "appearance"] as const;
-type SettingsTab = (typeof ADMIN_TABS)[number];
+const ALL_TABS = [
+  "account",
+  "profile",
+  "users",
+  "storage",
+  "system",
+  "convert",
+  "appearance",
+] as const;
+type SettingsTab = (typeof ALL_TABS)[number];
 
-const BASE_TAB_LIST: { id: SettingsTab; label: string }[] = [
-  { id: "account", label: "Account" },
-  { id: "profile", label: "Profile" },
-  { id: "storage", label: "Storage" },
-  { id: "system", label: "System" },
-  { id: "appearance", label: "Appearance" },
-];
+const TAB_LABELS: Record<SettingsTab, string> = {
+  account: "Account",
+  profile: "Profile",
+  users: "Users",
+  storage: "Storage",
+  system: "System",
+  convert: "Convert",
+  appearance: "Appearance",
+};
 
-const ADMIN_TAB_LIST: { id: SettingsTab; label: string }[] = [
-  { id: "account", label: "Account" },
-  { id: "profile", label: "Profile" },
-  { id: "users", label: "Users" },
-  { id: "storage", label: "Storage" },
-  { id: "system", label: "System" },
-  { id: "appearance", label: "Appearance" },
-];
+/**
+ * Tabs this person can open, in display order. Users exists for
+ * administrators only, so `?tab=users` can never land a non-admin on a panel
+ * that will 403. Convert is a desktop-only tool: it runs `message-reexport`
+ * in the desktop process, so a browser visiting the website never sees it.
+ */
+function visibleTabs(isAdmin: boolean, isDesktop: boolean): SettingsTab[] {
+  return ALL_TABS.filter((id) => {
+    if (id === "users") return isAdmin;
+    if (id === "convert") return canUseConvert(isDesktop);
+    return true;
+  });
+}
+
+/** "account, profile, and appearance" — the header sentence built from the visible tabs. */
+function tabSummary(tabs: SettingsTab[]): string {
+  const names = tabs.map((id) => TAB_LABELS[id].toLowerCase());
+  if (names.length <= 1) return names.join("");
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+}
 
 function tabFromSearchParam(raw: string | null, allowed: readonly SettingsTab[]): SettingsTab {
   return parseSelectKey(raw, allowed) ?? "account";
@@ -44,23 +68,20 @@ export default function SettingsScreen() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { profile } = useAccountProfile();
   const isAdmin = profile?.is_admin === true;
-  const allowedTabs = isAdmin ? ADMIN_TABS : BASE_TABS;
-  const tabList = isAdmin ? ADMIN_TAB_LIST : BASE_TAB_LIST;
-  const tab = tabFromSearchParam(searchParams.get("tab"), allowedTabs);
+  const tabs = visibleTabs(isAdmin, isTauri());
+  const tab = tabFromSearchParam(searchParams.get("tab"), tabs);
 
   return (
     <div className="max-w-[820px] p-6 text-text">
       <header>
         <h2 className="m-0 text-text">Settings</h2>
-        <p className="mt-[0.35rem] text-[0.875rem] text-muted">
-          Manage your account, profile{isAdmin ? ", users" : ""}, storage, system, and appearance.
-        </p>
+        <p className="mt-[0.35rem] text-[0.875rem] text-muted">Manage your {tabSummary(tabs)}.</p>
       </header>
 
       <Tabs
         selectedKey={tab}
         onSelectionChange={(key) => {
-          const next = parseSelectKey(key, allowedTabs);
+          const next = parseSelectKey(key, tabs);
           if (!next) return;
           const params = new URLSearchParams(searchParams);
           params.set("tab", next);
@@ -71,9 +92,9 @@ export default function SettingsScreen() {
           aria-label="Settings sections"
           className="relative mt-5 flex gap-1 border-b border-border"
         >
-          {tabList.map((t) => (
-            <Tab key={t.id} id={t.id} className={tabClassName}>
-              {t.label}
+          {tabs.map((id) => (
+            <Tab key={id} id={id} className={tabClassName}>
+              {TAB_LABELS[id]}
               <SelectionIndicator className="absolute bottom-0 left-2 right-2 h-[2px] rounded-full bg-accent transition-[translate,width] duration-200 motion-reduce:transition-none" />
             </Tab>
           ))}
@@ -96,6 +117,11 @@ export default function SettingsScreen() {
         <TabPanel id="system" className="mt-6">
           <SystemSection />
         </TabPanel>
+        {tabs.includes("convert") ? (
+          <TabPanel id="convert" className="mt-6">
+            <ConvertSection />
+          </TabPanel>
+        ) : null}
         <TabPanel id="appearance" className="mt-6">
           <AppearanceSection />
         </TabPanel>
