@@ -90,35 +90,82 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
         session.options.export_path.display(),
     ));
 
-    // Prepare the sink before the message stream. Attachment files are written
-    // after parse by the shared runner, so prior IR artifacts (including stale
-    // attachments/) must be cleaned first — same pattern as WhatsApp / SMS
-    // Backup & Restore. A resumed run is the exception: what the interrupted
-    // run wrote is exactly the work this one gets to skip. The shared writer
-    // makes the open and the queue-or-sink decision; the drain stays local
-    // because the encrypted-backup loader cannot go through
-    // `ExportWriter::finish`.
     let ExportWriterParts {
         mut sink,
         attachments_dir,
         use_queue,
         ..
-    } = ExportWriter::open(
+    } = open_writer(session)?;
+    let mut conversations = collect_conversations(session)?;
+
+    // The queue-or-sink decision came from `ExportWriter::open`: JSONL
+    // without obfuscation is the import path and drains the write queue;
+    // everything else keeps the sink path.
+    if use_queue {
+        return drain_conversations(session, conversations);
+    }
+    if is_file_backed(format) {
+        stage_conversation_attachments(session, &mut conversations, &attachments_dir)?;
+    }
+    write_conversations(session, &mut sink, conversations)?;
+    sink.finish()
+        .map_err(|e| RuntimeError::InvalidOptions(format!("finish export sink: {e:#}")))
+}
+
+/// Open the sink before the message stream. Attachment files are written
+/// after parse by the shared runner, so prior IR artifacts (including stale
+/// `attachments/`) must be cleaned first, the same pattern as WhatsApp and
+/// SMS Backup & Restore. A resumed run is the exception: what the
+/// interrupted run wrote is exactly the work this one gets to skip. The
+/// shared writer makes the open and the queue-or-sink decision; the drain
+/// stays local because the encrypted-backup loader cannot go through
+/// `ExportWriter::finish`.
+fn open_writer(session: &MailSession) -> Result<ExportWriterParts, RuntimeError> {
+    Ok(ExportWriter::open(
         &session.options.export_path,
-        format,
+        session.options.output_format,
         session.options.transforms.clone(),
         session.options.resume,
     )
     .map_err(|e| RuntimeError::InvalidOptions(format!("open export sink: {e:#}")))?
-    .into_parts();
+    .into_parts())
+}
 
-    let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
-    let mut current_message_row = -1;
-    let mut current_message = 0u64;
-    let mut failures: u64 = 0;
-    let total_messages =
-        Message::get_count(session.data_source.db(), &session.options.query_context)?;
+/// Formats whose attachments are files under `attachments/` rather than
+/// bytes embedded in the document.
+fn is_file_backed(format: OutputFormat) -> bool {
+    matches!(
+        format,
+        OutputFormat::Csv | OutputFormat::Json | OutputFormat::Jsonl | OutputFormat::Xml
+    )
+}
 
+/// Whether this run leaves attachment files for `run_attachment_jobs` to
+/// load and write later, so their bytes are not read during parse.
+fn stages_attachment_files(session: &MailSession) -> bool {
+    session.options.transforms.copies_attachments() && is_file_backed(session.options.output_format)
+}
+
+/// Poll votes and updates: noise that CSV and HTML export skip too.
+fn is_poll_noise(message: &Message) -> bool {
+    message.is_poll_vote() || message.is_poll_update()
+}
+
+/// Stream every row of `chat.db` into pending conversations keyed by chat
+/// identifier. A row that fails to convert is logged and counted, not fatal.
+///
+/// # Errors
+///
+/// Returns an error when the database cannot be read or the user cancels.
+fn collect_conversations(
+    session: &MailSession,
+) -> Result<BTreeMap<String, PendingConversation>, RuntimeError> {
+    let progress_every = message_progress_every(session.options.output_format);
+    let mut conversations = BTreeMap::new();
+    let mut last_row = -1;
+    let mut seen = 0u64;
+    let mut failures = 0u64;
+    let total = Message::get_count(session.data_source.db(), &session.options.query_context)?;
     let mut statement =
         Message::stream_rows(session.data_source.db(), &session.options.query_context)?;
 
@@ -127,44 +174,32 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
         message_vault_io_core::check_cancel(session.options.cancel.as_ref())
             .map_err(|msg| RuntimeError::InvalidOptions(msg.to_string()))?;
         let mut msg = message?;
-
-        if msg.rowid == current_message_row {
-            current_message += 1;
+        seen += 1;
+        // The stream repeats a row once per attachment join; keep the first.
+        if msg.rowid == last_row {
             continue;
         }
-        current_message_row = msg.rowid;
-
-        // Poll vote/update noise — keep skipping (same as CSV/HTML export focus).
-        if !msg.is_edited() && (msg.is_poll_vote() || msg.is_poll_update()) {
-            current_message += 1;
+        last_row = msg.rowid;
+        if !msg.is_edited() && is_poll_noise(&msg) {
             continue;
         }
-
         apply_body(&mut msg, session.data_source.db());
-
-        if msg.is_poll_vote() || msg.is_poll_update() {
-            current_message += 1;
+        if is_poll_noise(&msg) {
             continue;
         }
 
-        match collect_one(session, &mut conversations, &attachments_dir, &msg) {
-            Ok(()) => {}
-            Err(why) => {
-                failures += 1;
-                session.options.emit_log(format!(
-                    "Skipping message (rowid={}, guid={}): {}",
-                    msg.rowid, msg.guid, why
-                ));
-            }
+        if let Err(why) = collect_one(session, &mut conversations, &msg) {
+            failures += 1;
+            session.options.emit_log(format!(
+                "Skipping message (rowid={}, guid={}): {}",
+                msg.rowid, msg.guid, why
+            ));
         }
-        current_message += 1;
         // `%` instead of `u64::is_multiple_of`: that method needs Rust 1.87,
         // but this crate's MSRV is 1.85.
         #[allow(clippy::manual_is_multiple_of)]
-        if current_message % message_progress_every(format) == 0 {
-            session
-                .options
-                .emit_log(format!("  …{current_message}/{total_messages}"));
+        if seen % progress_every == 0 {
+            session.options.emit_log(format!("  …{seen}/{total}"));
         }
     }
 
@@ -173,26 +208,25 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
             "{failures} messages skipped due to formatting errors."
         ));
     }
+    Ok(conversations)
+}
 
-    // The queue-or-sink decision came from `ExportWriter::open`: JSONL
-    // without obfuscation is the import path and drains the write queue;
-    // everything else keeps the sink path.
-    if use_queue {
-        return drain_conversations(session, conversations);
-    }
-
-    if matches!(
-        format,
-        OutputFormat::Csv | OutputFormat::Json | OutputFormat::Jsonl | OutputFormat::Xml
-    ) {
-        stage_conversation_attachments(session, &mut conversations, &attachments_dir)?;
-    }
-
-    let total_conversations = conversations.len() as u64;
+/// Write every non-empty conversation through the sink, reporting progress.
+///
+/// # Errors
+///
+/// Returns an error when a document cannot be written or the user cancels.
+fn write_conversations(
+    session: &MailSession,
+    sink: &mut message_ir_format::FormatSink,
+    conversations: BTreeMap<String, PendingConversation>,
+) -> Result<(), RuntimeError> {
+    let format = session.options.output_format;
+    let total = conversations.len() as u64;
     session.options.emit_log("");
-    session.options.emit_log(format!(
-        "Preparing {total_conversations} conversation file(s)..."
-    ));
+    session
+        .options
+        .emit_log(format!("Preparing {total} conversation file(s)..."));
     let mut written = 0u64;
     for (chat_identifier, convo) in conversations {
         // Cheap AtomicBool load; abort promptly when the user cancels.
@@ -214,17 +248,13 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
         // `%` instead of `u64::is_multiple_of`: that method needs Rust 1.87,
         // but this crate's MSRV is 1.85.
         #[allow(clippy::manual_is_multiple_of)]
-        if written % CONVERSATION_PROGRESS_EVERY == 0 || written == total_conversations {
+        if written % CONVERSATION_PROGRESS_EVERY == 0 || written == total {
             session
                 .options
-                .emit_log(format!("  preparing {written}/{total_conversations}"));
+                .emit_log(format!("  preparing {written}/{total}"));
         }
     }
-    let sink_result = sink
-        .finish()
-        .map_err(|e| RuntimeError::InvalidOptions(format!("finish export sink: {e:#}")))?;
-
-    Ok(sink_result)
+    Ok(())
 }
 
 /// Project one accumulated conversation into the shared document shape.
@@ -462,7 +492,6 @@ fn stage_conversation_attachments(
 fn collect_one(
     session: &MailSession,
     conversations: &mut BTreeMap<String, PendingConversation>,
-    attachments_dir: &Path,
     message: &Message,
 ) -> Result<(), RuntimeError> {
     let (mail, loads) = build_mail_message(session, message)?;
@@ -474,11 +503,9 @@ fn collect_one(
 
     let ir_message = mail_message_to_ir(
         &mail,
-        attachments_dir,
-        session.options.output_format,
+        stages_attachment_files(session),
         session.options.attachment_embed,
-        session.options.transforms.copies_attachments(),
-    )?;
+    );
 
     let convo = conversations
         .entry(chat_identifier)
@@ -504,68 +531,17 @@ fn collect_one(
 
 /// Convert a built [`MailMessage`] into [`IrMessage`] (core fields + `imessage` bag).
 ///
-/// For CSV / JSON / JSON Lines / XML, non-empty attachment bytes are written
-/// under `attachments/` and referenced by `path`. For EML / MBOX, bytes stay in
-/// memory for [`message_ir_format::document_to_mail_messages`] to embed directly.
-///
-/// # Errors
-///
-/// Returns an error when attachment bytes cannot be written to disk.
-fn mail_message_to_ir(
-    mail: &MailMessage,
-    _attachments_dir: &Path,
-    format: OutputFormat,
-    embed: AttachmentEmbed,
-    copy_attachments: bool,
-) -> Result<IrMessage, RuntimeError> {
-    let persist_to_disk = copy_attachments
-        && matches!(
-            format,
-            OutputFormat::Csv | OutputFormat::Json | OutputFormat::Jsonl | OutputFormat::Xml
-        );
-
-    let mut attachments = Vec::with_capacity(mail.attachments.len());
-    for attachment in &mail.attachments {
-        let has_bytes = embed == AttachmentEmbed::Embed && !attachment.bytes.is_empty();
-        let deferred = persist_to_disk && embed == AttachmentEmbed::Embed;
-        let missing_reason = if has_bytes || deferred {
-            None
-        } else if embed == AttachmentEmbed::Disabled {
-            Some("not_copied".to_string())
-        } else {
-            Some("file_missing".to_string())
-        };
-        let (path, digest_sha256, file_size, bytes) = if persist_to_disk {
-            if has_bytes {
-                // Handwriting SVG stays in memory. File attachments are loaded
-                // later by `run_attachment_jobs`.
-                (
-                    None,
-                    None,
-                    Some(attachment.bytes.len() as u64),
-                    Some(attachment.bytes.clone()),
-                )
-            } else {
-                (None, None, None, None)
-            }
-        } else {
-            let bytes = has_bytes.then(|| attachment.bytes.clone());
-            let size = bytes.as_ref().map(|b| b.len() as u64);
-            (None, attachment.meta.digest_sha256.clone(), size, bytes)
-        };
-        attachments.push(IrAttachment {
-            path,
-            original_name: attachment.meta.original_name.clone(),
-            mime_type: attachment.meta.mime_type.clone(),
-            digest_sha256,
-            is_sticker: attachment.is_sticker,
-            transcription: attachment.transcription.clone(),
-            sticker_effect: attachment.sticker_effect.clone(),
-            size_bytes: file_size,
-            missing_reason,
-            bytes,
-        });
-    }
+/// When `stages_files` is set (CSV / JSON / JSON Lines / XML with attachment
+/// copying on), file attachments are loaded and written under `attachments/`
+/// later by `run_attachment_jobs`, so only in-memory bytes travel here. For
+/// EML / MBOX, bytes stay in memory for
+/// [`message_ir_format::document_to_mail_messages`] to embed directly.
+fn mail_message_to_ir(mail: &MailMessage, stages_files: bool, embed: AttachmentEmbed) -> IrMessage {
+    let attachments = mail
+        .attachments
+        .iter()
+        .map(|attachment| ir_attachment(attachment, stages_files, embed))
+        .collect();
 
     let (sender_handle, sender_display_name) = match mail.message.direction {
         IrDirection::Outgoing => {
@@ -588,7 +564,47 @@ fn mail_message_to_ir(
     out.sender_handle = sender_handle;
     out.sender_display_name = sender_display_name;
     out.attachments = attachments;
-    Ok(out)
+    out
+}
+
+/// One attachment's shared-structure record, with `missing_reason` set when
+/// neither bytes nor a later file load will fill it.
+fn ir_attachment(
+    attachment: &mail::MailAttachment,
+    stages_files: bool,
+    embed: AttachmentEmbed,
+) -> IrAttachment {
+    let embedding = embed == AttachmentEmbed::Embed;
+    let has_bytes = embedding && !attachment.bytes.is_empty();
+    let deferred = stages_files && embedding;
+    let missing_reason = if has_bytes || deferred {
+        None
+    } else if embed == AttachmentEmbed::Disabled {
+        Some("not_copied".to_string())
+    } else {
+        Some("file_missing".to_string())
+    };
+    // When files are staged, a handwriting SVG's bytes stay in memory and
+    // file attachments are loaded later, so no digest is known yet. Otherwise
+    // the digest from the backup travels with the bytes.
+    let bytes = has_bytes.then(|| attachment.bytes.clone());
+    let digest_sha256 = if stages_files {
+        None
+    } else {
+        attachment.meta.digest_sha256.clone()
+    };
+    IrAttachment {
+        path: None,
+        original_name: attachment.meta.original_name.clone(),
+        mime_type: attachment.meta.mime_type.clone(),
+        digest_sha256,
+        is_sticker: attachment.is_sticker,
+        transcription: attachment.transcription.clone(),
+        sticker_effect: attachment.sticker_effect.clone(),
+        size_bytes: bytes.as_ref().map(|b| b.len() as u64),
+        missing_reason,
+        bytes,
+    }
 }
 
 /// Message time as milliseconds since 1970-01-01 UTC.
@@ -881,200 +897,25 @@ fn build_mail_message(
     session: &MailSession,
     message: &Message,
 ) -> Result<(MailMessage, Vec<AttachmentLoad>), RuntimeError> {
-    let MailConversationContext {
-        chat_identifier,
-        conversation_type,
-        group_title,
-        participants,
-        is_from_me,
-        sender_handle,
-        sender_display_name,
-        service,
-    } = resolve_mail_conversation_context(session, message);
-
-    let defer_file_bytes = session.options.transforms.copies_attachments()
-        && matches!(
-            session.options.output_format,
-            OutputFormat::Csv | OutputFormat::Json | OutputFormat::Jsonl | OutputFormat::Xml
-        );
+    let context = resolve_mail_conversation_context(session, message);
     let (parts, mail_attachments, loads) =
-        collect_mail_parts_and_attachments(session, message, defer_file_bytes)?;
-
-    let send_effect = expressive_label(message.get_expressive());
-    let shared_location = message
-        .shared_location_kind()
-        .map(shared_location_label)
-        .map(str::to_string);
-
-    let app_value = build_balloon_value(session.data_source.db(), message);
-    let balloon_kind = app_value.as_ref().and_then(balloon_kind_label);
-    let balloon_bundle_id = message.balloon_bundle_id.clone();
-
-    let edits = message
-        .edited_parts
-        .as_ref()
-        .map(|edited| build_edit_records(edited, &session.offset))
-        .unwrap_or_default();
-
-    // --- Tapback path ---
-    let message_kind;
-    let mut text;
-    let mut announcement = None;
-    let mut associated_guid = None;
-    let mut associated_part = None;
-    let mut tapback_kind = None;
-    let mut tapback_emoji = None;
-    let mut tapback_action = None;
-    let mut in_reply_to_guid = None;
-    let mut is_reply = false;
-    let mut thread_originator_part = None;
-
-    if let Variant::Tapback(_, action, kind) = message.variant() {
-        let (kind_s, emoji) = match kind {
-            Tapback::Loved => ("loved", None),
-            Tapback::Liked => ("liked", None),
-            Tapback::Disliked => ("disliked", None),
-            Tapback::Laughed => ("laughed", None),
-            Tapback::Emphasized => ("emphasized", None),
-            Tapback::Questioned => ("questioned", None),
-            Tapback::Emoji(e) => ("emoji", e.map(str::to_string)),
-            Tapback::Sticker => ("sticker", None),
-        };
-        let action_s = match action {
-            TapbackAction::Added => "add",
-            TapbackAction::Removed => "remove",
-        };
-        message_kind = if matches!(kind, Tapback::Sticker) {
-            "sticker_tapback".to_string()
-        } else {
-            "tapback".to_string()
-        };
-        if let Some((part, guid)) = message.clean_associated_guid() {
-            associated_guid = Some(guid.to_string());
-            associated_part = Some(part as u32);
-            in_reply_to_guid = Some(guid.to_string());
-        }
-        tapback_kind = Some(kind_s.to_string());
-        tapback_emoji = emoji;
-        tapback_action = Some(action_s.to_string());
-        text = tapback_human_line(kind_s, tapback_emoji.as_deref(), action_s);
-    } else if message.is_shareplay() {
-        message_kind = "announcement".to_string();
-        text = "SharePlay Message Ended".to_string();
-        announcement = Some(text.clone());
-    } else if message.is_announcement() {
-        message_kind = "announcement".to_string();
-        text = announcement_text(session, message).unwrap_or_default();
-        announcement = Some(text.clone());
-    } else if shared_location.is_some() {
-        message_kind = "location_share".to_string();
-        text = message.text.clone().unwrap_or_else(|| {
-            format!(
-                "Shared location {}",
-                shared_location.as_deref().unwrap_or("started")
-            )
-        });
-    } else if app_value.is_some() {
-        message_kind = "balloon".to_string();
-        text = app_value
-            .as_ref()
-            .map(|v| balloon_summary(v, message.text.as_deref()))
-            .unwrap_or_default();
-    } else if service.eq_ignore_ascii_case("imessage") {
-        message_kind = "imessage".to_string();
-        text = message.text.clone().unwrap_or_default();
-    } else if !mail_attachments.is_empty() {
-        message_kind = "mms".to_string();
-        text = message.text.clone().unwrap_or_default();
-    } else {
-        message_kind = "sms".to_string();
-        text = message.text.clone().unwrap_or_default();
-    }
-
-    // Replies (non-tapback): own message + thread headers.
-    if !message.is_tapback() && message.is_reply() {
-        is_reply = true;
-        if let Some(guid) = message.thread_originator_guid.clone() {
-            in_reply_to_guid = Some(guid);
-        }
-        thread_originator_part = message
-            .thread_originator_part
-            .as_deref()
-            .and_then(parse_thread_part);
-    }
-
-    if let Some(effect) = send_effect.as_deref() {
-        if text.is_empty() {
-            text = effect.to_string();
-        } else if !text.contains(effect) {
-            text = format!("{text}\n\n{effect}");
-        }
-    }
-
-    let read_receipt_rfc3339 = message
-        .date_read(session.offset)
-        .ok()
-        .map(|d| d.to_rfc3339());
-
-    let num_replies = if message.num_replies > 0 {
-        Some(message.num_replies as u32)
-    } else {
-        None
-    };
-
-    let tapbacks_json = if message.is_tapback() {
-        None
-    } else {
-        build_parent_tapbacks_json(session, message)
-    };
-
-    let owner_handle = message.destination_caller_id.clone().unwrap_or_default();
-
-    /// The string trimmed, or `None` when blank.
-    fn nonempty(s: Option<String>) -> Option<String> {
-        s.as_deref()
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(str::to_string)
-    }
-
-    let bag = IrImessage {
-        is_reply,
-        in_reply_to_guid: nonempty(in_reply_to_guid),
-        thread_originator_part,
-        num_replies,
-        is_deleted: message.is_deleted(),
-        send_effect: nonempty(send_effect),
-        shared_location: nonempty(shared_location),
-        announcement: nonempty(announcement),
-        read_receipt_rfc3339: nonempty(read_receipt_rfc3339),
-        parts: if parts.is_empty() {
-            None
-        } else {
-            serde_json::to_value(&parts).ok()
-        },
-        edits: if edits.is_empty() {
-            None
-        } else {
-            serde_json::to_value(&edits).ok()
-        },
-        tapbacks: tapbacks_json.as_deref().map(parse_json_value),
-        app: app_value,
-        balloon_bundle_id: nonempty(balloon_bundle_id),
-        balloon_kind: nonempty(balloon_kind),
-        associated_guid: nonempty(associated_guid),
-        associated_part,
-        tapback_kind: nonempty(tapback_kind),
-        tapback_emoji: nonempty(tapback_emoji),
-        tapback_action: nonempty(tapback_action),
-    };
+        collect_mail_parts_and_attachments(session, message, stages_attachment_files(session))?;
+    let mut row = classify_row(
+        session,
+        message,
+        &context.service,
+        !mail_attachments.is_empty(),
+    );
+    let kind = row.kind;
+    let text = std::mem::take(&mut row.text);
+    let bag = imessage_bag(session, message, row, &parts);
 
     let mail = MailMessage {
-        chat_identifier,
-        conversation_type,
-        group_title,
-        participants,
-        owner_handle,
+        chat_identifier: context.chat_identifier,
+        conversation_type: context.conversation_type,
+        group_title: context.group_title,
+        participants: context.participants,
+        owner_handle: message.destination_caller_id.clone().unwrap_or_default(),
         owner_display_name: owner_display_name(session, message),
         export_source: EXPORT_SOURCE.into(),
         export_tool: EXPORT_TOOL.into(),
@@ -1083,15 +924,15 @@ fn build_mail_message(
         message: IrMessage {
             guid: message.guid.clone(),
             timestamp_unix_ms: timestamp_unix_ms(message, session.offset),
-            direction: if is_from_me {
+            direction: if context.is_from_me {
                 IrDirection::Outgoing
             } else {
                 IrDirection::Incoming
             },
-            service: IrService::parse(&service),
-            message_kind: IrMessageKind::parse(&message_kind),
-            sender_handle,
-            sender_display_name,
+            service: IrService::parse(&context.service),
+            message_kind: IrMessageKind::parse(kind),
+            sender_handle: context.sender_handle,
+            sender_display_name: context.sender_display_name,
             subject: message.subject.clone().filter(|s| !s.is_empty()),
             text,
             attachments: Vec::new(),
@@ -1103,11 +944,253 @@ fn build_mail_message(
     Ok((mail, loads))
 }
 
+/// Which of the message kinds a row is, the text that stands for it, and the
+/// values that decided it (which the `imessage` bag reports too).
+struct RowKind {
+    kind: &'static str,
+    text: String,
+    /// The announcement's text, for announcement rows.
+    announcement: Option<String>,
+    /// The shared-location label, for location rows.
+    shared_location: Option<String>,
+    /// The send effect's label, already appended to `text`.
+    send_effect: Option<String>,
+    /// The app balloon's payload, for balloon rows.
+    app: Option<serde_json::Value>,
+    tapback: Option<TapbackFields>,
+}
+
+/// A tapback row: which reaction, added or removed, on which message part.
+struct TapbackFields {
+    kind: &'static str,
+    /// The emoji, for the `emoji` kind.
+    emoji: Option<String>,
+    action: &'static str,
+    /// Guid of the message reacted to.
+    associated_guid: Option<String>,
+    /// Part index within that message.
+    associated_part: Option<u32>,
+}
+
+impl TapbackFields {
+    /// Read the reaction out of a row's [`Variant::Tapback`].
+    fn from_variant(message: &Message, action: TapbackAction, kind: Tapback<'_>) -> Self {
+        let (kind, emoji) = match kind {
+            Tapback::Loved => ("loved", None),
+            Tapback::Liked => ("liked", None),
+            Tapback::Disliked => ("disliked", None),
+            Tapback::Laughed => ("laughed", None),
+            Tapback::Emphasized => ("emphasized", None),
+            Tapback::Questioned => ("questioned", None),
+            Tapback::Emoji(e) => ("emoji", e.map(str::to_string)),
+            Tapback::Sticker => ("sticker", None),
+        };
+        let action = match action {
+            TapbackAction::Added => "add",
+            TapbackAction::Removed => "remove",
+        };
+        let target = message.clean_associated_guid();
+        Self {
+            kind,
+            emoji,
+            action,
+            associated_guid: target.map(|(_, guid)| guid.to_string()),
+            associated_part: target.map(|(part, _)| part as u32),
+        }
+    }
+
+    /// The message kind: stickers sent as reactions are their own kind.
+    fn message_kind(&self) -> &'static str {
+        if self.kind == "sticker" {
+            "sticker_tapback"
+        } else {
+            "tapback"
+        }
+    }
+
+    /// The human-readable line that stands in for the reaction's text.
+    fn text(&self) -> String {
+        tapback_human_line(self.kind, self.emoji.as_deref(), self.action)
+    }
+}
+
+/// Decide a row's kind and text. The order matters: a tapback, SharePlay
+/// end, or announcement wins over its (usually empty) text; a shared
+/// location or app balloon over a plain text; and a plain text is iMessage,
+/// MMS, or SMS by its service and whether it carries attachments.
+fn classify_row(
+    session: &MailSession,
+    message: &Message,
+    service: &str,
+    has_attachments: bool,
+) -> RowKind {
+    let shared_location = message
+        .shared_location_kind()
+        .map(shared_location_label)
+        .map(str::to_string);
+    let app = build_balloon_value(session.data_source.db(), message);
+    let plain = || message.text.clone().unwrap_or_default();
+
+    let (kind, text, announcement, tapback) =
+        if let Variant::Tapback(_, action, kind) = message.variant() {
+            let tapback = TapbackFields::from_variant(message, action, kind);
+            (tapback.message_kind(), tapback.text(), None, Some(tapback))
+        } else if message.is_shareplay() {
+            let text = "SharePlay Message Ended".to_string();
+            ("announcement", text.clone(), Some(text), None)
+        } else if message.is_announcement() {
+            let text = announcement_text(session, message).unwrap_or_default();
+            ("announcement", text.clone(), Some(text), None)
+        } else if let Some(location) = shared_location.as_deref() {
+            let text = message
+                .text
+                .clone()
+                .unwrap_or_else(|| format!("Shared location {location}"));
+            ("location_share", text, None, None)
+        } else if let Some(app) = &app {
+            (
+                "balloon",
+                balloon_summary(app, message.text.as_deref()),
+                None,
+                None,
+            )
+        } else if service.eq_ignore_ascii_case("imessage") {
+            ("imessage", plain(), None, None)
+        } else if has_attachments {
+            ("mms", plain(), None, None)
+        } else {
+            ("sms", plain(), None, None)
+        };
+
+    let send_effect = expressive_label(message.get_expressive());
+    RowKind {
+        kind,
+        text: with_send_effect(text, send_effect.as_deref()),
+        announcement,
+        shared_location,
+        send_effect,
+        app,
+        tapback,
+    }
+}
+
+/// The text with the send effect's label appended, unless it already names it.
+fn with_send_effect(text: String, effect: Option<&str>) -> String {
+    match effect {
+        None => text,
+        Some(effect) if text.is_empty() => effect.to_string(),
+        Some(effect) if text.contains(effect) => text,
+        Some(effect) => format!("{text}\n\n{effect}"),
+    }
+}
+
+/// Reply threading for a row.
+struct ThreadFields {
+    /// A reply in a thread (never true for a tapback).
+    is_reply: bool,
+    /// The message replied to: the reacted-to message for a tapback, else
+    /// the thread originator.
+    in_reply_to_guid: Option<String>,
+    /// Part index within the thread originator.
+    thread_originator_part: Option<u32>,
+}
+
+/// Where a row points: a tapback at the message it reacts to, any other
+/// reply at its thread originator, everything else nowhere.
+fn thread_fields(message: &Message, tapback: Option<&TapbackFields>) -> ThreadFields {
+    if let Some(tapback) = tapback {
+        return ThreadFields {
+            is_reply: false,
+            in_reply_to_guid: tapback.associated_guid.clone(),
+            thread_originator_part: None,
+        };
+    }
+    if !message.is_reply() {
+        return ThreadFields {
+            is_reply: false,
+            in_reply_to_guid: None,
+            thread_originator_part: None,
+        };
+    }
+    ThreadFields {
+        is_reply: true,
+        in_reply_to_guid: message.thread_originator_guid.clone(),
+        thread_originator_part: message
+            .thread_originator_part
+            .as_deref()
+            .and_then(parse_thread_part),
+    }
+}
+
+/// The `imessage` extension bag: everything Apple-specific the core message
+/// fields do not carry. Blank strings become `None` so the bag stays small.
+fn imessage_bag(
+    session: &MailSession,
+    message: &Message,
+    row: RowKind,
+    parts: &[crate::fields::PartRecord],
+) -> IrImessage {
+    let thread = thread_fields(message, row.tapback.as_ref());
+    let edits = message
+        .edited_parts
+        .as_ref()
+        .map(|edited| build_edit_records(edited, &session.offset))
+        .unwrap_or_default();
+    let read_receipt = message
+        .date_read(session.offset)
+        .ok()
+        .map(|d| d.to_rfc3339());
+    // A tapback has no tapbacks of its own.
+    let tapbacks = if row.tapback.is_some() {
+        None
+    } else {
+        build_parent_tapbacks_json(session, message)
+    };
+    let tapback = row.tapback.as_ref();
+    IrImessage {
+        is_reply: thread.is_reply,
+        in_reply_to_guid: trimmed(thread.in_reply_to_guid),
+        thread_originator_part: thread.thread_originator_part,
+        num_replies: (message.num_replies > 0).then_some(message.num_replies as u32),
+        is_deleted: message.is_deleted(),
+        send_effect: trimmed(row.send_effect),
+        shared_location: trimmed(row.shared_location),
+        announcement: trimmed(row.announcement),
+        read_receipt_rfc3339: trimmed(read_receipt),
+        parts: json_if_any(parts),
+        edits: json_if_any(&edits),
+        tapbacks: tapbacks.as_deref().map(parse_json_value),
+        balloon_kind: trimmed(row.app.as_ref().and_then(balloon_kind_label)),
+        balloon_bundle_id: trimmed(message.balloon_bundle_id.clone()),
+        associated_guid: trimmed(tapback.and_then(|t| t.associated_guid.clone())),
+        associated_part: tapback.and_then(|t| t.associated_part),
+        tapback_kind: tapback.map(|t| t.kind.to_string()),
+        tapback_emoji: trimmed(tapback.and_then(|t| t.emoji.clone())),
+        tapback_action: tapback.map(|t| t.action.to_string()),
+        app: row.app,
+    }
+}
+
+/// The string trimmed, or `None` when blank.
+fn trimmed(s: Option<String>) -> Option<String> {
+    s.as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+}
+
+/// The items as a JSON array, or `None` when there are none.
+fn json_if_any<T: serde::Serialize>(items: &[T]) -> Option<serde_json::Value> {
+    if items.is_empty() {
+        return None;
+    }
+    serde_json::to_value(items).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use mail::MailAttachment;
-    use std::fs;
 
     #[test]
     fn jsonl_progress_is_less_frequent_than_other_formats() {
@@ -1164,43 +1247,19 @@ mod tests {
 
     #[test]
     fn missing_reason_reflects_embed_and_bytes() {
-        let dir = tempfile::tempdir().unwrap();
         let with_bytes = sample_mail_with_attachment(b"abc".to_vec());
-        let ir = mail_message_to_ir(
-            &with_bytes,
-            dir.path(),
-            OutputFormat::Jsonl,
-            AttachmentEmbed::Embed,
-            true,
-        )
-        .unwrap();
+        let ir = mail_message_to_ir(&with_bytes, true, AttachmentEmbed::Embed);
         assert_eq!(ir.attachments[0].missing_reason, None);
         assert!(ir.attachments[0].path.is_none());
         assert_eq!(ir.attachments[0].bytes.as_deref(), Some(b"abc".as_slice()));
-        assert!(fs::read_dir(dir.path()).unwrap().next().is_none());
 
         let empty = sample_mail_with_attachment(Vec::new());
-        let ir_deferred = mail_message_to_ir(
-            &empty,
-            dir.path(),
-            OutputFormat::Jsonl,
-            AttachmentEmbed::Embed,
-            true,
-        )
-        .unwrap();
+        let ir_deferred = mail_message_to_ir(&empty, true, AttachmentEmbed::Embed);
         assert_eq!(ir_deferred.attachments[0].missing_reason, None);
         assert!(ir_deferred.attachments[0].bytes.is_none());
         assert!(ir_deferred.attachments[0].path.is_none());
-        assert!(fs::read_dir(dir.path()).unwrap().next().is_none());
 
-        let ir_disabled = mail_message_to_ir(
-            &with_bytes,
-            dir.path(),
-            OutputFormat::Jsonl,
-            AttachmentEmbed::Disabled,
-            true,
-        )
-        .unwrap();
+        let ir_disabled = mail_message_to_ir(&with_bytes, true, AttachmentEmbed::Disabled);
         assert_eq!(
             ir_disabled.attachments[0].missing_reason.as_deref(),
             Some("not_copied")

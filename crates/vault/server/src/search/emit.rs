@@ -492,67 +492,100 @@ fn with_person(
     result
 }
 
-/// `row_expr` is a member of the named set `v` in `table` (via `members`,
-/// whose `member_col` names the row). Handles `#id` and a case-insensitive
-/// name; a prefix means "a name that starts with this".
-#[allow(clippy::too_many_arguments)]
-fn named_set(
-    out: &mut Sql,
-    engine: DbEngine,
-    table: &str,
-    members: &str,
-    member_col: &str,
-    row_expr: &str,
-    account_expr: &str,
-    term: &FieldTerm,
-    v: &Value,
-) -> Result<(), QueryError> {
-    let group_col = if table == "contact_groups" {
-        "group_id"
-    } else {
-        "tag_id"
-    };
-    out.push(&format!(
-        "EXISTS (SELECT 1 FROM {members} nm JOIN {table} ns ON ns.id = nm.{group_col} WHERE nm.{member_col} = {row_expr} AND ns.account_id = {account_expr} AND "
-    ));
-    let result = match v {
-        Value::Id(id) => {
-            out.push("ns.id = ");
-            out.bind_int(*id);
-            Ok(())
-        }
-        Value::Text(t) => {
-            out.push(&name_eq_ci(engine, "ns.name", "?"));
-            out.param_text(t.clone());
-            Ok(())
-        }
-        Value::Prefix(t) => {
-            like_contains(out, engine, "ns.name", t, true);
-            Ok(())
-        }
-        _ => Err(bad_value(term, "needs a name or #id.")),
-    };
-    out.push(")");
-    result
+/// A named set a row can belong to: Contact Groups hold contacts, Message
+/// Tags hold conversations. `group:` and `tag:` differ only in these names
+/// and in which list the members live on, so both words share one emitter.
+#[derive(Debug, Clone, Copy)]
+struct NamedSet {
+    /// The list whose base row is a member: Contacts or Conversations.
+    home: ListKind,
+    /// Table of the sets themselves (`ns` in the SQL).
+    table: &'static str,
+    /// Membership table (`nm`).
+    members: &'static str,
+    /// `nm` column naming the set.
+    set_col: &'static str,
+    /// `nm` column naming the member row.
+    member_col: &'static str,
+    /// The member row's id, written against the home list's alias.
+    row_expr: &'static str,
+    /// The member row's account column, written against the home alias.
+    account_expr: &'static str,
 }
 
-/// No member of `table` (via `members`) names `row_expr`.
-fn no_named_set(
-    out: &mut Sql,
-    table: &str,
-    members: &str,
-    member_col: &str,
-    row_expr: &str,
-    account_expr: &str,
-) {
-    let group_col = if table == "contact_groups" {
-        "group_id"
-    } else {
-        "tag_id"
-    };
-    out.push(&format!(
-        "NOT EXISTS (SELECT 1 FROM {members} nm JOIN {table} ns ON ns.id = nm.{group_col} WHERE nm.{member_col} = {row_expr} AND ns.account_id = {account_expr})"
-    ));
+const CONTACT_GROUPS: NamedSet = NamedSet {
+    home: ListKind::Contacts,
+    table: "contact_groups",
+    members: "contact_group_members",
+    set_col: "group_id",
+    member_col: "contact_id",
+    row_expr: "ct.id",
+    account_expr: "ct.account_id",
+};
+
+const MESSAGE_TAGS: NamedSet = NamedSet {
+    home: ListKind::Conversations,
+    table: "message_tags",
+    members: "message_tag_members",
+    set_col: "tag_id",
+    member_col: "conversation_id",
+    row_expr: "c.id",
+    account_expr: "c.account_id",
+};
+
+impl NamedSet {
+    /// `SELECT 1 FROM members JOIN sets ... WHERE <row is a member> AND ns.account_id = ...`,
+    /// left open for the caller to add its own condition or close.
+    fn membership_from(&self) -> String {
+        let Self {
+            table,
+            members,
+            set_col,
+            member_col,
+            row_expr,
+            account_expr,
+            ..
+        } = self;
+        format!(
+            "SELECT 1 FROM {members} nm JOIN {table} ns ON ns.id = nm.{set_col} WHERE nm.{member_col} = {row_expr} AND ns.account_id = {account_expr}"
+        )
+    }
+
+    /// The home row is a member of the set `v` names. Handles `#id` and a
+    /// case-insensitive name; a prefix means "a name that starts with this".
+    fn contains(
+        &self,
+        out: &mut Sql,
+        engine: DbEngine,
+        term: &FieldTerm,
+        v: &Value,
+    ) -> Result<(), QueryError> {
+        out.push(&format!("EXISTS ({} AND ", self.membership_from()));
+        let result = match v {
+            Value::Id(id) => {
+                out.push("ns.id = ");
+                out.bind_int(*id);
+                Ok(())
+            }
+            Value::Text(t) => {
+                out.push(&name_eq_ci(engine, "ns.name", "?"));
+                out.param_text(t.clone());
+                Ok(())
+            }
+            Value::Prefix(t) => {
+                like_contains(out, engine, "ns.name", t, true);
+                Ok(())
+            }
+            _ => Err(bad_value(term, "needs a name or #id.")),
+        };
+        out.push(")");
+        result
+    }
+
+    /// The home row is in no set at all.
+    fn none(&self, out: &mut Sql) {
+        out.push(&format!("NOT EXISTS ({})", self.membership_from()));
+    }
 }
 
 /// The seven people-and-places words: `with`, `from`, `to`, `in`, `group`,
@@ -565,212 +598,163 @@ fn emit_people_word(
     term: &FieldTerm,
     v: &Value,
 ) -> Result<(), QueryError> {
-    let e = ctx.engine;
     match term.spec.word {
         "with" => with_person(ctx, out, term, v),
-        "from" => match v {
-            Value::Keyword("me") => {
-                out.push("m.is_from_me = 1");
-                Ok(())
-            }
-            _ => {
-                out.push("(m.is_from_me = 0 AND m.sender_handle_id IS NOT NULL AND ");
-                let result = person_matches(out, e, "m.sender_handle_id", term, v);
-                out.push(")");
-                result
-            }
-        },
-        "to" => match v {
-            Value::Keyword("me") => {
-                out.push("m.is_from_me = 0");
-                Ok(())
-            }
-            _ => {
-                out.push("(");
-                let mut result = with_person(ctx, out, term, v);
-                out.push(" AND (m.is_from_me = 1 OR m.sender_handle_id IS NULL OR NOT ");
-                if result.is_ok() {
-                    result = person_matches(out, e, "m.sender_handle_id", term, v);
-                }
-                out.push("))");
-                result
-            }
-        },
-        "in" => {
-            match v {
-                Value::Id(id) => {
-                    out.push("m.conversation_id = ");
-                    out.bind_int(*id);
-                    Ok(())
-                }
-                Value::Text(t) | Value::Prefix(t) => {
-                    let prefix = matches!(v, Value::Prefix(_));
-                    ctx.conversation(out, |o| {
-                    o.push("(");
-                    like_contains(o, e, "coalesce(c.group_title, '')", t, prefix);
-                    o.push(" OR EXISTS (SELECT 1 FROM handles hc WHERE hc.id = c.chat_handle_id AND ");
-                    like_contains(o, e, "hc.raw", t, prefix);
-                    o.push("))");
-                });
-                    Ok(())
-                }
-                _ => Err(bad_value(term, "needs a name or #id.")),
-            }
-        }
-        "group" => match v {
-            Value::Keyword("none") => {
-                match ctx.list {
-                    ListKind::Contacts => no_named_set(
-                        out,
-                        "contact_groups",
-                        "contact_group_members",
-                        "contact_id",
-                        "ct.id",
-                        "ct.account_id",
-                    ),
-                    // "No participant contact is in any Contact Group": the
-                    // double negation wraps the bridge's EXISTS so it reads
-                    // "there is no linked contact with a group".
-                    _ => {
-                        out.push("NOT ");
-                        ctx.contact(out, |o| {
-                            o.push("NOT ");
-                            no_named_set(
-                                o,
-                                "contact_groups",
-                                "contact_group_members",
-                                "contact_id",
-                                "ct.id",
-                                "ct.account_id",
-                            );
-                        });
-                    }
-                }
-                Ok(())
-            }
-            Value::Keyword("unknown") => {
-                ctx.contact(out, |o| o.push(UNKNOWN_CONTACT_SQL));
-                Ok(())
-            }
-            _ => {
-                let mut result = Ok(());
-                ctx.contact(out, |o| {
-                    result = named_set(
-                        o,
-                        e,
-                        "contact_groups",
-                        "contact_group_members",
-                        "contact_id",
-                        "ct.id",
-                        "ct.account_id",
-                        term,
-                        v,
-                    );
-                });
-                result
-            }
-        },
-        "tag" => match v {
-            Value::Keyword("none") => {
-                match ctx.list {
-                    ListKind::Conversations => no_named_set(
-                        out,
-                        "message_tags",
-                        "message_tag_members",
-                        "conversation_id",
-                        "c.id",
-                        "c.account_id",
-                    ),
-                    // "No conversation of theirs carries any Message Tag":
-                    // the double negation wraps the bridge's EXISTS, so a
-                    // contact with one tagged conversation is out even when
-                    // their other conversations carry no tag. On Messages
-                    // the bridge reaches the one conversation the message
-                    // is in, so it reads "this conversation has no tag".
-                    _ => {
-                        out.push("NOT ");
-                        ctx.conversation(out, |o| {
-                            o.push("NOT ");
-                            no_named_set(
-                                o,
-                                "message_tags",
-                                "message_tag_members",
-                                "conversation_id",
-                                "c.id",
-                                "c.account_id",
-                            );
-                        });
-                    }
-                }
-                Ok(())
-            }
-            _ => {
-                let mut result = Ok(());
-                ctx.conversation(out, |o| {
-                    result = named_set(
-                        o,
-                        e,
-                        "message_tags",
-                        "message_tag_members",
-                        "conversation_id",
-                        "c.id",
-                        "c.account_id",
-                        term,
-                        v,
-                    );
-                });
-                result
-            }
-        },
-        // Never through `ctx.message`: that bridge's Conversations shape
-        // requires a non-duplicate message, and an Import Run's whole point
-        // is to find rows a later run marked as duplicates. `import:` writes
-        // its own EXISTS on Conversations, and compares `m.import_id`
-        // directly on Messages (whose own duplicate default is already
-        // skipped for `import:` in `compile`).
-        "import" => match v {
-            Value::Keyword("last") => {
-                let account = ctx.account_id.to_string();
-                match ctx.list {
-                    ListKind::Messages => {
-                        out.push(
-                            "m.import_id = (SELECT MAX(vi.id) FROM vault_imports vi WHERE vi.account_id = ",
-                        );
-                        out.bind_text(account);
-                        out.push(")");
-                    }
-                    _ => {
-                        out.push(
-                            "EXISTS (SELECT 1 FROM messages mi WHERE mi.conversation_id = c.id AND mi.import_id = (SELECT MAX(vi.id) FROM vault_imports vi WHERE vi.account_id = ",
-                        );
-                        out.bind_text(account);
-                        out.push("))");
-                    }
-                }
-                Ok(())
-            }
-            Value::Id(id) => {
-                match ctx.list {
-                    ListKind::Messages => {
-                        out.push("m.import_id = ");
-                        out.bind_int(*id);
-                    }
-                    _ => {
-                        out.push(
-                            "EXISTS (SELECT 1 FROM messages mi WHERE mi.conversation_id = c.id AND mi.import_id = ",
-                        );
-                        out.bind_int(*id);
-                        out.push(")");
-                    }
-                }
-                Ok(())
-            }
-            _ => Err(bad_value(term, "needs #id or last.")),
-        },
+        "from" => emit_from(ctx, out, term, v),
+        "to" => emit_to(ctx, out, term, v),
+        "in" => emit_in(ctx, out, term, v),
+        "group" => emit_set_word(ctx, out, term, v, CONTACT_GROUPS),
+        "tag" => emit_set_word(ctx, out, term, v, MESSAGE_TAGS),
+        "import" => emit_import(ctx, out, term, v),
         _ => Err(bad_value(term, "is not built yet.")),
     }
 }
 
+/// `from:me` is the outgoing flag; `from:<person>` is an incoming message
+/// whose sender handle is that person.
+fn emit_from(
+    ctx: &ListCtx<'_>,
+    out: &mut Sql,
+    term: &FieldTerm,
+    v: &Value,
+) -> Result<(), QueryError> {
+    if matches!(v, Value::Keyword("me")) {
+        out.push("m.is_from_me = 1");
+        return Ok(());
+    }
+    out.push("(m.is_from_me = 0 AND m.sender_handle_id IS NOT NULL AND ");
+    let result = person_matches(out, ctx.engine, "m.sender_handle_id", term, v);
+    out.push(")");
+    result
+}
+
+/// `to:me` is any incoming message; `to:<person>` is a message in a
+/// conversation with that person that they did not send themselves.
+fn emit_to(
+    ctx: &ListCtx<'_>,
+    out: &mut Sql,
+    term: &FieldTerm,
+    v: &Value,
+) -> Result<(), QueryError> {
+    if matches!(v, Value::Keyword("me")) {
+        out.push("m.is_from_me = 0");
+        return Ok(());
+    }
+    out.push("(");
+    let mut result = with_person(ctx, out, term, v);
+    out.push(" AND (m.is_from_me = 1 OR m.sender_handle_id IS NULL OR NOT ");
+    if result.is_ok() {
+        result = person_matches(out, ctx.engine, "m.sender_handle_id", term, v);
+    }
+    out.push("))");
+    result
+}
+
+/// `in:#id` names a conversation; `in:<text>` matches its group title or its
+/// chat handle.
+fn emit_in(
+    ctx: &ListCtx<'_>,
+    out: &mut Sql,
+    term: &FieldTerm,
+    v: &Value,
+) -> Result<(), QueryError> {
+    match v {
+        Value::Id(id) => {
+            out.push("m.conversation_id = ");
+            out.bind_int(*id);
+            Ok(())
+        }
+        Value::Text(t) | Value::Prefix(t) => {
+            let prefix = matches!(v, Value::Prefix(_));
+            let e = ctx.engine;
+            ctx.conversation(out, |o| {
+                o.push("(");
+                like_contains(o, e, "coalesce(c.group_title, '')", t, prefix);
+                o.push(" OR EXISTS (SELECT 1 FROM handles hc WHERE hc.id = c.chat_handle_id AND ");
+                like_contains(o, e, "hc.raw", t, prefix);
+                o.push("))");
+            });
+            Ok(())
+        }
+        _ => Err(bad_value(term, "needs a name or #id.")),
+    }
+}
+
+/// `group:` and `tag:`. On the set's home list the base row is the member;
+/// on every other list the bridge reaches the member rows. `none` on a
+/// bridged list is a double negation around the bridge's EXISTS, so it reads
+/// "no row they reach is in any set": a contact with one tagged conversation
+/// is out of `tag:none` even when their other conversations carry no tag.
+fn emit_set_word(
+    ctx: &ListCtx<'_>,
+    out: &mut Sql,
+    term: &FieldTerm,
+    v: &Value,
+    set: NamedSet,
+) -> Result<(), QueryError> {
+    match v {
+        Value::Keyword("none") if ctx.list == set.home => {
+            set.none(out);
+            Ok(())
+        }
+        Value::Keyword("none") => {
+            out.push("NOT ");
+            ctx.reach(set.home, out, |o| {
+                o.push("NOT ");
+                set.none(o);
+            });
+            Ok(())
+        }
+        Value::Keyword("unknown") if set.home == ListKind::Contacts => {
+            ctx.contact(out, |o| o.push(UNKNOWN_CONTACT_SQL));
+            Ok(())
+        }
+        _ => {
+            let mut result = Ok(());
+            ctx.reach(set.home, out, |o| {
+                result = set.contains(o, ctx.engine, term, v);
+            });
+            result
+        }
+    }
+}
+
+/// `import:#id` and `import:last`. Never through `ctx.message`: that bridge's
+/// Conversations shape requires a non-duplicate message, and an Import Run's
+/// whole point is to find rows a later run marked as duplicates. So this
+/// writes its own EXISTS on Conversations, and compares `m.import_id`
+/// directly on Messages (whose own duplicate default is already skipped for
+/// `import:` in `compile`).
+fn emit_import(
+    ctx: &ListCtx<'_>,
+    out: &mut Sql,
+    term: &FieldTerm,
+    v: &Value,
+) -> Result<(), QueryError> {
+    let run = match v {
+        Value::Keyword("last") => None,
+        Value::Id(id) => Some(*id),
+        _ => return Err(bad_value(term, "needs #id or last.")),
+    };
+    let on_messages = ctx.list == ListKind::Messages;
+    let alias = if on_messages { "m" } else { "mi" };
+    if !on_messages {
+        out.push("EXISTS (SELECT 1 FROM messages mi WHERE mi.conversation_id = c.id AND ");
+    }
+    out.push(&format!("{alias}.import_id = "));
+    match run {
+        Some(id) => out.bind_int(id),
+        None => {
+            out.push("(SELECT MAX(vi.id) FROM vault_imports vi WHERE vi.account_id = ");
+            out.bind_text(ctx.account_id.to_string());
+            out.push(")");
+        }
+    }
+    if !on_messages {
+        out.push(")");
+    }
+    Ok(())
+}
 /// `expr <op> ?` for a size comparison; a range is two bounds, both bound in
 /// textual order.
 fn cmp_sql(out: &mut Sql, expr: &str, cmp: &Cmp<i64>) {
