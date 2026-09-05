@@ -23,13 +23,13 @@ fn jsonl_content_type_accepts_x_ndjson() {
 }
 
 #[test]
-fn internal_error_log_line_keeps_the_context_chain() {
+fn error_chain_keeps_every_context_layer() {
     let err = anyhow::Error::new(std::io::Error::other("disk full"))
         .context("write staging row")
         .context("stage conversation chat-1");
     assert_eq!(
-        internal_error_log_line(&err),
-        "internal error: stage conversation chat-1: write staging row: disk full"
+        error_chain(&err),
+        "stage conversation chat-1: write staging row: disk full"
     );
 }
 

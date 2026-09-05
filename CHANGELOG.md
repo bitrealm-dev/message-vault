@@ -13,6 +13,7 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ### Added
 
+- 2026-09-05: The vault server logs through `tracing`: one line per HTTP response, the full cause chain behind every 500, and warnings for work it could not finish. `RUST_LOG` sets the level; the default is `info`.
 - 2026-09-05: Permanent delete, from the trash only. **Delete** on a trashed conversation removes it, its messages, and any attachment file no other message still uses; **Delete** on a trashed contact does what a phone's Delete Contact does — the name, edits and Contact Group memberships go, the contact becomes Unknown, and its conversations stay, showing the handle. **Empty Trash** does both for everything in the trash. On the HTTP interface: `DELETE /v1/conversations/{id}` and `DELETE /v1/contacts/{id}` (409 for an item not in the trash) and `DELETE /v1/trash`, each needing a signed-in session whose account may delete. (#314)
 - 2026-09-05: Settings → Convert, a desktop-only tool that rewrites a folder of exported files into another format (JSON Lines, JSON, CSV, EML, MBOX, or Android XML) without reading a backup or the vault. The input format is detected from the folder; the output folder must differ from the input, and the screen says so before a run starts.
 
