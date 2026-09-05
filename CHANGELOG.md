@@ -26,6 +26,7 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ### Fixed
 
+- 2026-09-05: The vault no longer keeps one lock entry per asset ever uploaded and one rate-limit bucket per username ever tried. Both maps shrink again when their entries go idle.
 - 2026-09-05: An internal server error is now logged with its whole context chain (the step that failed and the database or file error under it) instead of the outermost message alone. The desktop app's media and pull errors carry the chain the same way.
 - 2026-09-03: Importing a file the vault cannot read now answers with a 400 that says what is wrong — which schema version the file has and which the vault reads, or which line is not valid — instead of "internal server error" with the reason on the server's log only.
 - 2026-09-03: `POST /v1/import` without a `source` now returns the vault's own JSON error ("query param source is required") instead of the framework's plain-text rejection.

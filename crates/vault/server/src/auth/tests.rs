@@ -267,6 +267,21 @@ async fn password_change_setup() -> (
 }
 
 #[test]
+fn auth_rate_limit_forgets_idle_buckets() {
+    let limits: AuthRateLimits = Arc::new(Mutex::new(HashMap::new()));
+    let start = Instant::now();
+    check_auth_rate_limit_at(&limits, "login:alice", start).unwrap();
+    check_auth_rate_limit_at(&limits, "login:bob", start).unwrap();
+    assert_eq!(limits.lock().unwrap().len(), 2);
+
+    let later = start + AUTH_RATE_WINDOW + Duration::from_secs(1);
+    check_auth_rate_limit_at(&limits, "login:carol", later).unwrap();
+    let map = limits.lock().unwrap();
+    assert_eq!(map.len(), 1);
+    assert!(map.contains_key("login:carol"));
+}
+
+#[test]
 fn auth_rate_limit_trips_after_max() {
     let limits: AuthRateLimits = Arc::new(Mutex::new(HashMap::new()));
     let bucket = "register:someone";

@@ -21,7 +21,6 @@ use tempfile::TempDir;
 use crate::extract::{Json, Path as AxumPath, Query};
 use axum::extract::{Request, State};
 use axum::http::HeaderMap;
-use tokio::sync::Mutex;
 
 use crate::assets::AssetStats;
 use crate::config::{PathsConfig, validate_source_id};
@@ -1606,13 +1605,7 @@ async fn run_import_path(
     let do_dedupe = query.dedupe;
     let query_import_id = query.import_id;
 
-    let account_lock = {
-        let mut map = state.account_import_locks.lock().await;
-        map.entry(account.clone())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone()
-    };
-    let _guard = account_lock.lock().await;
+    let _guard = state.account_import_locks.lock(account.clone()).await;
 
     // One pooled connection held for the whole import; the import semaphore
     // taken above keeps enough of the pool free for other requests.

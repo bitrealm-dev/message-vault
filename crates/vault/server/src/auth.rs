@@ -38,10 +38,25 @@ pub(crate) type AuthRateLimits = Arc<Mutex<HashMap<String, VecDeque<Instant>>>>;
 /// Reject when `bucket` has seen at least [`AUTH_RATE_MAX`] hits in
 /// [`AUTH_RATE_WINDOW`].
 fn check_auth_rate_limit(limits: &AuthRateLimits, bucket: &str) -> Result<(), ApiError> {
+    check_auth_rate_limit_at(limits, bucket, Instant::now())
+}
+
+/// [`check_auth_rate_limit`] with the clock as an argument, so a test can move it.
+fn check_auth_rate_limit_at(
+    limits: &AuthRateLimits,
+    bucket: &str,
+    now: Instant,
+) -> Result<(), ApiError> {
     let mut map = limits
         .lock()
         .map_err(|_| ApiError::Internal(anyhow::anyhow!("auth rate limiter poisoned")))?;
-    let now = Instant::now();
+    // Forget every bucket whose newest hit is outside the window. Buckets are
+    // named by whatever username the client sends, so without this a client
+    // spraying usernames grows the map for the life of the process.
+    map.retain(|_, hits| {
+        hits.back()
+            .is_some_and(|newest| now.duration_since(*newest) <= AUTH_RATE_WINDOW)
+    });
     let entry = map.entry(bucket.to_string()).or_default();
     while let Some(oldest) = entry.front() {
         if now.duration_since(*oldest) <= AUTH_RATE_WINDOW {
