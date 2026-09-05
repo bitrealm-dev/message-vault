@@ -42,6 +42,7 @@ pub async fn load_account_profile(
     Ok(AccountProfile { emails, phones })
 }
 
+/// Run a one-column query bound to `account_id` and collect the strings.
 async fn query_account_strings(
     conn: &mut AnyConnection,
     sql: &str,
@@ -98,6 +99,7 @@ pub async fn link_account_handle_with_service(
     Ok(handle_id)
 }
 
+/// True for the 8-4-4-4-12 hex shape of a UUID.
 fn looks_like_uuid(s: &str) -> bool {
     let s = s.trim();
     if s.len() != 36 {

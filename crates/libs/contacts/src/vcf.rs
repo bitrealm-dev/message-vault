@@ -62,6 +62,7 @@ fn parse_vcf_str(text: &str) -> Result<Vec<VcfCard>> {
     Ok(cards)
 }
 
+/// Join vCard continuation lines (starting with a space or tab) onto the line before.
 fn unfold_lines(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for line in text.lines() {
@@ -76,6 +77,7 @@ fn unfold_lines(text: &str) -> Vec<String> {
     out
 }
 
+/// Apply one `PROP;params:value` line to the card being built.
 fn apply_line(card: &mut VcfCard, line: &str) {
     let Some((name, value)) = line.split_once(':') else {
         return;
@@ -124,6 +126,7 @@ fn apply_line(card: &mut VcfCard, line: &str) {
     }
 }
 
+/// Undo vCard escaping of newlines, commas, semicolons, and backslashes.
 fn unescape(s: &str) -> String {
     s.replace("\\n", "\n")
         .replace("\\,", ",")

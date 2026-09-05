@@ -59,12 +59,14 @@ fn read_quoted(bytes: &[u8], mut i: usize) -> Option<(String, usize)> {
     None
 }
 
+/// True for a word that could be a field name: letters and hyphens, starting with a letter.
 fn is_field_word(s: &str) -> bool {
     let mut chars = s.chars();
     matches!(chars.next(), Some(c) if c.is_ascii_alphabetic())
         && chars.all(|c| c.is_ascii_alphabetic() || c == '-')
 }
 
+/// True for a byte that ends a bare (unquoted) word.
 fn is_bare_end(b: u8) -> bool {
     b.is_ascii_whitespace() || b == b'(' || b == b')'
 }

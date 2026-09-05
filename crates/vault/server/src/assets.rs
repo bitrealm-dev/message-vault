@@ -465,6 +465,7 @@ fn find_existing(assets_root: &Path, sha: &str) -> Option<PathBuf> {
     matches.into_iter().next()
 }
 
+/// True when the file name without its extension is exactly `expected`.
 fn file_stem_equals(path: &Path, expected: &str) -> bool {
     match path.file_stem().and_then(|s| s.to_str()) {
         Some(stem) => stem == expected,
@@ -472,10 +473,12 @@ fn file_stem_equals(path: &Path, expected: &str) -> bool {
     }
 }
 
+/// Path of the hidden `.<sha>.mime` sidecar that records a blob's MIME type when its name has no usable extension.
 fn mime_metadata_path(assets_root: &Path, sha: &str) -> PathBuf {
     assets_root.join(&sha[..2]).join(format!(".{sha}.mime"))
 }
 
+/// MIME type from the stored file's extension, else from its sidecar.
 fn mime_for_path_or_sidecar(assets_root: &Path, path: &Path, sha: &str) -> Option<String> {
     match resolve_mime(None, path) {
         Some(mime) => Some(mime),
@@ -483,6 +486,8 @@ fn mime_for_path_or_sidecar(assets_root: &Path, path: &Path, sha: &str) -> Optio
     }
 }
 
+/// MIME type to record for a blob that already exists: the export's claim wins, then what the
+/// stored file's name says, then what the source file said.
 fn mime_for_existing_file(
     export_mime: Option<&str>,
     dest: &Path,
@@ -496,6 +501,7 @@ fn mime_for_existing_file(
     resolve_mime(None, dest).or(source_mime)
 }
 
+/// Read the MIME sidecar for `sha`, if present and non-empty.
 fn read_mime_metadata(assets_root: &Path, sha: &str) -> Option<String> {
     let file = open_nofollow_read(&mime_metadata_path(assets_root, sha)).ok()?;
     let mut mime = String::new();
@@ -508,6 +514,7 @@ fn read_mime_metadata(assets_root: &Path, sha: &str) -> Option<String> {
     }
 }
 
+/// Write the MIME sidecar for `sha` unless one already exists. Empty types are not recorded.
 fn store_mime_metadata(assets_root: &Path, sha: &str, mime: &str) -> Result<()> {
     let mime = mime.trim();
     if mime.is_empty() {
@@ -532,6 +539,7 @@ fn store_mime_metadata(assets_root: &Path, sha: &str, mime: &str) -> Result<()> 
     }
 }
 
+/// The path under `root` as a forward-slash string, the form `attachments.assets_path` stores.
 fn path_relative_to(root: &Path, path: &Path) -> Result<String> {
     let relative = path.strip_prefix(root).with_context(|| {
         format!(
@@ -543,6 +551,7 @@ fn path_relative_to(root: &Path, path: &Path) -> Result<String> {
     Ok(relative.to_string_lossy().replace('\\', "/"))
 }
 
+/// The export's MIME claim when it has one, else a guess from the file extension.
 fn resolve_mime(export_mime: Option<&str>, source: &Path) -> Option<String> {
     if let Some(mime) = export_mime
         && !mime.is_empty()
@@ -565,6 +574,7 @@ fn guess_mime(ext: Option<&str>) -> Option<String> {
     media::mime_for_ext(ext?).map(str::to_string)
 }
 
+/// True for a plain file; symlinks are never followed into the asset store.
 fn is_regular_file(path: &Path) -> bool {
     match fs::symlink_metadata(path) {
         Ok(meta) => meta.is_file() && !meta.file_type().is_symlink(),
@@ -618,6 +628,7 @@ pub(crate) struct AssetPutResponse {
 }
 
 impl AssetPutResponse {
+    /// Response body for a blob that is now in the store.
     fn stored(asset: StoredAsset, already_present: bool) -> Json<Self> {
         Json(Self {
             sha256: asset.sha256,
@@ -636,6 +647,8 @@ enum AssetAccess {
     Probe,
 }
 
+/// Resolve the account and source an asset route targets, check the caller may perform
+/// `access` on it, and look the blob up by sha256.
 async fn resolve_asset_lookup(
     state: &AppState,
     auth: &AuthIdentity,

@@ -56,6 +56,7 @@ fn restrict_permissions(file: &File) -> Result<(), RuntimeError> {
     Ok(())
 }
 
+/// No-op off Unix; the Unix version narrows the decrypted backup's file mode.
 #[cfg(not(unix))]
 fn restrict_permissions(_file: &File) -> Result<(), RuntimeError> {
     Ok(())
@@ -116,6 +117,7 @@ pub fn ios_backup_encrypted_flag(backup_root: &Path) -> Option<bool> {
     }
 }
 
+/// The password for an encrypted backup, or the error that says one is required.
 fn password_for_encrypted_backup(provided: Option<&str>) -> Result<String, RuntimeError> {
     match provided {
         Some(password) => Ok(password.to_string()),
@@ -125,6 +127,7 @@ fn password_for_encrypted_backup(provided: Option<&str>) -> Result<String, Runti
     }
 }
 
+/// Fail when a password was given for a backup that is not encrypted, so a wrong assumption is not silently ignored.
 fn reject_leftover_password(
     is_encrypted: bool,
     provided: Option<&str>,

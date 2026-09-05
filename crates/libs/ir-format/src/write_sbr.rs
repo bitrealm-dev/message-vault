@@ -25,6 +25,7 @@ pub(crate) struct SbrBackupSession {
 }
 
 impl SbrBackupSession {
+    /// Start a new `smses-*.xml` backup under `output_dir`, replacing any earlier one.
     pub fn create(output_dir: &Path) -> Result<Self> {
         fs::create_dir_all(output_dir)
             .with_context(|| format!("create {}", output_dir.display()))?;
@@ -39,6 +40,7 @@ impl SbrBackupSession {
         })
     }
 
+    /// Write every message of one conversation as SBR `<sms>` or `<mms>` elements.
     pub fn append_document(&mut self, doc: &ConversationDocument) -> Result<()> {
         for msg in document_to_sbr_messages(doc, &self.output_dir)? {
             self.writer.write_message(&msg)?;
@@ -46,6 +48,7 @@ impl SbrBackupSession {
         Ok(())
     }
 
+    /// Close the XML and return the backup file path.
     pub fn finish(self) -> Result<PathBuf> {
         self.writer.finish()
     }
@@ -69,6 +72,8 @@ pub(crate) fn document_to_sbr_messages(
     Ok(out)
 }
 
+/// One IR message as an SBR element: restored from the vendor bag when the export came
+/// from SBR, else synthesized.
 fn ir_message_to_sbr(
     doc: &ConversationDocument,
     msg: &IrMessage,
@@ -102,6 +107,7 @@ fn ir_message_to_sbr(
     synthesize_sbr(doc, msg, owner, output_dir)
 }
 
+/// An `<sms>` from the original attributes, with the fields IR owns written back over them.
 fn restore_sms(mut attrs: BTreeMap<String, String>, msg: &IrMessage) -> SbrMessage {
     set_attr(&mut attrs, "date", msg.timestamp_unix_ms.to_string());
     set_attr(
@@ -121,6 +127,7 @@ fn restore_sms(mut attrs: BTreeMap<String, String>, msg: &IrMessage) -> SbrMessa
     SbrMessage::sms(attrs)
 }
 
+/// An `<mms>` from the original attributes, parts, and addresses, with the IR-owned fields written back.
 #[allow(clippy::too_many_arguments)]
 fn restore_mms(
     mut attrs: BTreeMap<String, String>,
@@ -152,6 +159,7 @@ fn restore_mms(
     Ok(Some(SbrMessage::mms(attrs, parts, addrs)))
 }
 
+/// An SBR element for a message that did not come from SBR: `<mms>` when it has attachments, else `<sms>`.
 fn synthesize_sbr(
     doc: &ConversationDocument,
     msg: &IrMessage,
@@ -169,6 +177,7 @@ fn synthesize_sbr(
     }
 }
 
+/// A minimal `<sms>` for a text-only message.
 fn synthesize_sms(doc: &ConversationDocument, msg: &IrMessage) -> SbrMessage {
     let peer = peer_address(doc, msg);
     let mut attrs = BTreeMap::new();
@@ -200,6 +209,7 @@ fn synthesize_sms(doc: &ConversationDocument, msg: &IrMessage) -> SbrMessage {
     SbrMessage::sms(attrs)
 }
 
+/// A minimal `<mms>` with a text part and one part per attachment, reading attachment bytes from the output folder.
 fn synthesize_mms(
     doc: &ConversationDocument,
     msg: &IrMessage,
@@ -273,6 +283,7 @@ fn synthesize_mms(
     Ok(SbrMessage::mms(attrs, parts, addrs))
 }
 
+/// The `<addr>` list for a synthesized MMS: the sender as From, everyone else as To.
 fn synthesize_addrs(
     doc: &ConversationDocument,
     msg: &IrMessage,
@@ -322,6 +333,7 @@ fn synthesize_addrs(
     addrs
 }
 
+/// One `<addr>` element's attributes.
 fn addr_entry(address: &str, addr_type: &str) -> BTreeMap<String, String> {
     let mut m = BTreeMap::new();
     set_attr(&mut m, "address", address);
@@ -330,6 +342,7 @@ fn addr_entry(address: &str, addr_type: &str) -> BTreeMap<String, String> {
     m
 }
 
+/// The other party's address: the sender for incoming messages, else the chat identifier.
 fn peer_address(doc: &ConversationDocument, msg: &IrMessage) -> String {
     if let Some(h) = msg
         .sender_handle
@@ -350,6 +363,7 @@ fn peer_address(doc: &ConversationDocument, msg: &IrMessage) -> String {
     doc.conversation.chat_identifier.clone()
 }
 
+/// The `address` attribute of an MMS: every participant joined with `~` for groups, else the peer.
 fn mms_address_field(doc: &ConversationDocument) -> String {
     if doc.conversation.conversation_type == IrConversationType::Group {
         doc.conversation
@@ -370,6 +384,7 @@ fn mms_address_field(doc: &ConversationDocument) -> String {
     }
 }
 
+/// The `contact_name` value: the sender's display name for incoming messages, else the peer's.
 fn contact_name_alias(doc: &ConversationDocument, msg: &IrMessage) -> Option<String> {
     if msg.direction == IrDirection::Incoming
         && let Some(n) = msg.sender_display_name.as_deref().filter(|s| !s.is_empty())

@@ -71,6 +71,8 @@ impl ExportTransforms {
     }
 }
 
+/// Load each attachment's bytes from the output folder into the document; unreadable
+/// files are left without bytes so packaging can continue.
 pub(crate) fn reload_attachment_bytes(doc: &mut ConversationDocument, output_dir: &Path) {
     for msg in &mut doc.messages {
         for att in &mut msg.attachments {
@@ -82,6 +84,7 @@ pub(crate) fn reload_attachment_bytes(doc: &mut ConversationDocument, output_dir
     }
 }
 
+/// Drop attachment paths and bytes when the media mode is disabled, keeping the metadata.
 pub(crate) fn clear_attachments_when_disabled(doc: &mut ConversationDocument, mode: MediaMode) {
     if !matches!(mode, MediaMode::Disabled) {
         return;
@@ -95,6 +98,7 @@ pub(crate) fn clear_attachments_when_disabled(doc: &mut ConversationDocument, mo
     }
 }
 
+/// Replace every handle, name, and body in the document with stable fake values.
 pub(crate) fn obfuscate_document(doc: &mut ConversationDocument, anon: &mut Obfuscator) {
     doc.conversation.chat_identifier = anon.obfuscate_handle(&doc.conversation.chat_identifier);
     if let Some(title) = doc.conversation.group_title.as_mut() {
@@ -135,6 +139,7 @@ pub(crate) fn obfuscate_document(doc: &mut ConversationDocument, anon: &mut Obfu
     }
 }
 
+/// Obfuscate one participant's handle and display name.
 fn obfuscate_participant(p: &mut IrParticipant, anon: &mut Obfuscator) {
     if let Some(handle) = p.handle.as_mut() {
         *handle = anon.obfuscate_handle(handle);
@@ -144,6 +149,7 @@ fn obfuscate_participant(p: &mut IrParticipant, anon: &mut Obfuscator) {
     }
 }
 
+/// Replace an attachment with the placeholder file for its media class.
 fn obfuscate_attachment(att: &mut IrAttachment) {
     let class = classify_attachment(att.mime_type.as_deref(), att.path.as_deref());
     let rel = placeholder_rel_path(class);
@@ -164,6 +170,8 @@ pub(crate) struct TransformOutcome {
     pub obfuscated_docs: usize,
 }
 
+/// Apply the export transforms (media mode, obfuscation) to every document, optionally
+/// loading attachment bytes first.
 pub(crate) fn apply_transforms(
     docs: &mut [ConversationDocument],
     output_dir: &Path,

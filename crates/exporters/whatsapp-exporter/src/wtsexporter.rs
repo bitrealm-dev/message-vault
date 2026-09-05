@@ -15,6 +15,7 @@ pub(crate) enum Platform {
 }
 
 impl Platform {
+    /// The wtsexporter command-line flag for this platform.
     pub fn as_flag(self) -> &'static str {
         match self {
             Self::Android => "-a",

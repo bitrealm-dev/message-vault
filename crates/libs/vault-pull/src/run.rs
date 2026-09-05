@@ -522,6 +522,7 @@ struct DownloadAssetsParallelArgs<'a> {
     cancel: Option<&'a CancelFlag>,
 }
 
+/// Download the given assets with a worker pool, skipping any already on disk. Returns the counts and bytes.
 fn download_assets_parallel(args: DownloadAssetsParallelArgs<'_>) -> Result<AssetDownloadStats> {
     let DownloadAssetsParallelArgs {
         session,

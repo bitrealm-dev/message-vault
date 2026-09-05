@@ -512,6 +512,7 @@ fn headroom_shortfall(needed: u64, available: u64) -> Option<String> {
     ))
 }
 
+/// A byte count as KiB, MiB, or GiB with one decimal.
 fn human_bytes(bytes: u64) -> String {
     const KIB: f64 = 1024.0;
     const MIB: f64 = KIB * 1024.0;
@@ -528,11 +529,13 @@ fn human_bytes(bytes: u64) -> String {
     }
 }
 
+/// Log that the write queue is starting on `units` conversations.
 fn announce_start(log: Option<&LogSink>, units: usize) {
     emit_log(log, "");
     emit_log(log, format!("Preparing {units} conversation file(s)..."));
 }
 
+/// Log the write queue's totals, noting resumed work.
 fn announce_finish(log: Option<&LogSink>, report: &WriteQueueReport, resume: bool) {
     emit_log(
         log,

@@ -208,10 +208,12 @@ pub fn parse_ir_lines(
     Ok(out)
 }
 
+/// True when the JSON object is a conversation header rather than a message.
 fn is_ir_header(value: &Value) -> bool {
     value.get("schema_version").is_some() && value.get("conversation").is_some()
 }
 
+/// Map a JSON Lines header onto the server's conversation record.
 fn conversation_from_ir(header: &ConversationHeader) -> ConversationRecord {
     let export_source = {
         let s = header.export.source.trim();
@@ -251,6 +253,7 @@ fn conversation_from_ir(header: &ConversationHeader) -> ConversationRecord {
     }
 }
 
+/// Map one IR message onto the server's message record, with local and UTC timestamps.
 fn message_from_ir(msg: &IrMessage) -> Result<MessageRecord> {
     let secs = msg.timestamp_unix_ms.div_euclid(1000);
     let (timestamp, timestamp_utc) = format_timestamps(secs).with_context(|| {
@@ -347,6 +350,7 @@ fn infer_sender_handle_type(sender_handle: Option<&str>, service: IrService) -> 
     Some(HandleType::Other)
 }
 
+/// Map one IR attachment onto the server's attachment record.
 fn attachment_from_ir(a: &IrAttachment) -> AttachmentRecord {
     AttachmentRecord {
         path: a.path.clone(),
@@ -360,6 +364,7 @@ fn attachment_from_ir(a: &IrAttachment) -> AttachmentRecord {
     }
 }
 
+/// Tapback rows from the iMessage extension, falling back to the message's own sender and direction.
 fn tapbacks_from_im(
     im: Option<&IrImessage>,
     fallback_from_me: bool,
@@ -404,6 +409,7 @@ struct WireTapback {
     sender: Option<String>,
 }
 
+/// Local and UTC RFC 3339 strings for a Unix timestamp, or `None` when it cannot be represented.
 fn format_timestamps(secs: i64) -> Option<(String, String)> {
     let local = Local.timestamp_opt(secs, 0).single().or_else(|| {
         Utc.timestamp_opt(secs, 0)

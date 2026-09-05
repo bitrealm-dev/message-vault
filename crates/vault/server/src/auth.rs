@@ -194,10 +194,12 @@ pub(crate) fn validate_password_policy(password: &str) -> Result<(), ApiError> {
 // Username validation
 // ---------------------------------------------------------------------------
 
+/// The username as stored: surrounding whitespace removed.
 pub(crate) fn normalize_username(raw: &str) -> String {
     raw.trim().to_string()
 }
 
+/// True for 1 to 128 characters of letters, digits, `_`, `-`, or `.`.
 pub(crate) fn is_valid_username(s: &str) -> bool {
     let s = s.trim();
     if s.is_empty() || s.len() > 128 {
@@ -207,6 +209,7 @@ pub(crate) fn is_valid_username(s: &str) -> bool {
         .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
 }
 
+/// The value trimmed and owned, or `None` when blank.
 fn nonempty_trimmed(value: Option<&str>) -> Option<String> {
     let raw = value?;
     let trimmed = raw.trim();
@@ -279,6 +282,7 @@ pub(crate) async fn auth_check(
     }))
 }
 
+/// Source ids this account has imported, oldest first.
 async fn list_account_sources(pool: &AnyPool, account_id: &str) -> Result<Vec<String>, ApiError> {
     let account_id = account_id.to_string();
     // Read-only: do not run ensure_vault_schema (avoids write locks on auth).
@@ -286,6 +290,7 @@ async fn list_account_sources(pool: &AnyPool, account_id: &str) -> Result<Vec<St
     Ok(dedupe::source_priority_from_db(&mut conn, &account_id).await?)
 }
 
+/// Account id for a username or UUID, or `None` when no account matches.
 async fn lookup_or_resolve_query(
     pool: &AnyPool,
     account_ref: &str,
@@ -295,6 +300,7 @@ async fn lookup_or_resolve_query(
     Ok(account_profile::lookup_account_ref(&mut conn, &account_ref).await?)
 }
 
+/// Username for an account id, when the account has one.
 async fn load_username(pool: &AnyPool, account_id: &str) -> Result<Option<String>, ApiError> {
     let account_id = account_id.to_string();
     let mut conn = pool.acquire().await?;

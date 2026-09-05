@@ -21,14 +21,17 @@ const SENT_TYPES: &[&str] = &["2", "128", "4", "135", "6", "5"];
 /// Android SMS/MMS type codes for inbox / received messages.
 const RECEIVED_TYPES: &[&str] = &["1", "132", "130"];
 
+/// `SMS with <name>` subject matcher.
 fn subject_re() -> &'static Regex {
     SUBJECT_RE.get_or_init(|| Regex::new(r"(?i)^SMS with (.+)$").expect("subject"))
 }
 
+/// Separator matcher for multi-address headers.
 fn address_split_re() -> &'static Regex {
     ADDRESS_SPLIT_RE.get_or_init(|| Regex::new(r"[~;,|]+").expect("split"))
 }
 
+/// `SMS archive ` subject prefix matcher.
 fn archive_subject_prefix_re() -> &'static Regex {
     ARCHIVE_SUBJECT_PREFIX_RE
         .get_or_init(|| Regex::new(r"(?i)^SMS archive ").expect("archive subject"))
@@ -48,7 +51,9 @@ pub(crate) struct MailHeaders {
 }
 
 impl MailHeaders {
+    /// Read the headers this exporter uses, once per EML.
     pub(crate) fn from_mail(mail: &ParsedMail<'_>) -> Self {
+        /// The first value of a header, trimmed.
         fn one(mail: &ParsedMail<'_>, name: &str) -> String {
             mail.headers
                 .get_first_value(name)
@@ -69,6 +74,7 @@ impl MailHeaders {
     }
 }
 
+/// Distinct phone numbers from an `X-smssync-address` header.
 fn smssync_participant_numbers(raw_address: &str) -> Vec<String> {
     if raw_address.trim().is_empty() {
         return Vec::new();
@@ -91,6 +97,7 @@ fn smssync_participant_numbers(raw_address: &str) -> Vec<String> {
     numbers
 }
 
+/// The contact name from an `SMS with <name>` subject, unless it is a number.
 fn contact_name_from_subject(subject: &str) -> Option<String> {
     let caps = subject_re().captures(subject.trim())?;
     let name = caps[1].trim();
@@ -100,6 +107,7 @@ fn contact_name_from_subject(subject: &str) -> Option<String> {
     Some(name.to_string())
 }
 
+/// Unix seconds from the SMS Backup+ date header (milliseconds or seconds), else the `Date` header.
 fn timestamp_seconds(headers: &MailHeaders) -> Option<f64> {
     let raw = &headers.smssync_date;
     if !raw.is_empty() && raw.chars().all(|c| c.is_ascii_digit()) {
@@ -150,6 +158,7 @@ fn is_sent(headers: &MailHeaders, owner_emails: &[String]) -> bool {
 
 /// First `text/plain` body in the MIME tree, with newlines normalized to `\n`.
 pub(crate) fn extract_plain_text_body(mail: &ParsedMail<'_>) -> String {
+    /// The first `text/plain` body in the MIME tree, with line endings normalized.
     fn walk(m: &ParsedMail<'_>) -> Option<String> {
         let ctype = m.ctype.mimetype.to_ascii_lowercase();
         if ctype == "text/plain"
@@ -167,6 +176,7 @@ pub(crate) fn extract_plain_text_body(mail: &ParsedMail<'_>) -> String {
     walk(mail).unwrap_or_default()
 }
 
+/// True when the EML is one SMS Backup+ message rather than an archive or unrelated mail.
 fn is_single_sms_eml(headers: &MailHeaders) -> bool {
     if !headers.smssync_type.is_empty() {
         return true;

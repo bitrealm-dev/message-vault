@@ -90,11 +90,13 @@ fn attachment_progress_from_log(line: &str) -> Option<ExtractProgressEvent> {
     })
 }
 
+/// `a/b` as two counts.
 fn split_ratio(text: &str) -> Option<(usize, usize)> {
     let (left, right) = text.split_once('/')?;
     Some((left.parse().ok()?, right.parse().ok()?))
 }
 
+/// `a/b` as two 64-bit counts.
 fn split_u64_ratio(text: &str) -> Option<(u64, u64)> {
     let (left, right) = text.split_once('/')?;
     Some((left.parse().ok()?, right.parse().ok()?))

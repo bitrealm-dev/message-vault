@@ -121,6 +121,7 @@ pub fn process_attachment_files(
     Ok((report, remap))
 }
 
+/// Send one line to the log callback, if there is one.
 fn emit(log: &mut Option<&mut dyn FnMut(&str)>, line: &str) {
     if let Some(log) = log.as_mut() {
         log(line);
@@ -150,6 +151,7 @@ fn attachments_dir_bytes(attachments: &Path) -> Result<u64> {
     Ok(total)
 }
 
+/// A byte count as KB, MB, or GB with one decimal.
 fn format_bytes(bytes: u64) -> String {
     const KB: f64 = 1000.0;
     const MB: f64 = KB * 1000.0;
@@ -207,6 +209,7 @@ fn is_msgmedia_temp(path: &Path) -> bool {
         .is_some_and(|n| n.contains(".msgmedia.tmp."))
 }
 
+/// Delete `*.msgmedia.tmp.*` files left by an interrupted run anywhere under `root`.
 fn remove_msgmedia_temps(root: &Path) -> Result<()> {
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -248,6 +251,7 @@ fn remove_temps_beside(path: &Path) {
     let _ = fs::remove_file(temp_sibling(path, ext));
 }
 
+/// The temp path a conversion writes to next to `path`.
 fn temp_sibling(path: &Path, ext: &str) -> PathBuf {
     path.with_extension(format!("msgmedia.tmp.{ext}"))
 }
@@ -263,6 +267,7 @@ fn with_temp_output<T>(tmp: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
     }
 }
 
+/// Remux into MP4 without re-encoding and commit it; `None` when ffmpeg cannot remux the container.
 fn try_remux_replace(path: &Path, commit: Commit<'_>) -> Result<Option<PathBuf>> {
     let tmp = temp_sibling(path, "mp4");
     if remux_mp4(path, &tmp).is_err() {
@@ -343,6 +348,7 @@ fn run_one(
     }
 }
 
+/// Convert or compress one file by its media kind and report what changed.
 fn process_one(
     output_dir: &Path,
     path: &Path,
@@ -404,6 +410,8 @@ pub fn derivative_name_for_missing(src: &Path, mode: MediaMode) -> Option<String
     derivative_name_impl(src, mode, |_floor| false)
 }
 
+/// The file name a conversion would produce, or `None` when the file would be left as-is;
+/// `under_floor` says whether a size is too small to bother with.
 fn derivative_name_impl(
     src: &Path,
     mode: MediaMode,
@@ -482,6 +490,8 @@ pub fn transcode_file(
     }
 }
 
+/// A `Changed` outcome naming the new relative path. Always Changed, even when the path
+/// is the same: callers must refresh digests after an in-place rewrite.
 fn changed(output_dir: &Path, old_rel: &str, new_path: &Path) -> Result<Outcome> {
     let new_rel = rel_path(output_dir, new_path)?;
     // Always report Changed — even when the relative path is unchanged (e.g. JPG
@@ -494,6 +504,7 @@ fn changed(output_dir: &Path, old_rel: &str, new_path: &Path) -> Result<Outcome>
     })
 }
 
+/// The path under `output_dir` with forward slashes.
 fn rel_path(output_dir: &Path, path: &Path) -> Result<String> {
     let rel = path
         .strip_prefix(output_dir)
@@ -501,6 +512,7 @@ fn rel_path(output_dir: &Path, path: &Path) -> Result<String> {
     Ok(rel.to_string_lossy().replace('\\', "/"))
 }
 
+/// `path` with its extension replaced by `ext`; unchanged when that would be the same path.
 fn sibling_with_ext(path: &Path, ext: &str) -> PathBuf {
     let stem = path.file_stem().unwrap_or_default();
     let mut dest = path.with_file_name(stem);
@@ -537,6 +549,7 @@ enum Commit<'a> {
     To(&'a Path),
 }
 
+/// Move the produced file to where the commit mode says: over the original, or to a named destination.
 fn commit_produced(commit: Commit<'_>, original: &Path, produced: &Path) -> Result<PathBuf> {
     match commit {
         Commit::InPlace => replace_original(original, produced),
@@ -579,6 +592,7 @@ fn is_smaller(produced: &Path, original: &Path) -> Result<bool> {
     Ok(fs::metadata(produced)?.len() < fs::metadata(original)?.len())
 }
 
+/// Replace the original with the produced file, renaming to the new extension and removing the old file.
 fn replace_original(original: &Path, produced: &Path) -> Result<PathBuf> {
     if produced == original {
         return Ok(original.to_path_buf());
@@ -609,6 +623,8 @@ fn replace_original(original: &Path, produced: &Path) -> Result<PathBuf> {
     Ok(final_path)
 }
 
+/// Convert an image to JPEG (compressing when asked), keeping the original when the result
+/// is not smaller and `keep_smaller` is set.
 fn convert_image(
     path: &Path,
     compress: bool,
@@ -641,6 +657,8 @@ fn convert_image(
     })
 }
 
+/// Convert audio to MP3 (compressing when asked), keeping the original when the result
+/// is not smaller and `keep_smaller` is set.
 fn convert_audio(
     path: &Path,
     compress: bool,
@@ -672,6 +690,7 @@ fn convert_audio(
     })
 }
 
+/// Convert a video to MP4: remux when the codecs allow, else re-encode.
 fn convert_video(path: &Path, commit: Commit<'_>) -> Result<PathBuf> {
     let tmp = temp_sibling(path, "mp4");
 
@@ -708,6 +727,7 @@ fn convert_video(path: &Path, commit: Commit<'_>) -> Result<PathBuf> {
     })
 }
 
+/// Copy the streams into an MP4 container without re-encoding.
 fn remux_mp4(path: &Path, tmp: &Path) -> Result<()> {
     let args = vec![
         "-y".into(),
@@ -722,6 +742,7 @@ fn remux_mp4(path: &Path, tmp: &Path) -> Result<()> {
     run_ffmpeg(&args)
 }
 
+/// Re-encode a video under the resolution, frame-rate, and quality caps; `None` when it is already within them.
 fn compress_video(
     path: &Path,
     opts: &CompressOptions,
@@ -811,6 +832,7 @@ fn compress_video(
     })
 }
 
+/// The ffmpeg arguments shared by every video re-encode: input, filter graph, and output settings.
 fn base_video_args(path: &Path, _tmp: &Path, vf: &str) -> Vec<String> {
     vec![
         "-y".into(),
@@ -850,6 +872,7 @@ pub(crate) fn is_efficient(
     true
 }
 
+/// A path as a string for a command line.
 fn path_str(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }

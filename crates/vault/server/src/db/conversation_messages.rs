@@ -20,6 +20,7 @@ use crate::db::participant_names::load_for_conversations;
 use crate::db::sql::{SqlParam, bind_all, group_rows_by_id, renumber_placeholders};
 use crate::server::ApiError;
 
+/// Sorted, deduplicated ids for an `IN` list.
 fn unique_ids(ids: impl IntoIterator<Item = i64>) -> Vec<i64> {
     let mut ids: Vec<i64> = ids.into_iter().collect();
     ids.sort_unstable();
@@ -182,6 +183,7 @@ pub async fn load_messages(
         .collect())
 }
 
+/// Attachment rows for these messages, grouped by message id.
 async fn load_attachments(
     conn: &mut AnyConnection,
     message_ids: &[i64],
@@ -216,6 +218,7 @@ async fn load_attachments(
     .await
 }
 
+/// Tapback rows for these messages, grouped by message id.
 async fn load_tapbacks(
     conn: &mut AnyConnection,
     message_ids: &[i64],

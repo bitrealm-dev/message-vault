@@ -31,6 +31,7 @@ struct PreparedAttachment {
     stored: Option<StoredAsset>,
 }
 
+/// The path trimmed, or `None` when blank.
 fn nonempty_rel(path: &Option<String>) -> Option<&str> {
     let raw = path.as_deref()?;
     let trimmed = raw.trim();
@@ -41,6 +42,7 @@ fn nonempty_rel(path: &Option<String>) -> Option<&str> {
     }
 }
 
+/// The value trimmed, or `None` when blank.
 pub(super) fn nonempty_str(value: Option<&str>) -> Option<&str> {
     let raw = value?;
     let trimmed = raw.trim();
@@ -51,6 +53,7 @@ pub(super) fn nonempty_str(value: Option<&str>) -> Option<&str> {
     }
 }
 
+/// Size on disk of a stored blob, or `None` when it is not there.
 fn stored_size_bytes(assets_dir: &Path, assets_path: Option<&str>) -> Option<i64> {
     let rel = assets_path?;
     let meta = std::fs::metadata(assets_dir.join(rel)).ok()?;
@@ -92,6 +95,8 @@ fn try_store_converted(
     )
 }
 
+/// Store an attachment by the sha256 the export claims (reusing an existing blob) or by
+/// hashing its file, counting the ones whose file is missing.
 fn store_claimed_or_path(
     att: &AttachmentRecord,
     export_dir: &Path,
@@ -143,6 +148,7 @@ fn store_claimed_or_path(
     Ok(None)
 }
 
+/// Stage every attachment of one message into the asset store, converting first when the media mode asks for it.
 fn prepare_attachments(
     export_dir: &Path,
     assets_dir: &Path,
@@ -229,6 +235,7 @@ INSERT INTO staging_tapbacks (
 "#;
 
 impl StagingInserts {
+    /// Fresh insert state for one import run.
     pub(super) fn new(account_id: &str, import_id: Option<i64>) -> Self {
         Self {
             account_id: account_id.to_string(),
@@ -254,6 +261,7 @@ type ConversationHeader = (
     String,
 );
 
+/// The source id for a conversation: its header's `export.source` when sources come from the files, else the fixed override.
 fn resolve_conversation_source(
     opts: &ImportOptions<'_>,
     path: &Path,
@@ -276,6 +284,7 @@ fn resolve_conversation_source(
     }
 }
 
+/// The asset store folder for this source, created when sources come from the files.
 fn assets_dir_for_source(opts: &ImportOptions<'_>, source: &str) -> Result<PathBuf> {
     if opts.source_from_jsonl {
         let paths = opts
@@ -298,6 +307,7 @@ pub fn is_orphaned_export(path: &Path) -> bool {
     stem.eq_ignore_ascii_case("orphaned")
 }
 
+/// Stage one JSON Lines file: its conversation header and messages, or its orphaned messages.
 pub(super) async fn import_file_to_staging(
     tx: &mut AnyConnection,
     stmts: &mut StagingInserts,
@@ -434,6 +444,12 @@ struct ImportConversationArgs<'a> {
     media_work: &'a Path,
 }
 
+/// Stage one conversation: its media on disk, then its handle, conversation
+/// row, participants, and message rows in the staging tables.
+///
+/// # Errors
+///
+/// Returns an error when a media file cannot be stored or a row cannot be written.
 async fn import_conversation_to_staging(args: ImportConversationArgs<'_>) -> Result<ImportStats> {
     let ImportConversationArgs {
         tx,
@@ -720,6 +736,7 @@ struct PendingTapbackRow {
     sender_handle_id: Option<i64>,
 }
 
+/// Bulk-insert one chunk of message rows, then their attachments and tapbacks keyed by the ids returned.
 async fn flush_staging_message_chunk(
     tx: &mut AnyConnection,
     stmts: &mut StagingInserts,
@@ -839,6 +856,7 @@ async fn flush_staging_message_chunk(
     Ok(())
 }
 
+/// Bulk-insert attachment rows in chunks that fit the bind limit.
 async fn flush_attachment_chunks(
     tx: &mut AnyConnection,
     rows: &[PendingAttachmentRow],
@@ -873,6 +891,7 @@ async fn flush_attachment_chunks(
     Ok(())
 }
 
+/// Bulk-insert tapback rows in chunks that fit the bind limit.
 async fn flush_tapback_chunks(
     tx: &mut AnyConnection,
     rows: &[PendingTapbackRow],

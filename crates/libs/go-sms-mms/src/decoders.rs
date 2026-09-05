@@ -3,6 +3,7 @@
 use crate::mms_enc::*;
 use std::collections::HashMap;
 
+/// True for MMS header fields whose value is a short integer.
 pub(crate) fn is_mms_short_integer_field(field: u8) -> bool {
     matches!(
         field,
@@ -33,6 +34,7 @@ pub(crate) fn is_mms_short_integer_field(field: u8) -> bool {
     )
 }
 
+/// The `yes`/`no` name for a boolean header byte.
 pub(crate) fn yes_no_token(v: u8) -> Option<&'static str> {
     match v {
         0x00 => Some("yes"),
@@ -41,6 +43,7 @@ pub(crate) fn yes_no_token(v: u8) -> Option<&'static str> {
     }
 }
 
+/// The name for a priority header byte.
 pub(crate) fn priority_token(v: u8) -> Option<&'static str> {
     match v {
         0x00 => Some("Low"),
@@ -57,24 +60,29 @@ pub(crate) struct Cursor<'a> {
 }
 
 impl<'a> Cursor<'a> {
+    /// A cursor at the start of `data`.
     pub(crate) fn new(data: &'a [u8]) -> Self {
         Self { data, pos: 0 }
     }
 
+    /// Bytes left after the cursor.
     pub(crate) fn remaining(&self) -> usize {
         self.data.len().saturating_sub(self.pos)
     }
 
+    /// The next byte without consuming it.
     pub(crate) fn peek(&self) -> Option<u8> {
         self.data.get(self.pos).copied()
     }
 
+    /// Consume and return the next byte.
     pub(crate) fn next_byte(&mut self) -> Result<u8, ()> {
         let b = self.peek().ok_or(())?;
         self.pos += 1;
         Ok(b)
     }
 
+    /// Consume the next `n` bytes as a slice.
     pub(crate) fn take(&mut self, n: usize) -> Result<&'a [u8], ()> {
         if self.remaining() < n {
             return Err(());
@@ -85,6 +93,7 @@ impl<'a> Cursor<'a> {
     }
 }
 
+/// WSP uintvar: seven bits per byte, high bit set on all but the last.
 pub(crate) fn decode_uint_var(cur: &mut Cursor<'_>) -> Result<u64, ()> {
     let mut value = 0u64;
     for _ in 0..5 {
@@ -97,6 +106,7 @@ pub(crate) fn decode_uint_var(cur: &mut Cursor<'_>) -> Result<u64, ()> {
     Err(())
 }
 
+/// WSP Value-length: a byte up to 30, or 31 followed by a uintvar.
 pub(crate) fn decode_value_length(cur: &mut Cursor<'_>) -> Result<usize, ()> {
     let byte = cur.peek().ok_or(())?;
     if byte <= 30 {
@@ -110,6 +120,7 @@ pub(crate) fn decode_value_length(cur: &mut Cursor<'_>) -> Result<usize, ()> {
     }
 }
 
+/// A NUL-terminated string (a leading quote byte is stripped).
 pub(crate) fn decode_text_string(cur: &mut Cursor<'_>) -> Result<String, ()> {
     let start = cur.pos;
     while cur.pos < cur.data.len() && cur.data[cur.pos] != 0 {
@@ -123,6 +134,7 @@ pub(crate) fn decode_text_string(cur: &mut Cursor<'_>) -> Result<String, ()> {
     Ok(s)
 }
 
+/// WSP Short-integer: one byte with the high bit set.
 pub(crate) fn decode_short_integer(cur: &mut Cursor<'_>) -> Result<u8, ()> {
     let byte = cur.peek().ok_or(())?;
     if byte & 0x80 == 0 {
@@ -132,6 +144,7 @@ pub(crate) fn decode_short_integer(cur: &mut Cursor<'_>) -> Result<u8, ()> {
     Ok(byte & 0x7f)
 }
 
+/// WSP Long-integer: a length byte followed by that many big-endian bytes.
 pub(crate) fn decode_long_integer(cur: &mut Cursor<'_>) -> Result<u64, ()> {
     let len = cur.peek().ok_or(())?;
     if len == 0 || len > 30 {
@@ -146,6 +159,7 @@ pub(crate) fn decode_long_integer(cur: &mut Cursor<'_>) -> Result<u64, ()> {
     Ok(value)
 }
 
+/// Short-integer if the high bit is set, else Long-integer.
 pub(crate) fn decode_integer_value(cur: &mut Cursor<'_>) -> Result<u64, ()> {
     if let Ok(v) = decode_short_integer(cur) {
         return Ok(u64::from(v));
@@ -153,6 +167,7 @@ pub(crate) fn decode_integer_value(cur: &mut Cursor<'_>) -> Result<u64, ()> {
     decode_long_integer(cur)
 }
 
+/// Cut an address at its `/TYPE=PLMN` suffix; GO SMS Pro's value lengths often swallow the next header.
 pub(crate) fn trim_encoded_string_junk(s: &str) -> String {
     // GO value-lengths often swallow the next header; keep a clean PLMN address.
     if let Some(idx) = s.find("/TYPE=PLMN") {
@@ -241,6 +256,7 @@ pub(crate) fn decode_encoded_string_value(cur: &mut Cursor<'_>) -> Result<String
     decode_text_string(cur)
 }
 
+/// Delta-seconds as a Long-integer, falling back to an Integer-value.
 pub(crate) fn decode_delta_seconds(cur: &mut Cursor<'_>) -> Result<u64, ()> {
     decode_long_integer(cur).or_else(|_| decode_integer_value(cur))
 }
@@ -268,6 +284,7 @@ pub(crate) fn decode_expiry_or_delivery_time(cur: &mut Cursor<'_>) -> Result<Str
     Ok(result)
 }
 
+/// MMS-version as `major.minor` from one Short-integer.
 pub(crate) fn decode_mms_version(cur: &mut Cursor<'_>) -> Result<String, ()> {
     let v = decode_short_integer(cur)?;
     let major = (v >> 4) & 0x0f;
@@ -275,6 +292,7 @@ pub(crate) fn decode_mms_version(cur: &mut Cursor<'_>) -> Result<String, ()> {
     Ok(format!("{major}.{minor}"))
 }
 
+/// Message-class: a well-known token name or a text string.
 pub(crate) fn decode_message_class_value(cur: &mut Cursor<'_>) -> Result<String, ()> {
     let saved = cur.pos;
     if let Ok(v) = decode_short_integer(cur) {
@@ -291,6 +309,7 @@ pub(crate) fn decode_message_class_value(cur: &mut Cursor<'_>) -> Result<String,
     decode_text_string(cur)
 }
 
+/// X-Mms-Status token name.
 pub(crate) fn decode_status_value(cur: &mut Cursor<'_>) -> Result<String, ()> {
     let v = decode_short_integer(cur)?;
     Ok(match v {
@@ -306,6 +325,7 @@ pub(crate) fn decode_status_value(cur: &mut Cursor<'_>) -> Result<String, ()> {
     })
 }
 
+/// X-Mms-Response-Status token name.
 pub(crate) fn decode_response_status_value(cur: &mut Cursor<'_>) -> Result<String, ()> {
     let v = decode_short_integer(cur)?;
     Ok(match v {
@@ -322,6 +342,7 @@ pub(crate) fn decode_response_status_value(cur: &mut Cursor<'_>) -> Result<Strin
     })
 }
 
+/// X-Mms-Sender-Visibility token name.
 pub(crate) fn decode_sender_visibility_value(cur: &mut Cursor<'_>) -> Result<String, ()> {
     let v = decode_short_integer(cur)?;
     Ok(match v {
@@ -361,10 +382,12 @@ pub(crate) fn decode_from_value(cur: &mut Cursor<'_>) -> Result<String, ()> {
     Ok(addr)
 }
 
+/// Date-value: seconds since the Unix epoch as a Long-integer.
 pub(crate) fn decode_date_value(cur: &mut Cursor<'_>) -> Result<u64, ()> {
     decode_long_integer(cur)
 }
 
+/// X-Mms-Message-Type token name (`m-send-req`, `m-retrieve-conf`, and so on).
 pub(crate) fn decode_message_type_value(cur: &mut Cursor<'_>) -> Result<String, ()> {
     let v = decode_short_integer(cur)?;
     let name = match v {
@@ -384,10 +407,12 @@ pub(crate) fn decode_message_type_value(cur: &mut Cursor<'_>) -> Result<String, 
     Ok(name.to_string())
 }
 
+/// MIME type for a WSP well-known content-type id.
 pub(crate) fn well_known_content_type(id: u64) -> Option<&'static str> {
     WELL_KNOWN_CONTENT_TYPES.get(id as usize).copied()
 }
 
+/// Constrained-media: a well-known id or a text string.
 pub(crate) fn decode_constrained_media(cur: &mut Cursor<'_>) -> Result<String, ()> {
     if let Ok(id) = decode_short_integer(cur) {
         return well_known_content_type(u64::from(id))
@@ -397,6 +422,7 @@ pub(crate) fn decode_constrained_media(cur: &mut Cursor<'_>) -> Result<String, (
     decode_text_string(cur)
 }
 
+/// A parameter value that may be a plain or an encoded string.
 pub(crate) fn decode_wsp_text_param(cur: &mut Cursor<'_>) -> Result<String, ()> {
     decode_text_string(cur).or_else(|_| decode_encoded_string_value(cur))
 }
@@ -453,6 +479,7 @@ pub(crate) fn decode_wsp_parameters(cur: &mut Cursor<'_>, end: usize) -> HashMap
     params
 }
 
+/// Content-type with its parameters, in either the constrained or the general form.
 pub(crate) fn decode_content_type_value(
     cur: &mut Cursor<'_>,
 ) -> Result<(String, HashMap<String, String>), ()> {
@@ -511,6 +538,7 @@ pub(crate) fn decode_content_disposition_value(
     Ok((decode_text_string(cur)?, HashMap::new()))
 }
 
+/// An application header value: a text string, else a text-string parameter.
 pub(crate) fn decode_application_header_value(cur: &mut Cursor<'_>) -> Result<String, ()> {
     let saved = cur.pos;
     if let Ok(s) = decode_text_string(cur)
@@ -537,6 +565,8 @@ pub(crate) fn decode_application_header_value(cur: &mut Cursor<'_>) -> Result<St
     Err(())
 }
 
+/// Skip a header value this decoder does not understand, trying the value-length,
+/// short-integer, and text-string shapes in turn.
 pub(crate) fn skip_unknown_mms_value(cur: &mut Cursor<'_>) -> Result<(), ()> {
     // Best-effort: value-length blob, short-integer, or text-string.
     let saved = cur.pos;
@@ -556,6 +586,7 @@ pub(crate) fn skip_unknown_mms_value(cur: &mut Cursor<'_>) -> Result<(), ()> {
     Ok(())
 }
 
+/// Decode one MMS header into `msg`. Returns `false` at the first non-header byte, where the body starts.
 pub(crate) fn decode_mms_header_field(
     cur: &mut Cursor<'_>,
     msg: &mut StructuredMms,
@@ -719,6 +750,7 @@ pub(crate) fn decode_mms_header_field(
     }
 }
 
+/// WSP multipart body: a part count, then each part's headers and data.
 pub(crate) fn decode_multipart_body(cur: &mut Cursor<'_>) -> Result<Vec<MmsPart>, ()> {
     let n = decode_uint_var(cur)? as usize;
     if n > 256 {

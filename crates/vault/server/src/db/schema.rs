@@ -82,6 +82,7 @@ async fn user_version(conn: &mut AnyConnection) -> Result<i64> {
         .await?)
 }
 
+/// Record the schema version in SQLite's `user_version` pragma.
 async fn stamp_user_version(conn: &mut AnyConnection, version: i64) -> Result<()> {
     sqlx::query(&format!("PRAGMA user_version = {version}"))
         .execute(&mut *conn)

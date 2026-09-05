@@ -202,6 +202,7 @@ struct ProcessOneArgs<'a> {
     row: &'a AssetRow,
 }
 
+/// Derive a browser preview for one stored blob and record it, or report why it was left as-is.
 async fn process_one(args: ProcessOneArgs<'_>) -> Result<Outcome> {
     let ProcessOneArgs {
         conn,
@@ -321,6 +322,7 @@ async fn process_one(args: ProcessOneArgs<'_>) -> Result<Outcome> {
     Ok(Outcome::Derived)
 }
 
+/// Account ids from the database, falling back to the folder names under `data_dir` when the table does not exist yet.
 async fn list_account_ids(conn: &mut AnyConnection, data_dir: &Path) -> Result<Vec<String>> {
     // Engine-branched: sqlite_master does not exist on Postgres.
     let mut ids = Vec::new();
@@ -342,6 +344,7 @@ async fn list_account_ids(conn: &mut AnyConnection, data_dir: &Path) -> Result<V
     Ok(ids)
 }
 
+/// Source ids for one account: those with messages in the database plus any folder under the account's data dir.
 async fn discover_source_ids(
     conn: &mut AnyConnection,
     account_id: &str,
@@ -386,6 +389,7 @@ async fn discover_source_ids(
     Ok(ids.into_iter().collect())
 }
 
+/// One row per stored blob for this account and source, with the names that could hint at its media type.
 async fn list_attachments(
     conn: &mut AnyConnection,
     account_id: &str,
@@ -446,6 +450,7 @@ async fn list_attachments(
     Ok(out)
 }
 
+/// Point every attachment row for `original_sha` at its new derived blob.
 async fn update_derived(
     conn: &mut AnyConnection,
     account_id: &str,
@@ -481,6 +486,7 @@ fn is_part_path(path: &str) -> bool {
     has_part_extension(Path::new(path))
 }
 
+/// True for a `.part` file left by an interrupted upload.
 fn has_part_extension(path: &Path) -> bool {
     let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
         return false;
@@ -555,6 +561,7 @@ fn cleanup_incoming_parts(assets_dir: &Path, dry_run: bool) -> Result<u64> {
     Ok(removed)
 }
 
+/// True when a multipart upload session's manifest (or, failing that, its folder) is older than the abandoned-session limit.
 fn upload_session_is_stale(session: &Path, now: std::time::SystemTime) -> Result<bool> {
     let manifest = session.join("manifest.json");
     let meta = if manifest.is_file() {
@@ -594,6 +601,7 @@ fn kind_of(assets_path: &str, mime: Option<&str>, name_hints: &[Option<&str>]) -
     MediaKind::Other
 }
 
+/// The MIME type trimmed, or `None` when blank.
 fn nonempty_mime(mime: Option<&str>) -> Option<&str> {
     let raw = mime?;
     let trimmed = raw.trim();
@@ -604,6 +612,7 @@ fn nonempty_mime(mime: Option<&str>) -> Option<&str> {
     }
 }
 
+/// JPEG bytes for an image, or `None` when it is already small enough to serve as-is.
 fn derive_image(source_path: &Path) -> Result<Option<Vec<u8>>> {
     let ext = ext_of(source_path);
     let size = fs::metadata(source_path)?.len();
@@ -627,6 +636,7 @@ fn derive_image(source_path: &Path) -> Result<Option<Vec<u8>>> {
     Ok(Some(buf))
 }
 
+/// Path of an MP4 preview written under `work_dir`, or `None` when the source is already web-friendly.
 fn derive_video(source_path: &Path, work_dir: &Path) -> Result<Option<PathBuf>> {
     let ext = ext_of(source_path);
     let size = fs::metadata(source_path)?.len();
@@ -647,6 +657,7 @@ fn derive_video(source_path: &Path, work_dir: &Path) -> Result<Option<PathBuf>> 
     Ok(Some(out))
 }
 
+/// Path of an MP3 preview written under `work_dir`, or `None` when the source is already web-friendly.
 fn derive_audio(source_path: &Path, work_dir: &Path) -> Result<Option<PathBuf>> {
     let ext = ext_of(source_path);
     let size = fs::metadata(source_path)?.len();
@@ -670,6 +681,7 @@ fn derive_audio(source_path: &Path, work_dir: &Path) -> Result<Option<PathBuf>> 
     Ok(Some(out))
 }
 
+/// The first twelve hex digits of the file's sha256, for log lines.
 fn hash_file_prefix(path: &Path) -> Option<String> {
     crate::assets::hash_file(path)
         .ok()
@@ -687,6 +699,7 @@ fn mime_for_ext(ext: &str) -> &'static str {
     media::mime_for_ext(ext).unwrap_or("application/octet-stream")
 }
 
+/// Write derived bytes into the content-addressed store; the same bytes always land at the same path.
 fn store_derived_bytes(derived_dir: &Path, buf: &[u8], ext: &str) -> Result<DerivedBlob> {
     let sha = crate::assets::sha256_hex(buf);
     let rel = derived_rel_path(&sha, ext);
@@ -705,6 +718,7 @@ fn store_derived_bytes(derived_dir: &Path, buf: &[u8], ext: &str) -> Result<Deri
     })
 }
 
+/// Read a derived file from `work_dir` and store it like [`store_derived_bytes`].
 fn store_derived_file(derived_dir: &Path, file_path: &Path, ext: &str) -> Result<DerivedBlob> {
     let buf = fs::read(file_path)?;
     store_derived_bytes(derived_dir, &buf, ext)

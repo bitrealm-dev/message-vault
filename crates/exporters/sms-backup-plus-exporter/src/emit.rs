@@ -24,6 +24,7 @@ const EXPORT_SOURCE: &str = "sms-backup-plus";
 const EXPORT_TOOL: &str = "SMS Backup+";
 const EXPORT_TOOL_VERSION: &str = "1.5.11";
 
+/// The EML's path relative to the input root it was found under, for the vendor `source` bag.
 fn relative_eml_path(
     eml_path: &Path,
     inputs: &[PathBuf],
@@ -97,6 +98,7 @@ fn should_replace_kept(existing: &PendingMessage, incoming: &ParsedMessage) -> b
     (incoming.timestamp_secs as i64) < existing.sort_key
 }
 
+/// Map a parsed EML message onto the pending message shape.
 fn pending_from_parsed(msg: ParsedMessage, pending_atts: Vec<PendingAttachment>) -> PendingMessage {
     let date_ms = timestamp_ms(msg.timestamp_secs).to_string();
     let name = msg.name_alias.clone().unwrap_or_default();
@@ -120,6 +122,8 @@ fn pending_from_parsed(msg: ParsedMessage, pending_atts: Vec<PendingAttachment>)
     }
 }
 
+/// Add a parsed message to its conversation, replacing a kept twin when this copy carries
+/// more (dedupe by cover identity).
 fn add_message(
     conversations: &mut HashMap<String, PendingConversation>,
     by_identity: &mut HashMap<String, HashMap<String, usize>>,

@@ -183,6 +183,7 @@ pub(crate) fn split_mboxrd(text: &str) -> Vec<Vec<u8>> {
     records
 }
 
+/// Join mbox body lines back into EML bytes with one trailing newline.
 fn join_eml_lines(lines: &[String]) -> Vec<u8> {
     let mut body = lines.join("\n");
     while body.ends_with('\n') {
@@ -192,6 +193,7 @@ fn join_eml_lines(lines: &[String]) -> Vec<u8> {
     body.into_bytes()
 }
 
+/// Strip one `>` from an mboxrd-escaped `From ` line.
 fn unescape_mboxrd_line(line: &str) -> &str {
     let bytes = line.as_bytes();
     let mut i = 0;
@@ -205,12 +207,14 @@ fn unescape_mboxrd_line(line: &str) -> &str {
     }
 }
 
+/// A header value, failing when it is missing or empty.
 fn required_header(headers: &[MailHeader<'_>], name: &str) -> Result<String> {
     optional_header(headers, name)
         .filter(|s| !s.is_empty())
         .with_context(|| format!("missing required header {name}"))
 }
 
+/// A header value trimmed, or `None` when missing or empty.
 fn optional_header(headers: &[MailHeader<'_>], name: &str) -> Option<String> {
     headers
         .get_first_value(name)
@@ -218,20 +222,24 @@ fn optional_header(headers: &[MailHeader<'_>], name: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// A header value, or `default` when missing.
 fn header_or(headers: &[MailHeader<'_>], name: &str, default: &str) -> String {
     optional_header(headers, name).unwrap_or_else(|| default.to_string())
 }
 
+/// True when the header is `true` or `1`.
 fn header_bool(headers: &[MailHeader<'_>], name: &str) -> bool {
     optional_header(headers, name)
         .map(|s| s.eq_ignore_ascii_case("true") || s == "1")
         .unwrap_or(false)
 }
 
+/// A header value parsed as a number.
 fn header_u32(headers: &[MailHeader<'_>], name: &str) -> Option<u32> {
     optional_header(headers, name)?.parse().ok()
 }
 
+/// Participants from the JSON header, or none when absent or malformed.
 fn parse_participants(headers: &[MailHeader<'_>]) -> Vec<Participant> {
     let Some(raw) = optional_header(headers, hn::PARTICIPANTS) else {
         return Vec::new();
@@ -239,6 +247,7 @@ fn parse_participants(headers: &[MailHeader<'_>]) -> Vec<Participant> {
     serde_json::from_str(&raw).unwrap_or_default()
 }
 
+/// The message text: the body of a simple mail, or the first `text/plain` part.
 fn extract_text_body(mail: &ParsedMail<'_>) -> Option<String> {
     if mail.subparts.is_empty() {
         return mail.get_body().ok().map(|s| trim_body(&s));
@@ -263,10 +272,12 @@ fn extract_text_body(mail: &ParsedMail<'_>) -> Option<String> {
     None
 }
 
+/// A body without trailing line endings.
 fn trim_body(s: &str) -> String {
     s.trim_end_matches(['\r', '\n']).to_string()
 }
 
+/// Attachments from the MIME parts, matched to the metadata header by position.
 fn merge_attachments(
     mail: &ParsedMail<'_>,
     headers: &[MailHeader<'_>],
@@ -302,6 +313,7 @@ fn merge_attachments(
     Ok(out)
 }
 
+/// Collect every attachment part's bytes, file name, and MIME type.
 fn collect_mime_attachments(
     mail: &ParsedMail<'_>,
     out: &mut Vec<(Vec<u8>, Option<String>, Option<String>)>,

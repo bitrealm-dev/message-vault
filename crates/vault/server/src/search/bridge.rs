@@ -17,6 +17,7 @@ pub(crate) struct Sql {
 }
 
 impl Sql {
+    /// Append raw SQL text.
     pub fn push(&mut self, s: &str) {
         self.text.push_str(s);
     }

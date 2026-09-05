@@ -273,6 +273,7 @@ pub(crate) fn for_list(list: ListKind) -> impl Iterator<Item = &'static FieldSpe
     FIELDS.iter().filter(move |f| f.lists.contains(&list))
 }
 
+/// Levenshtein distance between two strings, for "did you mean" suggestions.
 fn edit_distance(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();

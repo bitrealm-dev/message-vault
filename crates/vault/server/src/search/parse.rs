@@ -56,6 +56,7 @@ impl Expr {
         }
     }
 
+    /// Total nodes in the tree, for the complexity limit.
     fn nodes(&self) -> usize {
         match self {
             Self::And(v) | Self::Or(v) => 1 + v.iter().map(Expr::nodes).sum::<usize>(),
@@ -64,6 +65,7 @@ impl Expr {
         }
     }
 
+    /// Free-text terms in the tree, for the complexity limit.
     fn text_terms(&self) -> usize {
         match self {
             Self::And(v) | Self::Or(v) => v.iter().map(Expr::text_terms).sum(),
@@ -74,6 +76,7 @@ impl Expr {
     }
 }
 
+/// What a valid value for this field looks like, for the error message.
 fn value_hint(spec: &FieldSpec) -> String {
     let choices = || spec.values.join(", ");
     match spec.value_type {
@@ -149,6 +152,7 @@ fn empty_value_error(spec: &FieldSpec, word: &str, span: Range<usize>) -> QueryE
     err
 }
 
+/// Parse one `field:value` pair into a typed term, or explain why the value does not fit the field.
 fn field_term(
     list: ListKind,
     word: &str,
@@ -235,14 +239,17 @@ struct Parser<'t> {
 }
 
 impl Parser<'_> {
+    /// The next token without consuming it.
     fn peek(&self) -> Option<&Token> {
         self.tokens.get(self.i)
     }
 
+    /// An unbalanced-syntax error at `span`.
     fn unbalanced(&self, span: Range<usize>, msg: &str) -> QueryError {
         QueryError::new(QueryErrorKind::Unbalanced, span, msg)
     }
 
+    /// True when the next token cannot start an operand.
     fn at_operand_end(&self) -> bool {
         matches!(
             self.peek().map(|t| &t.kind),
@@ -250,6 +257,7 @@ impl Parser<'_> {
         )
     }
 
+    /// `a or b or c`: the lowest-precedence level.
     fn parse_or(&mut self, depth: usize) -> Result<Expr, QueryError> {
         let mut parts = vec![self.parse_and(depth)?];
         while matches!(self.peek().map(|t| &t.kind), Some(TokenKind::Or)) {
@@ -267,6 +275,7 @@ impl Parser<'_> {
         })
     }
 
+    /// `a b c` or `a and b`: adjacent terms are an implicit and.
     fn parse_and(&mut self, depth: usize) -> Result<Expr, QueryError> {
         let mut parts = vec![self.parse_unary(depth)?];
         loop {
@@ -290,6 +299,7 @@ impl Parser<'_> {
         })
     }
 
+    /// `not x` and `-x`, with the nesting-depth check.
     fn parse_unary(&mut self, depth: usize) -> Result<Expr, QueryError> {
         if depth > MAX_DEPTH {
             return Err(QueryError::new(
@@ -321,6 +331,7 @@ impl Parser<'_> {
         })
     }
 
+    /// A parenthesised group, a `field:value` term, or a free-text term.
     fn parse_primary(&mut self, depth: usize) -> Result<Expr, QueryError> {
         let tok = self
             .peek()

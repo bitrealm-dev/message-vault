@@ -10,6 +10,7 @@ use std::sync::OnceLock;
 
 static SAFE_RE: OnceLock<Regex> = OnceLock::new();
 
+/// The file name trimmed, unless blank or a literal `null`/`none`.
 fn valid_filename(name: Option<&str>) -> Option<String> {
     let cleaned = name?.trim();
     if cleaned.is_empty()
@@ -22,6 +23,7 @@ fn valid_filename(name: Option<&str>) -> Option<String> {
     }
 }
 
+/// File extension from the MIME type, falling back to the file name's own extension.
 fn extension_for(ctype: &str, filename: Option<&str>) -> String {
     let ct = ctype.to_ascii_lowercase();
     if let Some(ext) = media::ext_for_mime(&ct) {
@@ -48,6 +50,7 @@ fn extension_for(ctype: &str, filename: Option<&str>) -> String {
 /// total well under ext4's 255-byte NAME_MAX and avoids ENAMETOOLONG.
 const MAX_BASENAME_BYTES: usize = 160;
 
+/// A file name with unsafe characters replaced by `_`, never empty.
 fn safe_basename(name: &str) -> String {
     let re = SAFE_RE.get_or_init(|| Regex::new(r"[^\w.\-]+").expect("safe"));
     let cleaned = re.replace_all(name, "_");
@@ -73,6 +76,7 @@ fn safe_basename(name: &str) -> String {
     base
 }
 
+/// Collect every leaf MIME part.
 fn walk_parts<'a>(mail: &'a ParsedMail<'a>, out: &mut Vec<&'a ParsedMail<'a>>) {
     if mail.subparts.is_empty() {
         out.push(mail);

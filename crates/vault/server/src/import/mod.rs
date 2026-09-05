@@ -199,6 +199,7 @@ pub struct ImportStats {
 }
 
 impl ImportStats {
+    /// Add one staged file's counts onto the running import totals.
     fn merge_file(&mut self, other: &ImportStats) {
         self.conversations += other.conversations;
         self.participants += other.participants;

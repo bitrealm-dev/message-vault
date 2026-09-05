@@ -167,6 +167,7 @@ pub fn encode_part_data(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
+/// Write attributes as ` key="value"` with XML escaping.
 fn write_attrs(w: &mut impl Write, attrs: &BTreeMap<String, String>) -> Result<()> {
     for (k, v) in attrs {
         // quick-xml's full escape covers exactly the double-quoted attribute
@@ -176,6 +177,7 @@ fn write_attrs(w: &mut impl Write, attrs: &BTreeMap<String, String>) -> Result<(
     Ok(())
 }
 
+/// Write a self-closing element with its attributes.
 fn write_empty_element(
     w: &mut impl Write,
     name: &str,
@@ -187,6 +189,7 @@ fn write_empty_element(
     Ok(())
 }
 
+/// Write an `<mms>` element with its `<parts>` and `<addrs>` children.
 fn write_mms(
     w: &mut impl Write,
     attrs: &BTreeMap<String, String>,

@@ -202,6 +202,7 @@ pub(crate) struct StructuredMms {
 }
 
 impl StructuredMms {
+    /// True when the decode produced any address, part, or body worth keeping.
     pub fn is_useful(&self) -> bool {
         self.from.is_some()
             || !self.to.is_empty()
@@ -217,6 +218,7 @@ impl StructuredMms {
             || !self.application_headers.is_empty()
     }
 
+    /// Every address on the message: from, to, cc, bcc.
     pub fn address_strings(&self) -> Vec<String> {
         let mut out = Vec::new();
         if let Some(from) = &self.from {
@@ -228,12 +230,14 @@ impl StructuredMms {
         out
     }
 
+    /// Fill `dst` from `src` when `dst` is empty.
     fn merge_opt(dst: &mut Option<String>, src: Option<String>) {
         if dst.is_none() {
             *dst = src;
         }
     }
 
+    /// Fill every empty field of this message from `other`, and union the parts.
     fn merge_from(&mut self, other: StructuredMms) {
         Self::merge_opt(&mut self.from, other.from);
         if self.to.is_empty() {
@@ -279,6 +283,7 @@ impl StructuredMms {
     }
 }
 
+/// The fields that identify a part, so the same part decoded twice is kept once.
 fn part_dedupe_key(part: &MmsPart) -> (Option<&str>, Option<&str>, Option<&str>, usize, &[u8]) {
     (
         part.content_id.as_deref(),
@@ -289,6 +294,7 @@ fn part_dedupe_key(part: &MmsPart) -> (Option<&str>, Option<&str>, Option<&str>,
     )
 }
 
+/// Append the parts not already present by [`part_dedupe_key`].
 fn merge_parts_into(dst: &mut Vec<MmsPart>, incoming: Vec<MmsPart>) {
     for part in incoming {
         let key = part_dedupe_key(&part);
@@ -315,6 +321,7 @@ pub(crate) fn decode_bytes_with_charset(bytes: &[u8], charset: Option<u64>) -> S
     trim_encoded_string_junk(text.trim_end_matches('\0'))
 }
 
+/// A Content-ID without its `cid:` prefix and angle brackets.
 pub(crate) fn normalize_content_id(raw: &str) -> String {
     let s = raw.trim();
     let s = s.strip_prefix("cid:").unwrap_or(s);
@@ -388,6 +395,7 @@ pub(crate) fn scan_multipart_bodies(data: &[u8]) -> Vec<MmsPart> {
     parts
 }
 
+/// Try a structured decode at every `X-Mms-Message-Type` byte in the blob, for PDUs with junk before the headers.
 fn scan_message_type_starts(data: &[u8]) -> Vec<StructuredMms> {
     let mut out = Vec::new();
     let mut attempts = 0usize;
@@ -406,10 +414,12 @@ fn scan_message_type_starts(data: &[u8]) -> Vec<StructuredMms> {
     out
 }
 
+/// True for a byte that can appear in a part file name.
 fn is_printable_name_byte(b: u8) -> bool {
     matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-')
 }
 
+/// True for a short, printable name with an extension.
 fn looks_like_part_name(name: &str) -> bool {
     let name = name.trim();
     if name.is_empty() || name.len() > 128 {
@@ -421,6 +431,7 @@ fn looks_like_part_name(name: &str) -> bool {
     name.bytes().all(is_printable_name_byte)
 }
 
+/// Parse a Content-Location name at a `0x8e` byte; returns the name and the index after its NUL.
 fn try_parse_cloc_name_at(data: &[u8], at: usize) -> Option<(String, usize)> {
     // at points at 0x8e; returns (name, index of byte after NUL).
     if at >= data.len() || data[at] != 0x8e || at + 1 >= data.len() {
@@ -448,6 +459,7 @@ fn try_parse_cloc_name_at(data: &[u8], at: usize) -> Option<(String, usize)> {
     Some((name, name_end + 1))
 }
 
+/// Index of the next Content-Location name at or after `start`.
 fn find_next_cloc_name(data: &[u8], start: usize) -> Option<usize> {
     let mut i = start;
     while i + 2 < data.len() {
@@ -536,6 +548,7 @@ pub(crate) fn scan_named_parts(data: &[u8]) -> Vec<NamedPart> {
     parts
 }
 
+/// MIME type guessed from a part file name's extension.
 pub(crate) fn content_type_from_filename(name: &str) -> String {
     let lower = name.to_ascii_lowercase();
     let ext = lower.rsplit('.').next().unwrap_or("");
@@ -555,6 +568,7 @@ pub(crate) fn content_type_from_filename(name: &str) -> String {
     }
 }
 
+/// Attach the parts found by name scanning, skipping those the structured decode already has.
 fn merge_named_parts(msg: &mut StructuredMms, named: Vec<NamedPart>) {
     if named.is_empty() {
         return;
@@ -623,6 +637,7 @@ pub(crate) fn decode_mms_best_effort(data: &[u8]) -> StructuredMms {
     msg
 }
 
+/// File extension for a MIME type, or `None` when unknown.
 pub(crate) fn extension_for_content_type(content_type: &str) -> Option<&'static str> {
     let ct = content_type.to_ascii_lowercase();
     let base = ct.split(';').next().unwrap_or(&ct).trim();

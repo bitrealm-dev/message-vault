@@ -106,6 +106,7 @@ pub(crate) fn cover_identity(msg: &ParsedMessage) -> String {
     key
 }
 
+/// The dedupe identity: chat, second-floored time, direction, and text.
 pub(crate) fn cover_identity_from_parts(
     chat_id: &str,
     timestamp_ms: i64,

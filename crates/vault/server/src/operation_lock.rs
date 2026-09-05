@@ -47,6 +47,7 @@ pub(crate) fn acquire_for_reset(db: &Path) -> Result<VaultOperationLock> {
     })
 }
 
+/// Take the exclusive lock file next to the database, creating its folder if needed.
 fn acquire(db: &Path) -> Result<VaultOperationLock> {
     let lock_path = lock_path(db);
     if let Some(parent) = lock_path.parent() {
@@ -65,6 +66,7 @@ fn acquire(db: &Path) -> Result<VaultOperationLock> {
     Ok(VaultOperationLock { _file: file })
 }
 
+/// `<db>.operation.lock` next to the database file.
 fn lock_path(db: &Path) -> PathBuf {
     let mut name: OsString = db.as_os_str().to_owned();
     name.push(".operation.lock");

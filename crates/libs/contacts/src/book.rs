@@ -122,6 +122,7 @@ impl ContactsBook {
         Ok(book)
     }
 
+    /// Add one name with its phones, merging into an existing entry with the same normalized name.
     fn insert_entry(&mut self, display: &str, phones: &[String]) {
         let display = collapse_inner_whitespace(display);
         if display.is_empty() || phones.is_empty() {
@@ -192,6 +193,7 @@ impl ContactsBook {
     }
 }
 
+/// The stored form of a handle for its type.
 fn normalize_handle(raw: &str, handle_type: HandleType) -> String {
     phone::normalize_typed_handle(raw, handle_type).0
 }

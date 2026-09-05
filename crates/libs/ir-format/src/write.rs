@@ -332,6 +332,7 @@ pub(crate) fn write_conversation_csv(
     Ok(path)
 }
 
+/// Write a conversation as EML files or one mbox, by `package`.
 fn write_conversation_mail(
     output_dir: &Path,
     doc: &ConversationDocument,

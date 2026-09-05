@@ -339,6 +339,7 @@ pub fn display_service_label(sources: &[String]) -> String {
     "unknown".into()
 }
 
+/// Source ids per conversation, for conversations holding messages from more than one import.
 async fn load_conversation_sources(
     conn: &mut AnyConnection,
     conversation_ids: &[i64],

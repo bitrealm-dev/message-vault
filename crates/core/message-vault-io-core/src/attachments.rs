@@ -9,6 +9,7 @@ pub fn digest_prefix(digest_hex: &str) -> &str {
     &digest_hex[..16.min(digest_hex.len())]
 }
 
+/// `YYYYMMDD_HHMMSS` in local time for attachment file names, or the raw seconds when the time cannot be represented.
 fn date_prefix(timestamp_secs: i64) -> String {
     Local
         .timestamp_opt(timestamp_secs, 0)

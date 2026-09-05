@@ -26,6 +26,8 @@ pub(super) struct PromoteStats {
     pub(super) messages_appended: u64,
 }
 
+/// Move the account's staged rows into the production tables, wiping `wipe_sources` first
+/// in replace mode. Returns the promoted counts.
 pub(super) async fn promote_append(
     conn: &mut AnyConnection,
     mode: ImportMode,
@@ -375,6 +377,7 @@ fn promote_log(msg: impl std::fmt::Display) {
     let _ = io::stdout().flush();
 }
 
+/// Log the end of one promote phase with its own and the total elapsed time.
 fn promote_phase_done(total: Instant, phase: Instant, msg: impl std::fmt::Display) {
     promote_log(format_args!(
         "{msg}  (phase {:.1}s, total {:.1}s)",
@@ -383,11 +386,14 @@ fn promote_phase_done(total: Instant, phase: Instant, msg: impl std::fmt::Displa
     ));
 }
 
+/// True when the staged batch is large relative to the table, so dropping and rebuilding
+/// the secondary indexes beats maintaining them row by row.
 fn should_drop_messages_secondary_indexes(staging_count: i64, existing_count: i64) -> bool {
     staging_count >= PROMOTE_INDEX_DROP_MIN_STAGING
         && staging_count.saturating_mul(5) >= existing_count.max(1)
 }
 
+/// Promote messages in id-range chunks and return the staging-id to production-id map.
 async fn promote_messages_chunked(
     tx: &mut AnyConnection,
     mode: ImportMode,
@@ -423,6 +429,7 @@ async fn promote_messages_chunked(
     }
 }
 
+/// Replace-mode message promotion: insert every staged row, in id-range chunks.
 async fn promote_messages_replace_chunked(
     tx: &mut AnyConnection,
     account_id: &str,
@@ -522,6 +529,7 @@ async fn promote_messages_replace_chunked(
     Ok(msg_map)
 }
 
+/// Append-mode message promotion: insert the staged rows production does not already have, in id-range chunks.
 async fn promote_messages_append_chunked(
     tx: &mut AnyConnection,
     account_id: &str,
@@ -653,6 +661,8 @@ async fn promote_messages_append_chunked(
     Ok(msg_map)
 }
 
+/// Pair the staged ids just promoted with the production ids that appeared above
+/// `max_before`, in order, and add them to the map.
 async fn zip_new_message_ids(
     tx: &mut AnyConnection,
     msg_map: &mut HashMap<i64, i64>,
@@ -680,6 +690,7 @@ async fn zip_new_message_ids(
     )
 }
 
+/// Load the staging-to-production id map into the `_promote_msg_map` temp table for the SQL that rewrites child rows.
 async fn fill_promote_msg_map(
     tx: &mut AnyConnection,
     account_id: &str,

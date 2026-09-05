@@ -15,6 +15,7 @@ pub(crate) enum SourceKind {
 }
 
 impl SourceKind {
+    /// The source kind as written into the vendor bag.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Messages => "messages",
@@ -99,6 +100,7 @@ pub(crate) fn discover_csv_files(input: &Path) -> Result<Vec<DiscoveredCsv>> {
     Ok(files)
 }
 
+/// Sniff the CSV header to tell a Messages export from a WhatsApp export, or `None` for neither.
 fn classify_imazing_csv(path: &Path) -> Result<Option<SourceKind>> {
     let mut file = File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut buf = vec![0u8; 8192];
@@ -131,6 +133,7 @@ fn classify_imazing_csv(path: &Path) -> Result<Option<SourceKind>> {
     Ok(Some(SourceKind::Messages))
 }
 
+/// Read every row of one iMazing CSV, stripping a UTF-8 BOM first.
 pub(crate) fn parse_csv_file(path: &Path, kind: SourceKind) -> Result<Vec<RawRow>> {
     let mut file = File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut bytes = Vec::new();

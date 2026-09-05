@@ -14,6 +14,7 @@ pub(crate) enum SourceKind {
 }
 
 impl SourceKind {
+    /// The source kind as written into the vendor bag.
     pub fn as_str(self) -> &'static str {
         match self {
             SourceKind::PerChat => "per-chat",
@@ -60,6 +61,7 @@ pub(crate) fn discover_csv_files(input: &Path) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
+/// True for a `.csv` that is not one of OpenExtract's non-message exports.
 fn is_conversation_csv(path: &Path) -> bool {
     let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
         return false;
@@ -74,6 +76,7 @@ fn is_conversation_csv(path: &Path) -> bool {
     true
 }
 
+/// Read every row of one OpenExtract CSV, stripping a UTF-8 BOM first.
 pub(crate) fn parse_csv_file(path: &Path) -> Result<Vec<RawRow>> {
     let mut file = File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut bytes = Vec::new();
@@ -138,6 +141,7 @@ pub(crate) fn parse_csv_file(path: &Path) -> Result<Vec<RawRow>> {
     Ok(rows)
 }
 
+/// True for `1`, `true`, `yes`, or `y`.
 fn parse_bool(raw: &str) -> bool {
     matches!(
         raw.trim().to_ascii_lowercase().as_str(),

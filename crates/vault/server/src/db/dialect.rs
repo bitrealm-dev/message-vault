@@ -81,6 +81,7 @@ pub fn vacuum_after_demo_sql(engine: DbEngine) -> &'static [&'static str] {
     }
 }
 
+/// Run each statement, printing a warning instead of failing when one errors.
 async fn run_sql_warn(conn: &mut AnyConnection, statements: &[&str]) {
     for sql in statements {
         if let Err(err) = sqlx::query(sql).execute(&mut *conn).await {

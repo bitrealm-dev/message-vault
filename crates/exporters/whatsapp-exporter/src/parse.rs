@@ -51,10 +51,12 @@ pub(crate) fn load_chat_store(path: &Path) -> Result<ChatStoreFile> {
     serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))
 }
 
+/// True when the message's `media` field is the boolean `true`.
 fn media_flag_true(msg: &MessageJson) -> bool {
     matches!(&msg.media, Value::Bool(true))
 }
 
+/// True for the text wtsexporter writes when a media file was not in the backup.
 fn is_missing_media_placeholder(s: &str) -> bool {
     s.eq_ignore_ascii_case("The media is missing")
 }

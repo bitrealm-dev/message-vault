@@ -62,6 +62,7 @@ pub(crate) fn ymd(d: NaiveDate) -> String {
     d.format("%Y-%m-%d").to_string()
 }
 
+/// The first day of the month after `(y, m)`.
 fn first_of_next_month(y: i32, m: u32) -> Option<NaiveDate> {
     if m == 12 {
         NaiveDate::from_ymd_opt(y + 1, 1, 1)
@@ -70,6 +71,7 @@ fn first_of_next_month(y: i32, m: u32) -> Option<NaiveDate> {
     }
 }
 
+/// `today` moved back `months` months, clamped to the last day of the target month.
 fn shift_months_back(today: NaiveDate, months: u32) -> Option<NaiveDate> {
     let total = i64::from(today.year()) * 12 + i64::from(today.month()) - 1 - i64::from(months);
     let year = i32::try_from(total.div_euclid(12)).ok()?;
@@ -78,6 +80,7 @@ fn shift_months_back(today: NaiveDate, months: u32) -> Option<NaiveDate> {
     NaiveDate::from_ymd_opt(year, month, today.day().min(last))
 }
 
+/// True for a non-empty string of ASCII digits.
 fn all_digits(s: &str) -> bool {
     !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
 }

@@ -9,6 +9,7 @@ use phone::sanitize_number;
 use std::collections::{HashMap, HashSet};
 
 impl TransportFamily {
+    /// The transport family for a source kind.
     pub(super) fn from_kind(kind: SourceKind) -> Self {
         match kind {
             SourceKind::Messages => Self::Messages,
@@ -26,6 +27,8 @@ pub(super) struct PeerInfo {
     pub(super) unresolved_roster_labels: u64,
 }
 
+/// Work out who a chat session is with from its rows: the chat id, contact name, whether
+/// it is a group, and what could not be resolved.
 pub(super) fn collect_peer_info(kind: SourceKind, session: &str, rows: &[&RawRow]) -> PeerInfo {
     let mut handles: HashSet<String> = HashSet::new();
     for row in rows {
@@ -165,10 +168,12 @@ pub(super) fn is_outgoing(msg_type: &str) -> bool {
     )
 }
 
+/// True for iMazing's `Notification` message type.
 pub(super) fn is_notification(msg_type: &str) -> bool {
     msg_type.trim().eq_ignore_ascii_case("notification")
 }
 
+/// Every `+`-prefixed phone number mentioned in the text.
 fn phones_in_text(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let bytes = text.as_bytes();
@@ -240,6 +245,7 @@ fn resolve_chat_identifier(
     )
 }
 
+/// The sender handle and display name for a row: empty for outgoing, the sender for group rows, else the peer.
 pub(super) fn resolve_sender(
     row: &RawRow,
     is_from_me: bool,

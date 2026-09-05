@@ -180,6 +180,7 @@ pub fn group_spec() -> &'static MembershipSpec {
     &SPEC
 }
 
+/// Bump the member contact's updated-at, boxed so the spec table can hold it as a plain function pointer.
 fn touch_member_owner<'a>(
     conn: &'a mut AnyConnection,
     account_id: &'a str,
@@ -190,6 +191,7 @@ fn touch_member_owner<'a>(
     ))
 }
 
+/// Id of the named set called `name`, if it exists.
 async fn find_id(
     spec: &MembershipSpec,
     conn: &mut AnyConnection,
@@ -209,6 +211,7 @@ async fn find_id(
     Ok(id)
 }
 
+/// Id of the named set called `name`, creating it if needed.
 async fn ensure_id(
     spec: &MembershipSpec,
     conn: &mut AnyConnection,
@@ -236,6 +239,7 @@ pub fn is_reserved(spec: &MembershipSpec, name: &str) -> bool {
     spec.reserved.contains(&key.as_str())
 }
 
+/// The message for a reserved name: the spec's specific one, or the generic one.
 fn reserved_error(spec: &MembershipSpec, name: &str) -> String {
     let key = name.trim().to_ascii_lowercase();
     for (reserved, message) in spec.special_reserved {
@@ -246,6 +250,7 @@ fn reserved_error(spec: &MembershipSpec, name: &str) -> String {
     format!("\"{}\" is a reserved {}", name.trim(), spec.label)
 }
 
+/// Trim and validate a set name against the spec's length and reserved-name rules.
 fn normalize_name(spec: &MembershipSpec, name: &str) -> Result<String, MembershipError> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -263,6 +268,7 @@ fn normalize_name(spec: &MembershipSpec, name: &str) -> Result<String, Membershi
     Ok(trimmed.to_string())
 }
 
+/// True when the member row belongs to this account.
 async fn member_exists(
     spec: &MembershipSpec,
     conn: &mut AnyConnection,

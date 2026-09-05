@@ -80,6 +80,7 @@ pub(super) enum AttachmentLoad {
 /// Parts, kept attachments, and deferred file loads for one message.
 pub(super) type MailPartsAndLoads = (Vec<PartRecord>, Vec<MailAttachment>, Vec<AttachmentLoad>);
 
+/// Load a message's attachments from the backup, splitting them into mail parts and the file loads still to do.
 pub(super) fn collect_mail_parts_and_attachments(
     session: &MailSession,
     message: &Message,

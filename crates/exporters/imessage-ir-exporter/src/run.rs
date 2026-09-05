@@ -56,11 +56,13 @@ pub fn run(config: &ExporterConfig) -> anyhow::Result<RunResult> {
     Ok(RunResult { messages })
 }
 
+/// The shared cancel check, mapped onto this exporter's error type.
 fn check_cancel(config: &ExporterConfig) -> Result<(), RuntimeError> {
     message_vault_io_core::check_cancel(config.cancel.as_ref())
         .map_err(|msg| RuntimeError::InvalidOptions(msg.to_string()))
 }
 
+/// Translate the shared exporter config into this exporter's mail options, rejecting non-Apple sources.
 fn options_from_export_config(config: &ExporterConfig) -> Result<MailOptions, RuntimeError> {
     let SourceConfig::Apple(source) = &config.source else {
         return Err(RuntimeError::InvalidOptions(

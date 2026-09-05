@@ -63,22 +63,27 @@ pub struct ServerConfig {
     pub openapi_ui: bool,
 }
 
+/// serde default for `[server] bind`.
 fn default_server_bind() -> String {
     "127.0.0.1:8080".to_string()
 }
 
+/// serde default for `[server] asset_max_bytes` (512 MiB).
 fn default_asset_max_bytes() -> u64 {
     512 * 1024 * 1024
 }
 
+/// serde default for `[server] asset_part_size` (64 MiB).
 fn default_asset_part_size() -> usize {
     64 * 1024 * 1024
 }
 
+/// serde default for `[server] asset_hash_threshold_bytes` (20 MiB).
 fn default_asset_hash_threshold_bytes() -> u64 {
     20 * 1024 * 1024
 }
 
+/// serde default for `[server] openapi_ui`.
 fn default_openapi_ui() -> bool {
     false
 }
@@ -99,14 +104,17 @@ pub struct PathsConfig {
     pub assets_converted_dir: String,
 }
 
+/// serde default for `[paths] data_dir`.
 fn default_data_dir() -> PathBuf {
     PathBuf::from("data")
 }
 
+/// serde default for `[paths] assets_dir`.
 fn default_assets_dir_name() -> String {
     "assets".to_string()
 }
 
+/// serde default for `[paths] assets_converted_dir`.
 fn default_assets_converted_dir_name() -> String {
     "assets_converted".to_string()
 }
@@ -250,6 +258,7 @@ impl Config {
     }
 }
 
+/// A configured path made absolute against the config file's folder, unless it already is.
 fn resolve_path(base: &Path, configured: &Path) -> PathBuf {
     if configured.is_absolute() {
         configured.to_path_buf()
