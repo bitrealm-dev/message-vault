@@ -413,39 +413,42 @@ fn mark_covered(covered: &mut [bool], start: usize, end: usize) {
     }
 }
 
+/// Record every match of `re` as a span of `kind` with trailing punctuation
+/// trimmed off, skipping a match that overlaps a span already taken.
+fn push_trimmed_spans(
+    re: &Regex,
+    kind: StructuredKind,
+    raw: &str,
+    covered: &mut [bool],
+    spans: &mut Vec<(usize, usize, StructuredKind)>,
+) {
+    for m in re.find_iter(raw) {
+        let trimmed = trim_trailing_glue(m.as_str());
+        if trimmed.is_empty() {
+            continue;
+        }
+        let start = m.start();
+        let end = start + trimmed.len();
+        if span_overlaps(covered, start, end) {
+            continue;
+        }
+        mark_covered(covered, start, end);
+        spans.push((start, end, kind));
+    }
+}
+
 fn find_structured_spans(raw: &str) -> Vec<(usize, usize, StructuredKind)> {
     let mut covered = vec![false; raw.len()];
     let mut spans = Vec::new();
 
-    for m in url_re().find_iter(raw) {
-        let full = m.as_str();
-        let trimmed = trim_trailing_glue(full);
-        if trimmed.is_empty() {
-            continue;
-        }
-        let start = m.start();
-        let end = start + trimmed.len();
-        if span_overlaps(&covered, start, end) {
-            continue;
-        }
-        mark_covered(&mut covered, start, end);
-        spans.push((start, end, StructuredKind::Url));
-    }
-
-    for m in email_re().find_iter(raw) {
-        let full = m.as_str();
-        let trimmed = trim_trailing_glue(full);
-        if trimmed.is_empty() {
-            continue;
-        }
-        let start = m.start();
-        let end = start + trimmed.len();
-        if span_overlaps(&covered, start, end) {
-            continue;
-        }
-        mark_covered(&mut covered, start, end);
-        spans.push((start, end, StructuredKind::Email));
-    }
+    push_trimmed_spans(url_re(), StructuredKind::Url, raw, &mut covered, &mut spans);
+    push_trimmed_spans(
+        email_re(),
+        StructuredKind::Email,
+        raw,
+        &mut covered,
+        &mut spans,
+    );
 
     for m in phone_re().find_iter(raw) {
         let p = m.as_str();

@@ -743,6 +743,20 @@ fn remux_mp4(path: &Path, tmp: &Path) -> Result<()> {
     run_ffmpeg(&args)
 }
 
+/// Leave an MP4 as it is; remux anything else into one, so every video the
+/// vault keeps shares a container.
+fn keep_or_remux(path: &Path, commit: Commit<'_>) -> Result<Option<PathBuf>> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if ext == "mp4" {
+        return Ok(None);
+    }
+    try_remux_replace(path, commit)
+}
+
 /// Re-encode a video under the resolution, frame-rate, and quality caps; `None` when it is already within them.
 fn compress_video(
     path: &Path,
@@ -752,30 +766,14 @@ fn compress_video(
     let meta = fs::metadata(path)?;
     if meta.len() < opts.min_size_bytes {
         // Still remux non-mp4 small files for container consistency.
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        if ext == "mp4" {
-            return Ok(None);
-        }
-        return try_remux_replace(path, commit);
+        return keep_or_remux(path, commit);
     }
 
     let probe = probe_video(path).unwrap_or_default();
     if opts.skip_efficient
         && is_efficient(&probe.codec, probe.width, probe.height, probe.bitrate, opts)
     {
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        if ext == "mp4" {
-            return Ok(None);
-        }
-        return try_remux_replace(path, commit);
+        return keep_or_remux(path, commit);
     }
 
     let max_edge = opts.max_resolution.max_long_edge();

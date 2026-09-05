@@ -10,6 +10,8 @@ pub use utc_offset::parse_utc_offset;
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
+use std::io::Cursor;
+use std::path::Path;
 
 /// One attachment object written into `attachments_json`.
 #[derive(Debug, Serialize, Deserialize)]
@@ -90,6 +92,33 @@ pub use message_ir::{format_local_ts, stable_guid};
 /// Serialize a value for a CSV JSON cell (`null` on failure).
 pub fn json_cell(value: &impl Serialize) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "null".to_string())
+}
+
+/// A CSV reader over a file already read into memory.
+pub type CsvBytesReader = csv::Reader<Cursor<Vec<u8>>>;
+
+/// Open a CSV export for reading: the whole file in memory with a UTF-8
+/// byte-order mark stripped, a flexible reader over it, and the headers
+/// trimmed and lower-cased so [`col`] lookups ignore case.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read or has no header row.
+pub fn open_csv_lowercase(path: &Path) -> anyhow::Result<(CsvBytesReader, Vec<String>)> {
+    let mut bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        bytes.drain(..3);
+    }
+    let mut rdr = csv::ReaderBuilder::new()
+        .flexible(true)
+        .from_reader(Cursor::new(bytes));
+    let headers = rdr
+        .headers()
+        .with_context(|| format!("headers {}", path.display()))?
+        .iter()
+        .map(|h| h.trim().to_ascii_lowercase())
+        .collect();
+    Ok((rdr, headers))
 }
 
 /// Index of a required CSV header column.

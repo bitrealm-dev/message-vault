@@ -768,6 +768,20 @@ fn tapback_human_line(kind: &str, emoji: Option<&str>, action: &str) -> String {
     }
 }
 
+/// The IR name of a reaction and, for an emoji reaction, the emoji itself.
+fn tapback_kind(kind: Tapback<'_>) -> (&'static str, Option<String>) {
+    match kind {
+        Tapback::Loved => ("loved", None),
+        Tapback::Liked => ("liked", None),
+        Tapback::Disliked => ("disliked", None),
+        Tapback::Laughed => ("laughed", None),
+        Tapback::Emphasized => ("emphasized", None),
+        Tapback::Questioned => ("questioned", None),
+        Tapback::Emoji(e) => ("emoji", e.map(str::to_string)),
+        Tapback::Sticker => ("sticker", None),
+    }
+}
+
 /// JSON array of tapbacks on this message, if any exist.
 fn build_parent_tapbacks_json(session: &MailSession, message: &Message) -> Option<String> {
     let parts = session.tapbacks.get(&message.guid)?;
@@ -780,16 +794,7 @@ fn build_parent_tapbacks_json(session: &MailSession, message: &Message) -> Optio
             if matches!(action, TapbackAction::Removed) {
                 continue;
             }
-            let (kind, emoji) = match kind {
-                Tapback::Loved => ("loved", None),
-                Tapback::Liked => ("liked", None),
-                Tapback::Disliked => ("disliked", None),
-                Tapback::Laughed => ("laughed", None),
-                Tapback::Emphasized => ("emphasized", None),
-                Tapback::Questioned => ("questioned", None),
-                Tapback::Emoji(e) => ("emoji", e.map(str::to_string)),
-                Tapback::Sticker => ("sticker", None),
-            };
+            let (kind, emoji) = tapback_kind(kind);
             let (reactor_handle, reactor_display_name) = if tapback.is_from_me() {
                 (
                     None,
@@ -975,16 +980,7 @@ struct TapbackFields {
 impl TapbackFields {
     /// Read the reaction out of a row's [`Variant::Tapback`].
     fn from_variant(message: &Message, action: TapbackAction, kind: Tapback<'_>) -> Self {
-        let (kind, emoji) = match kind {
-            Tapback::Loved => ("loved", None),
-            Tapback::Liked => ("liked", None),
-            Tapback::Disliked => ("disliked", None),
-            Tapback::Laughed => ("laughed", None),
-            Tapback::Emphasized => ("emphasized", None),
-            Tapback::Questioned => ("questioned", None),
-            Tapback::Emoji(e) => ("emoji", e.map(str::to_string)),
-            Tapback::Sticker => ("sticker", None),
-        };
+        let (kind, emoji) = tapback_kind(kind);
         let action = match action {
             TapbackAction::Added => "add",
             TapbackAction::Removed => "remove",

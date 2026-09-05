@@ -491,25 +491,7 @@ async fn load_from_vcard_csv(
         if row.phones.is_empty() {
             continue;
         }
-        let mut name_parts = Vec::new();
-        if !row.first.is_empty() {
-            name_parts.push(row.first.as_str());
-        }
-        if !row.middle.is_empty() {
-            name_parts.push(row.middle.as_str());
-        }
-        if !row.last.is_empty() {
-            name_parts.push(row.last.as_str());
-        }
-        let preferred_name = {
-            let joined = name_parts.join(" ");
-            let collapsed = collapse_inner_whitespace(&joined);
-            if collapsed.is_empty() {
-                None
-            } else {
-                Some(collapsed)
-            }
-        };
+        let preferred_name = row.display_name();
         let phones = phone_handles_only(&row.phones);
         if phones.is_empty() {
             continue;

@@ -6,4 +6,6 @@ license = "LicenseRef-FCL-1.0-ALv2"
 
 [dependencies]
 anyhow = "1.0.103"
+hex = "0.4.3"
 message-ir = { path = "../ir" }
+sha2 = "0.11.0"

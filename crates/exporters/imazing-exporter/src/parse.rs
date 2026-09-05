@@ -135,22 +135,7 @@ fn classify_imazing_csv(path: &Path) -> Result<Option<SourceKind>> {
 
 /// Read every row of one iMazing CSV, stripping a UTF-8 BOM first.
 pub(crate) fn parse_csv_file(path: &Path, kind: SourceKind) -> Result<Vec<RawRow>> {
-    let mut file = File::open(path).with_context(|| format!("open {}", path.display()))?;
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
-        .with_context(|| format!("read {}", path.display()))?;
-    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        bytes.drain(..3);
-    }
-    let mut rdr = csv::ReaderBuilder::new()
-        .flexible(true)
-        .from_reader(bytes.as_slice());
-    let headers = rdr
-        .headers()
-        .with_context(|| format!("headers {}", path.display()))?
-        .iter()
-        .map(|h| h.trim().to_ascii_lowercase())
-        .collect::<Vec<_>>();
+    let (mut rdr, headers) = message_csv::open_csv_lowercase(path)?;
 
     let chat_i = col(&headers, "chat session")?;
     let date_i = col(&headers, "message date")?;
