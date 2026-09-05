@@ -45,6 +45,7 @@ jobs:
       rust: ${{ steps.classify.outputs.rust }}
       web: ${{ steps.classify.outputs.web }}
       docs: ${{ steps.classify.outputs.docs }}
+      docker: ${{ steps.classify.outputs.docker }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -58,27 +59,35 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$EVENT" != "pull_request" ]]; then
-            printf 'rust=true\nweb=true\ndocs=true\n' >> "$GITHUB_OUTPUT"
+            printf 'rust=true\nweb=true\ndocs=true\ndocker=true\n' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git fetch --quiet origin "$BASE"
-          rust=false web=false docs=false
+          rust=false web=false docs=false docker=false
           while IFS= read -r f; do
             case "$f" in
               # The committed OpenAPI document feeds the web app's generated
-              # types, so a change to it must run the web job.
+              # types, and the script that checks them runs in the web job,
+              # so a change to either must run that job.
               docs/src/assets/openapi.json) docs=true; web=true ;;
+              scripts/check-generated-api-types.sh) web=true ;;
               docs/*) docs=true ;;
               web/*) web=true ;;
               web-next/*) ;;                # legacy tree, not the product path
-              .github/workflows/*) rust=true; web=true; docs=true ;;
+              # The image is built from the Dockerfile, the Cargo manifests
+              # and lockfile it copies, and the toolchain pin. A change to one
+              # of them is how the image stops building while the Rust jobs
+              # stay green.
+              docker/*|Cargo.toml|Cargo.lock|rust-toolchain.toml|config/config.docker.toml) rust=true; docker=true ;;
+              crates/*/Cargo.toml|vendor/*/Cargo.toml) rust=true; docker=true ;;
+              .github/workflows/*) rust=true; web=true; docs=true; docker=true ;;
               .github/*|.cursor/*|.gitignore|LICENSE*) ;;
               *.md) ;;
               *) rust=true ;;               # crates, src-tauri, vendor, schema,
-            esac                            # docker, scripts, Cargo.* — Rust CI
+            esac                            # scripts — Rust CI
           done < <(git diff --name-only "origin/$BASE...HEAD")
-          printf 'rust=%s\nweb=%s\ndocs=%s\n' "$rust" "$web" "$docs" >> "$GITHUB_OUTPUT"
-          echo "rust=$rust web=$web docs=$docs"
+          printf 'rust=%s\nweb=%s\ndocs=%s\ndocker=%s\n' "$rust" "$web" "$docs" "$docker" >> "$GITHUB_OUTPUT"
+          echo "rust=$rust web=$web docs=$docs docker=$docker"
 
   # ── Rust: rustfmt ─────────────────────────────────────────────────────
   fmt:
@@ -259,10 +268,11 @@ jobs:
         run: cd web && npm test
 
   # ── Docs: Astro check + build ─────────────────────────────────────────
-  # The site build without rustdoc: copying prebuilt rustdoc HTML into
-  # public/ cannot change whether Astro builds, and cargo doc failures are
-  # compile failures the test job already catches. The full build with
-  # rustdoc, and the deploy, stay in docs.yml on push to main.
+  # The site build without rustdoc or the HTTP API catalog: both are copied
+  # into public/, which `astro check` never reads and the link checker
+  # excludes, so neither can change whether the site builds. cargo doc
+  # failures are compile failures the test job already catches. The full
+  # build with both, and the deploy, stay in docs.yml on the release tag.
   docs:
     name: Check and build (docs)
     needs: changes
@@ -282,9 +292,6 @@ jobs:
       - name: Install dependencies
         working-directory: docs
         run: npm ci
-
-      - name: Copy HTTP API catalog into rustdoc
-        run: bash docs/scripts/copy-http-api-reference.sh
 
       - name: Check
         working-directory: docs
@@ -317,6 +324,34 @@ jobs:
 
       - name: Check Docker rust-builder copies patched crates
         run: ./scripts/check-docker-context.sh
+
+  # ── docker: the release Dockerfile builds ─────────────────────────────
+  # The image used to be built for the first time on the release tag, so a
+  # pull request that broke docker/Dockerfile merged green and the tag
+  # failed. This job builds it without pushing whenever the Dockerfile, a
+  # Cargo manifest or the lockfile changes. Pull requests only: the tag job
+  # below builds and pushes the same image, and a push to main is checked
+  # by the pull request that produced it.
+  docker-build:
+    name: Docker image builds
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.docker == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./docker/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   # ── Always: product version lockstep ──────────────────────────────────
   # The four version files and their lockfiles must agree; on a v* tag they
@@ -436,8 +471,31 @@ jobs:
             libjavascriptcoregtk-4.1-dev \
             libsoup-3.0-dev
 
+      # tauri-cli publishes cargo-binstall metadata with prebuilt archives, so
+      # this downloads a binary in seconds. Compiling it from source took 5.6
+      # minutes on Linux, 8.5 on macOS and 10.6 on Windows in the v0.8.3
+      # release, about as long as building the app itself. The ^2 range keeps
+      # the release on the major the desktop app targets.
+      #
+      # Download only: --strategies leaves out binstall's compile fallback, so
+      # a missing archive fails this step instead of quietly compiling for ten
+      # minutes. macOS needs --pkg-fmt zip because tauri-cli's metadata says
+      # tgz for every target it does not override, it overrides x86_64 macOS
+      # but not aarch64, and its release ships only a zip for aarch64.
+      # GITHUB_TOKEN authenticates binstall's release lookup on
+      # api.github.com; unauthenticated, the 60-per-hour limit is shared by
+      # every runner on the same address and the lookup 403s.
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@v1.23.0
+
       - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2"
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          cargo binstall tauri-cli --version "^2" --no-confirm
+          --strategies crate-meta-data
+          ${{ matrix.os == 'macos-latest' && '--pkg-fmt zip' || '' }}
 
       - name: Build Tauri app
         run: cargo tauri build
