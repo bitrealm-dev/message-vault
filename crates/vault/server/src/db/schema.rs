@@ -11,7 +11,7 @@
 //! [`SCHEMA_VERSION`]). The rule is: any schema change requires a fresh
 //! reload of data, so an out-of-date database is rebuilt empty from the
 //! embedded DDL instead of being patched in place. Postgres has no
-//! user_version pragma; its idempotent DDL (`IF NOT EXISTS`) runs once
+//! `user_version` pragma; its idempotent DDL (`IF NOT EXISTS`) runs once
 //! behind a `schema_meta` marker gate (see [`VAULT_SCHEMA_META_KEY`]).
 
 use anyhow::Result;

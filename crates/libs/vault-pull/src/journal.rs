@@ -18,18 +18,30 @@ pub const PULL_JOURNAL_NAME: &str = ".vault-pull-state.jsonl";
 #[serde(tag = "event", rename_all = "snake_case")]
 /// One row in `.vault-pull-state.jsonl`.
 pub enum PullJournalEvent {
+    /// One attachment is on disk, so a later run can skip downloading it.
     AssetOk {
+        /// Vault base URL the attachment came from.
         url: String,
+        /// Account username the run signed in as.
         username: String,
+        /// Hex SHA-256 fingerprint of the attachment bytes; the skip key.
         sha256: String,
+        /// Not filled in: the run writes an empty string and nothing reads it.
         path: String,
+        /// Not filled in: the run writes `0` and nothing reads it.
         size_bytes: u64,
     },
+    /// A whole download finished, with its counts.
     BackupComplete {
+        /// Vault base URL the download came from.
         url: String,
+        /// Account username the run signed in as.
         username: String,
+        /// Conversations written.
         conversations: u64,
+        /// Messages written.
         messages: u64,
+        /// Attachments downloaded.
         assets: u64,
     },
 }

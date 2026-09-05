@@ -49,7 +49,7 @@ pub enum Commands {
     /// --output. Does not open the database.
     DumpCliDocs(DumpArgs),
 
-    /// Convert media under assets/ into browser previews under assets_converted/
+    /// Convert media under assets/ into browser previews under `assets_converted/`
     ProcessAssets(ProcessAssetsArgs),
 }
 

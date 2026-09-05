@@ -11,18 +11,28 @@ use serde::{Deserialize, Deserializer, de};
 /// are split across backups, and how often messages get photos or replies.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SeedConfig {
+    /// Random seed. The same seed and settings produce the same backups.
     #[serde(default = "default_seed")]
     pub seed: u64,
+    /// Folder the generated backups are written under.
     #[serde(default = "default_out")]
     pub out: String,
+    /// The "now" that every generated timestamp counts back from.
     #[serde(deserialize_with = "deserialize_reference_time")]
     pub reference_time: DateTime<Utc>,
+    /// How many contacts to invent and how their handles are shaped.
     pub contacts: ContactsConfig,
+    /// Contact labels and the share of contacts that get each one.
     pub labels: LabelsConfig,
+    /// One-to-one conversation sizes and shapes.
     pub one_to_one: OneToOneConfig,
+    /// Group conversation counts and sizes.
     pub groups: GroupsConfig,
+    /// Message mix: attachments, replies, tapbacks, transports.
     pub messages: MessagesConfig,
+    /// Deliberately awkward data: unassigned handles, orphans, empty threads.
     pub edge_cases: EdgeCasesConfig,
+    /// How conversations are split across the backup folders.
     #[serde(default)]
     pub sources: SourcesConfig,
 }

@@ -80,7 +80,7 @@ impl OutputFormat {
         matches!(self, Self::Eml | Self::Mbox)
     }
 
-    /// True when export writes a single SyncTech `smses.xml` (the FormatSink XML path).
+    /// True when export writes a single SyncTech `smses.xml` (the `FormatSink` XML path).
     pub fn is_sbr_xml(self) -> bool {
         matches!(self, Self::Xml)
     }
@@ -98,7 +98,7 @@ pub struct ExporterConfig {
     pub timezone: Option<String>,
     /// Fake-name rewrite settings; `None`-equivalent when disabled.
     pub obfuscate: ObfuscateConfig,
-    /// Attachment handling for FormatSink (none / copy / convert / compress).
+    /// Attachment handling for `FormatSink` (none / copy / convert / compress).
     pub media: MediaConfig,
     /// Shared cancel flag for in-process jobs; CLI runs leave it unset.
     pub cancel: Option<CancelFlag>,

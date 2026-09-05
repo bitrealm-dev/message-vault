@@ -870,7 +870,7 @@ pub struct PendingMessage {
     pub text: String,
     /// Relative paths to staged attachment files.
     pub attachments: Vec<PendingAttachment>,
-    /// Per-exporter metadata (e.g., key_id, android_type, xml_fields).
+    /// Per-exporter metadata (e.g., `key_id`, `android_type`, `xml_fields`).
     pub extra: std::collections::BTreeMap<String, String>,
 }
 

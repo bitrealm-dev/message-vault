@@ -223,7 +223,7 @@ pub(crate) fn prepare_file(
 struct AttachmentScan {
     /// Per message: how each attachment maps onto the import line.
     projections: Vec<Vec<AttachmentProjection>>,
-    /// sha256 → (relative path, mime). BTreeMap keeps a stable upload order.
+    /// sha256 → (relative path, mime). `BTreeMap` keeps a stable upload order.
     unique: BTreeMap<String, (String, Option<String>)>,
     /// Attachments seen, uploaded or not.
     count: u64,

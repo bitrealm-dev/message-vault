@@ -120,7 +120,7 @@ pub async fn vacuum_import_tables(conn: &mut AnyConnection) {
 }
 
 /// Aggregate many values into one column with U+001F separators (the format
-/// the export pipeline expects). SQLite uses GROUP_CONCAT, Postgres string_agg.
+/// the export pipeline expects). SQLite uses `GROUP_CONCAT`, Postgres `string_agg`.
 pub fn group_concat_unit_separator(engine: DbEngine, col: &str) -> String {
     match engine {
         DbEngine::Sqlite => format!("GROUP_CONCAT({col}, char(31))"),

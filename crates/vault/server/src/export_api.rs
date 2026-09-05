@@ -24,7 +24,7 @@ pub struct ExportPageOpts<'a> {
     pub account_id: &'a str,
     /// Search query string, in the search language.
     pub query: &'a str,
-    /// Max messages on the page. Already validated by the handler: 1..=MAX_LIST_LIMIT.
+    /// Max messages on the page. Already validated by the handler: `1..=MAX_LIST_LIMIT`.
     pub limit: usize,
     /// Row offset.
     pub offset: usize,

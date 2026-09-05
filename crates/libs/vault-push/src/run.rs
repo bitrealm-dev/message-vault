@@ -87,9 +87,13 @@ pub const DEFAULT_PREPARE_WORKERS: usize = 2;
 /// Settings for one full push run (paths, URL, flags, limits).
 #[derive(Debug, Clone)]
 pub struct VaultPushConfig {
+    /// A folder of JSON Lines conversation files, or one such file.
     pub input: PathBuf,
+    /// Vault base URL, e.g. `http://127.0.0.1:8080`.
     pub base_url: String,
+    /// Account username, recorded in the report and progress events.
     pub username: String,
+    /// API token or session token for the vault.
     pub key: String,
     /// `"append"` adds to existing data; `"replace"` clears then imports (with force).
     pub mode: String,
@@ -110,7 +114,9 @@ pub struct VaultPushConfig {
     /// If true, skip re-hashing attachments when the JSON Lines `size_bytes` matches
     /// the file size on disk. Default remains full verification of every file.
     pub trust_export: bool,
+    /// Extra tries per HTTP request after a transient failure.
     pub max_retries: u32,
+    /// Messages per import request; at least 1.
     pub batch_size: usize,
     /// Max parallel attachment uploads. Message imports stay one-at-a-time.
     pub asset_upload_workers: usize,
@@ -122,9 +128,13 @@ pub struct VaultPushConfig {
     pub asset_multipart_threshold: usize,
     /// Hard max attachment size this run will attempt to upload.
     pub asset_max_bytes: u64,
+    /// Where to write the report JSON; `None` puts it beside the input.
     pub report_path: Option<PathBuf>,
+    /// Where to write the run log; `None` puts it beside the input.
     pub log_path: Option<PathBuf>,
+    /// Where the journal lives; `None` puts it beside the input.
     pub journal_path: Option<PathBuf>,
+    /// Checked between files and uploads; set it to stop the run early.
     pub cancel: Option<CancelFlag>,
     /// Existing import session to reuse when the caller already created one.
     pub import_id: Option<i64>,

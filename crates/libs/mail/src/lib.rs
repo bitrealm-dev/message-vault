@@ -424,7 +424,7 @@ fn guid_prefix8(guid: &str) -> String {
 /// Synthetic RFC5322 address for a phone or Apple handle.
 ///
 /// Phones → `+E164@sms.local`. Email / other handles containing `@` →
-/// `local=domain@handle.local` (MAIL_ARCHIVE encoding).
+/// `local=domain@handle.local` (`MAIL_ARCHIVE` encoding).
 fn synthetic_address(handle: &str, display_name: Option<&str>) -> Address<'static> {
     let handle = handle.trim();
     let email = if handle.is_empty() {

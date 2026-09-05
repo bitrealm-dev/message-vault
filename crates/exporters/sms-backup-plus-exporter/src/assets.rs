@@ -47,7 +47,7 @@ fn extension_for(ctype: &str, filename: Option<&str>) -> String {
 
 /// Cap for the basename portion of generated attachment filenames. The name
 /// is prefixed with ~46 bytes of file-key/timestamp/digest, so 160 keeps the
-/// total well under ext4's 255-byte NAME_MAX and avoids ENAMETOOLONG.
+/// total well under ext4's 255-byte `NAME_MAX` and avoids ENAMETOOLONG.
 const MAX_BASENAME_BYTES: usize = 160;
 
 /// A file name with unsafe characters replaced by `_`, never empty.

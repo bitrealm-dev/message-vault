@@ -50,7 +50,7 @@ fn relative_eml_path(
 /// Unlike the shared `ensure_conversation` (which seeds a new entry only),
 /// group membership changes over time here, and a later message's smaller
 /// roster must not shrink the participant list. (A roster change that yields a
-/// different chat_key still splits the conversation into fragments; this keeps
+/// different `chat_key` still splits the conversation into fragments; this keeps
 /// each fragment's participant list complete within that key.)
 fn ensure_convo<'a>(
     map: &'a mut HashMap<String, PendingConversation>,

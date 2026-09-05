@@ -152,7 +152,7 @@ impl FromStr for MaxResolution {
     }
 }
 
-/// Build compress options from CLI-style fields (min_size like `20M`).
+/// Build compress options from CLI-style fields (`min_size` like `20M`).
 ///
 /// # Errors
 ///

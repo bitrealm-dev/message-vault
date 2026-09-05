@@ -31,7 +31,7 @@ pub(super) struct PromoteStats {
 ///
 /// Everything runs in one transaction, taken with the write lock up front on
 /// SQLite (IMMEDIATE) so two imports for different accounts cannot race into
-/// SQLITE_BUSY at the first write; Postgres has no statement-level equivalent.
+/// `SQLITE_BUSY` at the first write; Postgres has no statement-level equivalent.
 pub(super) async fn promote_append(
     conn: &mut AnyConnection,
     mode: ImportMode,

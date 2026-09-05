@@ -106,7 +106,7 @@ pub struct ParsedPdu {
     pub has_from: bool,
     /// Structured MMS To header list was non-empty.
     pub has_to: bool,
-    /// Optional MMS headers (subject, message_id, …).
+    /// Optional MMS headers (subject, `message_id`, …).
     pub pdu_fields: BTreeMap<String, String>,
     /// `structured` | `mixed` | `heuristic`
     pub decode_quality: &'static str,

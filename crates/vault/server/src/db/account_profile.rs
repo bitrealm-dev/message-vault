@@ -213,8 +213,8 @@ pub async fn update_password_hash(
 }
 
 /// Permanently delete an account. All dependent rows are removed by
-/// ON DELETE CASCADE (messages, conversations, contacts, vault_imports,
-/// account_handles/emails/api_tokens).
+/// ON DELETE CASCADE (messages, conversations, contacts, `vault_imports`,
+/// `account_handles/emails/api_tokens`).
 pub async fn delete_account(conn: &mut AnyConnection, account_id: &str) -> Result<()> {
     sqlx::query("DELETE FROM accounts WHERE id = $1")
         .bind(account_id)
@@ -377,7 +377,7 @@ pub async fn delete_all_messages_for_account(
     })
 }
 
-/// Load the preferred_name for an account, if set.
+/// Load the `preferred_name` for an account, if set.
 pub async fn load_preferred_name(
     conn: &mut AnyConnection,
     account_id: &str,
@@ -427,7 +427,7 @@ pub async fn upsert_account_phone(
     Ok(())
 }
 
-/// Upsert an account_emails row.
+/// Upsert an `account_emails` row.
 pub async fn upsert_account_email(
     conn: &mut AnyConnection,
     account_id: &str,

@@ -862,7 +862,7 @@ const ACCOUNT_ATTACHMENTS_FROM: &str = r"
         WHERE m.account_id = $1
         ";
 
-/// Total attachment bytes for an account (original size_bytes).
+/// Total attachment bytes for an account (original `size_bytes`).
 pub async fn account_attachment_bytes(conn: &mut AnyConnection, account_id: &str) -> Result<i64> {
     let n: i64 = sqlx::query_scalar(&format!(
         "SELECT COALESCE(SUM(a.size_bytes), 0) {ACCOUNT_ATTACHMENTS_FROM}"
