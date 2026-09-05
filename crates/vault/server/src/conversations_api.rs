@@ -183,8 +183,12 @@ pub async fn list_conversations_sorted(
     let mut params = filter.params().to_vec();
     params.push(SqlParam::Int(limit as i64));
     params.push(SqlParam::Int(offset as i64));
+    // The sort reads computed columns (`last_message_at`, `message_count`)
+    // inside expressions. SQLite lets ORDER BY name a select-list alias
+    // anywhere; Postgres only as a bare name. Sorting the rows as a derived
+    // table makes those aliases real columns on both engines.
     let sql = renumber_placeholders(&format!(
-        "{select} WHERE {where_sql} ORDER BY {order_by} LIMIT ? OFFSET ?",
+        "SELECT * FROM ({select} WHERE {where_sql}) AS c ORDER BY {order_by} LIMIT ? OFFSET ?",
         select = CONVERSATION_ROW_SELECT,
         order_by = order.order_by_sql(),
     ));

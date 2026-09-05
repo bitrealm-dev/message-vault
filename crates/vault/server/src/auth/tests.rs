@@ -368,6 +368,9 @@ async fn logout_on_conn_leaves_registered_account() {
 
 #[tokio::test]
 async fn change_password_transaction_rolls_back_every_credential() {
+    if crate::test_support::on_postgres() {
+        return; // SQLite-only: the failure is injected with a trigger in SQLite's RAISE syntax
+    }
     let (_dir, mut conn, old_session, api_tokens, other_account_token) =
         password_change_setup().await;
     sqlx::query(

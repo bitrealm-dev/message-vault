@@ -192,9 +192,28 @@ pub fn redact_db_url(url: &str) -> String {
     format!("{scheme}://{host}{path}")
 }
 
-/// Shared test pool: file-backed SQLite in a fresh temp dir.
+/// Shared test pool, plus a fresh temp dir for the test's files.
+///
+/// File-backed SQLite in that temp dir by default. When `MV_TEST_POSTGRES_URL`
+/// is set, a schema of its own on that Postgres server instead, so the same
+/// suite runs against the other engine and a green Postgres job means the
+/// SQL ran on Postgres (#339). A test about SQLite itself takes
+/// [`sqlite_test_pool`].
 #[cfg(test)]
 pub(crate) async fn test_pool() -> (AnyPool, tempfile::TempDir) {
+    if let Some(url) = crate::pg_test_url() {
+        sqlx::any::install_default_drivers();
+        let dir = tempfile::tempdir().unwrap();
+        return (pg_test_schema_pool(&url).await, dir);
+    }
+    sqlite_test_pool().await
+}
+
+/// File-backed SQLite in a fresh temp dir, whatever `MV_TEST_POSTGRES_URL`
+/// says: for a test whose subject is SQLite (a pragma, the file on disk,
+/// `sqlite_master`).
+#[cfg(test)]
+pub(crate) async fn sqlite_test_pool() -> (AnyPool, tempfile::TempDir) {
     sqlx::any::install_default_drivers();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("vault.db");
@@ -203,6 +222,60 @@ pub(crate) async fn test_pool() -> (AnyPool, tempfile::TempDir) {
         .await
         .unwrap();
     (pool, dir)
+}
+
+/// A pool whose connections all run in a schema created for this one test.
+///
+/// The schema is named `mvtest_<pid>_<n>`, so tests in one process never
+/// share one and a later process can tell the leftovers of an earlier one
+/// apart from its own. The first call in a process drops every `mvtest_`
+/// schema another process left behind: a crashed or interrupted run must
+/// not fill the shared test database. The connection URL carries
+/// `options=-csearch_path=<schema>`, so every table `ensure_vault_schema`
+/// creates lands in that schema and every query reads from it.
+#[cfg(test)]
+async fn pg_test_schema_pool(url: &str) -> AnyPool {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    static SWEPT: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
+
+    let pid = std::process::id();
+    let schema = format!("mvtest_{pid}_{}", NEXT.fetch_add(1, Ordering::Relaxed));
+    let admin = AnyPoolOptions::new()
+        .max_connections(1)
+        .connect(url)
+        .await
+        .expect("connect to MV_TEST_POSTGRES_URL");
+    SWEPT
+        .get_or_init(|| async {
+            let mine = format!("mvtest_{pid}_%");
+            let stale: Vec<String> = sqlx::query_scalar(
+                "SELECT nspname FROM pg_namespace WHERE nspname LIKE 'mvtest_%' AND nspname NOT LIKE $1",
+            )
+            .bind(&mine)
+            .fetch_all(&admin)
+            .await
+            .unwrap_or_default();
+            for name in stale {
+                let _ = sqlx::query(&format!("DROP SCHEMA IF EXISTS \"{name}\" CASCADE"))
+                    .execute(&admin)
+                    .await;
+            }
+        })
+        .await;
+    sqlx::query(&format!("CREATE SCHEMA \"{schema}\""))
+        .execute(&admin)
+        .await
+        .expect("create the test schema");
+    admin.close().await;
+
+    let separator = if url.contains('?') { '&' } else { '?' };
+    let scoped = format!("{url}{separator}options=-csearch_path%3D{schema}");
+    AnyPoolOptions::new()
+        .max_connections(4)
+        .connect(&scoped)
+        .await
+        .expect("connect to the test schema")
 }
 
 #[cfg(test)]
@@ -233,7 +306,7 @@ mod tests {
 
     #[tokio::test]
     async fn opens_sqlite_pool_and_applies_pragmas() {
-        let (pool, _dir) = test_pool().await;
+        let (pool, _dir) = sqlite_test_pool().await;
         // All five vault pragmas, read back through their pragma table
         // functions (values must match with_vault_pragmas).
         let busy_timeout: i64 = sqlx::query_scalar("SELECT timeout FROM pragma_busy_timeout")

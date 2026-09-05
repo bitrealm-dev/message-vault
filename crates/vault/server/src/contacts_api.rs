@@ -234,9 +234,12 @@ pub async fn list_contacts(
         .await?;
     let total = total.max(0) as u64;
 
+    // `name` is a select-list alias and the sort applies lower() to it. SQLite
+    // allows that; Postgres only allows a bare alias in ORDER BY, so the rows
+    // are sorted as a derived table where `name` is a real column.
     let order_by = format!("{}, ct.id", order_by_name_ci(engine, "name"));
     let sql = renumber_placeholders(&format!(
-        "SELECT ct.id,
+        "SELECT * FROM (SELECT ct.id,
                 COALESCE(NULLIF(trim(ct.preferred_name), ''), '(unknown)') AS name,
                 (SELECT COUNT(*)
                  FROM contact_handles ch
@@ -261,7 +264,7 @@ pub async fn list_contacts(
                  JOIN contact_groups cl ON cl.id = clm.group_id
                  WHERE clm.contact_id = ct.id AND cl.account_id = ct.account_id) AS groups
          FROM contacts ct
-         WHERE {where_sql}
+         WHERE {where_sql}) AS ct
          {order_by}
          LIMIT ? OFFSET ?",
         handles_agg = group_concat_unit_separator(engine, "val"),

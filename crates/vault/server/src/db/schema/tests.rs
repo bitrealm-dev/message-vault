@@ -82,6 +82,9 @@ async fn seeded_schema_vault() -> (sqlx::AnyPool, TestVault) {
 
 #[tokio::test]
 async fn promote_fts_indexing_covers_only_rows_inserted_by_this_promotion() {
+    if crate::test_support::on_postgres() {
+        return; // SQLite-only: asserts against the FTS5 table; the Postgres twin is promote_fts_cycle_pg
+    }
     let (pool, _vault) = seeded_schema_vault().await;
     let mut conn = pool.acquire().await.unwrap();
 
@@ -133,6 +136,9 @@ async fn promote_fts_indexing_covers_only_rows_inserted_by_this_promotion() {
 
 #[tokio::test]
 async fn fresh_vault_has_complete_current_schema() {
+    if crate::test_support::on_postgres() {
+        return; // SQLite-only: the contract lists SQLite objects such as messages_fts
+    }
     let (pool, _dir) = test_pool().await;
     let mut conn = pool.acquire().await.unwrap();
     ensure_vault_schema(&mut conn).await.unwrap();
@@ -357,6 +363,9 @@ async fn reset_staging_for_account_leaves_other_accounts() {
 
 #[tokio::test]
 async fn old_vault_rebuilds_empty_at_current_version() {
+    if crate::test_support::on_postgres() {
+        return; // SQLite-only: builds a legacy SQLite file with its nocase collation and user_version
+    }
     let (pool, _dir) = test_pool().await;
     let mut conn = pool.acquire().await.unwrap();
     // A pre-versioning vault from the pre-groups era: contact_labels
@@ -436,6 +445,9 @@ async fn current_version_vault_keeps_data_across_reensure() {
 
 #[tokio::test]
 async fn newer_version_vault_rebuilds_to_current() {
+    if crate::test_support::on_postgres() {
+        return; // SQLite-only: reads PRAGMA user_version; stale_postgres_marker_rebuilds_vault_schema_empty is the twin
+    }
     let (pool, _vault) = seeded_schema_vault().await;
     let mut conn = pool.acquire().await.unwrap();
     stamp_user_version(&mut conn, SCHEMA_VERSION + 1)
@@ -527,6 +539,9 @@ async fn fresh_accounts_default_to_full_permissions() {
 
 #[tokio::test]
 async fn messages_fts_stays_in_sync() {
+    if crate::test_support::on_postgres() {
+        return; // SQLite-only: queries the FTS5 table with MATCH; messages_fts_stays_in_sync_pg is the twin
+    }
     let (pool, _vault) = seeded_schema_vault().await;
     let mut conn = pool.acquire().await.unwrap();
     let conversation_id: i64 =
