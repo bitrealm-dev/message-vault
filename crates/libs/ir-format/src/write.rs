@@ -5,7 +5,7 @@ use crate::write_sbr;
 use anyhow::{Context, Result, bail};
 use mail::{MailAttachment, MailMessage, MailPackage, Participant, write_mail_package};
 use message_csv::{AttachmentCell, ParticipantCell, format_local_ts, json_cell};
-use message_ir::{ConversationDocument, ConversationHeader, IrMessageKind};
+use message_ir::{ConversationDocument, ConversationHeader, IrImessage, IrMessage, IrMessageKind};
 use message_vault_io_core::OutputFormat;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -183,12 +183,16 @@ fn sender_handle_type_cell(sender_handle: Option<&str>) -> &'static str {
 }
 
 /// Per-conversation CSV using the unified [`CSV_HEADERS`] contract.
+///
+/// # Errors
+///
+/// Returns an error when a message's timestamp cannot be formatted or the
+/// file cannot be written.
 pub(crate) fn write_conversation_csv(
     output_dir: &Path,
     doc: &ConversationDocument,
 ) -> Result<PathBuf> {
     let path = output_dir.join(format!("{}.csv", doc.filename_stem()));
-
     let participants_json = json_cell(
         &doc.conversation
             .participants
@@ -205,131 +209,205 @@ pub(crate) fn write_conversation_csv(
         let mut wtr = csv::Writer::from_writer(out);
         wtr.write_record(CSV_HEADERS)
             .with_context(|| format!("write header {}", path.display()))?;
-
         for msg in &doc.messages {
-            let secs = msg.timestamp_unix_ms.div_euclid(1000);
-            let (ts_local, ts_utc, ts_display) = format_local_ts(secs).ok_or_else(|| {
-                anyhow::anyhow!("invalid timestamp_unix_ms {}", msg.timestamp_unix_ms)
-            })?;
-            let attachment_cells: Vec<AttachmentCell> = msg
-                .attachments
-                .iter()
-                .map(|a| AttachmentCell {
-                    meta: a.into(),
-                    is_sticker: a.is_sticker,
-                    transcription: a.transcription.clone(),
-                    sticker_effect: a.sticker_effect.clone(),
-                })
-                .collect();
-            let attachments_json = json_cell(&attachment_cells);
-            let timestamp_unix_ms = msg.timestamp_unix_ms.to_string();
-            let android_type = msg
-                .source
-                .as_ref()
-                .and_then(|s| s.android_type)
-                .map(|n| n.to_string())
-                .unwrap_or_default();
-            let source_fields_json = msg
-                .source
-                .as_ref()
-                .filter(|s| !s.fields.is_empty())
-                .map(|s| serde_json::to_string(&s.fields).unwrap_or_default())
-                .unwrap_or_default();
-
-            let im = msg.imessage.as_ref();
-            let read_receipt = im
-                .and_then(|i| i.read_receipt_rfc3339.as_deref())
-                .unwrap_or("");
-            let is_deleted = im.map(|i| i.is_deleted).unwrap_or(false);
-            let send_effect = im.and_then(|i| i.send_effect.as_deref()).unwrap_or("");
-            let shared_location = im.and_then(|i| i.shared_location.as_deref()).unwrap_or("");
-            let is_announcement = msg.message_kind == IrMessageKind::Announcement;
-            let announcement = im.and_then(|i| i.announcement.as_deref()).unwrap_or("");
-            let is_reply = im.map(|i| i.is_reply).unwrap_or(false);
-            let thread_originator_guid =
-                im.and_then(|i| i.in_reply_to_guid.as_deref()).unwrap_or("");
-            let thread_originator_part = im
-                .and_then(|i| i.thread_originator_part)
-                .map(|n| n.to_string())
-                .unwrap_or_default();
-            let num_replies = im
-                .and_then(|i| i.num_replies)
-                .map(|n| n.to_string())
-                .unwrap_or_default();
-            let parts_json =
-                parts_cell_for_csv(msg.text.as_str(), im.and_then(|i| i.parts.as_ref()));
-            let edits_json = value_cell(im.and_then(|i| i.edits.as_ref()));
-            let tapbacks_json = value_cell(im.and_then(|i| i.tapbacks.as_ref()));
-            let app_json = value_cell(im.and_then(|i| i.app.as_ref()));
-            let balloon_bundle_id = im
-                .and_then(|i| i.balloon_bundle_id.as_deref())
-                .unwrap_or("");
-            let balloon_kind = im.and_then(|i| i.balloon_kind.as_deref()).unwrap_or("");
-            let associated_guid = im.and_then(|i| i.associated_guid.as_deref()).unwrap_or("");
-            let associated_part = im
-                .and_then(|i| i.associated_part)
-                .map(|n| n.to_string())
-                .unwrap_or_default();
-            let tapback_kind = im.and_then(|i| i.tapback_kind.as_deref()).unwrap_or("");
-            let tapback_emoji = im.and_then(|i| i.tapback_emoji.as_deref()).unwrap_or("");
-            let tapback_action = im.and_then(|i| i.tapback_action.as_deref()).unwrap_or("");
-
-            wtr.write_record([
-                doc.conversation.chat_identifier.as_str(),
-                doc.conversation.conversation_type.as_str(),
-                doc.conversation.group_title.as_deref().unwrap_or(""),
-                participants_json.as_str(),
-                msg.guid.as_str(),
-                ts_local.as_str(),
-                ts_utc.as_str(),
-                ts_display.as_str(),
-                timestamp_unix_ms.as_str(),
-                msg.direction.as_str(),
-                msg.service.as_str(),
-                msg.sender_handle.as_deref().unwrap_or(""),
-                msg.sender_display_name.as_deref().unwrap_or(""),
-                sender_handle_type_cell(msg.sender_handle.as_deref()),
-                msg.subject.as_deref().unwrap_or(""),
-                msg.text.as_str(),
-                attachments_json.as_str(),
-                msg.message_kind.as_str(),
-                doc.export.source.as_str(),
-                doc.export.tool.as_str(),
-                doc.export.tool_version.as_str(),
-                doc.export.owner_handle.as_deref().unwrap_or(""),
-                doc.export.owner_display_name.as_deref().unwrap_or(""),
-                android_type.as_str(),
-                source_fields_json.as_str(),
-                read_receipt,
-                if is_deleted { "true" } else { "false" },
-                send_effect,
-                shared_location,
-                if is_announcement { "true" } else { "false" },
-                announcement,
-                if is_reply { "true" } else { "false" },
-                thread_originator_guid,
-                thread_originator_part.as_str(),
-                num_replies.as_str(),
-                parts_json.as_str(),
-                edits_json.as_str(),
-                tapbacks_json.as_str(),
-                app_json.as_str(),
-                balloon_bundle_id,
-                balloon_kind,
-                associated_guid,
-                associated_part.as_str(),
-                tapback_kind,
-                tapback_emoji,
-                tapback_action,
-            ])
-            .with_context(|| format!("write row {}", path.display()))?;
+            let cells = MessageCells::new(msg)?;
+            wtr.write_record(csv_record(doc, &participants_json, msg, &cells))
+                .with_context(|| format!("write row {}", path.display()))?;
         }
-
         wtr.flush()?;
         Ok(())
     })?;
 
     Ok(path)
+}
+
+/// The cells of one message that have to be built rather than borrowed:
+/// formatted times, JSON columns, and the `imessage` bag's columns.
+struct MessageCells {
+    ts_local: String,
+    ts_utc: String,
+    ts_display: String,
+    timestamp_unix_ms: String,
+    attachments_json: String,
+    android_type: String,
+    source_fields_json: String,
+    imessage: ImessageCells,
+}
+
+impl MessageCells {
+    /// # Errors
+    ///
+    /// Returns an error when the timestamp is outside the representable range.
+    fn new(msg: &IrMessage) -> Result<Self> {
+        let secs = msg.timestamp_unix_ms.div_euclid(1000);
+        let (ts_local, ts_utc, ts_display) = format_local_ts(secs).ok_or_else(|| {
+            anyhow::anyhow!("invalid timestamp_unix_ms {}", msg.timestamp_unix_ms)
+        })?;
+        let attachment_cells: Vec<AttachmentCell> = msg
+            .attachments
+            .iter()
+            .map(|a| AttachmentCell {
+                meta: a.into(),
+                is_sticker: a.is_sticker,
+                transcription: a.transcription.clone(),
+                sticker_effect: a.sticker_effect.clone(),
+            })
+            .collect();
+        Ok(Self {
+            ts_local,
+            ts_utc,
+            ts_display,
+            timestamp_unix_ms: msg.timestamp_unix_ms.to_string(),
+            attachments_json: json_cell(&attachment_cells),
+            android_type: msg
+                .source
+                .as_ref()
+                .and_then(|s| s.android_type)
+                .map(|n| n.to_string())
+                .unwrap_or_default(),
+            source_fields_json: msg
+                .source
+                .as_ref()
+                .filter(|s| !s.fields.is_empty())
+                .map(|s| serde_json::to_string(&s.fields).unwrap_or_default())
+                .unwrap_or_default(),
+            imessage: ImessageCells::new(&msg.text, msg.imessage.as_ref()),
+        })
+    }
+}
+
+/// The `imessage` bag's columns as cell text; every cell is blank when the
+/// message has no bag.
+#[derive(Default)]
+struct ImessageCells {
+    read_receipt: String,
+    is_deleted: bool,
+    send_effect: String,
+    shared_location: String,
+    announcement: String,
+    is_reply: bool,
+    thread_originator_guid: String,
+    thread_originator_part: String,
+    num_replies: String,
+    parts_json: String,
+    edits_json: String,
+    tapbacks_json: String,
+    app_json: String,
+    balloon_bundle_id: String,
+    balloon_kind: String,
+    associated_guid: String,
+    associated_part: String,
+    tapback_kind: String,
+    tapback_emoji: String,
+    tapback_action: String,
+}
+
+impl ImessageCells {
+    /// `text` is the message text, which decides whether the parts column
+    /// repeats it and is therefore left blank.
+    fn new(text: &str, im: Option<&IrImessage>) -> Self {
+        let Some(im) = im else {
+            return Self {
+                parts_json: parts_cell_for_csv(text, None),
+                ..Self::default()
+            };
+        };
+        Self {
+            read_receipt: text_cell(&im.read_receipt_rfc3339),
+            is_deleted: im.is_deleted,
+            send_effect: text_cell(&im.send_effect),
+            shared_location: text_cell(&im.shared_location),
+            announcement: text_cell(&im.announcement),
+            is_reply: im.is_reply,
+            thread_originator_guid: text_cell(&im.in_reply_to_guid),
+            thread_originator_part: number_cell(im.thread_originator_part),
+            num_replies: number_cell(im.num_replies),
+            parts_json: parts_cell_for_csv(text, im.parts.as_ref()),
+            edits_json: value_cell(im.edits.as_ref()),
+            tapbacks_json: value_cell(im.tapbacks.as_ref()),
+            app_json: value_cell(im.app.as_ref()),
+            balloon_bundle_id: text_cell(&im.balloon_bundle_id),
+            balloon_kind: text_cell(&im.balloon_kind),
+            associated_guid: text_cell(&im.associated_guid),
+            associated_part: number_cell(im.associated_part),
+            tapback_kind: text_cell(&im.tapback_kind),
+            tapback_emoji: text_cell(&im.tapback_emoji),
+            tapback_action: text_cell(&im.tapback_action),
+        }
+    }
+}
+
+/// An optional string as a cell: the string, or blank.
+fn text_cell(value: &Option<String>) -> String {
+    value.clone().unwrap_or_default()
+}
+
+/// An optional number as a cell: the number, or blank.
+fn number_cell(value: Option<u32>) -> String {
+    value.map(|n| n.to_string()).unwrap_or_default()
+}
+
+/// `true` or `false`.
+fn bool_cell(value: bool) -> &'static str {
+    if value { "true" } else { "false" }
+}
+
+/// One CSV row in [`CSV_HEADERS`] order.
+fn csv_record<'a>(
+    doc: &'a ConversationDocument,
+    participants_json: &'a str,
+    msg: &'a IrMessage,
+    cells: &'a MessageCells,
+) -> [&'a str; 46] {
+    let im = &cells.imessage;
+    [
+        doc.conversation.chat_identifier.as_str(),
+        doc.conversation.conversation_type.as_str(),
+        doc.conversation.group_title.as_deref().unwrap_or(""),
+        participants_json,
+        msg.guid.as_str(),
+        cells.ts_local.as_str(),
+        cells.ts_utc.as_str(),
+        cells.ts_display.as_str(),
+        cells.timestamp_unix_ms.as_str(),
+        msg.direction.as_str(),
+        msg.service.as_str(),
+        msg.sender_handle.as_deref().unwrap_or(""),
+        msg.sender_display_name.as_deref().unwrap_or(""),
+        sender_handle_type_cell(msg.sender_handle.as_deref()),
+        msg.subject.as_deref().unwrap_or(""),
+        msg.text.as_str(),
+        cells.attachments_json.as_str(),
+        msg.message_kind.as_str(),
+        doc.export.source.as_str(),
+        doc.export.tool.as_str(),
+        doc.export.tool_version.as_str(),
+        doc.export.owner_handle.as_deref().unwrap_or(""),
+        doc.export.owner_display_name.as_deref().unwrap_or(""),
+        cells.android_type.as_str(),
+        cells.source_fields_json.as_str(),
+        im.read_receipt.as_str(),
+        bool_cell(im.is_deleted),
+        im.send_effect.as_str(),
+        im.shared_location.as_str(),
+        bool_cell(msg.message_kind == IrMessageKind::Announcement),
+        im.announcement.as_str(),
+        bool_cell(im.is_reply),
+        im.thread_originator_guid.as_str(),
+        im.thread_originator_part.as_str(),
+        im.num_replies.as_str(),
+        im.parts_json.as_str(),
+        im.edits_json.as_str(),
+        im.tapbacks_json.as_str(),
+        im.app_json.as_str(),
+        im.balloon_bundle_id.as_str(),
+        im.balloon_kind.as_str(),
+        im.associated_guid.as_str(),
+        im.associated_part.as_str(),
+        im.tapback_kind.as_str(),
+        im.tapback_emoji.as_str(),
+        im.tapback_action.as_str(),
+    ]
 }
 
 /// Write a conversation as EML files or one mbox, by `package`.

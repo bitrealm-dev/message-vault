@@ -470,15 +470,7 @@ fn part_fields(part: &MmsPart, decoded: &DecodedPartData) -> BTreeMap<String, St
 /// One `<sms>` element as a record, counting rows skipped for a bad date or address.
 fn parse_sms(attrs: &HashMap<String, String>, stats: &mut ParseStats) -> Option<Record> {
     stats.sms_seen += 1;
-    let date_ms = get(attrs, "date").to_string();
-    let timestamp_secs = date_ms
-        .parse::<f64>()
-        .ok()
-        .map(|v| v / 1000.0)
-        .or_else(|| {
-            stats.skipped_invalid_date += 1;
-            None
-        })?;
+    let (date_ms, timestamp_secs) = timestamp_from_date(attrs, stats)?;
     let address = sanitize_number(get(attrs, "address")).or_else(|| {
         stats.skipped_unknown_address += 1;
         None
@@ -522,7 +514,22 @@ fn parse_sms(attrs: &HashMap<String, String>, stats: &mut ParseStats) -> Option<
     })
 }
 
-/// One `<mms>` element as a record, working out direction and participants from its addresses.
+/// Unix seconds from an element's millisecond `date` attribute, with the raw
+/// value. Counts and drops an unreadable date.
+fn timestamp_from_date(
+    attrs: &HashMap<String, String>,
+    stats: &mut ParseStats,
+) -> Option<(String, f64)> {
+    let date_ms = get(attrs, "date").to_string();
+    let Ok(millis) = date_ms.parse::<f64>() else {
+        stats.skipped_invalid_date += 1;
+        return None;
+    };
+    Some((date_ms, millis / 1000.0))
+}
+
+/// One `<mms>` element as a [`Record`], or `None` (counted in `stats`) when it
+/// is a draft, has no participants, or names nobody but the owner.
 fn parse_mms(
     attrs: &HashMap<String, String>,
     parts: &[MmsPart],
@@ -531,15 +538,7 @@ fn parse_mms(
     stats: &mut ParseStats,
 ) -> Option<Record> {
     stats.mms_seen += 1;
-    let date_ms = get(attrs, "date").to_string();
-    let timestamp_secs = date_ms
-        .parse::<f64>()
-        .ok()
-        .map(|v| v / 1000.0)
-        .or_else(|| {
-            stats.skipped_invalid_date += 1;
-            None
-        })?;
+    let (date_ms, timestamp_secs) = timestamp_from_date(attrs, stats)?;
     let msg_box = get(attrs, "msg_box").trim().to_string();
     if matches!(
         msg_box.as_str(),
@@ -548,17 +547,7 @@ fn parse_mms(
         stats.skipped_draft_or_outbox += 1;
         return None;
     }
-    let mut participants: Vec<String> = get(attrs, "address")
-        .split('~')
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.trim().into())
-        .collect();
-    participants.extend(
-        addrs
-            .iter()
-            .filter(|a| !a.address.trim().is_empty())
-            .map(|a| a.address.trim().into()),
-    );
+    let participants = mms_participants(attrs, addrs);
     if participants.is_empty() {
         stats.skipped_empty_participants += 1;
         return None;
@@ -567,18 +556,81 @@ fn parse_mms(
     let sender_digits = if is_from_me {
         None
     } else {
-        addrs
-            .iter()
-            .find(|a| a.addr_type == MMS_ADDR_FROM)
-            .and_then(|a| sanitize_number(&a.address))
-            .filter(|d| !owners.contains(d))
-            .or_else(|| {
-                participants
-                    .iter()
-                    .filter_map(|p| sanitize_number(p))
-                    .find(|d| !owners.contains(d))
-            })
+        mms_sender(addrs, &participants, owners)
     };
+    let peers = mms_peers(&participants, owners);
+    if peers.is_empty() {
+        stats.skipped_unknown_address += 1;
+        return None;
+    }
+    let decoded: Vec<DecodedPartData> = parts.iter().map(|p| decode_part_data(&p.data)).collect();
+    let (text_refs, image_refs) = smil_refs(parts, &decoded);
+    let hint = name_alias(attrs);
+    let conversation = MmsConversation::for_peers(peers, hint.clone());
+    Some(Record {
+        chat_key: conversation.chat_key,
+        conversation_kind: conversation.kind,
+        group_title: conversation.group_title,
+        participant_digits: conversation.participant_digits,
+        timestamp_secs,
+        is_from_me,
+        sender_digits,
+        sender_display_name: if is_from_me { None } else { hint },
+        text: mms_text(parts, &text_refs),
+        subject: non_null(get(attrs, "sub")),
+        attachments: attachments(parts, &decoded, &image_refs, stats),
+        message_kind: "mms",
+        date_ms,
+        contact_name: raw_name(attrs),
+        android_type: msg_box,
+        source_fields: SourceFields::Mms {
+            attrs: btree(attrs),
+            parts: parts
+                .iter()
+                .zip(decoded.iter())
+                .map(|(p, d)| part_fields(p, d))
+                .collect(),
+            addrs: addrs.iter().map(|a| a.attrs.clone()).collect(),
+        },
+    })
+}
+
+/// Every address on the element: the `~`-joined `address` attribute, then
+/// each `<addr>` child. Blank entries are dropped; owners are not.
+fn mms_participants(attrs: &HashMap<String, String>, addrs: &[MmsAddr]) -> Vec<String> {
+    get(attrs, "address")
+        .split('~')
+        .chain(addrs.iter().map(|a| a.address.as_str()))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// The sender of an incoming MMS: the `FROM` address when it is a number
+/// other than the owner's, else the first participant number that is not
+/// the owner's.
+fn mms_sender(
+    addrs: &[MmsAddr],
+    participants: &[String],
+    owners: &HashSet<String>,
+) -> Option<String> {
+    addrs
+        .iter()
+        .find(|a| a.addr_type == MMS_ADDR_FROM)
+        .and_then(|a| sanitize_number(&a.address))
+        .filter(|d| !owners.contains(d))
+        .or_else(|| {
+            participants
+                .iter()
+                .filter_map(|p| sanitize_number(p))
+                .find(|d| !owners.contains(d))
+        })
+}
+
+/// The other parties: every participant number that is not the owner's,
+/// sorted and de-duplicated so the same group always gets the same key.
+fn mms_peers(participants: &[String], owners: &HashSet<String>) -> Vec<String> {
     let mut peers: Vec<String> = participants
         .iter()
         .filter_map(|p| sanitize_number(p))
@@ -586,12 +638,12 @@ fn parse_mms(
         .collect();
     peers.sort();
     peers.dedup();
-    if peers.is_empty() {
-        stats.skipped_unknown_address += 1;
-        return None;
-    }
-    let decoded: Vec<DecodedPartData> = parts.iter().map(|p| decode_part_data(&p.data)).collect();
-    let (text_refs, image_refs) = smil_refs(parts, &decoded);
+    peers
+}
+
+/// The message text: the text parts the SMIL references, in its order, or
+/// when there is no SMIL every text part sorted and de-duplicated.
+fn mms_text(parts: &[MmsPart], text_refs: &[String]) -> String {
     let mut text_by_key = HashMap::new();
     for part in parts
         .iter()
@@ -604,103 +656,85 @@ fn parse_mms(
             }
         }
     }
-    let text = if text_refs.is_empty() {
+    if text_refs.is_empty() {
         let mut values: Vec<String> = text_by_key.into_values().collect();
         values.sort();
         values.dedup();
-        values.join("\n")
-    } else {
-        text_refs
-            .iter()
-            .filter_map(|r| text_by_key.get(r))
-            .cloned()
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    let blobs = attachments(parts, &decoded, &image_refs, stats);
-    let hint = name_alias(attrs);
-    let source_fields = SourceFields::Mms {
-        attrs: btree(attrs),
-        parts: parts
-            .iter()
-            .zip(decoded.iter())
-            .map(|(p, d)| part_fields(p, d))
-            .collect(),
-        addrs: addrs.iter().map(|a| a.attrs.clone()).collect(),
-    };
-    if peers.len() == 1 {
-        let peer = peers.remove(0);
-        return Some(Record {
-            chat_key: peer.clone(),
-            conversation_kind: ConversationKind::Individual,
-            group_title: None,
-            participant_digits: vec![(peer, hint.clone())],
-            timestamp_secs,
-            is_from_me,
-            sender_digits,
-            sender_display_name: if is_from_me { None } else { hint },
-            text,
-            subject: non_null(get(attrs, "sub")),
-            attachments: blobs,
-            message_kind: "mms",
-            date_ms,
-            contact_name: raw_name(attrs),
-            android_type: msg_box,
-            source_fields,
-        });
+        return values.join("\n");
     }
-    let title = if peers.len() <= 4 {
-        format!(
-            "Group: {}",
-            peers
-                .iter()
-                .map(|d| phone::normalize_lenient(d))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
+    text_refs
+        .iter()
+        .filter_map(|r| text_by_key.get(r))
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Where an MMS lands: a one-to-one conversation keyed by the peer's number,
+/// or a group keyed by the sorted peer set.
+struct MmsConversation {
+    chat_key: String,
+    kind: ConversationKind,
+    group_title: Option<String>,
+    participant_digits: Vec<(String, Option<String>)>,
+}
+
+impl MmsConversation {
+    /// `peers` is sorted and non-empty; `hint` is the element's contact name,
+    /// which names the one peer of an individual conversation.
+    fn for_peers(mut peers: Vec<String>, hint: Option<String>) -> Self {
+        if peers.len() == 1 {
+            let peer = peers.remove(0);
+            return Self {
+                chat_key: peer.clone(),
+                kind: ConversationKind::Individual,
+                group_title: None,
+                participant_digits: vec![(peer, hint)],
+            };
+        }
+        Self {
+            chat_key: group_chat_key(&peers),
+            kind: ConversationKind::Group,
+            group_title: Some(group_title(&peers)),
+            participant_digits: peers.into_iter().map(|d| (d, None)).collect(),
+        }
+    }
+}
+
+/// `Group: <up to four numbers>`, with a count for the rest.
+fn group_title(peers: &[String]) -> String {
+    let shown: Vec<String> = peers
+        .iter()
+        .take(4)
+        .map(|d| phone::normalize_lenient(d))
+        .collect();
+    if peers.len() <= 4 {
+        format!("Group: {}", shown.join(", "))
     } else {
         format!(
             "Group: {}, and {} others",
-            peers[..4]
-                .iter()
-                .map(|d| phone::normalize_lenient(d))
-                .collect::<Vec<_>>()
-                .join(", "),
+            shown.join(", "),
             peers.len() - 4
         )
-    };
-    // Group chats are keyed by the sorted participant set because the format
-    // has no stable thread ID. When the roster changes (someone is added or
-    // removed), messages before and after the change land in different
-    // conversations — an inherent limitation of the source, documented at
-    // https://bitrealm.io/vault/developer/formats/sms-backup-restore/mapping/.
+    }
+}
+
+/// Group chats are keyed by the sorted participant set because the format
+/// has no stable thread ID. When the roster changes (someone is added or
+/// removed), messages before and after the change land in different
+/// conversations, an inherent limitation of the source, documented at
+/// https://bitrealm.io/vault/developer/formats/sms-backup-restore/mapping/.
+/// A very long roster is keyed by a hash so the key stays a usable file stem.
+fn group_chat_key(peers: &[String]) -> String {
     let raw_key = format!("group-{}", peers.join("_"));
-    let chat_key = if raw_key.len() > 180 {
+    if raw_key.len() > 180 {
         format!(
             "group-{}",
             &hex::encode(Sha256::digest(raw_key.as_bytes()))[..16]
         )
     } else {
         raw_key
-    };
-    Some(Record {
-        chat_key,
-        conversation_kind: ConversationKind::Group,
-        group_title: Some(title),
-        participant_digits: peers.into_iter().map(|d| (d, None)).collect(),
-        timestamp_secs,
-        is_from_me,
-        sender_digits,
-        sender_display_name: if is_from_me { None } else { hint },
-        text,
-        subject: non_null(get(attrs, "sub")),
-        attachments: blobs,
-        message_kind: "mms",
-        date_ms,
-        contact_name: raw_name(attrs),
-        android_type: msg_box,
-        source_fields,
-    })
+    }
 }
 
 /// Parse one XML file, calling `on_record` for each message as soon as it is
