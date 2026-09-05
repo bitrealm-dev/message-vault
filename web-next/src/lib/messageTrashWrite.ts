@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 
 import { currentAccountId } from "./accountScope";
-import { resetDb } from "./db";
+import { resetDb } from "./dbCore";
 import { assertVaultWritable } from "./owner";
 import { openWritableVaultDb } from "./vaultSchema";
 

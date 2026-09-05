@@ -6,6 +6,7 @@ import {
 } from "@/lib/accountContext";
 import { NextResponse } from "next/server";
 import { mutationErrorStatus } from "@/lib/owner";
+import { writesAvailable, writesNotAvailable } from "@/lib/vault/writes";
 
 export const runtime = "nodejs";
 
@@ -18,6 +19,7 @@ function authError(err: unknown): NextResponse | null {
 
 /** Recreate a deleted group and re-attach member contacts (undo delete group). */
 export async function POST(req: Request) {
+  if (!writesAvailable()) return writesNotAvailable();
   let body: { name?: unknown; memberContactIds?: unknown };
   try {
     body = await req.json();

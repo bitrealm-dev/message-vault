@@ -24,11 +24,14 @@ export default async function TrashPage({
   const initialYear = Number.isFinite(rawY) ? rawY : null;
 
   return withServerAccount(async () => {
-    const handles = listTrashedHandles();
-    const groupChats = listTrashedGroupYearRows();
-    const trashedContacts = listTrashedContacts();
-    const trashedContactMessages = listTrashedContactMessages();
-    const labels = listLabels();
+    const [handles, groupChats, trashedContacts, trashedContactMessages, labels] =
+      await Promise.all([
+        listTrashedHandles(),
+        listTrashedGroupYearRows(),
+        listTrashedContacts(),
+        listTrashedContactMessages(),
+        listLabels(),
+      ]);
 
     return (
       <BrowsePageLayout active="/trash" labels={labels}>

@@ -17,8 +17,10 @@ export default async function GroupMessagesPage({
   const year = Number.isFinite(rawY) ? rawY : null;
 
   return withServerAccount(async () => {
-    const groupChats = listGroupYearRows();
-    const labels = listLabels();
+    const [groupChats, labels] = await Promise.all([
+      listGroupYearRows(),
+      listLabels(),
+    ]);
 
     return (
       <BrowsePageLayout active="/group-messages" labels={labels}>

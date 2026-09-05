@@ -14,7 +14,7 @@ export default async function LabelPage({
 }) {
   const { slug } = await params;
   const sp = await searchParams;
-  const label = await withServerAccount(() => labelFromSlug(slug));
+  const label = await withServerAccount(async () => labelFromSlug(slug));
   if (!label) notFound();
 
   return (

@@ -89,7 +89,7 @@ The product has two pieces:
 | Docs site              | Astro 7 + Starlight, published to GitHub Pages at bitrealm.io on each `v*` release tag.                                            |
 | Packaging              | Docker (Node 22 + Rust image). GitHub Actions on `v*` tags builds the image and Tauri installers.                                 |
 | Helpers on PATH        | `ffmpeg` / `ffprobe` for media. `wtsexporter` (Python) for WhatsApp. `gh` for GitHub.                                             |
-| Not the product path   | Restored Next.js 16 browse app (`web-next/`, better-sqlite3). Kept on purpose; see CLAUDE.md before proposing its removal.        |
+| Not the product path   | Restored Next.js 16 browse app (`web-next/`), an HTTP client of the vault `/v1` API for evaluating its screens. Kept on purpose; see CLAUDE.md before proposing its removal. |
 
 ### Directory map (`tree -L 2 message-vault`)
 
@@ -122,12 +122,12 @@ message-vault
 ├── web/                    # Vite + React SPA: website and desktop UI
 │   └── src/                # screens, components, vault API client, Tauri wrappers
 └── web-next/               # restored historical Next.js browse UI (not the product GUI)
-    └── src/                # App Router pages that read vault.db via better-sqlite3
+    └── src/                # App Router pages; reads go through src/lib/vault/ to the /v1 API
 ```
 
 ```text
-# ❌ BAD — web-next with v2 schema IS NOT the product!
-# ✅ GOOD — product UI is web/ + src-tauri/; vault API is crates/vault/server/; schema v3 only
+# ❌ BAD — web-next IS NOT the product; it exists to evaluate what is worth porting into web/
+# ✅ GOOD — product UI is web/ + src-tauri/; vault API is crates/vault/server/
 ```
 
 ### First time setup

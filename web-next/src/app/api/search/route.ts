@@ -7,8 +7,9 @@ import {
   searchMessageContextIds,
   searchVault,
   searchVaultContacts,
-} from "@/lib/search";
+} from "@/lib/vault/search";
 import { parseSearchQuery } from "@/lib/searchQuery";
+import { VaultError } from "@/lib/vault/client";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -49,10 +50,7 @@ export async function GET(req: Request) {
             { status: 400 },
           );
         }
-        const ids = searchMessageContextIds(
-          messageId,
-          Number.isFinite(n) ? Math.max(0, Math.min(n, 20)) : 0,
-        );
+        const ids = await searchMessageContextIds(messageId);
         return NextResponse.json({ messageId, context: n, ids });
       }
       // Per-conversation match ids for the in-thread find bar.
@@ -67,7 +65,7 @@ export async function GET(req: Request) {
             { status: 400 },
           );
         }
-        const result = searchConversationMatches(q, conversationIds, {
+        const result = await searchConversationMatches(q, conversationIds, {
           source: source?.trim() || null,
         });
         return NextResponse.json(result);
@@ -76,7 +74,7 @@ export async function GET(req: Request) {
         parseSearchQuery(q).mode === "contacts"
           ? searchVaultContacts
           : searchVault;
-      const result = run(q, {
+      const result = await run(q, {
         limit: Number.isFinite(limit) ? limit : undefined,
         offset: Number.isFinite(offset) ? offset : undefined,
         source: source?.trim() || null,
@@ -87,9 +85,8 @@ export async function GET(req: Request) {
     const auth = authError(err);
     if (auth) return auth;
     const message = err instanceof Error ? err.message : "search failed";
-    // FTS syntax errors surface as SQLite errors — treat as bad query.
-    const status =
-      message.includes("fts5") || message.includes("MATCH") ? 400 : 500;
+    // The vault answers 400 for a query its language rejects.
+    const status = err instanceof VaultError && err.status === 400 ? 400 : 500;
     return NextResponse.json({ error: message }, { status });
   }
 }

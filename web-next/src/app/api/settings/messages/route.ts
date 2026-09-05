@@ -5,6 +5,7 @@ import {
 import { deleteAllMessagesForAccount } from "@/lib/messagesWrite";
 import { NextResponse } from "next/server";
 import { mutationErrorStatus } from "@/lib/owner";
+import { writesAvailable, writesNotAvailable } from "@/lib/vault/writes";
 
 export const runtime = "nodejs";
 
@@ -16,6 +17,7 @@ function authError(err: unknown): NextResponse | null {
 }
 
 export async function DELETE() {
+  if (!writesAvailable()) return writesNotAvailable();
   try {
     return await withAccountHandler(async (accountId) => {
       const deleted = deleteAllMessagesForAccount(accountId);

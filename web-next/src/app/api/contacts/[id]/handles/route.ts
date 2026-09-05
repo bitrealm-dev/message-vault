@@ -10,6 +10,7 @@ import {
 import { NextResponse } from "next/server";
 import { mutationErrorStatus } from "@/lib/owner";
 import { isHandleType } from "../../handles-body";
+import { writesAvailable, writesNotAvailable } from "@/lib/vault/writes";
 
 export const runtime = "nodejs";
 
@@ -46,6 +47,7 @@ function authError(err: unknown): NextResponse | null {
 }
 
 export async function POST(req: Request, { params }: Params) {
+  if (!writesAvailable()) return writesNotAvailable();
   const { id: idStr } = await params;
   const id = Number(idStr);
   if (!Number.isFinite(id)) {
@@ -91,6 +93,7 @@ export async function POST(req: Request, { params }: Params) {
 }
 
 export async function DELETE(req: Request, { params }: Params) {
+  if (!writesAvailable()) return writesNotAvailable();
   const { id: idStr } = await params;
   const id = Number(idStr);
   if (!Number.isFinite(id)) {

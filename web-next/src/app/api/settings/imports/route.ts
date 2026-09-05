@@ -2,15 +2,16 @@ import {
   unauthorizedResponse,
   withAccountHandler,
 } from "@/lib/accountContext";
-import { listVaultImports } from "@/lib/storageStats";
+import { listVaultImports } from "@/lib/vault/account";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
+/** Past import runs, from `GET /v1/imports`. */
 export async function GET() {
   try {
-    return await withAccountHandler(async (accountId) => {
-      const imports = listVaultImports(accountId);
+    return await withAccountHandler(async () => {
+      const imports = await listVaultImports();
       return NextResponse.json({ imports });
     });
   } catch (err) {

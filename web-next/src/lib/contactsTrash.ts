@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { currentAccountId } from "./accountScope";
-import { getContact, resetDb } from "./db";
+import { getContact } from "./contactsRead";
+import { resetDb } from "./dbCore";
 import { deleteContacts } from "./contactsWrite";
 import { trashHandlesInDb } from "./handlesWrite";
 import { assertVaultWritable } from "./owner";

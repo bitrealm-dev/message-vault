@@ -14,7 +14,7 @@ function authError(err: unknown): NextResponse | null {
   return null;
 }
 
-/** Members of a contact label (for undo snapshot / create-label undo guard). */
+/** Members of a contact label (`GET /v1/contact-groups/{id}/members`). */
 export async function GET(req: Request) {
   const name = new URL(req.url).searchParams.get("name")?.trim() ?? "";
   if (!name) {
@@ -23,7 +23,7 @@ export async function GET(req: Request) {
 
   try {
     return await withAccountHandler(async () => {
-      const memberContactIds = listLabelMemberContactIds(name);
+      const memberContactIds = await listLabelMemberContactIds(name);
       return NextResponse.json({ name, memberContactIds });
     });
   } catch (err) {

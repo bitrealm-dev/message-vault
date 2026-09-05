@@ -2,9 +2,8 @@
 
 import { useRef, useState, type ReactNode } from "react";
 import { IconHoverTarget } from "../IconHoverLabel";
-import { EllipsisIcon, RedoIcon, UndoIcon } from "../icons";
+import { EllipsisIcon } from "../icons";
 import { useDismissible } from "../useDismissible";
-import { useHistory } from "./HistoryProvider";
 
 export type ListHistoryMenuItem = {
   key: string;
@@ -17,15 +16,16 @@ export type ListHistoryMenuItem = {
   onClick: (triggerEl: HTMLElement | null) => void;
 };
 
-/** Fastmail-style ⋯ menu with Undo / Redo for list headers. */
+/**
+ * Fastmail-style ⋯ menu for list headers. Undo and redo are not features of
+ * web-next, so the menu holds only the list's own actions and renders
+ * nothing when there are none.
+ */
 export function ListHistoryMenu({
   items = [],
 }: {
-  /** Extra actions shown above Undo/Redo, separated by a divider. */
   items?: ListHistoryMenuItem[];
 }) {
-  const { canUndo, canRedo, busy, undo, redo, undoLabel, redoLabel } =
-    useHistory();
   const [open, setOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(
     null,
@@ -56,6 +56,8 @@ export function ListHistoryMenu({
     refs: [rootRef],
   });
 
+  if (items.length === 0) return null;
+
   return (
     <div className="relative" ref={rootRef}>
       <IconHoverTarget label="Actions" placement="bottom" hidden={open}>
@@ -64,7 +66,6 @@ export function ListHistoryMenu({
           type="button"
           aria-label="Actions"
           aria-expanded={open}
-          disabled={busy}
           onClick={toggle}
           className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-elevated text-muted hover:text-text disabled:opacity-40"
         >
@@ -95,35 +96,6 @@ export function ListHistoryMenu({
               {item.label}
             </button>
           ))}
-          {items.length > 0 && (
-            <div className="my-1 border-t border-border" />
-          )}
-          <button
-            type="button"
-            disabled={!canUndo}
-            title={undoLabel ?? undefined}
-            className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] text-text hover:bg-hover-strong disabled:opacity-40"
-            onClick={() => {
-              close();
-              void undo();
-            }}
-          >
-            <UndoIcon className="size-4 shrink-0 opacity-80" />
-            Undo
-          </button>
-          <button
-            type="button"
-            disabled={!canRedo}
-            title={redoLabel ?? undefined}
-            className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] text-text hover:bg-hover-strong disabled:opacity-40"
-            onClick={() => {
-              close();
-              void redo();
-            }}
-          >
-            <RedoIcon className="size-4 shrink-0 opacity-80" />
-            Redo
-          </button>
         </div>
       )}
     </div>

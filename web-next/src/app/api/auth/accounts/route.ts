@@ -1,9 +1,10 @@
-import { createAccount, isUsernameTaken, listAccounts } from "@/lib/accounts";
+import { createAccount } from "@/lib/accounts";
 import { isHankoAuth } from "@/lib/authMode";
 import { accountCookieOptions } from "@/lib/session";
 import { MAX_PASSWORD_LENGTH, validatePasswordPlaintext } from "@/lib/password";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { writesAvailable, writesNotAvailable } from "@/lib/vault/writes";
 
 export const runtime = "nodejs";
 
@@ -16,9 +17,12 @@ export async function GET(req: Request) {
       if (!username) {
         return NextResponse.json({ taken: false });
       }
-      return NextResponse.json({ taken: isUsernameTaken(username) });
+      // The vault answers 409 on register for a taken name; there is no
+      // check route, so the form learns on submit.
+      return NextResponse.json({ taken: false, username });
     }
-    return NextResponse.json({ accounts: listAccounts() });
+    // The vault has no account list for signed-out callers.
+    return NextResponse.json({ accounts: [] });
   } catch (err) {
     const message = err instanceof Error ? err.message : "failed to list accounts";
     return NextResponse.json({ error: message }, { status: 500 });
@@ -26,6 +30,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  if (!writesAvailable()) return writesNotAvailable();
   if (isHankoAuth()) {
     return NextResponse.json(
       { error: "Local account creation is disabled when VAULT_AUTH=hanko" },

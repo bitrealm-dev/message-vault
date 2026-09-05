@@ -1,13 +1,13 @@
-import { decodeMessageCursor } from "@/lib/messageCursor";
 import {
   DEFAULT_MESSAGE_PAGE_SIZE,
   MAX_MESSAGE_PAGE_SIZE,
 } from "@/lib/messagePageSize";
 import {
+  decodeCursor,
   messagesForConversationYear,
   messagesForConversations,
   messagesPageForConversations,
-} from "@/lib/messagesRead";
+} from "@/lib/vault/messages";
 import {
   unauthorizedResponse,
   withAccountHandler,
@@ -58,18 +58,14 @@ export async function GET(req: Request) {
     if (!Number.isFinite(limit) || limit < 1) {
       return NextResponse.json({ error: "invalid limit" }, { status: 400 });
     }
-    let before = null;
-    if (beforeRaw) {
-      before = decodeMessageCursor(beforeRaw);
-      if (!before) {
-        return NextResponse.json({ error: "invalid before cursor" }, { status: 400 });
-      }
+    if (beforeRaw && !decodeCursor(beforeRaw)) {
+      return NextResponse.json({ error: "invalid before cursor" }, { status: 400 });
     }
     try {
       return await withAccountHandler(async () => {
-        const page = messagesPageForConversations(conversationIds, {
+        const page = await messagesPageForConversations(conversationIds, {
           source,
-          before,
+          before: beforeRaw,
           limit: Math.min(limit, MAX_MESSAGE_PAGE_SIZE),
         });
         return NextResponse.json(page);
@@ -88,7 +84,7 @@ export async function GET(req: Request) {
     }
     try {
       return await withAccountHandler(async () => {
-        const messages = messagesForConversationYear(
+        const messages = await messagesForConversationYear(
           conversationIds,
           year,
           source,
@@ -105,7 +101,7 @@ export async function GET(req: Request) {
 
   try {
     return await withAccountHandler(async () => {
-      const messages = messagesForConversations(conversationIds, source);
+      const messages = await messagesForConversations(conversationIds, source);
       return NextResponse.json({ messages });
     });
   } catch (err) {

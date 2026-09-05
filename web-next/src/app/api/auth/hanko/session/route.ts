@@ -8,10 +8,12 @@ import { accountNeedsOnboarding } from "@/lib/onboarding";
 import { accountCookieOptions } from "@/lib/session";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { writesAvailable, writesNotAvailable } from "@/lib/vault/writes";
 
 export const runtime = "nodejs";
 
 export async function POST() {
+  if (!writesAvailable()) return writesNotAvailable();
   if (!isHankoAuth()) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
@@ -28,7 +30,7 @@ export async function POST() {
 
     return NextResponse.json({
       id: account.id,
-      needsOnboarding: accountNeedsOnboarding(account.id),
+      needsOnboarding: await accountNeedsOnboarding(),
     });
   } catch (err) {
     const message =

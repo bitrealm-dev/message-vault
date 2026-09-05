@@ -30,7 +30,7 @@ export async function GET(req: Request, { params }: Params) {
       const includeTrashed =
         url.searchParams.get("trashed") === "1" ||
         url.searchParams.get("trashed") === "true";
-      const page = loadContactThreadsPage(id, source, { includeTrashed });
+      const page = await loadContactThreadsPage(id, source, { includeTrashed });
       if (!page) {
         return NextResponse.json({ error: "not found" }, { status: 404 });
       }
