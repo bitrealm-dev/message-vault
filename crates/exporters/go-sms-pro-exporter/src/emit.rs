@@ -10,14 +10,15 @@ use go_sms_mms::{ParsedPdu, parse_pdu_file};
 use message_ir::{
     ExportMeta, HandleType, IrAttachment, IrService, IrSource, PendingAttachment,
     PendingConversation, PendingMessage, ProjectionHooks, ensure_conversation, parse_android_type,
-    pending_to_document, prepare_conversation,
 };
 use message_ir_format::{AttachmentSource, ExportTransforms, ExportWriter, FormatSinkResult};
-use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat, prepare_outputs};
+use message_vault_io_core::{
+    CancelFlag, ExportReport, OutputFormat, prepare_outputs, project_conversation,
+};
 use phone::OwnerHandleSet;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const EXPORT_SOURCE: &str = "go-sms-pro";
 const EXPORT_TOOL: &str = "GO SMS Pro";
@@ -298,7 +299,7 @@ fn is_pdu_file(p: &Path) -> bool {
         .is_some_and(|n| n.starts_with("I_") && n.ends_with(".pdu"))
 }
 
-/// GO SMS Pro deltas of the shared [`pending_to_document`] projection.
+/// GO SMS Pro deltas of the shared [`message_ir::pending_to_document`] projection.
 struct GoSmsProjection<'a> {
     export: ExportMeta,
     blob_bytes: &'a HashMap<String, Vec<u8>>,
@@ -407,92 +408,39 @@ pub(crate) fn convert_export(
     if !input_dir.is_dir() {
         bail!("input is not a directory: {}", input_dir.display());
     }
-
     let (inputs, output_dir) = prepare_outputs(&[input_dir.to_path_buf()], output_dir)?;
     let input_dir = &inputs[0];
-
     let owners = OwnerHandleSet::from_phones(owner_phones)?;
     let owner_handle = owners
         .primary_owner_handle()
         .expect("from_phones guarantees a phone owner handle");
-    let mut report = ExportReport::default();
-    let mut skips = SkipDetails::default();
-    let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
 
     // Clean previous CSV / mail artifacts (keep attachments if re-run; rewrite as needed).
     let writer = ExportWriter::open(&output_dir, output_format, transforms, resume)?;
-    let copy_attachments = writer.copies_attachments();
-    let mut blob_bytes: HashMap<String, Vec<u8>> = HashMap::new();
-
-    let mut xml_paths = message_vault_io_core::discover_files(input_dir, &is_xml_file)?;
-    xml_paths.sort();
-
-    for xml_path in xml_paths {
+    let mut ingest = Ingest {
+        owners: &owners,
+        copy_attachments: writer.copies_attachments(),
+        blob_bytes: HashMap::new(),
+        conversations: BTreeMap::new(),
+        report: ExportReport::default(),
+        skips: SkipDetails::default(),
+    };
+    for xml_path in sorted_files(input_dir, &is_xml_file)? {
         message_vault_io_core::check_cancel(cancel)?;
-        match parse_xml_file(&xml_path) {
-            Ok((msgs, stats)) => {
-                report.bump("xml_messages_seen", stats.messages);
-                report.skipped_invalid_date += stats.skipped_invalid_date;
-                report.bump("skipped_unknown_type", stats.skipped_unknown_type);
-                report.bump("skipped_unknown_address", stats.skipped_unknown_address);
-                skips.invalid_address_more += stats.skipped_unknown_address_details_more;
-                for d in stats.skipped_unknown_address_details {
-                    push_skip_detail(
-                        &mut skips.invalid_address,
-                        &mut skips.invalid_address_more,
-                        d,
-                    );
-                }
-                let msgs: Vec<_> = msgs.into_iter().collect();
-                add_xml_messages(&mut conversations, msgs);
-            }
-            Err(err) => report
-                .errors
-                .push(format!("{}: {err:#}", xml_path.display())),
-        }
+        ingest.ingest_xml(&xml_path);
     }
-
-    let mut pdu_paths = message_vault_io_core::discover_files(input_dir, &is_pdu_file)?;
-    pdu_paths.sort();
-
-    for pdu_path in pdu_paths {
+    for pdu_path in sorted_files(input_dir, &is_pdu_file)? {
         message_vault_io_core::check_cancel(cancel)?;
-        let all_digits = owners.all_phone_digits();
-        match parse_pdu_file(
-            &pdu_path,
-            &all_digits,
-            owners.primary_phone_digit().unwrap_or(""),
-        ) {
-            Ok(None) => {
-                report.bump("skipped_unparseable_pdu", 1);
-                if report.errors.len() < 20 {
-                    report
-                        .errors
-                        .push(format!("{}: unparseable PDU", pdu_path.display()));
-                }
-            }
-            Ok(Some(parsed)) => {
-                match queue_pdu_attachments(&parsed, copy_attachments, &mut blob_bytes) {
-                    Ok(atts) => add_pdu_message(
-                        &mut conversations,
-                        parsed,
-                        atts,
-                        &owners,
-                        &mut report,
-                        &mut skips,
-                    ),
-                    Err(err) => report
-                        .errors
-                        .push(format!("{}: {err:#}", pdu_path.display())),
-                }
-            }
-            Err(err) => report
-                .errors
-                .push(format!("{}: {err:#}", pdu_path.display())),
-        }
+        ingest.ingest_pdu(&pdu_path);
     }
-
     message_vault_io_core::check_cancel(cancel)?;
+    let Ingest {
+        blob_bytes,
+        conversations,
+        mut report,
+        skips,
+        ..
+    } = ingest;
 
     let hooks = GoSmsProjection {
         export: message_vault_io_core::export_meta(
@@ -507,16 +455,9 @@ pub(crate) fn convert_export(
     let mut documents = Vec::new();
     for (chat_id, mut convo) in conversations {
         dedupe_messages(&mut convo.messages);
-        let (keep, skipped) =
-            prepare_conversation(&mut convo, |a, b| a.sort_key.cmp(&b.sort_key), |k| k);
-        report.skipped_invalid_date += skipped;
-        if !keep {
-            continue;
+        if let Some(doc) = project_conversation(&chat_id, &mut convo, &hooks, &mut report) {
+            documents.push(doc);
         }
-        let (doc, tally) = pending_to_document(&chat_id, &convo, &hooks);
-        report.sent += tally.sent;
-        report.received += tally.received;
-        documents.push(doc);
     }
 
     let sink_result = writer.finish(
@@ -543,6 +484,102 @@ pub(crate) fn convert_export(
     write_skipped_no_party_csv(&output_dir, &skips.no_party, skips.no_party_more)?;
 
     Ok((report, sink_result))
+}
+
+/// Every file under `dir` matching `predicate`, in path order so runs are repeatable.
+///
+/// # Errors
+///
+/// Returns an error when the folder cannot be read.
+fn sorted_files(dir: &Path, predicate: &dyn Fn(&Path) -> bool) -> Result<Vec<PathBuf>> {
+    let mut paths = message_vault_io_core::discover_files(dir, predicate)?;
+    paths.sort();
+    Ok(paths)
+}
+
+/// Parse-time state shared across every XML and PDU file in one backup.
+struct Ingest<'a> {
+    owners: &'a OwnerHandleSet,
+    copy_attachments: bool,
+    /// Attachment bytes by digest, kept until the writer asks for them.
+    blob_bytes: HashMap<String, Vec<u8>>,
+    conversations: BTreeMap<String, PendingConversation>,
+    report: ExportReport,
+    skips: SkipDetails,
+}
+
+impl Ingest<'_> {
+    /// Add every SMS row from one backup XML. Parse failures are recorded in
+    /// the report and the file is skipped.
+    fn ingest_xml(&mut self, xml_path: &Path) {
+        let (msgs, stats) = match parse_xml_file(xml_path) {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                self.report
+                    .errors
+                    .push(format!("{}: {err:#}", xml_path.display()));
+                return;
+            }
+        };
+        self.report.bump("xml_messages_seen", stats.messages);
+        self.report.skipped_invalid_date += stats.skipped_invalid_date;
+        self.report
+            .bump("skipped_unknown_type", stats.skipped_unknown_type);
+        self.report
+            .bump("skipped_unknown_address", stats.skipped_unknown_address);
+        self.skips.invalid_address_more += stats.skipped_unknown_address_details_more;
+        for detail in stats.skipped_unknown_address_details {
+            push_skip_detail(
+                &mut self.skips.invalid_address,
+                &mut self.skips.invalid_address_more,
+                detail,
+            );
+        }
+        add_xml_messages(&mut self.conversations, msgs);
+    }
+
+    /// Add the MMS in one PDU file. Unparseable and empty PDUs are counted;
+    /// the first twenty unparseable ones are named in the report.
+    fn ingest_pdu(&mut self, pdu_path: &Path) {
+        let all_digits = self.owners.all_phone_digits();
+        let parsed = parse_pdu_file(
+            pdu_path,
+            &all_digits,
+            self.owners.primary_phone_digit().unwrap_or(""),
+        );
+        let parsed = match parsed {
+            Ok(Some(parsed)) => parsed,
+            Ok(None) => {
+                self.report.bump("skipped_unparseable_pdu", 1);
+                if self.report.errors.len() < 20 {
+                    self.report
+                        .errors
+                        .push(format!("{}: unparseable PDU", pdu_path.display()));
+                }
+                return;
+            }
+            Err(err) => {
+                self.report
+                    .errors
+                    .push(format!("{}: {err:#}", pdu_path.display()));
+                return;
+            }
+        };
+        match queue_pdu_attachments(&parsed, self.copy_attachments, &mut self.blob_bytes) {
+            Ok(atts) => add_pdu_message(
+                &mut self.conversations,
+                parsed,
+                atts,
+                self.owners,
+                &mut self.report,
+                &mut self.skips,
+            ),
+            Err(err) => self
+                .report
+                .errors
+                .push(format!("{}: {err:#}", pdu_path.display())),
+        }
+    }
 }
 
 fn remove_if_exists(path: &Path) {

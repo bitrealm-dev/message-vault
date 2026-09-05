@@ -36,6 +36,16 @@ pub enum SortKeyUnit {
     Milliseconds,
 }
 
+impl SortKeyUnit {
+    /// Convert a `sort_key` in this unit to Unix seconds.
+    pub fn to_secs(self, key: i64) -> i64 {
+        match self {
+            Self::Seconds => key,
+            Self::Milliseconds => key / 1000,
+        }
+    }
+}
+
 /// Counters from one projection, for the caller to fold into its report.
 ///
 /// The projection cannot bump an exporter report directly (that type lives in
@@ -120,6 +130,13 @@ pub trait ProjectionHooks {
     /// Unit of [`PendingMessage::sort_key`]; the default is seconds.
     fn sort_key_unit(&self) -> SortKeyUnit {
         SortKeyUnit::Seconds
+    }
+
+    /// Order of messages inside one conversation before projection. The
+    /// default sorts by `sort_key` alone; an exporter whose rows can share a
+    /// timestamp adds its own tie-break so output stays deterministic.
+    fn message_order(&self, a: &PendingMessage, b: &PendingMessage) -> std::cmp::Ordering {
+        a.sort_key.cmp(&b.sort_key)
     }
 
     /// Row shape of one message. The default maps attachment-less rows to
