@@ -21,12 +21,6 @@ pub mod pull;
 pub mod push;
 pub mod staging;
 
-/// Treat missing, blank, and whitespace-only strings as absent.
-pub(crate) fn optional_trimmed(value: Option<&str>) -> Option<&str> {
-    let value = value?.trim();
-    if value.is_empty() { None } else { Some(value) }
-}
-
 /// Last log line from a job, or `fallback` when the job wrote none.
 pub(crate) fn last_log_line_or(messages: &[String], fallback: &str) -> String {
     match messages.last() {

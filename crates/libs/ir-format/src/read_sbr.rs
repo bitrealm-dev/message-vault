@@ -322,8 +322,7 @@ fn names_by_handle(conversation: &PendingConversation) -> HashMap<String, String
             message
                 .sender_display_name
                 .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty()),
+                .and_then(message_ir::trimmed),
         ) {
             names
                 .entry(phone::normalize_lenient(digits))

@@ -123,7 +123,7 @@ pub(crate) fn parse_xml_str(text: &str) -> Result<(Vec<XmlMessage>, XmlParseStat
                 stats.sent += 1;
                 XmlMessage {
                     other_digits: other,
-                    name_alias: non_empty(&contact),
+                    name_alias: message_ir::nonempty(&contact),
                     timestamp_secs,
                     is_from_me: true,
                     sender_digits: None,
@@ -184,16 +184,6 @@ pub(crate) fn parse_xml_str(text: &str) -> Result<(Vec<XmlMessage>, XmlParseStat
     }
 
     Ok((out, stats))
-}
-
-/// Trimmed string, or `None` when empty.
-fn non_empty(s: &str) -> Option<String> {
-    let t = s.trim();
-    if t.is_empty() {
-        None
-    } else {
-        Some(t.to_string())
-    }
 }
 
 /// Record an XML SMS whose `<address>` had no usable digits.

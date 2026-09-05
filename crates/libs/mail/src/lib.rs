@@ -356,9 +356,8 @@ fn envelope_sender(msg: &MailMessage) -> String {
             .message
             .sender_handle
             .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .or_else(|| peer_handle(msg).map(str::trim).filter(|s| !s.is_empty()))
+            .and_then(message_ir::trimmed)
+            .or_else(|| peer_handle(msg).and_then(message_ir::trimmed))
             .unwrap_or("unknown"),
         IrDirection::Outgoing => {
             let owner = msg.owner_handle.trim();
@@ -436,10 +435,7 @@ fn synthetic_address(handle: &str, display_name: Option<&str>) -> Address<'stati
     } else {
         format!("{handle}@{SMS_ADDRESS_DOMAIN}")
     };
-    let name = display_name
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
+    let name = display_name.and_then(message_ir::nonempty);
     Address::new_address(name, email)
 }
 
@@ -450,8 +446,7 @@ fn owner_address(msg: &MailMessage) -> Address<'static> {
     let display = msg
         .owner_display_name
         .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
+        .and_then(message_ir::trimmed)
         .unwrap_or(OWNER_DISPLAY_NAME);
     synthetic_address(handle, Some(display))
 }
@@ -461,8 +456,7 @@ fn conversation_address(msg: &MailMessage) -> Address<'static> {
     let display = msg
         .group_title
         .as_deref()
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
+        .and_then(message_ir::trimmed)
         .unwrap_or_else(|| {
             let id = msg.chat_identifier.trim();
             if id.is_empty() { "group" } else { id }
@@ -498,14 +492,12 @@ fn peer_display_name<'a>(msg: &'a MailMessage, peer: &str) -> Option<&'a str> {
         .iter()
         .find(|p| p.handle == peer)
         .and_then(|p| p.display_name.as_deref())
-        .map(str::trim)
-        .filter(|n| !n.is_empty())
+        .and_then(message_ir::trimmed)
         .or_else(|| {
             msg.message
                 .sender_display_name
                 .as_deref()
-                .map(str::trim)
-                .filter(|n| !n.is_empty())
+                .and_then(message_ir::trimmed)
                 .filter(|_| {
                     msg.message
                         .sender_handle
@@ -623,8 +615,7 @@ fn envelope_addresses(msg: &MailMessage) -> (Address<'static>, Address<'static>)
                     .message
                     .sender_handle
                     .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
+                    .and_then(message_ir::trimmed)
                     .unwrap_or("unknown");
                 synthetic_address(sender, msg.message.sender_display_name.as_deref())
             }
@@ -633,8 +624,7 @@ fn envelope_addresses(msg: &MailMessage) -> (Address<'static>, Address<'static>)
         return (from, conversation_address(msg));
     }
     let peer = peer_handle(msg)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
+        .and_then(message_ir::trimmed)
         .unwrap_or_else(|| {
             let id = msg.chat_identifier.trim();
             if id.is_empty() { "unknown" } else { id }
@@ -822,12 +812,7 @@ fn mail_subject(msg: &MailMessage) -> String {
 /// Who the subject names: the group title (or member list), or the peer.
 fn conversation_subject_label(msg: &MailMessage) -> String {
     if msg.conversation_type.eq_ignore_ascii_case("group") {
-        if let Some(t) = msg
-            .group_title
-            .as_deref()
-            .map(str::trim)
-            .filter(|t| !t.is_empty())
-        {
+        if let Some(t) = msg.group_title.as_deref().and_then(message_ir::trimmed) {
             return t.to_string();
         }
         let id = msg.chat_identifier.trim();
@@ -837,7 +822,7 @@ fn conversation_subject_label(msg: &MailMessage) -> String {
         return "group".to_string();
     }
 
-    if let Some(peer) = peer_handle(msg).map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(peer) = peer_handle(msg).and_then(message_ir::trimmed) {
         if let Some(n) = peer_display_name(msg, peer) {
             return n.to_string();
         }

@@ -124,7 +124,7 @@ pub(super) enum TzMode {
 
 /// Parse a timezone string into local time or a fixed UTC offset.
 pub(super) fn resolve_tz(timezone: Option<&str>) -> Result<TzMode> {
-    match timezone.map(str::trim).filter(|s| !s.is_empty()) {
+    match timezone.and_then(message_ir::trimmed) {
         None => Ok(TzMode::Local),
         Some(name) => {
             let offset = parse_utc_offset(name).map_err(anyhow::Error::msg)?;

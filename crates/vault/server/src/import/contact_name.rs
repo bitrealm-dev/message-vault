@@ -1,11 +1,10 @@
 //! Contact linking and display-name merging during import.
 
 use anyhow::Result;
-use message_ir::HandleType;
+use message_ir::{HandleType, trimmed};
 use sqlx::AnyConnection;
 
 use super::ImportStats;
-use super::staging::nonempty_str;
 use crate::db::contacts;
 use crate::db::handles::{
     HandleIdCache, infer_handle_type_from_shape as infer_handle_type, upsert_handle_row_cached,
@@ -27,7 +26,7 @@ pub(super) async fn ensure_contact_for_handle(
     backup_name: Option<&str>,
     stats: &mut ImportStats,
 ) -> Result<i64> {
-    let name = nonempty_str(backup_name).unwrap_or("");
+    let name = backup_name.and_then(trimmed).unwrap_or("");
     if let Some(existing) = ensure_sibling_contact_link(tx, account_id, handle_id).await? {
         // An import names only a contact an earlier import left nameless;
         // `contacts::propose_name` is where that rule and its two siblings
@@ -63,7 +62,7 @@ pub(super) async fn resolve_name_only_participant(
     account_id: &str,
     name: Option<&str>,
 ) -> Result<(Option<i64>, Option<String>)> {
-    let Some(name) = nonempty_str(name) else {
+    let Some(name) = name.and_then(trimmed) else {
         // A participant with neither an address nor a name says nothing at
         // all; there is nothing to create and nothing to show.
         return Ok((None, None));
@@ -105,7 +104,7 @@ pub(super) async fn resolve_incoming_sender_handle(
     if sender.is_from_me {
         return Ok(None);
     }
-    let Some(address) = nonempty_str(sender.address) else {
+    let Some(address) = sender.address.and_then(trimmed) else {
         return Ok(None);
     };
     let handle_type = sender

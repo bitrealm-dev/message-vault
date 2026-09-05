@@ -585,7 +585,7 @@ fn kind_of(assets_path: &str, mime: Option<&str>, name_hints: &[Option<&str>]) -
     if is_part_path(assets_path) {
         return MediaKind::Other;
     }
-    let declared = nonempty_mime(mime);
+    let declared = mime.and_then(message_ir::trimmed);
     let kind = media_tools::kind_of(Path::new(assets_path), declared);
     // A stored path that already identifies the file wins, and so does a
     // declared MIME — including `image/gif` and `.gif`, which stay unconverted.
@@ -599,17 +599,6 @@ fn kind_of(assets_path: &str, mime: Option<&str>, name_hints: &[Option<&str>]) -
         }
     }
     MediaKind::Other
-}
-
-/// The MIME type trimmed, or `None` when blank.
-fn nonempty_mime(mime: Option<&str>) -> Option<&str> {
-    let raw = mime?;
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed)
-    }
 }
 
 /// JPEG bytes for an image, or `None` when it is already small enough to serve as-is.

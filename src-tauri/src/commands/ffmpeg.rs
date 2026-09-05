@@ -10,8 +10,6 @@
 
 use std::path::{Path, PathBuf};
 
-use super::optional_trimmed;
-
 /// Paths the Settings screen shows after looking for ffmpeg and ffprobe.
 #[derive(serde::Serialize)]
 pub struct FfmpegToolsProbeDto {
@@ -39,7 +37,7 @@ fn probe_to_dto(probe: media::FfmpegToolsProbe) -> FfmpegToolsProbeDto {
 
 /// Treat a blank folder string as "search the default PATH instead".
 fn optional_tools_dir(dir: Option<&str>) -> Option<&Path> {
-    let dir = optional_trimmed(dir)?;
+    let dir = dir.and_then(message_ir::trimmed)?;
     Some(Path::new(dir))
 }
 
@@ -67,7 +65,7 @@ pub fn probe_ffmpeg_tools(dir: Option<String>) -> FfmpegToolsProbeDto {
 /// there.
 #[tauri::command]
 pub fn set_ffmpeg_tools_dir(dir: Option<String>) -> Result<FfmpegToolsProbeDto, String> {
-    let trimmed = optional_trimmed(dir.as_deref());
+    let trimmed = dir.as_deref().and_then(message_ir::trimmed);
     match trimmed {
         None => {
             media::set_tools_dir(None);

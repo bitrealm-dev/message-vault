@@ -11,6 +11,7 @@ hex = "0.4.3"
 jsonl_journal = { package = "journal", path = "../../libs/journal" }
 vault-http = { path = "../../libs/vault-http" }
 message-vault-io-core = { path = "../../core/message-vault-io-core" }
+media = { path = "../media" }
 message-ir = { path = "../../libs/ir" }
 message-ir-format = { path = "../../libs/ir-format" }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }

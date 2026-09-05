@@ -264,7 +264,7 @@ fn resolve_forwarded_paths(args: &WtsexporterArgs) -> Result<ForwardedPaths> {
     let key = if backup.is_none() {
         None
     } else {
-        match args.key.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        match args.key.as_deref().and_then(message_ir::trimmed) {
             Some(k) if looks_like_path(k) => {
                 let path = absolutize(Path::new(k))?;
                 Some(path.to_string_lossy().into_owned())

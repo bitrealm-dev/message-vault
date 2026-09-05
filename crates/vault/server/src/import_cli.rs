@@ -276,12 +276,7 @@ pub fn discover_sources(paths: &[PathBuf]) -> Result<Vec<String>> {
         for record in records {
             if let ExportRecord::Conversation(c) = record {
                 saw_conversation = true;
-                let Some(source) = c
-                    .export_source
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                else {
+                let Some(source) = c.export_source.as_deref().and_then(message_ir::trimmed) else {
                     bail!(
                         "{}: conversation '{}' is missing export.source \
                          (required for CLI directory import; or pass --source)",

@@ -34,8 +34,8 @@ use whatsapp_exporter::run as run_whatsapp;
 
 use super::events::ExtractErrorEvent;
 use super::jobs::{reset_and_clone_cancel, spawn_job};
+use super::last_log_line_or;
 use super::progress::{ExtractProgressStage, extract_progress_from_log};
-use super::{last_log_line_or, optional_trimmed};
 use crate::state::AppState;
 
 /// Ask this process to stop the export that is currently running.
@@ -292,7 +292,7 @@ struct ExtractOptions {
 ///
 /// Returns an error if the string is not copy, convert, compress, or skip.
 pub(crate) fn parse_attachment_media(raw: Option<&str>) -> Result<AttachmentMedia, String> {
-    let Some(raw) = optional_trimmed(raw) else {
+    let Some(raw) = raw.and_then(message_ir::trimmed) else {
         return Ok(AttachmentMedia::default());
     };
     let lowered = raw.to_ascii_lowercase();
@@ -312,7 +312,7 @@ pub(crate) fn parse_attachment_media(raw: Option<&str>) -> Result<AttachmentMedi
 ///
 /// Returns an error if the string is not 720p, 1080p, or 4k.
 pub(crate) fn parse_max_resolution(raw: Option<&str>) -> Result<MaxResolution, String> {
-    let Some(raw) = optional_trimmed(raw) else {
+    let Some(raw) = raw.and_then(message_ir::trimmed) else {
         return Ok(MaxResolution::default());
     };
     MaxResolution::parse(raw).ok_or_else(|| {

@@ -166,7 +166,7 @@ impl ProgressBatcher {
             self.total,
             self.chunk_conversations,
             self.chunk_messages,
-            format_bytes_mb(self.chunk_bytes),
+            media::format_bytes(self.chunk_bytes),
             format_ms_seconds(self.chunk_import_ms),
             format_ms_seconds(wall_ms),
         );
@@ -178,11 +178,6 @@ impl ProgressBatcher {
         self.chunk_count = 0;
         line
     }
-}
-
-/// Format a byte count as megabytes with one decimal place.
-fn format_bytes_mb(bytes: u64) -> String {
-    format!("{:.1}MB", bytes as f64 / 1_000_000.0)
 }
 
 /// Format a millisecond count as seconds with one decimal place.
@@ -330,7 +325,7 @@ mod tests {
         assert!(tenth.starts_with("files 10/25 - "));
         assert!(tenth.contains("conversations=10"));
         assert!(tenth.contains("messages=20"));
-        assert!(tenth.contains("transfer size=7.0MB"));
+        assert!(tenth.contains("transfer size=7.0 MB"));
         assert!(tenth.contains("import time=33.0s"));
         // total time is wall-clock for the progress window, not sum of profile.total_ms.
         assert!(tenth.contains("total time="));

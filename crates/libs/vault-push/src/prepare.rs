@@ -295,7 +295,7 @@ fn scan_one_attachment(
     index: usize,
     scan: &mut AttachmentScan,
 ) -> Result<AttachmentProjection> {
-    let Some(rel) = att.path.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+    let Some(rel) = att.path.as_deref().and_then(message_ir::trimmed) else {
         // No path means the bytes were never staged. "Do not copy" exports
         // look like this, and the reason the exporter set ("not_copied";
         // older exports say "skipped" or "embed_disabled") explains why.
@@ -349,11 +349,7 @@ fn scan_one_attachment(
             size: Some(file_len),
         });
     }
-    let claimed = att
-        .digest_sha256
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
+    let claimed = att.digest_sha256.as_deref().and_then(message_ir::trimmed);
     let digest = ctx
         .digests
         .resolve(&abs, claimed, att.size_bytes, name, rel, &mut |warning| {
