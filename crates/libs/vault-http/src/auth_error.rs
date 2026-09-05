@@ -3,12 +3,11 @@
 //! Each variant has a stable `kind()` string for tests and a short
 //! `user_message()` for the desktop app banner.
 
-use std::fmt;
-
 /// Failure from `GET /v1/auth/check`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AuthError {
     /// The vault URL could not be parsed as a valid HTTP URL.
+    #[error("invalid vault URL {url}: {detail}")]
     InvalidUrl {
         /// The vault URL that failed to parse.
         url: String,
@@ -16,11 +15,13 @@ pub enum AuthError {
         detail: String,
     },
     /// The HTTP client could not be built (for example, TLS setup failed).
+    #[error("build HTTP client: {detail}")]
     Client {
         /// The underlying client-build error.
         detail: String,
     },
     /// The vault could not be reached over the network.
+    #[error("GET {url}: {detail}")]
     Network {
         /// The endpoint that could not be reached.
         url: String,
@@ -28,6 +29,7 @@ pub enum AuthError {
         detail: String,
     },
     /// The vault did not respond within the request timeout.
+    #[error("GET {url}: {detail}")]
     Timeout {
         /// The endpoint that timed out.
         url: String,
@@ -35,11 +37,15 @@ pub enum AuthError {
         detail: String,
     },
     /// Connected, but the response body could not be read.
+    #[error("read auth/check body: {detail}")]
     ReadResponse {
         /// The underlying read error.
         detail: String,
     },
     /// The endpoint returned HTML instead of the vault API.
+    #[error(
+        "auth/check returned HTML from {url} (HTTP {status}). Vault URL must point at the vault host (TLS site or port 8080), not the Next.js browse UI alone (port 3000)"
+    )]
     WrongHostHtml {
         /// The endpoint that returned HTML.
         url: String,
@@ -47,13 +53,18 @@ pub enum AuthError {
         status: u16,
     },
     /// Requested `http://…` but the vault redirected to `https://…` (auth header dropped).
+    #[error(
+        "vault URL {url} redirected from http to https; use https:// so the API key is sent (http redirects drop Authorization)"
+    )]
     HttpsRequired {
         /// The `http://` URL that the vault redirected to `https://`.
         url: String,
     },
     /// The API key was rejected as invalid.
+    #[error("invalid vault key")]
     InvalidKey,
     /// The API key does not have permission for this vault.
+    #[error("auth/check failed (HTTP {status}): {body}")]
     Forbidden {
         /// The HTTP status code returned.
         status: u16,
@@ -61,6 +72,7 @@ pub enum AuthError {
         body: String,
     },
     /// The vault API was not found at this URL.
+    #[error("auth/check failed (HTTP {status}): {body}")]
     ApiNotFound {
         /// The HTTP status code returned.
         status: u16,
@@ -68,6 +80,7 @@ pub enum AuthError {
         body: String,
     },
     /// The vault rejected the request because it was rate limited.
+    #[error("auth/check failed (HTTP {status}): {body}")]
     RateLimited {
         /// The HTTP status code returned.
         status: u16,
@@ -75,6 +88,7 @@ pub enum AuthError {
         body: String,
     },
     /// The vault failed while verifying the credentials.
+    #[error("auth/check failed (HTTP {status}): {body}")]
     ServerError {
         /// The HTTP status code returned.
         status: u16,
@@ -82,6 +96,7 @@ pub enum AuthError {
         body: String,
     },
     /// The vault returned an unexpected HTTP status.
+    #[error("auth/check failed (HTTP {status}): {body}")]
     HttpStatus {
         /// The HTTP status code returned.
         status: u16,
@@ -89,6 +104,7 @@ pub enum AuthError {
         body: String,
     },
     /// The response body was not recognizable JSON.
+    #[error("parse auth/check JSON from {url} (HTTP {status}): {snippet}")]
     BadJson {
         /// The endpoint whose response could not be parsed.
         url: String,
@@ -98,11 +114,13 @@ pub enum AuthError {
         snippet: String,
     },
     /// The vault rejected the supplied credentials.
+    #[error("auth/check rejected: {message}")]
     Rejected {
         /// The rejection message from the vault.
         message: String,
     },
     /// The vault did not return an account id.
+    #[error("auth/check did not return account_id")]
     MissingAccountId,
 }
 
@@ -194,52 +212,6 @@ impl AuthError {
         self.to_string()
     }
 }
-
-impl fmt::Display for AuthError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidUrl { url, detail } => {
-                write!(f, "invalid vault URL {url}: {detail}")
-            }
-            Self::Client { detail } => write!(f, "build HTTP client: {detail}"),
-            Self::Network { url, detail } | Self::Timeout { url, detail } => {
-                write!(f, "GET {url}: {detail}")
-            }
-            Self::ReadResponse { detail } => write!(f, "read auth/check body: {detail}"),
-            Self::WrongHostHtml { url, status } => write!(
-                f,
-                "auth/check returned HTML from {url} (HTTP {status}). \
-                 Vault URL must point at the vault server (TLS vault host or port 8080), \
-                 not the website"
-            ),
-            Self::HttpsRequired { url } => write!(
-                f,
-                "vault URL {url} redirected from http to https; \
-                 use https:// so the API key is sent (http redirects drop Authorization)"
-            ),
-            Self::InvalidKey => write!(f, "invalid vault key"),
-            Self::Forbidden { status, body }
-            | Self::ApiNotFound { status, body }
-            | Self::RateLimited { status, body }
-            | Self::ServerError { status, body }
-            | Self::HttpStatus { status, body } => {
-                write!(f, "auth/check failed (HTTP {status}): {body}")
-            }
-            Self::BadJson {
-                url,
-                status,
-                snippet,
-            } => write!(
-                f,
-                "parse auth/check JSON from {url} (HTTP {status}): {snippet}"
-            ),
-            Self::Rejected { message } => write!(f, "auth/check rejected: {message}"),
-            Self::MissingAccountId => write!(f, "auth/check did not return account_id"),
-        }
-    }
-}
-
-impl std::error::Error for AuthError {}
 
 #[cfg(test)]
 mod tests {

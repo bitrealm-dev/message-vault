@@ -1,8 +1,5 @@
 //! Per-account vault import session records (one row per vault-push / CLI import run).
 
-use std::error::Error;
-use std::fmt;
-
 use anyhow::{Result, bail};
 use chrono::Utc;
 use serde::Serialize;
@@ -217,52 +214,28 @@ pub struct ImportDetail {
 }
 
 /// Failure looking up or reusing an import session.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ImportLookupError {
     /// No session with this id for this account.
+    #[error("import {import_id} not found for this account")]
     NotFound {
         /// The session id that was looked up.
         import_id: i64,
     },
     /// Session exists but cannot be reused (wrong status/source/mode).
+    #[error("{message}")]
     InvalidSession {
         /// Why the session cannot be reused.
         message: String,
     },
     /// Database failure.
-    Db(anyhow::Error),
-}
-
-impl fmt::Display for ImportLookupError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NotFound { import_id } => {
-                write!(f, "import {import_id} not found for this account")
-            }
-            Self::InvalidSession { message } => f.write_str(message),
-            Self::Db(err) => err.fmt(f),
-        }
-    }
-}
-
-impl Error for ImportLookupError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::NotFound { .. } | Self::InvalidSession { .. } => None,
-            Self::Db(err) => err.source(),
-        }
-    }
+    #[error(transparent)]
+    Db(#[from] anyhow::Error),
 }
 
 impl From<sqlx::Error> for ImportLookupError {
     fn from(value: sqlx::Error) -> Self {
         Self::Db(value.into())
-    }
-}
-
-impl From<anyhow::Error> for ImportLookupError {
-    fn from(value: anyhow::Error) -> Self {
-        Self::Db(value)
     }
 }
 
@@ -313,37 +286,21 @@ impl<'a> StartImportArgs<'a> {
 }
 
 /// Why a session could not be started.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum StartImportError {
     /// This account already has a live session. The partial unique index
     /// rejected the insert, so this holds even against a racing client.
+    ///
+    /// Naming the way out matters: a killed CLI import leaves a session open
+    /// that blocks every later one, and the desktop app's Import screen is
+    /// where it can be resumed or discarded.
+    #[error(
+        "this account already has an active import session; open Import in the desktop app to resume or discard it"
+    )]
     AlreadyActive,
     /// Anything else.
+    #[error(transparent)]
     Db(anyhow::Error),
-}
-
-impl std::fmt::Display for StartImportError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            // Naming the way out matters: a killed CLI import leaves a
-            // session open that blocks every later one, and the desktop
-            // app's Import screen is where it can be resumed or discarded.
-            Self::AlreadyActive => write!(
-                f,
-                "this account already has an active import session; open Import in the desktop app to resume or discard it"
-            ),
-            Self::Db(e) => write!(f, "{e}"),
-        }
-    }
-}
-
-impl Error for StartImportError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::AlreadyActive => None,
-            Self::Db(err) => err.source(),
-        }
-    }
 }
 
 /// Open a new import session.

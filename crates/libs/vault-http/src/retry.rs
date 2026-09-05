@@ -21,7 +21,8 @@ pub enum RetryKind {
 ///
 /// `Display` prints only the message, so error text stays exactly what the
 /// call site wrote; the status travels typed for [`classify_retry`].
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
 pub struct VaultHttpError {
     status: u16,
     message: String,
@@ -36,14 +37,6 @@ impl VaultHttpError {
         }
     }
 }
-
-impl std::fmt::Display for VaultHttpError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for VaultHttpError {}
 
 /// Classify an error for [`with_retries`].
 ///

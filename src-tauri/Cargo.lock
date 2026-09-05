@@ -492,6 +492,7 @@ dependencies = [
  "csv",
  "message-ir",
  "phone",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -2264,6 +2265,7 @@ dependencies = [
  "message-ir",
  "obfuscate",
  "sha2 0.11.0",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -4785,6 +4787,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
