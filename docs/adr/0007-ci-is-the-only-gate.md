@@ -7,22 +7,36 @@ fast pre-flight that catches the mistakes not worth a round trip, and
 `check-all.sh` runs the whole set locally for anyone who wants it before
 pushing.
 
-`ci.yml` holds ten jobs on a pull request. A `changes` job diffs the branch
-against its base and publishes three booleans — `rust`, `web`, `docs` — and the
-heavy jobs read them:
+`ci.yml` holds eleven jobs on a pull request. A `changes` job diffs the branch
+against its base and publishes four booleans — `rust`, `web`, `docs`, `docker`
+— and the heavy jobs read them:
 
 | Job | Runs when | What it does |
 | --- | --- | --- |
-| `changes` | always | Diffs against the base and outputs `rust`, `web`, `docs` |
+| `changes` | always | Diffs against the base and outputs `rust`, `web`, `docs`, `docker` |
 | `fmt` | `rust` | `cargo fmt --check` on the workspace and on `src-tauri` |
 | `clippy` | `rust` | `cargo clippy --workspace --all-targets -- -D warnings` |
 | `test` | `rust` | `cargo build --workspace` and `cargo test --workspace` against a `postgres:16-alpine` service |
 | `check-tauri` | `rust` | `cargo check`, Clippy at `-D warnings`, and `cargo test` on `src-tauri` |
 | `web` | `web` | `biome ci`, `check-generated-api-types.sh`, `npm run build`, `npm test` |
-| `docs` | `docs` | `npm ci`, `astro check`, `astro build` — the site without rustdoc |
+| `docs` | `docs` | `npm ci`, `astro check`, `astro build` — the site without rustdoc or the HTTP API catalog |
 | `license` | always | `check-license.sh` |
 | `docker-context` | always | `check-docker-context.sh` |
+| `docker-build` | `docker`, pull requests only | `docker/build-push-action` with `push: false`: the release Dockerfile builds |
 | `version` | always | `check-version-lockstep.sh`: the four product version files and their lockfiles agree, and on a `v*` tag agree with the tag |
+
+Two classifier arms are not what the directory alone would suggest.
+`scripts/check-generated-api-types.sh` sets `web`, not `rust`, because the
+`web` job is the one that runs it; every other path under `scripts/` falls to
+`rust`. `docker` is true for `docker/`, the root and per-crate Cargo manifests,
+`Cargo.lock`, `rust-toolchain.toml` and `config/config.docker.toml`: the
+files the Dockerfile copies or reads, and so the only files that can stop the
+image building while the Rust jobs stay green. Before `docker-build` existed
+the image was built for the first time on the release tag, so a pull request
+that broke `docker/Dockerfile` merged green and the failure appeared where the
+fix is a new tag. The job runs on pull requests only: the tag job builds and
+pushes the same image, and a push to `main` was checked by the pull request
+that produced it.
 
 `src-tauri`'s Clippy stays inside `check-tauri` rather than the `clippy` job,
 because its build needs the webkit and gtk system packages that job already
@@ -58,6 +72,14 @@ On a `v*` tag the `docker` and `release` jobs depend on every job in `ci.yml`,
 and `github-release` depends on both of them, because its notes promise the
 Docker image as well as the installers. Nothing ships unless everything is
 green.
+
+The `release` matrix installs `tauri-cli` with `cargo binstall`, not
+`cargo install`. `tauri-cli` publishes cargo-binstall metadata pointing at
+prebuilt `cargo-tauri-{target}` archives on its GitHub releases, so the
+install is a download. Compiling it from source took 5.6 minutes on Linux, 8.5
+on macOS and 10.6 on Windows in the v0.8.3 release, about as long as building
+the app itself. The `^2` version range stays, so the release remains on the
+major the desktop app targets.
 
 ## Why
 
@@ -229,7 +251,11 @@ production deploy; it is now scoped by `github.ref`. Its `pages: write` and
 `deploy` job alone. The pull-request docs build skips rustdoc, because
 copying prebuilt rustdoc HTML into `public/` cannot change whether Astro
 builds, and `cargo doc` failures are compile failures that the `test` job
-already catches.
+already catches. It skips the HTTP API catalog copy for the same reason:
+`docs/scripts/copy-http-api-reference.sh` writes into `public/`, which
+`astro check` never reads, and `astro.config.mjs` excludes
+`/vault/developer/rustdoc/**` from link checking, so the step changed nothing
+the job verified. `docs.yml` still runs both before the build it deploys.
 
 Every sentence in `AGENTS.md` and `CLAUDE.md` describing the old arrangement is
 now false and was rewritten — in particular the three statements that CI does
