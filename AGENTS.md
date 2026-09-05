@@ -241,7 +241,7 @@ Optional: `./scripts/build-static.sh` copies `web/dist` to `static/` so the vaul
 
 Run these from the repository root unless a `cd` is shown.
 
-Rust formatter is `rustfmt`. CI does not run Clippy. `src-tauri/` is not a workspace member, so format it with `--manifest-path`.
+Rust formatter is `rustfmt`. CI gates Clippy at `-D warnings` on the workspace and on `src-tauri`. `src-tauri/` is not a workspace member, so format it with `--manifest-path`. `rust-toolchain.toml` pins the toolchain for every checkout and for CI; bump it deliberately, in its own pull request, fixing any new Clippy lints there — a floating stable can redden `main` with no code change.
 
 ```bash
 # Check format (what CI runs)
@@ -251,9 +251,11 @@ cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 # Rewrite Rust (workspace + src-tauri) and web/ (Biome)
 ./scripts/format-all.sh
 
-# Clippy (workspace + src-tauri) and web lint (Biome).
-# Warnings do not fail.
-./scripts/lint-all.sh
+# Fast pre-flight: fmt --check, Clippy -D warnings, Biome ci, tsc.
+./scripts/check-pr.sh
+
+# Everything CI runs, serially (build, tests, audits, docs, the lot).
+./scripts/check-all.sh
 
 cargo build --workspace
 cargo test --workspace
@@ -281,7 +283,7 @@ npm run build             # tsc && vite build
 npm run dev               # Vite on http://localhost:5173 (proxies /v1 to :8080)
 ```
 
-From the repository root, `./scripts/format-all.sh` runs rustfmt then the web formatter. `./scripts/lint-all.sh` runs Clippy (workspace plus `src-tauri`) then the web linter. `./scripts/check-pr.sh` calls `format-all.sh`, then build/test/lint. CI does not run Clippy.
+From the repository root, `./scripts/format-all.sh` rewrites Rust and web sources to the formatters. `./scripts/check-pr.sh` is the fast pre-flight — `cargo fmt --check` and Clippy at `-D warnings` on both manifests, `biome ci`, and the web type-check; it checks and never rewrites. `./scripts/check-all.sh` runs everything CI runs, serially, starting with `check-pr.sh`. Why the split: `docs/adr/0007-ci-is-the-only-gate.md`.
 
 Do not start a separate `npm run dev` while `cargo tauri dev` is running. Tauri starts Vite itself.
 
@@ -297,7 +299,7 @@ cd docs && npm ci && npm run check && npm run build
 
 Not gated by CI `web-next/` (`npm run lint` / `npm test` there if that tree is edited).
 
-Clippy is not a CI job. Run it locally with `./scripts/lint-all.sh` (`rust-analyzer.check.command` is `clippy` in `.vscode/settings.json`).
+Clippy is a CI job (`-D warnings`, workspace and `src-tauri`). `./scripts/check-pr.sh` runs it locally (`rust-analyzer.check.command` is `clippy` in `.vscode/settings.json`).
 
 ### Releases and versions
 

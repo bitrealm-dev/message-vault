@@ -547,10 +547,9 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     let max_body_bytes = upload_limits.max_bytes as usize;
 
     // Open the pool, warm it, and ensure schema once before serving.
-    let pool = match &db_url {
-        Some(url) => engine::open_pool_from_url(url).await?,
-        None => engine::open_pool_for_path(&cfg.paths.db).await?,
-    };
+    let pool = engine::DbTarget::new(db_url.as_deref(), &cfg.paths.db)
+        .open()
+        .await?;
     {
         let mut conn = pool.acquire().await?;
         let _: i32 = sqlx::query_scalar("SELECT 1").fetch_one(&mut *conn).await?; // warmup (i32: INT4 on Postgres, INTEGER on SQLite)

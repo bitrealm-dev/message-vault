@@ -1,9 +1,10 @@
 //! Database engine detection and pool construction.
 
+use std::fmt;
 use std::path::Path;
 use std::str::FromStr;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use sqlx::any::{AnyConnectOptions, AnyPoolOptions};
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{AnyPool, ConnectOptions};
@@ -113,6 +114,80 @@ pub async fn open_pool_from_url(url: &str) -> Result<AnyPool> {
         .max_connections(4)
         .connect(url)
         .await?)
+}
+
+/// Where a command finds its database: a connection URL when one was given,
+/// otherwise a SQLite file from the config or `--db`.
+///
+/// The URL always wins because it can name a Postgres server, which a path
+/// never can. Every CLI entry point and the HTTP server resolve their
+/// database through this type so the choice, the error context, and the
+/// credential redaction live in one place.
+#[derive(Debug, Clone, Copy)]
+pub enum DbTarget<'a> {
+    /// `sqlite://…` or `postgres://…` connection URL.
+    Url(&'a str),
+    /// SQLite file path.
+    Path(&'a Path),
+}
+
+impl<'a> DbTarget<'a> {
+    /// The URL when one was supplied, else the path.
+    pub fn new(url: Option<&'a str>, path: &'a Path) -> Self {
+        match url {
+            Some(url) => Self::Url(url),
+            None => Self::Path(path),
+        }
+    }
+
+    /// Open the pool for this target, naming it (with credentials redacted)
+    /// in the error context.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the URL scheme is unknown or the connection fails.
+    pub async fn open(self) -> Result<AnyPool> {
+        match self {
+            Self::Url(url) => open_pool_from_url(url).await,
+            Self::Path(path) => open_pool_for_path(path).await,
+        }
+        .with_context(|| format!("failed to open database {self}"))
+    }
+}
+
+impl fmt::Display for DbTarget<'_> {
+    /// The target for status lines and errors; never includes credentials.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Url(url) => f.write_str(&redact_db_url(url)),
+            Self::Path(path) => write!(f, "{}", path.display()),
+        }
+    }
+}
+
+/// A database URL with credentials stripped, safe for status and error
+/// output: `postgres://user:secret@host:5432/db` prints as
+/// `postgres://host:5432/db`. Query parameters (which can carry secrets of
+/// their own) are dropped too. Inputs that are not `scheme://…` URLs print
+/// as a placeholder instead of being echoed raw.
+///
+/// Best effort: a malformed URL — a `/` or `#` inside the password, for
+/// instance — can defeat the splits and leak credentials into the error
+/// context. sqlx rejects such URLs before any output is produced, so this
+/// only ever prints URLs that failed to open for other reasons.
+pub fn redact_db_url(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return "<db url>".to_string();
+    };
+    let rest = rest.split_once('?').map_or(rest, |(r, _)| r);
+    let (authority, path) = match rest.split_once('/') {
+        Some((authority, path)) => (authority, format!("/{path}")),
+        None => (rest, String::new()),
+    };
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    format!("{scheme}://{host}{path}")
 }
 
 /// Shared test pool: file-backed SQLite in a fresh temp dir.

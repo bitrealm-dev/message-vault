@@ -496,25 +496,18 @@ pub async fn unlink_account_handle(
     Ok(removed > 0)
 }
 
-/// Open the vault DB and resolve `account_ref` to a UUID.
+/// Open the vault at `target` and resolve `account_ref` (username or UUID)
+/// to an account UUID. Used by CLI commands that take `--account`.
+///
+/// # Errors
+///
+/// Returns an error when the database cannot be opened or the account does
+/// not exist.
 pub async fn resolve_account_ref_at(
-    db_path: &std::path::Path,
+    target: crate::db::engine::DbTarget<'_>,
     account_ref: &str,
 ) -> Result<String> {
-    let pool = crate::db::engine::open_pool_for_path(db_path)
-        .await
-        .with_context(|| format!("open database {}", db_path.display()))?;
-    let mut conn = pool.acquire().await?;
-    resolve_account_ref(&mut conn, account_ref).await
-}
-
-/// Open the vault by connection URL (`--db-url`) and resolve `account_ref`
-/// to a UUID. Mirrors [`resolve_account_ref_at`] for URL-based deployments;
-/// the URL is redacted in error context so credentials never leak.
-pub async fn resolve_account_ref_at_url(db_url: &str, account_ref: &str) -> Result<String> {
-    let pool = crate::db::engine::open_pool_from_url(db_url)
-        .await
-        .with_context(|| format!("open database {}", crate::import_cli::redact_db_url(db_url)))?;
+    let pool = target.open().await?;
     let mut conn = pool.acquire().await?;
     resolve_account_ref(&mut conn, account_ref).await
 }

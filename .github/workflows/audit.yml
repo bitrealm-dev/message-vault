@@ -1,0 +1,69 @@
+name: Audit
+
+# Dependency advisories fail when somebody publishes an advisory, not when
+# somebody writes bad code, so they do not run on every pull request. They
+# run when a change could alter the dependency graph (a lockfile or the deny
+# config moves — which is every Dependabot PR) and on a weekly schedule that
+# catches newly published advisories on main. These checks are deliberately
+# not in the ruleset's required list. Why: docs/adr/0007-ci-is-the-only-gate.md.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "deny.toml"
+      - "src-tauri/Cargo.toml"
+      - "web/package-lock.json"
+      - "web/package.json"
+      - "docs/package-lock.json"
+      - "docs/package.json"
+      - ".github/workflows/audit.yml"
+  schedule:
+    # Mondays 09:13 UTC. An off-hour minute avoids the on-the-hour spike.
+    - cron: "13 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deny:
+    name: cargo-deny (advisories)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories
+
+  npm-audit:
+    name: Audit npm deps
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            docs/package-lock.json
+
+      - name: Audit web frontend
+        run: |
+          cd web
+          npm ci
+          npm audit --audit-level=high
+
+      - name: Audit docs site
+        run: |
+          cd docs
+          npm ci
+          npm audit --audit-level=high
