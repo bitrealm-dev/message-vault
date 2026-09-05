@@ -79,7 +79,13 @@ prebuilt `cargo-tauri-{target}` archives on its GitHub releases, so the
 install is a download. Compiling it from source took 5.6 minutes on Linux, 8.5
 on macOS and 10.6 on Windows in the v0.8.3 release, about as long as building
 the app itself. The `^2` version range stays, so the release remains on the
-major the desktop app targets.
+major the desktop app targets. The step passes `--strategies crate-meta-data`,
+which drops binstall's compile fallback, so a missing archive fails the step
+rather than quietly costing the ten minutes again. The macOS leg adds
+`--pkg-fmt zip`: `tauri-cli`'s metadata declares `tgz` and overrides only
+`x86_64-apple-darwin` to `zip`, while its release ships only a `zip` for
+`aarch64-apple-darwin`, the runner's target. A dry run of binstall 1.23.0
+against that target fails without the flag and resolves 2.11.4 with it.
 
 ## Why
 

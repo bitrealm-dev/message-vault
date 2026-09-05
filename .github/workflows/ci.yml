@@ -476,11 +476,21 @@ jobs:
       # minutes on Linux, 8.5 on macOS and 10.6 on Windows in the v0.8.3
       # release, about as long as building the app itself. The ^2 range keeps
       # the release on the major the desktop app targets.
+      #
+      # Download only: --strategies leaves out binstall's compile fallback, so
+      # a missing archive fails this step instead of quietly compiling for ten
+      # minutes. macOS needs --pkg-fmt zip because tauri-cli's metadata says
+      # tgz for every target it does not override, it overrides x86_64 macOS
+      # but not aarch64, and its release ships only a zip for aarch64.
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@v1.23.0
 
       - name: Install Tauri CLI
-        run: cargo binstall tauri-cli --version "^2" --no-confirm
+        shell: bash
+        run: >-
+          cargo binstall tauri-cli --version "^2" --no-confirm
+          --strategies crate-meta-data
+          ${{ matrix.os == 'macos-latest' && '--pkg-fmt zip' || '' }}
 
       - name: Build Tauri app
         run: cargo tauri build
