@@ -225,9 +225,12 @@ export type ImportJobFormValues = {
   maxFps: string;
   minSizeMb: string;
   ownerPhones: string[];
+  /** Owner email addresses; only SMS Backup+ reads them. */
+  ownerEmails: string[];
   force: boolean;
   obfuscate: boolean;
-  isSbr: boolean;
+  /** True for the Android SMS sources, whose extract carries owner phones. */
+  isAndroidSms: boolean;
   attachmentRoot: string;
   appleContacts: string;
   whatsappKey: string;
@@ -297,9 +300,11 @@ export function restoreFormFromSnapshot(raw: unknown): ImportJobFormValues | nul
   if (typeof r.maxFps !== "string") return null;
   if (typeof r.minSizeMb !== "string") return null;
   if (!isStringArray(r.ownerPhones)) return null;
+  // Snapshots written before SMS Backup+ had an email field carry none.
+  const ownerEmails = isStringArray(r.ownerEmails) ? r.ownerEmails : [];
   if (typeof r.force !== "boolean") return null;
   if (typeof r.obfuscate !== "boolean") return null;
-  if (typeof r.isSbr !== "boolean") return null;
+  if (typeof r.isAndroidSms !== "boolean") return null;
   if (typeof r.attachmentRoot !== "string") return null;
   if (typeof r.appleContacts !== "string") return null;
   if (typeof r.whatsappWa !== "string") return null;
@@ -316,9 +321,10 @@ export function restoreFormFromSnapshot(raw: unknown): ImportJobFormValues | nul
     maxFps: r.maxFps,
     minSizeMb: r.minSizeMb,
     ownerPhones: r.ownerPhones,
+    ownerEmails,
     force: r.force,
     obfuscate: r.obfuscate,
-    isSbr: r.isSbr,
+    isAndroidSms: r.isAndroidSms,
     attachmentRoot: r.attachmentRoot,
     appleContacts: r.appleContacts,
     whatsappKey: "",
@@ -1053,13 +1059,14 @@ export function useImportJob() {
                   business: form.whatsappBusiness,
                 })
               : {}),
-            ...(form.isSbr
+            ...(form.isAndroidSms
               ? sbrExtractFields({
                   attachmentMedia: extractAttachmentMedia(form.attachmentMedia),
                   maxResolution: form.maxResolution,
                   maxFps: form.maxFps,
                   minSizeMb: form.minSizeMb,
                   ownerPhones: form.ownerPhones,
+                  ownerEmails: form.ownerEmails,
                   obfuscate: form.obfuscate,
                 })
               : {}),

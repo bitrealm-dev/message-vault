@@ -6,6 +6,13 @@ import PasswordField from "../../components/PasswordField";
 import PathPicker from "../../components/PathPicker";
 import PhoneTokenField, { type PhoneTokenFieldHandle } from "../../components/PhoneTokenField";
 import Select, { ListBoxItem, selectItemClassName } from "../../components/Select";
+import TextField from "../../components/TextField";
+import {
+  backupFolderHint,
+  isAndroidSmsSource,
+  needsOwnerEmails,
+  splitEmails,
+} from "../../lib/androidSmsSources";
 import { EXPORT_SOURCES } from "../../lib/exportSources";
 import {
   IMESSAGE_SOURCE_ID,
@@ -82,6 +89,9 @@ export type ImportFormFieldsProps = {
   onMinSizeMbChange: (value: string) => void;
   ownerPhones: string[];
   onOwnerPhonesChange: (phones: string[]) => void;
+  /** Owner email addresses as typed (SMS Backup+ only); commas separate several. */
+  ownerEmails: string;
+  onOwnerEmailsChange: (value: string) => void;
   /** Vault account phones for SBR mismatch checks (empty until loaded). */
   profilePhones: string[];
   profilePhonesReady: boolean;
@@ -216,7 +226,9 @@ function AttachmentFields(props: {
 
 export default function ImportFormFields(props: ImportFormFieldsProps) {
   const isIos = props.source === "imessage-ios";
-  const isSbr = props.source === "sms-backup-restore";
+  const isAndroidSms = isAndroidSmsSource(props.source);
+  const wantsEmails = needsOwnerEmails(props.source);
+  const hasOwnerEmail = !wantsEmails || splitEmails(props.ownerEmails).length > 0;
   const imessageMethod = isImessageMethod(props.source) ? props.source : null;
   const whatsappMethod = isWhatsappMethod(props.source) ? props.source : null;
   const imessageGate = imessageMethod
@@ -246,7 +258,7 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
     ? whatsappCryptRequired(props.whatsappStats.hasMsgstoreDb, props.whatsappStats.cryptName)
     : false;
   const showCompress =
-    (imessageMethod !== null || whatsappMethod !== null || isSbr) &&
+    (imessageMethod !== null || whatsappMethod !== null || isAndroidSms) &&
     props.attachmentMedia === "compress";
   const phoneFieldRef = useRef<PhoneTokenFieldHandle>(null);
   const [phoneDraft, setPhoneDraft] = useState("");
@@ -256,7 +268,7 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
     ? [...props.ownerPhones, phoneDraft.trim()]
     : props.ownerPhones;
   const phonesMismatch =
-    isSbr &&
+    isAndroidSms &&
     ownerPhonesNeedMismatchAck(phonesForMatch, props.profilePhones, {
       ready: props.profilePhonesReady,
       fetchFailed: props.profilePhonesError,
@@ -267,11 +279,11 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
   }, [phonesMismatch]);
 
   useEffect(() => {
-    if (!isSbr) {
+    if (!isAndroidSms) {
       setPhoneDraft("");
       setMismatchAck(false);
     }
-  }, [isSbr]);
+  }, [isAndroidSms]);
 
   const canImport = imessageGate
     ? imessageGate.enabled && !props.running
@@ -279,15 +291,17 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
       ? whatsappGate.enabled && !props.running
       : Boolean(props.backupPath) &&
         !props.running &&
-        (!isSbr || props.profilePhonesReady) &&
-        (!isSbr || props.ownerPhones.length > 0 || phoneDraftPending) &&
+        (!isAndroidSms || props.profilePhonesReady) &&
+        (!isAndroidSms || props.ownerPhones.length > 0 || phoneDraftPending) &&
+        hasOwnerEmail &&
         (!phonesMismatch || mismatchAck);
 
   function handleImport(): void {
-    if (isSbr) {
+    if (isAndroidSms) {
       if (!props.profilePhonesReady) return;
       const phones = phoneFieldRef.current?.flush() ?? props.ownerPhones;
       if (phones.length === 0) return;
+      if (!hasOwnerEmail) return;
       const mismatch = ownerPhonesNeedMismatchAck(phones, props.profilePhones, {
         ready: props.profilePhonesReady,
         fetchFailed: props.profilePhonesError,
@@ -560,7 +574,7 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
               onMinSizeMbChange={props.onMinSizeMbChange}
             />
           </>
-        ) : isSbr ? (
+        ) : isAndroidSms ? (
           <>
             <StackedField label="Backup Directory">
               <PathPicker
@@ -569,10 +583,7 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
                 directory
                 placeholder="Folder containing sms-*.xml backup files"
               />
-              <p className={hintStyle}>
-                Point at a folder of SMS Backup &amp; Restore XML files (not a single ZIP). Unlock
-                encrypted backups before selecting the folder.
-              </p>
+              <p className={hintStyle}>{backupFolderHint(props.source)}</p>
             </StackedField>
 
             <AttachmentFields
@@ -628,6 +639,17 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
                 <span>Allow import from phone numbers not on my profile.</span>
               </Checkbox>
             </StackedField>
+
+            {wantsEmails ? (
+              <TextField
+                label="Backup Device Email Addresses"
+                aria-label="Backup Device Email Addresses"
+                value={props.ownerEmails}
+                onChange={props.onOwnerEmailsChange}
+                hint="Pre-filled from your profile. The Gmail or IMAP account SMS Backup+ synced to; separate several with commas."
+                placeholder="you@example.com"
+              />
+            ) : null}
           </>
         ) : (
           <StackedField label="Backup path">
@@ -648,7 +670,7 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
         >
           Force reprocessing
         </Checkbox>
-        {isIos || isSbr ? (
+        {isIos || isAndroidSms ? (
           <Checkbox
             labelClassName="mb-2 flex text-[0.875rem]"
             checked={props.obfuscate}
