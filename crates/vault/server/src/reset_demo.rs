@@ -14,7 +14,7 @@ use sqlx::Row;
 use crate::config::Config;
 use crate::db::account_profile;
 use crate::db::dialect;
-use crate::db::engine;
+use crate::db::engine::{self, DbTarget};
 use crate::db::schema;
 use crate::dedupe;
 use crate::import::{self, ImportExportArgs, ImportMode};
@@ -69,9 +69,9 @@ struct PreparedBundle {
     contacts_vcf: PathBuf,
 }
 
-/// One per-source import in a demo reset. Both reset transports (the SQLite
-/// path and `--db-url`) loop over [`DEMO_IMPORT_SOURCES`], so the sources,
-/// their order, and their Replace-then-Append modes stay in sync.
+/// One per-source import in a demo reset. [`import_demo_sources`] loops over
+/// [`DEMO_IMPORT_SOURCES`] for both transports, so the sources, their order,
+/// and their Replace-then-Append modes stay in sync.
 struct DemoImportSource {
     /// Label printed in the "Reset demo — preparing replacement" header.
     label: &'static str,
@@ -127,13 +127,15 @@ fn print_reset_header(account_id: &str, prepared: &PreparedBundle, db: &dyn std:
 /// (but continue) when some attachments fail conversion.
 async fn dedupe_and_process_assets(
     cfg: &Config,
-    db_path: &Path,
     account_id: &str,
-    db_url: Option<&str>,
+    target: DbTarget<'_>,
 ) -> Result<(dedupe::DedupeStats, process_assets::ProcessAssetsStats)> {
-    let target = engine::DbTarget::new(db_url, db_path);
     let dedupe_stats = dedupe::run_dedupe(target, account_id, 2).await?;
     println!("Reset demo — processing prepared assets");
+    let (db, db_url) = match target {
+        DbTarget::Url(url) => (None, Some(url.to_string())),
+        DbTarget::Path(path) => (Some(path.to_path_buf()), None),
+    };
     let process_stats = process_assets::run(
         cfg,
         &ProcessAssetsOptions {
@@ -142,9 +144,9 @@ async fn dedupe_and_process_assets(
             skip_image: false,
             skip_video: false,
             skip_audio: false,
-            db: None,
+            db,
             source: None,
-            db_url: db_url.map(str::to_string),
+            db_url,
         },
     )
     .await
@@ -254,16 +256,6 @@ pub async fn run_reset_demo(
     config_dest: &Path,
     db_url: Option<&str>,
 ) -> Result<ResetDemoStats> {
-    run_reset_demo_for_account(bundle, config_dest, DEMO_ACCOUNT_ID, db_url).await
-}
-
-/// Rebuild the demo bundle and install it for `account_id`, on the SQLite file or at `db_url`.
-async fn run_reset_demo_for_account(
-    bundle: &Path,
-    config_dest: &Path,
-    account_id: &str,
-    db_url: Option<&str>,
-) -> Result<ResetDemoStats> {
     let bundle = if bundle.is_absolute() {
         bundle.to_path_buf()
     } else {
@@ -272,7 +264,8 @@ async fn run_reset_demo_for_account(
 
     println!("  bundle:       {}", bundle.display());
     let seed_stats = maybe_regenerate_bundle(&bundle)?;
-    let reset_stats = prepare_config_and_reset(&bundle, config_dest, account_id, db_url).await?;
+    let reset_stats =
+        prepare_config_and_reset(&bundle, config_dest, DEMO_ACCOUNT_ID, db_url).await?;
 
     Ok(ResetDemoStats {
         seed: seed_stats,
@@ -282,15 +275,14 @@ async fn run_reset_demo_for_account(
     })
 }
 
-/// Refuse a config that serves the database from a URL unless `--db-url` was passed.
-fn refuse_url_config_without_flag(cfg: &Config, db_url: Option<&str>) -> Result<()> {
-    if db_url.is_some() {
-        return Ok(());
-    }
+/// Refuse a config that serves the database from a URL. The SQLite reset
+/// replaces the file at `paths.db`, which cannot reach a URL-served database;
+/// `--db-url` takes the other transport and never reaches this check.
+fn refuse_url_config(cfg: &Config) -> Result<()> {
     if let Some(url) = cfg.database.url.as_deref() {
         bail!(
-            "reset-demo replaces the on-disk vault at paths.db, but this config serves the database from {}; URL-served databases cannot be reset this way — run reset-demo on the host that owns the database file",
-            crate::db::engine::redact_db_url(url)
+            "reset-demo replaces the on-disk vault at paths.db, but this config serves the database from {}; URL-served databases cannot be reset this way — run reset-demo on the host that owns the database file, or pass --db-url",
+            engine::redact_db_url(url)
         );
     }
     Ok(())
@@ -335,7 +327,7 @@ async fn prepare_config_and_reset(
         )
     })?;
     let cfg = Config::load(temporary_config.path())?;
-    refuse_url_config_without_flag(&cfg, None)?;
+    refuse_url_config(&cfg)?;
     let temporary_config = temporary_config.into_temp_path();
     reset_prepared_bundle(
         &cfg,
@@ -347,9 +339,9 @@ async fn prepare_config_and_reset(
     .await
 }
 
-/// Connection-URL reset (Postgres, or SQLite by URL): wipe the demo account in
-/// place, then seed and import into the live database. There is no snapshot to
-/// swap, so this path relies on the wipe being scoped to one account.
+/// Connection-URL reset (Postgres, or SQLite by URL): rebuild the demo account
+/// in the live database. There is no snapshot to swap, so this path relies on
+/// the wipe being scoped to one account.
 async fn reset_prepared_bundle_at_url(
     cfg: &Config,
     bundle: &Path,
@@ -357,49 +349,7 @@ async fn reset_prepared_bundle_at_url(
     db_url: &str,
 ) -> Result<ResetPreparedStats> {
     let prepared = validate_prepared_bundle(bundle)?;
-    wipe_demo_account_at_url(cfg, account_id, db_url).await?;
-
-    print_reset_header(
-        account_id,
-        &prepared,
-        &crate::db::engine::redact_db_url(db_url),
-    );
-
-    seed_demo_account_at_url(db_url, account_id, &prepared.seed).await?;
-    let mut import_stats = import::ImportStats::default();
-    for source in &DEMO_IMPORT_SOURCES {
-        let stats = crate::import_cli::run(
-            cfg,
-            &crate::import_cli::CliImportOptions {
-                account_id: account_id.to_string(),
-                input_dir: (source.staging_dir)(&prepared).clone(),
-                db_path: None,
-                db_url: Some(db_url.to_string()),
-                assets_dir: None,
-                source_override: Some(source.source.to_string()),
-                mode: source.mode,
-                media: crate::import_media::MediaMode::Copy,
-                contacts: source.with_contacts.then(|| prepared.contacts_vcf.clone()),
-                overwrite_contacts: source.with_contacts,
-                skip_dedupe: true,
-                window_secs: 2,
-            },
-        )
-        .await?
-        .import;
-        merge_import_stats(&mut import_stats, &stats);
-    }
-
-    let (dedupe_stats, process_stats) =
-        dedupe_and_process_assets(cfg, &cfg.paths.db, account_id, Some(db_url)).await?;
-
-    vacuum_after_demo_url(db_url).await;
-
-    Ok(ResetPreparedStats {
-        import: import_stats,
-        dedupe_keys_filled: dedupe_stats.keys_filled,
-        process_assets: process_stats,
-    })
+    rebuild_demo_account(cfg, &prepared, account_id, DbTarget::Url(db_url)).await
 }
 
 /// SQLite reset: build the new state in a prepared database next to the active one, prove
@@ -432,19 +382,94 @@ async fn reset_prepared_bundle(
     let mut temporary_cfg = cfg.clone();
     temporary_cfg.paths.db = prepared_db.clone();
     temporary_cfg.paths.data_dir = data_work.path().to_path_buf();
-    wipe_demo_account(&temporary_cfg, account_id).await?;
+    let stats = rebuild_demo_account(
+        &temporary_cfg,
+        &prepared,
+        account_id,
+        DbTarget::Path(&prepared_db),
+    )
+    .await?;
 
-    print_reset_header(account_id, &prepared, &cfg.paths.db.display());
+    verify_non_demo_state_preserved(&cfg.paths.db, &prepared_db, account_id).await?;
+    let active_account = cfg.paths.data_dir.join(account_id);
+    let prepared_account = temporary_cfg.paths.data_dir.join(account_id);
+    let paths = ResetPaths {
+        active_db: &cfg.paths.db,
+        prepared_db: &prepared_db,
+        active_account: &active_account,
+        prepared_account: &prepared_account,
+        active_config: config_dest,
+        prepared_config,
+    };
+    install_reset_state_or_keep_work(&paths, db_work, data_work).await?;
+    crate::operation_lock::mark_ready(&cfg.paths.db)?;
+    Ok(stats)
+}
 
-    seed_demo_account(&prepared_db, account_id, &prepared.seed).await?;
-    let mut import_stats = import::ImportStats::default();
+/// Swap the prepared state in. When the swap fails and its rollback left any
+/// of the previous state in the work directories, keep those directories on
+/// disk and name them in the error so nothing is lost.
+async fn install_reset_state_or_keep_work(
+    paths: &ResetPaths<'_>,
+    db_work: tempfile::TempDir,
+    data_work: tempfile::TempDir,
+) -> Result<()> {
+    let Err(error) = install_reset_state(paths).await else {
+        return Ok(());
+    };
+    let config_backup = sqlite_sidecar(paths.prepared_config, ".previous-active");
+    let previous_state_still_in_work = db_work.path().join("previous-vault.db").exists()
+        || data_work.path().join("previous-account").exists()
+        || config_backup.exists();
+    if previous_state_still_in_work {
+        let db_work = db_work.keep();
+        let data_work = data_work.keep();
+        return Err(error.context(format!(
+            "reset-demo rollback was incomplete; temporary database and account state were kept at {} and {}",
+            db_work.display(),
+            data_work.display()
+        )));
+    }
+    Err(error)
+}
+
+/// Wipe, seed, import, dedupe, convert media, and vacuum the demo account on
+/// `target`. Both transports run exactly this; what differs is what `target`
+/// names and what the caller does around it (the SQLite path snapshots the
+/// database first and swaps it in after).
+async fn rebuild_demo_account(
+    cfg: &Config,
+    prepared: &PreparedBundle,
+    account_id: &str,
+    target: DbTarget<'_>,
+) -> Result<ResetPreparedStats> {
+    wipe_demo_account(cfg, account_id, target).await?;
+    print_reset_header(account_id, prepared, &target);
+    seed_demo_account(target, account_id, &prepared.seed).await?;
+    let import = import_demo_sources(cfg, prepared, account_id, target).await?;
+    let (dedupe_stats, process_stats) = dedupe_and_process_assets(cfg, account_id, target).await?;
+    vacuum_after_demo(target).await;
+    Ok(ResetPreparedStats {
+        import,
+        dedupe_keys_filled: dedupe_stats.keys_filled,
+        process_assets: process_stats,
+    })
+}
+
+/// Import the staged sources in [`DEMO_IMPORT_SOURCES`] order: the first
+/// replaces the account's data and the rest append. Returns the summed counts.
+async fn import_demo_sources(
+    cfg: &Config,
+    prepared: &PreparedBundle,
+    account_id: &str,
+    target: DbTarget<'_>,
+) -> Result<import::ImportStats> {
+    let mut totals = import::ImportStats::default();
     for source in &DEMO_IMPORT_SOURCES {
-        let assets_dir = temporary_cfg
-            .paths
-            .assets_dir_for_account(account_id, source.source);
+        let assets_dir = cfg.paths.assets_dir_for_account(account_id, source.source);
         let stats = import::import_export(&ImportExportArgs {
-            export_dir: (source.staging_dir)(&prepared),
-            db_path: &prepared_db,
+            export_dir: (source.staging_dir)(prepared),
+            db: target,
             assets_dir: &assets_dir,
             contacts: source
                 .with_contacts
@@ -455,52 +480,10 @@ async fn reset_prepared_bundle(
             account_id,
         })
         .await?;
-        merge_import_stats(&mut import_stats, &stats);
+        totals.add_run(&stats);
     }
-
-    let (dedupe_stats, process_stats) =
-        dedupe_and_process_assets(&temporary_cfg, &prepared_db, account_id, None).await?;
-
-    vacuum_after_demo_path(&prepared_db).await;
-
-    verify_non_demo_state_preserved(&cfg.paths.db, &prepared_db, account_id).await?;
-    let active_account = cfg.paths.data_dir.join(account_id);
-    let prepared_account = temporary_cfg.paths.data_dir.join(account_id);
-    let replacement = install_reset_state(&ResetPaths {
-        active_db: &cfg.paths.db,
-        prepared_db: &prepared_db,
-        active_account: &active_account,
-        prepared_account: &prepared_account,
-        active_config: config_dest,
-        prepared_config,
-    })
-    .await;
-    if let Err(error) = replacement {
-        let config_backup = sqlite_sidecar(prepared_config, ".previous-active");
-        let previous_state_still_in_work = db_work.path().join("previous-vault.db").exists()
-            || data_work.path().join("previous-account").exists()
-            || config_backup.exists();
-        if previous_state_still_in_work {
-            let db_work = db_work.keep();
-            let data_work = data_work.keep();
-            return Err(error.context(format!(
-                "reset-demo rollback was incomplete; temporary database and account state were kept at {} and {}",
-                db_work.display(),
-                data_work.display()
-            )));
-        }
-        return Err(error);
-    }
-
-    crate::operation_lock::mark_ready(&cfg.paths.db)?;
-
-    Ok(ResetPreparedStats {
-        import: import_stats,
-        dedupe_keys_filled: dedupe_stats.keys_filled,
-        process_assets: process_stats,
-    })
+    Ok(totals)
 }
-
 /// Check the bundle has its seed, the three staging folders, and the contacts file, and return their paths.
 fn validate_prepared_bundle(bundle: &Path) -> Result<PreparedBundle> {
     let demo_seed = bundle.join("config/seed.toml");
@@ -957,10 +940,10 @@ fn maybe_regenerate_bundle(bundle: &Path) -> Result<demo_seed::GenStats> {
     );
 }
 
-/// Compact import tables after the sample inbox is fully loaded. Failure is a
-/// warning; the demo rows are already committed.
-async fn vacuum_after_demo_url(db_url: &str) {
-    let pool = match engine::open_pool_from_url(db_url).await {
+/// Compact import tables after the sample inbox is fully loaded. Best effort:
+/// failures are printed, not returned, because the demo rows are already committed.
+async fn vacuum_after_demo(target: DbTarget<'_>) {
+    let pool = match target.open().await {
         Ok(pool) => pool,
         Err(err) => {
             eprintln!("  sql:      warning: vacuum after demo failed to open the database: {err}");
@@ -969,19 +952,6 @@ async fn vacuum_after_demo_url(db_url: &str) {
     };
     vacuum_after_demo_on_pool(pool).await;
 }
-
-/// Open the SQLite file and run [`vacuum_after_demo_on_pool`]. Best effort: failures are printed, not returned.
-async fn vacuum_after_demo_path(db_path: &Path) {
-    let pool = match engine::open_pool_for_path(db_path).await {
-        Ok(pool) => pool,
-        Err(err) => {
-            eprintln!("  sql:      warning: vacuum after demo failed to open the database: {err}");
-            return;
-        }
-    };
-    vacuum_after_demo_on_pool(pool).await;
-}
-
 /// Reclaim space after the demo import replaced most rows. Best effort: a failed vacuum only costs disk space.
 async fn vacuum_after_demo_on_pool(pool: sqlx::AnyPool) {
     let mut conn = match pool.acquire().await {
@@ -1002,22 +972,6 @@ async fn vacuum_after_demo_on_pool(pool: sqlx::AnyPool) {
     pool.close().await;
 }
 
-/// Add one import's counts onto another; the demo imports three sources in turn.
-fn merge_import_stats(into: &mut import::ImportStats, other: &import::ImportStats) {
-    into.conversations += other.conversations;
-    into.participants += other.participants;
-    into.messages += other.messages;
-    into.attachments += other.attachments;
-    into.tapbacks += other.tapbacks;
-    into.files += other.files;
-    into.assets_copied += other.assets_copied;
-    into.assets_deduped += other.assets_deduped;
-    into.assets_missing += other.assets_missing;
-    into.messages_deduped += other.messages_deduped;
-    into.messages_appended += other.messages_appended;
-    into.phones_needing_review += other.phones_needing_review;
-}
-
 /// Parse `config/seed.toml` from the bundle.
 fn load_demo_seed(path: &Path) -> Result<DemoSeed> {
     let text = fs::read_to_string(path)
@@ -1025,9 +979,9 @@ fn load_demo_seed(path: &Path) -> Result<DemoSeed> {
     toml::from_str(&text).with_context(|| format!("failed to parse demo seed {}", path.display()))
 }
 
-/// Open the SQLite file and seed the demo account row and profile.
-async fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) -> Result<()> {
-    let pool = engine::open_pool_for_path(db_path).await?;
+/// Open the target database and seed the demo account row and profile.
+async fn seed_demo_account(target: DbTarget<'_>, account_id: &str, seed: &DemoSeed) -> Result<()> {
+    let pool = target.open().await?;
     let mut conn = pool.acquire().await?;
     schema::ensure_vault_schema(&mut conn).await?;
     seed_demo_account_on_conn(&mut conn, account_id, seed).await?;
@@ -1035,18 +989,6 @@ async fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) ->
     pool.close().await;
     Ok(())
 }
-
-/// Open the database at `db_url` and seed the demo account row and profile.
-async fn seed_demo_account_at_url(db_url: &str, account_id: &str, seed: &DemoSeed) -> Result<()> {
-    let pool = engine::open_pool_from_url(db_url).await?;
-    let mut conn = pool.acquire().await?;
-    schema::ensure_vault_schema(&mut conn).await?;
-    seed_demo_account_on_conn(&mut conn, account_id, seed).await?;
-    conn.close().await?;
-    pool.close().await;
-    Ok(())
-}
-
 /// Create the demo account row and the profile fields the seed names, so the demo signs in without setup.
 async fn seed_demo_account_on_conn(
     conn: &mut sqlx::AnyConnection,
@@ -1111,59 +1053,14 @@ async fn seed_demo_account_on_conn(
 }
 
 /// Delete the demo account's vault rows (child rows follow via CASCADE) and
-/// on-disk attachments. Leaves `vault.db` and other accounts intact.
-async fn wipe_demo_account(cfg: &Config, account_id: &str) -> Result<()> {
-    let db = &cfg.paths.db;
-    if db.is_file() {
-        println!("Reset demo — clearing account data in {}", db.display());
-        let pool = engine::open_pool_for_path(db)
-            .await
-            .with_context(|| format!("open {} for demo account wipe", db.display()))?;
-        let mut conn = pool
-            .acquire()
-            .await
-            .with_context(|| format!("open {} for demo account wipe", db.display()))?;
-        schema::ensure_vault_schema(&mut conn).await?;
-        let deleted = sqlx::query("DELETE FROM accounts WHERE id = $1")
-            .bind(account_id)
-            .execute(&mut *conn)
-            .await
-            .with_context(|| format!("delete account {account_id}"))?
-            .rows_affected();
-        println!("  sql:      demo account rows removed (accounts matched={deleted})");
-        conn.close().await?;
-        pool.close().await;
-    } else {
-        println!(
-            "Reset demo — no existing db at {}; will create on import",
-            db.display()
-        );
-    }
-
-    let account_root = cfg.paths.data_dir.join(account_id);
-    remove_tree_if_exists(&account_root)?;
-    Ok(())
-}
-
-/// Delete every row and media file that belongs to the demo account at `db_url`,
-/// and nothing else.
-async fn wipe_demo_account_at_url(cfg: &Config, account_id: &str, db_url: &str) -> Result<()> {
-    println!(
-        "Reset demo — clearing account data in {}",
-        crate::db::engine::redact_db_url(db_url)
-    );
-    let pool = engine::open_pool_from_url(db_url).await.with_context(|| {
-        format!(
-            "open {} for demo account wipe",
-            crate::db::engine::redact_db_url(db_url)
-        )
-    })?;
-    let mut conn = pool.acquire().await.with_context(|| {
-        format!(
-            "open {} for demo account wipe",
-            crate::db::engine::redact_db_url(db_url)
-        )
-    })?;
+/// on-disk attachments. Leaves the database and other accounts intact.
+async fn wipe_demo_account(cfg: &Config, account_id: &str, target: DbTarget<'_>) -> Result<()> {
+    println!("Reset demo — clearing account data in {target}");
+    let pool = target.open().await?;
+    let mut conn = pool
+        .acquire()
+        .await
+        .with_context(|| format!("open {target} for demo account wipe"))?;
     schema::ensure_vault_schema(&mut conn).await?;
     let deleted = sqlx::query("DELETE FROM accounts WHERE id = $1")
         .bind(account_id)
@@ -1179,7 +1076,6 @@ async fn wipe_demo_account_at_url(cfg: &Config, account_id: &str, db_url: &str) 
     remove_tree_if_exists(&account_root)?;
     Ok(())
 }
-
 /// Remove a folder tree; a missing folder is not an error.
 fn remove_tree_if_exists(path: &Path) -> Result<()> {
     if path.exists() {
@@ -1210,23 +1106,14 @@ mod tests {
     }
 
     #[test]
-    fn refuse_url_config_without_flag_errors_when_config_has_url() {
-        let err = refuse_url_config_without_flag(&url_config_for_refuse_tests(), None)
+    fn refuse_url_config_errors_when_config_has_url() {
+        let err = refuse_url_config(&url_config_for_refuse_tests())
             .expect_err("config URL without --db-url must fail");
         assert!(
             err.to_string()
                 .contains("URL-served databases cannot be reset"),
             "{err}"
         );
-    }
-
-    #[test]
-    fn refuse_url_config_without_flag_ok_when_db_url_flag_set() {
-        refuse_url_config_without_flag(
-            &url_config_for_refuse_tests(),
-            Some("postgres://vault:vault@127.0.0.1:5432/vault"),
-        )
-        .expect("flag allows a URL-served config");
     }
 
     fn write_tiny_reset_bundle(root: &Path) {

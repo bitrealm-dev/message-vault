@@ -209,6 +209,17 @@ impl ImportStats {
         self.messages_deduped += other.messages_deduped;
         self.phones_needing_review += other.phones_needing_review;
     }
+
+    /// Add a whole import run's counts onto a running total, files and assets
+    /// included; the demo reset imports three sources in turn.
+    pub fn add_run(&mut self, other: &ImportStats) {
+        self.merge_file(other);
+        self.files += other.files;
+        self.assets_copied += other.assets_copied;
+        self.assets_deduped += other.assets_deduped;
+        self.assets_missing += other.assets_missing;
+        self.messages_appended += other.messages_appended;
+    }
 }
 
 /// Arguments for [`import_export`].
@@ -216,8 +227,8 @@ impl ImportStats {
 pub struct ImportExportArgs<'a> {
     /// Folder of `*.jsonl` conversation files to import.
     pub export_dir: &'a Path,
-    /// Database path.
-    pub db_path: &'a Path,
+    /// Database to import into.
+    pub db: engine::DbTarget<'a>,
     /// Content-addressed asset store directory.
     pub assets_dir: &'a Path,
     /// Optional address book to load: VCF or vCard CSV export.
@@ -249,9 +260,7 @@ pub async fn import_export(args: &ImportExportArgs<'_>) -> Result<ImportStats> {
 
     let paths = crate::import_cli::list_jsonl_files(args.export_dir)?;
 
-    let pool = engine::open_pool_for_path(args.db_path)
-        .await
-        .with_context(|| format!("failed to open database {}", args.db_path.display()))?;
+    let pool = args.db.open().await?;
     let mut conn = pool.acquire().await?;
     schema::ensure_vault_schema(&mut conn).await?;
     crate::db::account_profile::ensure_account_row(&mut conn, args.account_id).await?;
