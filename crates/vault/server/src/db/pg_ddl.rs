@@ -17,6 +17,8 @@
 //! Anything structurally different between the engines (full-text search)
 //! stays hand-written in its own `schema/sql/fts_postgres*.sql` files.
 
+use std::fmt::Write as _;
+
 /// Transpiled Postgres DDL: one entry per SQLite source, in application
 /// order, plus the deferred foreign keys to run after all of them.
 pub(crate) struct PgDdl {
@@ -127,10 +129,11 @@ fn transpile_file(
         // A table just closed: its case-insensitive indexes come right after.
         if line.trim() == ");" {
             for (table, column) in pending_ci.drain(..) {
-                out.push_str(&format!(
+                let _ = write!(
+                    out,
                     "-- Case-insensitive uniqueness (SQLite's UNIQUE COLLATE NOCASE twin).\n\
                      CREATE UNIQUE INDEX IF NOT EXISTS ix_{table}_{column}_ci ON {table} (lower({column}));\n"
-                ));
+                );
             }
         }
     }
@@ -164,7 +167,8 @@ fn render_deferred_fks(fks: &[DeferredFk]) -> String {
             column,
             clause,
         } = fk;
-        out.push_str(&format!(
+        let _ = write!(
+            out,
             "DO $$\n\
              BEGIN\n\
              {i}IF NOT EXISTS (\n\
@@ -176,7 +180,7 @@ fn render_deferred_fks(fks: &[DeferredFk]) -> String {
              {i}END IF;\n\
              END $$;\n",
             i = "    "
-        ));
+        );
     }
     out
 }

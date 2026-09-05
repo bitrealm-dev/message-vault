@@ -184,8 +184,7 @@ pub(crate) fn count_file_results(results: &[FileResult]) -> FileResultCounts {
 pub(crate) fn now_stamp() -> String {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs().to_string())
-        .unwrap_or_else(|_| "0".into())
+        .map_or_else(|_| "0".into(), |d| d.as_secs().to_string())
 }
 
 /// Milliseconds since `started` (for PROFILE timing fields).

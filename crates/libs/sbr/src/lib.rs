@@ -60,6 +60,7 @@ impl SbrMessage {
 ///
 /// Message bodies are buffered in a sidecar temp file; [`finish`](Self::finish)
 /// writes the final document with the correct `count`.
+#[derive(Debug)]
 pub struct SbrBackupWriter {
     path: PathBuf,
     body_path: PathBuf,

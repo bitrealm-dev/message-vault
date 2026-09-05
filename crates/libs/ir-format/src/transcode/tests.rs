@@ -307,7 +307,7 @@ fn a_convert_failed_attachment_keeps_its_path_and_is_retried_on_resume() {
 fn cancelling_stops_the_pass_without_corrupting_the_folder() {
     let (dir, jsonl, _) = staged_one("photo.png", &test_png_bytes());
     let cancel = CancelFlag::default();
-    cancel.store(true, Ordering::SeqCst);
+    cancel.store(true, Ordering::Relaxed);
 
     let err = transcode_staged(
         dir.path(),

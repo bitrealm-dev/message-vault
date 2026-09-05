@@ -40,6 +40,7 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ### Changed
 
+- 2026-09-05: Mechanical Rust cleanup from the rust-skills review: `Debug` on every public type, `write!` into existing strings, `clone_from` and `map_or` idioms, relaxed ordering on cancel flags, and the desktop app's synchronous commands marked to run off the main thread. No behaviour changes.
 - 2026-09-05: The desktop app's `path_stat` and `ios_backup_encrypted` commands return their value directly; neither had a failure to report.
 - 2026-09-05: Release builds of the vault server and the desktop app use whole-program optimisation and stripped symbols. Shared Rust dependencies are declared once in the workspace; `quick-xml` is on one version.
 - 2026-09-05: The import mode (`replace` or `append`) is one shared type across the HTTP API, the `import` command, `vault-push` and the desktop push command. A mode that is not one of the two is refused at the edge with the same message everywhere.

@@ -13,8 +13,8 @@ use serde::Deserialize;
 
 use crate::{AuthError, AuthInfo, truncate};
 
-#[derive(Clone)]
 /// Blocking HTTP client shared by every vault call in one run.
+#[derive(Debug, Clone)]
 pub struct HttpSession {
     client: Client,
 }

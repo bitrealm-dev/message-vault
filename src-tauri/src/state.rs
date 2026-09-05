@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 /// Data every command can reach through Tauri's managed state.
+#[derive(Debug)]
 pub struct AppState {
     /// Shared switch the background job checks. The `cancel` command sets it
     /// to true. The exporter reads it between steps and stops when it is true.

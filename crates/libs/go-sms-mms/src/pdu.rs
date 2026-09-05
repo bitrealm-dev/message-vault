@@ -556,7 +556,7 @@ fn detect_attachment_blobs(data: &[u8]) -> Vec<(String, usize, usize)> {
     hits.sort_by_key(|(idx, _)| *idx);
     let mut merged = Vec::new();
     for (idx, (start, ext)) in hits.iter().enumerate() {
-        let next_start = hits.get(idx + 1).map(|(s, _)| *s).unwrap_or(data.len());
+        let next_start = hits.get(idx + 1).map_or(data.len(), |(s, _)| *s);
         let size = next_start - start;
         if !attachment_ok(ext, size) {
             continue;

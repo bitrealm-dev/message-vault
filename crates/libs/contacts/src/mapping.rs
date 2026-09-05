@@ -61,7 +61,7 @@ impl NameMapping {
         let mut mapping = Self::empty();
         for (idx, rec) in rdr.records().enumerate() {
             let rec = rec.with_context(|| format!("read name mapping line {}", idx + 2))?;
-            let handle_raw = rec.get(handle_idx).map(str::trim).unwrap_or("");
+            let handle_raw = rec.get(handle_idx).map_or("", str::trim);
             let incorrect = rec
                 .get(incorrect_idx)
                 .map(|s| collapse_inner_whitespace(s.trim()))
@@ -73,8 +73,7 @@ impl NameMapping {
             // Infer handle type from column or default to Phone
             let handle_type = type_idx
                 .and_then(|i| rec.get(i))
-                .map(|s| HandleType::parse(s.trim()))
-                .unwrap_or(HandleType::Phone);
+                .map_or(HandleType::Phone, |s| HandleType::parse(s.trim()));
 
             if handle_type == HandleType::Phone && sanitize_number(handle_raw).is_none() {
                 continue;

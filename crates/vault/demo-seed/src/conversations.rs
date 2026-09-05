@@ -711,7 +711,7 @@ impl<R: Rng> Seeder<'_, R> {
             {
                 let im = msg.imessage.get_or_insert_with(IrImessage::default);
                 im.is_reply = true;
-                im.in_reply_to_guid = origin_guid.clone();
+                im.in_reply_to_guid.clone_from(&origin_guid);
                 im.thread_originator_part = Some(0);
             }
             if i % (messages.reply_stride.max(1) + 17) == 0 {
@@ -859,7 +859,7 @@ impl<R: Rng> Seeder<'_, R> {
         {
             let im = msg.imessage.get_or_insert_with(IrImessage::default);
             im.is_reply = true;
-            im.in_reply_to_guid = origin_guid.clone();
+            im.in_reply_to_guid.clone_from(origin_guid);
             im.thread_originator_part = Some(0);
         }
         if i.is_multiple_of(messages.reply_stride.max(1) + 29) {

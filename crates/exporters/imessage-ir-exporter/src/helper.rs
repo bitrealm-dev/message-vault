@@ -265,8 +265,7 @@ impl Helper {
         let status = self
             .child
             .wait()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|e| format!("unknown status ({e})"));
+            .map_or_else(|e| format!("unknown status ({e})"), |s| s.to_string());
         let stderr = self.stderr_text();
         anyhow!(
             "imessage-reader stopped before finishing ({status}){}",

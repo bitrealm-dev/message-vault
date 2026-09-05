@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 /// through [`finish`](Self::finish) (iMessage's encrypted-backup loader is
 /// not `Sync`) takes [`into_parts`](Self::into_parts) instead and keeps its
 /// own tail.
+#[derive(Debug)]
 pub struct ExportWriter {
     output_dir: PathBuf,
     sink: FormatSink,
@@ -39,6 +40,7 @@ pub struct ExportWriter {
 /// The opened sink and the decisions [`ExportWriter::open`] made, for an
 /// exporter that writes its own tail instead of calling
 /// [`ExportWriter::finish`].
+#[derive(Debug)]
 pub struct ExportWriterParts {
     /// The opened (cleaned or resumed) format sink.
     pub sink: FormatSink,

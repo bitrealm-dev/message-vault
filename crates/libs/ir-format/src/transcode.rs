@@ -518,7 +518,7 @@ fn apply_transcode(
     let attachments_dir = staging_dir.join("attachments");
     let final_path = attachments_dir.join(&name);
     let marker = attachments_dir.join(format!("{name}{IN_PROGRESS_SUFFIX}"));
-    let original_len = std::fs::metadata(src).map(|m| m.len()).unwrap_or(0);
+    let original_len = std::fs::metadata(src).map_or(0, |m| m.len());
 
     match media::transcode_file(src, &marker, options.mode, &options.compress) {
         Err(err) => {
@@ -536,7 +536,7 @@ fn apply_transcode(
                     att.path = Some(r.rel.clone());
                     att.digest_sha256 = Some(r.digest.clone());
                     att.size_bytes = Some(r.size);
-                    att.mime_type = r.mime.clone();
+                    att.mime_type.clone_from(&r.mime);
                     att.missing_reason = Some(reason.clone());
                 });
             } else {
@@ -565,7 +565,7 @@ fn apply_transcode(
                     att.path = Some(r.rel.clone());
                     att.digest_sha256 = Some(r.digest.clone());
                     att.size_bytes = Some(r.size);
-                    att.mime_type = r.mime.clone();
+                    att.mime_type.clone_from(&r.mime);
                     att.missing_reason = None;
                 });
                 write_conversation_jsonl_to(jsonl, doc)?;
@@ -601,7 +601,7 @@ fn apply_transcode(
                 att.path = Some(rel.clone());
                 att.digest_sha256 = Some(digest.clone());
                 att.size_bytes = Some(produced_len);
-                att.mime_type = mime.clone();
+                att.mime_type.clone_from(&mime);
                 att.missing_reason = None;
             });
             write_conversation_jsonl_to(jsonl, doc)?;
@@ -641,7 +641,7 @@ fn apply_repoint(
         att.path = Some(r.rel.clone());
         att.digest_sha256 = Some(r.digest.clone());
         att.size_bytes = Some(r.size);
-        att.mime_type = r.mime.clone();
+        att.mime_type.clone_from(&r.mime);
         att.missing_reason = None;
     });
     write_conversation_jsonl_to(jsonl, doc)?;

@@ -59,6 +59,7 @@ pub struct SbrReadReport {
 }
 
 /// Options for [`read_sbr_documents`].
+#[derive(Debug)]
 pub struct SbrReadOptions<'a> {
     /// Known owner phone numbers (empty triggers inference).
     pub owner_phones: &'a [String],

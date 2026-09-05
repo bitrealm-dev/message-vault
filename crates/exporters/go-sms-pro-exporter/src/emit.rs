@@ -269,7 +269,7 @@ fn pdu_pending_message(parsed: ParsedPdu, attachments: Vec<PendingAttachment>) -
 /// the PDU key (`…|body|att_names`) for the same message, so exact-key dedupe
 /// alone would let both rows through and export the MMS twice.
 fn dedupe_base_key(key: &str) -> &str {
-    key.rsplit_once('|').map(|(base, _)| base).unwrap_or(key)
+    key.rsplit_once('|').map_or(key, |(base, _)| base)
 }
 
 /// Drop duplicate pending messages, keeping the row with more attachments.

@@ -75,7 +75,7 @@ pub(crate) fn parse_xml_file(path: &Path) -> Result<(Vec<XmlMessage>, XmlParseSt
         .unwrap_or("")
         .to_string();
     for d in &mut stats.skipped_unknown_address_details {
-        d.xml_file = xml_file.clone();
+        d.xml_file.clone_from(&xml_file);
     }
     Ok((msgs, stats))
 }
@@ -92,9 +92,9 @@ pub(crate) fn parse_xml_str(text: &str) -> Result<(Vec<XmlMessage>, XmlParseStat
 
     for fields in file.sms {
         stats.messages += 1;
-        let addr = sanitize_number(fields.get("address").map(String::as_str).unwrap_or(""));
+        let addr = sanitize_number(fields.get("address").map_or("", String::as_str));
         let contact = fields.get("contactName").cloned().unwrap_or_default();
-        let body_raw = fields.get("body").map(String::as_str).unwrap_or("");
+        let body_raw = fields.get("body").map_or("", String::as_str);
         let body = decode_gosms_emojis(body_raw);
         // A missing `<date>` must not become a fake 1970-01-01 row: all such
         // messages would share timestamp 0 and could falsely deduplicate.

@@ -65,7 +65,7 @@ fn finished_push_events(
 }
 
 /// User-facing parameters for the `push` command.
-#[derive(serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PushArgs {
     /// Base URL of the vault server, for example `http://127.0.0.1:8080`.
@@ -103,8 +103,8 @@ pub struct PushArgs {
 ///
 /// Returns an error if another thread panicked while holding the shared
 /// state lock. Failures during the upload are sent as `extract:error`.
-#[tauri::command]
-pub async fn push(
+#[tauri::command(async)]
+pub fn push(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
     app: tauri::AppHandle,
     args: PushArgs,

@@ -80,7 +80,7 @@ fn disabled_skips_without_loading() {
             &att_dir,
             &media_cfg(MediaMode::Disabled),
             |_| {
-                loaded.store(true, Ordering::SeqCst);
+                loaded.store(true, Ordering::Relaxed);
                 Ok(Some(b"x".to_vec()))
             },
             |_| {},
@@ -89,7 +89,7 @@ fn disabled_skips_without_loading() {
         )
         .unwrap();
     }
-    assert!(!loaded.load(Ordering::SeqCst));
+    assert!(!loaded.load(Ordering::Relaxed));
     assert_eq!(att.missing_reason.as_deref(), Some("not_copied"));
     assert!(att.path.is_none());
     assert!(!att_dir.exists() || std::fs::read_dir(&att_dir).unwrap().next().is_none());
@@ -230,7 +230,7 @@ fn cancel_stops_before_next_job() {
             &media_cfg(MediaMode::Clone),
             |i| {
                 if i == 0 {
-                    cancel.store(true, Ordering::SeqCst);
+                    cancel.store(true, Ordering::Relaxed);
                 }
                 Ok(Some(b"x".to_vec()))
             },

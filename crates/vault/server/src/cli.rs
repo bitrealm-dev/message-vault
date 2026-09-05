@@ -15,7 +15,7 @@ use crate::db::engine::DbTarget;
 use crate::db::{account_profile, contacts as contacts_db};
 use crate::dedupe::DedupeStats;
 
-#[derive(Parser)]
+#[derive(Debug, Parser)]
 #[command(name = "message-vault-server")]
 #[command(about = "Import and view messages in SQLite")]
 /// Command-line entry point parsed from argv.
@@ -26,7 +26,7 @@ pub struct Cli {
 }
 
 /// One subcommand per CLI operation: import, serve, and maintenance.
-#[derive(Subcommand)]
+#[derive(Debug, Subcommand)]
 pub enum Commands {
     /// Import a message-ir JSONL folder (source from export.source unless --source)
     Import(ImportArgs),
@@ -55,7 +55,7 @@ pub enum Commands {
 }
 
 /// Options for `import`.
-#[derive(Args)]
+#[derive(Debug, Args)]
 pub struct ImportArgs {
     /// Optional source override (forces one source; skips IR export.source)
     #[arg(long)]
@@ -111,7 +111,7 @@ pub struct ImportArgs {
 }
 
 /// Options for `dedupe-cross-source`.
-#[derive(Args)]
+#[derive(Debug, Args)]
 pub struct DedupeArgs {
     /// Path to config.toml
     #[arg(long, default_value = "config/config.toml")]
@@ -135,7 +135,7 @@ pub struct DedupeArgs {
 }
 
 /// Options for `import-contacts`.
-#[derive(Args)]
+#[derive(Debug, Args)]
 pub struct ImportContactsArgs {
     /// Path to config.toml
     #[arg(long, default_value = "config/config.toml")]
@@ -155,7 +155,7 @@ pub struct ImportContactsArgs {
 }
 
 /// Options for `reset-demo`.
-#[derive(Args)]
+#[derive(Debug, Args)]
 pub struct ResetDemoArgs {
     /// Demo bundle directory (rewritten by demo-seed, then imported)
     #[arg(long, default_value = "crates/vault/demo-seed")]
@@ -173,7 +173,7 @@ pub struct ResetDemoArgs {
 }
 
 /// Options for `serve`.
-#[derive(Args)]
+#[derive(Debug, Args)]
 pub struct ServeArgs {
     /// Path to config.toml (must include `[server]` with `bind`)
     #[arg(long, default_value = "config/config.toml")]
@@ -185,7 +185,7 @@ pub struct ServeArgs {
 }
 
 /// Options shared by `dump-openapi` and `dump-cli-docs`.
-#[derive(Args)]
+#[derive(Debug, Args)]
 pub struct DumpArgs {
     /// Destination file. Omit to print stdout.
     #[arg(long)]
@@ -193,7 +193,7 @@ pub struct DumpArgs {
 }
 
 /// Options for `process-assets`.
-#[derive(Args)]
+#[derive(Debug, Args)]
 pub struct ProcessAssetsArgs {
     /// Path to config.toml
     #[arg(long, default_value = "config/config.toml")]

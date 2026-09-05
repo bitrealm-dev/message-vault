@@ -111,6 +111,7 @@ enum StructuredKind {
 }
 
 /// Keyed obfuscator (in-memory cache only; never writes a real→fake map).
+#[derive(Debug)]
 pub struct Obfuscator {
     key: [u8; 32],
     /// Digits-only → fake digits-only (same length).

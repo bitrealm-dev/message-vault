@@ -55,6 +55,7 @@ impl FormatSinkResult {
 ///
 /// Documents are buffered until [`finish`](Self::finish), which applies
 /// attachment media transforms and obfuscation, then projects all chats.
+#[derive(Debug)]
 pub struct FormatSink {
     output_dir: PathBuf,
     format: OutputFormat,

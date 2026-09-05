@@ -495,7 +495,7 @@ fn mime_for_existing_file(
     if let Some(mime) = export_mime
         && !mime.is_empty()
     {
-        return Some(mime.to_owned());
+        return Some(mime.to_string());
     }
     resolve_mime(None, dest).or(source_mime)
 }
@@ -509,7 +509,7 @@ fn read_mime_metadata(assets_root: &Path, sha: &str) -> Option<String> {
     if mime.is_empty() {
         None
     } else {
-        Some(mime.to_owned())
+        Some(mime.to_string())
     }
 }
 
@@ -859,8 +859,7 @@ pub(crate) async fn asset_put_handler(
         "{sha256}-{}.part",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
+            .map_or(0, |d| d.as_nanos())
     ));
     let n = match stream_body_to_file(request.into_body(), &tmp_path, state.max_body_bytes).await {
         Ok(n) => n,

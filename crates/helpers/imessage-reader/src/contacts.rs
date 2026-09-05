@@ -269,7 +269,7 @@ impl ContactsIndex {
                         .unwrap_or_else(|| Name::from_details(details.clone()));
 
                     // Keep the original details string for display/fallback
-                    name.details = details.clone();
+                    name.details.clone_from(details);
                     name.handle_ids.insert(handle_id);
                     name
                 });

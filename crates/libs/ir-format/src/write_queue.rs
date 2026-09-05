@@ -271,8 +271,7 @@ pub fn drain_write_queue_with_loader(
 /// handful of threads the disk, not the CPU, sets the pace.
 pub fn default_writer_count() -> usize {
     std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1)
+        .map_or(1, |n| n.get())
         .clamp(1, 8)
 }
 
@@ -364,7 +363,7 @@ pub fn drain_write_queue(
         for _ in 0..writer_count {
             scope.spawn(|| {
                 loop {
-                    if abort.load(Ordering::SeqCst) {
+                    if abort.load(Ordering::Relaxed) {
                         return;
                     }
                     let Some(unit) = queue.lock().expect("write queue lock").pop_front() else {
@@ -420,7 +419,7 @@ pub fn drain_write_queue(
                             if slot.is_none() {
                                 *slot = Some(format!("{err:#}"));
                             }
-                            abort.store(true, Ordering::SeqCst);
+                            abort.store(true, Ordering::Relaxed);
                             return;
                         }
                     }
@@ -624,7 +623,7 @@ fn write_one_unit(
     on_progress: &dyn Fn(UnitProgress),
     cancel: Option<&CancelFlag>,
 ) -> Result<UnitOutcome> {
-    if cancel.is_some_and(|f| f.load(Ordering::SeqCst)) {
+    if cancel.is_some_and(|f| f.load(Ordering::Relaxed)) {
         anyhow::bail!("canceled");
     }
 

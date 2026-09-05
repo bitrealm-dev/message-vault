@@ -25,8 +25,7 @@ pub(crate) fn input_folder(input: &Path) -> Result<PathBuf> {
     let folder = if input.is_file() {
         input
             .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("."))
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
     } else {
         input.to_path_buf()
     };

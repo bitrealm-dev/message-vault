@@ -658,7 +658,7 @@ pub fn conversation_stem(
         return with_suffix(&stem, suffix);
     }
 
-    let mut stem = String::from("group");
+    let mut stem = "group".to_string();
     for phone in phones.iter().take(GROUP_FILENAME_MAX_PHONES) {
         stem.push('_');
         stem.push_str(phone);
@@ -875,7 +875,7 @@ pub struct PendingMessage {
 impl PendingMessage {
     /// Read an exporter-specific string field from [`Self::extra`].
     pub fn extra_str(&self, key: &str) -> &str {
-        self.extra.get(key).map(String::as_str).unwrap_or("")
+        self.extra.get(key).map_or("", String::as_str)
     }
 
     /// Read a boolean stored in [`Self::extra`] (values `"true"` / `"false"`).
@@ -972,7 +972,7 @@ impl PendingConversation {
 
     /// Read an exporter-specific string field from [`Self::extra`].
     pub fn extra_str(&self, key: &str) -> &str {
-        self.extra.get(key).map(String::as_str).unwrap_or("")
+        self.extra.get(key).map_or("", String::as_str)
     }
 
     /// First non-empty `contact_name` extra on a message in this conversation.

@@ -23,8 +23,8 @@ use crate::state::AppState;
 /// Returns an error if `output_format` is not one of json, jsonl, csv, eml,
 /// mbox, or xml, or if another thread panicked while holding the shared
 /// state lock. Failures during conversion are sent as `extract:error`.
-#[tauri::command]
-pub async fn format(
+#[tauri::command(async)]
+pub fn format(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
     app: tauri::AppHandle,
     input_dir: String,

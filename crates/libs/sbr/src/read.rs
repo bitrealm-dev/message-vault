@@ -175,7 +175,7 @@ fn attrs(e: &quick_xml::events::BytesStart<'_>) -> HashMap<String, String> {
 
 /// The attribute value, or an empty string.
 fn get<'a>(attrs: &'a HashMap<String, String>, key: &str) -> &'a str {
-    attrs.get(key).map(String::as_str).unwrap_or("")
+    attrs.get(key).map_or("", String::as_str)
 }
 
 /// The attributes as an ordered map, for the vendor bag.

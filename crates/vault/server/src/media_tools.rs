@@ -157,8 +157,7 @@ pub fn tool_on_path(name: &str) -> bool {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .is_ok_and(|s| s.success())
 }
 
 /// Run ffmpeg with `args` (`-y` and quiet logging are added). On failure,
