@@ -80,7 +80,6 @@ pub struct MembershipSpec {
     /// Reserved names with dedicated error messages (lowercase name, message).
     pub special_reserved: &'static [(&'static str, &'static str)],
     /// Extra work after a membership change (groups touch the contact row).
-    #[allow(clippy::type_complexity)]
     pub on_change: Option<ChangeHook>,
 }
 

@@ -17,7 +17,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow};
 use hmac::{Hmac, KeyInit, Mac};
 use rand::Rng;
 use regex::Regex;
@@ -547,11 +547,30 @@ pub fn materialize_placeholders(output_dir: &Path) -> Result<()> {
 }
 
 /// Seed length: 32 bytes → 64 hex characters (2^256 key space).
-/// Backward-compatible: shorter hex seeds (e.g. legacy 8-char) are still
-/// accepted; their bytes are hashed into the 32-byte working key.
 pub const OBFUSCATE_SEED_BYTES: usize = 32;
 /// Hex length of a 32-byte seed.
-pub const OBFUSCATE_SEED_HEX_LEN: usize = 64;
+pub const OBFUSCATE_SEED_HEX_LEN: usize = OBFUSCATE_SEED_BYTES * 2;
+
+/// Check that `seed_hex` (already trimmed) is exactly
+/// [`OBFUSCATE_SEED_HEX_LEN`] hex digits. Every caller that accepts a seed
+/// runs this one check, so the form and the run agree on what a seed is.
+///
+/// # Errors
+///
+/// Returns the message to show when the seed has the wrong length or holds
+/// a non-hex character.
+pub fn check_seed_hex(seed_hex: &str) -> std::result::Result<(), String> {
+    if seed_hex.len() != OBFUSCATE_SEED_HEX_LEN {
+        return Err(format!(
+            "obfuscate seed must be exactly {OBFUSCATE_SEED_HEX_LEN} hex characters, got {}",
+            seed_hex.len()
+        ));
+    }
+    if !seed_hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("obfuscate seed must contain only hex characters (0-9, a-f)".to_string());
+    }
+    Ok(())
+}
 
 fn key_from_seed_bytes(bytes: &[u8]) -> [u8; 32] {
     let dig = Sha256::digest(bytes);
@@ -564,7 +583,7 @@ fn key_from_seed_bytes(bytes: &[u8]) -> [u8; 32] {
 ///
 /// # Errors
 ///
-/// Returns an error when `seed_hex` is not valid hex of length 8–64.
+/// Returns an error when `seed_hex` is not exactly [`OBFUSCATE_SEED_HEX_LEN`] hex digits.
 pub fn resolve_obfuscator(seed_hex: Option<&str>) -> Result<Obfuscator> {
     resolve_obfuscator_with_log(seed_hex, None)
 }
@@ -577,16 +596,8 @@ pub fn resolve_obfuscator_with_log(
     let key = match seed_hex {
         Some(s) => {
             let s = s.trim();
-            // Accept any hex seed from 8 to 64 chars for backward compatibility
-            // (legacy seeds were 8 chars / 4 bytes). All seeds are hashed via
-            // SHA-256 into a 32-byte working key.
-            if s.len() < 8 || s.len() > 64 || s.len() % 2 != 0 {
-                bail!(
-                    "--obfuscate-seed must be 8–64 hex characters (even length), got {}",
-                    s.len()
-                );
-            }
-            let bytes = hex::decode(s).context("invalid --obfuscate-seed (expected hex)")?;
+            check_seed_hex(s).map_err(|e| anyhow!(e))?;
+            let bytes = hex::decode(s).context("invalid obfuscate seed (expected hex)")?;
             key_from_seed_bytes(&bytes)
         }
         None => {
@@ -1014,33 +1025,39 @@ mod tests {
 
     #[test]
     fn seed_resolves_and_is_stable() {
-        let mut a = resolve_obfuscator(Some("01234567")).unwrap();
-        let mut b = resolve_obfuscator(Some("01234567")).unwrap();
+        let mut a = resolve_obfuscator(Some(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        ))
+        .unwrap();
+        let mut b = resolve_obfuscator(Some(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        ))
+        .unwrap();
         assert_eq!(
             a.obfuscate_phone("+15555550100"),
             b.obfuscate_phone("+15555550100")
         );
         assert_ne!(
             a.obfuscate_phone("+15555550100"),
-            resolve_obfuscator(Some("fedcba98"))
-                .unwrap()
-                .obfuscate_phone("+15555550100")
+            resolve_obfuscator(Some(
+                "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+            ))
+            .unwrap()
+            .obfuscate_phone("+15555550100")
         );
     }
 
     #[test]
-    fn seed_rejects_wrong_length() {
-        // Too short (< 8 hex chars)
-        assert!(resolve_obfuscator(Some("abcd")).is_err());
-        assert!(resolve_obfuscator(Some("abcdef")).is_err());
-        // Odd length (must be even for valid hex)
-        assert!(resolve_obfuscator(Some("abcde")).is_err());
-        // Too long (> 64 hex chars)
-        let long = "a".repeat(66);
-        assert!(resolve_obfuscator(Some(&long)).is_err());
-        // Valid lengths: legacy 8-char and modern 64-char
-        assert!(resolve_obfuscator(Some("01234567")).is_ok());
-        assert!(resolve_obfuscator(Some("0123456789abcdef")).is_ok());
+    fn seed_must_be_exactly_64_hex_chars() {
+        // The old 8-character seed is refused.
+        assert!(resolve_obfuscator(Some("01234567")).is_err());
+        assert!(resolve_obfuscator(Some(&"a".repeat(63))).is_err());
+        assert!(resolve_obfuscator(Some(&"a".repeat(65))).is_err());
+        // Right length, not hex.
+        assert!(resolve_obfuscator(Some(&"g".repeat(64))).is_err());
+        assert!(resolve_obfuscator(Some(&"a".repeat(64))).is_ok());
+        // Surrounding whitespace is trimmed; upper-case hex is fine.
+        assert!(resolve_obfuscator(Some(&format!(" {} ", "A".repeat(64)))).is_ok());
     }
 
     #[test]

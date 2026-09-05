@@ -75,10 +75,8 @@ impl HttpSession {
         &self,
         base_url: &str,
         key: &str,
-        username: &str,
     ) -> std::result::Result<AuthInfo, AuthError> {
-        // Validate the token first (no account=). A wrong User ID used to return
-        // HTTP 403 "username does not match vault key", which looked like a bad token.
+        // The token alone names the account; the reply carries the username.
         let base = trim_base_url(base_url);
         let parsed_base = match reqwest::Url::parse(base) {
             Ok(parsed) => parsed,
@@ -124,9 +122,6 @@ impl HttpSession {
             .account_id
             .filter(|s| !s.is_empty())
             .ok_or(AuthError::MissingAccountId)?;
-        // Token is authoritative. Ignore a wrong Username field — callers should
-        // prefer `AuthInfo.username` for later account= query params.
-        let _ = username;
         Ok(AuthInfo {
             account_id,
             username: parsed.username,
@@ -195,15 +190,11 @@ fn classify_auth_http_status(status: u16, body: String) -> AuthError {
 /// # Errors
 ///
 /// Returns [`AuthError`] when the client cannot be built or login fails.
-pub fn auth_check(
-    base_url: &str,
-    key: &str,
-    username: &str,
-) -> std::result::Result<AuthInfo, AuthError> {
+pub fn auth_check(base_url: &str, key: &str) -> std::result::Result<AuthInfo, AuthError> {
     let session = HttpSession::new().map_err(|error| AuthError::Client {
         detail: format!("{error:#}"),
     })?;
-    session.auth_check(base_url, key, username)
+    session.auth_check(base_url, key)
 }
 
 #[cfg(test)]

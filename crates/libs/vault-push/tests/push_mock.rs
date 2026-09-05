@@ -156,7 +156,7 @@ fn authenticate_and_push_text_only_conversation() {
         }));
     });
 
-    let info = authenticate(&server.base_url(), "mv_test", "alice").unwrap();
+    let info = authenticate(&server.base_url(), "mv_test").unwrap();
     assert_eq!(info.account_id, "acct-1");
 
     let dir = tempdir().unwrap();
@@ -991,7 +991,7 @@ fn authenticate_maps_http_failures_to_typed_errors() {
         when.method(GET).path("/v1/auth/check");
         then.status(401).body("unauthorized");
     });
-    let err = authenticate(&server.base_url(), "bad", "").unwrap_err();
+    let err = authenticate(&server.base_url(), "bad").unwrap_err();
     assert_eq!(err.kind(), "invalid_key");
     assert!(!err.user_message().contains("unauthorized"));
     assert!(err.detail().contains("invalid vault key"));
@@ -1005,7 +1005,7 @@ fn authenticate_maps_html_and_status_failures() {
         then.status(200)
             .body("<!DOCTYPE html><html><body>browse ui</body></html>");
     });
-    let err = authenticate(&server.base_url(), "mv_test", "").unwrap_err();
+    let err = authenticate(&server.base_url(), "mv_test").unwrap_err();
     assert_eq!(err.kind(), "wrong_host");
     assert!(err.user_message().contains("website"));
     assert!(err.detail().contains("HTML"));
@@ -1016,7 +1016,7 @@ fn authenticate_maps_html_and_status_failures() {
         when.method(GET).path("/v1/auth/check");
         then.status(403).body("username does not match vault key");
     });
-    let err = authenticate(&server.base_url(), "mv_test", "").unwrap_err();
+    let err = authenticate(&server.base_url(), "mv_test").unwrap_err();
     assert_eq!(err.kind(), "forbidden");
     assert!(!err.user_message().contains("username does not match"));
     assert!(err.detail().contains("username does not match vault key"));
@@ -1024,7 +1024,7 @@ fn authenticate_maps_html_and_status_failures() {
 
 #[test]
 fn authenticate_rejects_invalid_url() {
-    let err = authenticate("not a url", "mv_test", "").unwrap_err();
+    let err = authenticate("not a url", "mv_test").unwrap_err();
     assert_eq!(err.kind(), "invalid_url");
     assert!(matches!(err, AuthError::InvalidUrl { .. }));
 }

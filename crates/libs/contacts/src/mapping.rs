@@ -95,19 +95,6 @@ impl NameMapping {
         Ok(mapping)
     }
 
-    /// Load from a path option, returning the path when loaded.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the file cannot be opened or read, or when a
-    /// required header (`Handle` / `Incorrect Name`) is missing.
-    pub fn load_optional(path: Option<&Path>) -> Result<(Self, Option<std::path::PathBuf>)> {
-        match path {
-            Some(path) => Ok((Self::load(path)?, Some(path.to_path_buf()))),
-            None => Ok((Self::empty(), None)),
-        }
-    }
-
     /// If `eml_name` is an incorrect export name, return (normalized handle, type).
     pub fn handle_for_incorrect_name(&self, eml_name: &str) -> Option<&(String, HandleType)> {
         let key = normalize_name_key(eml_name);

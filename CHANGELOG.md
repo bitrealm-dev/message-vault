@@ -17,6 +17,8 @@ Released version headings also carry a date: `## [0.8.0] - 2026-08-24`.
 
 ### Removed
 
+- 2026-09-05: The `[server] asset_hash_threshold_bytes` config key. The vault parsed it and then ignored it, because multipart uploads have verified the SHA-256 fingerprint for every size since the threshold was dropped. A config file that still carries the key no longer loads; delete the line.
+- 2026-09-05: The 8-character obfuscation seed. A seed is exactly 64 hex characters, which is the length the exporter prints when it generates one. Shorter seeds were accepted by the run but refused by the desktop form, so a person could never paste a printed seed back in.
 - 2026-09-05: The desktop app no longer reads import progress out of the exporters' log lines. `src-tauri/src/commands/progress.rs`, which parsed `…500/12345`, `attachments 2/3 100/500`, and `Preparing N conversation file(s)` with string heuristics, is gone.
 - 2026-09-03: The export cursor, the `source=` parameter on `GET /v1/export/messages` and `/count` (write `source:imessage` in the query instead), the `savedSearches` and `savedSearch` fields, the `ok` and `account_ok` flags, and `vault-pull`'s unused `compose_query`.
 - 2026-08-31: The legacy Slint desktop GUI (`crates/message-vault-io-gui`) is gone. The Tauri desktop app is the product path. Its screens are recorded, one image per exporter, in `docs/superpowers/reference/legacy-slint-gui.md`.

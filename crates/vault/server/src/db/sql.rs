@@ -12,31 +12,22 @@ use super::engine::DbEngine;
 
 /// One bound parameter in a dynamic query. sqlx's Any driver exposes no
 /// user-constructible dynamic value, so heterogeneous binds ride this enum.
-///
-/// `Bool`/`Null` are part of the enum contract shared by every dynamic query
-/// builder; no current filter binds them, so silence the dead-code warning
-/// rather than drop the variants.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub enum SqlParam {
     Text(String),
     Int(i64),
-    Bool(bool),
-    Null,
 }
 
 /// Encode `params` into Any-driver arguments, in order.
 ///
-/// `String`/`i64`/`bool`/`None` cannot fail to encode on the Any driver; an
-/// encode failure is unreachable and panics like sqlx's own `Query::bind`.
+/// `String`/`i64` cannot fail to encode on the Any driver; an encode
+/// failure is unreachable and panics like sqlx's own `Query::bind`.
 pub fn bind_args<'q>(params: &[SqlParam]) -> AnyArguments<'q> {
     let mut args = AnyArguments::default();
     for p in params {
         match p {
             SqlParam::Text(v) => args.add(v.clone()),
             SqlParam::Int(v) => args.add(*v),
-            SqlParam::Bool(v) => args.add(*v),
-            SqlParam::Null => args.add(Option::<String>::None),
         }
         .expect("error encoding argument");
     }
@@ -233,14 +224,9 @@ mod tests {
 
     #[test]
     fn bind_args_encodes_every_variant_in_order() {
-        // All four variants must encode without panicking, in order; the
+        // Every variant must encode without panicking, in order; the
         // argument count is the only thing the Any driver lets us observe.
-        let params = vec![
-            SqlParam::Text("t".into()),
-            SqlParam::Int(7),
-            SqlParam::Bool(true),
-            SqlParam::Null,
-        ];
+        let params = vec![SqlParam::Text("t".into()), SqlParam::Int(7)];
         let args = bind_args(&params);
         assert_eq!(args.len(), params.len());
     }

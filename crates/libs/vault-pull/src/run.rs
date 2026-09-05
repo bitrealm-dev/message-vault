@@ -218,8 +218,8 @@ impl<'a> Pull<'a> {
     ///
     /// Returns an error when login fails or the journal cannot be read.
     fn login(cfg: &'a VaultPullConfig, out: &mut Option<&mut ProgressFn<'_>>) -> Result<Self> {
-        let auth = authenticate(&cfg.base_url, &cfg.key, &cfg.username)
-            .map_err(|e| anyhow::anyhow!("{}", e.detail()))?;
+        let auth =
+            authenticate(&cfg.base_url, &cfg.key).map_err(|e| anyhow::anyhow!("{}", e.detail()))?;
         let account = auth.account_id.clone();
         let username = auth.username.clone().unwrap_or_else(|| account.clone());
         emit(

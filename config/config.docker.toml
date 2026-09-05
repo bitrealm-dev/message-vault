@@ -14,10 +14,6 @@ assets_converted_dir = "assets_converted"
 [server]
 bind = "0.0.0.0:8080"
 
-# Attachments at or above this size (bytes) skip server-side SHA-256
-# verification at upload completion. 20 MiB default.
-asset_hash_threshold_bytes = 20971520
-
 # UI origins that call this API on a different host/port. Without this list the
 # desktop app reports it cannot reach the server even when curl to :8080 works.
 # - Vite / `cargo tauri dev`: :5173

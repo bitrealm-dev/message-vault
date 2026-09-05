@@ -35,18 +35,6 @@ pub struct ImportResponse {
     pub messages_appended: u64,
     #[serde(default)]
     pub messages_deduped: u64,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub conversations: u64,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub attachments: u64,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub assets_copied: u64,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub assets_missing: u64,
 }
 
 /// One attachment to upload: where it is on disk, what it is, and the size

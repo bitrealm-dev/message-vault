@@ -14,7 +14,6 @@ pub const SESSION_TTL_SECS: u64 = 30 * 24 * 60 * 60;
 /// # Errors
 ///
 /// Returns an error when random bytes cannot be generated.
-#[allow(dead_code)] // used by rotate_account_session_token
 pub fn generate_session_token() -> Result<String> {
     generate_prefixed_token("mv-user-")
 }
@@ -91,27 +90,11 @@ pub async fn lookup_account_for_token(
     Ok(Some(account_id))
 }
 
-/// True when the account already has a session token row.
-///
-/// # Errors
-///
-/// Returns an error when the count query fails.
-#[allow(dead_code)]
-pub async fn account_has_session_token(conn: &mut AnyConnection, account_id: &str) -> Result<bool> {
-    let n: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM account_session_tokens WHERE account_id = $1")
-            .bind(account_id)
-            .fetch_one(&mut *conn)
-            .await?;
-    Ok(n > 0)
-}
-
 /// Create or replace the account's session token hash; returns plaintext once.
 ///
 /// # Errors
 ///
 /// Returns an error when a token cannot be generated or the write fails.
-#[allow(dead_code)]
 pub async fn rotate_account_session_token(
     conn: &mut AnyConnection,
     account_id: &str,

@@ -45,11 +45,6 @@ pub struct ServerConfig {
     /// (under Cloudflare Free/Pro ~100 MB). Must be ≤ `asset_max_bytes`.
     #[serde(default = "default_asset_part_size")]
     pub asset_part_size: usize,
-    /// Attachments at or above this size historically skipped SHA-256 at upload
-    /// completion. Multipart completion always checks fingerprints now; this field
-    /// remains for config compatibility.
-    #[serde(default = "default_asset_hash_threshold_bytes")]
-    pub asset_hash_threshold_bytes: u64,
     /// Cross-Origin Resource Sharing (CORS) origins allowed to call this API,
     /// on top of the packaged desktop app's own origins, which are always
     /// allowed. CORS is the browser rule that decides which other websites may
@@ -76,11 +71,6 @@ fn default_asset_max_bytes() -> u64 {
 /// serde default for `[server] asset_part_size` (64 MiB).
 fn default_asset_part_size() -> usize {
     64 * 1024 * 1024
-}
-
-/// serde default for `[server] asset_hash_threshold_bytes` (20 MiB).
-fn default_asset_hash_threshold_bytes() -> u64 {
-    20 * 1024 * 1024
 }
 
 /// serde default for `[server] openapi_ui`.
