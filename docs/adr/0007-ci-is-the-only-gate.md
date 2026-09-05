@@ -38,8 +38,10 @@ deadlocks every pull request that misses the filter, exactly like
 `paths-ignore`. `docs.yml` keeps the full build with rustdoc and the Pages
 deploy, on push to `main` only.
 
-On a `v*` tag the `docker` and `release` jobs depend on every job in `ci.yml`.
-Nothing ships unless everything is green.
+On a `v*` tag the `docker` and `release` jobs depend on every job in `ci.yml`,
+and `github-release` depends on both of them, because its notes promise the
+Docker image as well as the installers. Nothing ships unless everything is
+green.
 
 ## Why
 
