@@ -132,11 +132,7 @@ fn ingest_chat(
     let group = is_group_jid(jid);
     let chat_id = chat_id_from_jid(jid);
     let group_title = if group {
-        chat.name
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
+        chat.name.as_deref().and_then(message_ir::nonempty)
     } else {
         None
     };
@@ -316,7 +312,7 @@ fn resolve_media_file(
     let mut candidates: Vec<PathBuf> = Vec::new();
     if hint.is_absolute() {
         candidates.push(hint.to_path_buf());
-    } else if let Some(base) = media_base.map(str::trim).filter(|s| !s.is_empty()) {
+    } else if let Some(base) = media_base.and_then(message_ir::trimmed) {
         let base_path = Path::new(base);
         if base_path.is_absolute() {
             candidates.push(base_path.join(hint));
@@ -341,7 +337,7 @@ fn resolve_media_file(
 /// Allowed roots for media path checks (search roots plus an absolute `media_base`).
 fn allowed_media_roots(media_base: Option<&str>, media_search_roots: &[PathBuf]) -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = media_search_roots.to_vec();
-    if let Some(base) = media_base.map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(base) = media_base.and_then(message_ir::trimmed) {
         let base_path = Path::new(base);
         if base_path.is_absolute() {
             roots.push(base_path.to_path_buf());

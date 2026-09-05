@@ -155,8 +155,7 @@ pub(crate) fn safe_rel(rel: &str) -> Result<()> {
 pub(crate) fn attachment_label(att: &message_ir::IrAttachment, index: usize) -> String {
     att.original_name
         .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
+        .and_then(message_ir::trimmed)
         .map_or_else(|| format!("attachment {index}"), str::to_string)
 }
 

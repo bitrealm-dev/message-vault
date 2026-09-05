@@ -287,7 +287,7 @@ impl Form {
             ApplePlatform::Auto => None,
             other => Some(other),
         };
-        let inputs = non_empty(self.db_path.trim())
+        let inputs = message_ir::trimmed(&self.db_path)
             .map(|p| vec![PathBuf::from(p)])
             .unwrap_or_default();
         ExporterConfig {
@@ -302,10 +302,10 @@ impl Form {
             resume: false,
             source: SourceConfig::Apple(AppleConfig {
                 platform,
-                attachment_root: non_empty(self.attachment_root.trim()).map(str::to_string),
+                attachment_root: message_ir::nonempty(&self.attachment_root),
                 copy_method,
                 apple_contacts: non_empty_path(&self.apple_contacts),
-                backup_password: non_empty(self.backup_password.trim()).map(str::to_string),
+                backup_password: message_ir::nonempty(&self.backup_password),
                 use_caller_id: true,
             }),
         }
@@ -347,7 +347,7 @@ impl Form {
             source: SourceConfig::Whatsapp(WhatsappConfig {
                 platform: Some(self.whatsapp_platform),
                 json: None,
-                key: non_empty(self.whatsapp_key.trim()).map(str::to_string),
+                key: message_ir::nonempty(&self.whatsapp_key),
                 backup: non_empty_path(&self.whatsapp_backup),
                 wa: non_empty_path(&self.whatsapp_wa),
                 media: non_empty_path(&self.whatsapp_media),
@@ -366,7 +366,7 @@ impl Form {
         let input = require_single_existing_path(&self.input, "Input", errors);
         required_text(&self.output, "Output", errors);
         let media = self.validate_media(errors);
-        let timezone = non_empty(self.timezone.trim()).map(str::to_string);
+        let timezone = message_ir::nonempty(&self.timezone);
         ExporterConfig {
             inputs: input.into_iter().collect(),
             output: PathBuf::from(self.output.trim()),
@@ -605,35 +605,20 @@ fn validate_obfuscate_seed(seed: &str, errors: &mut Vec<String>) -> Option<Strin
 
 /// Non-empty trimmed lines from a multiline text field.
 fn lines(value: &str) -> Vec<&str> {
-    value
-        .lines()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .collect()
+    value.lines().filter_map(message_ir::trimmed).collect()
 }
 
 /// Non-empty tokens split on commas or whitespace.
 fn values(value: &str) -> Vec<&str> {
     value
         .split(['\n', ',', ';'])
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+        .filter_map(message_ir::trimmed)
         .collect()
-}
-
-/// `Some(trimmed)` when the string is not blank.
-fn non_empty(value: &str) -> Option<&str> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed)
-    }
 }
 
 /// `Some(path)` when the string is not blank.
 fn non_empty_path(value: &str) -> Option<PathBuf> {
-    non_empty(value).map(PathBuf::from)
+    message_ir::trimmed(value).map(PathBuf::from)
 }
 
 #[cfg(test)]

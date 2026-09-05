@@ -461,7 +461,7 @@ pub(crate) fn balloon_summary(app: &Value, fallback_text: Option<&str>) -> Strin
     {
         return t.to_string();
     }
-    if let Some(t) = fallback_text.map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(t) = fallback_text.and_then(message_ir::trimmed) {
         return t.to_string();
     }
     match app.get("kind").and_then(|v| v.as_str()) {

@@ -762,7 +762,7 @@ pub(crate) async fn resolve_import_account(
     query_account: Option<&str>,
     pool: &sqlx::AnyPool,
 ) -> Result<String, ApiError> {
-    let query = nonempty_query_account(query_account);
+    let query = query_account.and_then(message_ir::trimmed);
     if let Some(q) = query {
         let resolved = resolve_account_ref_async(pool, q).await?;
         if resolved != auth.account_id {
@@ -772,17 +772,6 @@ pub(crate) async fn resolve_import_account(
         }
     }
     Ok(auth.account_id.clone())
-}
-
-/// The `account` query value trimmed, or `None` when blank.
-pub(crate) fn nonempty_query_account(value: Option<&str>) -> Option<&str> {
-    let raw = value?;
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed)
-    }
 }
 
 /// The media type from `Content-Type` without its parameters.

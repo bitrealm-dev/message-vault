@@ -15,7 +15,7 @@ use sqlx::{AnyConnection, AnyPool};
 
 use crate::db::{account_profile, api_tokens, schema, session_tokens};
 use crate::dedupe;
-use crate::server::{ApiError, AppState, AuthIdentity, FullAccess, nonempty_query_account};
+use crate::server::{ApiError, AppState, AuthIdentity, FullAccess};
 
 /// Max password bytes accepted before hashing (registration / login / change).
 const MAX_PASSWORD_BYTES: usize = 1024;
@@ -209,17 +209,6 @@ pub(crate) fn is_valid_username(s: &str) -> bool {
         .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
 }
 
-/// The value trimmed and owned, or `None` when blank.
-fn nonempty_trimmed(value: Option<&str>) -> Option<String> {
-    let raw = value?;
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
 #[derive(Debug, Deserialize)]
 pub(crate) struct AuthCheckQuery {
     #[serde(default)]
@@ -260,7 +249,7 @@ pub(crate) async fn auth_check(
     let account_id = auth.account_id;
     let username = load_username(&state.db, &account_id).await?;
 
-    if let Some(q) = nonempty_query_account(query.account.as_deref()) {
+    if let Some(q) = query.account.as_deref().and_then(message_ir::trimmed) {
         let resolved = lookup_or_resolve_query(&state.db, q).await?;
         let matches = match resolved {
             Some(resolved) => resolved == account_id,
@@ -345,8 +334,8 @@ pub async fn register_handler(
         Some(hash_password(&password_plain)?)
     };
 
-    let preferred_name = nonempty_trimmed(req.preferred_name.as_deref());
-    let phone = nonempty_trimmed(req.phone.as_deref());
+    let preferred_name = req.preferred_name.as_deref().and_then(message_ir::nonempty);
+    let phone = req.phone.as_deref().and_then(message_ir::nonempty);
 
     let account_id = uuid::Uuid::new_v4().to_string();
 

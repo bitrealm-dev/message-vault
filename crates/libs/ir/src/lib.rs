@@ -640,7 +640,7 @@ pub fn conversation_stem(
         return with_suffix(&stem, suffix);
     }
 
-    if let Some(title) = group_title.map(str::trim).filter(|t| !t.is_empty()) {
+    if let Some(title) = group_title.and_then(trimmed) {
         let stem = sanitize_stem(title);
         if !stem.is_empty() && !stem.chars().all(|c| c == '_') {
             return with_suffix(&stem, suffix);
@@ -772,14 +772,16 @@ pub fn file_sha256(path: &std::path::Path) -> std::io::Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
+/// `s` trimmed, or `None` when blank. The one place "blank means absent"
+/// is spelled out; pass it to `Option::and_then` for optional fields.
+pub fn trimmed(s: &str) -> Option<&str> {
+    let t = s.trim();
+    if t.is_empty() { None } else { Some(t) }
+}
+
 /// Trimmed owned copy of `s`, or `None` when blank.
 pub fn nonempty(s: &str) -> Option<String> {
-    let t = s.trim();
-    if t.is_empty() {
-        None
-    } else {
-        Some(t.to_string())
-    }
+    trimmed(s).map(str::to_string)
 }
 
 /// Owner identity for outgoing rows: handle + display (`"Me"` if handle set but name missing).

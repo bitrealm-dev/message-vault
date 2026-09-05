@@ -61,7 +61,7 @@ impl DateRange {
         end: Option<&str>,
         tz_name: Option<&str>,
     ) -> Result<Self> {
-        match tz_name.map(str::trim).filter(|s| !s.is_empty()) {
+        match tz_name.and_then(message_ir::trimmed) {
             None => Self::parse(start, end),
             Some(name) => {
                 let offset = parse_utc_offset(name)?;
@@ -76,11 +76,11 @@ impl DateRange {
         start: Option<&str>,
         end: Option<&str>,
     ) -> Result<Self> {
-        let start_secs = match start.map(str::trim).filter(|s| !s.is_empty()) {
+        let start_secs = match start.and_then(message_ir::trimmed) {
             None => None,
             Some(s) => Some(midnight_secs(parse_ymd(s)?)?),
         };
-        let end_secs = match end.map(str::trim).filter(|s| !s.is_empty()) {
+        let end_secs = match end.and_then(message_ir::trimmed) {
             None => None,
             Some(s) => Some(midnight_secs(parse_ymd(s)?)?),
         };

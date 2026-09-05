@@ -102,10 +102,7 @@ pub async fn imessage_backup_identities(
     backup_password: Option<String>,
 ) -> Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let password = backup_password
-            .as_deref()
-            .map(str::trim)
-            .filter(|p| !p.is_empty());
+        let password = backup_password.as_deref().and_then(message_ir::trimmed);
         imessage_ir_exporter::backup_identities(Path::new(path.trim()), ios, password)
             .map_err(|e| format!("{e:#}"))
     })

@@ -292,18 +292,14 @@ pub async fn list_contacts(
                 let handles = handles_blob
                     .map(|s| {
                         s.split('\u{1f}')
-                            .map(str::trim)
-                            .filter(|v| !v.is_empty())
-                            .map(str::to_string)
+                            .filter_map(message_ir::nonempty)
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
                 let mut groups = groups_blob
                     .map(|s| {
                         s.split('\u{1f}')
-                            .map(str::trim)
-                            .filter(|v| !v.is_empty())
-                            .map(str::to_string)
+                            .filter_map(message_ir::nonempty)
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
@@ -832,7 +828,7 @@ async fn find_contact_handle_id(
          WHERE ch.account_id = $1 AND ch.contact_id = $2
            AND (h.raw = $3 OR h.normalized = $3)",
     );
-    let id = if let Some(svc) = service.map(str::trim).filter(|s| !s.is_empty()) {
+    let id = if let Some(svc) = service.and_then(message_ir::trimmed) {
         sql.push_str(" AND h.service = $4 LIMIT 1");
         let platform = message_ir::HandleService::parse(svc);
         sqlx::query_scalar::<_, i64>(&sql)
@@ -1028,12 +1024,7 @@ pub async fn mutate_contact(
         };
         let new_id = ensure_handle_row(conn, account_id, next, upd.service.as_deref()).await?;
         if old_id == new_id {
-            if let Some(svc) = upd
-                .service
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
+            if let Some(svc) = upd.service.as_deref().and_then(message_ir::trimmed) {
                 sqlx::query("UPDATE handles SET service = $1 WHERE id = $2")
                     .bind(svc)
                     .bind(new_id)

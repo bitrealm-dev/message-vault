@@ -86,8 +86,7 @@ pub fn compute_content_key(
         .map(|s| s.to_string())
         .unwrap_or_else(|| {
             timestamp_utc
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
+                .and_then(message_ir::trimmed)
                 .unwrap_or(timestamp)
                 .to_string()
         });
@@ -177,8 +176,7 @@ fn hash_content_keys(
 /// Unix seconds from `timestamp_utc`, falling back to the local `timestamp`.
 fn resolve_utc_secs(timestamp_utc: Option<&str>, timestamp: &str) -> Option<i64> {
     timestamp_utc
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
+        .and_then(message_ir::trimmed)
         .and_then(parse_rfc3339_utc_secs)
         .or_else(|| parse_rfc3339_utc_secs(timestamp.trim()))
 }

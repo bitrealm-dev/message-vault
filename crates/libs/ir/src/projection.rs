@@ -281,12 +281,7 @@ pub fn display_names_for_handles(
     for msg in &convo.messages {
         if !msg.sender_handle.is_empty() {
             let handle = normalize_handle(&msg.sender_handle);
-            if let Some(name) = msg
-                .sender_display_name
-                .as_deref()
-                .map(str::trim)
-                .filter(|n| !n.is_empty())
-            {
+            if let Some(name) = msg.sender_display_name.as_deref().and_then(crate::trimmed) {
                 names.entry(handle).or_insert_with(|| name.to_string());
             }
         }

@@ -464,8 +464,8 @@ fn run_media_post_pass(
             options.media,
             media.processed,
             media.skipped,
-            human_bytes(media.bytes_before),
-            human_bytes(media.bytes_after)
+            media::format_bytes(media.bytes_before),
+            media::format_bytes(media.bytes_after)
         ),
     );
     Ok(media)
@@ -507,26 +507,9 @@ fn headroom_shortfall(needed: u64, available: u64) -> Option<String> {
     }
     Some(format!(
         "Not enough space on the staging disk: this backup needs about {}, and {} is free.",
-        human_bytes(required),
-        human_bytes(available)
+        media::format_bytes(required),
+        media::format_bytes(available)
     ))
-}
-
-/// A byte count as KiB, MiB, or GiB with one decimal.
-fn human_bytes(bytes: u64) -> String {
-    const KIB: f64 = 1024.0;
-    const MIB: f64 = KIB * 1024.0;
-    const GIB: f64 = MIB * 1024.0;
-    let n = bytes as f64;
-    if n >= GIB {
-        format!("{:.1} GiB", n / GIB)
-    } else if n >= MIB {
-        format!("{:.1} MiB", n / MIB)
-    } else if n >= KIB {
-        format!("{:.1} KiB", n / KIB)
-    } else {
-        format!("{bytes} B")
-    }
 }
 
 /// Log that the write queue is starting on `units` conversations.
@@ -1058,7 +1041,7 @@ mod tests {
         assert_eq!(headroom_shortfall(1024, 10 * 1024 * 1024 * 1024), None);
         let msg = headroom_shortfall(2 * 1024 * 1024 * 1024, 1024).unwrap();
         assert!(msg.contains("free"), "{msg}");
-        assert!(msg.contains("GiB"), "{msg}");
+        assert!(msg.contains("GB"), "{msg}");
     }
 
     #[test]

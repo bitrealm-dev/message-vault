@@ -305,8 +305,7 @@ fn login(cfg: &VaultPushConfig, out: &mut Reporter<'_, '_>) -> Result<Session> {
     let username = auth
         .username
         .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
+        .and_then(message_ir::trimmed)
         .unwrap_or(auth.account_id.as_str())
         .to_string();
     out.log(&format!(

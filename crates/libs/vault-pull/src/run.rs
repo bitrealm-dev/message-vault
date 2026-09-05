@@ -377,7 +377,7 @@ impl<'a> Pull<'a> {
                 "Assets: {} downloaded, {} skipped ({} total bytes)",
                 counts.downloaded,
                 counts.skipped,
-                format_bytes_human(stats.bytes)
+                media::format_bytes(stats.bytes)
             )),
         );
         Ok(counts)
@@ -446,19 +446,13 @@ impl<'a> Pull<'a> {
 /// vault stores one blob per fingerprint, so later mentions are the same file.
 fn note_asset_refs(msg: &Message, assets: &mut HashMap<String, (String, String)>) {
     for att in &msg.attachments {
-        let Some(sha) = att
-            .sha256
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        else {
+        let Some(sha) = att.sha256.as_deref().and_then(message_ir::trimmed) else {
             continue;
         };
         let rel = att
             .path
             .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
+            .and_then(message_ir::trimmed)
             .map(|p| p.trim_start_matches('/').to_string())
             .unwrap_or_else(|| format!("attachments/{sha}"));
         assets
@@ -582,19 +576,6 @@ fn download_assets_parallel(args: DownloadAssetsParallelArgs<'_>) -> Result<Asse
         }
     }
     Ok(stats)
-}
-
-/// Format a byte count as GB, MB, KB, or B with one decimal place when scaled.
-fn format_bytes_human(bytes: u64) -> String {
-    if bytes >= 1_000_000_000 {
-        format!("{:.1} GB", bytes as f64 / 1_000_000_000.0)
-    } else if bytes >= 1_000_000 {
-        format!("{:.1} MB", bytes as f64 / 1_000_000.0)
-    } else if bytes >= 1_000 {
-        format!("{:.1} KB", bytes as f64 / 1_000.0)
-    } else {
-        format!("{bytes} B")
-    }
 }
 
 /// Write one conversation as a JSON Lines file (header, then one message per line).

@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use message_ir::{HandleService, HandleType};
+use message_ir::{HandleService, HandleType, nonempty, trimmed};
 use sqlx::AnyConnection;
 use sqlx::Row;
 
@@ -31,28 +31,6 @@ struct PreparedAttachment {
     stored: Option<StoredAsset>,
 }
 
-/// The path trimmed, or `None` when blank.
-fn nonempty_rel(path: &Option<String>) -> Option<&str> {
-    let raw = path.as_deref()?;
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed)
-    }
-}
-
-/// The value trimmed, or `None` when blank.
-pub(super) fn nonempty_str(value: Option<&str>) -> Option<&str> {
-    let raw = value?;
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed)
-    }
-}
-
 /// Size on disk of a stored blob, or `None` when it is not there.
 fn stored_size_bytes(assets_dir: &Path, assets_path: Option<&str>) -> Option<i64> {
     let rel = assets_path?;
@@ -72,7 +50,7 @@ fn try_store_converted(
     if !matches!(media, MediaMode::Convert | MediaMode::Compress) {
         return Ok(None);
     }
-    let Some(rel) = nonempty_rel(&att.path) else {
+    let Some(rel) = att.path.as_deref().and_then(trimmed) else {
         return Ok(None);
     };
     let source = crate::config::resolve_under_root(export_dir, rel)?;
@@ -103,7 +81,7 @@ fn store_claimed_or_path(
     assets_dir: &Path,
     asset_stats: &mut AssetStats,
 ) -> Result<Option<StoredAsset>> {
-    if let Some(sha) = nonempty_rel(&att.sha256) {
+    if let Some(sha) = att.sha256.as_deref().and_then(trimmed) {
         if let Some(found) = assets::lookup_by_sha256(assets_dir, sha) {
             asset_stats.deduped += 1;
             return Ok(Some(StoredAsset {
@@ -111,7 +89,7 @@ fn store_claimed_or_path(
                 ..found
             }));
         }
-        if let Some(rel) = nonempty_rel(&att.path) {
+        if let Some(rel) = att.path.as_deref().and_then(trimmed) {
             let source = crate::config::resolve_under_root(export_dir, rel)?;
             return match assets::store_verified(
                 &source,
@@ -269,7 +247,7 @@ fn resolve_conversation_source(
     export_source: Option<&str>,
 ) -> Result<String> {
     if opts.source_from_jsonl {
-        let Some(source) = nonempty_str(export_source) else {
+        let Some(source) = export_source.and_then(trimmed) else {
             bail!(
                 "{}: conversation '{}' is missing export.source \
                  (required for CLI directory import)",
@@ -632,7 +610,7 @@ async fn insert_participant(
     if flagged {
         stats.phones_needing_review += 1;
     }
-    let backup_name = nonempty_str(name_alias.as_deref()).map(str::to_string);
+    let backup_name = name_alias.as_deref().and_then(nonempty);
     let contact_id = ensure_contact_for_handle(
         tx,
         &stmts.account_id,

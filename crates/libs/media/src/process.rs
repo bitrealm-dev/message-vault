@@ -151,8 +151,9 @@ fn attachments_dir_bytes(attachments: &Path) -> Result<u64> {
     Ok(total)
 }
 
-/// A byte count as KB, MB, or GB with one decimal.
-fn format_bytes(bytes: u64) -> String {
+/// A byte count as KB, MB, or GB with one decimal, for progress lines and
+/// reports. Decimal units: that is how people read a file size.
+pub fn format_bytes(bytes: u64) -> String {
     const KB: f64 = 1000.0;
     const MB: f64 = KB * 1000.0;
     const GB: f64 = MB * 1000.0;
