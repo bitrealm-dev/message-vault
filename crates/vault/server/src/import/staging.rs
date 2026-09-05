@@ -19,7 +19,7 @@ use crate::db::sql::{max_rows_for_bind_limit, values_tuples};
 use crate::import_media::{self, MediaMode};
 use crate::jsonl;
 use crate::models::{
-    AttachmentRecord, ConversationRecord, ExportRecord, MessageRecord, clean_body,
+    AttachmentRecord, ConversationRecord, ExportRecord, MessageRecord, TapbackRecord, clean_body,
 };
 
 use super::contact_name::{
@@ -720,6 +720,42 @@ async fn flush_staging_message_chunk(
     if chunk.is_empty() {
         return Ok(());
     }
+    let mut by_sort = insert_message_rows(tx, stmts, conversation_id, source, chunk).await?;
+
+    let mut att_rows = Vec::new();
+    let mut tap_rows = Vec::new();
+    for row in chunk {
+        // Consume the RETURNING id so a conflicted row (duplicate guid) is
+        // skipped instead of attaching children to another message.
+        let Some(message_id) = by_sort.remove(&row.sort_order) else {
+            stats.messages_deduped += 1;
+            continue;
+        };
+        stats.messages += 1;
+        att_rows.extend(
+            row.attachments
+                .iter()
+                .map(|prepared| PendingAttachmentRow::new(message_id, prepared, assets_dir)),
+        );
+        for tap in &row.msg.tapbacks {
+            tap_rows.push(tapback_row(tx, stmts, stats, message_id, row, tap).await?);
+        }
+    }
+
+    flush_attachment_chunks(tx, &att_rows, stats).await?;
+    flush_tapback_chunks(tx, &tap_rows, stats).await?;
+    Ok(())
+}
+
+/// Insert the chunk's message rows in one statement. Returns the new ids by
+/// sort order; a row the insert skipped (duplicate guid) has no entry.
+async fn insert_message_rows(
+    tx: &mut AnyConnection,
+    stmts: &StagingInserts,
+    conversation_id: i64,
+    source: &str,
+    chunk: &[PendingStagingMessage],
+) -> Result<HashMap<i64, i64>> {
     let sql = format!(
         "{INSERT_MESSAGE_PREFIX} {} {INSERT_MESSAGE_SUFFIX}",
         values_tuples(chunk.len(), MESSAGE_BIND_COLUMNS)
@@ -747,84 +783,82 @@ async fn flush_staging_message_chunk(
             .bind(stmts.import_id);
     }
     let returned = q.fetch_all(&mut *tx).await?;
-    let mut by_sort = HashMap::<i64, i64>::new();
+    let mut by_sort = HashMap::with_capacity(returned.len());
     for row in &returned {
         let id: i64 = row.try_get(0)?;
         let sort_order: i64 = row.try_get(1)?;
         by_sort.insert(sort_order, id);
     }
+    Ok(by_sort)
+}
 
-    let mut att_rows = Vec::new();
-    let mut tap_rows = Vec::new();
-    for row in chunk {
-        // Consume the RETURNING id so a conflicted row (duplicate guid) is
-        // skipped instead of attaching children to another message.
-        let message_id = by_sort.remove(&row.sort_order);
-        let Some(message_id) = message_id else {
-            stats.messages_deduped += 1;
-            continue;
+impl PendingAttachmentRow {
+    /// The row for one of a staged message's attachments: the stored blob's
+    /// digest, path, and type when the file was stored, the record's own
+    /// type and missing reason when it was not.
+    fn new(message_id: i64, prepared: &PreparedAttachment, assets_dir: &Path) -> Self {
+        let att = &prepared.record;
+        let (sha256, assets_path, mime_type) = match &prepared.stored {
+            Some(stored) => (
+                Some(stored.sha256.clone()),
+                Some(stored.assets_path.clone()),
+                stored.mime_type.clone().or_else(|| att.mime_type.clone()),
+            ),
+            None => (None, None, att.mime_type.clone()),
         };
-        stats.messages += 1;
-
-        for prepared in &row.attachments {
-            let att = &prepared.record;
-            let (sha256, assets_path, mime_type) = match &prepared.stored {
-                Some(stored) => (
-                    Some(stored.sha256.clone()),
-                    Some(stored.assets_path.clone()),
-                    stored.mime_type.clone().or_else(|| att.mime_type.clone()),
-                ),
-                None => (None, None, att.mime_type.clone()),
-            };
-            let size_bytes = stored_size_bytes(assets_dir, assets_path.as_deref())
-                .or_else(|| att.size_bytes.map(|n| n as i64));
-            let missing_reason = if sha256.is_none() {
-                att.missing_reason.clone()
-            } else {
-                None
-            };
-            att_rows.push(PendingAttachmentRow {
-                message_id,
-                path: att.path.clone(),
-                original_name: att.original_name.clone(),
-                mime_type,
-                is_sticker: att.is_sticker as i64,
-                transcription: att.transcription.clone(),
-                sha256,
-                assets_path,
-                size_bytes,
-                missing_reason,
-            });
-        }
-
-        for tap in &row.msg.tapbacks {
-            let sender_handle_id = resolve_incoming_sender_handle(
-                tx,
-                &mut stmts.handles,
-                &stmts.account_id,
-                IncomingSender {
-                    is_from_me: tap.is_from_me,
-                    address: tap.sender.as_deref(),
-                    handle_type: None,
-                    platform: &row.sender_platform,
-                },
-                stats,
-            )
-            .await?;
-            tap_rows.push(PendingTapbackRow {
-                message_id,
-                part_index: tap.part_index,
-                kind: tap.kind.clone(),
-                emoji: tap.emoji.clone(),
-                is_from_me: tap.is_from_me as i64,
-                sender_handle_id,
-            });
+        let size_bytes = stored_size_bytes(assets_dir, assets_path.as_deref())
+            .or_else(|| att.size_bytes.map(|n| n as i64));
+        let missing_reason = if sha256.is_none() {
+            att.missing_reason.clone()
+        } else {
+            None
+        };
+        Self {
+            message_id,
+            path: att.path.clone(),
+            original_name: att.original_name.clone(),
+            mime_type,
+            is_sticker: att.is_sticker as i64,
+            transcription: att.transcription.clone(),
+            sha256,
+            assets_path,
+            size_bytes,
+            missing_reason,
         }
     }
+}
 
-    flush_attachment_chunks(tx, &att_rows, stats).await?;
-    flush_tapback_chunks(tx, &tap_rows, stats).await?;
-    Ok(())
+/// The row for one tapback on a staged message, its sender resolved to a
+/// handle the way an incoming message's sender is.
+async fn tapback_row(
+    tx: &mut AnyConnection,
+    stmts: &mut StagingInserts,
+    stats: &mut ImportStats,
+    message_id: i64,
+    row: &PendingStagingMessage,
+    tap: &TapbackRecord,
+) -> Result<PendingTapbackRow> {
+    let sender_handle_id = resolve_incoming_sender_handle(
+        tx,
+        &mut stmts.handles,
+        &stmts.account_id,
+        IncomingSender {
+            is_from_me: tap.is_from_me,
+            address: tap.sender.as_deref(),
+            handle_type: None,
+            platform: &row.sender_platform,
+        },
+        stats,
+    )
+    .await?;
+    Ok(PendingTapbackRow {
+        message_id,
+        part_index: tap.part_index,
+        kind: tap.kind.clone(),
+        emoji: tap.emoji.clone(),
+        is_from_me: tap.is_from_me as i64,
+        sender_handle_id,
+    })
 }
 
 /// Bulk-insert attachment rows in chunks that fit the bind limit.

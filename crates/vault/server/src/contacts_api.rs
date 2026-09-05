@@ -337,7 +337,41 @@ pub async fn get_contact_detail(
     account_id: &str,
     contact_id: i64,
 ) -> Result<Option<ContactDetail>, ApiError> {
-    let name_and_modified: Option<(String, String)> = sqlx::query_as(&format!(
+    let Some((name, last_modified)) =
+        contact_name_and_modified(conn, account_id, contact_id).await?
+    else {
+        return Ok(None);
+    };
+    let handles = contact_handle_stats(conn, account_id, contact_id).await?;
+    let totals = contact_totals(conn, account_id, contact_id).await?;
+    let contact_groups = crate::named_membership::names_for_item(
+        crate::named_membership::group_spec(),
+        conn,
+        account_id,
+        contact_id,
+    )
+    .await?;
+
+    Ok(Some(ContactDetail {
+        id: contact_id,
+        name,
+        handles,
+        direct_conversations: totals.direct,
+        group_conversations: totals.groups,
+        total_messages: totals.messages,
+        last_modified,
+        groups: contact_groups,
+    }))
+}
+
+/// The contact's display name (`(unknown)` when blank) and last-modified
+/// stamp, or `None` when it is missing, another account's, or in the trash.
+async fn contact_name_and_modified(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    contact_id: i64,
+) -> Result<Option<(String, String)>, ApiError> {
+    Ok(sqlx::query_as(&format!(
         "SELECT COALESCE(NULLIF(trim(preferred_name), ''), '(unknown)'),
                 last_modified
          FROM contacts ct
@@ -348,13 +382,56 @@ pub async fn get_contact_detail(
     .bind(contact_id)
     .bind(account_id)
     .fetch_optional(&mut *conn)
-    .await?;
-    let Some((name, last_modified)) = name_and_modified else {
-        return Ok(None);
-    };
+    .await?)
+}
 
-    // One row per handle. Date range and message counts cover direct + group
-    // conversations that include the handle (excluding trashed conversations).
+/// One row of [`contact_handle_stats`]: handle, service, first and last
+/// timestamp, then direct and group conversation and message counts.
+type ContactHandleRow = (
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    i64,
+    i64,
+    i64,
+    i64,
+);
+
+impl From<ContactHandleRow> for ContactHandleInfo {
+    fn from(
+        (
+            handle,
+            service,
+            start_date,
+            end_date,
+            individual_conversations,
+            group_conversations,
+            individual_message_count,
+            group_message_count,
+        ): ContactHandleRow,
+    ) -> Self {
+        Self {
+            handle,
+            service,
+            start_date,
+            end_date,
+            individual_conversations: individual_conversations.max(0) as u64,
+            group_conversations: group_conversations.max(0) as u64,
+            individual_message_count: individual_message_count.max(0) as u64,
+            group_message_count: group_message_count.max(0) as u64,
+        }
+    }
+}
+
+/// One entry per linked handle, ordered by handle: the date range and the
+/// conversation and message counts over the direct and group conversations
+/// that include it, trashed conversations excluded.
+async fn contact_handle_stats(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    contact_id: i64,
+) -> Result<Vec<ContactHandleInfo>, ApiError> {
     let rows: Vec<ContactHandleRow> = sqlx::query_as(&format!(
         "SELECT h.raw,
                     NULLIF(trim(h.service), '') AS service,
@@ -383,34 +460,25 @@ pub async fn get_contact_detail(
     .bind(contact_id)
     .fetch_all(&mut *conn)
     .await?;
-    let handles = rows
-        .into_iter()
-        .map(
-            |(
-                handle,
-                service,
-                start_date,
-                end_date,
-                individual_conversations,
-                group_conversations,
-                individual_message_count,
-                group_message_count,
-            )| ContactHandleInfo {
-                handle,
-                service,
-                start_date,
-                end_date,
-                individual_conversations: individual_conversations.max(0) as u64,
-                group_conversations: group_conversations.max(0) as u64,
-                individual_message_count: individual_message_count.max(0) as u64,
-                group_message_count: group_message_count.max(0) as u64,
-            },
-        )
-        .collect();
+    Ok(rows.into_iter().map(ContactHandleInfo::from).collect())
+}
 
-    // Conversation + message stats across handles of this contact only.
-    // Do not GROUP BY the entire account messages table — that dominated drawer latency.
-    let (direct, groups, total): (i64, i64, i64) = sqlx::query_as(&format!(
+/// Conversation and message counts across every handle of one contact.
+struct ContactTotals {
+    direct: u64,
+    groups: u64,
+    messages: u64,
+}
+
+/// Counts over the conversations the contact is in, trashed ones excluded.
+/// Scoped to those conversations on purpose: grouping the whole account's
+/// messages table dominated drawer latency.
+async fn contact_totals(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    contact_id: i64,
+) -> Result<ContactTotals, ApiError> {
+    let (direct, groups, messages): (i64, i64, i64) = sqlx::query_as(&format!(
         "WITH involved AS (
                SELECT c.id, c.conversation_type
                FROM conversations c
@@ -431,37 +499,12 @@ pub async fn get_contact_detail(
     .bind(contact_id)
     .fetch_one(&mut *conn)
     .await?;
-
-    let contact_groups = crate::named_membership::names_for_item(
-        crate::named_membership::group_spec(),
-        conn,
-        account_id,
-        contact_id,
-    )
-    .await?;
-
-    Ok(Some(ContactDetail {
-        id: contact_id,
-        name,
-        handles,
-        direct_conversations: direct.max(0) as u64,
-        group_conversations: groups.max(0) as u64,
-        total_messages: total.max(0) as u64,
-        last_modified,
-        groups: contact_groups,
-    }))
+    Ok(ContactTotals {
+        direct: direct.max(0) as u64,
+        groups: groups.max(0) as u64,
+        messages: messages.max(0) as u64,
+    })
 }
-
-type ContactHandleRow = (
-    String,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    i64,
-    i64,
-    i64,
-    i64,
-);
 
 /// First/last seen and message counts for many contacts in one grouped query.
 ///
