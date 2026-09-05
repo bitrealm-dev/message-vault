@@ -965,6 +965,27 @@ export interface paths {
         patch: operations["message_tag_members_update"];
         trace?: never;
     };
+    "/v1/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Messages matching `q`, newest page by page, as the search language ranks
+         *     them: the same rows `GET /v1/export/messages` would return, behind a
+         *     signed-in session with the list defaults and the list's offset ceiling.
+         */
+        get: operations["messages_list_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/saved-searches": {
         parameters: {
             query?: never;
@@ -5498,6 +5519,56 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    messages_list_handler: {
+        parameters: {
+            query?: {
+                /** @description Search query in the Messages list's words; empty matches every message */
+                q?: string;
+                /** @description Page size, default 40, max 500 */
+                limit?: number;
+                /** @description Page offset, max 50000 */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Message"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -1,13 +1,12 @@
 import { useState } from "react";
+import { quote } from "../../lib/searchQuery";
 import type { Message } from "../../lib/types";
-import { listConversationMessages } from "../../lib/vaultApi";
+import { listConversationMessages, listMessages } from "../../lib/vaultApi";
 import { keys } from "../../lib/vaultKeys";
 import { useVaultQuery } from "../../lib/vaultQuery";
 
-/** Page size for full-conversation browsing. */
+/** Page size for the thread, whatever it is showing: all years, one year, or a find. */
 export const PAGE_SIZE = 50;
-/** Largest page the messages API will return in one request. */
-const YEAR_FETCH_LIMIT = 500;
 
 /** One page's worth of conversation messages, as the hook hands them to a screen. */
 type MessagesResult = { items: Message[]; total: number };
@@ -37,54 +36,64 @@ export function displaySourceLabel(source: string): string {
 }
 
 /**
- * Footer count line. A year filter loads that year in full, so it always shows
- * the whole range. Unfiltered browsing shows the current page window.
+ * Footer count line: the window of the page the person is on, named for what
+ * the thread is showing. Every view pages the same way; a year is no longer
+ * loaded in full (#323).
  */
-export function buildFooterLabel(activeYear: number | null, total: number, offset: number): string {
-  if (activeYear !== null) {
-    if (total === 0) return `${activeYear}: 0 of 0`;
-    return `${activeYear}: 1–${total} of ${total}`;
-  }
-  if (total === 0) return "Messages 0 of 0";
-  return `Messages ${offset + 1}–${Math.min(offset + PAGE_SIZE, total)} of ${total}`;
+export function buildFooterLabel(
+  activeYear: number | null,
+  total: number,
+  offset: number,
+  finding = false,
+): string {
+  const subject = finding ? "Matches" : activeYear === null ? "Messages" : `${activeYear}:`;
+  if (total === 0) return `${subject} 0 of 0`;
+  return `${subject} ${offset + 1}–${Math.min(offset + PAGE_SIZE, total)} of ${total}`;
 }
 
 /**
- * Load every message in one calendar year, paging until the server has no
- * more. Runs inside a query function so the whole year lands in one cache
- * entry — see issue #323: a year is not paged lazily.
+ * The search-language query a find in one conversation compiles to: the
+ * conversation by id, the active year when one is chosen, and the typed term
+ * as free text. Runs on `GET /v1/messages`, so it reaches every message in
+ * the conversation, not the page in hand (#313).
  */
-async function fetchYear(
+export function findQueryFor(
   conversationId: number,
-  year: number,
-  signal: AbortSignal,
-): Promise<MessagesResult> {
-  const items: Message[] = [];
-  let offset = 0;
-  let total = 0;
-  while (true) {
-    const page = await listConversationMessages(
-      conversationId,
-      { offset, limit: YEAR_FETCH_LIMIT, year },
-      { signal },
-    );
-    total = page.total;
-    items.push(...page.items);
-    offset += page.items.length;
-    if (page.items.length === 0 || offset >= total) break;
-  }
-  return { items, total };
+  activeYear: number | null,
+  term: string,
+): string {
+  const parts = [`in:#${conversationId}`];
+  if (activeYear !== null) parts.push(`date:${activeYear}`);
+  parts.push(quote(term.trim()));
+  return parts.join(" ");
 }
 
-/** Load messages for one conversation, either a page at a time or a whole year. */
+/**
+ * What a cache key says the thread is looking at: the list under
+ * `conversations` (messages or find) and the conversation id. Two keys with
+ * the same scope show the same kind of rows for the same thread, so the
+ * previous page may stand in while the next one loads; anything else (a new
+ * conversation, a find replacing the thread) must not.
+ */
+function threadScope(queryKey: readonly unknown[] | undefined): string | null {
+  if (!queryKey) return null;
+  const at = queryKey.indexOf("conversations");
+  if (at < 0) return null;
+  return `${String(queryKey[at + 1])}:${String(queryKey[at + 2])}`;
+}
+
+/**
+ * Load messages for one conversation a page at a time: the whole thread, one
+ * calendar year of it, or the messages matching the find box.
+ */
 export function useConversationMessages(conversationId: number) {
   /** `offset`, `activeYear`, `findTerm` and `activeMatch` are view state, not
    * server state — a screen's choice of what to look at, not anything the
    * vault owns. The messages themselves come from `useVaultQuery` below. */
   const [offset, setOffset] = useState(0);
-  /** `null` = all years (paged). Otherwise load every message in that calendar year. */
+  /** `null` = all years. Otherwise the thread (or the find) is narrowed to that calendar year. */
   const [activeYear, setActiveYear] = useState<number | null>(null);
-  const [findTerm, setFindTerm] = useState("");
+  const [findTerm, setFindTermState] = useState("");
   const [activeMatch, setActiveMatch] = useState(0);
 
   // A new conversation starts back at page one, with no year filter or find
@@ -96,21 +105,37 @@ export function useConversationMessages(conversationId: number) {
     setRenderedConversationId(conversationId);
     setOffset(0);
     setActiveYear(null);
-    setFindTerm("");
+    setFindTermState("");
     setActiveMatch(0);
   }
 
-  const keyParams =
-    activeYear !== null
-      ? { offset: 0, limit: YEAR_FETCH_LIMIT, year: activeYear }
-      : { offset, limit: PAGE_SIZE, year: null };
+  const finding = findTerm.trim().length > 0;
+  const findQuery = finding ? findQueryFor(conversationId, activeYear, findTerm) : "";
+
+  const key = finding
+    ? keys.conversations.find(conversationId, findQuery, offset, PAGE_SIZE)
+    : keys.conversations.messages(conversationId, { offset, limit: PAGE_SIZE, year: activeYear });
 
   const query = useVaultQuery<MessagesResult>(
-    keys.conversations.messages(conversationId, keyParams),
+    key,
     (signal) =>
-      activeYear !== null
-        ? fetchYear(conversationId, activeYear, signal)
-        : listConversationMessages(conversationId, { offset, limit: PAGE_SIZE }, { signal }),
+      finding
+        ? listMessages({ q: findQuery, offset, limit: PAGE_SIZE }, { signal })
+        : listConversationMessages(
+            conversationId,
+            activeYear !== null
+              ? { offset, limit: PAGE_SIZE, year: activeYear }
+              : { offset, limit: PAGE_SIZE },
+            { signal },
+          ),
+    {
+      // Turning a page keeps the current one on screen until the next lands,
+      // instead of flashing "0 of 0" and disabling both pager buttons
+      // (#326). Scoped to the same thread and the same kind of rows, so one
+      // conversation's page never stands in for another's.
+      placeholderData: (previous, previousQuery) =>
+        threadScope(previousQuery?.queryKey) === threadScope([...key]) ? previous : undefined,
+    },
   );
 
   const messages = query.data?.items ?? [];
@@ -118,6 +143,13 @@ export function useConversationMessages(conversationId: number) {
 
   const fetchConversationPage = (newOffset: number) => {
     setOffset(newOffset);
+    setActiveMatch(0);
+  };
+
+  const setFindTerm = (term: string) => {
+    setFindTermState(term);
+    setOffset(0);
+    setActiveMatch(0);
   };
 
   const selectAllYears = () => {
@@ -143,9 +175,12 @@ export function useConversationMessages(conversationId: number) {
     activeYear,
     findTerm,
     setFindTerm,
+    finding,
     activeMatch,
     setActiveMatch,
     loading: query.isLoading,
+    /** A cached page is being revalidated in the background. */
+    refreshing: query.isFetching && !query.isLoading,
     fetchConversationPage,
     selectAllYears,
     selectYear,

@@ -11,8 +11,8 @@ use crate::db::conversation_messages::{
     Message, conversation_join_sql, load_messages, messages_from_sql,
 };
 use crate::db::dialect::engine_of;
-use crate::db::engine::DbEngine;
 use crate::db::sql::{bind_all, renumber_placeholders};
+use crate::messages_api::{count_matching_messages, message_filter};
 use crate::server::{ApiError, AppState, ExportAccess, resolve_import_account};
 
 use crate::paging::{DEFAULT_EXPORT_LIMIT, Page, page_params};
@@ -54,41 +54,6 @@ pub struct ExportCountResponse {
     pub attachments: u64,
     /// Sum of known `size_bytes` for those unique fingerprints (unknown sizes omitted).
     pub total_bytes: u64,
-}
-
-/// Compile `query` into a WHERE fragment over the messages alias `m`.
-fn message_filter(
-    engine: DbEngine,
-    account_id: &str,
-    query: &str,
-    today: chrono::NaiveDate,
-) -> Result<crate::search::Filter, ApiError> {
-    Ok(crate::search::compile(crate::search::CompileRequest {
-        list: crate::search::ListKind::Messages,
-        query,
-        account_id,
-        engine,
-        today,
-    })?)
-}
-
-/// `COUNT(*)` of the messages a compiled filter matches.
-async fn count_matching_messages(
-    conn: &mut AnyConnection,
-    filter: &crate::search::Filter,
-) -> Result<u64, ApiError> {
-    let sql = format!(
-        "SELECT COUNT(*)
-         {messages_from_sql}
-         WHERE {where_sql}",
-        messages_from_sql = messages_from_sql(),
-        where_sql = filter.where_sql(),
-    );
-    let n: i64 = (&mut *conn)
-        .fetch_one(bind_all(&renumber_placeholders(&sql), filter.params()))
-        .await?
-        .try_get(0)?;
-    Ok(n.max(0) as u64)
 }
 
 /// Export messages matching a query in the search language, a page at a time.

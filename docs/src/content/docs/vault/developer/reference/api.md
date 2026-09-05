@@ -50,6 +50,10 @@ HTTP `mode` defaults to `append` (CLI `import` defaults to `replace`). HTTP `ded
 
 A file the vault cannot read comes back as a 400 whose `error` names the line, or the schema version the file has and the version the vault reads.
 
+## Messages across conversations
+
+`GET /v1/messages?q=` answers one row per message matching `q`, paged like every other list, behind a signed-in session. It is a read route: opening a conversation is `GET /v1/conversations/{id}/messages`, downloading is `GET /v1/export/messages`, and searching across messages is this. The thread's find box uses it with `in:#id` so a find reaches every message in the conversation, not the page the browser holds.
+
 ## Search operators (`q`)
 
 `q` is the same search language the website uses — see [Search](/vault/user/how-to/search/) for the full grammar: quoting, `none`/`any`, date and size ranges, `-` to exclude, `or` and parentheses, `avoc*` prefixes. Export compiles `q` against the Messages list, with the same compiler Contacts and Conversations search use elsewhere in the vault, full-text index included for free text. These are the words the Messages list has:

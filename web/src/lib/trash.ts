@@ -44,7 +44,12 @@ function useConversationTrashWrite(
     // messages. contacts.lists is also left alone: ContactSummary (name,
     // handles, groups) carries no conversation or message counts.
     onSettled: () =>
-      cache.invalidate(keys.conversations.lists, keys.trash.all, keys.contacts.details),
+      cache.invalidate(
+        keys.conversations.lists,
+        keys.conversations.finds,
+        keys.trash.all,
+        keys.contacts.details,
+      ),
   });
 }
 
