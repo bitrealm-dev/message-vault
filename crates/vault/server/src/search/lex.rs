@@ -84,135 +84,197 @@ pub(crate) fn tokenize(input: &str) -> Result<Vec<Token>, QueryError> {
             format!("The search is longer than {MAX_QUERY_BYTES} bytes."),
         ));
     }
-    let bytes = input.as_bytes();
-    let mut tokens = Vec::new();
-    let mut i = 0usize;
-    while i < bytes.len() {
-        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-            i += 1;
+    let mut lexer = Lexer {
+        input,
+        bytes: input.as_bytes(),
+        pos: 0,
+        tokens: Vec::new(),
+    };
+    while lexer.skip_whitespace() {
+        lexer.next_token()?;
+    }
+    Ok(lexer.tokens)
+}
+
+/// A cursor over the query bytes and the tokens read so far.
+struct Lexer<'a> {
+    input: &'a str,
+    bytes: &'a [u8],
+    pos: usize,
+    tokens: Vec<Token>,
+}
+
+impl Lexer<'_> {
+    /// Move past whitespace. False at the end of the input.
+    fn skip_whitespace(&mut self) -> bool {
+        while self
+            .bytes
+            .get(self.pos)
+            .is_some_and(u8::is_ascii_whitespace)
+        {
+            self.pos += 1;
         }
-        if i >= bytes.len() {
-            break;
+        self.pos < self.bytes.len()
+    }
+
+    fn peek(&self) -> Option<u8> {
+        self.bytes.get(self.pos).copied()
+    }
+
+    /// The index of the first byte at or after the cursor that `keep` rejects.
+    fn scan(&self, keep: impl Fn(u8) -> bool) -> usize {
+        let mut end = self.pos;
+        while self.bytes.get(end).is_some_and(|&b| keep(b)) {
+            end += 1;
         }
-        let start = i;
-        if bytes[i] == b'(' || bytes[i] == b')' {
-            let kind = if bytes[i] == b'(' {
-                TokenKind::LParen
-            } else {
-                TokenKind::RParen
-            };
-            tokens.push(Token {
-                kind,
-                span: start..i + 1,
-                negated: false,
-            });
-            i += 1;
-            continue;
-        }
-        let mut negated = false;
-        if bytes[i] == b'-' && i + 1 < bytes.len() && !is_bare_end(bytes[i + 1]) {
-            negated = true;
-            i += 1;
-        }
-        if i < bytes.len() && bytes[i] == b'(' {
-            // `-(a or b)`: the minus applies to the group.
-            tokens.push(Token {
-                kind: TokenKind::LParen,
-                span: start..i + 1,
-                negated,
-            });
-            i += 1;
-            continue;
-        }
-        if bytes[i] == b'"' {
-            let (text, next) = read_quoted(bytes, i + 1).ok_or_else(|| {
-                QueryError::new(
-                    QueryErrorKind::Unbalanced,
-                    i..bytes.len(),
-                    "A quote never closes.",
-                )
-            })?;
-            tokens.push(Token {
-                kind: TokenKind::Phrase(text),
-                span: start..next,
-                negated,
-            });
-            i = next;
-            continue;
-        }
-        // A bare run up to whitespace or a parenthesis, watching for `word:`.
-        let mut j = i;
-        while j < bytes.len() && !is_bare_end(bytes[j]) && bytes[j] != b':' {
-            j += 1;
-        }
-        let head = &input[i..j];
-        // `word:` is a field unless the value starts with `/`, so a pasted
-        // URL such as `http://x` stays a word.
-        let value_starts_with_slash = j + 1 < bytes.len() && bytes[j + 1] == b'/';
-        if j < bytes.len() && bytes[j] == b':' && is_field_word(head) && !value_starts_with_slash {
-            let word = head.to_ascii_lowercase();
-            let mut k = j + 1;
-            if k < bytes.len() && bytes[k] == b'"' {
-                let (value, next) = read_quoted(bytes, k + 1).ok_or_else(|| {
-                    QueryError::new(
-                        QueryErrorKind::Unbalanced,
-                        k..bytes.len(),
-                        "A quote never closes.",
-                    )
-                })?;
-                tokens.push(Token {
-                    kind: TokenKind::Field {
-                        word,
-                        value,
-                        quoted: true,
-                    },
-                    span: start..next,
-                    negated,
-                });
-                i = next;
-                continue;
-            }
-            while k < bytes.len() && !is_bare_end(bytes[k]) {
-                k += 1;
-            }
-            tokens.push(Token {
-                kind: TokenKind::Field {
-                    word,
-                    value: input[j + 1..k].to_string(),
-                    quoted: false,
-                },
-                span: start..k,
-                negated,
-            });
-            i = k;
-            continue;
-        }
-        // Not a field: take the whole bare run, colons included.
-        while j < bytes.len() && !is_bare_end(bytes[j]) {
-            j += 1;
-        }
-        let text = &input[i..j];
-        let lower = text.to_ascii_lowercase();
-        let kind = match lower.as_str() {
-            "or" if !negated => TokenKind::Or,
-            "and" if !negated => TokenKind::And,
-            "not" if !negated => TokenKind::Not,
-            _ => {
-                let (text, prefix) = match text.strip_suffix('*') {
-                    Some(t) if !t.is_empty() => (t.to_string(), true),
-                    _ => (text.to_string(), false),
-                };
-                TokenKind::Word { text, prefix }
-            }
-        };
-        tokens.push(Token {
+        end
+    }
+
+    /// Record a token spanning `start..end` and move the cursor past it.
+    fn push(&mut self, kind: TokenKind, start: usize, end: usize, negated: bool) {
+        self.tokens.push(Token {
             kind,
-            span: start..j,
+            span: start..end,
             negated,
         });
-        i = j;
+        self.pos = end;
     }
-    Ok(tokens)
+
+    /// Read one token; the cursor is on a non-whitespace byte.
+    fn next_token(&mut self) -> Result<(), QueryError> {
+        let start = self.pos;
+        match self.peek() {
+            Some(b'(') => {
+                self.push(TokenKind::LParen, start, start + 1, false);
+                return Ok(());
+            }
+            Some(b')') => {
+                self.push(TokenKind::RParen, start, start + 1, false);
+                return Ok(());
+            }
+            _ => {}
+        }
+        // A leading `-` negates the token after it, unless nothing follows it.
+        let negated = self.peek() == Some(b'-')
+            && self
+                .bytes
+                .get(self.pos + 1)
+                .is_some_and(|&b| !is_bare_end(b));
+        if negated {
+            self.pos += 1;
+        }
+        match self.peek() {
+            // `-(a or b)`: the minus applies to the group.
+            Some(b'(') => {
+                self.push(TokenKind::LParen, start, self.pos + 1, negated);
+                Ok(())
+            }
+            Some(b'"') => {
+                let (text, next) = self.quoted_after(self.pos)?;
+                self.push(TokenKind::Phrase(text), start, next, negated);
+                Ok(())
+            }
+            _ => self.read_bare(start, negated),
+        }
+    }
+
+    /// The quoted value whose opening quote is at `quote`, and the index just
+    /// past its closing quote.
+    ///
+    /// # Errors
+    ///
+    /// `Unbalanced` from the quote to the end when it never closes.
+    fn quoted_after(&self, quote: usize) -> Result<(String, usize), QueryError> {
+        read_quoted(self.bytes, quote + 1).ok_or_else(|| {
+            QueryError::new(
+                QueryErrorKind::Unbalanced,
+                quote..self.bytes.len(),
+                "A quote never closes.",
+            )
+        })
+    }
+
+    /// A bare run up to whitespace or a parenthesis: a `word:value` field when
+    /// the run before a colon is a field word, else an operator or a word.
+    fn read_bare(&mut self, start: usize, negated: bool) -> Result<(), QueryError> {
+        let input = self.input;
+        let head_end = self.scan(|b| !is_bare_end(b) && b != b':');
+        let head = &input[self.pos..head_end];
+        // `word:` is a field unless the value starts with `/`, so a pasted
+        // URL such as `http://x` stays a word.
+        let value_starts_with_slash = self.bytes.get(head_end + 1) == Some(&b'/');
+        if self.bytes.get(head_end) == Some(&b':')
+            && is_field_word(head)
+            && !value_starts_with_slash
+        {
+            return self.read_field(start, negated, head.to_ascii_lowercase(), head_end + 1);
+        }
+        // Not a field: take the whole bare run, colons included.
+        let end = self.scan(|b| !is_bare_end(b));
+        let kind = word_or_operator(&input[self.pos..end], negated);
+        self.push(kind, start, end, negated);
+        Ok(())
+    }
+
+    /// `word:value`, where the value is quoted or runs to whitespace.
+    fn read_field(
+        &mut self,
+        start: usize,
+        negated: bool,
+        word: String,
+        value_start: usize,
+    ) -> Result<(), QueryError> {
+        if self.bytes.get(value_start) == Some(&b'"') {
+            let (value, next) = self.quoted_after(value_start)?;
+            self.push(
+                TokenKind::Field {
+                    word,
+                    value,
+                    quoted: true,
+                },
+                start,
+                next,
+                negated,
+            );
+            return Ok(());
+        }
+        let mut end = value_start;
+        while self.bytes.get(end).is_some_and(|&b| !is_bare_end(b)) {
+            end += 1;
+        }
+        let value = self.input[value_start..end].to_string();
+        self.push(
+            TokenKind::Field {
+                word,
+                value,
+                quoted: false,
+            },
+            start,
+            end,
+            negated,
+        );
+        Ok(())
+    }
+}
+
+/// `or`, `and`, and `not` are operators unless negated (`-or` is a word);
+/// anything else is a word, with a trailing `*` marking a prefix.
+fn word_or_operator(text: &str, negated: bool) -> TokenKind {
+    match text.to_ascii_lowercase().as_str() {
+        "or" if !negated => TokenKind::Or,
+        "and" if !negated => TokenKind::And,
+        "not" if !negated => TokenKind::Not,
+        _ => match text.strip_suffix('*') {
+            Some(stem) if !stem.is_empty() => TokenKind::Word {
+                text: stem.to_string(),
+                prefix: true,
+            },
+            _ => TokenKind::Word {
+                text: text.to_string(),
+                prefix: false,
+            },
+        },
+    }
 }
 
 #[cfg(test)]
