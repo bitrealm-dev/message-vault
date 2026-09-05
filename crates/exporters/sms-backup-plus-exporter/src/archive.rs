@@ -155,7 +155,9 @@ fn assign_archive_attachments(messages: &mut [ParsedMessage], att_queue: Vec<Att
 }
 
 /// Parse a consolidated `SMS archive …` EML into multiple messages.
-/// Parse an already-loaded archive EML (avoids a second disk read).
+///
+/// Returns the messages and how many dated blocks were dropped for an
+/// unreadable timestamp.
 pub(crate) fn parse_archive_eml_mail(
     path: &Path,
     mail: &mailparse::ParsedMail<'_>,
@@ -164,88 +166,64 @@ pub(crate) fn parse_archive_eml_mail(
     if !is_archive_eml(headers) {
         return Ok((Vec::new(), 0));
     }
-
     let caps = archive_subject_re()
         .captures(headers.subject.trim())
         .context("archive subject")?;
-    let export_name = clean_archive_contact_name(&caps[1]);
-    let phone_raw = phone_from_from_header(&headers.from);
-    // Empty peer phones are kept and written under the `unknown` chat stem.
-    let conv_number = if !phone_raw.is_empty() {
-        phone_raw.clone()
-    } else if export_name.starts_with('+') || export_name.chars().all(|c| c.is_ascii_digit()) {
-        sanitize_number(&export_name).unwrap_or_default()
-    } else {
-        String::new()
-    };
+    let peer = ArchivePeer::new(
+        clean_archive_contact_name(&caps[1]),
+        phone_from_from_header(&headers.from),
+    );
 
     let file_key = hex::encode(Sha256::digest(path.to_string_lossy().as_bytes()));
-    let file_key = &file_key[..12.min(file_key.len())];
-    let mime_atts = extract_attachments(mail, 0.0, Some(file_key));
-    let att_queue: Vec<AttachmentBlob> = mime_atts;
+    let attachments = extract_attachments(mail, 0.0, Some(&file_key[..12.min(file_key.len())]));
 
-    let body = extract_plain_text_body(mail);
-    let lines: Vec<&str> = body.lines().collect();
+    let mut reader = ArchiveReader::new(peer);
+    for line in extract_plain_text_body(mail).lines() {
+        reader.feed(line);
+    }
+    let (mut messages, skipped_invalid_date) = reader.finish();
+    assign_archive_attachments(&mut messages, attachments);
+    // Drop messages that ended up with neither text nor attachments.
+    messages.retain(|m| !m.text.trim().is_empty() || !m.attachments.is_empty());
+    Ok((messages, skipped_invalid_date))
+}
 
-    let mut messages = Vec::new();
-    let mut skipped_invalid_date = 0u64;
-    let mut current_date: Option<String> = None;
-    let mut current_sender: Option<String> = None;
-    let mut body_lines: Vec<String> = Vec::new();
-    let mut skipped_header = false;
-    let contact_name = export_name.clone();
+/// The other party of an archive: the name from the subject and the number
+/// from the `From:` header, or from the name when the name is itself a number.
+struct ArchivePeer {
+    name: String,
+    /// Empty when no number is known; such messages are written under the `unknown` chat stem.
+    number: String,
+}
 
-    let flush = |current_date: &mut Option<String>,
-                 current_sender: &mut Option<String>,
-                 body_lines: &mut Vec<String>,
-                 skipped_invalid_date: &mut u64,
-                 messages: &mut Vec<ParsedMessage>| {
-        let Some(date) = current_date.take() else {
-            body_lines.clear();
-            *current_sender = None;
-            return;
-        };
-        let Some(sender) = current_sender.take() else {
-            body_lines.clear();
-            return;
-        };
-        let text = body_lines
-            .iter()
-            .map(|l| l.trim_end())
-            .collect::<Vec<_>>()
-            .join("\n")
-            .trim()
-            .to_string();
-        body_lines.clear();
-        if text.is_empty() {
-            // May still receive an attachment in assign_archive_attachments.
-            // Keep empty-text placeholders so MMS-only lines can get media.
-        }
-        let Some(ts) = parse_archive_timestamp(&date) else {
-            *skipped_invalid_date += 1;
-            return;
-        };
-        let sender_key = sender.trim().to_ascii_lowercase();
-        let (is_from_me, sender_digits) = if sender_key == "me" {
-            (true, None)
-        } else if conv_number.is_empty() {
-            (false, None)
+impl ArchivePeer {
+    fn new(name: String, phone: String) -> Self {
+        let number = if !phone.is_empty() {
+            phone
+        } else if name.starts_with('+') || name.chars().all(|c| c.is_ascii_digit()) {
+            sanitize_number(&name).unwrap_or_default()
         } else {
-            (false, Some(conv_number.clone()))
+            String::new()
         };
-        let name = Some(contact_name.clone());
-        messages.push(ParsedMessage {
-            chat_key: conv_number.clone(),
+        Self { name, number }
+    }
+
+    /// A message in this peer's conversation holding one dated block's text.
+    fn message(&self, timestamp_secs: f64, is_from_me: bool, text: String) -> ParsedMessage {
+        let number = self.number.clone();
+        let name = Some(self.name.clone());
+        ParsedMessage {
+            chat_key: number.clone(),
             conversation_type: "individual".into(),
             group_title: None,
-            participant_digits: if conv_number.is_empty() {
+            participant_digits: if number.is_empty() {
                 vec![]
             } else {
-                vec![(conv_number.clone(), name.clone())]
+                vec![(number.clone(), name.clone())]
             },
-            timestamp_secs: ts,
+            timestamp_secs,
             is_from_me,
-            sender_digits,
+            sender_digits: (!is_from_me && !number.is_empty()).then(|| number.clone()),
             text,
             attachments: Vec::new(),
             name_alias: name,
@@ -253,69 +231,106 @@ pub(crate) fn parse_archive_eml_mail(
             source_kind: "archive".into(),
             android_type: String::new(),
             eml_path: String::new(),
-        });
-    };
-
-    for line in lines {
-        let stripped = line.trim();
-        if stripped.is_empty() {
-            if current_date.is_some() {
-                body_lines.push(String::new());
-            }
-            continue;
-        }
-
-        if !skipped_header {
-            if stripped.eq_ignore_ascii_case(&export_name)
-                || stripped.eq_ignore_ascii_case(&contact_name)
-            {
-                skipped_header = true;
-                continue;
-            }
-            if date_only_re().is_match(stripped) && current_date.is_none() {
-                continue;
-            }
-            skipped_header = true;
-        }
-
-        if let Some(caps) = message_header_re().captures(stripped) {
-            flush(
-                &mut current_date,
-                &mut current_sender,
-                &mut body_lines,
-                &mut skipped_invalid_date,
-                &mut messages,
-            );
-            current_date = Some(caps[1].to_string());
-            current_sender = Some(caps[2].trim().to_string());
-            continue;
-        }
-
-        // A date-only line is a separator only between messages (or in the
-        // preamble, handled above). Once a message body is open the line is
-        // content — a text that is just a date must not lose its text.
-        if date_only_re().is_match(stripped) && current_date.is_none() {
-            continue;
-        }
-
-        if current_date.is_some() {
-            body_lines.push(line.trim_end().to_string());
         }
     }
-    flush(
-        &mut current_date,
-        &mut current_sender,
-        &mut body_lines,
-        &mut skipped_invalid_date,
-        &mut messages,
-    );
+}
 
-    assign_archive_attachments(&mut messages, att_queue);
+/// The dated block being read: its header line's date and sender, then its body lines.
+struct OpenMessage {
+    date: String,
+    sender: String,
+    lines: Vec<String>,
+}
 
-    // Drop messages that ended up with neither text nor attachments.
-    messages.retain(|m| !m.text.trim().is_empty() || !m.attachments.is_empty());
+/// Line-by-line reader for an archive body. A `date - sender` line opens a
+/// message and the lines after it are its text until the next header. The
+/// export's own name and a bare date may precede the first header; both are
+/// skipped.
+struct ArchiveReader {
+    peer: ArchivePeer,
+    messages: Vec<ParsedMessage>,
+    skipped_invalid_date: u64,
+    open: Option<OpenMessage>,
+    /// Whether the preamble (the contact name, a bare date) has been passed.
+    past_preamble: bool,
+}
 
-    Ok((messages, skipped_invalid_date))
+impl ArchiveReader {
+    fn new(peer: ArchivePeer) -> Self {
+        Self {
+            peer,
+            messages: Vec::new(),
+            skipped_invalid_date: 0,
+            open: None,
+            past_preamble: false,
+        }
+    }
+
+    /// Read one line of the body.
+    fn feed(&mut self, line: &str) {
+        let stripped = line.trim();
+        if stripped.is_empty() {
+            if let Some(open) = &mut self.open {
+                open.lines.push(String::new());
+            }
+            return;
+        }
+        if !self.past_preamble {
+            if stripped.eq_ignore_ascii_case(&self.peer.name) {
+                self.past_preamble = true;
+                return;
+            }
+            if date_only_re().is_match(stripped) && self.open.is_none() {
+                return;
+            }
+            self.past_preamble = true;
+        }
+        if let Some(caps) = message_header_re().captures(stripped) {
+            self.flush();
+            self.open = Some(OpenMessage {
+                date: caps[1].to_string(),
+                sender: caps[2].trim().to_string(),
+                lines: Vec::new(),
+            });
+            return;
+        }
+        // Anything before the first header is preamble. Once a message body
+        // is open every line is content, a bare date included: a text that is
+        // just a date must not lose its text.
+        if let Some(open) = &mut self.open {
+            open.lines.push(line.trim_end().to_string());
+        }
+    }
+
+    /// Close the open block as a message. A block whose timestamp does not
+    /// parse is counted and dropped. An empty text is kept, because
+    /// [`assign_archive_attachments`] may still give the message media.
+    fn flush(&mut self) {
+        let Some(open) = self.open.take() else {
+            return;
+        };
+        let Some(timestamp_secs) = parse_archive_timestamp(&open.date) else {
+            self.skipped_invalid_date += 1;
+            return;
+        };
+        let text = open
+            .lines
+            .iter()
+            .map(|l| l.trim_end())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string();
+        let is_from_me = open.sender.trim().eq_ignore_ascii_case("me");
+        self.messages
+            .push(self.peer.message(timestamp_secs, is_from_me, text));
+    }
+
+    /// Close the last block and return the messages with the skipped count.
+    fn finish(mut self) -> (Vec<ParsedMessage>, u64) {
+        self.flush();
+        (self.messages, self.skipped_invalid_date)
+    }
 }
 
 #[cfg(test)]
