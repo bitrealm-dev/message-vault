@@ -30,7 +30,20 @@ product vocabulary.
 - Use `gh pr create` to open a pull request
 - Do not merge PRs yourself unless explicitly instructed
 - Use `gh pr view <number>` to check PR status before any operations
-- Include a clear description of what the PR does and why
+- **Write the description to one of the templates in `.github/PULL_REQUEST_TEMPLATE/`.**
+  They exist for whoever opens the pull request to fill in — an agent included —
+  not as options offered to a reviewer:
+  - `feature.md` for new behaviour: what it does and for whom, the key files
+    changed, HTTP API and schema changes, how to test it.
+  - `bugfix.md` for a fix: expected against actual, the root cause stated
+    separately from the fix, steps to reproduce before and verify after,
+    impact, and regression risk.
+  - `.github/pull_request_template.md` is the generic default applied
+    automatically. Use it for changes that are neither, such as documentation.
+
+  Fill the sections in rather than deleting them. Root Cause and Regression
+  Risk on a fix are the two that make it reviewable, so answer them plainly
+  instead of dropping them.
 
 ## Code Changes
 

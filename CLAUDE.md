@@ -69,7 +69,7 @@ After `web/` UI changes, verify in the browser with the Playwright MCP (`plugin-
 - **Version lockstep** (current `0.8.3`): `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `web/package.json`, `crates/vault/server/Cargo.toml` all carry the product version. Leave other crates at `0.1.0`; never bump `web-next` (`0.3.0`).
 - **Pushing a `v*` tag ships a release** — CI builds the Docker image and desktop installers and creates a GitHub Release. Never create or push tags unless asked.
 - **CI gates**: rustfmt, workspace build + test, Biome `ci` (lint and format drift), Vitest. Clippy is not gated — run `./scripts/lint-all.sh` locally.
-- **Git workflow**: never commit to `main`; use a branch or worktree. Verify PR state with `gh pr view` / `gh pr list` / `gh pr checks` before pushing — don't assume. Don't merge PRs unless explicitly asked.
+- **Git workflow**: never commit to `main`; use a branch or worktree. Verify PR state with `gh pr view` / `gh pr list` / `gh pr checks` before pushing — don't assume. Don't merge PRs unless explicitly asked. Write the PR description to the matching template in `.github/PULL_REQUEST_TEMPLATE/` (`feature.md` or `bugfix.md`) — those are for the author to fill in, not options offered to a reviewer. See AGENTS.md, "Submitting Work".
 - **Biome**: prefer a real fix over `biome-ignore`; prefix unused bindings with `_`.
 - **Tests** use committed fixtures in `tests/fixtures/`; never commit personal backups or real message data.
 
