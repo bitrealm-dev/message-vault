@@ -338,15 +338,7 @@ pub async fn set_membership(
     let mut changed = 0u64;
     for id in ids {
         let n = if enable {
-            let sql = format!(
-                "INSERT INTO {mt} ({mc}, {nc})
-                 SELECT id, $1 FROM {member_table} WHERE id = $2 AND account_id = $3
-                 ON CONFLICT DO NOTHING",
-                mt = spec.members_table,
-                mc = spec.member_column,
-                nc = spec.name_column,
-                member_table = spec.member_table,
-            );
+            let sql = insert_member_sql(spec);
             sqlx::query(&sql)
                 .bind(name_row_id)
                 .bind(id)
@@ -355,19 +347,7 @@ pub async fn set_membership(
                 .await?
                 .rows_affected()
         } else {
-            let sql = format!(
-                "DELETE FROM {mt}
-                 WHERE {mc} = $1 AND {nc} = $2
-                   AND EXISTS (
-                     SELECT 1 FROM {member_table}
-                     WHERE {member_table}.id = {mt}.{mc}
-                       AND {member_table}.account_id = $3
-                   )",
-                mt = spec.members_table,
-                mc = spec.member_column,
-                nc = spec.name_column,
-                member_table = spec.member_table,
-            );
+            let sql = delete_member_sql(spec);
             sqlx::query(&sql)
                 .bind(id)
                 .bind(name_row_id)
@@ -593,28 +573,8 @@ pub async fn patch_members(
         }
     }
 
-    let insert_sql = format!(
-        "INSERT INTO {mt} ({mc}, {nc})
-         SELECT id, $1 FROM {member_table} WHERE id = $2 AND account_id = $3
-         ON CONFLICT DO NOTHING",
-        mt = spec.members_table,
-        mc = spec.member_column,
-        nc = spec.name_column,
-        member_table = spec.member_table,
-    );
-    let delete_sql = format!(
-        "DELETE FROM {mt}
-         WHERE {mc} = $1 AND {nc} = $2
-           AND EXISTS (
-             SELECT 1 FROM {member_table}
-             WHERE {member_table}.id = {mt}.{mc}
-               AND {member_table}.account_id = $3
-           )",
-        mt = spec.members_table,
-        mc = spec.member_column,
-        nc = spec.name_column,
-        member_table = spec.member_table,
-    );
+    let insert_sql = insert_member_sql(spec);
+    let delete_sql = delete_member_sql(spec);
 
     let mut added = 0u64;
     for member in add {
@@ -716,6 +676,38 @@ pub async fn names_for_items(
         })
     })
     .await
+}
+
+/// Link one member to one name row, doing nothing when the link exists or
+/// the member is not the account's. Binds: name row id, member id, account.
+fn insert_member_sql(spec: &MembershipSpec) -> String {
+    format!(
+        "INSERT INTO {mt} ({mc}, {nc})
+         SELECT id, $1 FROM {member_table} WHERE id = $2 AND account_id = $3
+         ON CONFLICT DO NOTHING",
+        mt = spec.members_table,
+        mc = spec.member_column,
+        nc = spec.name_column,
+        member_table = spec.member_table,
+    )
+}
+
+/// Unlink one member from one name row when the member is the account's.
+/// Binds: member id, name row id, account.
+fn delete_member_sql(spec: &MembershipSpec) -> String {
+    format!(
+        "DELETE FROM {mt}
+         WHERE {mc} = $1 AND {nc} = $2
+           AND EXISTS (
+             SELECT 1 FROM {member_table}
+             WHERE {member_table}.id = {mt}.{mc}
+               AND {member_table}.account_id = $3
+           )",
+        mt = spec.members_table,
+        mc = spec.member_column,
+        nc = spec.name_column,
+        member_table = spec.member_table,
+    )
 }
 
 #[cfg(test)]

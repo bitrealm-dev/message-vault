@@ -208,15 +208,7 @@ pub async fn create_user_handler(
     // between them must not leave an account that exists without the admin
     // flag the caller asked for (mirrors auth::register_handler).
     let mut tx = conn.begin().await?;
-    if account_profile::lookup_account_ref(&mut tx, &username)
-        .await
-        .map_err(|e| ApiError::BadRequest(e.to_string()))?
-        .is_some()
-    {
-        return Err(ApiError::BadRequest(format!(
-            "username already taken: {username}"
-        )));
-    }
+    crate::auth::require_username_free(&mut tx, &username).await?;
 
     let account_id = uuid::Uuid::new_v4().to_string();
     account_profile::insert_account(&mut tx, &account_id, &username, Some(&password_hash), None)

@@ -32,6 +32,7 @@
 
 use std::collections::HashMap;
 
+use sqlx::any::AnyRow;
 use sqlx::{AnyConnection, Row};
 
 pub use vault_api_types::Participant;
@@ -100,17 +101,7 @@ async fn load_participant_rows(
                  ORDER BY p.conversation_id, p.id"
             )
         },
-        |row| {
-            Ok((
-                row.try_get::<i64, _>(0)?,
-                Participant {
-                    name: row.try_get(1)?,
-                    handle: row.try_get(2)?,
-                    service: row.try_get(3)?,
-                    contact_id: row.try_get(4)?,
-                },
-            ))
-        },
+        participant_row,
     )
     .await
 }
@@ -152,19 +143,23 @@ async fn load_from_chat_handle(
                  WHERE conv.id IN ({placeholders})"
             )
         },
-        |row| {
-            Ok((
-                row.try_get::<i64, _>(0)?,
-                Participant {
-                    name: row.try_get(1)?,
-                    handle: row.try_get(2)?,
-                    service: row.try_get(3)?,
-                    contact_id: row.try_get(4)?,
-                },
-            ))
-        },
+        participant_row,
     )
     .await
+}
+
+/// One row of either query above: the conversation id, then the participant
+/// as (name, handle, service, contact id).
+fn participant_row(row: &AnyRow) -> Result<(i64, Participant), sqlx::Error> {
+    Ok((
+        row.try_get::<i64, _>(0)?,
+        Participant {
+            name: row.try_get(1)?,
+            handle: row.try_get(2)?,
+            service: row.try_get(3)?,
+            contact_id: row.try_get(4)?,
+        },
+    ))
 }
 
 #[cfg(test)]

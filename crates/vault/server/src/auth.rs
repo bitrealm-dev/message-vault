@@ -300,6 +300,28 @@ async fn load_username(pool: &AnyPool, account_id: &str) -> Result<Option<String
 // Handlers
 // ---------------------------------------------------------------------------
 
+/// Refuse a username another account already has.
+///
+/// # Errors
+///
+/// A 400 naming the username when it is taken. A failed lookup is a 400 too,
+/// as it always was here.
+pub(crate) async fn require_username_free(
+    conn: &mut AnyConnection,
+    username: &str,
+) -> Result<(), ApiError> {
+    if account_profile::lookup_account_ref(conn, username)
+        .await
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?
+        .is_some()
+    {
+        return Err(ApiError::BadRequest(format!(
+            "username already taken: {username}"
+        )));
+    }
+    Ok(())
+}
+
 /// Create a local vault account and return its session token.
 #[utoipa::path(
     post,
@@ -342,15 +364,7 @@ pub async fn register_handler(
     let mut conn = state.db.acquire().await?;
     let mut tx = conn.begin().await?;
 
-    if account_profile::lookup_account_ref(&mut tx, &username)
-        .await
-        .map_err(|e| ApiError::BadRequest(e.to_string()))?
-        .is_some()
-    {
-        return Err(ApiError::BadRequest(format!(
-            "username already taken: {username}"
-        )));
-    }
+    require_username_free(&mut tx, &username).await?;
 
     let first_account = account_profile::vault_has_no_real_accounts(&mut tx).await?;
 

@@ -3,7 +3,6 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -188,60 +187,6 @@ fn reset_account_work_dir(data_dir: &Path) -> Result<tempfile::TempDir> {
                 data_dir.display()
             )
         })
-}
-
-/// Rename, or copy-then-remove when the paths sit on different mounts.
-fn rename_prepared_path(source: &Path, destination: &Path) -> Result<()> {
-    match fs::rename(source, destination) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
-            move_across_devices(source, destination).with_context(|| {
-                format!(
-                    "copy {} to {} after a cross-device rename",
-                    source.display(),
-                    destination.display()
-                )
-            })
-        }
-        Err(error) => Err(error)
-            .with_context(|| format!("rename {} to {}", source.display(), destination.display())),
-    }
-}
-
-/// Move a file or folder even when `fs::rename` cannot (different filesystems): copy, then remove the source.
-fn move_across_devices(source: &Path, destination: &Path) -> Result<()> {
-    if source.is_dir() {
-        copy_dir_recursive(source, destination)?;
-        fs::remove_dir_all(source)
-            .with_context(|| format!("remove copied directory {}", source.display()))?;
-    } else {
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("create parent {}", parent.display()))?;
-        }
-        fs::copy(source, destination)
-            .with_context(|| format!("copy {} to {}", source.display(), destination.display()))?;
-        fs::remove_file(source)
-            .with_context(|| format!("remove copied file {}", source.display()))?;
-    }
-    Ok(())
-}
-
-/// Copy a folder tree, creating `destination` as needed.
-fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
-    fs::create_dir_all(destination).with_context(|| format!("create {}", destination.display()))?;
-    for entry in fs::read_dir(source).with_context(|| format!("read {}", source.display()))? {
-        let entry = entry?;
-        let from = entry.path();
-        let to = destination.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy_dir_recursive(&from, &to)?;
-        } else {
-            fs::copy(&from, &to)
-                .with_context(|| format!("copy {} to {}", from.display(), to.display()))?;
-        }
-    }
-    Ok(())
 }
 
 /// Rebuild the demo vault from the bundle at `bundle` and write the active
@@ -704,7 +649,7 @@ struct ResetPaths<'a> {
 
 /// Swap the prepared database, account folder, and config into their active paths.
 async fn install_reset_state(paths: &ResetPaths<'_>) -> Result<()> {
-    install_reset_state_with(paths, rename_prepared_path).await
+    install_reset_state_with(paths, demo_seed::move_path).await
 }
 
 /// [`install_reset_state`] with the rename step injected, so tests can simulate a rename that fails midway.
