@@ -49,6 +49,7 @@ import {
 } from "../lib/whatsappImport";
 import BackupIdentityList from "./import/BackupIdentityList";
 import BackupIdentityStopScreen from "./import/BackupIdentityStopScreen";
+import { restoreFormFromSnapshot } from "./import/formSnapshot";
 import GateOneScreen from "./import/GateOneScreen";
 import GateTwoScreen from "./import/GateTwoScreen";
 import ImportFormFields from "./import/ImportFormFields";
@@ -56,14 +57,11 @@ import ImportProgressView from "./import/ImportProgressView";
 import ResumeImportPanel from "./import/ResumeImportPanel";
 import {
   checkSourceFingerprint,
+  type FolderCheck,
   type ResumeDecision,
   resumeDecisionFor,
 } from "./import/resumeDecision";
-import {
-  parseStoredStagingSummary,
-  restoreFormFromSnapshot,
-  useImportJob,
-} from "./import/useImportJob";
+import { parseStoredStagingSummary, useImportJob } from "./import/useImportJob";
 
 const DEFAULT_SOURCE = IMESSAGE_DEFAULT_METHOD;
 const PATH_PROBE_DEBOUNCE_MS = 200;
@@ -73,7 +71,7 @@ const PATH_PROBE_DEBOUNCE_MS = 200;
 const MAX_MATCH_IDENTIFIERS = 500;
 
 /** Nothing to decide -- the form renders. The one spelling of "no resume". */
-const NO_RESUME: ResumeDecision = { kind: "none", canResume: false, session: null };
+const NO_RESUME: ResumeDecision = { kind: "none", session: null };
 
 function mapPathStat(raw: { exists: boolean; isFile: boolean; isDirectory: boolean }): PathStat {
   return {
@@ -90,6 +88,21 @@ async function probePath(path: string): Promise<PathStat | null> {
     return mapPathStat(await invokePathStat(trimmed));
   } catch {
     return { exists: false, isFile: false, isDirectory: false };
+  }
+}
+
+/**
+ * Whether a session's staging folder is still on disk. A stat that fails
+ * outright is "unknown", not "missing": an IPC error says nothing about the
+ * folder, and reading it as gone would offer to discard staged work that
+ * may well still be there.
+ */
+async function stagingFolderCheck(stagingDir: string): Promise<FolderCheck> {
+  try {
+    const stat = await invokePathStat(stagingDir);
+    return stat.exists && stat.isDirectory ? "present" : "missing";
+  } catch {
+    return "unknown";
   }
 }
 
@@ -210,12 +223,13 @@ export default function ImportScreen() {
     void (async () => {
       try {
         const session = await getActiveImportSession();
-        const stat = session?.staging_dir ? await probePath(session.staging_dir) : null;
-        const folderExists = Boolean(stat?.exists && stat.isDirectory);
+        const folder = session?.staging_dir
+          ? await stagingFolderCheck(session.staging_dir)
+          : "missing";
         // Only a resume of the copy consults this; every later stage works
-        // from the staged folder rather than the backup.
-        // The full stat, not `probePath`'s narrowed one: the comparison
-        // needs the size and modified time.
+        // from the staged folder rather than the backup. The full stat, not
+        // `probePath`'s narrowed one: the comparison needs the size and
+        // modified time.
         const sourceStat = session?.source_fingerprint?.path
           ? await invokePathStat(session.source_fingerprint.path).catch(() => null)
           : null;
@@ -226,7 +240,7 @@ export default function ImportScreen() {
             resumeDecisionFor({
               session,
               deviceId: getDeviceId(),
-              folderExists,
+              folder,
               fingerprint: checkSourceFingerprint(session?.source_fingerprint ?? null, sourceStat),
             }),
           );
@@ -347,7 +361,7 @@ export default function ImportScreen() {
         // The staging folder is present -- the decision only reached here
         // because it is -- so folder_missing's copy would be false. This
         // kind exists solely for this screen to construct.
-        setResume({ kind: "settings_unreadable", canResume: false, session });
+        setResume({ kind: "settings_unreadable", session });
         return;
       }
       applyRestoredFormState(restoredForm);

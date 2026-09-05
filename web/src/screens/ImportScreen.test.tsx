@@ -39,9 +39,10 @@ const apiPostMock = vi.hoisted(() => vi.fn());
 const apiGetMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./import/useImportJob", async (importOriginal) => {
-  // restoreFormFromSnapshot is real: it's pure, already unit-tested on its
-  // own, and using it here exercises the same validation the screen relies
-  // on. Only useImportJob itself is replaced.
+  // Only useImportJob itself is replaced; parseStoredStagingSummary stays
+  // real. restoreFormFromSnapshot now lives in formSnapshot.ts, which is not
+  // mocked at all, so the screen runs the same validation it does in
+  // production.
   const actual = await importOriginal<typeof import("./import/useImportJob")>();
   return {
     ...actual,
@@ -293,6 +294,15 @@ describe("ImportScreen entering Import", () => {
     expect(await screen.findByTestId("resume-panel")).toBeInTheDocument();
     expect(screen.getByTestId("resume-kind")).toHaveTextContent("resume_push");
     expect(screen.queryByTestId("import-form")).not.toBeInTheDocument();
+  });
+
+  it("says the staging folder could not be checked, not that it is gone, when the stat fails", async () => {
+    getActiveImportSessionMock.mockResolvedValue(session({ stage: "pushing" }));
+    invokePathStatMock.mockRejectedValue(new Error("ipc down"));
+    renderWithVault(<ImportScreen />);
+
+    expect(await screen.findByTestId("resume-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("resume-kind")).toHaveTextContent("folder_unknown");
   });
 
   it("discards the session and drops through to the form", async () => {

@@ -7,6 +7,10 @@ export type ResumeDecision = {
     | "none"
     | "other_device"
     | "folder_missing"
+    // The staging folder was recorded but the stat of it failed, so whether
+    // it is there is not known. Distinct from folder_missing because an IPC
+    // error is not evidence the folder is gone.
+    | "folder_unknown"
     | "resume_push"
     // A session waiting at either approval gate: the summary is recomputed
     // fresh from the folder (decision 39) and shown again, nothing restored.
@@ -27,10 +31,11 @@ export type ResumeDecision = {
     // itself when restoreFormFromSnapshot rejects the snapshot at the point
     // of trying to resume or restart.
     | "settings_unreadable";
-  /** Whether staged work can be picked up rather than redone. */
-  canResume: boolean;
   session: ActiveImportSession | null;
 };
+
+/** Whether a session's staging folder is on disk, or that the check itself failed. */
+export type FolderCheck = "present" | "missing" | "unknown";
 
 /**
  * Decide what to show when Import opens and the vault reports a session.
@@ -46,35 +51,38 @@ export type ResumeDecision = {
 export function resumeDecisionFor(args: {
   session: ActiveImportSession | null;
   deviceId: string;
-  folderExists: boolean;
+  folder: FolderCheck;
   fingerprint: FingerprintCheck;
 }): ResumeDecision {
-  const { session, deviceId, folderExists, fingerprint } = args;
-  if (!session) return { kind: "none", canResume: false, session: null };
+  const { session, deviceId, folder, fingerprint } = args;
+  if (!session) return { kind: "none", session: null };
   if (session.device_id && session.device_id !== deviceId) {
-    return { kind: "other_device", canResume: false, session };
+    return { kind: "other_device", session };
   }
-  if (!session.staging_dir || !folderExists) {
-    return { kind: "folder_missing", canResume: false, session };
+  if (!session.staging_dir || folder === "missing") {
+    return { kind: "folder_missing", session };
+  }
+  if (folder === "unknown") {
+    return { kind: "folder_unknown", session };
   }
   if (session.stage === "pushing") {
-    return { kind: "resume_push", canResume: true, session };
+    return { kind: "resume_push", session };
   }
   if (session.stage === "awaiting_gate_1" || session.stage === "awaiting_gate_2") {
-    return { kind: "resume_gate", canResume: true, session };
+    return { kind: "resume_gate", session };
   }
   if (session.stage === "transcode") {
-    return { kind: "resume_media", canResume: true, session };
+    return { kind: "resume_media", session };
   }
   // Only the copy cares whether the backup still matches: every later stage
   // works from the staged folder, not from the source.
   if (session.stage === "write") {
     if (fingerprint === "mismatch" || fingerprint === "source_missing") {
-      return { kind: "source_changed", canResume: false, session };
+      return { kind: "source_changed", session };
     }
-    return { kind: "resume_write", canResume: true, session };
+    return { kind: "resume_write", session };
   }
-  return { kind: "restart", canResume: false, session };
+  return { kind: "restart", session };
 }
 
 /** How a session's stored backup fingerprint compares to the backup now. */
