@@ -72,9 +72,19 @@ jobs:
           {
             echo '## Coverage (Rust workspace)'
             echo
+            echo 'Function coverage is the number to chase. The full list of'
+            echo 'uncovered functions is in the artifact.'
+            echo
+            echo '```'
+            cat target/llvm-cov/functions.txt
+            echo '```'
+            echo
+            echo '<details><summary>Per-file table (regions, functions, lines)</summary>'
+            echo
             echo '```'
             cat target/llvm-cov/summary.txt
             echo '```'
+            echo '</details>'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload reports
@@ -85,4 +95,6 @@ jobs:
             target/llvm-cov/html
             target/llvm-cov/lcov.info
             target/llvm-cov/summary.txt
+            target/llvm-cov/functions.txt
+            target/llvm-cov/uncovered-functions.txt
           retention-days: 30
