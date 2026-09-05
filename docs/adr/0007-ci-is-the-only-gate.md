@@ -48,8 +48,10 @@ merge also did real work for nothing: a burst of twelve squash merges on
 each after a full `cargo doc`. `workflow_dispatch` stays for a docs-only
 correction that should not wait for the next tag.
 
-On a `v*` tag the `docker` and `release` jobs depend on every job in `ci.yml`.
-Nothing ships unless everything is green.
+On a `v*` tag the `docker` and `release` jobs depend on every job in `ci.yml`,
+and `github-release` depends on both of them, because its notes promise the
+Docker image as well as the installers. Nothing ships unless everything is
+green.
 
 ## Why
 

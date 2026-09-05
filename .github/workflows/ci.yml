@@ -476,10 +476,13 @@ jobs:
           if-no-files-found: error
 
   # ── Tag only: create GitHub Release with all artifacts ─────────────────
+  # The release notes tell people to `docker pull` the image, so the release
+  # waits for the image push as well as the installers. A failed push means
+  # no release; fix, delete the tag, and tag again.
   github-release:
     name: GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: release
+    needs: [release, docker]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
