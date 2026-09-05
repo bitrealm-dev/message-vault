@@ -47,6 +47,26 @@ Anyone re-proposing a command line should re-derive it from the audience, not
 from the observation that these crates are one `main.rs` away from being
 commands again. They are, and that is not the question.
 
+## Amendment: a helper process is not a command line
+
+`imessage-reader` (`crates/helpers/imessage-reader`) is a program, and this
+decision still holds. It exists for a licence reason and no other: it links
+`imessage-database` and `crabapple`, which are GPL-3.0-or-later, and the rest
+of the repository is under the Fair Core License, which the GPL does not let
+a single binary combine with. The desktop app therefore starts the reader as
+a separate process, writes one request on its stdin, and reads the messages
+back off its stdout (`crates/helpers/imessage-reader-protocol`). A process
+boundary is what keeps the GPL on its own side; a library boundary would not.
+The policy is `docs/agents/licences.md`.
+
+That program is not a command line in this decision's sense. Nobody types it:
+it takes one JSON line on stdin and speaks only to the app, the installer puts
+it beside the app and nowhere on `PATH`, and it appears on no documentation
+page as something to run. It is an implementation detail with a process
+around it. The audience question above — who would use a command, and for
+what — has the same answer it had: nobody yet, and when it changes the answer
+is one `message-vault` command, not a reader that happens to be executable.
+
 ## Consequences
 
 - `crates/cli/` no longer exists. `vault-push` and `vault-pull` live in
@@ -55,7 +75,9 @@ commands again. They are, and that is not the question.
   since the server's own page is the only one left to generate.
 - The exporter crates keep `run` as their entire public entry point. Adding a
   binary back to one of them is a decision about product surface, not a
-  convenience.
+  convenience. `imessage-reader` is the one program beside the server, and it
+  is not an exporter: it reads the database and the FCL exporter still does
+  the exporting.
 - The documentation pages for these commands were deleted without redirects.
   Before a stable release this project keeps no compatibility path — not for
   database schemas, not for stored vault data, and not for URLs — so those
