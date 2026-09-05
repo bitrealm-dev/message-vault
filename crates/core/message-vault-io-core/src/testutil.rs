@@ -1,17 +1,7 @@
 //! Shared scaffolding for exporter `convert_smoke` tests (behind `testutil`).
 
-use contacts::ContactsBook;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-
-/// An empty contacts CSV book in a temp dir (header-only, no rows).
-pub fn empty_contacts(dir: &tempfile::TempDir) -> ContactsBook {
-    let path = dir.path().join("contacts.csv");
-    let mut f = fs::File::create(&path).unwrap();
-    writeln!(f, "First Name,Last Name,Mobile Phone").unwrap();
-    ContactsBook::load_vcard_csv(&path).unwrap()
-}
 
 /// Sorted `.csv` paths under `root` (the smoke-test file collection block).
 pub fn csv_files(root: &Path) -> Vec<PathBuf> {

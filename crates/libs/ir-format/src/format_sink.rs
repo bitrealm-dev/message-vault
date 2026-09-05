@@ -243,9 +243,7 @@ pub fn write_documents_through_sink(
         written += 1;
         sink.write_document(doc)?;
         report.conversations += 1;
-        // `%` instead of `usize::is_multiple_of`: that method needs Rust 1.87.
-        #[allow(clippy::manual_is_multiple_of)]
-        if written % 100 == 0 || written == total {
+        if written.is_multiple_of(100) || written == total {
             emit_log(log, format!("  preparing {written}/{total}"));
             emit_progress(
                 progress,
@@ -392,7 +390,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let transforms = ExportTransforms {
             obfuscate: true,
-            obfuscate_seed: Some("01234567".into()),
+            obfuscate_seed: Some(
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+            ),
             ..ExportTransforms::none()
         };
         let mut sink = FormatSink::open(tmp.path(), OutputFormat::Csv, transforms).unwrap();

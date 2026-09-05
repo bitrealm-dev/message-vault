@@ -34,16 +34,6 @@ impl fmt::Display for PhoneRegion {
 }
 
 impl PhoneRegion {
-    /// Parse a CLI string (`usa`/`us`/`international`/`intl`, case-insensitive);
-    /// `None` for unknown input.
-    pub fn parse_cli(s: &str) -> Option<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "usa" | "us" => Some(Self::Usa),
-            "international" | "intl" => Some(Self::International),
-            _ => None,
-        }
-    }
-
     /// Region for a loader-side raw value: a `+`-prefixed value is already
     /// unambiguous E.164 (international rules apply); anything else is treated
     /// as a US national number (this crate's home region).

@@ -47,7 +47,6 @@ pub struct ParticipantRecord {
     /// Display-name alias, when the export supplied one.
     pub name_alias: Option<String>,
     /// Handle type (phone, email, or username).
-    #[allow(dead_code)] // consumed by import-time handle resolution
     pub handle_type: Option<HandleType>,
 }
 
@@ -65,7 +64,6 @@ pub struct MessageRecord {
     /// Sender handle for incoming messages.
     pub sender: Option<String>,
     /// Sender handle type (phone, email, or username).
-    #[allow(dead_code)] // sender identity for import-time handle resolution
     pub sender_handle_type: Option<HandleType>,
     /// Per-message transport (`sms` / `imessage` / `rcs` / `whatsapp` / …).
     pub service: Option<String>,

@@ -541,11 +541,8 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         cfg.paths.data_dir.join(".operation.lock")
     };
     let _operation_lock = crate::operation_lock::acquire_for_serve(&lock_path)?;
-    let upload_limits = asset_uploads::UploadLimits::resolve(
-        server.asset_part_size,
-        server.asset_max_bytes,
-        server.asset_hash_threshold_bytes,
-    );
+    let upload_limits =
+        asset_uploads::UploadLimits::resolve(server.asset_part_size, server.asset_max_bytes);
     let max_body_bytes = upload_limits.max_bytes as usize;
 
     // Open the pool, warm it, and ensure schema once before serving.
@@ -895,7 +892,6 @@ pub(crate) async fn test_app_state(pool: sqlx::AnyPool, data_dir: &Path) -> AppS
                 bind: "127.0.0.1:0".into(),
                 asset_max_bytes: 8 * 1024 * 1024,
                 asset_part_size: 1024 * 1024,
-                asset_hash_threshold_bytes: 1024 * 1024,
                 cors_origins: Vec::new(),
                 openapi_ui: false,
             }),

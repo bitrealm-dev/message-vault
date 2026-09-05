@@ -136,12 +136,8 @@ pub struct VaultPushConfig {
 ///
 /// Returns [`crate::AuthError`] when the URL is invalid, the host is unreachable,
 /// or the key is rejected.
-pub fn authenticate(
-    base_url: &str,
-    key: &str,
-    username: &str,
-) -> std::result::Result<AuthInfo, crate::AuthError> {
-    vault_http::auth_check(base_url, key, username)
+pub fn authenticate(base_url: &str, key: &str) -> std::result::Result<AuthInfo, crate::AuthError> {
+    vault_http::auth_check(base_url, key)
 }
 
 /// The authenticated connection one push run uses for every request.
@@ -304,7 +300,7 @@ pub fn run(cfg: &VaultPushConfig, progress: Option<&mut ProgressFn<'_>>) -> Resu
 fn login(cfg: &VaultPushConfig, out: &mut Reporter<'_, '_>) -> Result<Session> {
     let url = cfg.base_url.trim_end_matches('/').to_string();
     let http = HttpSession::new()?;
-    let auth = http.auth_check(&url, &cfg.key, cfg.username.trim())?;
+    let auth = http.auth_check(&url, &cfg.key)?;
     let username = auth
         .username
         .as_deref()

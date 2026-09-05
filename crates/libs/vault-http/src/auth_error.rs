@@ -209,8 +209,8 @@ impl fmt::Display for AuthError {
             Self::WrongHostHtml { url, status } => write!(
                 f,
                 "auth/check returned HTML from {url} (HTTP {status}). \
-                 Vault URL must point at the vault host (TLS site or port 8080), \
-                 not the Next.js browse UI alone (port 3000)"
+                 Vault URL must point at the vault server (TLS vault host or port 8080), \
+                 not the website"
             ),
             Self::HttpsRequired { url } => write!(
                 f,

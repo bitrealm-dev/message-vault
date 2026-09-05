@@ -28,8 +28,6 @@ pub struct UploadLimits {
     pub part_size: usize,
     /// Max total size for one asset.
     pub max_bytes: u64,
-    /// Retained for config compatibility. Multipart completion always verifies SHA-256.
-    pub hash_threshold_bytes: u64,
 }
 
 impl Default for UploadLimits {
@@ -37,7 +35,6 @@ impl Default for UploadLimits {
         Self {
             part_size: DEFAULT_PART_SIZE,
             max_bytes: DEFAULT_MAX_BYTES,
-            hash_threshold_bytes: 20 * 1024 * 1024,
         }
     }
 }
@@ -45,7 +42,7 @@ impl Default for UploadLimits {
 impl UploadLimits {
     /// Build limits from config. `VAULT_ASSET_PART_SIZE` overrides part size when set
     /// to a value in `1..=part_size` (tests / smoke).
-    pub fn resolve(part_size: usize, max_bytes: u64, hash_threshold_bytes: u64) -> Self {
+    pub fn resolve(part_size: usize, max_bytes: u64) -> Self {
         let part_size = std::env::var("VAULT_ASSET_PART_SIZE")
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
@@ -55,7 +52,6 @@ impl UploadLimits {
         Self {
             part_size,
             max_bytes,
-            hash_threshold_bytes,
         }
     }
 }
@@ -288,9 +284,7 @@ pub fn put_part(
 /// Concatenate parts, check the claimed SHA-256 fingerprint, and install into
 /// the asset store.
 ///
-/// Always hashes the assembled object and rejects fingerprint mismatches,
-/// regardless of `limits.hash_threshold_bytes` (kept for config compatibility
-/// only).
+/// Always hashes the assembled object and rejects fingerprint mismatches.
 ///
 /// # Errors
 ///
@@ -300,7 +294,6 @@ pub fn complete_upload(
     assets_root: &Path,
     sha256: &str,
     upload_id: &str,
-    limits: UploadLimits,
 ) -> Result<(StoredAsset, bool)> {
     let sha = assets::require_sha256(sha256)?;
     let upload_id = require_upload_id(upload_id)?;
@@ -355,8 +348,6 @@ pub fn complete_upload(
             );
         }
     }
-    let _ = limits.hash_threshold_bytes; // config compatibility; hashing is always on
-
     let result = assets::store_verified(
         &assembled,
         &sha,
@@ -422,8 +413,7 @@ mod tests {
         }
         write_manifest(&session, &manifest).unwrap();
 
-        let (stored, already) =
-            complete_upload(root, &sha, upload_id, UploadLimits::default()).unwrap();
+        let (stored, already) = complete_upload(root, &sha, upload_id).unwrap();
         assert!(!already);
         assert_eq!(stored.sha256, sha);
         assert!(root.join(&stored.assets_path).is_file());
@@ -451,8 +441,7 @@ mod tests {
         manifest.received.insert(1);
         write_manifest(&session, &manifest).unwrap();
 
-        let err =
-            complete_upload(root, &wrong_sha, upload_id, UploadLimits::default()).unwrap_err();
+        let err = complete_upload(root, &wrong_sha, upload_id).unwrap_err();
         assert!(err.to_string().contains("sha256 mismatch"));
         assert!(!session.exists());
     }
@@ -478,12 +467,7 @@ mod tests {
         manifest.received.insert(1);
         write_manifest(&session, &manifest).unwrap();
 
-        let limits = UploadLimits {
-            part_size: 64,
-            max_bytes: DEFAULT_MAX_BYTES,
-            hash_threshold_bytes: 0,
-        };
-        let err = complete_upload(root, &claimed_sha, upload_id, limits).unwrap_err();
+        let err = complete_upload(root, &claimed_sha, upload_id).unwrap_err();
         assert!(
             err.to_string().contains("sha256 mismatch"),
             "expected mismatch, got: {err}"
@@ -538,7 +522,7 @@ mod tests {
         manifest.received.insert(1);
         write_manifest(&session, &manifest).unwrap();
 
-        let err = complete_upload(root, &sha, upload_id, UploadLimits::default()).unwrap_err();
+        let err = complete_upload(root, &sha, upload_id).unwrap_err();
         assert!(err.to_string().contains("missing part"));
         // Incomplete sessions are kept so the client can resume missing parts.
         assert!(session.exists());
@@ -555,7 +539,7 @@ mod tests {
         unsafe {
             std::env::set_var("VAULT_ASSET_PART_SIZE", "10");
         }
-        let limits = UploadLimits::resolve(DEFAULT_PART_SIZE, DEFAULT_MAX_BYTES, 20 * 1024 * 1024);
+        let limits = UploadLimits::resolve(DEFAULT_PART_SIZE, DEFAULT_MAX_BYTES);
         let (existing, start) =
             start_upload(root, &sha, data.len() as u64, Some("text/plain"), limits).unwrap();
         assert!(existing.is_none());
@@ -570,7 +554,7 @@ mod tests {
             offset = end;
             part += 1;
         }
-        let (stored, already) = complete_upload(root, &sha, &start.upload_id, limits).unwrap();
+        let (stored, already) = complete_upload(root, &sha, &start.upload_id).unwrap();
         assert!(!already);
         assert_eq!(stored.sha256, sha);
         unsafe {
@@ -602,7 +586,6 @@ mod tests {
         let limits = UploadLimits {
             part_size: 1024,
             max_bytes: 2048,
-            hash_threshold_bytes: 20 * 1024 * 1024,
         };
         let err = start_upload(root, &sha, 4096, None, limits).unwrap_err();
         assert!(err.to_string().contains("server limit"));

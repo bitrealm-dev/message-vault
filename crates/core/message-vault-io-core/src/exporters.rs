@@ -596,17 +596,18 @@ fn required_text(value: &str, label: &str, errors: &mut Vec<String>) {
     }
 }
 
-/// Return a trimmed hex seed, or push an error when the string is not hex.
+/// Return a trimmed hex seed, or push an error when it is not a valid seed.
 fn validate_obfuscate_seed(seed: &str, errors: &mut Vec<String>) -> Option<String> {
     let seed = seed.trim();
     if seed.is_empty() {
         return None;
     }
-    if seed.len() != 8 || !seed.chars().all(|c| c.is_ascii_hexdigit()) {
-        errors.push("Obfuscate seed must be exactly 8 hexadecimal characters.".into());
-        None
-    } else {
-        Some(seed.to_string())
+    match obfuscate::check_seed_hex(seed) {
+        Ok(()) => Some(seed.to_string()),
+        Err(message) => {
+            errors.push(message);
+            None
+        }
     }
 }
 
@@ -660,9 +661,20 @@ mod tests {
             obfuscate_seed: "01234567".into(),
             ..Form::default()
         };
+        assert!(form.to_config(Exporter::OpenExtract).is_err());
+        let form = Form {
+            input: std::env::current_dir().unwrap().display().to_string(),
+            output: "out".into(),
+            obfuscate_seed: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                .into(),
+            ..Form::default()
+        };
         let config = form.to_config(Exporter::OpenExtract).unwrap();
         assert!(config.obfuscate.enabled);
-        assert_eq!(config.obfuscate.seed.as_deref(), Some("01234567"));
+        assert_eq!(
+            config.obfuscate.seed.as_deref(),
+            Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+        );
     }
 
     #[test]

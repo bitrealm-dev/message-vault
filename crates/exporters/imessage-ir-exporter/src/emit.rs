@@ -198,10 +198,7 @@ fn collect_conversations(
                 msg.rowid, msg.guid, why
             ));
         }
-        // `%` instead of `u64::is_multiple_of`: that method needs Rust 1.87,
-        // but this crate's MSRV is 1.85.
-        #[allow(clippy::manual_is_multiple_of)]
-        if seen % progress_every == 0 {
+        if seen.is_multiple_of(progress_every) {
             session.options.emit_log(format!("  …{seen}/{total}"));
             session.options.emit_progress(ProgressEvent::Parse {
                 done: usize::try_from(seen).unwrap_or(usize::MAX),
@@ -255,10 +252,7 @@ fn write_conversations(
                 document_id
             ))
         })?;
-        // `%` instead of `u64::is_multiple_of`: that method needs Rust 1.87,
-        // but this crate's MSRV is 1.85.
-        #[allow(clippy::manual_is_multiple_of)]
-        if written % CONVERSATION_PROGRESS_EVERY == 0 || written == total {
+        if written.is_multiple_of(CONVERSATION_PROGRESS_EVERY) || written == total {
             session
                 .options
                 .emit_log(format!("  preparing {written}/{total}"));

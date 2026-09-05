@@ -1857,10 +1857,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "contacts",
  "media",
  "message-csv",
  "message-ir",
+ "obfuscate",
  "sha2 0.11.0",
  "tempfile",
 ]

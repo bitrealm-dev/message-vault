@@ -321,7 +321,9 @@ mod tests {
         let transforms = ExportTransforms {
             media: MediaMode::Convert,
             obfuscate: true,
-            obfuscate_seed: Some("01234567".into()),
+            obfuscate_seed: Some(
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+            ),
             ..ExportTransforms::none()
         };
         let outcome = apply_transforms(&mut docs, tmp.path(), &transforms, false).unwrap();
@@ -344,7 +346,9 @@ mod tests {
         let transforms = ExportTransforms {
             media: MediaMode::Disabled,
             obfuscate: true,
-            obfuscate_seed: Some("01234567".into()),
+            obfuscate_seed: Some(
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+            ),
             ..ExportTransforms::none()
         };
         apply_transforms(&mut docs, tmp.path(), &transforms, false).unwrap();
