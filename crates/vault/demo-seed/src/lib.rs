@@ -142,16 +142,19 @@ fn generate_into(cfg: &SeedConfig, out: &Path) -> Result<GenStats> {
     contacts::write_config_toml(&config_dir)?;
     contacts::write_seed_toml(&config_dir)?;
 
-    let stats = conversations::write_all(conversations::WriteAllArgs {
-        imessage_staging: &imessage_staging,
-        sbr_staging: &sbr_staging,
-        whatsapp_staging: &whatsapp_staging,
-        roster: &roster,
+    let staging = conversations::StagingDirs {
+        imessage: &imessage_staging,
+        sbr: &sbr_staging,
+        whatsapp: &whatsapp_staging,
+    };
+    let stats = conversations::write_all(
+        &staging,
+        &roster,
         cfg,
-        corpus: &corpus,
-        rng: &mut rng,
-        attachment_digests: &attachment_digests,
-    })?;
+        &corpus,
+        &mut rng,
+        &attachment_digests,
+    )?;
 
     write_readme(out, &stats, cfg, corpus.len())?;
 
