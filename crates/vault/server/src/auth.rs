@@ -6,10 +6,9 @@ use std::time::{Duration, Instant};
 
 use crate::extract::{Json, Query};
 use anyhow::{Context, Result};
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use axum::extract::State;
 use axum::http::HeaderMap;
-use rand::TryRng;
 use serde::{Deserialize, Serialize};
 use sqlx::Connection;
 use sqlx::{AnyConnection, AnyPool};
@@ -129,14 +128,11 @@ impl AuthTokenResponse {
 ///
 /// Returns an error when the password cannot be hashed.
 pub(crate) fn hash_password(password: &str) -> Result<String> {
-    let mut salt_bytes = [0u8; 16];
-    rand::rngs::SysRng
-        .try_fill_bytes(&mut salt_bytes)
-        .context("fill password salt from system RNG")?;
-    let salt = SaltString::encode_b64(&salt_bytes)
-        .map_err(|e| anyhow::anyhow!("password salt encode failed: {e}"))?;
+    // argon2 0.6 generates the salt itself, from the system RNG, and sizes it
+    // to the algorithm's recommendation. That replaces a hand-rolled 16-byte
+    // fill and base64 encode, which is not code worth owning on an auth path.
     let hash = Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
+        .hash_password(password.as_bytes())
         .map_err(|e| anyhow::anyhow!("password hash failed: {e}"))?;
     Ok(hash.to_string())
 }
@@ -699,6 +695,69 @@ pub async fn delete_account_handler(
 mod tests {
     use super::*;
     use crate::db::engine;
+
+    /// Passwords hashed before the argon2 0.6 upgrade must still let people in.
+    ///
+    /// These three strings were produced by argon2 0.5.3, the version the vault
+    /// shipped with, using the salt scheme it used then: sixteen bytes from the
+    /// system RNG, base64-encoded, passed to `Argon2::default()`. If a future
+    /// upgrade stops them verifying, every account created before that upgrade
+    /// is locked out, and no other test in this suite would notice — the rest
+    /// all hash and verify with the same version in the same process.
+    #[test]
+    fn hashes_written_by_argon2_0_5_still_verify() {
+        const LEGACY: &[(&str, &str)] = &[
+            (
+                "hunter2hunter2",
+                "$argon2id$v=19$m=19456,t=2,p=1$/ic5l4xy5HAgEHBiuv0t3A$iI1c7vmoqfa79pGmE3/iquM09ezwKoYA8U1dxtWH/rg",
+            ),
+            (
+                "",
+                "$argon2id$v=19$m=19456,t=2,p=1$Mp73mogaQlz3ZqmokZzY/A$CVBX4QUiJTjS5u4sLQ7rvMEuSo8e6c1izYXZTtJo+RQ",
+            ),
+            (
+                "pässwörd with spaces 🔐",
+                "$argon2id$v=19$m=19456,t=2,p=1$l9S0iAuO7kK+iuZf99EN9g$FQ35n77YztPzFZAYqhZnyRLK6TUg7nuXUGiO7Nx1s90",
+            ),
+        ];
+        for (password, hash) in LEGACY {
+            assert!(
+                verify_password(hash, password),
+                "argon2 0.5 hash must still verify for {password:?}"
+            );
+            assert!(
+                !verify_password(hash, "wrong-password"),
+                "the wrong password must still be refused for {password:?}"
+            );
+        }
+    }
+
+    /// The parameters the vault writes must not drift silently. A weaker
+    /// memory or time cost would be a security regression that still passes
+    /// every round-trip test, because hashing and verifying would agree.
+    #[test]
+    fn a_new_hash_keeps_argon2id_and_its_default_cost() {
+        let hash = hash_password("hunter2hunter2").expect("hash");
+        assert!(
+            hash.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"),
+            "unexpected argon2 parameters: {hash}"
+        );
+        assert!(verify_password(&hash, "hunter2hunter2"));
+        assert!(!verify_password(&hash, "hunter2hunter3"));
+    }
+
+    /// Two hashes of the same password must differ, or the salt is not doing
+    /// its job. argon2 0.6 generates the salt itself now, so this is the check
+    /// that the generated salt is actually random rather than fixed.
+    #[test]
+    fn the_same_password_hashes_differently_every_time() {
+        let a = hash_password("hunter2hunter2").expect("hash");
+        let b = hash_password("hunter2hunter2").expect("hash");
+        assert_ne!(a, b, "a repeated hash means the salt is not random");
+        assert!(verify_password(&a, "hunter2hunter2"));
+        assert!(verify_password(&b, "hunter2hunter2"));
+    }
+
     use crate::db::permissions::Permissions;
     use crate::test_support::*;
     use axum::http::StatusCode;
