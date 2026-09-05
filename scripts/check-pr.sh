@@ -1,63 +1,39 @@
 #!/usr/bin/env bash
-# Local pre-PR check: format Rust and web, then license consistency, workspace
-# build/test, src-tauri check, web lint/test/build, docs check/build.
+# Fast pre-PR check: formatting and lint only, nothing expensive.
 #
 #   ./scripts/check-pr.sh
 #
-# Stops on the first failure. Format rewrites files (not --check): rustfmt on
-# the workspace and src-tauri, Biome on web/. Runs npm ci in web/ and docs/
-# only when that tree has no node_modules yet.
+# Stops on the first failure. Checks, never rewrites: rustfmt --check and
+# Clippy at -D warnings on the workspace and src-tauri, Biome ci, and the
+# web type-check. Run ./scripts/format-all.sh to fix formatting failures.
+# CI is the complete gate; ./scripts/check-all.sh runs the full set locally.
+# Why this split: docs/adr/0007-ci-is-the-only-gate.md.
+# Runs npm ci in web/ only when that tree has no node_modules yet.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
-"${SCRIPT_DIR}/format-all.sh"
+echo "==> cargo fmt --check (workspace)"
+cargo fmt --all -- --check
 
-echo "==> license consistency"
-"${SCRIPT_DIR}/check-license.sh"
+echo "==> cargo fmt --check (src-tauri)"
+cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 
-echo "==> docker rust-builder copies patched crates"
-"${SCRIPT_DIR}/check-docker-context.sh"
+echo "==> cargo clippy (workspace)"
+cargo clippy --workspace --all-targets -- -D warnings
 
-echo "==> cargo deny check advisories"
-if cargo deny --version >/dev/null 2>&1; then
-  cargo deny check advisories
-else
-  echo "cargo-deny not installed; skipping advisory check (CI enforces it)" >&2
+echo "==> cargo clippy (src-tauri)"
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+if [[ ! -d web/node_modules ]]; then
+  echo "==> npm ci (web)"
+  (cd web && npm ci)
 fi
-
-echo "==> cargo build --workspace"
-cargo build --workspace
-
-echo "==> cargo test --workspace"
-cargo test --workspace
-
-echo "==> cargo check src-tauri"
-cargo check --manifest-path src-tauri/Cargo.toml
-
-echo "==> generated vault API types match the OpenAPI document"
-"${SCRIPT_DIR}/check-generated-api-types.sh"
-
-echo "==> web lint"
-(cd web && npm run lint)
-echo "==> web test"
-(cd web && npm test)
-echo "==> web audit"
-(cd web && npm audit --audit-level=high)
-echo "==> web build (type-check + bundle)"
-(cd web && npm run build)
-
-if [[ ! -d docs/node_modules ]]; then
-  echo "==> npm ci (docs)"
-  (cd docs && npm ci)
-fi
-echo "==> docs check"
-(cd docs && npm run check)
-echo "==> docs build"
-(cd docs && npm run build)
-echo "==> docs audit"
-(cd docs && npm audit --audit-level=high)
+echo "==> web lint + format check"
+(cd web && npx biome ci .)
+echo "==> web type-check"
+(cd web && npm run typecheck)
 
 echo "All pre-PR checks passed."

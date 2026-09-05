@@ -242,7 +242,7 @@ npm ci
 npm run dev
 ```
 
-Open **http://localhost:4321/** for the home page, or **http://localhost:4321/vault/developer/** for the Developer docs. `./scripts/check-pr.sh` already checks and builds `docs/`, so run it before opening a pull request.
+Open **http://localhost:4321/** for the home page, or **http://localhost:4321/vault/developer/** for the Developer docs. `./scripts/check-all.sh` checks and builds `docs/` along with everything else, and CI builds the site on every pull request that touches it.
 
 ## Open a pull request
 
@@ -256,9 +256,9 @@ From the repository root:
 ./scripts/check-pr.sh
 ```
 
-That script runs `./scripts/format-all.sh` first (rustfmt on the workspace and `src-tauri/`, then Biome on `web/`; it rewrites files). Then it builds and tests the workspace, lints and tests `web/`, and checks and builds `docs/`. It stops on the first failure. It runs `npm ci` in `web/` or `docs/` only when that tree has no `node_modules` yet. If rustfmt or Biome changed files, commit those changes before opening the pull request.
+That script is quick: it checks formatting on the workspace and `src-tauri/`, runs Clippy on both at `-D warnings`, and lints and type-checks `web/`. It stops on the first failure and never rewrites files — if formatting fails, run `./scripts/format-all.sh` and commit the result.
 
-Clippy is not part of that script or of CI. Run `./scripts/lint-all.sh` locally to run Clippy on the workspace and `src-tauri/`, then the web linter.
+CI runs the complete gate on every pull request: build, tests (including the Postgres-backed server suites), the web bundle and its tests, and the docs build. To run all of that locally in one command, use `./scripts/check-all.sh`; expect it to take a while, since it does serially what CI does in parallel.
 
 While iterating on one crate, `cargo test -p go-sms-pro-exporter` is enough. Exporter smoke tests use committed fixtures; personal phone backups are not required.
 
