@@ -229,6 +229,145 @@ pub fn compact(path: &Path, url: &str, username: &str, state: &JournalState) -> 
     })
 }
 
+/// The journal of one push run: the in-memory skip sets plus the file they
+/// are appended to, bound to one vault URL and username.
+///
+/// Every write goes through here so callers never repeat the URL, username,
+/// and path that every [`JournalEvent`] carries. Successful events update the
+/// in-memory sets *and* append to disk; failures are best-effort diagnostics
+/// and never fail the run.
+#[derive(Debug)]
+pub struct RunJournal {
+    state: JournalState,
+    path: PathBuf,
+    url: String,
+    username: String,
+}
+
+impl RunJournal {
+    /// Load the journal for this vault target, or start empty when `fresh` is
+    /// set (force mode and replace mode both ignore earlier progress).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when an existing journal file cannot be read.
+    pub fn open(path: PathBuf, url: &str, username: &str, fresh: bool) -> Result<Self> {
+        let state = if fresh {
+            JournalState::default()
+        } else {
+            load(&path, url, username)?
+        };
+        Ok(Self {
+            state,
+            path,
+            url: url.to_string(),
+            username: username.to_string(),
+        })
+    }
+
+    /// True when this conversation file fully imported on an earlier run.
+    pub fn has_file(&self, file: &str) -> bool {
+        self.state.files.contains(file)
+    }
+
+    /// True when this message id was imported on an earlier run.
+    pub fn has_message(&self, file: &str, guid: &str) -> bool {
+        self.state
+            .messages
+            .contains(&JournalState::message_key(file, guid))
+    }
+
+    /// True when this attachment fingerprint was uploaded on an earlier run.
+    pub fn has_asset(&self, sha256: &str) -> bool {
+        self.state.assets.contains(sha256)
+    }
+
+    /// Record that the vault now holds this attachment.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the journal file cannot be appended to.
+    pub fn asset_ok(&mut self, source: &str, sha256: &str) -> Result<()> {
+        self.state.assets.insert(sha256.to_string());
+        append(
+            &self.path,
+            &JournalEvent::AssetOk {
+                url: self.url.clone(),
+                username: self.username.clone(),
+                source: source.to_string(),
+                sha256: sha256.to_string(),
+            },
+        )
+    }
+
+    /// Record that every message in one import request was accepted.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the journal file cannot be appended to.
+    pub fn message_batch_ok(&mut self, source: &str, messages: Vec<JournalMessage>) -> Result<()> {
+        for message in &messages {
+            self.state
+                .messages
+                .insert(JournalState::message_key(&message.file, &message.guid));
+        }
+        append(
+            &self.path,
+            &JournalEvent::MessageBatchOk {
+                url: self.url.clone(),
+                username: self.username.clone(),
+                source: source.to_string(),
+                messages,
+            },
+        )
+    }
+
+    /// Record that a whole conversation file finished importing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the journal file cannot be appended to.
+    pub fn file_ok(&mut self, source: &str, file: &str) -> Result<()> {
+        self.state.files.insert(file.to_string());
+        append(
+            &self.path,
+            &JournalEvent::FileOk {
+                url: self.url.clone(),
+                username: self.username.clone(),
+                source: source.to_string(),
+                file: file.to_string(),
+            },
+        )
+    }
+
+    /// Note a failure for later diagnosis. Best effort: a journal write error
+    /// here is swallowed because the failure itself is already being reported.
+    pub fn record_failure(&self, source: &str, file: &str, stage: &str, error: &str) {
+        let _ = append(
+            &self.path,
+            &JournalEvent::Fail {
+                url: self.url.clone(),
+                username: self.username.clone(),
+                source: source.to_string(),
+                file: file.to_string(),
+                guid: None,
+                sha256: None,
+                stage: stage.to_string(),
+                error: error.to_string(),
+            },
+        );
+    }
+
+    /// Rewrite the journal file from the in-memory sets (see [`compact`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file cannot be rewritten.
+    pub fn compact(&self) -> Result<()> {
+        compact(&self.path, &self.url, &self.username, &self.state)
+    }
+}
+
 /// Split stored `file\0guid` keys back into journal message records, sorted.
 fn messages_from_state_keys(state: &JournalState) -> Vec<JournalMessage> {
     let mut messages: Vec<JournalMessage> = Vec::new();
