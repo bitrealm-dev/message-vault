@@ -3,18 +3,20 @@
 
 use crate::attachments::{AttachmentIndex, ResolveAttachmentArgs, resolve_attachment_cell};
 use crate::attachments_emit::{attachment_guid_materials, pending_attachment_to_ir};
-use crate::parse::{RawRow, SourceKind, discover_csv_files, parse_csv_file};
+use crate::parse::{DiscoveredCsv, RawRow, SourceKind, discover_csv_files, parse_csv_file};
 use crate::parse_emit::{
-    collect_peer_info, is_notification, is_outgoing, parse_message_date, resolve_sender, resolve_tz,
+    PeerInfo, TzMode, collect_peer_info, is_notification, is_outgoing, parse_message_date,
+    resolve_sender, resolve_tz,
 };
 use anyhow::Result;
 use message_ir::{
     ExportMeta, HandleType, IrAttachment, IrParticipant, IrService, IrSource, PendingAttachment,
-    PendingConversation, PendingMessage, ProjectedRole, ProjectionHooks, pending_to_document,
-    prepare_conversation,
+    PendingConversation, PendingMessage, ProjectedRole, ProjectionHooks,
 };
 use message_ir_format::{AttachmentSource, ExportTransforms, ExportWriter, FormatSinkResult};
-use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat, prepare_outputs};
+use message_vault_io_core::{
+    CancelFlag, ExportReport, OutputFormat, prepare_outputs, project_conversation,
+};
 use serde_json::Map;
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
@@ -78,200 +80,25 @@ pub(crate) fn convert_export(
     let input = &inputs[0];
     let writer = ExportWriter::open(&output, output_format, transforms, resume)?;
     let copy_attachments = writer.copies_attachments();
-    // Walk the input tree once; per-attachment lookups hit this index.
-    let attachment_index = copy_attachments.then(|| AttachmentIndex::build(input));
 
-    let files = discover_csv_files(input)?;
-    let mut report = ExportReport::default();
-    let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
-    // Parse-time dedupe state keyed by conversation key (the shared
-    // PendingConversation carries document data only).
-    let mut seen_keys: BTreeMap<String, HashSet<String>> = BTreeMap::new();
-
-    for discovered in &files {
+    let mut ingest = Ingest {
+        tz,
+        // Walk the input tree once; per-attachment lookups hit this index.
+        attachment_index: copy_attachments.then(|| AttachmentIndex::build(input)),
+        copy_attachments,
+        conversations: BTreeMap::new(),
+        seen_keys: BTreeMap::new(),
+        report: ExportReport::default(),
+    };
+    for discovered in discover_csv_files(input)? {
         message_vault_io_core::check_cancel(cancel)?;
-        match discovered.kind {
-            SourceKind::Messages => report.bump("messages_files", 1),
-            SourceKind::WhatsApp => report.bump("whatsapp_files", 1),
-        }
-        let rows = match parse_csv_file(&discovered.path, discovered.kind) {
-            Ok(r) => r,
-            Err(e) => {
-                report
-                    .errors
-                    .push(format!("{}: {e:#}", discovered.path.display()));
-                continue;
-            }
-        };
-        if rows.is_empty() {
-            continue;
-        }
-
-        let family = TransportFamily::from_kind(discovered.kind);
-        let mut by_session: BTreeMap<String, Vec<&RawRow>> = BTreeMap::new();
-        for row in &rows {
-            by_session
-                .entry(row.chat_session.clone())
-                .or_default()
-                .push(row);
-        }
-
-        for (session, session_rows) in by_session {
-            let peer = collect_peer_info(discovered.kind, &session, &session_rows);
-            if peer.unresolved_chat {
-                report.bump("name_only_chat", 1);
-            }
-            report.bump(
-                "unresolved_group_participants",
-                peer.unresolved_roster_labels,
-            );
-
-            let convo_key = format!("{}|{}", family.key_prefix(), peer.chat_id);
-            let convo = conversations.entry(convo_key.clone()).or_insert_with(|| {
-                let mut convo = PendingConversation::new(
-                    peer.chat_id.clone(),
-                    peer.group,
-                    peer.group.then(|| session.clone()),
-                    Vec::new(),
-                );
-                convo
-                    .extra
-                    .insert("source_kind".into(), discovered.kind.as_str().to_string());
-                if peer.unresolved_chat {
-                    convo
-                        .extra
-                        .insert(message_ir::CHAT_ID_IS_NAME.into(), "1".into());
-                }
-                convo
-            });
-
-            for row in session_rows {
-                let Some((secs, date_ms)) = parse_message_date(&row.message_date, &tz) else {
-                    report.skipped_invalid_date += 1;
-                    continue;
-                };
-                let is_notification = is_notification(&row.msg_type);
-                let is_from_me = !is_notification && is_outgoing(&row.msg_type);
-                let (sender_handle, sender_display_name) = resolve_sender(
-                    row,
-                    is_from_me,
-                    is_notification,
-                    &peer.chat_id,
-                    &peer.contact_name,
-                );
-
-                let mut attachments = Vec::new();
-                let mut attachment_extra: BTreeMap<String, String> = BTreeMap::new();
-                if !row.attachment.is_empty() {
-                    let csv_parent = discovered.path.parent().unwrap_or_else(|| Path::new("."));
-                    let (cell, source) = resolve_attachment_cell(ResolveAttachmentArgs {
-                        csv_name: &row.attachment,
-                        attachment_type: &row.attachment_type,
-                        csv_parent,
-                        index: attachment_index.as_ref(),
-                        copy_attachments,
-                    });
-                    attachments.push(PendingAttachment {
-                        rel_path: row.attachment.clone(),
-                        content_type: cell.meta.mime_type.clone().unwrap_or_default(),
-                        extension: Path::new(&row.attachment)
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .unwrap_or("")
-                            .to_string(),
-                        digest_sha256: None,
-                        name_hint: cell.meta.original_name.clone(),
-                    });
-                    // iMazing rows carry at most one attachment, so sticker
-                    // metadata fits on the message.
-                    attachment_extra.insert(
-                        "is_sticker".into(),
-                        if cell.is_sticker { "true" } else { "false" }.into(),
-                    );
-                    attachment_extra.insert(
-                        "transcription".into(),
-                        cell.transcription.unwrap_or_default(),
-                    );
-                    attachment_extra.insert(
-                        "sticker_effect".into(),
-                        cell.sticker_effect.unwrap_or_default(),
-                    );
-                    if let Some(src) = source {
-                        attachment_extra.insert(
-                            "attachment_source".into(),
-                            src.to_string_lossy().into_owned(),
-                        );
-                    }
-                }
-
-                // sender_id distinguishes same-second same-text rows from
-                // different senders in group chats.
-                let dedupe_key = format!(
-                    "{}|{}|{}|{}|{}|{}",
-                    peer.chat_id,
-                    secs,
-                    if is_from_me { "1" } else { "0" },
-                    row.sender_id,
-                    row.text,
-                    row.attachment
-                );
-                if !seen_keys
-                    .entry(convo_key.clone())
-                    .or_default()
-                    .insert(dedupe_key)
-                {
-                    report.duplicates_dropped += 1;
-                    continue;
-                }
-
-                let service = if row.service.trim().is_empty() {
-                    match discovered.kind {
-                        SourceKind::WhatsApp => "WhatsApp".to_string(),
-                        SourceKind::Messages => "SMS".to_string(),
-                    }
-                } else {
-                    row.service.clone()
-                };
-
-                convo.messages.push(PendingMessage {
-                    sort_key: secs,
-                    is_from_me,
-                    sender_handle,
-                    sender_display_name: if sender_display_name.is_empty() {
-                        None
-                    } else {
-                        Some(sender_display_name)
-                    },
-                    text: row.text.clone(),
-                    attachments,
-                    extra: {
-                        let mut e = BTreeMap::new();
-                        e.insert(
-                            "is_notification".into(),
-                            if is_notification { "true" } else { "false" }.into(),
-                        );
-                        e.insert("subject".into(), row.subject.clone());
-                        e.insert("contact_name".into(), peer.contact_name.clone());
-                        e.insert("date_ms".into(), date_ms);
-                        e.insert("service".into(), service);
-                        e.insert("imazing_status".into(), row.status.clone());
-                        e.insert("imazing_type".into(), row.msg_type.clone());
-                        e.insert("reactions".into(), row.reactions.clone());
-                        e.insert("replying_to".into(), row.replying_to.clone());
-                        e.insert("forwarded".into(), row.forwarded.clone());
-                        e.insert("attachment_info".into(), row.attachment_info.clone());
-                        e.insert("delivered_date".into(), row.delivered_date.clone());
-                        e.insert("read_date".into(), row.read_date.clone());
-                        e.insert("edited_date".into(), row.edited_date.clone());
-                        e.insert("deleted_date".into(), row.deleted_date.clone());
-                        e.insert("sent_date".into(), row.sent_date.clone());
-                        e.extend(attachment_extra);
-                        e
-                    },
-                });
-            }
-        }
+        ingest.ingest_file(&discovered);
     }
+    let Ingest {
+        conversations,
+        mut report,
+        ..
+    } = ingest;
 
     let hooks = ImazingProjection {
         export: message_vault_io_core::export_meta(
@@ -286,20 +113,10 @@ pub(crate) fn convert_export(
     let mut sources = Vec::new();
     for (_key, mut convo) in conversations {
         let chat_id = convo.chat_id.clone();
-        let (keep, skipped) =
-            prepare_conversation(&mut convo, |a, b| a.sort_key.cmp(&b.sort_key), |k| k);
-        report.skipped_invalid_date += skipped;
-        if !keep {
+        let Some(doc) = project_conversation(&chat_id, &mut convo, &hooks, &mut report) else {
             continue;
-        }
+        };
         collect_attachment_sources(&convo, &mut sources);
-        let (doc, tally) = pending_to_document(&chat_id, &convo, &hooks);
-        report.messages += tally.messages;
-        report.sent += tally.sent;
-        report.received += tally.received;
-        if tally.notifications > 0 {
-            report.bump("notifications", tally.notifications);
-        }
         documents.push(doc);
     }
 
@@ -322,6 +139,230 @@ pub(crate) fn convert_export(
     )?;
 
     Ok((report, sink_result))
+}
+
+/// Parse-time state shared across every CSV file in one export.
+struct Ingest {
+    tz: TzMode,
+    attachment_index: Option<AttachmentIndex>,
+    copy_attachments: bool,
+    /// Keyed by `<family>|<chat id>` so a Messages chat and a WhatsApp chat
+    /// with the same peer stay separate conversations.
+    conversations: BTreeMap<String, PendingConversation>,
+    /// Parse-time dedupe state keyed by conversation key (the shared
+    /// `PendingConversation` carries document data only).
+    seen_keys: BTreeMap<String, HashSet<String>>,
+    report: ExportReport,
+}
+
+impl Ingest {
+    /// Parse one CSV and fold every chat session in it into the pending conversations.
+    ///
+    /// A file that fails to parse is recorded in the report and skipped so
+    /// one bad export does not stop the rest.
+    fn ingest_file(&mut self, discovered: &DiscoveredCsv) {
+        match discovered.kind {
+            SourceKind::Messages => self.report.bump("messages_files", 1),
+            SourceKind::WhatsApp => self.report.bump("whatsapp_files", 1),
+        }
+        let rows = match parse_csv_file(&discovered.path, discovered.kind) {
+            Ok(rows) => rows,
+            Err(e) => {
+                self.report
+                    .errors
+                    .push(format!("{}: {e:#}", discovered.path.display()));
+                return;
+            }
+        };
+        let mut by_session: BTreeMap<String, Vec<&RawRow>> = BTreeMap::new();
+        for row in &rows {
+            by_session
+                .entry(row.chat_session.clone())
+                .or_default()
+                .push(row);
+        }
+        for (session, session_rows) in by_session {
+            self.ingest_session(discovered, &session, &session_rows);
+        }
+    }
+
+    /// Work out who one chat session is with, then add each of its rows.
+    fn ingest_session(&mut self, discovered: &DiscoveredCsv, session: &str, rows: &[&RawRow]) {
+        let peer = collect_peer_info(discovered.kind, session, rows);
+        if peer.unresolved_chat {
+            self.report.bump("name_only_chat", 1);
+        }
+        self.report.bump(
+            "unresolved_group_participants",
+            peer.unresolved_roster_labels,
+        );
+        let family = TransportFamily::from_kind(discovered.kind);
+        let convo_key = format!("{}|{}", family.key_prefix(), peer.chat_id);
+        self.conversations
+            .entry(convo_key.clone())
+            .or_insert_with(|| {
+                let mut convo = PendingConversation::new(
+                    peer.chat_id.clone(),
+                    peer.group,
+                    peer.group.then(|| session.to_string()),
+                    Vec::new(),
+                );
+                convo
+                    .extra
+                    .insert("source_kind".into(), discovered.kind.as_str().to_string());
+                if peer.unresolved_chat {
+                    convo
+                        .extra
+                        .insert(message_ir::CHAT_ID_IS_NAME.into(), "1".into());
+                }
+                convo
+            });
+        for row in rows {
+            if let Some(message) = self.message_from_row(discovered, row, &peer, &convo_key) {
+                self.conversations
+                    .get_mut(&convo_key)
+                    .expect("conversation inserted above")
+                    .messages
+                    .push(message);
+            }
+        }
+    }
+
+    /// Build the pending message for one CSV row, or `None` when the row has
+    /// no usable date or repeats a row already seen in this conversation.
+    fn message_from_row(
+        &mut self,
+        discovered: &DiscoveredCsv,
+        row: &RawRow,
+        peer: &PeerInfo,
+        convo_key: &str,
+    ) -> Option<PendingMessage> {
+        let Some((secs, date_ms)) = parse_message_date(&row.message_date, &self.tz) else {
+            self.report.skipped_invalid_date += 1;
+            return None;
+        };
+        let is_notification = is_notification(&row.msg_type);
+        let is_from_me = !is_notification && is_outgoing(&row.msg_type);
+        let (sender_handle, sender_display_name) = resolve_sender(
+            row,
+            is_from_me,
+            is_notification,
+            &peer.chat_id,
+            &peer.contact_name,
+        );
+        // sender_id distinguishes same-second same-text rows from
+        // different senders in group chats.
+        let dedupe_key = format!(
+            "{}|{}|{}|{}|{}|{}",
+            peer.chat_id,
+            secs,
+            if is_from_me { "1" } else { "0" },
+            row.sender_id,
+            row.text,
+            row.attachment
+        );
+        if !self
+            .seen_keys
+            .entry(convo_key.to_string())
+            .or_default()
+            .insert(dedupe_key)
+        {
+            self.report.duplicates_dropped += 1;
+            return None;
+        }
+        let (attachments, attachment_extra) = self.attachment_for_row(discovered, row);
+        let service = if row.service.trim().is_empty() {
+            match discovered.kind {
+                SourceKind::WhatsApp => "WhatsApp".to_string(),
+                SourceKind::Messages => "SMS".to_string(),
+            }
+        } else {
+            row.service.clone()
+        };
+
+        let mut extra = BTreeMap::new();
+        extra.insert(
+            "is_notification".into(),
+            if is_notification { "true" } else { "false" }.into(),
+        );
+        extra.insert("subject".into(), row.subject.clone());
+        extra.insert("contact_name".into(), peer.contact_name.clone());
+        extra.insert("date_ms".into(), date_ms);
+        extra.insert("service".into(), service);
+        extra.insert("imazing_status".into(), row.status.clone());
+        extra.insert("imazing_type".into(), row.msg_type.clone());
+        extra.insert("reactions".into(), row.reactions.clone());
+        extra.insert("replying_to".into(), row.replying_to.clone());
+        extra.insert("forwarded".into(), row.forwarded.clone());
+        extra.insert("attachment_info".into(), row.attachment_info.clone());
+        extra.insert("delivered_date".into(), row.delivered_date.clone());
+        extra.insert("read_date".into(), row.read_date.clone());
+        extra.insert("edited_date".into(), row.edited_date.clone());
+        extra.insert("deleted_date".into(), row.deleted_date.clone());
+        extra.insert("sent_date".into(), row.sent_date.clone());
+        extra.extend(attachment_extra);
+
+        Some(PendingMessage {
+            sort_key: secs,
+            is_from_me,
+            sender_handle,
+            sender_display_name: (!sender_display_name.is_empty()).then_some(sender_display_name),
+            text: row.text.clone(),
+            attachments,
+            extra,
+        })
+    }
+
+    /// The attachment a row names (iMazing rows carry at most one), plus the
+    /// sticker and transcription metadata that rides on the message.
+    fn attachment_for_row(
+        &self,
+        discovered: &DiscoveredCsv,
+        row: &RawRow,
+    ) -> (Vec<PendingAttachment>, BTreeMap<String, String>) {
+        if row.attachment.is_empty() {
+            return (Vec::new(), BTreeMap::new());
+        }
+        let csv_parent = discovered.path.parent().unwrap_or_else(|| Path::new("."));
+        let (cell, source) = resolve_attachment_cell(ResolveAttachmentArgs {
+            csv_name: &row.attachment,
+            attachment_type: &row.attachment_type,
+            csv_parent,
+            index: self.attachment_index.as_ref(),
+            copy_attachments: self.copy_attachments,
+        });
+        let attachment = PendingAttachment {
+            rel_path: row.attachment.clone(),
+            content_type: cell.meta.mime_type.clone().unwrap_or_default(),
+            extension: Path::new(&row.attachment)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_string(),
+            digest_sha256: None,
+            name_hint: cell.meta.original_name.clone(),
+        };
+        let mut extra = BTreeMap::new();
+        extra.insert(
+            "is_sticker".into(),
+            if cell.is_sticker { "true" } else { "false" }.into(),
+        );
+        extra.insert(
+            "transcription".into(),
+            cell.transcription.unwrap_or_default(),
+        );
+        extra.insert(
+            "sticker_effect".into(),
+            cell.sticker_effect.unwrap_or_default(),
+        );
+        if let Some(src) = source {
+            extra.insert(
+                "attachment_source".into(),
+                src.to_string_lossy().into_owned(),
+            );
+        }
+        (vec![attachment], extra)
+    }
 }
 
 fn collect_attachment_sources(
@@ -369,7 +410,7 @@ fn imazing_packaging_stem_suffix(source_kind: &str) -> Option<String> {
     }
 }
 
-/// iMazing deltas of the shared [`pending_to_document`] projection.
+/// iMazing deltas of the shared [`message_ir::pending_to_document`] projection.
 struct ImazingProjection {
     export: ExportMeta,
 }

@@ -6,7 +6,10 @@
 
 use anyhow::{Context, bail};
 use message_csv::DateRange;
-use message_ir::PendingConversation;
+use message_ir::{
+    ConversationDocument, PendingConversation, ProjectionHooks, ProjectionTally,
+    pending_to_document, prepare_conversation,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -132,6 +135,43 @@ impl ExportReport {
     pub fn extra(&self, key: &str) -> u64 {
         self.extra.get(key).copied().unwrap_or(0)
     }
+
+    /// Fold the counts from one projected conversation into this report.
+    pub fn absorb_tally(&mut self, tally: ProjectionTally) {
+        self.messages += tally.messages;
+        self.sent += tally.sent;
+        self.received += tally.received;
+        if tally.notifications > 0 {
+            self.bump("notifications", tally.notifications);
+        }
+    }
+}
+
+/// Turn one pending conversation into a document, or drop it.
+///
+/// This is the step every exporter runs after parsing: sort the messages the
+/// way the exporter's hooks say, drop rows whose timestamp cannot be
+/// represented, project the rest with [`pending_to_document`], and fold the
+/// counts into `report`. Returns `None` when no message survives.
+pub fn project_conversation<H: ProjectionHooks + ?Sized>(
+    chat_id: &str,
+    convo: &mut PendingConversation,
+    hooks: &H,
+    report: &mut ExportReport,
+) -> Option<ConversationDocument> {
+    let unit = hooks.sort_key_unit();
+    let (keep, skipped) = prepare_conversation(
+        convo,
+        |a, b| hooks.message_order(a, b),
+        |key| unit.to_secs(key),
+    );
+    report.skipped_invalid_date += skipped;
+    if !keep {
+        return None;
+    }
+    let (doc, tally) = pending_to_document(chat_id, convo, hooks);
+    report.absorb_tally(tally);
+    Some(doc)
 }
 
 /// Print `RunResult` lines with the standard stdout/stderr split:

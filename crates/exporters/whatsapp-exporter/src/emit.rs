@@ -9,11 +9,10 @@ use anyhow::{Context, Result};
 use message_csv::{format_local_ts, json_cell};
 use message_ir::{
     ExportMeta, HandleType, IrAttachment, IrParticipant, IrService, IrSource, PendingAttachment,
-    PendingConversation, PendingMessage, ProjectionHooks, SortKeyUnit, pending_to_document,
-    prepare_conversation,
+    PendingConversation, PendingMessage, ProjectionHooks, SortKeyUnit,
 };
 use message_ir_format::{AttachmentSource, ExportTransforms, ExportWriter, FormatSinkResult};
-use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat, project_conversation};
 use serde_json::Map;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -98,24 +97,10 @@ pub(crate) fn convert_json(
     let mut media_sources: Vec<Option<PathBuf>> = Vec::new();
     for (chat_id, mut convo) in conversations {
         message_vault_io_core::check_cancel(cancel)?;
-        let (keep, skipped) = prepare_conversation(
-            &mut convo,
-            |a, b| {
-                a.sort_key
-                    .cmp(&b.sort_key)
-                    .then_with(|| a.extra_str("key_id").cmp(b.extra_str("key_id")))
-            },
-            |k| k / 1000,
-        );
-        report.skipped_invalid_date += skipped;
-        if !keep {
+        let Some(doc) = project_conversation(&chat_id, &mut convo, &hooks, &mut report) else {
             continue;
-        }
+        };
         collect_media_sources(&convo, &mut media_sources);
-        let (doc, tally) = pending_to_document(&chat_id, &convo, &hooks);
-        report.messages += tally.messages;
-        report.sent += tally.sent;
-        report.received += tally.received;
         documents.push(doc);
     }
 
@@ -403,7 +388,7 @@ fn reactions_json(v: &serde_json::Value) -> String {
     }
 }
 
-/// WhatsApp deltas of the shared [`pending_to_document`] projection.
+/// WhatsApp deltas of the shared [`message_ir::pending_to_document`] projection.
 struct WhatsappProjection {
     export: ExportMeta,
 }
@@ -419,6 +404,13 @@ impl ProjectionHooks for WhatsappProjection {
 
     fn sort_key_unit(&self) -> SortKeyUnit {
         SortKeyUnit::Milliseconds
+    }
+
+    /// Same-millisecond rows fall back to `key_id` so output order is stable.
+    fn message_order(&self, a: &PendingMessage, b: &PendingMessage) -> std::cmp::Ordering {
+        a.sort_key
+            .cmp(&b.sort_key)
+            .then_with(|| a.extra_str("key_id").cmp(b.extra_str("key_id")))
     }
 
     fn guid_materials(&self, msg: &PendingMessage) -> Vec<String> {

@@ -6,11 +6,12 @@ use anyhow::Result;
 use chrono::DateTime;
 use message_ir::{
     ExportMeta, HandleType, IrParticipant, IrService, IrSource, PendingConversation,
-    PendingMessage, ProjectionHooks, ensure_conversation, pending_to_document,
-    prepare_conversation,
+    PendingMessage, ProjectionHooks, ensure_conversation,
 };
 use message_ir_format::{AttachmentSource, ExportTransforms, ExportWriter, FormatSinkResult};
-use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat, prepare_outputs};
+use message_vault_io_core::{
+    CancelFlag, ExportReport, OutputFormat, prepare_outputs, project_conversation,
+};
 use phone::sanitize_number;
 use serde_json::{Map, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -54,121 +55,19 @@ pub(crate) fn convert_export(
     } = args;
     let (inputs, output) = prepare_outputs(&[input.to_path_buf()], output)?;
     let input = &inputs[0];
-
     let writer = ExportWriter::open(&output, output_format, transforms, resume)?;
 
-    let files = discover_csv_files(input)?;
-    let mut report = ExportReport::default();
-    let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
-    // Dedupe duplicate CSV rows: same chat + second + direction + text.
-    let mut seen_keys: HashSet<String> = HashSet::new();
-
-    // For per-chat files, infer peer once from all rows in that file.
-    for path in &files {
+    let mut ingest = Ingest::default();
+    for path in discover_csv_files(input)? {
         message_vault_io_core::check_cancel(cancel)?;
-        let rows = match parse_csv_file(path) {
-            Ok(r) => r,
-            Err(e) => {
-                report.errors.push(format!("{}: {e:#}", path.display()));
-                continue;
-            }
-        };
-        if rows.is_empty() {
-            continue;
-        }
-
-        let per_chat_peer = if rows[0].source_kind == SourceKind::PerChat {
-            Some(infer_peer_label(&rows))
-        } else {
-            None
-        };
-
-        // A chat can be labelled with a person's name while its rows still
-        // carry that person's number. Prefer the address the source actually
-        // recorded; only fall back to a name-only participant when the source
-        // recorded no address anywhere in the chat.
-        let mut phone_by_label: HashMap<String, String> = HashMap::new();
-        for row in &rows {
-            if row.is_from_me || is_me(&row.sender) {
-                continue;
-            }
-            if sanitize_number(&row.sender).is_none() {
-                continue;
-            }
-            phone_by_label
-                .entry(peer_label_for(row, per_chat_peer.as_deref()))
-                .or_insert_with(|| row.sender.clone());
-        }
-
-        for row in rows {
-            let peer_label = peer_label_for(&row, per_chat_peer.as_deref());
-
-            let (chat_id, contact_name, name_only) = match resolve_chat(&peer_label) {
-                (key, name, true) => match phone_by_label.get(&peer_label) {
-                    Some(phone) => (phone::normalize_lenient(phone), name, false),
-                    None => (key, name, true),
-                },
-                resolved => resolved,
-            };
-
-            let Some((secs, date_ms)) = parse_timestamp(&row.date) else {
-                report.skipped_invalid_date += 1;
-                continue;
-            };
-
-            let is_from_me = resolve_is_from_me(&row);
-            let (sender_handle, sender_display_name) =
-                resolve_sender(&row, is_from_me, &chat_id, &contact_name);
-
-            let dedupe_key = format!(
-                "{}|{}|{}|{}",
-                chat_id,
-                secs,
-                if is_from_me { "1" } else { "0" },
-                row.text
-            );
-            if !seen_keys.insert(dedupe_key) {
-                report.duplicates_dropped += 1;
-                continue;
-            }
-
-            let convo = ensure_conversation(&mut conversations, &chat_id, false, None, Vec::new());
-            if name_only
-                && convo
-                    .extra
-                    .insert(message_ir::CHAT_ID_IS_NAME.to_string(), "1".to_string())
-                    .is_none()
-            {
-                // Counted once per conversation, not once per row.
-                report.bump("name_only_chat", 1);
-            }
-            convo.messages.push(PendingMessage {
-                sort_key: secs,
-                is_from_me,
-                sender_handle,
-                sender_display_name: if sender_display_name.is_empty() {
-                    None
-                } else {
-                    Some(sender_display_name)
-                },
-                text: row.text,
-                attachments: Vec::new(),
-                extra: {
-                    let mut e = BTreeMap::new();
-                    e.insert("contact_name".into(), contact_name);
-                    e.insert("date_ms".into(), date_ms);
-                    e.insert(
-                        "has_attachments".into(),
-                        if row.has_attachments { "true" } else { "false" }.into(),
-                    );
-                    e.insert("source_kind".into(), row.source_kind.as_str().to_string());
-                    e
-                },
-            });
-        }
+        ingest.ingest_file(&path);
     }
-
     message_vault_io_core::check_cancel(cancel)?;
+    let Ingest {
+        conversations,
+        mut report,
+        ..
+    } = ingest;
 
     let hooks = OpenExtractProjection {
         export: message_vault_io_core::export_meta(
@@ -181,17 +80,9 @@ pub(crate) fn convert_export(
     };
     let mut documents = Vec::new();
     for (chat_id, mut convo) in conversations {
-        let (keep, skipped) =
-            prepare_conversation(&mut convo, |a, b| a.sort_key.cmp(&b.sort_key), |k| k);
-        report.skipped_invalid_date += skipped;
-        if !keep {
-            continue;
+        if let Some(doc) = project_conversation(&chat_id, &mut convo, &hooks, &mut report) {
+            documents.push(doc);
         }
-        let (doc, tally) = pending_to_document(&chat_id, &convo, &hooks);
-        report.messages += tally.messages;
-        report.sent += tally.sent;
-        report.received += tally.received;
-        documents.push(doc);
     }
 
     // OpenExtract carries no attachments; every attachment source is Missing.
@@ -203,6 +94,124 @@ pub(crate) fn convert_export(
     )?;
 
     Ok((report, sink_result))
+}
+
+/// Parse-time state shared across every CSV file in one export.
+#[derive(Default)]
+struct Ingest {
+    conversations: BTreeMap<String, PendingConversation>,
+    /// Dedupe duplicate CSV rows: same chat + second + direction + text.
+    seen_keys: HashSet<String>,
+    report: ExportReport,
+}
+
+impl Ingest {
+    /// Parse one CSV and add its rows. A file that fails to parse is recorded
+    /// in the report and skipped so one bad export does not stop the rest.
+    fn ingest_file(&mut self, path: &Path) {
+        let rows = match parse_csv_file(path) {
+            Ok(rows) => rows,
+            Err(e) => {
+                self.report
+                    .errors
+                    .push(format!("{}: {e:#}", path.display()));
+                return;
+            }
+        };
+        let Some(first) = rows.first() else {
+            return;
+        };
+        // For per-chat files, infer the peer once from all rows in that file.
+        let per_chat_peer =
+            (first.source_kind == SourceKind::PerChat).then(|| infer_peer_label(&rows));
+        let phone_by_label = phones_by_peer_label(&rows, per_chat_peer.as_deref());
+        for row in rows {
+            self.ingest_row(row, per_chat_peer.as_deref(), &phone_by_label);
+        }
+    }
+
+    /// Add one row to its conversation, or count why it was dropped.
+    fn ingest_row(
+        &mut self,
+        row: RawRow,
+        per_chat_peer: Option<&str>,
+        phone_by_label: &HashMap<String, String>,
+    ) {
+        let peer_label = peer_label_for(&row, per_chat_peer);
+        let (chat_id, contact_name, name_only) = match resolve_chat(&peer_label) {
+            (key, name, true) => match phone_by_label.get(&peer_label) {
+                Some(phone) => (phone::normalize_lenient(phone), name, false),
+                None => (key, name, true),
+            },
+            resolved => resolved,
+        };
+        let Some((secs, date_ms)) = parse_timestamp(&row.date) else {
+            self.report.skipped_invalid_date += 1;
+            return;
+        };
+        let is_from_me = resolve_is_from_me(&row);
+        let (sender_handle, sender_display_name) =
+            resolve_sender(&row, is_from_me, &chat_id, &contact_name);
+
+        let dedupe_key = format!(
+            "{}|{}|{}|{}",
+            chat_id,
+            secs,
+            if is_from_me { "1" } else { "0" },
+            row.text
+        );
+        if !self.seen_keys.insert(dedupe_key) {
+            self.report.duplicates_dropped += 1;
+            return;
+        }
+
+        let convo = ensure_conversation(&mut self.conversations, &chat_id, false, None, Vec::new());
+        if name_only
+            && convo
+                .extra
+                .insert(message_ir::CHAT_ID_IS_NAME.to_string(), "1".to_string())
+                .is_none()
+        {
+            // Counted once per conversation, not once per row.
+            self.report.bump("name_only_chat", 1);
+        }
+        let mut extra = BTreeMap::new();
+        extra.insert("contact_name".into(), contact_name);
+        extra.insert("date_ms".into(), date_ms);
+        extra.insert(
+            "has_attachments".into(),
+            if row.has_attachments { "true" } else { "false" }.into(),
+        );
+        extra.insert("source_kind".into(), row.source_kind.as_str().to_string());
+        convo.messages.push(PendingMessage {
+            sort_key: secs,
+            is_from_me,
+            sender_handle,
+            sender_display_name: (!sender_display_name.is_empty()).then_some(sender_display_name),
+            text: row.text,
+            attachments: Vec::new(),
+            extra,
+        });
+    }
+}
+
+/// The phone number each peer label was seen with, when the source recorded one.
+///
+/// A chat can be labelled with a person's name while its rows still carry
+/// that person's number. Prefer the address the source actually recorded;
+/// only fall back to a name-only participant when the source recorded no
+/// address anywhere in the chat.
+fn phones_by_peer_label(rows: &[RawRow], per_chat_peer: Option<&str>) -> HashMap<String, String> {
+    let mut phone_by_label: HashMap<String, String> = HashMap::new();
+    for row in rows {
+        if row.is_from_me || is_me(&row.sender) || sanitize_number(&row.sender).is_none() {
+            continue;
+        }
+        phone_by_label
+            .entry(peer_label_for(row, per_chat_peer))
+            .or_insert_with(|| row.sender.clone());
+    }
+    phone_by_label
 }
 
 /// The other party's label for one row: the conversation column when it names
@@ -332,7 +341,7 @@ fn parse_timestamp(raw: &str) -> Option<(i64, String)> {
     None
 }
 
-/// OpenExtract deltas of the shared [`pending_to_document`] projection.
+/// OpenExtract deltas of the shared [`message_ir::pending_to_document`] projection.
 struct OpenExtractProjection {
     export: ExportMeta,
 }

@@ -8,11 +8,12 @@ use crate::types::ParsedMessage;
 use anyhow::{Result, bail};
 use message_ir::{
     ExportMeta, IrAttachment, IrService, IrSource, PendingAttachment, PendingConversation,
-    PendingMessage, ProjectionHooks, parse_android_type, pending_to_document, prepare_conversation,
+    PendingMessage, ProjectionHooks, parse_android_type,
 };
 use message_ir_format::{AttachmentSource, ExportTransforms, ExportWriter, FormatSinkResult};
 use message_vault_io_core::{
     CancelFlag, ExportReport, LogSink, OutputFormat, emit_log, prepare_outputs,
+    project_conversation,
 };
 use phone::OwnerHandleSet;
 use rayon::prelude::*;
@@ -185,7 +186,7 @@ pub(super) fn is_eml_file(p: &Path) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("eml"))
 }
 
-/// SMS Backup+ deltas of the shared [`pending_to_document`] projection.
+/// SMS Backup+ deltas of the shared [`message_ir::pending_to_document`] projection.
 struct SbpProjection<'a> {
     export: ExportMeta,
     blob_bytes: &'a HashMap<String, Vec<u8>>,
@@ -232,19 +233,46 @@ impl ProjectionHooks for SbpProjection<'_> {
 
 const EML_PROGRESS_EVERY: u64 = 5000;
 
-fn vlog(verbose: bool, log: Option<&LogSink>, msg: impl AsRef<str>) {
-    if verbose {
-        emit_log(log, msg);
-    }
+/// Verbose-only log output: every method is a no-op unless `--verbose` was passed.
+#[derive(Clone, Copy)]
+struct Verbose<'a> {
+    enabled: bool,
+    log: Option<&'a LogSink>,
 }
 
-fn report_progress(verbose: bool, log: Option<&LogSink>, label: &str, processed: u64, total: u64) {
-    if !verbose || total == 0 {
-        return;
+impl Verbose<'_> {
+    /// Write one line when verbose.
+    fn line(self, msg: impl AsRef<str>) {
+        if self.enabled {
+            emit_log(self.log, msg);
+        }
     }
-    let every = EML_PROGRESS_EVERY;
-    if processed == total || (every > 0 && processed.is_multiple_of(every)) {
-        emit_log(log, format!("{label}: {processed} / {total}"));
+
+    /// Write a `label: N / total` line every [`EML_PROGRESS_EVERY`] items and at the end.
+    fn progress(self, label: &str, processed: u64, total: u64) {
+        if !self.enabled || total == 0 {
+            return;
+        }
+        if processed == total || processed.is_multiple_of(EML_PROGRESS_EVERY) {
+            emit_log(self.log, format!("{label}: {processed} / {total}"));
+        }
+    }
+
+    /// List the first twenty error lines from the report, and how many more there were.
+    fn errors(self, report: &ExportReport) {
+        if !self.enabled || report.errors.is_empty() {
+            return;
+        }
+        emit_log(self.log, format!("errors: {}", report.errors.len()));
+        for err in report.errors.iter().take(20) {
+            emit_log(self.log, format!("  {err}"));
+        }
+        if report.errors.len() > 20 {
+            emit_log(
+                self.log,
+                format!("  … and {} more", report.errors.len() - 20),
+            );
+        }
     }
 }
 
@@ -291,151 +319,50 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
         log,
         resume,
     } = args;
+    let verbose = Verbose {
+        enabled: verbose,
+        log,
+    };
     let owners = OwnerHandleSet::from_phones(owner_phones)?;
     let owner_handle = owners
         .primary_owner_handle()
         .expect("from_phones guarantees a phone owner handle");
+    let owner_digits = owners.all_phone_digits();
     let owner_emails_lc: Vec<String> = owner_emails
         .iter()
         .map(|e| e.trim().to_ascii_lowercase())
         .filter(|e| !e.is_empty())
         .collect();
-    let mut report = ExportReport::default();
-    let mut conversations: HashMap<String, PendingConversation> = HashMap::new();
-    // Online dedupe state (fingerprint → message index) keyed by chat id;
-    // the shared PendingConversation carries document data only.
-    let mut by_identity: HashMap<String, HashMap<String, usize>> = HashMap::new();
-
-    vlog(
-        verbose,
-        log,
-        format!("owner phones: {}", owners.all_phone_digits().len()),
-    );
-    vlog(
-        verbose,
-        log,
-        format!("owner emails: {}", owner_emails_lc.len()),
-    );
-    vlog(verbose, log, format!("output: {}", output_dir.display()));
+    verbose.line(format!("owner phones: {}", owner_digits.len()));
+    verbose.line(format!("owner emails: {}", owner_emails_lc.len()));
+    verbose.line(format!("output: {}", output_dir.display()));
 
     let input_paths: Vec<PathBuf> = inputs.iter().map(|p| p.as_ref().to_path_buf()).collect();
     let (inputs, output_dir) = prepare_outputs(&input_paths, output_dir)?;
-
     let writer = ExportWriter::open(&output_dir, output_format, transforms, resume)?;
-    let copy_attachments = writer.copies_attachments();
-    let mut blob_bytes: HashMap<String, Vec<u8>> = HashMap::new();
-
-    let input_roots = inputs.clone();
-    let file_inputs: HashSet<PathBuf> = input_roots
-        .iter()
-        .filter(|p| p.is_file())
-        .cloned()
-        .collect();
 
     let eml_paths = collect_eml_paths(&inputs, cancel)?;
-    let total = eml_paths.len() as u64;
-    vlog(
-        verbose,
-        log,
-        format!("scanning {total} .eml files (parallel parse)"),
-    );
-    // Pre-size for typical 1:1 chat counts; grows as needed.
-    conversations.reserve((total / 4).min(50_000) as usize);
-
+    verbose.line(format!(
+        "scanning {} .eml files (parallel parse)",
+        eml_paths.len()
+    ));
     message_vault_io_core::check_cancel(cancel)?;
 
-    let owner_all_digits = owners.all_phone_digits();
-
-    // Parallel parse in chunks so attachment payloads are not all held at once.
-    // Each worker checks cancel before reading an EML.
-    const EML_PARSE_CHUNK: usize = 256;
-    let mut scanned: u64 = 0;
-    for chunk in eml_paths.chunks(EML_PARSE_CHUNK) {
-        message_vault_io_core::check_cancel(cancel)?;
-        let outcomes: Vec<ParsedEmlKind> = chunk
-            .par_iter()
-            .map(|eml_path| {
-                if message_vault_io_core::is_cancelled(cancel) {
-                    return ParsedEmlKind::Cancelled;
-                }
-                let rel_path = relative_eml_path(eml_path, &input_roots, &file_inputs);
-                parse_one_eml(eml_path, rel_path, &owner_all_digits, &owner_emails_lc)
-            })
-            .collect();
-
-        for outcome in outcomes {
-            message_vault_io_core::check_cancel(cancel)?;
-            scanned += 1;
-            report_progress(verbose, log, "scanned", scanned, total);
-            match outcome {
-                ParsedEmlKind::Cancelled => {
-                    bail!("cancelled");
-                }
-                ParsedEmlKind::Archive {
-                    msgs,
-                    skipped_dates,
-                    _path_display: _,
-                } => {
-                    report.bump("archive_eml", 1);
-                    report.skipped_invalid_date += skipped_dates;
-                    for msg in msgs {
-                        if msg.chat_key.is_empty() {
-                            report.bump("unknown_chat_messages", 1);
-                        }
-                        let atts =
-                            queue_attachments(&msg.attachments, copy_attachments, &mut blob_bytes);
-                        add_message(&mut conversations, &mut by_identity, msg, atts, &mut report);
-                    }
-                }
-                ParsedEmlKind::Flat {
-                    msg,
-                    _path_display: _,
-                } => {
-                    report.bump("flat_eml", 1);
-                    if msg.chat_key.is_empty() {
-                        report.bump("unknown_chat_messages", 1);
-                    }
-                    let atts =
-                        queue_attachments(&msg.attachments, copy_attachments, &mut blob_bytes);
-                    add_message(
-                        &mut conversations,
-                        &mut by_identity,
-                        *msg,
-                        atts,
-                        &mut report,
-                    );
-                }
-                ParsedEmlKind::FlatNone => {
-                    report.bump("skipped_parse_error", 1);
-                }
-                ParsedEmlKind::NotSms => {
-                    report.bump("skipped_not_sms_backup_plus", 1);
-                }
-                ParsedEmlKind::IoError(msg) => {
-                    report.errors.push(msg);
-                }
-                ParsedEmlKind::ParseError(msg) => {
-                    report.bump("skipped_parse_error", 1);
-                    report.errors.push(msg);
-                }
-            }
-        }
-    }
-
-    vlog(
-        verbose,
-        log,
-        format!(
-            "parsed: flat_eml={} archive_eml={} messages={} unknown_chat={} skipped_not_sms_backup_plus={} skipped_parse_error={} skipped_bad_date={}",
-            report.extra("flat_eml"),
-            report.extra("archive_eml"),
-            report.extra("messages_before_dedupe"),
-            report.extra("unknown_chat_messages"),
-            report.extra("skipped_not_sms_backup_plus"),
-            report.extra("skipped_parse_error"),
-            report.skipped_invalid_date
-        ),
-    );
+    let parse = ParseInputs {
+        file_inputs: inputs.iter().filter(|p| p.is_file()).cloned().collect(),
+        input_roots: inputs,
+        owner_digits,
+        owner_emails_lc,
+    };
+    let mut ingest = EmlIngest::new(writer.copies_attachments(), eml_paths.len());
+    parse_all_emls(&eml_paths, &parse, cancel, verbose, &mut ingest)?;
+    verbose.line(ingest.parse_summary());
+    let EmlIngest {
+        blob_bytes,
+        conversations,
+        mut report,
+        ..
+    } = ingest;
 
     let hooks = SbpProjection {
         export: message_vault_io_core::export_meta(
@@ -450,29 +377,17 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
     let mut documents = Vec::new();
     for (chat_id, mut convo) in conversations {
         message_vault_io_core::check_cancel(cancel)?;
-        let (keep, skipped) =
-            prepare_conversation(&mut convo, |a, b| a.sort_key.cmp(&b.sort_key), |k| k);
-        report.skipped_invalid_date += skipped;
-        if !keep {
-            continue;
+        if let Some(doc) = project_conversation(&chat_id, &mut convo, &hooks, &mut report) {
+            documents.push(doc);
         }
-        let (doc, tally) = pending_to_document(&chat_id, &convo, &hooks);
-        report.messages += tally.messages;
-        report.sent += tally.sent;
-        report.received += tally.received;
-        documents.push(doc);
     }
 
     if !writer.use_queue() {
-        vlog(
-            verbose,
-            log,
-            format!(
-                "writing {} conversation files (duplicates dropped so far: {})",
-                documents.len(),
-                report.duplicates_dropped
-            ),
-        );
+        verbose.line(format!(
+            "writing {} conversation files (duplicates dropped so far: {})",
+            documents.len(),
+            report.duplicates_dropped
+        ));
     }
     let sink_result = writer.finish(
         documents,
@@ -489,28 +404,173 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
         &mut report,
     )?;
 
-    vlog(
-        verbose,
-        log,
-        format!(
-            "done: conversations={} messages={} duplicates_dropped={} attachments={}",
-            report.conversations,
-            report.messages,
-            report.duplicates_dropped,
-            report.attachments_saved
-        ),
-    );
-    if verbose && !report.errors.is_empty() {
-        emit_log(log, format!("errors: {}", report.errors.len()));
-        for err in report.errors.iter().take(20) {
-            emit_log(log, format!("  {err}"));
+    verbose.line(format!(
+        "done: conversations={} messages={} duplicates_dropped={} attachments={}",
+        report.conversations, report.messages, report.duplicates_dropped, report.attachments_saved
+    ));
+    verbose.errors(&report);
+    Ok((report, sink_result))
+}
+
+/// Read-only inputs every parallel EML parse needs.
+struct ParseInputs {
+    /// The `--input` paths after output preparation; relative EML paths are
+    /// computed against these.
+    input_roots: Vec<PathBuf>,
+    /// The subset of `input_roots` that are single files rather than folders.
+    file_inputs: HashSet<PathBuf>,
+    owner_digits: HashSet<String>,
+    owner_emails_lc: Vec<String>,
+}
+
+/// How many EMLs one parallel batch parses before its results are folded in.
+///
+/// Chunking keeps attachment payloads from all being held in memory at once.
+const EML_PARSE_CHUNK: usize = 256;
+
+/// Parse every EML in parallel chunks and fold the outcomes into `ingest`.
+///
+/// # Errors
+///
+/// Returns an error when the run is cancelled.
+fn parse_all_emls(
+    eml_paths: &[PathBuf],
+    inputs: &ParseInputs,
+    cancel: Option<&CancelFlag>,
+    verbose: Verbose<'_>,
+    ingest: &mut EmlIngest,
+) -> Result<()> {
+    let total = eml_paths.len() as u64;
+    let mut scanned = 0u64;
+    for chunk in eml_paths.chunks(EML_PARSE_CHUNK) {
+        message_vault_io_core::check_cancel(cancel)?;
+        let outcomes: Vec<ParsedEmlKind> = chunk
+            .par_iter()
+            .map(|eml_path| parse_eml_path(eml_path, inputs, cancel))
+            .collect();
+        for outcome in outcomes {
+            message_vault_io_core::check_cancel(cancel)?;
+            scanned += 1;
+            verbose.progress("scanned", scanned, total);
+            ingest.absorb(outcome)?;
         }
-        if report.errors.len() > 20 {
-            emit_log(log, format!("  … and {} more", report.errors.len() - 20));
+    }
+    Ok(())
+}
+
+/// Parse one EML on a worker thread. Checks cancel first so a cancelled run
+/// stops reading files promptly.
+fn parse_eml_path(
+    eml_path: &Path,
+    inputs: &ParseInputs,
+    cancel: Option<&CancelFlag>,
+) -> ParsedEmlKind {
+    if message_vault_io_core::is_cancelled(cancel) {
+        return ParsedEmlKind::Cancelled;
+    }
+    let rel_path = relative_eml_path(eml_path, &inputs.input_roots, &inputs.file_inputs);
+    parse_one_eml(
+        eml_path,
+        rel_path,
+        &inputs.owner_digits,
+        &inputs.owner_emails_lc,
+    )
+}
+
+/// Everything the scan accumulates: conversations, dedupe state, attachment
+/// bytes, and the counts that end up in the report.
+struct EmlIngest {
+    copy_attachments: bool,
+    /// Attachment bytes by digest, kept until the writer asks for them.
+    blob_bytes: HashMap<String, Vec<u8>>,
+    conversations: HashMap<String, PendingConversation>,
+    /// Online dedupe state (fingerprint → message index) keyed by chat id;
+    /// the shared `PendingConversation` carries document data only.
+    by_identity: HashMap<String, HashMap<String, usize>>,
+    report: ExportReport,
+}
+
+impl EmlIngest {
+    /// Empty state, pre-sized for the typical ratio of chats to EML files.
+    fn new(copy_attachments: bool, eml_count: usize) -> Self {
+        Self {
+            copy_attachments,
+            blob_bytes: HashMap::new(),
+            conversations: HashMap::with_capacity((eml_count / 4).min(50_000)),
+            by_identity: HashMap::new(),
+            report: ExportReport::default(),
         }
     }
 
-    Ok((report, sink_result))
+    /// Fold one parsed EML into the pending conversations.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a worker saw the cancel flag.
+    fn absorb(&mut self, outcome: ParsedEmlKind) -> Result<()> {
+        match outcome {
+            ParsedEmlKind::Cancelled => bail!("cancelled"),
+            ParsedEmlKind::Archive {
+                msgs,
+                skipped_dates,
+                _path_display: _,
+            } => {
+                self.report.bump("archive_eml", 1);
+                self.report.skipped_invalid_date += skipped_dates;
+                for msg in msgs {
+                    self.add_parsed(msg);
+                }
+            }
+            ParsedEmlKind::Flat {
+                msg,
+                _path_display: _,
+            } => {
+                self.report.bump("flat_eml", 1);
+                self.add_parsed(*msg);
+            }
+            ParsedEmlKind::FlatNone => self.report.bump("skipped_parse_error", 1),
+            ParsedEmlKind::NotSms => self.report.bump("skipped_not_sms_backup_plus", 1),
+            ParsedEmlKind::IoError(msg) => self.report.errors.push(msg),
+            ParsedEmlKind::ParseError(msg) => {
+                self.report.bump("skipped_parse_error", 1);
+                self.report.errors.push(msg);
+            }
+        }
+        Ok(())
+    }
+
+    /// Queue one message's attachments and add it to its conversation.
+    fn add_parsed(&mut self, msg: ParsedMessage) {
+        if msg.chat_key.is_empty() {
+            self.report.bump("unknown_chat_messages", 1);
+        }
+        let atts = queue_attachments(
+            &msg.attachments,
+            self.copy_attachments,
+            &mut self.blob_bytes,
+        );
+        add_message(
+            &mut self.conversations,
+            &mut self.by_identity,
+            msg,
+            atts,
+            &mut self.report,
+        );
+    }
+
+    /// One line of parse counters for the verbose log.
+    fn parse_summary(&self) -> String {
+        format!(
+            "parsed: flat_eml={} archive_eml={} messages={} unknown_chat={} skipped_not_sms_backup_plus={} skipped_parse_error={} skipped_bad_date={}",
+            self.report.extra("flat_eml"),
+            self.report.extra("archive_eml"),
+            self.report.extra("messages_before_dedupe"),
+            self.report.extra("unknown_chat_messages"),
+            self.report.extra("skipped_not_sms_backup_plus"),
+            self.report.extra("skipped_parse_error"),
+            self.report.skipped_invalid_date
+        )
+    }
 }
 
 #[cfg(test)]
