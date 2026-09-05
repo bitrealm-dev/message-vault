@@ -1074,10 +1074,19 @@ pub(crate) async fn asset_upload_complete_handler(
         let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
         let sha = sha256.clone();
         let uid = upload_id.clone();
-        let _ = tokio::task::spawn_blocking(move || {
+        let dropped = tokio::task::spawn_blocking(move || {
             asset_uploads::abort_upload(&assets_dir, &sha, &uid)
         })
-        .await;
+        .await
+        .map_err(anyhow::Error::from)
+        .and_then(|result| result);
+        if let Err(error) = dropped {
+            tracing::warn!(
+                upload_id,
+                error = format!("{error:#}"),
+                "could not drop stale upload session"
+            );
+        }
         return Ok(AssetPutResponse::stored(stored, true));
     }
 
