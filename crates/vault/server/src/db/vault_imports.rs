@@ -463,6 +463,29 @@ pub async fn get_active_import(
     }
 }
 
+/// The account's import when it is still running.
+///
+/// # Errors
+///
+/// [`ImportLookupError::NotFound`] when the account owns no such import,
+/// [`ImportLookupError::InvalidSession`] when it is no longer running.
+async fn require_running_import(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    import_id: i64,
+) -> std::result::Result<VaultImportRow, ImportLookupError> {
+    let existing = get_owned_import(&mut *conn, account_id, import_id).await?;
+    if existing.status != "running" {
+        return Err(ImportLookupError::InvalidSession {
+            message: format!(
+                "import {import_id} is not running (status={})",
+                existing.status
+            ),
+        });
+    }
+    Ok(existing)
+}
+
 /// Move a live session to another stage, optionally recording what the user
 /// approved at the gate they just passed.
 ///
@@ -482,15 +505,7 @@ pub async fn set_import_stage(
     stage: ImportStage,
     summary_json: Option<&str>,
 ) -> std::result::Result<(), ImportLookupError> {
-    let existing = get_owned_import(&mut *conn, account_id, import_id).await?;
-    if existing.status != "running" {
-        return Err(ImportLookupError::InvalidSession {
-            message: format!(
-                "import {import_id} is not running (status={})",
-                existing.status
-            ),
-        });
-    }
+    require_running_import(conn, account_id, import_id).await?;
     match summary_json {
         Some(summary) => {
             sqlx::query(
@@ -531,15 +546,7 @@ pub async fn discard_import(
     account_id: &str,
     import_id: i64,
 ) -> std::result::Result<(), ImportLookupError> {
-    let existing = get_owned_import(&mut *conn, account_id, import_id).await?;
-    if existing.status != "running" {
-        return Err(ImportLookupError::InvalidSession {
-            message: format!(
-                "import {import_id} is not running (status={})",
-                existing.status
-            ),
-        });
-    }
+    require_running_import(conn, account_id, import_id).await?;
     sqlx::query(
         "UPDATE vault_imports
          SET status = 'cancelled', stage = NULL, finished_at = $1

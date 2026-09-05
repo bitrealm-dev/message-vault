@@ -258,30 +258,29 @@ fn is_jsonl_file(path: &Path) -> bool {
 /// Returns an error if a rename fails. If the previous files cannot be fully
 /// restored, they are left in the backup folder and the error says so.
 fn replace_generated_paths(active: &Path, prepared: &Path) -> Result<()> {
-    replace_generated_paths_with(active, prepared, rename_generated_path)
+    replace_generated_paths_with(active, prepared, move_path)
 }
 
-/// Rename `source` onto `destination`. When the paths sit on different mounts
-/// (`EXDEV` / `ErrorKind::CrossesDevices`), copy then delete the source.
-///
-/// Docker BuildKit overlay layers trigger that error when `demo-seed` moves
-/// `config/` into a temporary backup directory.
+/// Move `source` onto `destination`: a rename, or, when the paths sit on
+/// different mounts (`EXDEV` / `ErrorKind::CrossesDevices`), a copy then a
+/// delete of the source. Docker BuildKit overlay layers trigger that error
+/// when the demo bundle or the reset-demo work tree moves into place.
 ///
 /// # Errors
 ///
 /// Returns an error if neither rename nor copy-then-remove can finish.
-fn rename_generated_path(source: &Path, destination: &Path) -> Result<()> {
-    rename_generated_path_with(source, destination, |from, to| fs::rename(from, to))
+pub fn move_path(source: &Path, destination: &Path) -> Result<()> {
+    move_path_with(source, destination, |from, to| fs::rename(from, to))
 }
 
-/// Same as [`rename_generated_path`], but uses `rename` so tests can return
+/// Same as [`move_path`], but uses `rename` so tests can return
 /// `ErrorKind::CrossesDevices` without two real filesystems.
 ///
 /// # Errors
 ///
 /// Returns an error if `rename` fails for a reason other than a cross-device
 /// move, or if the copy-then-remove fallback cannot finish.
-fn rename_generated_path_with<F>(source: &Path, destination: &Path, rename: F) -> Result<()>
+pub fn move_path_with<F>(source: &Path, destination: &Path, rename: F) -> Result<()>
 where
     F: FnOnce(&Path, &Path) -> io::Result<()>,
 {
@@ -296,13 +295,8 @@ where
                 )
             })
         }
-        Err(error) => Err(error).with_context(|| {
-            format!(
-                "rename generated demo path {} to {}",
-                source.display(),
-                destination.display()
-            )
-        }),
+        Err(error) => Err(error)
+            .with_context(|| format!("rename {} to {}", source.display(), destination.display())),
     }
 }
 
@@ -663,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn rename_generated_path_copies_file_when_rename_crosses_devices() {
+    fn move_path_copies_file_when_rename_crosses_devices() {
         let temp = tempfile::tempdir().expect("create test directory");
         let source = temp.path().join("README.md");
         let destination = temp.path().join("backup").join("README.md");
@@ -671,7 +665,7 @@ mod tests {
         fs::create_dir_all(destination.parent().expect("backup parent"))
             .expect("create backup directory");
 
-        rename_generated_path_with(&source, &destination, |_source, _destination| {
+        move_path_with(&source, &destination, |_source, _destination| {
             Err(std::io::Error::new(
                 std::io::ErrorKind::CrossesDevices,
                 "Invalid cross-device link",
@@ -687,7 +681,7 @@ mod tests {
     }
 
     #[test]
-    fn rename_generated_path_copies_directory_when_rename_crosses_devices() {
+    fn move_path_copies_directory_when_rename_crosses_devices() {
         let temp = tempfile::tempdir().expect("create test directory");
         let source = temp.path().join("config");
         let destination = temp.path().join("backup").join("config");
@@ -696,7 +690,7 @@ mod tests {
         fs::create_dir_all(destination.parent().expect("backup parent"))
             .expect("create backup directory");
 
-        rename_generated_path_with(&source, &destination, |_source, _destination| {
+        move_path_with(&source, &destination, |_source, _destination| {
             Err(std::io::Error::new(
                 std::io::ErrorKind::CrossesDevices,
                 "Invalid cross-device link",
@@ -723,7 +717,7 @@ mod tests {
         write_bundle_paths(&prepared, b"new");
 
         replace_generated_paths_with(&active, &prepared, |source, destination| {
-            rename_generated_path_with(source, destination, |_source, _destination| {
+            move_path_with(source, destination, |_source, _destination| {
                 Err(std::io::Error::new(
                     std::io::ErrorKind::CrossesDevices,
                     "Invalid cross-device link",
