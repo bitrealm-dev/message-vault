@@ -328,12 +328,15 @@ fn classify_one(
     if verdict == SizeVerdict::FitsAsIs {
         return;
     }
-    let name = original_name.map(ToString::to_string).unwrap_or_else(|| {
-        abs.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(rel)
-            .to_string()
-    });
+    let name = original_name.map_or_else(
+        || {
+            abs.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(rel)
+                .to_string()
+        },
+        ToString::to_string,
+    );
     summary.forecasts.push(AttachmentForecast {
         path: rel.to_string(),
         name,

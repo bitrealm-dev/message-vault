@@ -514,15 +514,16 @@ impl FileStaging<'_> {
 /// Platform for chat and participant handles: the conversation's own hint,
 /// else WhatsApp for a WhatsApp export, else phone.
 fn platform_for(platform_service: Option<&str>, source: &str) -> HandleService {
-    platform_service
-        .map(HandleService::parse)
-        .unwrap_or_else(|| {
+    platform_service.map_or_else(
+        || {
             if source.eq_ignore_ascii_case("whatsapp") {
                 HandleService::Whatsapp
             } else {
                 HandleService::Phone
             }
-        })
+        },
+        HandleService::parse,
+    )
 }
 
 /// Stage every message's attachments on disk, pairing each message with what
@@ -649,8 +650,7 @@ async fn resolve_message_rows(
         let sender_platform = msg
             .service
             .as_deref()
-            .map(HandleService::parse)
-            .unwrap_or(platform);
+            .map_or(platform, HandleService::parse);
         let sender_handle_id = resolve_incoming_sender_handle(
             tx,
             &mut stmts.handles,

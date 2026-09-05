@@ -229,9 +229,7 @@ fn header_or(headers: &[MailHeader<'_>], name: &str, default: &str) -> String {
 
 /// True when the header is `true` or `1`.
 fn header_bool(headers: &[MailHeader<'_>], name: &str) -> bool {
-    optional_header(headers, name)
-        .map(|s| s.eq_ignore_ascii_case("true") || s == "1")
-        .unwrap_or(false)
+    optional_header(headers, name).is_some_and(|s| s.eq_ignore_ascii_case("true") || s == "1")
 }
 
 /// A header value parsed as a number.
@@ -302,7 +300,7 @@ fn merge_attachments(mail: &ParsedMail<'_>, headers: &[MailHeader<'_>]) -> Vec<M
                 mime_type: m.and_then(|c| c.mime_type.clone()).or(mime_fallback),
                 digest_sha256: m.and_then(|c| c.digest_sha256.clone()),
             },
-            is_sticker: m.map(|c| c.is_sticker).unwrap_or(false),
+            is_sticker: m.is_some_and(|c| c.is_sticker),
             transcription: m.and_then(|c| c.transcription.clone()),
             sticker_effect: m.and_then(|c| c.sticker_effect.clone()),
         });
@@ -329,11 +327,7 @@ fn collect_mime_attachments(
         }
         let disp = part.get_content_disposition();
         let is_attachment = disp.disposition == mailparse::DispositionType::Attachment
-            || disp
-                .params
-                .get("filename")
-                .map(|s| !s.is_empty())
-                .unwrap_or(false)
+            || disp.params.get("filename").is_some_and(|s| !s.is_empty())
             || (!mime.starts_with("text/") && !mime.starts_with("multipart/"));
         if !is_attachment {
             continue;

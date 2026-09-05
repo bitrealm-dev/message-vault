@@ -308,12 +308,12 @@ fn message_from_ir(msg: &IrMessage) -> Result<MessageRecord> {
         service: Some(msg.service.as_str().to_string()),
         subject: msg.subject.clone().filter(|s| !s.is_empty()),
         text,
-        is_announcement: im.map(|i| i.announcement.is_some()).unwrap_or(false)
+        is_announcement: im.is_some_and(|i| i.announcement.is_some())
             || matches!(msg.message_kind, IrMessageKind::Announcement),
         announcement: im.and_then(|i| i.announcement.clone()),
         attachments: msg.attachments.iter().map(attachment_from_ir).collect(),
         tapbacks,
-        is_reply: im.map(|i| i.is_reply).unwrap_or(false),
+        is_reply: im.is_some_and(|i| i.is_reply),
         thread_originator_guid: im.and_then(|i| i.in_reply_to_guid.clone()),
         thread_originator_part: im.and_then(|i| i.thread_originator_part.map(i64::from)),
         num_replies: im.and_then(|i| i.num_replies.map(i64::from)).unwrap_or(0),

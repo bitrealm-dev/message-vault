@@ -39,7 +39,7 @@ pub(crate) fn name_only_key(msg: &ParsedMessage) -> Option<String> {
     if msg.conversation_type == "group" || !msg.chat_key.is_empty() {
         return None;
     }
-    let name = msg.name_alias.as_deref().map(str::trim).unwrap_or("");
+    let name = msg.name_alias.as_deref().map_or("", str::trim);
     if name.is_empty() {
         return None;
     }

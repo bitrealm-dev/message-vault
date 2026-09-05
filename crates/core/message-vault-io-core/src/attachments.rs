@@ -11,11 +11,10 @@ pub fn digest_prefix(digest_hex: &str) -> &str {
 
 /// `YYYYMMDD_HHMMSS` in local time for attachment file names, or the raw seconds when the time cannot be represented.
 fn date_prefix(timestamp_secs: i64) -> String {
-    Local
-        .timestamp_opt(timestamp_secs, 0)
-        .single()
-        .map(|t| t.format("%Y%m%d_%H%M%S").to_string())
-        .unwrap_or_else(|| timestamp_secs.to_string())
+    Local.timestamp_opt(timestamp_secs, 0).single().map_or_else(
+        || timestamp_secs.to_string(),
+        |t| t.format("%Y%m%d_%H%M%S").to_string(),
+    )
 }
 
 /// Content-addressed attachment filename: `{local-date}-{digest16}{ext}`.

@@ -45,7 +45,7 @@ use crate::state::AppState;
 /// Form fields shared by `summarize_staging` and `transcode_staging` — the
 /// same media fields the Extract form parses, addressed at an already-staged
 /// folder instead of a fresh backup.
-#[derive(serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StagingArgs {
     /// Staging folder written by an earlier `extract` run.
@@ -240,8 +240,8 @@ fn transcode_summary(report: &TranscodeReport) -> String {
 /// another thread panicked while holding the shared state lock. Failures
 /// during the pass — including a cancellation and ffmpeg/ffprobe being
 /// unavailable — are sent as `extract:error`, verbatim, not returned here.
-#[tauri::command]
-pub async fn transcode_staging(
+#[tauri::command(async)]
+pub fn transcode_staging(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
     app: tauri::AppHandle,
     args: StagingArgs,
@@ -318,7 +318,7 @@ pub async fn transcode_staging(
 }
 
 /// Arguments for [`delete_staging`].
-#[derive(serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteStagingArgs {
     /// Staging folder to remove.

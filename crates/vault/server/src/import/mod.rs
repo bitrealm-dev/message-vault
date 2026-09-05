@@ -1218,8 +1218,10 @@ fn import_date_ymd(row: &crate::db::vault_imports::VaultImportRow) -> String {
         .or(Some(row.started_at.as_str()))
         .and_then(|ts| ts.get(..10))
         .filter(|d| d.len() == 10)
-        .map(str::to_string)
-        .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string())
+        .map_or_else(
+            || chrono::Utc::now().format("%Y-%m-%d").to_string(),
+            str::to_string,
+        )
 }
 
 fn parse_summary_json(summary_json: Option<String>) -> serde_json::Value {

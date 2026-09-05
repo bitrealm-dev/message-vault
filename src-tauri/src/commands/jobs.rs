@@ -34,7 +34,7 @@ use crate::state::AppState;
 /// state lock.
 pub(crate) fn reset_and_clone_cancel(state: &Arc<Mutex<AppState>>) -> Result<CancelFlag, String> {
     let st = state.lock().map_err(|e| e.to_string())?;
-    st.cancel_flag.store(false, Ordering::SeqCst);
+    st.cancel_flag.store(false, Ordering::Relaxed);
     Ok(st.cancel_flag.clone())
 }
 
@@ -65,7 +65,7 @@ mod tests {
     fn reset_and_clone_returns_a_fresh_false_flag() {
         let state = Arc::new(Mutex::new(AppState::new()));
         let cancel = reset_and_clone_cancel(&state).unwrap();
-        assert!(!cancel.load(Ordering::SeqCst));
+        assert!(!cancel.load(Ordering::Relaxed));
     }
 
     #[test]
@@ -75,9 +75,9 @@ mod tests {
             .lock()
             .unwrap()
             .cancel_flag
-            .store(true, Ordering::SeqCst);
+            .store(true, Ordering::Relaxed);
         let cancel = reset_and_clone_cancel(&state).unwrap();
-        assert!(!cancel.load(Ordering::SeqCst));
+        assert!(!cancel.load(Ordering::Relaxed));
         assert!(Arc::ptr_eq(&cancel, &state.lock().unwrap().cancel_flag));
     }
 }

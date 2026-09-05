@@ -175,7 +175,7 @@ impl ProgressBatcher {
     fn take_chunk_line(&mut self) -> String {
         // Wall time for this progress window — not the sum of per-file clocks
         // (those overlap when prepares run ahead of imports).
-        let wall_ms = self.chunk_started.map(elapsed_ms).unwrap_or(0);
+        let wall_ms = self.chunk_started.map_or(0, elapsed_ms);
         let line = format!(
             "files {}/{} - conversations={} messages={} transfer size={}, import time={}, total time={}",
             self.done,

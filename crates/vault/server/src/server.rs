@@ -256,7 +256,7 @@ auth_guard!(
 );
 
 /// Shared server state passed to every HTTP handler.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct AppState {
     /// Loaded configuration.
     pub cfg: Arc<Config>,
@@ -507,12 +507,7 @@ async fn json_body_limit_response(mut response: Response) -> Response {
 
 /// Assemble the full router: API routes, auth routes, the optional OpenAPI UI, CORS, and the static web app.
 pub(crate) fn http_app(state: AppState) -> Router {
-    let openapi_ui = state
-        .cfg
-        .server
-        .as_ref()
-        .map(|s| s.openapi_ui)
-        .unwrap_or(false);
+    let openapi_ui = state.cfg.server.as_ref().is_some_and(|s| s.openapi_ui);
     let cors_origins = state
         .cfg
         .server

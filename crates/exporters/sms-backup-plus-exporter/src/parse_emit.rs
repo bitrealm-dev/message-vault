@@ -118,7 +118,7 @@ pub(super) fn parse_one_eml(
         match parse_archive_eml_mail(eml_path, &mail, &headers) {
             Ok((mut msgs, skipped_dates)) => {
                 for msg in &mut msgs {
-                    msg.eml_path = rel_path.clone();
+                    msg.eml_path.clone_from(&rel_path);
                 }
                 ParsedEmlKind::Archive {
                     msgs,

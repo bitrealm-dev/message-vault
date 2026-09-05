@@ -26,6 +26,7 @@ pub struct AttachmentProgress {
 }
 
 /// One attachment to stage, pointing at the in-memory IR row.
+#[derive(Debug)]
 pub struct AttachmentJob<'a> {
     /// Conversation attachment to fill after the write.
     pub attachment: &'a mut IrAttachment,
@@ -87,7 +88,7 @@ pub fn run_attachment_jobs(
         .map_err(|e| format!("create {}: {e}", attachments_dir.display()))?;
 
     for (i, job) in jobs.iter_mut().enumerate() {
-        if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
+        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
             return Err("canceled".into());
         }
 
@@ -128,7 +129,7 @@ pub fn run_attachment_jobs(
     }
 
     if matches!(media.mode, MediaMode::Convert | MediaMode::Compress) {
-        if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
+        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
             return Err("canceled".into());
         }
         apply_convert_or_compress(jobs, attachments_dir, media, log)?;

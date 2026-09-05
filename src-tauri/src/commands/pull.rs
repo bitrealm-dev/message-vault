@@ -13,7 +13,7 @@ use super::jobs::{reset_and_clone_cancel, spawn_job};
 use crate::state::AppState;
 
 /// User-facing parameters for the `pull` command.
-#[derive(serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PullArgs {
     /// Base URL of the vault server, for example `http://127.0.0.1:8080`.
@@ -40,8 +40,8 @@ pub struct PullArgs {
 ///
 /// Returns an error if another thread panicked while holding the shared
 /// state lock. Failures during the download are sent as `extract:error`.
-#[tauri::command]
-pub async fn pull(
+#[tauri::command(async)]
+pub fn pull(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
     app: tauri::AppHandle,
     args: PullArgs,

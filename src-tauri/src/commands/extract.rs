@@ -47,10 +47,10 @@ use crate::state::AppState;
 ///
 /// Returns an error if another thread panicked while holding the shared
 /// state lock.
-#[tauri::command]
-pub async fn cancel(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> Result<(), String> {
+#[tauri::command(async)]
+pub fn cancel(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> Result<(), String> {
     let state = state.lock().map_err(|e| e.to_string())?;
-    state.cancel_flag.store(true, Ordering::SeqCst);
+    state.cancel_flag.store(true, Ordering::Relaxed);
     Ok(())
 }
 
@@ -126,7 +126,7 @@ fn count_jsonl_output(root: &Path) -> anyhow::Result<JsonlOutputCounts> {
 }
 
 /// User-facing parameters for the `extract` command (before defaults/parsing).
-#[derive(serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtractArgs {
     /// Backup source key, for example `imessage-ios` or `whatsapp-android`.
@@ -183,8 +183,8 @@ pub struct ExtractArgs {
 /// Returns an error if a form field is invalid, the source is unknown, or
 /// another thread panicked while holding the shared state lock. Failures
 /// during the export itself are sent as `extract:error`, not returned here.
-#[tauri::command]
-pub async fn extract(
+#[tauri::command(async)]
+pub fn extract(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
     app: tauri::AppHandle,
     args: ExtractArgs,
@@ -427,14 +427,14 @@ fn build_exporter_config(
         "imessage-ios" => {
             form.db_path = path.to_string();
             form.apple_platform = ApplePlatform::Ios;
-            form.backup_password = options.backup_password.clone();
+            form.backup_password.clone_from(&options.backup_password);
             Exporter::Imessage
         }
         "imessage-macos" | "imessage-jailbreak" => {
             form.db_path = path.to_string();
             form.apple_platform = ApplePlatform::MacOs;
-            form.attachment_root = options.attachment_root.clone();
-            form.apple_contacts = options.apple_contacts.clone();
+            form.attachment_root.clone_from(&options.attachment_root);
+            form.apple_contacts.clone_from(&options.apple_contacts);
             // The Extract screen only offers obfuscation for iOS backups.
             form.obfuscate = false;
             Exporter::Imessage
@@ -466,17 +466,17 @@ fn build_exporter_config(
         "whatsapp-android" => {
             form.input = path.to_string();
             form.whatsapp_platform = WhatsappPlatform::Android;
-            form.whatsapp_key = options.whatsapp_key.clone();
-            form.whatsapp_wa = options.whatsapp_wa.clone();
-            form.whatsapp_media = options.whatsapp_media.clone();
-            form.whatsapp_db = options.whatsapp_db.clone();
+            form.whatsapp_key.clone_from(&options.whatsapp_key);
+            form.whatsapp_wa.clone_from(&options.whatsapp_wa);
+            form.whatsapp_media.clone_from(&options.whatsapp_media);
+            form.whatsapp_db.clone_from(&options.whatsapp_db);
             Exporter::Whatsapp
         }
         "whatsapp-ios" => {
             form.input = path.to_string();
             form.whatsapp_platform = WhatsappPlatform::Ios;
             form.whatsapp_backup = path.to_string();
-            form.whatsapp_wa = options.whatsapp_wa.clone();
+            form.whatsapp_wa.clone_from(&options.whatsapp_wa);
             form.whatsapp_business = options.whatsapp_business;
             Exporter::Whatsapp
         }

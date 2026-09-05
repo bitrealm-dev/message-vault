@@ -178,10 +178,12 @@ fn collect(helper: &mut Helper, options: &ExportOptions) -> Result<Collected> {
                         )
                     })?;
                 if convo.owner_handle.is_empty() && !record.owner_handle.is_empty() {
-                    convo.owner_handle = record.owner_handle.clone();
+                    convo.owner_handle.clone_from(&record.owner_handle);
                 }
                 if convo.owner_display_name.is_none() {
-                    convo.owner_display_name = record.owner_display_name.clone();
+                    convo
+                        .owner_display_name
+                        .clone_from(&record.owner_display_name);
                 }
                 let (message, loads) = message_to_ir(*record, embed, stages_files);
                 convo.attachment_loads.extend(loads);
@@ -475,8 +477,8 @@ fn pending_to_document(
     let mut messages = convo.messages;
     for msg in &mut messages {
         if msg.direction == IrDirection::Outgoing {
-            msg.sender_handle = owner_handle.clone();
-            msg.sender_display_name = owner_display_name.clone();
+            msg.sender_handle.clone_from(&owner_handle);
+            msg.sender_display_name.clone_from(&owner_display_name);
         }
     }
     ConversationDocument {

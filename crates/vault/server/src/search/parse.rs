@@ -2,6 +2,7 @@
 //! registry for the requested list here, so the emitters never see a word
 //! they do not own.
 
+use std::fmt::Write as _;
 use std::ops::Range;
 
 use chrono::NaiveDate;
@@ -168,7 +169,7 @@ fn field_term(
             format!("{word}: is not a search word."),
         );
         if let Some(near) = fields::nearest(word, list) {
-            err.message.push_str(&format!(" Did you mean {near}:?"));
+            let _ = write!(err.message, " Did you mean {near}:?");
             err.did_you_mean = Some(near);
         }
         return Err(err);
@@ -186,7 +187,7 @@ fn field_term(
         );
         err.field = Some(spec.word);
         if let Some(near) = fields::nearest(word, list).filter(|n| *n != spec.word) {
-            err.message.push_str(&format!(" Did you mean {near}:?"));
+            let _ = write!(err.message, " Did you mean {near}:?");
             err.did_you_mean = Some(near);
         }
         return Err(err);

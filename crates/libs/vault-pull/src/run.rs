@@ -478,8 +478,10 @@ fn note_asset_refs(msg: &Message, assets: &mut HashMap<String, (String, String)>
             .path
             .as_deref()
             .and_then(message_ir::trimmed)
-            .map(|p| p.trim_start_matches('/').to_string())
-            .unwrap_or_else(|| format!("attachments/{sha}"));
+            .map_or_else(
+                || format!("attachments/{sha}"),
+                |p| p.trim_start_matches('/').to_string(),
+            );
         assets
             .entry(sha.to_string())
             .or_insert_with(|| (msg.source.clone(), rel));

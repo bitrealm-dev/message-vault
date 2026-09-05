@@ -428,7 +428,7 @@ fn inject_attachment_data(
     // First unconsumed attachment for the positional fallback.
     let mut next_unconsumed = 0usize;
     for part in parts.iter_mut() {
-        let ct = part.get("ct").map(String::as_str).unwrap_or("");
+        let ct = part.get("ct").map_or("", String::as_str);
         let is_text = ct.starts_with("text/") || ct.eq_ignore_ascii_case("application/smil");
         let decode_error = part.get("data_decode_error").is_some_and(|v| v == "true");
         let digest = part.get("data_sha256").cloned();

@@ -503,9 +503,10 @@ pub(crate) fn decode_content_type_value(
             return Err(());
         }
         let media = if let Ok(id) = decode_integer_value(cur) {
-            well_known_content_type(id)
-                .map(str::to_string)
-                .unwrap_or_else(|| format!("application/octet-stream;id={id}"))
+            well_known_content_type(id).map_or_else(
+                || format!("application/octet-stream;id={id}"),
+                str::to_string,
+            )
         } else {
             decode_text_string(cur)?
         };

@@ -44,9 +44,7 @@ pub fn emit_log(sink: Option<&LogSink>, line: impl AsRef<str>) {
 
 /// Whether cancel has been requested.
 pub fn is_cancelled(cancel: Option<&CancelFlag>) -> bool {
-    cancel
-        .map(|flag| flag.load(Ordering::Relaxed))
-        .unwrap_or(false)
+    cancel.is_some_and(|flag| flag.load(Ordering::Relaxed))
 }
 
 /// Error returned by [`check_cancel`] when cancel was requested.

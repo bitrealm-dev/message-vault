@@ -11,7 +11,7 @@
 use std::path::{Path, PathBuf};
 
 /// Paths the Settings screen shows after looking for ffmpeg and ffprobe.
-#[derive(serde::Serialize)]
+#[derive(Debug, serde::Serialize)]
 pub struct FfmpegToolsProbeDto {
     /// Whether both tools were found and pass `-version`.
     pub ok: bool,

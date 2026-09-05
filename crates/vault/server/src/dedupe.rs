@@ -1,6 +1,7 @@
 //! Cross-source content fingerprint and soft-hide dedupe.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use std::io::{self, Write};
 use std::time::Instant;
 
@@ -81,8 +82,7 @@ pub fn compute_content_key(
     attachment_shas: &[String],
 ) -> String {
     let epoch = parse_rfc3339_utc_secs(timestamp.trim())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| timestamp.trim().to_string());
+        .map_or_else(|| timestamp.trim().to_string(), |s| s.to_string());
 
     let mut shas: Vec<&str> = attachment_shas
         .iter()
@@ -95,7 +95,7 @@ pub fn compute_content_key(
     let sender = if is_from_me {
         ""
     } else {
-        sender_normalized.map(str::trim).unwrap_or("")
+        sender_normalized.map_or("", str::trim)
     };
 
     let mut hasher = Sha256::new();
@@ -123,7 +123,7 @@ fn content_key_for_row(
 ) -> (i64, String) {
     let (id, conversation_id, chat_id, conversation_type, is_from_me, ts, body, sender_norm) = row;
     let empty: &[String] = &[];
-    let shas = shas_by_msg.get(id).map(Vec::as_slice).unwrap_or(empty);
+    let shas = shas_by_msg.get(id).map_or(empty, Vec::as_slice);
     let group_identity = if conversation_type == "group" {
         Some(chat_identity_for_content_key(
             chat_id,
@@ -284,12 +284,12 @@ async fn insert_content_key_rows(conn: &mut AnyConnection, keys: &[(i64, String)
     let total = keys.len();
     let mut written = 0usize;
     for chunk in keys.chunks(SQLITE_IN_CHUNK) {
-        let mut sql = String::from("INSERT INTO _content_keys (id, content_key) VALUES ");
+        let mut sql = "INSERT INTO _content_keys (id, content_key) VALUES ".to_string();
         for (i, _) in chunk.iter().enumerate() {
             if i > 0 {
                 sql.push(',');
             }
-            sql.push_str(&format!("(${}, ${})", i * 2 + 1, i * 2 + 2));
+            let _ = write!(sql, "(${}, ${})", i * 2 + 1, i * 2 + 2);
         }
         let mut q = sqlx::query(&sql);
         for (id, key) in chunk {
@@ -402,8 +402,8 @@ impl ContentKeyInputs {
         }
 
         // One scan for attachment hashes belonging to this account's message id range.
-        let min_id = rows.first().map(|r| r.0).unwrap_or(0);
-        let max_id = rows.last().map(|r| r.0).unwrap_or(0);
+        let min_id = rows.first().map_or(0, |r| r.0);
+        let max_id = rows.last().map_or(0, |r| r.0);
         let att_rows: Vec<(i64, String)> = sqlx::query_as(
             r"
             SELECT a.message_id, a.sha256
@@ -556,8 +556,7 @@ fn pick_winner(cands: &[Cand], prio: &HashMap<&str, usize>) -> i64 {
                 })
                 .then_with(|| a.id.cmp(&b.id))
         })
-        .map(|c| c.id)
-        .unwrap_or(cands[0].id)
+        .map_or(cands[0].id, |c| c.id)
 }
 
 /// Parse an RFC3339 timestamp into Unix UTC seconds, honoring Z / ±HH:MM offsets.

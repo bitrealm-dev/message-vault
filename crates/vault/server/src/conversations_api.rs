@@ -302,8 +302,8 @@ async fn load_conversation_rows(
         let service = display_service_label(
             source_sets
                 .get(&row.id)
-                .map(|s| s.as_slice())
-                .unwrap_or(&[]),
+                .map(Vec::as_slice)
+                .unwrap_or_default(),
         );
         let parts = participants.remove(&row.id).unwrap_or_default();
         out.push(ConversationSummary {

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -114,7 +115,7 @@ pub fn process_attachment_files(
         format_bytes(report.bytes_after),
     );
     if !report.errors.is_empty() {
-        summary.push_str(&format!(" errors={}", report.errors.len()));
+        let _ = write!(summary, " errors={}", report.errors.len());
     }
     emit(&mut log, &summary);
 
@@ -393,7 +394,7 @@ pub enum TranscodeOutcome {
 #[must_use]
 pub fn derivative_name(src: &Path, mode: MediaMode) -> Option<String> {
     derivative_name_impl(src, mode, |floor| {
-        fs::metadata(src).map(|m| m.len()).unwrap_or(0) <= floor
+        fs::metadata(src).map_or(0, |m| m.len()) <= floor
     })
 }
 

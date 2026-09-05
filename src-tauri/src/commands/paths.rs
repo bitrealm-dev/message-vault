@@ -68,7 +68,7 @@ pub(crate) fn path_stat_inner(path: &str) -> PathStat {
         exists: path.exists(),
         is_file: path.is_file(),
         is_directory: path.is_dir(),
-        size_bytes: meta.as_ref().map(std::fs::Metadata::len).unwrap_or(0),
+        size_bytes: meta.as_ref().map_or(0, std::fs::Metadata::len),
         modified_unix_ms,
     }
 }
