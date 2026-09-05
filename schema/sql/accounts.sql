@@ -8,6 +8,9 @@ CREATE TABLE IF NOT EXISTS accounts (
     password_hash TEXT,
     -- Display name for “you” in the UI.
     preferred_name TEXT,
+    -- IANA time zone (for example America/New_York) every message time, day and year is
+    -- read in. Chosen at profile setup; a message records only the instant it arrived.
+    time_zone TEXT NOT NULL DEFAULT 'UTC',
     -- 1 = may manage users through /v1/admin/*; 0 = ordinary account.
     is_admin INTEGER NOT NULL DEFAULT 0,
     -- 1 = may not sign in and existing sessions are refused; 0 = active.

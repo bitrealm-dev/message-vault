@@ -194,7 +194,10 @@ async fn run_against(conn: &mut AnyConnection) -> Vec<(&'static str, Vec<i64>)> 
                 query,
                 limit: 100,
                 offset: 0,
-                today: chrono::NaiveDate::from_ymd_opt(2026, 9, 2).unwrap(),
+                clock: (
+                    chrono_tz::UTC,
+                    chrono::NaiveDate::from_ymd_opt(2026, 9, 2).unwrap(),
+                ),
             },
         )
         .await
@@ -233,7 +236,10 @@ async fn assert_diacritics_exception(conn: &mut AnyConnection, engine: Engine) {
             query: "cafe",
             limit: 100,
             offset: 0,
-            today: chrono::NaiveDate::from_ymd_opt(2026, 9, 2).unwrap(),
+            clock: (
+                chrono_tz::UTC,
+                chrono::NaiveDate::from_ymd_opt(2026, 9, 2).unwrap(),
+            ),
         },
     )
     .await

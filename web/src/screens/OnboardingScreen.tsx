@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import AuthBackButton from "../components/AuthBackButton";
 import AuthErrorFooter from "../components/AuthErrorFooter";
 import AuthSubmitButton from "../components/AuthSubmitButton";
@@ -17,16 +17,18 @@ import {
   handleValidationError,
 } from "../lib/handleService";
 import { parseSelectKey } from "../lib/selectKey";
+import { browserTimeZone, timeZoneOptions } from "../lib/timeZone";
 import { authCard, authCardBody, authCardFooter, authTitle, pageCenter } from "../lib/uiStyles";
 import { useAsyncAction } from "../lib/useAsyncAction";
 import { updateAccountProfile } from "../lib/vaultApi";
 
 /**
  * The card never scrolls and never resizes, so the list of accounts is bounded
- * by what fits inside the frame. Five rows fill the space the card has;
- * anyone with more finishes the list in Settings → Profile.
+ * by what fits inside the frame. Four rows fill the space the card has once
+ * the Time Zone picker takes its line; anyone with more finishes the list in
+ * Settings → Profile.
  */
-const MAX_ACCOUNT_ROWS = 5;
+const MAX_ACCOUNT_ROWS = 4;
 
 /**
  * How long the error line stays blank before the same message is put back.
@@ -98,6 +100,11 @@ function serviceIcon(service: HandleService) {
 export default function OnboardingScreen() {
   const { login, logout, token, serverUrl, accountId } = useAuth();
   const [displayName, setDisplayName] = useState("");
+  // Every message time, day and year is shown in this zone, and `date:`
+  // searches draw their day boundaries from it. The browser's zone is the
+  // right first guess for where this person reads their messages.
+  const [timeZone, setTimeZone] = useState(browserTimeZone);
+  const zones = useMemo(() => timeZoneOptions(timeZone), [timeZone]);
   const [handles, setHandles] = useState<HandleInput[]>(() => [newHandleRow()]);
   // Rows whose value does not read as the kind of account it is set to. Held
   // by id rather than index so removing a row cannot move the mark onto a
@@ -205,6 +212,7 @@ export default function OnboardingScreen() {
       }
       await updateAccountProfile({
         preferred_name: displayName.trim(),
+        time_zone: timeZone,
         handles: handles
           .filter((h) => h.handle.trim())
           .map((h) => ({ handle: h.handle.trim(), service: h.service })),
@@ -236,6 +244,21 @@ export default function OnboardingScreen() {
             onChange={setDisplayName}
             placeholder="Your name"
           />
+
+          <Select
+            label="Time Zone"
+            selectedKey={timeZone}
+            onSelectionChange={(k) => {
+              if (typeof k === "string") setTimeZone(k);
+            }}
+            className="mt-4"
+          >
+            {zones.map((z) => (
+              <ListBoxItem key={z} id={z} className={selectItemClassName}>
+                {z}
+              </ListBoxItem>
+            ))}
+          </Select>
 
           <div className="mt-4 mb-2 block text-[0.875rem] font-medium text-text">Your Accounts</div>
 

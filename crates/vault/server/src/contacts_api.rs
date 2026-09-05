@@ -214,15 +214,17 @@ pub async fn list_contacts(
     q: &str,
     limit: usize,
     offset: usize,
-    today: chrono::NaiveDate,
+    clock: (chrono_tz::Tz, chrono::NaiveDate),
 ) -> Result<Page<ContactSummary>, ApiError> {
     let engine = engine_of(conn);
+    let (zone, today) = clock;
     let filter = crate::search::compile(crate::search::CompileRequest {
         list: crate::search::ListKind::Contacts,
         query: q,
         account_id,
         engine,
         today,
+        zone,
     })?;
     let where_sql = filter.where_sql();
 
@@ -1219,13 +1221,14 @@ pub(crate) async fn contacts_list_handler(
         DEFAULT_LIST_LIMIT,
         Some(MAX_LIST_OFFSET),
     )?;
+    let clock = crate::db::account_profile::account_clock(&mut conn, &auth.account_id).await?;
     let result = list_contacts(
         &mut conn,
         &auth.account_id,
         &q,
         page.limit,
         page.offset,
-        chrono::Local::now().date_naive(),
+        clock,
     )
     .await?;
     Ok(Json(result))

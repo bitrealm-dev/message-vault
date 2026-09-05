@@ -82,26 +82,26 @@ describe("OnboardingScreen", () => {
     expect(screen.queryByRole("button", { name: "Remove account 1" })).not.toBeInTheDocument();
   });
 
-  it("stops at five accounts and points at Settings", async () => {
+  it("stops at four accounts and points at Settings", async () => {
     const user = setupUser();
     render(<OnboardingScreen />);
 
     // Each row has to hold a distinct account before the next one can be
-    // added. Typing four of them a character at a time is real synchronous
+    // added. Typing three of them a character at a time is real synchronous
     // rendering work — one React update per keystroke — with no timer or
     // wait involved, so a busy machine can push it past a wall-clock budget
     // on its own. Pasting each value in one event drives the same
     // validation with a fraction of the renders, which is what actually
     // keeps this fast under load rather than just giving it more time to
     // finish in.
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 3; i++) {
       const field = rowValue(i + 1);
       await user.click(field);
       await user.paste(`+1 555-123-45${60 + i}`);
       await user.click(screen.getByRole("button", { name: "+ Add account" }));
     }
 
-    expect(rowValue(5)).toBeInTheDocument();
+    expect(rowValue(4)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "+ Add account" })).not.toBeInTheDocument();
     expect(screen.getByText("Add the rest in Settings after setup.")).toBeInTheDocument();
   });

@@ -45,10 +45,9 @@ CREATE TABLE IF NOT EXISTS staging_messages (
     source TEXT NOT NULL,
     -- Source-native message id when available.
     guid TEXT,
-    -- Message time as RFC3339 with the importing server's local offset (derived from the source epoch).
+    -- The instant the message was sent, RFC 3339 in UTC with a Z suffix. Shown, searched
+    -- and filed by day and year in the account's time zone (accounts.time_zone).
     timestamp TEXT NOT NULL,
-    -- Message time normalized to UTC when available.
-    timestamp_utc TEXT,
     -- 1 = sent by the vault owner; 0 = received from someone else.
     is_from_me INTEGER NOT NULL,
     -- Sender identity handle id; NULL when unknown.

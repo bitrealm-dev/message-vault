@@ -9,7 +9,7 @@ use super::bridge::{ListCtx, Sql, contact_conversations_link};
 use super::error::{QueryError, QueryErrorKind};
 use super::fts;
 use super::parse::{Expr, FieldTerm, TextTerm};
-use super::value::{Cmp, DateCmp, Value, ymd};
+use super::value::{Cmp, DateCmp, Value, utc_instant};
 use super::{Filter, ListKind};
 
 /// Contact `ct` is not in the trash.
@@ -32,11 +32,13 @@ pub(crate) fn compile(
     expr: Option<&Expr>,
     account_id: &str,
     engine: DbEngine,
+    zone: chrono_tz::Tz,
 ) -> Result<Filter, QueryError> {
     let ctx = ListCtx {
         list,
         engine,
         account_id,
+        zone,
     };
     let mut out = Sql::default();
     out.push("(");
@@ -916,25 +918,26 @@ fn emit_kind_word(
     }
 }
 
-/// `expr` (an RFC 3339 text timestamp) falls where `cmp` says. Text
-/// comparison against `YYYY-MM-DD` works because the date is a prefix of the
-/// timestamp.
-fn date_sql(out: &mut Sql, expr: &str, cmp: &DateCmp) {
+/// `expr` (a stored UTC instant as RFC 3339 text) falls where `cmp` says.
+/// Each day bound becomes the instant that day begins in the account's zone,
+/// written in the same UTC text form, so the comparison is plain text on
+/// both engines and the zone decides which day a message belongs to.
+fn date_sql(out: &mut Sql, expr: &str, cmp: &DateCmp, zone: chrono_tz::Tz) {
     match cmp {
         DateCmp::In(span) => {
             out.push(&format!("({expr} >= "));
-            out.bind_text(ymd(span.start));
+            out.bind_text(utc_instant(zone, span.start));
             out.push(&format!(" AND {expr} < "));
-            out.bind_text(ymd(span.end));
+            out.bind_text(utc_instant(zone, span.end));
             out.push(")");
         }
         DateCmp::Gte(d) | DateCmp::Gt(d) => {
             out.push(&format!("{expr} >= "));
-            out.bind_text(ymd(*d));
+            out.bind_text(utc_instant(zone, *d));
         }
         DateCmp::Lt(d) | DateCmp::Lte(d) => {
             out.push(&format!("{expr} < "));
-            out.bind_text(ymd(*d));
+            out.bind_text(utc_instant(zone, *d));
         }
     }
 }
@@ -954,7 +957,7 @@ fn emit_measure_word(
 ) -> Result<(), QueryError> {
     match (term.spec.word, v) {
         ("date", Value::Date(cmp)) => {
-            ctx.message(out, |o| date_sql(o, "m.timestamp", cmp));
+            ctx.message(out, |o| date_sql(o, "m.timestamp", cmp, ctx.zone));
             Ok(())
         }
         ("first-message", Value::Date(cmp)) => {
@@ -962,7 +965,7 @@ fn emit_measure_word(
                 "(SELECT MIN(m2.timestamp) FROM messages m2 WHERE {})",
                 ctx.messages_link("m2")
             );
-            date_sql(out, &expr, cmp);
+            date_sql(out, &expr, cmp, ctx.zone);
             Ok(())
         }
         ("last-message", Value::Date(cmp)) => {
@@ -970,7 +973,7 @@ fn emit_measure_word(
                 "(SELECT MAX(m2.timestamp) FROM messages m2 WHERE {})",
                 ctx.messages_link("m2")
             );
-            date_sql(out, &expr, cmp);
+            date_sql(out, &expr, cmp, ctx.zone);
             Ok(())
         }
         ("messages", Value::Count(cmp)) => {

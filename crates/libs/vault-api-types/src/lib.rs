@@ -79,10 +79,11 @@ api_shape! {
         pub service: Option<String>,
         /// Export GUID for replies and grouping.
         pub guid: Option<String>,
-        /// Message timestamp (local).
+        /// The instant the message was sent: RFC 3339 in UTC with a `Z`
+        /// suffix. A caller shows it in the account's time zone
+        /// (`AccountProfileResponse.time_zone`); the vault stores nothing
+        /// about where the phone was.
         pub timestamp: String,
-        /// UTC timestamp, when known.
-        pub timestamp_utc: Option<String>,
         /// Ordering key within the conversation.
         pub sort_order: i64,
         /// True for messages sent by the account owner.
@@ -190,7 +191,6 @@ mod tests {
             service: None,
             guid: None,
             timestamp: "2024-01-01T00:00:00Z".into(),
-            timestamp_utc: None,
             sort_order: 0,
             is_from_me: false,
             sender: None,

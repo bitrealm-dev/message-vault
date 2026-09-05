@@ -68,13 +68,8 @@ pub fn build_document(
 ///
 /// Returns an error when the timestamp cannot be parsed.
 pub fn to_ir_message(msg: &Message, skip_attachments: bool) -> Result<IrMessage> {
-    let timestamp_unix_ms = parse_timestamp_unix_ms(
-        msg.timestamp_utc
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(msg.timestamp.as_str()),
-    )
-    .with_context(|| format!("message {} timestamp", msg.id))?;
+    let timestamp_unix_ms = parse_timestamp_unix_ms(msg.timestamp.as_str())
+        .with_context(|| format!("message {} timestamp", msg.id))?;
 
     let service = IrService::parse(msg.service.as_deref().unwrap_or(""));
     let direction = if msg.is_from_me {
@@ -292,8 +287,7 @@ mod tests {
           "source": "imessage",
           "service": "iMessage",
           "guid": "3A9E-0001",
-          "timestamp": "2015-03-12T14:05:22-04:00",
-          "timestamp_utc": "2015-03-12T18:05:22Z",
+          "timestamp": "2015-03-12T18:05:22Z",
           "sort_order": 0,
           "is_from_me": false,
           "sender": "+15555550100",
@@ -387,8 +381,7 @@ mod tests {
             source: "imessage".into(),
             service: Some("iMessage".into()),
             guid: Some("g1".into()),
-            timestamp: "2015-03-12T14:05:22-04:00".into(),
-            timestamp_utc: Some("2015-03-12T18:05:22Z".into()),
+            timestamp: "2015-03-12T18:05:22Z".into(),
             is_from_me: false,
             sender: Some("+1".into()),
             subject: None,
@@ -457,8 +450,7 @@ mod tests {
             source: "imessage".into(),
             service: Some("iMessage".into()),
             guid: Some("g1".into()),
-            timestamp: "2015-03-12T14:05:22-04:00".into(),
-            timestamp_utc: Some("2015-03-12T18:05:22Z".into()),
+            timestamp: "2015-03-12T18:05:22Z".into(),
             is_from_me: false,
             sender: Some("+1".into()),
             subject: None,

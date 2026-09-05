@@ -5315,6 +5315,7 @@
         "required": [
           "account_id",
           "username",
+          "time_zone",
           "phones",
           "emails",
           "is_demo",
@@ -5369,6 +5370,10 @@
             ],
             "description": "Display name, when set."
           },
+          "time_zone": {
+            "type": "string",
+            "description": "IANA time zone every message time, day and year is shown in, for\nexample `America/New_York`. Chosen at profile setup."
+          },
           "username": {
             "type": "string",
             "description": "Account username (falls back to the account id)."
@@ -5399,6 +5404,13 @@
               "$ref": "#/components/schemas/ProfileHandleInput"
             },
             "description": "Handles to unlink from the account profile."
+          },
+          "time_zone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "IANA time zone to set, for example `America/New_York`; `None` leaves\nthe current zone unchanged. An unknown name is a 400."
           }
         }
       },
@@ -7586,14 +7598,7 @@
           },
           "timestamp": {
             "type": "string",
-            "description": "Message timestamp (local)."
-          },
-          "timestamp_utc": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "UTC timestamp, when known."
+            "description": "The instant the message was sent: RFC 3339 in UTC with a `Z`\nsuffix. A caller shows it in the account's time zone\n(`AccountProfileResponse.time_zone`); the vault stores nothing\nabout where the phone was."
           }
         }
       },
@@ -7992,14 +7997,7 @@
                 },
                 "timestamp": {
                   "type": "string",
-                  "description": "Message timestamp (local)."
-                },
-                "timestamp_utc": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "description": "UTC timestamp, when known."
+                  "description": "The instant the message was sent: RFC 3339 in UTC with a `Z`\nsuffix. A caller shows it in the account's time zone\n(`AccountProfileResponse.time_zone`); the vault stores nothing\nabout where the phone was."
                 }
               }
             },

@@ -22,7 +22,7 @@ async fn list_conversations(
         ConversationOrder::default(),
         limit,
         offset,
-        crate::search::tests::today(),
+        crate::search::tests::clock(),
     )
     .await
 }
@@ -278,7 +278,7 @@ async fn list_conversations_sorts_by_date_or_message_count() {
             ConversationOrder { sort, order },
             DEFAULT_LIST_LIMIT,
             0,
-            crate::search::tests::today(),
+            crate::search::tests::clock(),
         )
         .await
         .unwrap()
@@ -386,7 +386,7 @@ async fn list_queries_enforce_search_limits() {
             query,
             DEFAULT_LIST_LIMIT,
             0,
-            chrono::Local::now().date_naive(),
+            crate::search::tests::clock(),
         )
         .await
         .unwrap_err();
@@ -417,7 +417,7 @@ async fn malformed_boolean_queries_are_bad_requests_for_export() {
             crate::export_api::ExportCountOpts {
                 account_id: &account,
                 query,
-                today: chrono::Local::now().date_naive(),
+                clock: crate::search::tests::clock(),
             },
         )
         .await
@@ -1065,7 +1065,7 @@ async fn duplicate_only_threads_sort_last_in_either_date_direction() {
             },
             DEFAULT_LIST_LIMIT,
             0,
-            crate::search::tests::today(),
+            crate::search::tests::clock(),
         )
         .await
         .unwrap()
@@ -2101,21 +2101,26 @@ async fn conversation_messages_year_narrows_and_total_is_the_years_count() {
 async fn a_message_at_31_december_2359_local_is_in_that_year_not_the_next() {
     let (vault, user, conversation_id) = conversation_messages_fixture().await;
     let mut conn = vault.state.db.acquire().await.unwrap();
-    // Local offset -05:00: 2024-12-31 23:59 local is 2025-01-01 04:59
-    // UTC (`timestamp_utc`, set explicitly here). A boundary computed
-    // against UTC would place this message in 2025; the search
-    // language's date:2024 compares the local `timestamp` text as a
-    // prefix, so it must stay in 2024. That is the boundary this route
-    // must also use.
+    // The account lives in New York. A message at 2024-12-31 23:59 there is
+    // the instant 2025-01-01T04:59:00Z, which is what the vault stores. The
+    // year's edges are computed in the account's zone, the same rule
+    // `date:2024` uses, so this message is in 2024 and not in 2025. A
+    // boundary computed in UTC would file it under 2025.
+    crate::db::account_profile::set_time_zone(
+        &mut conn,
+        &user.account_id,
+        chrono_tz::America::New_York,
+    )
+    .await
+    .unwrap();
     sqlx::query(
         "INSERT INTO messages (
-            conversation_id, account_id, source, timestamp, timestamp_utc,
+            conversation_id, account_id, source, timestamp,
             is_from_me, sort_order, body
-         ) VALUES ($1, $2, 'imessage', $3, $4, 1, 0, 'new year''s eve')",
+         ) VALUES ($1, $2, 'imessage', $3, 1, 0, 'new year''s eve')",
     )
     .bind(conversation_id)
     .bind(&user.account_id)
-    .bind("2024-12-31T23:59:00-05:00")
     .bind("2025-01-01T04:59:00Z")
     .execute(&mut *conn)
     .await

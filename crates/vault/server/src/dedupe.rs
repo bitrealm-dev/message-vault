@@ -19,16 +19,15 @@ const CONTENT_KEY_WRITE_LOG_EVERY: usize = 50_000;
 ///
 /// Column order matches the SELECT in [`recompute_content_keys`]:
 /// `id`, `conversation_id`, `chat_id` (chat handle `normalized`),
-/// `conversation_type`, `is_from_me`, `timestamp_utc`, `timestamp`,
-/// `body`, `sender_normalized`. Two SQL columns are both named
-/// `normalized`, so this stays a positional tuple rather than `FromRow`.
+/// `conversation_type`, `is_from_me`, `timestamp`, `body`,
+/// `sender_normalized`. Two SQL columns are both named `normalized`, so
+/// this stays a positional tuple rather than `FromRow`.
 type ContentKeyRow = (
     i64,
     i64,
     String,
     String,
     i64,
-    Option<String>,
     String,
     Option<String>,
     Option<String>,
@@ -69,7 +68,7 @@ pub fn chat_identity_for_content_key(
 
 /// Build a content key from chat + direction + sender + UTC epoch + body + attachment hashes.
 ///
-/// Prefers `timestamp_utc`; falls back to local `timestamp` (offsets are applied).
+/// `timestamp` is the stored UTC instant; a value that does not parse is hashed as text.
 /// For groups, pass the sorted-participant identity from [`chat_identity_for_content_key`].
 /// Incoming group messages include the normalized sender so two peers sending the same
 /// text at the same second do not collide; outgoing (`is_from_me`) uses an empty sender.
@@ -77,19 +76,13 @@ pub fn compute_content_key(
     chat_identifier: &str,
     is_from_me: bool,
     sender_normalized: Option<&str>,
-    timestamp_utc: Option<&str>,
     timestamp: &str,
     body: Option<&str>,
     attachment_shas: &[String],
 ) -> String {
-    let epoch = resolve_utc_secs(timestamp_utc, timestamp)
+    let epoch = parse_rfc3339_utc_secs(timestamp.trim())
         .map(|s| s.to_string())
-        .unwrap_or_else(|| {
-            timestamp_utc
-                .and_then(message_ir::trimmed)
-                .unwrap_or(timestamp)
-                .to_string()
-        });
+        .unwrap_or_else(|| timestamp.trim().to_string());
 
     let mut shas: Vec<&str> = attachment_shas
         .iter()
@@ -128,17 +121,7 @@ fn content_key_for_row(
     group_handles: &HashMap<i64, Vec<String>>,
     shas_by_msg: &HashMap<i64, Vec<String>>,
 ) -> (i64, String) {
-    let (
-        id,
-        conversation_id,
-        chat_id,
-        conversation_type,
-        is_from_me,
-        ts_utc,
-        ts,
-        body,
-        sender_norm,
-    ) = row;
+    let (id, conversation_id, chat_id, conversation_type, is_from_me, ts, body, sender_norm) = row;
     let empty: &[String] = &[];
     let shas = shas_by_msg.get(id).map(Vec::as_slice).unwrap_or(empty);
     let group_identity = if conversation_type == "group" {
@@ -154,7 +137,6 @@ fn content_key_for_row(
         identity,
         *is_from_me != 0,
         sender_norm.as_deref(),
-        ts_utc.as_deref(),
         ts,
         body.as_deref(),
         shas,
@@ -171,14 +153,6 @@ fn hash_content_keys(
     rows.par_iter()
         .map(|row| content_key_for_row(row, group_handles, shas_by_msg))
         .collect()
-}
-
-/// Unix seconds from `timestamp_utc`, falling back to the local `timestamp`.
-fn resolve_utc_secs(timestamp_utc: Option<&str>, timestamp: &str) -> Option<i64> {
-    timestamp_utc
-        .and_then(message_ir::trimmed)
-        .and_then(parse_rfc3339_utc_secs)
-        .or_else(|| parse_rfc3339_utc_secs(timestamp.trim()))
 }
 
 /// Counts reported by one cross-source dedupe pass.
@@ -387,7 +361,7 @@ impl ContentKeyInputs {
         let sql = format!(
             r"
             SELECT m.id, m.conversation_id, h.normalized, c.conversation_type,
-                   m.is_from_me, m.timestamp_utc, m.timestamp, m.body,
+                   m.is_from_me, m.timestamp, m.body,
                    hs.normalized
             FROM messages m
             JOIN conversations c ON c.id = m.conversation_id
@@ -588,7 +562,7 @@ fn pick_winner(cands: &[Cand], prio: &HashMap<&str, usize>) -> i64 {
 
 /// Parse an RFC3339 timestamp into Unix UTC seconds, honoring Z / ±HH:MM offsets.
 ///
-/// Strict RFC3339 is sufficient: `messages.timestamp` and `messages.timestamp_utc`
+/// Strict RFC3339 is sufficient: `messages.timestamp`
 /// are only ever written by `models::format_timestamps` (chrono's
 /// `to_rfc3339_opts(SecondsFormat::Secs, true)`), so no lenient spellings reach
 /// this path. Unparseable input yields `None`.
@@ -657,19 +631,10 @@ async fn load_near_rows(
     conn: &mut AnyConnection,
     account_id: &str,
 ) -> Result<HashMap<i64, Vec<NearRow>>> {
-    type NearDedupeRow = (
-        i64,
-        i64,
-        String,
-        i64,
-        Option<String>,
-        String,
-        Option<String>,
-        String,
-    );
+    type NearDedupeRow = (i64, i64, String, i64, String, Option<String>, String);
     let msg_rows: Vec<NearDedupeRow> = sqlx::query_as(
         r"
-        SELECT m.id, m.conversation_id, m.source, m.is_from_me, m.timestamp_utc, m.timestamp, m.body,
+        SELECT m.id, m.conversation_id, m.source, m.is_from_me, m.timestamp, m.body,
                COALESCE(hs.normalized, '')
         FROM messages m
         JOIN conversations c ON c.id = m.conversation_id
@@ -702,8 +667,8 @@ async fn load_near_rows(
     }
 
     let mut by_conversation: HashMap<i64, Vec<NearRow>> = HashMap::new();
-    for (id, conversation_id, source, is_from_me, ts_utc, ts, body, sender_norm) in msg_rows {
-        let Some(secs) = resolve_utc_secs(ts_utc.as_deref(), &ts) else {
+    for (id, conversation_id, source, is_from_me, ts, body, sender_norm) in msg_rows {
+        let Some(secs) = parse_rfc3339_utc_secs(ts.trim()) else {
             continue;
         };
         let shas = shas_by_msg.remove(&id).unwrap_or_default();

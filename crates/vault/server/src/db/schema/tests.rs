@@ -199,6 +199,7 @@ async fn assert_current_schema_contract(conn: &mut AnyConnection) {
             "username",
             "password_hash",
             "preferred_name",
+            "time_zone",
             "is_admin",
             "disabled",
             "can_import",

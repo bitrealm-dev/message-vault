@@ -29,7 +29,6 @@ function message(id: number): Message {
     service: "sms",
     guid: null,
     timestamp: "2024-01-01T00:00:00Z",
-    timestamp_utc: null,
     is_from_me: false,
     sender: "someone",
     subject: null,
@@ -249,13 +248,24 @@ describe("useConversationMessages", () => {
 
 describe("conversationYears", () => {
   it("covers both endpoint years", () => {
-    expect(conversationYears("2020-05-01T00:00:00Z", "2022-02-01T00:00:00Z")).toEqual([
+    expect(conversationYears("2020-05-01T00:00:00Z", "2022-02-01T00:00:00Z", "UTC")).toEqual([
       2020, 2021, 2022,
     ]);
   });
 
+  it("reads the years in the account's zone", () => {
+    // The last message is 04:59 UTC on New Year's Day: still 2024 in New
+    // York, so no 2025 chip is offered for a year that holds nothing.
+    expect(conversationYears("2024-06-01T00:00:00Z", "2025-01-01T04:59:00Z", "UTC")).toEqual([
+      2024, 2025,
+    ]);
+    expect(
+      conversationYears("2024-06-01T00:00:00Z", "2025-01-01T04:59:00Z", "America/New_York"),
+    ).toEqual([2024]);
+  });
+
   it("returns nothing without both endpoints", () => {
-    expect(conversationYears(null, "2022-02-01T00:00:00Z")).toEqual([]);
+    expect(conversationYears(null, "2022-02-01T00:00:00Z", "UTC")).toEqual([]);
   });
 });
 

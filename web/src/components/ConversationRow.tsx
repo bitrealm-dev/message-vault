@@ -1,5 +1,6 @@
 import { type ReactNode, useId } from "react";
 import { formatDateSpan } from "../lib/formatDate";
+import { useTimeZone } from "../lib/timeZone";
 import { listRowDivider } from "../lib/tw";
 import type { Conversation } from "../lib/types";
 import Checkbox from "./Checkbox";
@@ -125,6 +126,7 @@ export default function ConversationRow({
   const dateSpan = formatDateSpan(
     conversation.date_range_start,
     conversation.last_message_at || conversation.date_range_end,
+    useTimeZone(),
   );
   const bottomLeft = isGroup ? <GroupService conv={conversation} /> : directService(conversation);
 

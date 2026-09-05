@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { quote } from "../../lib/searchQuery";
+import { yearIn } from "../../lib/timeZone";
 import type { Message } from "../../lib/types";
 import { listConversationMessages, listMessages } from "../../lib/vaultApi";
 import { keys } from "../../lib/vaultKeys";
@@ -11,14 +12,19 @@ export const PAGE_SIZE = 50;
 /** One page's worth of conversation messages, as the hook hands them to a screen. */
 type MessagesResult = { items: Message[]; total: number };
 
-/** Calendar years covered by a conversation's first and last message dates. */
+/**
+ * Calendar years covered by a conversation's first and last message instants,
+ * read in the account's `zone`: the same rule the vault's `year=` filter and
+ * `date:2024` use, so every chip names a year that has messages in it.
+ */
 export function conversationYears(
   startIso: string | null | undefined,
   endIso: string | null | undefined,
+  zone: string,
 ): number[] {
   if (!startIso || !endIso) return [];
-  const startYear = new Date(startIso).getFullYear();
-  const endYear = new Date(endIso).getFullYear();
+  const startYear = yearIn(startIso, zone);
+  const endYear = yearIn(endIso, zone);
   if (!Number.isFinite(startYear) || !Number.isFinite(endYear) || endYear < startYear) {
     return [];
   }

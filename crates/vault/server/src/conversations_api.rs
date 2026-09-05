@@ -162,15 +162,17 @@ pub async fn list_conversations_sorted(
     order: ConversationOrder,
     limit: usize,
     offset: usize,
-    today: chrono::NaiveDate,
+    clock: (chrono_tz::Tz, chrono::NaiveDate),
 ) -> Result<Page<ConversationSummary>, ApiError> {
     let engine = engine_of(conn);
+    let (zone, today) = clock;
     let filter = crate::search::compile(crate::search::CompileRequest {
         list: crate::search::ListKind::Conversations,
         query: q,
         account_id,
         engine,
         today,
+        zone,
     })?;
     let where_sql = filter.where_sql();
 
@@ -464,6 +466,7 @@ fn conversation_messages_where(
     conversation_id: i64,
     account_id: &str,
     year: Option<i32>,
+    zone: chrono_tz::Tz,
 ) -> Result<(String, Vec<SqlParam>), ApiError> {
     let mut sql =
         "m.conversation_id = ? AND m.account_id = ? AND m.duplicate_of IS NULL".to_string();
@@ -473,13 +476,19 @@ fn conversation_messages_where(
     ];
     if let Some(year) = year {
         // `today` only matters to the relative-span forms (`7d`, `1y`, …)
-        // `parse_date_span` also understands; a bare `YYYY` ignores it.
-        let today = chrono::Local::now().date_naive();
+        // `parse_date_span` also understands; a bare `YYYY` ignores it. The
+        // year's edges are the instants it begins and ends in the account's
+        // zone, the same rule `date:YYYY` uses.
+        let today = crate::search::today_in(zone);
         let span = crate::search::value::parse_date_span(&year.to_string(), today)
             .ok_or_else(|| ApiError::BadRequest("year must be a four-digit year".into()))?;
         sql.push_str(" AND m.timestamp >= ? AND m.timestamp < ?");
-        params.push(SqlParam::Text(crate::search::value::ymd(span.start)));
-        params.push(SqlParam::Text(crate::search::value::ymd(span.end)));
+        params.push(SqlParam::Text(crate::search::value::utc_instant(
+            zone, span.start,
+        )));
+        params.push(SqlParam::Text(crate::search::value::utc_instant(
+            zone, span.end,
+        )));
     }
     Ok((sql, params))
 }
@@ -506,7 +515,8 @@ pub async fn get_conversation_messages(
         return Ok(None);
     }
 
-    let (where_sql, params) = conversation_messages_where(conversation_id, account_id, year)?;
+    let zone = crate::db::account_profile::load_time_zone(conn, account_id).await?;
+    let (where_sql, params) = conversation_messages_where(conversation_id, account_id, year, zone)?;
 
     let count_sql = renumber_placeholders(&format!(
         "SELECT COUNT(*) FROM messages m WHERE {where_sql}"
@@ -591,6 +601,7 @@ pub(crate) async fn conversations_list_handler(
             .as_deref()
             .map_or_else(SortOrder::default, SortOrder::from_param),
     };
+    let clock = crate::db::account_profile::account_clock(&mut conn, &auth.account_id).await?;
     let result = list_conversations_sorted(
         &mut conn,
         &auth.account_id,
@@ -598,7 +609,7 @@ pub(crate) async fn conversations_list_handler(
         order,
         page.limit,
         page.offset,
-        chrono::Local::now().date_naive(),
+        clock,
     )
     .await?;
     Ok(Json(result))

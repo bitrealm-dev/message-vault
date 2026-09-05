@@ -5,6 +5,7 @@ import {
   contactPreviewFromThreadParticipants,
 } from "../components/contactDrawer/contactDrawerTypes";
 import SourcesPanel from "../components/SourcesPanel";
+import { useTimeZone } from "../lib/timeZone";
 import type { Conversation, MessageAttachment } from "../lib/types";
 import ConversationHeader from "./message/ConversationHeader";
 import MessageFindBar from "./message/MessageFindBar";
@@ -48,9 +49,10 @@ export default function MessageView({
   const [showSources, setShowSources] = useState(false);
   const [participantsOpen, setParticipantsOpen] = useState(true);
 
+  const zone = useTimeZone();
   const years = useMemo(
-    () => conversationYears(conversation.date_range_start, conversation.date_range_end),
-    [conversation.date_range_start, conversation.date_range_end],
+    () => conversationYears(conversation.date_range_start, conversation.date_range_end, zone),
+    [conversation.date_range_start, conversation.date_range_end, zone],
   );
 
   // Open the image viewer at the clicked photo. Previous/next walks this page's images.

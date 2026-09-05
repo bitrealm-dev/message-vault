@@ -75,6 +75,14 @@ pub struct CompileRequest<'a> {
     pub engine: DbEngine,
     /// Relative dates resolve against this day. Never read from the clock here.
     pub today: NaiveDate,
+    /// The account's time zone: the anchor that turns a stored instant into a
+    /// day or a year for `date:`, `first-message:` and `last-message:`.
+    pub zone: chrono_tz::Tz,
+}
+
+/// Today's date in `zone`, for the relative date forms (`today`, `7d`, `1y`).
+pub fn today_in(zone: chrono_tz::Tz) -> NaiveDate {
+    chrono::Utc::now().with_timezone(&zone).date_naive()
 }
 
 /// One parenthesised boolean expression plus the values it binds.
@@ -105,5 +113,11 @@ impl Filter {
 pub fn compile(req: CompileRequest<'_>) -> Result<Filter, QueryError> {
     let tokens = lex::tokenize(req.query)?;
     let expr = parse::parse(req.list, &tokens, req.today)?;
-    emit::compile(req.list, expr.as_ref(), req.account_id, req.engine)
+    emit::compile(
+        req.list,
+        expr.as_ref(),
+        req.account_id,
+        req.engine,
+        req.zone,
+    )
 }

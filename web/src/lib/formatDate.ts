@@ -1,26 +1,29 @@
-/** Calendar date: year, month, and day (e.g. "Sep 9, 2024"). */
-export function formatDay(iso: string): string {
+/**
+ * Calendar date of a message instant, read in `zone` (e.g. "Sep 9, 2024").
+ *
+ * The zone is the account's (`useTimeZone`), never the browser's: the same
+ * instant is a different day in Sydney and in New York, and the day the
+ * person expects is the one their account is set to.
+ */
+export function formatDay(iso: string, zone: string): string {
   return new Date(iso).toLocaleDateString([], {
+    timeZone: zone,
     year: "numeric",
     month: "short",
     day: "numeric",
   });
 }
 
-/** Month and year only (e.g. "Sep 2024"). */
-export function formatMonthYear(iso: string): string {
+/** Month and year of a message instant in `zone` (e.g. "Sep 2024"). */
+export function formatMonthYear(iso: string, zone: string): string {
   return new Date(iso).toLocaleDateString([], {
+    timeZone: zone,
     month: "short",
     year: "numeric",
   });
 }
 
-/** Locale default date (browser short date). */
-export function formatLocaleDate(iso: string): string {
-  return new Date(iso).toLocaleDateString();
-}
-
-/** Locale date + time for import history rows. */
+/** Locale date + time for import history rows, in the browser's zone. */
 export function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
     year: "numeric",
@@ -32,20 +35,21 @@ export function formatDateTime(iso: string): string {
 }
 
 /**
- * First and last message dates as a span.
+ * First and last message dates as a span, in `zone`.
  * Returns a single day when start and end format identically.
  */
 export function formatDateSpan(
   start: string | null | undefined,
   end: string | null | undefined,
+  zone: string,
 ): string | null {
   if (start && end) {
-    const a = formatDay(start);
-    const b = formatDay(end);
+    const a = formatDay(start, zone);
+    const b = formatDay(end, zone);
     return a === b ? a : `${a} – ${b}`;
   }
-  if (end) return formatDay(end);
-  if (start) return formatDay(start);
+  if (end) return formatDay(end, zone);
+  if (start) return formatDay(start, zone);
   return null;
 }
 

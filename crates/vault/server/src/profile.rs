@@ -20,6 +20,9 @@ pub struct AccountProfileResponse {
     pub username: String,
     /// Display name, when set.
     pub preferred_name: Option<String>,
+    /// IANA time zone every message time, day and year is shown in, for
+    /// example `America/New_York`. Chosen at profile setup.
+    pub time_zone: String,
     /// Phone handles linked to the account.
     pub phones: Vec<String>,
     /// Email addresses linked to the account.
@@ -45,6 +48,10 @@ async fn load_response(
         .await?
         .unwrap_or_else(|| account_id.to_string());
     let preferred_name = account_profile::load_preferred_name(conn, account_id).await?;
+    let time_zone = account_profile::load_time_zone(conn, account_id)
+        .await?
+        .name()
+        .to_string();
     let profile = account_profile::load_account_profile(conn, account_id).await?;
     let auth = account_profile::load_account_auth(conn, account_id)
         .await?
@@ -53,6 +60,7 @@ async fn load_response(
         account_id: account_id.to_string(),
         username,
         preferred_name,
+        time_zone,
         phones: profile.phones,
         emails: profile.emails,
         is_demo: account_profile::is_demo_account(account_id),
@@ -103,6 +111,10 @@ pub struct AccountProfileUpdateRequest {
     /// Display name to set; `None` (or empty) leaves the current name unchanged.
     #[serde(default)]
     pub preferred_name: Option<String>,
+    /// IANA time zone to set, for example `America/New_York`; `None` leaves
+    /// the current zone unchanged. An unknown name is a 400.
+    #[serde(default)]
+    pub time_zone: Option<String>,
     /// Handles to add/link onto the account profile.
     #[serde(default)]
     pub handles: Vec<ProfileHandleInput>,
@@ -116,6 +128,8 @@ pub struct AccountProfileUpdateRequest {
 enum ProfileUpdateError {
     /// The client named a handle service the profile does not support.
     UnsupportedService(String),
+    /// The client named a time zone chrono-tz does not know.
+    UnknownTimeZone(String),
     /// Database failure.
     Db(anyhow::Error),
 }
@@ -126,6 +140,10 @@ impl std::fmt::Display for ProfileUpdateError {
             Self::UnsupportedService(service) => {
                 write!(f, "unsupported handle service: {service}")
             }
+            Self::UnknownTimeZone(name) => write!(
+                f,
+                "unknown time zone: {name}; use an IANA name such as America/New_York"
+            ),
             Self::Db(e) => e.fmt(f),
         }
     }
@@ -134,7 +152,7 @@ impl std::fmt::Display for ProfileUpdateError {
 impl std::error::Error for ProfileUpdateError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::UnsupportedService(_) => None,
+            Self::UnsupportedService(_) | Self::UnknownTimeZone(_) => None,
             Self::Db(err) => err.source(),
         }
     }
@@ -155,7 +173,8 @@ impl From<anyhow::Error> for ProfileUpdateError {
 impl From<ProfileUpdateError> for ApiError {
     fn from(e: ProfileUpdateError) -> Self {
         match e {
-            err @ ProfileUpdateError::UnsupportedService(_) => Self::BadRequest(err.to_string()),
+            err @ (ProfileUpdateError::UnsupportedService(_)
+            | ProfileUpdateError::UnknownTimeZone(_)) => Self::BadRequest(err.to_string()),
             ProfileUpdateError::Db(err) => Self::Internal(err.to_string()),
         }
     }
@@ -166,9 +185,16 @@ async fn apply_profile_update(
     conn: &mut AnyConnection,
     account_id: &str,
     preferred_name: Option<&str>,
+    time_zone: Option<&str>,
     handles: &[ProfileHandleInput],
     remove_handles: &[ProfileHandleInput],
 ) -> std::result::Result<(), ProfileUpdateError> {
+    if let Some(name) = time_zone.map(str::trim).filter(|n| !n.is_empty()) {
+        let zone: chrono_tz::Tz = name
+            .parse()
+            .map_err(|_| ProfileUpdateError::UnknownTimeZone(name.to_string()))?;
+        account_profile::set_time_zone(conn, account_id, zone).await?;
+    }
     if let Some(name) = preferred_name {
         let name = name.trim();
         let stored_name = if name.is_empty() {
@@ -248,6 +274,7 @@ async fn update_profile_on_conn(
         &mut tx,
         account_id,
         req.preferred_name.as_deref(),
+        req.time_zone.as_deref(),
         &req.handles,
         &req.remove_handles,
     )
@@ -450,6 +477,7 @@ mod tests {
             &mut conn,
             &account_id,
             Some("Alex"),
+            None,
             &[
                 ProfileHandleInput {
                     handle: "+1 (555) 555-0100".into(),
@@ -497,6 +525,7 @@ mod tests {
             &mut conn,
             &account_id,
             None,
+            None,
             &[
                 ProfileHandleInput {
                     handle: "+15555550100".into(),
@@ -515,6 +544,7 @@ mod tests {
         apply_profile_update(
             &mut conn,
             &account_id,
+            None,
             None,
             &[],
             &[
@@ -549,6 +579,7 @@ mod tests {
             &account_id,
             &AccountProfileUpdateRequest {
                 preferred_name: Some("Changed Name".into()),
+                time_zone: None,
                 handles: vec![ProfileHandleInput {
                     handle: "alice@example.com".into(),
                     service: "unsupported".into(),
@@ -628,5 +659,52 @@ mod tests {
             StatusCode::FORBIDDEN,
             "closing the account stays session-only"
         );
+    }
+
+    /// The zone is chosen at profile setup and read back on the profile; an
+    /// unknown name is refused before anything is written.
+    #[tokio::test]
+    async fn the_profile_carries_a_time_zone_and_refuses_an_unknown_one() {
+        let vault = crate::test_support::test_vault().await;
+        let account =
+            crate::test_support::register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+        let mut conn = vault.conn().await;
+        let before = load_response(&mut conn, &account.account_id).await.unwrap();
+        assert_eq!(before.time_zone, "UTC", "a new account starts in UTC");
+
+        update_profile_on_conn(
+            &mut conn,
+            &account.account_id,
+            &AccountProfileUpdateRequest {
+                preferred_name: None,
+                time_zone: Some("America/New_York".into()),
+                handles: vec![],
+                remove_handles: vec![],
+            },
+        )
+        .await
+        .unwrap();
+        let after = load_response(&mut conn, &account.account_id).await.unwrap();
+        assert_eq!(after.time_zone, "America/New_York");
+
+        let err = update_profile_on_conn(
+            &mut conn,
+            &account.account_id,
+            &AccountProfileUpdateRequest {
+                preferred_name: None,
+                time_zone: Some("Mars/Olympus_Mons".into()),
+                handles: vec![],
+                remove_handles: vec![],
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, ProfileUpdateError::UnknownTimeZone(_)),
+            "{err}"
+        );
+        assert!(matches!(ApiError::from(err), ApiError::BadRequest(_)));
+        let unchanged = load_response(&mut conn, &account.account_id).await.unwrap();
+        assert_eq!(unchanged.time_zone, "America/New_York");
     }
 }

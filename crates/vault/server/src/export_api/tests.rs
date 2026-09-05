@@ -5,7 +5,7 @@ use crate::test_support::{SeedConversation, TestVault, seed_conversation, test_v
 async fn export_takes_the_search_language() {
     let (pool, _dir, f) = crate::search::tests::seeded().await;
     let mut conn = pool.acquire().await.unwrap();
-    let today = crate::search::tests::today();
+    let clock = crate::search::tests::clock();
     let page = export_messages(
         &mut conn,
         ExportPageOpts {
@@ -13,7 +13,7 @@ async fn export_takes_the_search_language() {
             query: "from:me avocado",
             limit: 50,
             offset: 0,
-            today,
+            clock,
         },
     )
     .await
@@ -27,7 +27,7 @@ async fn export_takes_the_search_language() {
         ExportCountOpts {
             account_id: crate::search::tests::ACCOUNT,
             query: "source:whatsapp",
-            today,
+            clock,
         },
     )
     .await
@@ -42,7 +42,7 @@ async fn export_takes_the_search_language() {
             query: "sparkle:yes",
             limit: 50,
             offset: 0,
-            today,
+            clock,
         },
     )
     .await
@@ -124,7 +124,7 @@ async fn export_includes_attachment_missing_reason() {
             query: &query,
             limit: 100,
             offset: 0,
-            today: crate::search::tests::today(),
+            clock: crate::search::tests::clock(),
         },
     )
     .await
@@ -151,7 +151,7 @@ async fn conversation_filter_scopes_messages() {
             query: &query1,
             limit: 100,
             offset: 0,
-            today: crate::search::tests::today(),
+            clock: crate::search::tests::clock(),
         },
     )
     .await
@@ -168,7 +168,7 @@ async fn conversation_filter_scopes_messages() {
             query: &query2,
             limit: 100,
             offset: 0,
-            today: crate::search::tests::today(),
+            clock: crate::search::tests::clock(),
         },
     )
     .await
@@ -183,7 +183,7 @@ async fn conversation_filter_scopes_messages() {
             query: "",
             limit: 100,
             offset: 0,
-            today: crate::search::tests::today(),
+            clock: crate::search::tests::clock(),
         },
     )
     .await
@@ -230,7 +230,7 @@ async fn export_message_count_supports_handle_filters() {
             ExportCountOpts {
                 account_id: "a1",
                 query,
-                today: crate::search::tests::today(),
+                clock: crate::search::tests::clock(),
             },
         )
         .await
@@ -252,7 +252,7 @@ async fn free_text_matches_message_body_via_fts() {
             query: "one",
             limit: 100,
             offset: 0,
-            today: crate::search::tests::today(),
+            clock: crate::search::tests::clock(),
         },
     )
     .await
@@ -295,7 +295,7 @@ async fn export_boolean_query_preserves_or() {
             query: "foo OR bar",
             limit: 100,
             offset: 0,
-            today: crate::search::tests::today(),
+            clock: crate::search::tests::clock(),
         },
     )
     .await
@@ -345,7 +345,7 @@ async fn export_boolean_query_preserves_and_and_not() {
                     query,
                     limit: 100,
                     offset: 0,
-                    today: crate::search::tests::today(),
+                    clock: crate::search::tests::clock(),
                 },
             )
             .await
@@ -399,7 +399,7 @@ async fn export_boolean_query_combines_body_phrases_prefixes_and_nesting() {
                     query,
                     limit: 100,
                     offset: 0,
-                    today: crate::search::tests::today(),
+                    clock: crate::search::tests::clock(),
                 },
             )
             .await
@@ -444,7 +444,7 @@ async fn rejects_an_oversized_query() {
             query: &huge,
             limit: 10,
             offset: 0,
-            today: crate::search::tests::today(),
+            clock: crate::search::tests::clock(),
         },
     )
     .await
@@ -490,7 +490,7 @@ async fn export_does_not_leak_other_account_messages() {
             query: "secret",
             limit: 100,
             offset: 0,
-            today: crate::search::tests::today(),
+            clock: crate::search::tests::clock(),
         },
     )
     .await
@@ -504,7 +504,7 @@ async fn export_does_not_leak_other_account_messages() {
             query: "",
             limit: 100,
             offset: 0,
-            today: crate::search::tests::today(),
+            clock: crate::search::tests::clock(),
         },
     )
     .await
@@ -542,7 +542,7 @@ async fn export_pages_by_offset_and_reports_the_total() {
                     query: "",
                     limit,
                     offset,
-                    today: crate::search::tests::today(),
+                    clock: crate::search::tests::clock(),
                 },
             )
             .await
@@ -602,7 +602,7 @@ async fn export_sql_placeholders_match_params_order() {
         engine_of(&conn),
         "a1",
         r#"from:alice to:bo subject:hello tag:work ("alpha phrase" OR report*)"#,
-        crate::search::tests::today(),
+        crate::search::tests::clock(),
     )
     .unwrap();
     let sql = format!(

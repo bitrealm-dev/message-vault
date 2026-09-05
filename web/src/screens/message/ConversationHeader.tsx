@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { apiErrorMessage } from "../../lib/apiErrorMessage";
 import { formatMonthYear } from "../../lib/formatDate";
+import { useTimeZone } from "../../lib/timeZone";
 import { useTrashConversation } from "../../lib/trash";
 import type { Conversation } from "../../lib/types";
 import ContactGroupFromConversation from "./ContactGroupFromConversation";
@@ -31,6 +32,7 @@ export default function ConversationHeader({
   onOpenContact?: (contactId: string) => void;
   onShowSources: () => void;
 }) {
+  const zone = useTimeZone();
   const navigate = useNavigate();
   const trashConversation = useTrashConversation();
 
@@ -111,8 +113,8 @@ export default function ConversationHeader({
         <span>{sourceLabel}</span>
         {conversation.date_range_start && conversation.date_range_end && (
           <span>
-            {formatMonthYear(conversation.date_range_start)} –{" "}
-            {formatMonthYear(conversation.date_range_end)}
+            {formatMonthYear(conversation.date_range_start, zone)} –{" "}
+            {formatMonthYear(conversation.date_range_end, zone)}
           </span>
         )}
         <span>{conversation.message_count} messages</span>

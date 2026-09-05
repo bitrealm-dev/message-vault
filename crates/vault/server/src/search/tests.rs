@@ -16,6 +16,11 @@ pub(crate) fn today() -> NaiveDate {
     NaiveDate::from_ymd_opt(2026, 9, 2).unwrap()
 }
 
+/// The clock the route tests hand the lists: UTC, on the fixed day above.
+pub(crate) fn clock() -> (chrono_tz::Tz, NaiveDate) {
+    (chrono_tz::UTC, today())
+}
+
 /// Ids the fixture created, so a test can assert on them by name.
 #[derive(Debug, Default)]
 pub(crate) struct Fixture {
@@ -694,6 +699,7 @@ pub(crate) async fn run(conn: &mut AnyConnection, list: ListKind, q: &str) -> Ve
         account_id: ACCOUNT,
         engine: engine_of(conn),
         today: today(),
+        zone: chrono_tz::UTC,
     })
     .unwrap_or_else(|e| panic!("{q:?} on {list:?}: {}", e.message));
     let table = match list {
@@ -726,6 +732,7 @@ pub(crate) fn err(list: ListKind, q: &str) -> QueryError {
         account_id: ACCOUNT,
         engine: DbEngine::Sqlite,
         today: today(),
+        zone: chrono_tz::UTC,
     })
     .expect_err("expected a refusal")
 }
@@ -888,6 +895,7 @@ mod free_text {
             account_id: ACCOUNT,
             engine: DbEngine::Postgres,
             today: today(),
+            zone: chrono_tz::UTC,
         };
         let a = compile(req()).unwrap();
         let b = compile(req()).unwrap();
@@ -903,6 +911,7 @@ mod free_text {
             account_id: ACCOUNT,
             engine: DbEngine::Sqlite,
             today: today(),
+            zone: chrono_tz::UTC,
         })
         .unwrap();
         assert!(f.where_sql().starts_with("(ct.account_id = ?"));
@@ -921,6 +930,7 @@ mod free_text {
                 account_id: ACCOUNT,
                 engine: DbEngine::Postgres,
                 today: today(),
+                zone: chrono_tz::UTC,
             })
             .unwrap();
             assert_eq!(
@@ -1712,6 +1722,7 @@ mod coverage {
                         account_id: ACCOUNT,
                         engine: DbEngine::Postgres,
                         today: today(),
+                        zone: chrono_tz::UTC,
                     })
                     .unwrap_or_else(|e| panic!("{q} on {list:?}: {}", e.message));
                     assert_eq!(
@@ -2103,6 +2114,7 @@ mod web_fixture {
                 account_id: ACCOUNT,
                 engine: DbEngine::Sqlite,
                 today: today(),
+                zone: chrono_tz::UTC,
             })
             .unwrap_or_else(|e| {
                 panic!(

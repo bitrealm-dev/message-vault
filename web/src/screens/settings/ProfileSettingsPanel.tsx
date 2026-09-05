@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Button from "../../components/Button";
 import Select, { ListBoxItem, selectItemClassName } from "../../components/Select";
 import type { AccountProfile } from "../../lib/account";
@@ -10,16 +10,19 @@ import {
 } from "../../lib/handleService";
 import { phonesMatch } from "../../lib/phoneTokens";
 import { parseSelectKey } from "../../lib/selectKey";
+import { timeZoneOptions } from "../../lib/timeZone";
 import { useAccountProfile, useUpdateAccountProfile } from "../../lib/useAccountProfile";
 import { inputClassName, sectionTitleClass } from "./profileStyles";
 
-/** Profile settings: display name and phone/email/WhatsApp handles. */
+/** Profile settings: display name, time zone, and phone/email/WhatsApp handles. */
 export function ProfileSettingsPanel() {
   const { profile, loading, error: loadError } = useAccountProfile();
   const updateProfile = useUpdateAccountProfile();
   const [name, setName] = useState("");
   const [nameSaved, setNameSaved] = useState(false);
   const [nameError, setNameError] = useState("");
+  const [zoneError, setZoneError] = useState("");
+  const zones = useMemo(() => timeZoneOptions(profile?.time_zone), [profile?.time_zone]);
 
   const [newHandle, setNewHandle] = useState("");
   const [newHandleService, setNewHandleService] = useState<HandleService>("phone");
@@ -49,6 +52,18 @@ export function ProfileSettingsPanel() {
       setTimeout(() => setNameSaved(false), 2000);
     } catch (e) {
       setNameError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  // Picking a zone is the whole gesture: no Save button, the vault answers
+  // with the profile as it now stands and every date label re-renders from it.
+  const handleChangeZone = async (zone: string) => {
+    if (zone === profile.time_zone) return;
+    setZoneError("");
+    try {
+      await updateProfile.mutateAsync({ time_zone: zone });
+    } catch (e) {
+      setZoneError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -113,6 +128,28 @@ export function ProfileSettingsPanel() {
       </div>
       {nameError && <div className="mb-6 text-[0.813rem] text-danger">{nameError}</div>}
       {!nameError && <div className="mb-6" />}
+
+      <h3 className={sectionTitleClass}>Time Zone</h3>
+      <Select
+        selectedKey={profile.time_zone}
+        onSelectionChange={(k) => {
+          if (typeof k === "string") void handleChangeZone(k);
+        }}
+        isDisabled={handleBusy}
+        aria-label="Time zone"
+        className="mb-[0.35rem] max-w-[22rem]"
+      >
+        {zones.map((z) => (
+          <ListBoxItem key={z} id={z} className={selectItemClassName}>
+            {z}
+          </ListBoxItem>
+        ))}
+      </Select>
+      <div className="text-[0.813rem] text-muted">
+        Message times, days and years are shown in this zone.
+      </div>
+      {zoneError && <div className="mb-6 text-[0.813rem] text-danger">{zoneError}</div>}
+      {!zoneError && <div className="mb-6" />}
 
       <h3 className={sectionTitleClass}>My Handles</h3>
       {handles.length === 0 ? (

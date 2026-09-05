@@ -71,6 +71,8 @@ pub(crate) struct ListCtx<'a> {
     pub list: ListKind,
     pub engine: DbEngine,
     pub account_id: &'a str,
+    /// The account's time zone, for the date words' boundaries.
+    pub zone: chrono_tz::Tz,
 }
 
 impl ListCtx<'_> {

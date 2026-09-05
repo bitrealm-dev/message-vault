@@ -1,7 +1,7 @@
 //! Import-side records mapped from message-ir JSONL.
 
 use anyhow::{Context, Result};
-use chrono::{Local, TimeZone, Utc};
+use chrono::{TimeZone, Utc};
 use message_ir::{
     ConversationHeader, HandleService, HandleType, IrAttachment, IrDirection, IrImessage,
     IrMessage, IrMessageKind, IrService, SCHEMA_VERSION,
@@ -55,10 +55,8 @@ pub struct ParticipantRecord {
 pub struct MessageRecord {
     /// Export GUID for replies and grouping.
     pub guid: Option<String>,
-    /// Message timestamp (local).
+    /// The instant the message was sent: RFC 3339 in UTC with a `Z` suffix.
     pub timestamp: String,
-    /// UTC timestamp, when the export supplied one.
-    pub timestamp_utc: Option<String>,
     /// True for messages sent by the account owner.
     pub is_from_me: bool,
     /// Sender handle for incoming messages.
@@ -251,10 +249,10 @@ fn conversation_from_ir(header: &ConversationHeader) -> ConversationRecord {
     }
 }
 
-/// Map one IR message onto the server's message record, with local and UTC timestamps.
+/// Map one IR message onto the server's message record.
 fn message_from_ir(msg: &IrMessage) -> Result<MessageRecord> {
     let secs = msg.timestamp_unix_ms.div_euclid(1000);
-    let (timestamp, timestamp_utc) = format_timestamps(secs).with_context(|| {
+    let timestamp = format_utc_timestamp(secs).with_context(|| {
         format!(
             "unrepresentable timestamp_unix_ms {}",
             msg.timestamp_unix_ms
@@ -296,7 +294,6 @@ fn message_from_ir(msg: &IrMessage) -> Result<MessageRecord> {
             Some(msg.guid.clone())
         },
         timestamp,
-        timestamp_utc: Some(timestamp_utc),
         is_from_me,
         sender: if is_from_me {
             None
@@ -407,18 +404,15 @@ struct WireTapback {
     sender: Option<String>,
 }
 
-/// Local and UTC RFC 3339 strings for a Unix timestamp, or `None` when it cannot be represented.
-fn format_timestamps(secs: i64) -> Option<(String, String)> {
-    let local = Local.timestamp_opt(secs, 0).single().or_else(|| {
+/// The UTC RFC 3339 string (`Z` suffix) for a Unix timestamp, or `None` when
+/// it cannot be represented. The vault stores the instant and nothing about
+/// where the phone was; the account's time zone turns it into a clock reading.
+fn format_utc_timestamp(secs: i64) -> Option<String> {
+    Some(
         Utc.timestamp_opt(secs, 0)
-            .single()
-            .map(|utc| Local.from_utc_datetime(&utc.naive_utc()))
-    })?;
-    let utc = local.with_timezone(&Utc);
-    Some((
-        local.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-        utc.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-    ))
+            .single()?
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    )
 }
 
 #[cfg(test)]

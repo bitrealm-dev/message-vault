@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
 import { highlightText } from "../../lib/highlightText";
+import { useTimeZone } from "../../lib/timeZone";
 import type { Message, MessageAttachment, MessageTapback } from "../../lib/types";
 
 type BubblePalette = "imessage" | "sms";
@@ -12,9 +13,15 @@ export type MessageBubbleProps = {
   onAttachmentClick?: (attachment: MessageAttachment, source: string) => void;
 };
 
-/** Timestamp shown under a bubble or beside a flat-row sender. */
-export function formatMessageTime(timestamp: string, withYear = false): string {
+/**
+ * Timestamp shown under a bubble or beside a flat-row sender, read in `zone`.
+ *
+ * `timestamp` is the UTC instant the vault stores; `zone` is the account's
+ * (`useTimeZone`), which is what makes it the clock reading the person saw.
+ */
+export function formatMessageTime(timestamp: string, zone: string, withYear = false): string {
   return new Date(timestamp).toLocaleString([], {
+    timeZone: zone,
     month: "short",
     day: "numeric",
     ...(withYear ? { year: "numeric" as const } : {}),
@@ -229,6 +236,7 @@ export function ServiceBubbleShell({
   children: ReactNode;
 }) {
   const mine = message.is_from_me;
+  const zone = useTimeZone();
   return (
     <ServiceRow messageId={String(message.id)} isActive={isActive}>
       <div
@@ -242,7 +250,7 @@ export function ServiceBubbleShell({
         >
           {senderName(message)}
         </span>
-        <span className={timeClassName}>{formatMessageTime(message.timestamp)}</span>
+        <span className={timeClassName}>{formatMessageTime(message.timestamp, zone)}</span>
       </div>
       {children}
     </ServiceRow>
