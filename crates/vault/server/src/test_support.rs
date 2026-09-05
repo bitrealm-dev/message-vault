@@ -73,6 +73,16 @@ pub async fn serve(state: &AppState) -> TestServer {
     }
 }
 
+/// True when `MV_TEST_POSTGRES_URL` points the suite at Postgres.
+///
+/// A test whose subject is SQLite itself (a pragma, the FTS5 table, the
+/// `nocase` collation, `sqlite_stat1`, a trigger written in SQLite's syntax)
+/// returns early on this and says why in a comment; where the same promise
+/// matters on Postgres, a `_pg` twin carries it there.
+pub fn on_postgres() -> bool {
+    crate::pg_test_url().is_some()
+}
+
 /// An empty vault with schema applied and no accounts.
 pub async fn test_vault() -> TestVault {
     let (pool, tmp) = crate::db::engine::test_pool().await;

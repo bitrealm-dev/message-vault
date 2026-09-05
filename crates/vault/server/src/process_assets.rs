@@ -935,22 +935,24 @@ mod tests {
             .await
             .unwrap();
         let mut conn = pool.acquire().await.unwrap();
-        sqlx::query(&format!(
-            r#"
-            INSERT INTO accounts (id, username) VALUES ('acc', 'demo');
-            INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-                VALUES ('acc', '+1', '+1', 'phone', 'phone');
-            INSERT INTO conversations (id, account_id, chat_handle_id, conversation_type, source_file)
-                VALUES (1, 'acc', 1, 'individual', 't');
-            INSERT INTO messages (id, conversation_id, account_id, source, timestamp, is_from_me, sort_order)
-                VALUES (1, 1, 'acc', 'imessage', '2020-01-01T00:00:00Z', 0, 0);
-            INSERT INTO attachments (id, message_id, sha256, assets_path, mime_type, original_name, path)
-                VALUES (1, 1, '{SHA}', 'ab/{SHA}', NULL, 'voice-note.amr', 'attachments/voice-note.amr');
-            "#
-        ))
-        .execute(&mut *conn)
-        .await
-        .unwrap();
+        for statement in [
+            "INSERT INTO accounts (id, username) VALUES ('acc', 'demo')".to_string(),
+            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+                VALUES ('acc', '+1', '+1', 'phone', 'phone')"
+                .to_string(),
+            "INSERT INTO conversations (id, account_id, chat_handle_id, conversation_type, source_file)
+                VALUES (1, 'acc', 1, 'individual', 't')"
+                .to_string(),
+            "INSERT INTO messages (id, conversation_id, account_id, source, timestamp, is_from_me, sort_order)
+                VALUES (1, 1, 'acc', 'imessage', '2020-01-01T00:00:00Z', 0, 0)"
+                .to_string(),
+            format!(
+                "INSERT INTO attachments (id, message_id, sha256, assets_path, mime_type, original_name, path)
+                VALUES (1, 1, '{SHA}', 'ab/{SHA}', NULL, 'voice-note.amr', 'attachments/voice-note.amr')"
+            ),
+        ] {
+            sqlx::query(&statement).execute(&mut *conn).await.unwrap();
+        }
 
         let rows = list_attachments(&mut conn, "acc", "imessage")
             .await

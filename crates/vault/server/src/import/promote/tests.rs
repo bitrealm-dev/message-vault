@@ -292,6 +292,9 @@ async fn promote_fts_cycle_pg() {
 
 #[tokio::test]
 async fn promote_analyzes_import_tables_before_begin() {
+    if crate::test_support::on_postgres() {
+        return; // SQLite-only: reads sqlite_stat1; promote_analyzes_import_tables_before_begin_pg is the twin
+    }
     let (pool, _dir) = crate::db::engine::test_pool().await;
     let mut conn = pool.acquire().await.unwrap();
     schema::ensure_vault_schema(&mut conn).await.unwrap();
@@ -467,25 +470,20 @@ async fn promote_analyzes_import_tables_before_begin_pg() {
 async fn promote_message_map_ignores_other_accounts() {
     let (pool, _dir) = crate::db::engine::test_pool().await;
     let mut conn = pool.acquire().await.unwrap();
-    sqlx::query(
-        r#"
-        CREATE TABLE messages (
-            id INTEGER PRIMARY KEY,
-            account_id TEXT NOT NULL
-        );
-        INSERT INTO messages (id, account_id) VALUES
+    for statement in [
+        "CREATE TABLE messages (id INTEGER PRIMARY KEY, account_id TEXT NOT NULL)",
+        "INSERT INTO messages (id, account_id) VALUES
             (1, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
-            (2, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
-        "#,
-    )
-    .execute(&mut *conn)
-    .await
-    .unwrap();
+            (2, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')",
+    ] {
+        sqlx::query(statement).execute(&mut *conn).await.unwrap();
+    }
+    let engine = crate::db::dialect::engine_of(&conn);
     let mut promote = Promote {
         tx: conn.begin().await.unwrap(),
         account_id: TEST_ACCOUNT,
         mode: ImportMode::Append,
-        engine: DbEngine::Sqlite,
+        engine,
         stats: PromoteStats::default(),
         started: Instant::now(),
     };

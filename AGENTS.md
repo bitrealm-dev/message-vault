@@ -262,7 +262,10 @@ cargo test --workspace
 cargo test -p sms-backup-restore-exporter   # one crate
 cargo build --manifest-path src-tauri/Cargo.toml
 
-# Postgres engine tests (skip unless a dev Postgres is reachable)
+# The same server suite on Postgres. With the variable set every test that
+# takes the shared test pool runs in a schema of its own on that server, so
+# this is the run that proves new SQL works on both engines. About 3.5
+# minutes against the compose service; without the variable it is SQLite.
 docker compose -f docker-compose.pg.yml up -d
 MV_TEST_POSTGRES_URL=postgres://vault:vault@127.0.0.1:5432/vault cargo test -p message-vault-server
 ```

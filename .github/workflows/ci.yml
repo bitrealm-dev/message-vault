@@ -122,9 +122,11 @@ jobs:
       - name: Clippy workspace
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-  # ── Rust: build + test, with the Postgres-gated suites live ───────────
-  # The gated tests (search parity, FTS, promote) skip themselves unless
-  # MV_TEST_POSTGRES_URL is set; the service makes them run here.
+  # ── Rust: build + test, the server suite on Postgres ──────────────────
+  # With MV_TEST_POSTGRES_URL set, the server's shared test pool hands every
+  # test a schema of its own on the service, so the whole suite runs against
+  # Postgres here (#339). Tests whose subject is SQLite itself return early
+  # and say so. Without the variable the same suite runs on SQLite.
   test:
     name: Build & Test (Rust)
     needs: changes
