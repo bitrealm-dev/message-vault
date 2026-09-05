@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   clearRecentSearches,
   loadRecentSearches,
@@ -14,7 +14,11 @@ import {
   useSearchSuggestions,
 } from "../lib/useSearchSuggestions";
 import { Z_INLINE_PANEL, Z_POPOVER } from "../lib/zLayers";
-import AdvancedSearchForm, { type AdvancedSearchMode } from "./AdvancedSearchForm";
+import type { AdvancedSearchMode } from "./AdvancedSearchForm";
+
+// The advanced form pulls in the date picker and calendar, about 150 kB of
+// the entry chunk that most visits never open. It loads when the panel does.
+const AdvancedSearchForm = lazy(() => import("./AdvancedSearchForm"));
 
 /** Element id for one recent-search row, referenced by `aria-activedescendant`. */
 function optionId(scope: SearchScope, query: string): string {
@@ -362,12 +366,14 @@ export default function SearchBar({
 
       {showAdvanced ? (
         <div className={`absolute top-full left-0 mt-2 w-full min-w-[300px] ${Z_INLINE_PANEL}`}>
-          <AdvancedSearchForm
-            mode={advancedMode}
-            withTail
-            onApply={(q) => applyQuery(q, { save: true })}
-            onClose={() => setShowAdvanced(false)}
-          />
+          <Suspense fallback={null}>
+            <AdvancedSearchForm
+              mode={advancedMode}
+              withTail
+              onApply={(q) => applyQuery(q, { save: true })}
+              onClose={() => setShowAdvanced(false)}
+            />
+          </Suspense>
         </div>
       ) : null}
     </div>
