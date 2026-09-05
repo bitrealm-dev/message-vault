@@ -6894,7 +6894,6 @@
           "contacts",
           "contact_handles",
           "contacts_created",
-          "contact_group_links",
           "contacts_skipped",
           "messages_deduped",
           "messages_appended",
@@ -6924,12 +6923,6 @@
             "type": "integer",
             "format": "int64",
             "description": "Attachment records (message–media links) imported.",
-            "minimum": 0
-          },
-          "contact_group_links": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Contact–group links created.",
             "minimum": 0
           },
           "contact_handles": {

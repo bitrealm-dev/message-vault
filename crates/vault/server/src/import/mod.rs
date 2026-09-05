@@ -183,8 +183,6 @@ pub struct ImportStats {
     pub contact_handles: u64,
     /// Contacts the import created for participants nothing else owned.
     pub contacts_created: u64,
-    /// Contact–group links created.
-    pub contact_group_links: u64,
     /// True when the address book was not loaded (already present or no file).
     pub contacts_skipped: bool,
     /// Messages hidden as duplicates within this import.
@@ -441,7 +439,6 @@ pub async fn import_jsonl_files_on_conn(
     let mut stats = ImportStats {
         contacts: contact_stats.contacts,
         contact_handles: contact_stats.phones,
-        contact_group_links: contact_stats.groups,
         contacts_skipped: contact_stats.skipped,
         phones_needing_review: contact_stats.phones_needing_review,
         mode: opts.mode.as_str().to_string(),
@@ -505,8 +502,8 @@ async fn load_contacts_step(
         say("  sql:      contacts skipped (already loaded or no address book)");
     } else {
         say(&format!(
-            "  sql:      contacts={} phones={} groups={}",
-            contact_stats.contacts, contact_stats.phones, contact_stats.groups
+            "  sql:      contacts={} phones={}",
+            contact_stats.contacts, contact_stats.phones
         ));
     }
     Ok(contact_stats)

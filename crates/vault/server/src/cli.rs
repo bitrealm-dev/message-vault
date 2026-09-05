@@ -317,7 +317,6 @@ fn print_import_stats(import: &crate::import::ImportStats) {
     } else {
         println!("  contacts:      {}", import.contacts);
         println!("  contact handles:{}", import.contact_handles);
-        println!("  contact groups:{}", import.contact_group_links);
     }
     println!("  files:         {}", import.files);
     println!("  conversations: {}", import.conversations);
@@ -420,7 +419,6 @@ async fn run_import_contacts(args: ImportContactsArgs) -> Result<()> {
     println!("  contacts:     {}", args.contacts.display());
     println!("  rows:         {}", stats.contacts);
     println!("  phones:       {}", stats.phones);
-    println!("  group links:  {}", stats.groups);
     Ok(())
 }
 
