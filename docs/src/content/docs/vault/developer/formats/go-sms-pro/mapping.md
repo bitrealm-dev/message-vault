@@ -14,7 +14,7 @@ Shared model: [message-ir](/vault/developer/architecture/common-message/). CSV p
 
 ## Pipeline / output
 
-Source XML/PDU → `ConversationDocument` → [`message_ir_format::FormatSink`](../../../libs/ir-format/src/format_sink.rs) (`--format json|jsonl|csv|eml|mbox|xml`; default `json`).
+Source XML/PDU → `ConversationDocument` → [`message_ir_format::FormatSink`](https://github.com/bitrealm-io/message-vault/blob/main/crates/libs/ir-format/src/format_sink.rs) (`--format json|jsonl|csv|eml|mbox|xml`; default `json`).
 
 With `--format csv`: one file per conversation. PDU media under `attachments/` when copying/embedding. Filenames: 1:1 → `+E164.csv`; untitled groups → `group_+A_+B_….csv` (max 10 phones, then a hash). `--format xml` writes a single SyncTech `smses.xml`.
 

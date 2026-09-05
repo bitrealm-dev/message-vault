@@ -284,7 +284,9 @@ Rebase is allowed; merge is enough. Don't force-push unless the branch is only u
 
 ### Open the pull request
 
-A pull request asks to merge the branch into `main`. Open it against `main` on [bitrealm-io/message-vault](https://github.com/bitrealm-io/message-vault). Use the GitHub pull request form; the default template is enough for most changes. Feature and bug-fix templates also exist, but they aren't required. Open it as a draft if you want early feedback.
+A pull request asks to merge the branch into `main`. Open it against `main` on [bitrealm-io/message-vault](https://github.com/bitrealm-io/message-vault). Use the GitHub pull request form; the default template is enough for most changes. Feature and bug-fix templates also exist, but they aren't required. GitHub
+doesn't offer them in the form, so pick one by adding `?template=feature.md` or
+`?template=bugfix.md` to the compare URL. Open it as a draft if you want early feedback.
 
 Link the issue (`Ref: #123`). Write `Fixes #123` in the description if this change should close that issue.
 

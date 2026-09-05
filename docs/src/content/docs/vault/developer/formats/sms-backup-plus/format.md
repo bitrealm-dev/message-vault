@@ -32,4 +32,4 @@ Optional MIME attachments are attached to messages in order.
 
 ## Import mapping and deduplication
 
-Source-field mapping and online cover-key deduplication: [`IMPORT_MAPPING.md`](IMPORT_MAPPING.md).
+Source-field mapping and online cover-key deduplication: [SMS Backup+ mapping](/vault/developer/formats/sms-backup-plus/mapping/).
