@@ -5,12 +5,14 @@
 #   ./scripts/run-vault-dev.sh --reset         # wipe data/, start empty
 #   ./scripts/run-vault-dev.sh --reset-demo    # wipe data/, seed sample inbox
 #   ./scripts/run-vault-dev.sh --sqlweb        # SQLite browser on http://127.0.0.1:8081
+#   ./scripts/run-vault-dev.sh --release       # optimized binary (combine with any flag above)
 #
 # Website (separate terminal):
 #   cd web && npm run dev          # http://localhost:5173, proxies /v1 here
 #   cargo tauri dev                # desktop window, same Vite
 #
-# Debug profile so server-crate edits recompile quickly. Restart this process
+# Debug profile by default so server-crate edits recompile quickly; --release
+# builds the optimized binary for seeding and serving. Restart this process
 # after Rust changes.
 #
 # Does not overwrite an existing config/config.toml except after reset-demo,
@@ -27,14 +29,16 @@ DEMO=0
 RESET=0
 SQLWEB=0
 SQLWEB_PID=""
+RELEASE=0
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [--reset | --reset-demo] [--sqlweb]
+Usage: $(basename "$0") [--reset | --reset-demo] [--sqlweb] [--release]
 
   --reset       Wipe data/ and start with an empty vault
   --reset-demo  Wipe data/ and seed the sample inbox
   --sqlweb      Start sqlite-web on http://127.0.0.1:8081 (needs sqlite_web on PATH)
+  --release     Build and run the optimized binary (seed and serve)
   -h, --help
 EOF
 }
@@ -43,6 +47,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --reset) RESET=1 ;;
     --reset-demo) DEMO=1 ;;
+    --release) RELEASE=1 ;;
     --demo)
       echo "error: --demo was renamed to --reset-demo (always wipes data/ and reseeds)" >&2
       exit 1
@@ -109,12 +114,17 @@ start_sqlweb() {
   trap stop_sqlweb EXIT INT TERM
 }
 
+# cargo run with the chosen profile; arguments after -- go to the server binary.
+vault() {
+  cargo run "${CARGO_PROFILE[@]}" -p message-vault-server -- "$@"
+}
+
 run_server() {
-  echo "Starting message-vault-server (debug). Restart after server-crate edits."
+  echo "Starting message-vault-server (${PROFILE_NAME}). Restart after server-crate edits."
   if [[ "${SQLWEB}" -eq 1 ]]; then
-    cargo run -p message-vault-server -- serve --config "${CONFIG}"
+    vault serve --config "${CONFIG}"
   else
-    exec cargo run -p message-vault-server -- serve --config "${CONFIG}"
+    exec cargo run "${CARGO_PROFILE[@]}" -p message-vault-server -- serve --config "${CONFIG}"
   fi
 }
 
@@ -125,6 +135,13 @@ wipe_data() {
 }
 
 require_cmd cargo
+
+CARGO_PROFILE=()
+PROFILE_NAME="debug"
+if [[ "${RELEASE}" -eq 1 ]]; then
+  CARGO_PROFILE=(--release)
+  PROFILE_NAME="release"
+fi
 
 mkdir -p data
 
@@ -141,10 +158,10 @@ if [[ "${DEMO}" -eq 1 ]]; then
   require_cmd ffmpeg
   require_cmd ffprobe
   echo "Seeding demo data…"
-  cargo run -p message-vault-server -- reset-demo --config "${CONFIG}"
+  vault reset-demo --config "${CONFIG}"
   write_host_dev_config
   echo "Converting demo media…"
-  cargo run -p message-vault-server -- process-assets --config "${CONFIG}" \
+  vault process-assets --config "${CONFIG}" \
     || echo "warning: process-assets failed; UI still works"
 elif [[ "${RESET}" -eq 1 ]]; then
   echo "Empty data/ (create an account in the web UI)."
