@@ -109,125 +109,122 @@ pub async fn push(
     args: PushArgs,
 ) -> Result<(), String> {
     let cancel = reset_and_clone_cancel(&state)?;
-
     let app_handle = app.clone();
-
     spawn_job(app, move || {
-        let cfg = VaultPushConfig {
-            input: PathBuf::from(&args.input_dir),
-            base_url: args.base_url,
-            username: args.username,
-            key: args.key,
-            mode: args.mode,
-            continue_on_error: args.continue_on_error,
-            force: args.force,
-            skip_attachments: args.skip_attachments,
-            trust_export: args.trust_export,
-            verify_digests: false,
-            max_retries: 3,
-            // Pack until vault_push::MAX_IMPORT_BODY_BYTES (64 MiB); do not stop at a message count.
-            batch_size: vault_push::NO_MESSAGE_COUNT_LIMIT,
-            // Above the CLI default (8): desktop imports are often many small files.
-            asset_upload_workers: 16,
-            // Above the CLI default (3): hide more hashing behind in-flight imports.
-            prepare_ahead: 8,
-            // Above the CLI default (2): more of the prepare-ahead queue runs at once.
-            prepare_workers: 4,
-            // Below the CLI default (vault_push::MAX_PROXY_BODY_BYTES, 90 MiB):
-            // desktop uploads switch to multipart sooner so a large attachment
-            // moves in small parts instead of one long PUT.
-            asset_multipart_threshold: 5 * 1024 * 1024,
-            // Per-file attachment cap. JSONL import batches use MAX_IMPORT_BODY_BYTES.
-            asset_max_bytes: ASSET_MAX_BYTES,
-            report_path: None,
-            log_path: None,
-            // Relies on one preflight HEAD per run instead of a persisted journal.
-            journal_path: None,
-            cancel: Some(cancel),
-            import_id: args.import_id,
-        };
-
-        let mut progress = |event: ProgressEvent| match event {
-            ProgressEvent::Log(line) => {
-                let _ = app_handle.emit("extract:log", line);
-            }
-            ProgressEvent::Auth { .. } => {}
-            ProgressEvent::FileStart { index, total, file } => {
-                let _ = app_handle.emit("extract:log", format!("Starting: {file}"));
-                let _ = app_handle.emit(
-                    "extract:progress",
-                    ExtractProgressEvent {
-                        step: "upload".into(),
-                        done: index.saturating_sub(1),
-                        total,
-                        bytes_done: None,
-                        bytes_total: None,
-                        status: None,
-                    },
-                );
-            }
-            ProgressEvent::FileDone { file, status } => {
-                let _ = app_handle.emit("extract:log", format!("Done: {file} ({status})"));
-            }
-            ProgressEvent::Issue {
-                kind,
-                step,
-                item,
-                reason,
-            } => {
-                let _ = app_handle.emit(
-                    "extract:issue",
-                    serde_json::json!({
-                        "kind": kind,
-                        "step": step,
-                        "item": item,
-                        "reason": reason,
-                    }),
-                );
-            }
-            ProgressEvent::Finished(report) => {
-                for result in &report.results {
-                    if result.status == "failed" {
-                        let reason = result.error.as_deref().unwrap_or("upload failed");
-                        let _ = app_handle.emit(
-                            "extract:issue",
-                            serde_json::json!({
-                                "kind": "error",
-                                "step": "upload",
-                                "item": result.file,
-                                "reason": reason,
-                            }),
-                        );
-                    } else if result.status == "skipped" {
-                        let reason = result
-                            .error
-                            .as_deref()
-                            .unwrap_or("already imported or skipped");
-                        let _ = app_handle.emit(
-                            "extract:issue",
-                            serde_json::json!({
-                                "kind": "skip",
-                                "step": "upload",
-                                "item": result.file,
-                                "reason": reason,
-                            }),
-                        );
-                    }
-                }
-                let (progress, summary) = finished_push_events(&report);
-                let _ = app_handle.emit("extract:progress", progress);
-                let _ = app_handle.emit("extract:finished", summary.to_string());
-            }
-        };
-
-        match run_push(&cfg, Some(&mut progress)) {
-            Ok(_) => {}
-            Err(err) => return Err(err),
-        }
-        Ok(())
+        let mut cfg = push_config(args);
+        cfg.cancel = Some(cancel);
+        let mut progress = |event: ProgressEvent| forward_push_event(&app_handle, event);
+        run_push(&cfg, Some(&mut progress)).map(|_report| ())
     });
-
     Ok(())
+}
+
+/// The push settings the desktop app uses. They differ from the command-line
+/// defaults because desktop imports are many small files over a local
+/// network; each number says why.
+fn push_config(args: PushArgs) -> VaultPushConfig {
+    VaultPushConfig {
+        input: PathBuf::from(&args.input_dir),
+        base_url: args.base_url,
+        username: args.username,
+        key: args.key,
+        mode: args.mode,
+        continue_on_error: args.continue_on_error,
+        force: args.force,
+        skip_attachments: args.skip_attachments,
+        trust_export: args.trust_export,
+        verify_digests: false,
+        max_retries: 3,
+        // Pack until vault_push::MAX_IMPORT_BODY_BYTES (64 MiB); do not stop at a message count.
+        batch_size: vault_push::NO_MESSAGE_COUNT_LIMIT,
+        // Above the CLI default (8): desktop imports are often many small files.
+        asset_upload_workers: 16,
+        // Above the CLI default (3): hide more hashing behind in-flight imports.
+        prepare_ahead: 8,
+        // Above the CLI default (2): more of the prepare-ahead queue runs at once.
+        prepare_workers: 4,
+        // Below the CLI default (vault_push::MAX_PROXY_BODY_BYTES, 90 MiB):
+        // desktop uploads switch to multipart sooner so a large attachment
+        // moves in small parts instead of one long PUT.
+        asset_multipart_threshold: 5 * 1024 * 1024,
+        // Per-file attachment cap. JSONL import batches use MAX_IMPORT_BODY_BYTES.
+        asset_max_bytes: ASSET_MAX_BYTES,
+        report_path: None,
+        log_path: None,
+        // Relies on one preflight HEAD per run instead of a persisted journal.
+        journal_path: None,
+        cancel: None,
+        import_id: args.import_id,
+    }
+}
+
+/// Relay one push progress event to the window as `extract:*` events.
+fn forward_push_event(app: &tauri::AppHandle, event: ProgressEvent) {
+    match event {
+        ProgressEvent::Log(line) => {
+            let _ = app.emit("extract:log", line);
+        }
+        ProgressEvent::Auth { .. } => {}
+        ProgressEvent::FileStart { index, total, file } => {
+            let _ = app.emit("extract:log", format!("Starting: {file}"));
+            let _ = app.emit(
+                "extract:progress",
+                ExtractProgressEvent {
+                    step: "upload".into(),
+                    done: index.saturating_sub(1),
+                    total,
+                    bytes_done: None,
+                    bytes_total: None,
+                    status: None,
+                },
+            );
+        }
+        ProgressEvent::FileDone { file, status } => {
+            let _ = app.emit("extract:log", format!("Done: {file} ({status})"));
+        }
+        ProgressEvent::Issue {
+            kind,
+            step,
+            item,
+            reason,
+        } => {
+            let _ = app.emit(
+                "extract:issue",
+                serde_json::json!({
+                    "kind": kind,
+                    "step": step,
+                    "item": item,
+                    "reason": reason,
+                }),
+            );
+        }
+        ProgressEvent::Finished(report) => {
+            emit_conversation_issues(app, &report);
+            let (progress, summary) = finished_push_events(&report);
+            let _ = app.emit("extract:progress", progress);
+            let _ = app.emit("extract:finished", summary.to_string());
+        }
+    }
+}
+
+/// Report each failed or skipped conversation as an issue chip.
+fn emit_conversation_issues(app: &tauri::AppHandle, report: &vault_push::PushReport) {
+    for result in &report.results {
+        let (kind, fallback) = match result.status.as_str() {
+            "failed" => ("error", "upload failed"),
+            "skipped" => ("skip", "already imported or skipped"),
+            _ => continue,
+        };
+        let _ = app.emit(
+            "extract:issue",
+            serde_json::json!({
+                "kind": kind,
+                "step": "upload",
+                "item": result.file,
+                "reason": result.error.as_deref().unwrap_or(fallback),
+            }),
+        );
+    }
 }
 
 #[cfg(test)]
