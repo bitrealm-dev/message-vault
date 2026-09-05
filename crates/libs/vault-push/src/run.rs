@@ -44,7 +44,7 @@ use message_vault_io_core::{CancelFlag, check_cancel};
 
 use crate::AuthInfo;
 use crate::folder::{detect_source, file_label, input_folder, list_jsonl_files};
-use crate::http::{self, CompleteImportArgs, HttpSession};
+use crate::http::{HttpSession, ImportOutcome};
 use crate::journal::{self, RunJournal};
 use crate::pipeline::{ChunkStep, ImportPipeline};
 use crate::prepare::{
@@ -145,10 +145,13 @@ pub fn authenticate(
 }
 
 /// The authenticated connection one push run uses for every request.
+#[derive(Clone)]
 pub(crate) struct Session {
     pub http: HttpSession,
     /// Base URL with any trailing slash removed.
     pub url: String,
+    /// The API key every request carries.
+    pub key: String,
     /// The account the API key resolved to (server-reported name, or the id).
     pub username: String,
     pub auth: AuthInfo,
@@ -274,7 +277,6 @@ pub fn run(cfg: &VaultPushConfig, progress: Option<&mut ProgressFn<'_>>) -> Resu
         && let Some(import_id) = import_id
     {
         complete_import_session(
-            cfg,
             &session,
             import_id,
             &report,
@@ -326,6 +328,7 @@ fn login(cfg: &VaultPushConfig, out: &mut Reporter<'_, '_>) -> Result<Session> {
     Ok(Session {
         http,
         url,
+        key: cfg.key.clone(),
         username,
         auth,
     })
@@ -351,15 +354,7 @@ fn start_import_session(
         );
         return Some(import_id);
     }
-    match http::start_import(
-        &session.http,
-        &session.url,
-        &cfg.key,
-        &session.username,
-        &source,
-        &cfg.mode,
-        Some("vault-push"),
-    ) {
+    match session.start_import(&source, &cfg.mode, Some("vault-push")) {
         Ok(Some(id)) => {
             out.show_as(
                 &format!("vault import session id={id} source={source}"),
@@ -581,7 +576,6 @@ fn write_report(path: &Path, report: &PushReport) -> Result<()> {
 /// Tell the vault how the import session ended. Best effort: a failure here
 /// is logged, not returned, because the data is already in the vault.
 fn complete_import_session(
-    cfg: &VaultPushConfig,
     session: &Session,
     import_id: i64,
     report: &PushReport,
@@ -589,12 +583,9 @@ fn complete_import_session(
     aborted: bool,
     out: &mut Reporter<'_, '_>,
 ) {
-    let completed = http::complete_import(
-        &session.http,
-        CompleteImportArgs {
-            base_url: &session.url,
-            key: &cfg.key,
-            import_id,
+    let completed = session.complete_import(
+        import_id,
+        &ImportOutcome {
             ok: report.ok,
             status: outcome_status(report, aborted),
             message_count: report.messages,
