@@ -1,7 +1,6 @@
 import { BrowsePageLayout } from "@/components/BrowsePageLayout";
 import { BrowseShell } from "@/components/BrowseShell";
 import { listContacts, listLabels, labelSlug } from "@/lib/db";
-import { ensureUnknownContacts } from "@/lib/contactsWrite";
 import { withServerAccount } from "@/lib/serverAccount";
 import type { ContactSection } from "@/lib/types";
 
@@ -17,9 +16,12 @@ export async function ContactBrowsePage({
   contactId: number | null;
 }) {
   return withServerAccount(async () => {
-    ensureUnknownContacts();
-    const contacts = listContacts(section);
-    const labels = listLabels();
+    // The vault gives every imported handle a contact at import time, so
+    // there is no "ensure Unknown contacts" step before listing.
+    const [contacts, labels] = await Promise.all([
+      listContacts(section),
+      listLabels(),
+    ]);
     const paneKey =
       typeof section === "object" ? `label-${labelSlug(section.label)}` : section;
 

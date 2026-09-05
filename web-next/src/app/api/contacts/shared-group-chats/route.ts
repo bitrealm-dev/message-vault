@@ -14,7 +14,11 @@ function authError(err: unknown): NextResponse | null {
   return null;
 }
 
-/** Group chats that include every contact id (AND). Extra participants allowed. */
+/**
+ * Group chats that include every contact id (AND). Extra participants
+ * allowed. Computed from `GET /v1/conversations`; the `source` filter is
+ * accepted but has no effect, since the list carries no import source.
+ */
 export async function GET(req: Request) {
   try {
     return await withAccountHandler(async () => {
@@ -30,8 +34,7 @@ export async function GET(req: Request) {
           { status: 400 },
         );
       }
-      const source = url.searchParams.get("source");
-      const groupChats = groupChatsContainingContacts(ids, source);
+      const groupChats = await groupChatsContainingContacts(ids);
       return NextResponse.json({ groupChats });
     });
   } catch (err) {

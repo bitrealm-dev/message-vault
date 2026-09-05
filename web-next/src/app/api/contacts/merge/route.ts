@@ -5,6 +5,7 @@ import {
 } from "@/lib/accountContext";
 import { NextResponse } from "next/server";
 import { mutationErrorStatus } from "@/lib/owner";
+import { writesAvailable, writesNotAvailable } from "@/lib/vault/writes";
 
 export const runtime = "nodejs";
 
@@ -16,6 +17,7 @@ function authError(err: unknown): NextResponse | null {
 }
 
 export async function POST(req: Request) {
+  if (!writesAvailable()) return writesNotAvailable();
   let body: Record<string, unknown>;
   try {
     body = await req.json();

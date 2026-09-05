@@ -7,6 +7,7 @@ import {
 import { NextResponse } from "next/server";
 import { mutationErrorStatus } from "@/lib/owner";
 import { parseHandlesBody } from "../handles-body";
+import { writesAvailable, writesNotAvailable } from "@/lib/vault/writes";
 
 export const runtime = "nodejs";
 
@@ -28,7 +29,7 @@ export async function GET(_req: Request, { params }: Params) {
 
   try {
     return await withAccountHandler(async () => {
-      const contact = getContact(id);
+      const contact = await getContact(id);
       if (!contact) {
         return NextResponse.json({ error: "not found" }, { status: 404 });
       }
@@ -43,6 +44,7 @@ export async function GET(_req: Request, { params }: Params) {
 }
 
 export async function PATCH(req: Request, { params }: Params) {
+  if (!writesAvailable()) return writesNotAvailable();
   const { id: idStr } = await params;
   const id = Number(idStr);
   if (!Number.isFinite(id)) {

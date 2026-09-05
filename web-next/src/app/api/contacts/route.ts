@@ -6,6 +6,7 @@ import {
 import { NextResponse } from "next/server";
 import { mutationErrorStatus } from "@/lib/owner";
 import { parseHandlesBody } from "./handles-body";
+import { writesAvailable, writesNotAvailable } from "@/lib/vault/writes";
 
 export const runtime = "nodejs";
 
@@ -17,6 +18,7 @@ function authError(err: unknown): NextResponse | null {
 }
 
 export async function POST(req: Request) {
+  if (!writesAvailable()) return writesNotAvailable();
   let body: Record<string, unknown>;
   try {
     body = await req.json();
@@ -81,6 +83,7 @@ export async function POST(req: Request) {
 }
 
 export async function DELETE(req: Request) {
+  if (!writesAvailable()) return writesNotAvailable();
   let body: Record<string, unknown>;
   try {
     body = await req.json();

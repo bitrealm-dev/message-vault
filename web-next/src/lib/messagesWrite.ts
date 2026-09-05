@@ -1,6 +1,6 @@
 import fs from "fs";
 
-import { resetDb } from "./db";
+import { resetDb } from "./dbCore";
 import { loadSources } from "./paths";
 import { openWritableVaultDb } from "./vaultSchema";
 

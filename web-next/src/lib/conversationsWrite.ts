@@ -1,6 +1,6 @@
 import { currentAccountId } from "./accountScope";
 import { assertVaultWritable } from "./owner";
-import { resetDb } from "./db";
+import { resetDb } from "./dbCore";
 import { openWritableVaultDb } from "./vaultSchema";
 
 /** Move a group conversation into Trash. */

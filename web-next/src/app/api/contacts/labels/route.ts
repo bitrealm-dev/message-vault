@@ -5,10 +5,12 @@ import {
 import { setContactsLabelMembership } from "@/lib/contactsWrite";
 import { mutationErrorStatus } from "@/lib/owner";
 import { NextResponse } from "next/server";
+import { writesAvailable, writesNotAvailable } from "@/lib/vault/writes";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  if (!writesAvailable()) return writesNotAvailable();
   let body: Record<string, unknown>;
   try {
     body = await req.json();

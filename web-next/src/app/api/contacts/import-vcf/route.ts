@@ -9,6 +9,7 @@ import {
 } from "@/lib/accountContext";
 import { NextResponse } from "next/server";
 import { mutationErrorStatus } from "@/lib/owner";
+import { writesAvailable, writesNotAvailable } from "@/lib/vault/writes";
 
 export const runtime = "nodejs";
 
@@ -114,6 +115,7 @@ function parseMappings(raw: FormDataEntryValue | null): VcfCategoryMapping[] {
  * - `mappings` = JSON array of { source, target, enabled } (required for commit)
  */
 export async function POST(req: Request) {
+  if (!writesAvailable()) return writesNotAvailable();
   let form: FormData;
   try {
     form = await req.formData();

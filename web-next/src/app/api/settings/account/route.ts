@@ -23,8 +23,10 @@ import { isDemoAccount } from "@/lib/demoAccount";
 import { mutationErrorStatus } from "@/lib/owner";
 import { validatePasswordPlaintext } from "@/lib/password";
 import { clearAccountCookieOptions } from "@/lib/session";
+import { settingsAccount } from "@/lib/vault/account";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { writesAvailable, writesNotAvailable } from "@/lib/vault/writes";
 
 export const runtime = "nodejs";
 
@@ -75,9 +77,8 @@ function authError(err: unknown): NextResponse | null {
 
 export async function GET() {
   try {
-    return await withAccountHandler(async (accountId) => {
-      const account = loadAccount(accountId);
-      return NextResponse.json(accountJson(account, accountId));
+    return await withAccountHandler(async () => {
+      return NextResponse.json(await settingsAccount());
     });
   } catch (err) {
     const auth = authError(err);
@@ -90,6 +91,7 @@ export async function GET() {
 }
 
 export async function PATCH(req: Request) {
+  if (!writesAvailable()) return writesNotAvailable();
   let body: Record<string, unknown>;
   try {
     body = await req.json();
@@ -250,6 +252,7 @@ export async function PATCH(req: Request) {
 }
 
 export async function DELETE() {
+  if (!writesAvailable()) return writesNotAvailable();
   try {
     return await withAccountHandler(async (accountId) => {
       deleteAccount(accountId);

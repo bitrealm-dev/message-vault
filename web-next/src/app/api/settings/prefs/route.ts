@@ -6,7 +6,7 @@ import {
   AccountPrefError,
   getAccountPrefs,
   saveAccountPrefs,
-} from "@/lib/accountPrefs";
+} from "@/lib/vault/prefs";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -18,10 +18,11 @@ function authError(err: unknown): NextResponse | null {
   return null;
 }
 
+/** Display prefs live in a cookie: the vault has no preferences route. */
 export async function GET() {
   try {
-    return await withAccountHandler(async (accountId) => {
-      const prefs = getAccountPrefs(accountId);
+    return await withAccountHandler(async () => {
+      const prefs = await getAccountPrefs();
       return NextResponse.json({ prefs });
     });
   } catch (err) {
@@ -65,8 +66,8 @@ export async function PATCH(req: Request) {
   }
 
   try {
-    return await withAccountHandler(async (accountId) => {
-      const prefs = saveAccountPrefs(accountId, patch);
+    return await withAccountHandler(async () => {
+      const prefs = await saveAccountPrefs(patch);
       return NextResponse.json({ prefs });
     });
   } catch (err) {

@@ -8,8 +8,8 @@ export const dynamic = "force-dynamic";
 
 export default async function OnboardingPage() {
   return withServerAccount(
-    async (accountId) => {
-      if (!accountNeedsOnboarding(accountId)) {
+    async () => {
+      if (!(await accountNeedsOnboarding())) {
         redirect("/");
       }
       return <OnboardingForm />;

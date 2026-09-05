@@ -82,6 +82,47 @@ function MissingMediaPlaceholder({
   );
 }
 
+/** Formats the old `assets_converted/` transcode used to make playable. */
+const NEEDS_TRANSCODE = new Set([
+  "image/heic",
+  "image/heif",
+  "video/quicktime",
+  "video/x-msvideo",
+  "audio/amr",
+  "audio/x-caf",
+]);
+
+function needsTranscode(mime: string | null): boolean {
+  return Boolean(mime && NEEDS_TRANSCODE.has(mime.toLowerCase()));
+}
+
+/** The vault has no route for transcoded media; the raw file is offered instead. */
+function NoTranscodeNotice({
+  attachment,
+  url,
+}: {
+  attachment: AttachmentRow;
+  url: string;
+}) {
+  const label = attachment.originalName?.trim() || "Attachment";
+  return (
+    <div
+      role="note"
+      className="flex max-w-xs flex-col gap-1 rounded-lg border border-dashed border-border bg-hover px-3 py-2.5 text-[12px]"
+    >
+      <div className="text-[11px] font-medium tracking-wide uppercase opacity-70">
+        No /v1 route for converted media
+      </div>
+      <div className="opacity-80">
+        {attachment.mimeType ?? "This format"} is not playable here. Raw file:{" "}
+        <a href={url} className="underline" target="_blank" rel="noreferrer">
+          {label}
+        </a>
+      </div>
+    </div>
+  );
+}
+
 export function MessageAttachments({
   source,
   attachments,
@@ -97,6 +138,9 @@ export function MessageAttachments({
     <div className={`${hasBody ? "mt-2" : ""} space-y-1.5`}>
       {attachments.map((a) => {
         const { url, mimeType } = resolveAttachmentMedia(source, a);
+        if (url && needsTranscode(mimeType)) {
+          return <NoTranscodeNotice key={a.id} attachment={a} url={url} />;
+        }
         if (url && isImageMime(mimeType)) {
           return (
             // eslint-disable-next-line @next/next/no-img-element

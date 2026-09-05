@@ -9,6 +9,7 @@ import {
 } from "@/lib/messageTrashWrite";
 import { mutationErrorStatus } from "@/lib/owner";
 import { NextResponse } from "next/server";
+import { writesAvailable, writesNotAvailable } from "@/lib/vault/writes";
 
 export const runtime = "nodejs";
 
@@ -86,9 +87,11 @@ async function mutate(req: Request, restore: boolean): Promise<NextResponse> {
 }
 
 export async function POST(req: Request) {
+  if (!writesAvailable()) return writesNotAvailable();
   return mutate(req, false);
 }
 
 export async function DELETE(req: Request) {
+  if (!writesAvailable()) return writesNotAvailable();
   return mutate(req, true);
 }

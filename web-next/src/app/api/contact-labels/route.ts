@@ -6,6 +6,7 @@ import {
 } from "@/lib/accountContext";
 import { NextResponse } from "next/server";
 import { mutationErrorStatus } from "@/lib/owner";
+import { writesAvailable, writesNotAvailable } from "@/lib/vault/writes";
 
 export const runtime = "nodejs";
 
@@ -19,7 +20,7 @@ function authError(err: unknown): NextResponse | null {
 export async function GET() {
   try {
     return await withAccountHandler(async () => {
-      return NextResponse.json({ labels: listLabels() });
+      return NextResponse.json({ labels: await listLabels() });
     });
   } catch (err) {
     const auth = authError(err);
@@ -30,6 +31,7 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  if (!writesAvailable()) return writesNotAvailable();
   let body: { name?: unknown };
   try {
     body = await req.json();
@@ -59,6 +61,7 @@ export async function POST(req: Request) {
 }
 
 export async function PATCH(req: Request) {
+  if (!writesAvailable()) return writesNotAvailable();
   let body: { from?: unknown; to?: unknown };
   try {
     body = await req.json();
@@ -92,6 +95,7 @@ export async function PATCH(req: Request) {
 }
 
 export async function DELETE(req: Request) {
+  if (!writesAvailable()) return writesNotAvailable();
   let body: { name?: unknown };
   try {
     body = await req.json();

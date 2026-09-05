@@ -1,8 +1,8 @@
-import { loadSources } from "@/lib/paths";
 import {
   unauthorizedResponse,
   withAccountHandler,
 } from "@/lib/accountContext";
+import { listSources } from "@/lib/vault/account";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -14,10 +14,11 @@ function authError(err: unknown): NextResponse | null {
   return null;
 }
 
+/** Import source ids, from `GET /v1/auth/check`. */
 export async function GET() {
   try {
     return await withAccountHandler(async () => {
-      const sources = loadSources().map((s) => ({ id: s.id }));
+      const sources = (await listSources()).map((id) => ({ id }));
       return NextResponse.json({ sources });
     });
   } catch (err) {

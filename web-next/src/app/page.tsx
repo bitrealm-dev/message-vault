@@ -6,8 +6,7 @@ export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
   return withServerAccount(async () => {
-    const stats = homeStats();
-    const labels = listLabels();
+    const [stats, labels] = await Promise.all([homeStats(), listLabels()]);
     return <HomePageClient labels={labels} stats={stats} />;
   });
 }

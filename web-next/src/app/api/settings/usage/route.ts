@@ -2,15 +2,16 @@ import {
   unauthorizedResponse,
   withAccountHandler,
 } from "@/lib/accountContext";
-import { loadStorageUsage } from "@/lib/storageStats";
+import { loadStorageUsage } from "@/lib/vault/account";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
+/** Attachment usage, from `GET /v1/account/storage`. */
 export async function GET() {
   try {
-    return await withAccountHandler(async (accountId) => {
-      const usage = loadStorageUsage(accountId);
+    return await withAccountHandler(async () => {
+      const usage = await loadStorageUsage();
       return NextResponse.json(usage);
     });
   } catch (err) {

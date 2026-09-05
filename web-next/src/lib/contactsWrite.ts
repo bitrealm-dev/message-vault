@@ -1,7 +1,8 @@
 import Database from "better-sqlite3";
 import { currentAccountId } from "./accountScope";
 import { contactHandlesByContact, getDb, joinPreferredName } from "./dbCore";
-import { getContact, resetDb } from "./db";
+import { getContact } from "./contactsRead";
+import { resetDb } from "./dbCore";
 import { openWritableVaultDb } from "./vaultSchema";
 import {
   inferHandleType,
