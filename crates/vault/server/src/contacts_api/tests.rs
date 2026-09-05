@@ -1741,6 +1741,175 @@ async fn trashed_contact_row_count(conn: &mut AnyConnection, account_id: &str, i
     .unwrap()
 }
 
+/// A signed-in account with one named contact on `+15550100`, in one
+/// conversation (id 1) holding two messages, and already in the trash.
+/// Returns the account and the contact's id.
+async fn trashed_contact_fixture() -> (TestVault, RegisteredAccount, i64) {
+    let (vault, token, account) = contacts_fixture_with_handles(&["+15550100"]).await;
+    let mut conn = vault.conn().await;
+    insert_direct_conversation(
+        &mut conn,
+        &account.account_id,
+        1,
+        "+15550100",
+        "imessage",
+        &["2020-01-01T00:00:00Z", "2020-01-02T00:00:00Z"],
+    )
+    .await;
+    let id: i64 = sqlx::query_scalar("SELECT id FROM contacts WHERE account_id = $1")
+        .bind(&account.account_id)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    let status = crate::test_support::post_status(
+        &vault.state,
+        &format!("/v1/contacts/{id}/trash"),
+        &token,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    (vault, account, id)
+}
+
+async fn contact_name_and_origin(conn: &mut AnyConnection, id: i64) -> (String, String) {
+    sqlx::query_as("SELECT preferred_name, origin FROM contacts WHERE id = $1")
+        .bind(id)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn contact_delete_makes_it_unknown_and_leaves_its_conversations_alone() {
+    let (vault, account, id) = trashed_contact_fixture().await;
+
+    let status = crate::test_support::delete_status(
+        &vault.state,
+        &format!("/v1/contacts/{id}"),
+        &account.token,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let mut conn = vault.conn().await;
+    assert_eq!(
+        contact_name_and_origin(&mut conn, id).await,
+        (String::new(), "import".into()),
+        "the name goes and the row is an import's again"
+    );
+    assert_eq!(
+        trashed_contact_row_count(&mut conn, &account.account_id, id).await,
+        0,
+        "it leaves the trash"
+    );
+    // Out of the trash and nameless, it opens again — as Unknown — and its
+    // conversation counts are what they were.
+    let detail: serde_json::Value =
+        crate::test_support::get_json(&vault.state, &format!("/v1/contacts/{id}"), &account.token)
+            .await;
+    assert_eq!(detail["name"], "(unknown)", "{detail}");
+    assert_eq!(detail["direct_conversations"], 1, "{detail}");
+    assert_eq!(detail["total_messages"], 2, "{detail}");
+    let conversations: serde_json::Value = crate::test_support::get_json(
+        &vault.state,
+        "/v1/conversations?q=trashed:any",
+        &account.token,
+    )
+    .await;
+    assert_eq!(
+        conversations["total"], 1,
+        "no conversation is deleted with a contact"
+    );
+    assert_eq!(
+        conversations["items"][0]["participants"][0]["name"], "+15550100",
+        "the conversation now shows the handle: {conversations}"
+    );
+}
+
+#[tokio::test]
+async fn contact_delete_refuses_a_contact_that_is_not_in_the_trash() {
+    let (vault, token, account) = contacts_fixture_with_handles(&["+15550100"]).await;
+    let list: serde_json::Value =
+        crate::test_support::get_json(&vault.state, "/v1/contacts", &token).await;
+    let id = list["items"][0]["id"].as_i64().unwrap();
+
+    let (status, body) =
+        crate::test_support::delete_raw(&vault.state, &format!("/v1/contacts/{id}"), &token).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains("not in the trash"), "{body}");
+    let mut conn = vault.conn().await;
+    assert_eq!(
+        contact_name_and_origin(&mut conn, id).await.0,
+        "Contact 0",
+        "the name stays"
+    );
+    drop(account);
+}
+
+#[tokio::test]
+async fn contact_delete_404s_for_an_unknown_id_and_for_another_accounts() {
+    let (vault, alice, alices) = trashed_contact_fixture().await;
+    let bob = register_via_api(&vault.state, "bob", "hunter2hunter2").await;
+
+    let status =
+        crate::test_support::delete_status(&vault.state, "/v1/contacts/999999", &alice.token).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let status = crate::test_support::delete_status(
+        &vault.state,
+        &format!("/v1/contacts/{alices}"),
+        &bob.token,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "Bob must not learn the id exists"
+    );
+    let mut conn = vault.conn().await;
+    assert_eq!(
+        contact_name_and_origin(&mut conn, alices).await.0,
+        "Contact 0",
+        "Bob's request must not touch Alice's contact"
+    );
+}
+
+#[tokio::test]
+async fn contact_delete_needs_the_delete_permission() {
+    let (vault, account, id) = trashed_contact_fixture().await;
+    {
+        let mut conn = vault.conn().await;
+        sqlx::query("UPDATE accounts SET can_delete = 0 WHERE id = $1")
+            .bind(&account.account_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+    }
+
+    let status = crate::test_support::delete_status(
+        &vault.state,
+        &format!("/v1/contacts/{id}"),
+        &account.token,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let mut conn = vault.conn().await;
+    assert_eq!(contact_name_and_origin(&mut conn, id).await.0, "Contact 0");
+}
+
+#[tokio::test]
+async fn contact_delete_requires_auth() {
+    let (vault, _account, id) = trashed_contact_fixture().await;
+    let status = crate::test_support::delete_status(
+        &vault.state,
+        &format!("/v1/contacts/{id}"),
+        "not-a-token",
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
 #[tokio::test]
 async fn contact_trash_drops_it_from_the_list() {
     let (vault, token, _account) = contacts_fixture_with_handles(&["+15550100"]).await;

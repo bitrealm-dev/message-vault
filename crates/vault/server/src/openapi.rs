@@ -32,6 +32,7 @@ use crate::server::AppState;
         (name = "Assets", description = "Attachment bytes"),
         (name = "Contacts", description = "Address book and contact groups"),
         (name = "Conversations", description = "Conversation list and sources"),
+        (name = "Trash", description = "Empty the trash; the one door to permanent deletion, with DELETE on a trashed conversation or contact"),
         (name = "Message tags", description = "Tags on conversations"),
         (name = "Search", description = "The words the search language accepts"),
         (name = "Admin", description = "User management for administrators")
@@ -84,6 +85,7 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(crate::contacts_api::contact_mutate_handler))
         .routes(routes!(crate::contacts_api::contact_trash_handler))
         .routes(routes!(crate::contacts_api::contact_restore_handler))
+        .routes(routes!(crate::contacts_api::contact_delete_handler))
         .routes(routes!(crate::contacts_api::contact_match_handler))
         .routes(routes!(crate::contacts_api::address_book_load_handler))
         .routes(routes!(crate::named_set_api::contact_groups_list))
@@ -130,6 +132,10 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(
             crate::conversations_api::conversation_restore_handler
         ))
+        .routes(routes!(
+            crate::conversations_api::conversation_delete_handler
+        ))
+        .routes(routes!(crate::trash_api::empty_trash_handler))
         .routes(routes!(crate::import::imports_list_handler))
         .routes(routes!(crate::import::imports_create_handler))
         .routes(routes!(crate::import::imports_active_handler))
@@ -276,9 +282,15 @@ mod tests {
             "/v1/conversations/{id}/messages",
             "/v1/conversations/{id}/trash",
             "/v1/conversations/{id}/restore",
+            "/v1/trash",
         ] {
             assert!(paths.contains_key(p), "missing {p}");
         }
+        // Trash is the only door to permanent deletion: DELETE exists on a
+        // conversation, on a contact, and on the trash as a whole.
+        assert!(paths["/v1/conversations/{id}"]["delete"].is_object());
+        assert!(paths["/v1/contacts/{id}"]["delete"].is_object());
+        assert!(paths["/v1/trash"]["delete"].is_object());
     }
 
     #[test]

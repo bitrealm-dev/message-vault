@@ -1,11 +1,15 @@
 /** @vitest-environment jsdom */
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Conversation } from "../lib/types";
 import {
+  deleteContact,
+  deleteConversation,
+  emptyTrash,
+  getAccountProfile,
   getConversation,
   listContacts,
   listConversations,
@@ -24,13 +28,26 @@ vi.mock("../lib/vaultApi", async (importOriginal) => ({
   listContacts: vi.fn(),
   listSearchFields: vi.fn(),
   getConversation: vi.fn(),
+  getAccountProfile: vi.fn(),
   restoreConversation: vi.fn(),
   restoreContact: vi.fn(),
+  deleteConversation: vi.fn(),
+  deleteContact: vi.fn(),
+  emptyTrash: vi.fn(),
 }));
 
 const listConversationsMock = vi.mocked(listConversations);
 const listContactsMock = vi.mocked(listContacts);
 const listSearchFieldsMock = vi.mocked(listSearchFields);
+const getAccountProfileMock = vi.mocked(getAccountProfile);
+const deleteConversationMock = vi.mocked(deleteConversation);
+const deleteContactMock = vi.mocked(deleteContact);
+const emptyTrashMock = vi.mocked(emptyTrash);
+
+/** The signed-in account's profile, as far as this screen reads it. */
+function profile(can_delete: boolean): Awaited<ReturnType<typeof getAccountProfile>> {
+  return { can_delete } as unknown as Awaited<ReturnType<typeof getAccountProfile>>;
+}
 
 /** The words each list accepts, as `GET /v1/search/fields` would say: enough of
  * the registry (search/fields.rs) to tell a shared word from a one-list word. */
@@ -98,6 +115,14 @@ describe("TrashScreen", () => {
     getConversationMock.mockReset();
     restoreConversationMock.mockReset();
     restoreContactMock.mockReset();
+    getAccountProfileMock.mockReset();
+    deleteConversationMock.mockReset();
+    deleteContactMock.mockReset();
+    emptyTrashMock.mockReset();
+    getAccountProfileMock.mockResolvedValue(profile(true));
+    deleteConversationMock.mockResolvedValue(undefined);
+    deleteContactMock.mockResolvedValue(undefined);
+    emptyTrashMock.mockResolvedValue(undefined);
     listSearchFieldsMock.mockReset();
     listSearchFieldsMock.mockImplementation(async (list) =>
       fieldsFor(list as keyof typeof FIELD_WORDS),
@@ -273,6 +298,138 @@ describe("TrashScreen", () => {
         expect.objectContaining({ q: "trashed:yes ada" }),
         expect.anything(),
       );
+    });
+  });
+
+  describe("permanent delete", () => {
+    it("deletes the selected conversation after the dialog is confirmed, and clears the selection", async () => {
+      const user = userEvent.setup();
+      renderAt("/trash?tsel=42");
+
+      expect(await screen.findByText("Ada Lovelace")).toBeTruthy();
+      await user.click(screen.getByRole("button", { name: "Delete" }));
+
+      const dialog = await screen.findByRole("dialog", { name: "Delete this conversation?" });
+      expect(
+        within(dialog).getByText(/Deletes Ada Lovelace and its 5 messages from your vault/),
+      ).toBeTruthy();
+      // Nothing is sent until the dialog is confirmed.
+      expect(deleteConversationMock).not.toHaveBeenCalled();
+
+      await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+      await waitFor(() => {
+        expect(deleteConversationMock).toHaveBeenCalledWith(42, expect.anything());
+      });
+      await waitFor(() => {
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(screen.queryByText("Ada Lovelace")).toBeNull();
+      });
+    });
+
+    it("keeps the dialog open and shows why when deleting a conversation fails", async () => {
+      deleteConversationMock.mockRejectedValue(new Error("Could not delete this conversation."));
+      const user = userEvent.setup();
+      renderAt("/trash?tsel=42");
+
+      await screen.findByText("Ada Lovelace");
+      await user.click(screen.getByRole("button", { name: "Delete" }));
+      const dialog = await screen.findByRole("dialog");
+      await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+        "Could not delete this conversation.",
+      );
+      expect(screen.getByText("Ada Lovelace")).toBeTruthy();
+    });
+
+    it("deletes a contact from its row after a dialog that says the messages stay", async () => {
+      const user = userEvent.setup();
+      let trashed = [contact(7, "Grace Hopper")];
+      listContactsMock.mockImplementation(async () => contactPage(trashed));
+      deleteContactMock.mockImplementation(async () => {
+        trashed = [];
+      });
+      renderAt("/trash");
+
+      await user.click(await screen.findByRole("button", { name: "Delete Grace Hopper" }));
+
+      const dialog = await screen.findByRole("dialog", { name: "Delete Grace Hopper?" });
+      expect(
+        within(dialog).getByText(
+          "The name and details go, and the contact becomes Unknown. The messages stay, showing the phone number or address instead.",
+        ),
+      ).toBeTruthy();
+      await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+      await waitFor(() => {
+        expect(deleteContactMock).toHaveBeenCalledWith(7, expect.anything());
+      });
+      await waitFor(() => {
+        expect(screen.queryByText("Grace Hopper")).toBeNull();
+      });
+      expect(screen.getByText("No contacts in Trash.")).toBeTruthy();
+    });
+
+    it("empties the trash after the dialog is confirmed", async () => {
+      const user = userEvent.setup();
+      listContactsMock.mockResolvedValue(contactPage([contact(7, "Grace Hopper")]));
+      renderAt("/trash");
+
+      await user.click(await screen.findByRole("button", { name: "Empty Trash" }));
+
+      const dialog = await screen.findByRole("dialog", { name: "Empty Trash?" });
+      expect(
+        within(dialog).getByText(
+          /Every contact in Trash loses its name and details and becomes Unknown; their messages stay\./,
+        ),
+      ).toBeTruthy();
+      expect(emptyTrashMock).not.toHaveBeenCalled();
+
+      await user.click(within(dialog).getByRole("button", { name: "Empty Trash" }));
+
+      await waitFor(() => {
+        expect(emptyTrashMock).toHaveBeenCalledTimes(1);
+      });
+      await waitFor(() => {
+        expect(screen.queryByRole("dialog")).toBeNull();
+      });
+    });
+
+    it("says Empty Trash empties all of Trash while a search narrows the view", async () => {
+      const user = userEvent.setup();
+      renderAt("/trash?tq=ada");
+
+      await user.click(await screen.findByRole("button", { name: "Empty Trash" }));
+
+      const dialog = await screen.findByRole("dialog", { name: "Empty Trash?" });
+      expect(
+        within(dialog).getByText(/This empties all of Trash, not only what matches the search\./),
+      ).toBeTruthy();
+    });
+
+    it("does not offer Empty Trash when the trash is empty", async () => {
+      listConversationsMock.mockResolvedValue({ items: [], total: 0, limit: 1, offset: 0 });
+      renderAt("/trash");
+
+      expect(await screen.findByText("Trash is empty.")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Empty Trash" })).toBeNull();
+    });
+
+    it("disables Delete and Empty Trash for an account that may not delete", async () => {
+      getAccountProfileMock.mockResolvedValue(profile(false));
+      listContactsMock.mockResolvedValue(contactPage([contact(7, "Grace Hopper")]));
+      renderAt("/trash?tsel=42");
+
+      expect(await screen.findByText("Ada Lovelace")).toBeTruthy();
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Empty Trash" })).toBeDisabled();
+      });
+      expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Delete Grace Hopper" })).toBeDisabled();
+      // Restore stays available: only deleting needs the grant.
+      expect(screen.getByRole("button", { name: "Restore" })).not.toBeDisabled();
+      expect(screen.getByRole("button", { name: "Restore Grace Hopper" })).not.toBeDisabled();
     });
   });
 });

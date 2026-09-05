@@ -16,12 +16,12 @@ use crate::db::contacts::{self, contact_id_for_handle};
 use crate::db::dialect::{engine_of, group_concat_unit_separator, order_by_name_ci};
 use crate::db::handles::{infer_handle_type_from_shape, normalize_handle};
 use crate::db::sql::{SqlParam, bind_args, in_placeholders, renumber_placeholders};
-use crate::db::trash::{Trashable, move_to_trash, restore};
+use crate::db::trash::{DeleteOutcome, Trashable, delete_trashed, move_to_trash, restore};
 use crate::paging::{
     DEFAULT_LIST_LIMIT, MAX_CONTACT_SUMMARY_IDS, MAX_LIST_OFFSET, Page, PageQuery, page_params,
 };
 use crate::search::emit::{NOT_TRASHED_CONTACT, NOT_TRASHED_CONVERSATION};
-use crate::server::{ApiError, AppState, FullAccess};
+use crate::server::{ApiError, AppState, FullAccess, FullDeleteAccess};
 
 /// Contact row for the list: name, handles, groups.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -1381,6 +1381,41 @@ pub(crate) async fn contact_restore_handler(
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::NotFound("contact not found".into()))
+    }
+}
+
+/// Delete a trashed contact the way a phone's Delete Contact does: the name
+/// and the person's edits go, the contact becomes Unknown again and leaves
+/// the trash, and every conversation it was in stays as it is, showing the
+/// handle. Conversations are never deleted with a contact. A contact that is
+/// not in the trash answers 409.
+#[utoipa::path(
+    delete,
+    path = "/v1/contacts/{id}",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Contact id")),
+    responses(
+        (status = 204, description = "Deleted: the contact is Unknown again"),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody),
+        (status = 409, body = crate::server::ErrorBody, description = "The contact is not in the trash")
+    )
+)]
+pub(crate) async fn contact_delete_handler(
+    State(state): State<AppState>,
+    FullDeleteAccess(auth): FullDeleteAccess,
+    AxumPath(contact_id): AxumPath<i64>,
+) -> Result<StatusCode, ApiError> {
+    let mut conn = state.db.acquire().await?;
+    match delete_trashed(&mut conn, &auth.account_id, Trashable::Contact(contact_id)).await? {
+        // A contact owns no files, so there is nothing to remove from disk.
+        DeleteOutcome::Deleted(_) => Ok(StatusCode::NO_CONTENT),
+        DeleteOutcome::NotOwned => Err(ApiError::NotFound("contact not found".into())),
+        DeleteOutcome::NotTrashed => Err(ApiError::Conflict(
+            "the contact is not in the trash; move it to the trash first".into(),
+        )),
     }
 }
 

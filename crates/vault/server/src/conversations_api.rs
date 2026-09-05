@@ -1,6 +1,7 @@
 //! Read-only conversation list used by `GET /v1/conversations`.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::extract::{Json, Path as AxumPath, Query};
 use axum::extract::State;
@@ -15,9 +16,10 @@ use crate::db::participant_names::{Participant, load_for_conversations};
 use crate::db::sql::{
     SqlParam, bind_args, fold_in_id_chunks, in_placeholders, renumber_placeholders,
 };
-use crate::db::trash::{Trashable, move_to_trash, restore};
+use crate::db::trash::{DeleteOutcome, Trashable, delete_trashed, move_to_trash, restore};
 use crate::paging::{DEFAULT_LIST_LIMIT, MAX_LIST_OFFSET, Page, page_params};
-use crate::server::{ApiError, AppState, FullAccess};
+use crate::server::{ApiError, AppState, FullAccess, FullDeleteAccess};
+use crate::trash_api::remove_orphaned_files;
 
 /// Column the conversation list is ordered by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -785,6 +787,50 @@ pub(crate) async fn conversation_restore_handler(
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::NotFound("conversation not found".into()))
+    }
+}
+
+/// Permanently delete a trashed conversation: the conversation, its
+/// messages, and any attachment file no other message still uses. Trash is
+/// the only door to deletion, so a conversation that is not in the trash
+/// answers 409 rather than being deleted from wherever it was.
+#[utoipa::path(
+    delete,
+    path = "/v1/conversations/{id}",
+    tag = "Conversations",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Conversation id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody),
+        (status = 409, body = crate::server::ErrorBody, description = "The conversation is not in the trash")
+    )
+)]
+pub(crate) async fn conversation_delete_handler(
+    State(state): State<AppState>,
+    FullDeleteAccess(auth): FullDeleteAccess,
+    AxumPath(conversation_id): AxumPath<i64>,
+) -> Result<StatusCode, ApiError> {
+    let outcome = {
+        let mut conn = state.db.acquire().await?;
+        delete_trashed(
+            &mut conn,
+            &auth.account_id,
+            Trashable::Conversation(conversation_id),
+        )
+        .await?
+    };
+    match outcome {
+        DeleteOutcome::Deleted(orphaned) => {
+            remove_orphaned_files(Arc::clone(&state.cfg), auth.account_id, orphaned).await?;
+            Ok(StatusCode::NO_CONTENT)
+        }
+        DeleteOutcome::NotOwned => Err(ApiError::NotFound("conversation not found".into())),
+        DeleteOutcome::NotTrashed => Err(ApiError::Conflict(
+            "the conversation is not in the trash; move it to the trash first".into(),
+        )),
     }
 }
 

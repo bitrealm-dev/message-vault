@@ -37,6 +37,7 @@ pub(crate) mod search_api;
 pub(crate) mod server;
 #[cfg(test)]
 pub mod test_support;
+pub(crate) mod trash_api;
 
 pub use server::{ApiError, AppState, AuthCapability, AuthIdentity, ErrorBody, resolve_auth, run};
 

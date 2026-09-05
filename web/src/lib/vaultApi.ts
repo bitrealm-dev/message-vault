@@ -281,6 +281,26 @@ export function restoreConversation(conversationId: number): Promise<void> {
   return apiClient.post<void>(`/v1/conversations/${conversationId}/restore`, {});
 }
 
+/**
+ * Permanently delete a trashed conversation: the conversation, its messages,
+ * and any attachment file no other message still uses. The vault answers 409
+ * for a conversation that is not in the trash — trash is the only door.
+ */
+export function deleteConversation(conversationId: number): Promise<void> {
+  return apiClient.delete<void>(`/v1/conversations/${conversationId}`);
+}
+
+// ── Trash ───────────────────────────────────────────────────────────────────
+
+/**
+ * Empty the trash: every trashed conversation is deleted for good, and every
+ * trashed contact loses its name and details and becomes Unknown, its
+ * conversations untouched.
+ */
+export function emptyTrash(): Promise<void> {
+  return apiClient.delete<void>("/v1/trash");
+}
+
 // ── Contacts ────────────────────────────────────────────────────────────────
 
 export type ContactListParams = { q?: string; limit?: number; offset?: number };
@@ -346,6 +366,16 @@ export function trashContact(contactId: string | number): Promise<void> {
 /** Take a contact out of the trash. Idempotent: restoring one that was not trashed still answers. */
 export function restoreContact(contactId: string | number): Promise<void> {
   return apiClient.post<void>(`/v1/contacts/${encodeURIComponent(String(contactId))}/restore`, {});
+}
+
+/**
+ * Delete a trashed contact the way a phone's Delete Contact does: the name
+ * and details go, the contact becomes Unknown again and leaves the trash, and
+ * its conversations stay, showing the handle. The vault answers 409 for a
+ * contact that is not in the trash.
+ */
+export function deleteContact(contactId: string | number): Promise<void> {
+  return apiClient.delete<void>(`/v1/contacts/${encodeURIComponent(String(contactId))}`);
 }
 
 // ── Contact Groups ──────────────────────────────────────────────────────────

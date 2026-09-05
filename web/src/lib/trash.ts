@@ -1,5 +1,8 @@
 import { type UseMutationResult, useMutation } from "@tanstack/react-query";
 import {
+  deleteContact as deleteVaultContact,
+  deleteConversation as deleteVaultConversation,
+  emptyTrash as emptyVaultTrash,
   restoreContact as restoreVaultContact,
   restoreConversation as restoreVaultConversation,
   trashContact as trashVaultContact,
@@ -10,9 +13,8 @@ import { useVaultCache } from "./vaultQuery";
 
 /**
  * Trash is a soft marker on two different nouns — conversations and contacts
- * — set and cleared by four idempotent routes. Permanent delete and Empty
- * Trash are separate and unbuilt (issue #314); nothing here destroys
- * anything.
+ * — set and cleared by four idempotent routes, and the one door to permanent
+ * deletion: Delete on a trashed row, and Empty Trash for everything in it.
  *
  * Unlike Contact Groups and Message Tags this is not a `nameCollection`:
  * there is no name, no membership, and nothing to look an id up by — the
@@ -61,6 +63,30 @@ export function useRestoreConversation(): UseMutationResult<void, Error, number>
   return useConversationTrashWrite(restoreVaultConversation);
 }
 
+/**
+ * Permanently delete a trashed conversation.
+ *
+ * Wider than trash and restore because the conversation itself is gone, not
+ * moved: every entry under `conversations` — its detail, its message pages,
+ * its Sources panel — now describes a row the vault will 404, so the whole
+ * prefix is marked rather than the list alone. `storage.all` is marked too,
+ * because the attachment files only this conversation used went with it and
+ * Settings → Storage counts them.
+ */
+export function useDeleteConversation(): UseMutationResult<void, Error, number> {
+  const cache = useVaultCache();
+  return useMutation<void, Error, number>({
+    mutationFn: deleteVaultConversation,
+    onSettled: () =>
+      cache.invalidate(
+        keys.conversations.all,
+        keys.trash.all,
+        keys.contacts.details,
+        keys.storage.all,
+      ),
+  });
+}
+
 /** Every list and detail that shows contact trash state. */
 function useContactTrashWrite(
   write: (id: string | number) => Promise<void>,
@@ -91,4 +117,49 @@ export function useTrashContact(): UseMutationResult<void, Error, string | numbe
 
 export function useRestoreContact(): UseMutationResult<void, Error, string | number> {
   return useContactTrashWrite(restoreVaultContact);
+}
+
+/**
+ * Delete a trashed contact: the name and details go and the contact becomes
+ * Unknown again, its conversations untouched.
+ *
+ * Unlike trash and restore, this changes what every conversation the person
+ * was in shows — the participant's name is now their handle — so
+ * `conversations.all` is marked along with the contact's own list and
+ * detail. `contactGroups.all` is marked because the contact left its Contact
+ * Groups.
+ */
+export function useDeleteContact(): UseMutationResult<void, Error, string | number> {
+  const cache = useVaultCache();
+  return useMutation<void, Error, string | number>({
+    mutationFn: deleteVaultContact,
+    onSettled: (_data, _error, id) =>
+      cache.invalidate(
+        keys.contacts.lists,
+        keys.contacts.detail(id),
+        keys.conversations.all,
+        keys.contactGroups.all,
+      ),
+  });
+}
+
+/**
+ * Empty the trash: what `useDeleteConversation` does to every trashed
+ * conversation and `useDeleteContact` to every trashed contact, in one vault
+ * call. The response names nothing, so the union of what those two mark is
+ * marked, with the whole of `contacts` standing in for the per-id details.
+ */
+export function useEmptyTrash(): UseMutationResult<void, Error, void> {
+  const cache = useVaultCache();
+  return useMutation<void, Error, void>({
+    mutationFn: emptyVaultTrash,
+    onSettled: () =>
+      cache.invalidate(
+        keys.conversations.all,
+        keys.contacts.all,
+        keys.trash.all,
+        keys.contactGroups.all,
+        keys.storage.all,
+      ),
+  });
 }
