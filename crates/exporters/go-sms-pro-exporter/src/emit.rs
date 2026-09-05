@@ -2,7 +2,7 @@
 //! ([`ConversationDocument`]) every exporter writes, then write the chosen
 //! output format via [`FormatSink`].
 
-use crate::attachments_emit::{pending_attachment_to_ir, queue_pdu_attachments};
+use crate::attachments_emit::queue_pdu_attachments;
 use crate::chat_id::{chat_id_group, chat_id_individual, guarded_phone};
 use crate::xml::{SkippedBadAddrDetail, XmlMessage, parse_xml_file};
 use anyhow::{Context, Result, bail};
@@ -319,7 +319,7 @@ impl ProjectionHooks for GoSmsProjection<'_> {
     }
 
     fn attachment_to_ir(&self, att: &PendingAttachment, _msg: &PendingMessage) -> IrAttachment {
-        pending_attachment_to_ir(att, self.blob_bytes)
+        att.to_ir(self.blob_bytes)
     }
 
     fn source(&self, convo: &PendingConversation, msg: &PendingMessage) -> IrSource {
@@ -462,15 +462,7 @@ pub(crate) fn convert_export(
 
     let sink_result = writer.finish(
         documents,
-        &mut |att| {
-            let hint = att
-                .size_bytes
-                .or_else(|| att.bytes.as_ref().map(|b| b.len() as u64));
-            match att.bytes.take() {
-                Some(bytes) => (AttachmentSource::Bytes(bytes), hint),
-                None => (AttachmentSource::Missing, hint),
-            }
-        },
+        &mut AttachmentSource::take_bytes,
         cancel,
         &mut report,
     )?;

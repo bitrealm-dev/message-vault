@@ -9,8 +9,8 @@ use message_ir::{
     IrService, IrSource, SCHEMA_VERSION, owner_sender,
 };
 use message_vault_io_core::{
-    AttachmentJob, CancelFlag, LogSink, MediaConfig, check_cancel, discover_files, emit_log,
-    is_cancelled, run_attachment_jobs,
+    CancelFlag, LogSink, MediaConfig, attachment_jobs, check_cancel, clear_attachment_bytes,
+    discover_files, is_cancelled, log_attachment_progress, run_attachment_jobs,
 };
 use phone::OwnerHandleSet;
 use sbr::{
@@ -177,22 +177,7 @@ fn stage_read_attachments(
         })
         .collect();
 
-    let mut jobs = Vec::new();
-    for doc in documents.iter_mut() {
-        for msg in &mut doc.messages {
-            let ts = msg.timestamp_unix_ms;
-            for att in &mut msg.attachments {
-                let hint = att
-                    .size_bytes
-                    .or_else(|| att.bytes.as_ref().map(|b| b.len() as u64));
-                jobs.push(AttachmentJob {
-                    attachment: att,
-                    timestamp_unix_ms: ts,
-                    size_hint: hint,
-                });
-            }
-        }
-    }
+    let mut jobs = attachment_jobs(documents);
     let mode = if options.copy_attachments {
         options.media
     } else {
@@ -207,15 +192,7 @@ fn stage_read_attachments(
             compress: options.compress.clone(),
         },
         |i| Ok(payloads.get(i).cloned().flatten()),
-        |progress| {
-            emit_log(
-                options.log,
-                format!(
-                    "  attachments {}/{} {}/{}",
-                    progress.done, progress.total, progress.bytes_done, progress.bytes_total
-                ),
-            );
-        },
+        log_attachment_progress(options.log),
         options.log,
         options.cancel.map(|flag| flag.as_ref()),
     )
@@ -230,13 +207,7 @@ fn stage_read_attachments(
         }
     }
     if !options.keep_attachment_bytes {
-        for doc in documents.iter_mut() {
-            for msg in &mut doc.messages {
-                for att in &mut msg.attachments {
-                    att.bytes = None;
-                }
-            }
-        }
+        clear_attachment_bytes(documents);
     }
     Ok(())
 }

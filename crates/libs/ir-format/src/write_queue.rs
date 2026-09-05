@@ -24,9 +24,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 use media::{CompressOptions, MediaMode};
-use message_ir::ConversationDocument;
+use message_ir::{ConversationDocument, IrAttachment};
 use message_vault_io_core::{
-    AttachmentJob, CancelFlag, LogSink, MediaConfig, OutputFormat, emit_log, run_attachment_jobs,
+    AttachmentJob, CancelFlag, LogSink, MediaConfig, OutputFormat, attachment_size_hint, emit_log,
+    run_attachment_jobs,
 };
 
 use crate::transcode::{TranscodeOptions, transcode_staged};
@@ -44,6 +45,20 @@ pub enum AttachmentSource {
     /// that copies files.
     #[default]
     Missing,
+}
+
+impl AttachmentSource {
+    /// The attachment's in-memory bytes as its source, taken out of the
+    /// record, with the size to report; `Missing` when the exporter held
+    /// none. The `source_for` hook of every exporter whose attachments
+    /// arrive as bytes rather than files.
+    pub fn take_bytes(att: &mut IrAttachment) -> (Self, Option<u64>) {
+        let hint = attachment_size_hint(att);
+        match att.bytes.take() {
+            Some(bytes) => (Self::Bytes(bytes), hint),
+            None => (Self::Missing, hint),
+        }
+    }
 }
 
 /// One attachment of a unit, pinned to its place in the document.

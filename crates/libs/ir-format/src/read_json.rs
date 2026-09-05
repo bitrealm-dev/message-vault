@@ -83,13 +83,5 @@ pub fn read_conversation_jsonl(path: &Path) -> Result<ConversationDocument> {
         .and_then(|n| n.to_str())
         .and_then(crate::util::packaging_suffix_from_stem);
 
-    let mut doc = ConversationDocument {
-        schema_version: SCHEMA_VERSION,
-        export: header.export,
-        conversation: header.conversation,
-        messages,
-        packaging_stem_suffix,
-    };
-    doc.finalize_stats();
-    Ok(doc)
+    Ok(header.into_document(messages, packaging_stem_suffix))
 }

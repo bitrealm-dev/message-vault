@@ -2,7 +2,7 @@
 //! onto the shared [`IrAttachment`] shape after the runner writes files.
 
 use crate::types::AttachmentBlob;
-use message_ir::{IrAttachment, PendingAttachment};
+use message_ir::PendingAttachment;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -49,26 +49,5 @@ pub(super) fn merge_attachments(into: &mut Vec<PendingAttachment>, from: Vec<Pen
         if seen.insert(att.digest_sha256.clone().unwrap_or_default()) {
             into.push(att);
         }
-    }
-}
-
-/// Map a queued attachment onto the shared [`IrAttachment`] shape.
-pub(super) fn pending_attachment_to_ir(
-    a: &PendingAttachment,
-    blob_bytes: &HashMap<String, Vec<u8>>,
-) -> IrAttachment {
-    let digest = a.digest_sha256.clone();
-    let bytes = digest.as_ref().and_then(|d| blob_bytes.get(d).cloned());
-    IrAttachment {
-        path: None,
-        original_name: a.name_hint.clone(),
-        mime_type: a.mime_type(),
-        digest_sha256: digest,
-        is_sticker: false,
-        transcription: None,
-        sticker_effect: None,
-        size_bytes: bytes.as_ref().map(|b| b.len() as u64),
-        missing_reason: None,
-        bytes,
     }
 }

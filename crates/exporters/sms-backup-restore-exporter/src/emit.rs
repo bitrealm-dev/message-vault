@@ -101,15 +101,7 @@ pub(crate) fn convert_export(
     core.conversations = 0;
     let sink_result = writer.finish(
         documents,
-        &mut |att| {
-            let hint = att
-                .size_bytes
-                .or_else(|| att.bytes.as_ref().map(|b| b.len() as u64));
-            match att.bytes.take() {
-                Some(bytes) => (AttachmentSource::Bytes(bytes), hint),
-                None => (AttachmentSource::Missing, hint),
-            }
-        },
+        &mut AttachmentSource::take_bytes,
         args.cancel,
         &mut core,
     )?;
