@@ -144,12 +144,15 @@ impl Promote<'_> {
     }
 
     /// Create, or empty, a temp table mapping staging ids to production ids.
+    /// Two statements on purpose: Postgres refuses two commands in one
+    /// prepared statement, and `split_ddl` only splits at line ends.
     async fn reset_id_map(&mut self, table: &str) -> Result<()> {
-        for stmt in schema::split_ddl(&format!(
-            "CREATE TEMP TABLE IF NOT EXISTS {table} (staging_id BIGINT PRIMARY KEY, prod_id BIGINT NOT NULL); DELETE FROM {table};"
-        )) {
-            sqlx::query(&stmt).execute(&mut *self.tx).await?;
-        }
+        let create = format!(
+            "CREATE TEMP TABLE IF NOT EXISTS {table} (staging_id BIGINT PRIMARY KEY, prod_id BIGINT NOT NULL)"
+        );
+        sqlx::query(&create).execute(&mut *self.tx).await?;
+        let clear = format!("DELETE FROM {table}");
+        sqlx::query(&clear).execute(&mut *self.tx).await?;
         Ok(())
     }
 
