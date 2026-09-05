@@ -107,68 +107,25 @@ pub async fn run(cfg: &Config, opts: &ProcessAssetsOptions) -> Result<ProcessAss
     let mut stats = ProcessAssetsStats::default();
 
     for account_id in &account_ids {
-        let mut source_ids = discover_source_ids(
-            &mut conn,
-            account_id,
-            &cfg.paths.data_dir,
-            &cfg.paths.assets_dir,
-        )
-        .await?;
-        if let Some(filter) = opts.source.as_deref() {
-            let filter = filter.trim();
-            source_ids.retain(|id| id == filter);
-            if source_ids.is_empty() {
-                bail!("unknown source '{filter}' for account {account_id}");
-            }
-        }
+        let source_ids = sources_to_process(&mut conn, cfg, opts, account_id).await?;
         if source_ids.is_empty() {
             eprintln!("account {account_id}: no sources found — skip");
             continue;
         }
-
         for source_id in source_ids {
-            let assets_dir = cfg.paths.assets_dir_for_account(account_id, &source_id);
-            let converted_dir = cfg
-                .paths
-                .assets_converted_dir_for_account(account_id, &source_id);
-            println!(
-                "account {account_id} source {source_id}: assets={}",
-                assets_dir.display()
-            );
-            if !assets_dir.is_dir() {
-                eprintln!("  skip — assets dir missing");
+            let Some(pass) = SourcePass::open(cfg, opts, work.path(), account_id, &source_id)?
+            else {
                 continue;
-            }
-            let cleaned = cleanup_incoming_parts(&assets_dir, opts.dry_run)?;
-            if cleaned > 0 {
-                println!("  cleaned {cleaned} leftover .part upload temp(s) under .incoming/");
-            }
-            fs::create_dir_all(&converted_dir)
-                .with_context(|| format!("create converted dir {}", converted_dir.display()))?;
-
+            };
             let rows = list_attachments(&mut conn, account_id, &source_id).await?;
             for row in rows {
                 stats.scanned += 1;
-                match process_one(ProcessOneArgs {
-                    conn: &mut conn,
-                    opts,
-                    work_dir: work.path(),
-                    account_id,
-                    source_id: &source_id,
-                    assets_dir: &assets_dir,
-                    converted_dir: &converted_dir,
-                    row: &row,
-                })
-                .await
-                {
+                match pass.process(&mut conn, &row).await {
                     Ok(Outcome::Derived) => stats.derived += 1,
                     Ok(Outcome::Skipped) => stats.skipped += 1,
                     Err(err) => {
                         stats.errors += 1;
-                        eprintln!(
-                            "failed {account_id}/{source_id}/{}: {err:#}",
-                            row.assets_path
-                        );
+                        eprintln!("failed {}: {err:#}", pass.label(&row));
                     }
                 }
             }
@@ -191,135 +148,213 @@ enum Outcome {
     Skipped,
 }
 
-struct ProcessOneArgs<'a> {
-    conn: &'a mut AnyConnection,
+/// The account's source ids, narrowed to `--source` when one was given.
+///
+/// # Errors
+///
+/// Returns an error when the requested source is not one of the account's.
+async fn sources_to_process(
+    conn: &mut AnyConnection,
+    cfg: &Config,
+    opts: &ProcessAssetsOptions,
+    account_id: &str,
+) -> Result<Vec<String>> {
+    let mut source_ids =
+        discover_source_ids(conn, account_id, &cfg.paths.data_dir, &cfg.paths.assets_dir).await?;
+    if let Some(filter) = opts.source.as_deref() {
+        let filter = filter.trim();
+        source_ids.retain(|id| id == filter);
+        if source_ids.is_empty() {
+            bail!("unknown source '{filter}' for account {account_id}");
+        }
+    }
+    Ok(source_ids)
+}
+
+/// One account's source folder being processed: where its originals are,
+/// where the derived files go, and the options every attachment shares.
+struct SourcePass<'a> {
     opts: &'a ProcessAssetsOptions,
     work_dir: &'a Path,
     account_id: &'a str,
     source_id: &'a str,
-    assets_dir: &'a Path,
-    converted_dir: &'a Path,
-    row: &'a AssetRow,
+    assets_dir: PathBuf,
+    converted_dir: PathBuf,
 }
 
-/// Derive a browser preview for one stored blob and record it, or report why it was left as-is.
-async fn process_one(args: ProcessOneArgs<'_>) -> Result<Outcome> {
-    let ProcessOneArgs {
-        conn,
-        opts,
-        work_dir,
-        account_id,
-        source_id,
-        assets_dir,
-        converted_dir,
-        row,
-    } = args;
-    // Incomplete transfers / aborted uploads — never hand these to ffmpeg.
-    if is_part_path(&row.assets_path) {
-        let source_path = assets_dir.join(&row.assets_path);
+/// What deriving one attachment produced.
+enum Derived {
+    /// The original is not converted: unsupported, already small, or declined.
+    Skipped,
+    /// A dry run: said what it would write and stored nothing.
+    DryRun,
+    Stored(DerivedBlob),
+}
+
+impl<'a> SourcePass<'a> {
+    /// Find the folders, clean leftover upload temps, and make the converted
+    /// folder. `None` when the source has no assets folder to process.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the leftover cleanup or the folder creation fails.
+    fn open(
+        cfg: &Config,
+        opts: &'a ProcessAssetsOptions,
+        work_dir: &'a Path,
+        account_id: &'a str,
+        source_id: &'a str,
+    ) -> Result<Option<Self>> {
+        let assets_dir = cfg.paths.assets_dir_for_account(account_id, source_id);
+        let converted_dir = cfg
+            .paths
+            .assets_converted_dir_for_account(account_id, source_id);
+        println!(
+            "account {account_id} source {source_id}: assets={}",
+            assets_dir.display()
+        );
+        if !assets_dir.is_dir() {
+            eprintln!("  skip — assets dir missing");
+            return Ok(None);
+        }
+        let cleaned = cleanup_incoming_parts(&assets_dir, opts.dry_run)?;
+        if cleaned > 0 {
+            println!("  cleaned {cleaned} leftover .part upload temp(s) under .incoming/");
+        }
+        fs::create_dir_all(&converted_dir)
+            .with_context(|| format!("create converted dir {}", converted_dir.display()))?;
+        Ok(Some(Self {
+            opts,
+            work_dir,
+            account_id,
+            source_id,
+            assets_dir,
+            converted_dir,
+        }))
+    }
+
+    /// `account/source/path`: how log lines name an attachment.
+    fn label(&self, row: &AssetRow) -> String {
+        format!("{}/{}/{}", self.account_id, self.source_id, row.assets_path)
+    }
+
+    /// Derive a browser preview for one stored blob and record it, or report why it was left as-is.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the original is missing, a conversion fails, or
+    /// the row cannot be updated.
+    async fn process(&self, conn: &mut AnyConnection, row: &AssetRow) -> Result<Outcome> {
+        // Incomplete transfers / aborted uploads — never hand these to ffmpeg.
+        if is_part_path(&row.assets_path) {
+            return self.remove_incomplete(row);
+        }
+        let kind = kind_of(
+            &row.assets_path,
+            row.mime_type.as_deref(),
+            &row.name_hints(),
+        );
+        let wanted = match kind {
+            MediaKind::Image => !self.opts.skip_image,
+            MediaKind::Video => !self.opts.skip_video,
+            MediaKind::Audio => !self.opts.skip_audio,
+            MediaKind::Other => false,
+        };
+        if !wanted
+            || should_skip_existing(
+                self.opts.force,
+                row.derived_assets_path.as_deref(),
+                &self.converted_dir,
+            )
+        {
+            return Ok(Outcome::Skipped);
+        }
+        let source_path = self.assets_dir.join(&row.assets_path);
+        if !source_path.is_file() {
+            bail!("missing original: {}", self.label(row));
+        }
+        let blob = match self.derive(kind, &source_path, row)? {
+            Derived::Skipped => return Ok(Outcome::Skipped),
+            Derived::DryRun => return Ok(Outcome::Derived),
+            Derived::Stored(blob) => blob,
+        };
+        update_derived(conn, self.account_id, self.source_id, &row.sha256, &blob).await?;
+        println!("{} -> {}", self.label(row), blob.assets_path);
+        Ok(Outcome::Derived)
+    }
+
+    /// Delete a `.part` left by an interrupted upload, or say so in a dry
+    /// run. Always counts as skipped.
+    fn remove_incomplete(&self, row: &AssetRow) -> Result<Outcome> {
+        let source_path = self.assets_dir.join(&row.assets_path);
         if source_path.is_file() {
-            if opts.dry_run {
-                println!(
-                    "[dry-run] would remove incomplete {account_id}/{source_id}/{}",
-                    row.assets_path
-                );
+            if self.opts.dry_run {
+                println!("[dry-run] would remove incomplete {}", self.label(row));
             } else {
                 fs::remove_file(&source_path)
                     .with_context(|| format!("remove incomplete {}", source_path.display()))?;
-                println!(
-                    "removed incomplete {account_id}/{source_id}/{}",
-                    row.assets_path
-                );
+                println!("removed incomplete {}", self.label(row));
             }
         }
-        return Ok(Outcome::Skipped);
+        Ok(Outcome::Skipped)
     }
 
-    let kind = kind_of(
-        &row.assets_path,
-        row.mime_type.as_deref(),
-        &row.name_hints(),
-    );
-    match kind {
-        MediaKind::Image if opts.skip_image => return Ok(Outcome::Skipped),
-        MediaKind::Video if opts.skip_video => return Ok(Outcome::Skipped),
-        MediaKind::Audio if opts.skip_audio => return Ok(Outcome::Skipped),
-        MediaKind::Other => return Ok(Outcome::Skipped),
-        _ => {}
-    }
-
-    if should_skip_existing(
-        opts.force,
-        row.derived_assets_path.as_deref(),
-        converted_dir,
-    ) {
-        return Ok(Outcome::Skipped);
-    }
-
-    let source_path = assets_dir.join(&row.assets_path);
-    if !source_path.is_file() {
-        bail!(
-            "missing original: {account_id}/{source_id}/{}",
-            row.assets_path
-        );
-    }
-
-    let blob = match kind {
-        MediaKind::Image => {
-            let Some(jpeg) = derive_image(&source_path)? else {
-                return Ok(Outcome::Skipped);
-            };
-            if opts.dry_run {
-                println!(
-                    "[dry-run] image {account_id}/{source_id}/{} -> jpeg {} bytes",
-                    row.assets_path,
-                    jpeg.len()
-                );
-                return Ok(Outcome::Derived);
+    /// Convert one original by kind. Images come back as bytes; video and
+    /// audio come back as a file ffmpeg wrote to the work folder.
+    fn derive(&self, kind: MediaKind, source_path: &Path, row: &AssetRow) -> Result<Derived> {
+        match kind {
+            MediaKind::Image => {
+                let Some(jpeg) = derive_image(source_path)? else {
+                    return Ok(Derived::Skipped);
+                };
+                if self.opts.dry_run {
+                    println!(
+                        "[dry-run] image {} -> jpeg {} bytes",
+                        self.label(row),
+                        jpeg.len()
+                    );
+                    return Ok(Derived::DryRun);
+                }
+                Ok(Derived::Stored(store_derived_bytes(
+                    &self.converted_dir,
+                    &jpeg,
+                    ".jpg",
+                )?))
             }
-            store_derived_bytes(converted_dir, &jpeg, ".jpg")?
+            MediaKind::Video => {
+                let out = derive_video(source_path, self.work_dir)?;
+                self.store_work_file(out, "video", "mp4", ".mp4", row)
+            }
+            MediaKind::Audio => {
+                let out = derive_audio(source_path, self.work_dir)?;
+                self.store_work_file(out, "audio", "mp3", ".mp3", row)
+            }
+            MediaKind::Other => Ok(Derived::Skipped),
         }
-        MediaKind::Video => {
-            let Some(out) = derive_video(&source_path, work_dir)? else {
-                return Ok(Outcome::Skipped);
-            };
-            if opts.dry_run {
-                println!(
-                    "[dry-run] video {account_id}/{source_id}/{} -> mp4",
-                    row.assets_path
-                );
-                let _ = fs::remove_file(&out);
-                return Ok(Outcome::Derived);
-            }
-            let blob = store_derived_file(converted_dir, &out, ".mp4")?;
+    }
+
+    /// Store a derivative ffmpeg wrote to the work folder, then remove the
+    /// work file. `None` means ffmpeg declined the file.
+    fn store_work_file(
+        &self,
+        out: Option<PathBuf>,
+        what: &str,
+        format: &str,
+        ext: &str,
+        row: &AssetRow,
+    ) -> Result<Derived> {
+        let Some(out) = out else {
+            return Ok(Derived::Skipped);
+        };
+        if self.opts.dry_run {
+            println!("[dry-run] {what} {} -> {format}", self.label(row));
             let _ = fs::remove_file(&out);
-            blob
+            return Ok(Derived::DryRun);
         }
-        MediaKind::Audio => {
-            let Some(out) = derive_audio(&source_path, work_dir)? else {
-                return Ok(Outcome::Skipped);
-            };
-            if opts.dry_run {
-                println!(
-                    "[dry-run] audio {account_id}/{source_id}/{} -> mp3",
-                    row.assets_path
-                );
-                let _ = fs::remove_file(&out);
-                return Ok(Outcome::Derived);
-            }
-            let blob = store_derived_file(converted_dir, &out, ".mp3")?;
-            let _ = fs::remove_file(&out);
-            blob
-        }
-        MediaKind::Other => return Ok(Outcome::Skipped),
-    };
-
-    update_derived(conn, account_id, source_id, &row.sha256, &blob).await?;
-    println!(
-        "{account_id}/{source_id}/{} -> {}",
-        row.assets_path, blob.assets_path
-    );
-    Ok(Outcome::Derived)
+        let blob = store_derived_file(&self.converted_dir, &out, ext);
+        let _ = fs::remove_file(&out);
+        Ok(Derived::Stored(blob?))
+    }
 }
 
 /// Account ids from the database, falling back to the folder names under `data_dir` when the table does not exist yet.
