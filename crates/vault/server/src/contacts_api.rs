@@ -809,90 +809,6 @@ fn infer_handle_type(raw: &str, service: Option<&str>) -> HandleType {
     }
 }
 
-/// Id of the handle row for `raw` that already belongs to this contact, if any.
-async fn find_contact_handle_id(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    contact_id: i64,
-    raw: &str,
-    service: Option<&str>,
-) -> AnyResult<Option<i64>> {
-    let needle = raw.trim();
-    if needle.is_empty() {
-        return Ok(None);
-    }
-    let mut sql = String::from(
-        "SELECT ch.handle_id
-         FROM contact_handles ch
-         JOIN handles h ON h.id = ch.handle_id
-         WHERE ch.account_id = $1 AND ch.contact_id = $2
-           AND (h.raw = $3 OR h.normalized = $3)",
-    );
-    let id = if let Some(svc) = service.and_then(message_ir::trimmed) {
-        sql.push_str(" AND h.service = $4 LIMIT 1");
-        let platform = message_ir::HandleService::parse(svc);
-        sqlx::query_scalar::<_, i64>(&sql)
-            .bind(account_id)
-            .bind(contact_id)
-            .bind(needle)
-            .bind(platform.as_str())
-            .fetch_optional(&mut *conn)
-            .await?
-    } else {
-        sql.push_str(
-            " ORDER BY CASE h.service WHEN 'phone' THEN 0 WHEN 'whatsapp' THEN 1 ELSE 2 END
-             LIMIT 1",
-        );
-        sqlx::query_scalar::<_, i64>(&sql)
-            .bind(account_id)
-            .bind(contact_id)
-            .bind(needle)
-            .fetch_optional(&mut *conn)
-            .await?
-    };
-    Ok(id)
-}
-
-/// Insert or find the handle row for `raw`, typed by `service`, without linking it to the account owner.
-async fn ensure_handle_row(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    raw: &str,
-    service: Option<&str>,
-) -> AnyResult<i64> {
-    let handle_type = infer_handle_type(raw, service);
-    // Contact-owned handles must not be linked as account owner identities.
-    let (id, _) = crate::db::handles::upsert_handle_row(
-        conn,
-        account_id,
-        raw.trim(),
-        handle_type,
-        service.map(|s| s.trim()).filter(|s| !s.is_empty()),
-    )
-    .await?;
-    Ok(id)
-}
-
-/// True when the contact belongs to this account and is not in the trash.
-async fn contact_exists(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    contact_id: i64,
-) -> AnyResult<bool> {
-    let found: Option<i64> = sqlx::query_scalar(&format!(
-        "SELECT ct.id
-         FROM contacts ct
-         WHERE ct.id = $1 AND ct.account_id = $2
-           AND {not_trashed}",
-        not_trashed = NOT_TRASHED_CONTACT_SQL,
-    ))
-    .bind(contact_id)
-    .bind(account_id)
-    .fetch_optional(&mut *conn)
-    .await?;
-    Ok(found.is_some())
-}
-
 /// Why a contact edit did not happen.
 ///
 /// The two cases answer with different statuses and the difference is not one
@@ -942,6 +858,42 @@ macro_rules! refuse {
     };
 }
 
+/// The one edit a `PATCH /v1/contacts/{id}` body asks for.
+enum ContactEdit<'a> {
+    /// Give the contact a name the person typed.
+    Rename(&'a str),
+    /// Link a handle.
+    AddHandle(&'a ContactHandlePayload),
+    /// Swap one linked handle for another.
+    UpdateHandle(&'a ContactUpdateHandlePayload),
+    /// Unlink a handle.
+    RemoveHandle(&'a ContactRemoveHandlePayload),
+}
+
+impl ContactMutationBody {
+    /// The single edit the body asks for.
+    ///
+    /// # Errors
+    ///
+    /// Refused when the body sets none of the four fields or more than one.
+    fn edit(&self) -> Result<ContactEdit<'_>, ContactEditError> {
+        let mut edits = [
+            self.name.as_deref().map(ContactEdit::Rename),
+            self.add_handle.as_ref().map(ContactEdit::AddHandle),
+            self.update_handle.as_ref().map(ContactEdit::UpdateHandle),
+            self.remove_handle.as_ref().map(ContactEdit::RemoveHandle),
+        ]
+        .into_iter()
+        .flatten();
+        match (edits.next(), edits.next()) {
+            (Some(edit), None) => Ok(edit),
+            _ => {
+                refuse!("exactly one of name, add_handle, update_handle, remove_handle is required")
+            }
+        }
+    }
+}
+
 /// Apply a contact mutation. Returns false when the contact is missing.
 ///
 /// # Errors
@@ -953,24 +905,56 @@ pub async fn mutate_contact(
     contact_id: i64,
     body: &ContactMutationBody,
 ) -> Result<bool, ContactEditError> {
-    if !contact_exists(conn, account_id, contact_id).await? {
+    let mut editor = ContactEditor {
+        conn,
+        account_id,
+        contact_id,
+    };
+    if !editor.exists().await? {
         return Ok(false);
     }
+    editor.apply(body.edit()?).await
+}
 
-    let set_count = [
-        body.name.is_some(),
-        body.add_handle.is_some(),
-        body.update_handle.is_some(),
-        body.remove_handle.is_some(),
-    ]
-    .into_iter()
-    .filter(|b| *b)
-    .count();
-    if set_count != 1 {
-        refuse!("exactly one of name, add_handle, update_handle, remove_handle is required");
+/// One contact of one account under edit. Every edit reads and writes the
+/// contact's handle links, so the three things they all need live here and
+/// the edits are methods.
+struct ContactEditor<'a> {
+    conn: &'a mut AnyConnection,
+    account_id: &'a str,
+    contact_id: i64,
+}
+
+impl ContactEditor<'_> {
+    /// True when the contact belongs to this account and is not in the trash.
+    async fn exists(&mut self) -> AnyResult<bool> {
+        let found: Option<i64> = sqlx::query_scalar(&format!(
+            "SELECT ct.id
+             FROM contacts ct
+             WHERE ct.id = $1 AND ct.account_id = $2
+               AND {not_trashed}",
+            not_trashed = NOT_TRASHED_CONTACT_SQL,
+        ))
+        .bind(self.contact_id)
+        .bind(self.account_id)
+        .fetch_optional(&mut *self.conn)
+        .await?;
+        Ok(found.is_some())
     }
 
-    if let Some(name) = body.name.as_ref() {
+    /// Apply the edit. `true` once the contact is as the edit asked, whether
+    /// or not anything had to change.
+    async fn apply(&mut self, edit: ContactEdit<'_>) -> Result<bool, ContactEditError> {
+        match edit {
+            ContactEdit::Rename(name) => self.rename(name).await,
+            ContactEdit::AddHandle(add) => self.add_handle(add).await,
+            ContactEdit::UpdateHandle(upd) => self.update_handle(upd).await,
+            ContactEdit::RemoveHandle(rem) => self.remove_handle(rem).await,
+        }
+    }
+
+    /// Name the contact.
+    async fn rename(&mut self, name: &str) -> Result<bool, ContactEditError> {
         let name = name.trim();
         if name.is_empty() {
             refuse!("name must not be empty");
@@ -979,136 +963,198 @@ pub async fn mutate_contact(
         // the product, so the row stops being the import's and becomes the
         // person's. `contacts::propose_name` is where that rule lives, along
         // with what it means for the import and the address book.
-        contacts::propose_name(conn, account_id, contact_id, name, contacts::Origin::User).await?;
-        return Ok(true);
+        contacts::propose_name(
+            &mut *self.conn,
+            self.account_id,
+            self.contact_id,
+            name,
+            contacts::Origin::User,
+        )
+        .await?;
+        Ok(true)
     }
 
-    if let Some(add) = body.add_handle.as_ref() {
+    /// Link a handle, creating its row when the vault has never seen it.
+    async fn add_handle(&mut self, add: &ContactHandlePayload) -> Result<bool, ContactEditError> {
         let raw = add.handle.trim();
         if raw.is_empty() {
             refuse!("handle must not be empty");
         }
-        let handle_id = ensure_handle_row(conn, account_id, raw, add.service.as_deref()).await?;
-        // One contact per handle (PK on contact_handles.handle_id + account).
-        if require_handle_available(conn, account_id, handle_id, contact_id)
-            .await?
-            .is_some()
-        {
-            // Already linked — no address-book change.
+        let handle_id = self.handle_row(raw, add.service.as_deref()).await?;
+        if self.claim(handle_id).await? {
+            // Already linked: no address-book change.
             return Ok(true);
         }
         // The person attached this identity themselves, so a later address
         // book load leaves it alone.
-        crate::db::contacts::link_handle_to_contact(
-            conn,
-            account_id,
+        contacts::link_handle_to_contact(
+            &mut *self.conn,
+            self.account_id,
             handle_id,
-            contact_id,
-            crate::db::contacts::Origin::User,
+            self.contact_id,
+            contacts::Origin::User,
         )
         .await?;
-        return Ok(touch_ok(conn, account_id, contact_id).await?);
+        self.touched().await
     }
 
-    if let Some(upd) = body.update_handle.as_ref() {
+    /// Replace one linked handle with another.
+    async fn update_handle(
+        &mut self,
+        upd: &ContactUpdateHandlePayload,
+    ) -> Result<bool, ContactEditError> {
         let prev = upd.previous_handle.trim();
         let next = upd.handle.trim();
         if prev.is_empty() || next.is_empty() {
             refuse!("previous_handle and handle must not be empty");
         }
-        let Some(old_id) =
-            find_contact_handle_id(conn, account_id, contact_id, prev, upd.service.as_deref())
-                .await?
-        else {
+        let service = upd.service.as_deref();
+        let Some(old_id) = self.linked_handle(prev, service).await? else {
             refuse!("previous handle not found on contact");
         };
-        let new_id = ensure_handle_row(conn, account_id, next, upd.service.as_deref()).await?;
+        let new_id = self.handle_row(next, service).await?;
         if old_id == new_id {
-            if let Some(svc) = upd.service.as_deref().and_then(message_ir::trimmed) {
-                sqlx::query("UPDATE handles SET service = $1 WHERE id = $2")
-                    .bind(svc)
-                    .bind(new_id)
-                    .execute(&mut *conn)
-                    .await?;
-                return Ok(touch_ok(conn, account_id, contact_id).await?);
-            }
-            return Ok(true);
+            return self.retype_handle(new_id, service).await;
         }
-        if require_handle_available(conn, account_id, new_id, contact_id)
-            .await?
-            .is_some()
-        {
-            // Already on this contact — drop the previous link.
+        if self.claim(new_id).await? {
+            // The new handle is already on this contact, so the edit amounts
+            // to dropping the previous one.
+            self.unlink(old_id).await?;
+        } else {
             sqlx::query(
-                "DELETE FROM contact_handles
-                 WHERE account_id = $1 AND contact_id = $2 AND handle_id = $3",
+                "UPDATE contact_handles SET handle_id = $1
+                 WHERE account_id = $2 AND contact_id = $3 AND handle_id = $4",
             )
-            .bind(account_id)
-            .bind(contact_id)
+            .bind(new_id)
+            .bind(self.account_id)
+            .bind(self.contact_id)
             .bind(old_id)
-            .execute(&mut *conn)
+            .execute(&mut *self.conn)
             .await?;
-            return Ok(touch_ok(conn, account_id, contact_id).await?);
         }
-        sqlx::query(
-            "UPDATE contact_handles SET handle_id = $1
-             WHERE account_id = $2 AND contact_id = $3 AND handle_id = $4",
-        )
-        .bind(new_id)
-        .bind(account_id)
-        .bind(contact_id)
-        .bind(old_id)
-        .execute(&mut *conn)
-        .await?;
-        return Ok(touch_ok(conn, account_id, contact_id).await?);
+        self.touched().await
     }
 
-    if let Some(rem) = body.remove_handle.as_ref() {
+    /// The same handle named twice: only a given service changes.
+    async fn retype_handle(
+        &mut self,
+        handle_id: i64,
+        service: Option<&str>,
+    ) -> Result<bool, ContactEditError> {
+        let Some(service) = service.and_then(message_ir::trimmed) else {
+            return Ok(true);
+        };
+        sqlx::query("UPDATE handles SET service = $1 WHERE id = $2")
+            .bind(service)
+            .bind(handle_id)
+            .execute(&mut *self.conn)
+            .await?;
+        self.touched().await
+    }
+
+    /// Unlink a handle. The handle row itself stays: messages still cite it.
+    async fn remove_handle(
+        &mut self,
+        rem: &ContactRemoveHandlePayload,
+    ) -> Result<bool, ContactEditError> {
         let raw = rem.handle.trim();
         if raw.is_empty() {
             refuse!("handle must not be empty");
         }
-        let Some(handle_id) =
-            find_contact_handle_id(conn, account_id, contact_id, raw, rem.service.as_deref())
-                .await?
-        else {
+        let Some(handle_id) = self.linked_handle(raw, rem.service.as_deref()).await? else {
             refuse!("handle not found on contact");
         };
+        self.unlink(handle_id).await?;
+        self.touched().await
+    }
+
+    /// Id of the handle row for `raw` that is linked to this contact, if any.
+    /// With a service, only that service's row; without one, the phone row
+    /// first, then WhatsApp, then anything else.
+    async fn linked_handle(&mut self, raw: &str, service: Option<&str>) -> AnyResult<Option<i64>> {
+        let needle = raw.trim();
+        if needle.is_empty() {
+            return Ok(None);
+        }
+        let mut sql = String::from(
+            "SELECT ch.handle_id
+             FROM contact_handles ch
+             JOIN handles h ON h.id = ch.handle_id
+             WHERE ch.account_id = $1 AND ch.contact_id = $2
+               AND (h.raw = $3 OR h.normalized = $3)",
+        );
+        let id = if let Some(svc) = service.and_then(message_ir::trimmed) {
+            sql.push_str(" AND h.service = $4 LIMIT 1");
+            let platform = message_ir::HandleService::parse(svc);
+            sqlx::query_scalar::<_, i64>(&sql)
+                .bind(self.account_id)
+                .bind(self.contact_id)
+                .bind(needle)
+                .bind(platform.as_str())
+                .fetch_optional(&mut *self.conn)
+                .await?
+        } else {
+            sql.push_str(
+                " ORDER BY CASE h.service WHEN 'phone' THEN 0 WHEN 'whatsapp' THEN 1 ELSE 2 END
+                 LIMIT 1",
+            );
+            sqlx::query_scalar::<_, i64>(&sql)
+                .bind(self.account_id)
+                .bind(self.contact_id)
+                .bind(needle)
+                .fetch_optional(&mut *self.conn)
+                .await?
+        };
+        Ok(id)
+    }
+
+    /// Insert or find the handle row for `raw`, typed by `service`, without
+    /// linking it to the account owner: contact-owned handles must never
+    /// become owner identities.
+    async fn handle_row(&mut self, raw: &str, service: Option<&str>) -> AnyResult<i64> {
+        let handle_type = infer_handle_type(raw, service);
+        let (id, _) = crate::db::handles::upsert_handle_row(
+            &mut *self.conn,
+            self.account_id,
+            raw.trim(),
+            handle_type,
+            service.and_then(message_ir::trimmed),
+        )
+        .await?;
+        Ok(id)
+    }
+
+    /// True when the handle is already linked to this contact. A handle
+    /// belongs to one contact per account (the primary key on
+    /// `contact_handles`), so one linked elsewhere is refused.
+    async fn claim(&mut self, handle_id: i64) -> Result<bool, ContactEditError> {
+        match contact_id_for_handle(&mut *self.conn, self.account_id, handle_id).await? {
+            Some(owner) if owner == self.contact_id => Ok(true),
+            Some(_) => refuse!("handle already linked to another contact"),
+            None => Ok(false),
+        }
+    }
+
+    /// Drop the link between the contact and the handle.
+    async fn unlink(&mut self, handle_id: i64) -> AnyResult<()> {
         sqlx::query(
             "DELETE FROM contact_handles
              WHERE account_id = $1 AND contact_id = $2 AND handle_id = $3",
         )
-        .bind(account_id)
-        .bind(contact_id)
+        .bind(self.account_id)
+        .bind(self.contact_id)
         .bind(handle_id)
-        .execute(&mut *conn)
+        .execute(&mut *self.conn)
         .await?;
-        return Ok(touch_ok(conn, account_id, contact_id).await?);
+        Ok(())
     }
 
-    Ok(true)
-}
-
-/// The contact that currently owns the handle when it is this one or none; an error when a different contact owns it.
-async fn require_handle_available(
-    conn: &mut AnyConnection,
-    account_id: &str,
-    handle_id: i64,
-    contact_id: i64,
-) -> Result<Option<i64>, ContactEditError> {
-    let existing = contact_id_for_handle(conn, account_id, handle_id).await?;
-    if let Some(other) = existing
-        && other != contact_id
-    {
-        refuse!("handle already linked to another contact");
+    /// Bump the contact's updated-at and report success, for edits that
+    /// changed the links but not the contact row.
+    async fn touched(&mut self) -> Result<bool, ContactEditError> {
+        contacts::touch_contact(&mut *self.conn, self.account_id, self.contact_id).await?;
+        Ok(true)
     }
-    Ok(existing)
-}
-
-/// Bump the contact's updated-at and report success, for mutations that changed nothing else.
-async fn touch_ok(conn: &mut AnyConnection, account_id: &str, contact_id: i64) -> AnyResult<bool> {
-    contacts::touch_contact(conn, account_id, contact_id).await?;
-    Ok(true)
 }
 
 /// Page through the account's contacts (id, name, handles, groups).
