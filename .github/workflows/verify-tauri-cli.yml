@@ -30,6 +30,8 @@ jobs:
 
       - name: Install Tauri CLI
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: >-
           cargo binstall tauri-cli --version "^2" --no-confirm
           --strategies crate-meta-data
