@@ -10,8 +10,6 @@
 //! [`PendingConversation`] (with per-converter metadata in their `extra`
 //! maps) before building a [`ConversationDocument`].
 
-#![warn(missing_docs)]
-
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};

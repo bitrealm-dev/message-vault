@@ -1,5 +1,4 @@
 //! HTTP API and SQLite storage for browsing imported messages.
-#![warn(missing_docs)]
 
 pub mod cli;
 pub mod cli_docs;

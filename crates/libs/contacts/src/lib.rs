@@ -10,8 +10,6 @@
 //!
 //! Accepted inputs: VCF, or vCard CSV.
 
-#![warn(missing_docs)]
-
 mod book;
 mod format;
 mod mapping;

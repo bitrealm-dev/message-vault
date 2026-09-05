@@ -4,8 +4,6 @@
 //! key always yields the same remaps; fakes do not embed or encrypt the
 //! original, and no mapping sidecar is written.
 
-#![warn(missing_docs)]
-
 mod names;
 
 use std::collections::HashMap;

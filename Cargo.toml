@@ -36,6 +36,42 @@ exclude = ["src-tauri"]
 message-ir = { path = "crates/libs/ir" }
 contacts = { path = "crates/libs/contacts" }
 phone = { path = "crates/libs/phone" }
+# Declared once here and inherited with `workspace = true`; a member adds only
+# the features it needs beyond these.
+anyhow = "1.0.103"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+sha2 = "0.11.0"
+hex = "0.4.3"
+chrono = { version = "0.4.44", default-features = false, features = ["clock", "std"] }
+csv = "1.4.0"
+regex = "1.13.0"
+clap = { version = "4.6.1", features = ["derive"] }
+tempfile = "3.27.0"
+reqwest = { version = "0.12.25", default-features = false, features = ["rustls-tls", "json"] }
+quick-xml = "0.42.0"
+thiserror = "2.0.19"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+# `.to_string()` and `.into()` are the two spellings this codebase uses for
+# `&str` to `String`; all three forms compile to the same code.
+str_to_string = "allow"
+# `pub(crate)` on an item inside a private module is kept on purpose: it says
+# "never part of the crate API" at the item, and stays true if the module is
+# later made public.
+redundant_pub_crate = "allow"
+
+# Release binaries (the Docker image and the desktop bundles) are built rarely
+# and run for a long time, so spend the build time on whole-program
+# optimisation. `panic` stays `unwind`: vault-push, the journal and the
+# iMessage helper catch a worker thread's panic through `join`.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
 
 [patch.crates-io]
 sqlx-sqlite = { path = "vendor/sqlx-sqlite" }

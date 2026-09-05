@@ -7,8 +7,6 @@
 //! All writes run under one process-wide lock, so a rewrite can never mix
 //! bytes with a concurrent append.
 
-#![warn(missing_docs)]
-
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;

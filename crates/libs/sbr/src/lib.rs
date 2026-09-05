@@ -3,8 +3,6 @@
 //! Writers produce a single backup file (`smses.xml`) with root
 //! `<smses count="N">`. See the [SMS Backup & Restore XML output](https://bitrealm.io/vault/developer/formats/sms-backup-restore-xml/).
 
-#![warn(missing_docs)]
-
 mod read;
 
 pub use read::{

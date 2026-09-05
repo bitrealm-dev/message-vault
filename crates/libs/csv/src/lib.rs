@@ -1,7 +1,5 @@
 //! Shared CSV helpers for writing conversation files.
 
-#![warn(missing_docs)]
-
 mod date_range;
 mod utc_offset;
 

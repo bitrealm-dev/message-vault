@@ -6,8 +6,6 @@
 //! a single file. SMS/MMS fill the core fields. iMessage also sets reply,
 //! tapback, balloon, parts, and edits extension fields.
 
-#![warn(missing_docs)]
-
 mod headers;
 mod parse;
 

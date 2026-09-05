@@ -27,8 +27,6 @@
 //! themselves in the OpenAPI document. The server turns it on; a client crate
 //! leaves it off and never builds utoipa.
 
-#![warn(missing_docs)]
-
 use serde::{Deserialize, Serialize};
 
 /// What happens to a source's messages that were imported before: `replace`

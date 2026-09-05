@@ -9,8 +9,6 @@
 //! Convert and compress need `ffmpeg` / `ffprobe` beside the running binary,
 //! in `MESSAGE_VAULT_IO_BIN`, or on `PATH`.
 
-#![warn(missing_docs)]
-
 mod estimate;
 mod mime;
 mod probe;
