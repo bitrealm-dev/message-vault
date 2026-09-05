@@ -1,19 +1,26 @@
 import Button from "../../components/Button";
 
+/**
+ * Find in conversation. The term runs on the vault (`GET /v1/messages` with
+ * `in:#id`), so `matchCount` is every match in the conversation, or in the
+ * chosen year, and the thread below shows the matches a page at a time.
+ */
 export default function MessageFindBar({
   findTerm,
   onFindTermChange,
   matchCount,
-  activeMatch,
-  yearMode,
+  matchPosition,
+  activeYear,
   onPrevMatch,
   onNextMatch,
 }: {
   findTerm: string;
   onFindTermChange: (value: string) => void;
+  /** Matches in the whole conversation (or year), from the vault. */
   matchCount: number;
-  activeMatch: number;
-  yearMode: boolean;
+  /** Zero-based position of the highlighted match among all matches. */
+  matchPosition: number;
+  activeYear: number | null;
   onPrevMatch: () => void;
   onNextMatch: () => void;
 }) {
@@ -34,8 +41,8 @@ export default function MessageFindBar({
       {matchCount > 0 && (
         <>
           <span className="whitespace-nowrap text-[0.75rem] text-muted">
-            {activeMatch + 1} of {matchCount}
-            {yearMode ? " in this year" : " on this page"}
+            {matchPosition + 1} of {matchCount}
+            {activeYear === null ? " in this conversation" : ` in ${activeYear}`}
           </span>
           <Button onClick={onPrevMatch} className="!px-1.5 !py-1 !text-[0.813rem]">
             ↑

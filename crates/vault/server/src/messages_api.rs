@@ -1,0 +1,119 @@
+//! `GET /v1/messages`: one row per message matching a query in the search
+//! language, paged like every other list.
+//!
+//! This is a read route, not Export. Opening a conversation is a lookup by id
+//! (`GET /v1/conversations/{id}/messages`); searching across messages is a
+//! list with a query, and this is that list. The thread's find box uses it
+//! with `in:#id`, so a find reaches every message in the conversation rather
+//! than whatever page the browser happens to hold (#313).
+
+use crate::extract::{Json, Query};
+use axum::extract::State;
+use sqlx::AnyConnection;
+use sqlx::{Executor, Row};
+
+use crate::db::conversation_messages::{Message, load_messages, messages_from_sql};
+use crate::db::dialect::engine_of;
+use crate::db::engine::DbEngine;
+use crate::db::sql::{bind_all, renumber_placeholders};
+use crate::paging::{DEFAULT_LIST_LIMIT, MAX_LIST_OFFSET, Page, PageQuery, page_params};
+use crate::server::{ApiError, AppState, FullAccess};
+
+/// Compile a query against the Messages list of the search language.
+///
+/// # Errors
+///
+/// Returns a bad-request error when the query does not parse or uses a word
+/// the Messages list does not have.
+pub(crate) fn message_filter(
+    engine: DbEngine,
+    account_id: &str,
+    query: &str,
+    today: chrono::NaiveDate,
+) -> Result<crate::search::Filter, ApiError> {
+    Ok(crate::search::compile(crate::search::CompileRequest {
+        list: crate::search::ListKind::Messages,
+        query,
+        account_id,
+        engine,
+        today,
+    })?)
+}
+
+/// `COUNT(*)` of the messages a compiled filter matches.
+pub(crate) async fn count_matching_messages(
+    conn: &mut AnyConnection,
+    filter: &crate::search::Filter,
+) -> Result<u64, ApiError> {
+    let sql = format!(
+        "SELECT COUNT(*)
+         {messages_from_sql}
+         WHERE {where_sql}",
+        messages_from_sql = messages_from_sql(),
+        where_sql = filter.where_sql(),
+    );
+    let n: i64 = (&mut *conn)
+        .fetch_one(bind_all(&renumber_placeholders(&sql), filter.params()))
+        .await?
+        .try_get(0)?;
+    Ok(n.max(0) as u64)
+}
+
+/// Messages matching `q`, newest page by page, as the search language ranks
+/// them: the same rows `GET /v1/export/messages` would return, behind a
+/// signed-in session with the list defaults and the list's offset ceiling.
+#[utoipa::path(
+    get,
+    path = "/v1/messages",
+    tag = "Messages",
+    security(("bearer" = [])),
+    params(
+        ("q" = Option<String>, Query, description = "Search query in the Messages list's words; empty matches every message"),
+        ("limit" = Option<usize>, Query, description = "Page size, default 40, max 500"),
+        ("offset" = Option<usize>, Query, description = "Page offset, max 50000")
+    ),
+    responses(
+        (status = 200, body = crate::paging::Page<Message>),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn messages_list_handler(
+    State(state): State<AppState>,
+    FullAccess(auth): FullAccess,
+    Query(query): Query<PageQuery>,
+) -> Result<Json<Page<Message>>, ApiError> {
+    let page = page_params(
+        query.limit,
+        query.offset,
+        DEFAULT_LIST_LIMIT,
+        Some(MAX_LIST_OFFSET),
+    )?;
+    let today = chrono::Local::now().date_naive();
+    let mut conn = state.db.acquire().await?;
+    let filter = message_filter(
+        engine_of(&conn),
+        &auth.account_id,
+        query.q.as_deref().unwrap_or(""),
+        today,
+    )?;
+    let total = count_matching_messages(&mut conn, &filter).await?;
+    let items = load_messages(
+        &mut conn,
+        filter.where_sql(),
+        filter.params(),
+        page.limit as u32,
+        page.offset as u32,
+    )
+    .await?;
+    Ok(Json(Page {
+        items,
+        total,
+        limit: page.limit,
+        offset: page.offset,
+    }))
+}
+
+#[cfg(test)]
+mod tests;

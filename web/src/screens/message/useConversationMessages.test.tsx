@@ -3,7 +3,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Message } from "../../lib/types";
-import { listConversationMessages } from "../../lib/vaultApi";
+import { listConversationMessages, listMessages } from "../../lib/vaultApi";
 import { mockedAuth, VaultProviders } from "../../test/vaultProviders";
 import {
   buildFooterLabel,
@@ -16,9 +16,11 @@ vi.mock("../../lib/auth", () => ({ useAuth: () => mockedAuth }));
 vi.mock("../../lib/vaultApi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lib/vaultApi")>()),
   listConversationMessages: vi.fn(),
+  listMessages: vi.fn(),
 }));
 
 const getMessages = vi.mocked(listConversationMessages);
+const searchMessages = vi.mocked(listMessages);
 
 function message(id: number): Message {
   return {
@@ -77,6 +79,7 @@ function routeGets(slow: Promise<MessagePage>) {
 describe("useConversationMessages", () => {
   beforeEach(() => {
     getMessages.mockReset();
+    searchMessages.mockReset();
   });
 
   it("ignores a slow response from the conversation the user navigated away from", async () => {
@@ -120,12 +123,11 @@ describe("useConversationMessages", () => {
     expect(result.current.loading).toBe(false);
   });
 
-  it("asks for a year with year=, and walks its pages until the total is covered", async () => {
-    // Page one of the unfiltered view, then a two-page year.
+  it("asks for a year with year=, one page at a time like every other view", async () => {
     getMessages
       .mockResolvedValueOnce(page([message(9)]))
-      .mockResolvedValueOnce({ items: [message(1), message(2)], total: 3, limit: 500, offset: 0 })
-      .mockResolvedValueOnce({ items: [message(3)], total: 3, limit: 500, offset: 2 });
+      .mockResolvedValueOnce({ items: [message(1), message(2)], total: 3, limit: 50, offset: 0 })
+      .mockResolvedValueOnce({ items: [message(3)], total: 3, limit: 50, offset: 50 });
 
     const { result } = renderHook(({ id }: { id: number }) => useConversationMessages(id), {
       initialProps: { id: 7 },
@@ -142,25 +144,77 @@ describe("useConversationMessages", () => {
     );
 
     act(() => result.current.selectYear(2020));
-    await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual([1, 2, 3]));
+    await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual([1, 2]));
 
     // The year is a `year=` parameter on the conversation's own messages
-    // route, asked for a whole page at a time, and paged until the vault's
-    // total is covered — not a `date:2020` term in a search query.
+    // route, at the ordinary page size. A year is not loaded in full (#323):
+    // find-in-conversation runs on the vault now, so nothing needs the whole
+    // year in the browser, and a 50,000-message year no longer hits the
+    // offset ceiling mid-walk (#326).
     expect(getMessages).toHaveBeenNthCalledWith(
       2,
       7,
-      { offset: 0, limit: 500, year: 2020 },
+      { offset: 0, limit: 50, year: 2020 },
       expect.objectContaining({ signal: expect.anything() }),
     );
+    expect(result.current.total).toBe(3);
+
+    act(() => result.current.fetchConversationPage(50));
+    await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual([3]));
     expect(getMessages).toHaveBeenNthCalledWith(
       3,
       7,
-      { offset: 2, limit: 500, year: 2020 },
+      { offset: 50, limit: 50, year: 2020 },
       expect.objectContaining({ signal: expect.anything() }),
     );
     expect(getMessages).toHaveBeenCalledTimes(3);
-    expect(result.current.total).toBe(3);
+  });
+
+  it("runs the find box on the vault, scoped to the conversation and the chosen year", async () => {
+    getMessages.mockResolvedValue(page([message(9)]));
+    searchMessages.mockResolvedValue({
+      items: [message(4), message(5)],
+      total: 2,
+      limit: 50,
+      offset: 0,
+    });
+
+    const { result } = renderHook(({ id }: { id: number }) => useConversationMessages(id), {
+      initialProps: { id: 7 },
+      wrapper: VaultProviders,
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => result.current.setFindTerm("dentist"));
+    await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual([4, 5]));
+    expect(result.current.finding).toBe(true);
+    expect(result.current.total).toBe(2);
+    // `in:#id` plus the term as free text: the same language every list speaks.
+    expect(searchMessages).toHaveBeenLastCalledWith(
+      { q: "in:#7 dentist", offset: 0, limit: 50 },
+      expect.objectContaining({ signal: expect.anything() }),
+    );
+
+    act(() => result.current.selectYear(2021));
+    await waitFor(() =>
+      expect(searchMessages).toHaveBeenLastCalledWith(
+        { q: "in:#7 date:2021 dentist", offset: 0, limit: 50 },
+        expect.objectContaining({ signal: expect.anything() }),
+      ),
+    );
+
+    // A phrase with a space is quoted for the language.
+    act(() => result.current.setFindTerm("book club"));
+    await waitFor(() =>
+      expect(searchMessages).toHaveBeenLastCalledWith(
+        { q: 'in:#7 date:2021 "book club"', offset: 0, limit: 50 },
+        expect.objectContaining({ signal: expect.anything() }),
+      ),
+    );
+
+    // Clearing the box returns to the thread.
+    act(() => result.current.setFindTerm(""));
+    await waitFor(() => expect(result.current.finding).toBe(false));
   });
 
   it("resets offset, activeYear, findTerm and activeMatch when the conversation changes", async () => {
@@ -172,10 +226,11 @@ describe("useConversationMessages", () => {
     );
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    // Drive every reset-target away from its default before switching.
+    // Drive every reset-target away from its default before switching. A new
+    // find term starts at page one, so the page turn comes after it.
     act(() => result.current.selectYear(2020));
-    act(() => result.current.fetchConversationPage(50));
     act(() => result.current.setFindTerm("hello"));
+    act(() => result.current.fetchConversationPage(50));
     act(() => result.current.setActiveMatch(3));
 
     expect(result.current.activeYear).toBe(2020);
@@ -205,11 +260,17 @@ describe("conversationYears", () => {
 });
 
 describe("buildFooterLabel", () => {
-  it("shows the whole range for a year filter", () => {
-    expect(buildFooterLabel(2021, 120, 0)).toBe("2021: 1–120 of 120");
+  it("shows the page window for a year filter, since a year pages like everything else", () => {
+    expect(buildFooterLabel(2021, 120, 0)).toBe("2021: 1–50 of 120");
+    expect(buildFooterLabel(2021, 120, 100)).toBe("2021: 101–120 of 120");
   });
 
   it("shows the page window when browsing all years", () => {
     expect(buildFooterLabel(null, 120, 50)).toBe("Messages 51–100 of 120");
+  });
+
+  it("names the rows as matches while finding", () => {
+    expect(buildFooterLabel(null, 7, 0, true)).toBe("Matches 1–7 of 7");
+    expect(buildFooterLabel(2021, 0, 0, true)).toBe("Matches 0 of 0");
   });
 });

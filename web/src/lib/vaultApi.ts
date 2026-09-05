@@ -243,6 +243,24 @@ export function listConversationMessages(
   );
 }
 
+/** Query for `GET /v1/messages`: the search language's Messages list, paged. */
+export type MessagesListParams = {
+  q?: string;
+  offset?: number;
+  limit?: number;
+};
+
+/**
+ * One row per message matching `q`, across every conversation the account
+ * has. A read route, not Export: the thread's find box uses it with `in:#id`.
+ */
+export function listMessages(
+  params: MessagesListParams,
+  opts?: VaultRequestOptions,
+): Promise<Schema["Page_Message"]> {
+  return apiClient.get<Schema["Page_Message"]>(withQuery("/v1/messages", query(params)), opts);
+}
+
 export function getConversationSources(
   conversationId: number,
   opts?: VaultRequestOptions,

@@ -123,6 +123,7 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(
             crate::conversations_api::conversation_messages_handler
         ))
+        .routes(routes!(crate::messages_api::messages_list_handler))
         .routes(routes!(
             crate::conversations_api::conversation_trash_handler
         ))
@@ -269,6 +270,7 @@ mod tests {
             "/v1/saved-searches/{id}",
             "/v1/search/fields",
             "/v1/conversations",
+            "/v1/messages",
             "/v1/conversations/{id}",
             "/v1/conversations/{id}/sources",
             "/v1/conversations/{id}/messages",

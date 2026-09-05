@@ -31,6 +31,7 @@ export default function MessageView({
     activeYear,
     findTerm,
     setFindTerm,
+    finding,
     activeMatch,
     setActiveMatch,
     loading,
@@ -90,15 +91,12 @@ export default function MessageView({
   // the find bar stays on `findTerm` while the thread trails on the deferred one.
   const deferredFindTerm = useDeferredValue(findTerm);
 
-  // Message ids on this page whose text contains the find-bar search.
-  const matchIds = useMemo(() => {
-    const t = deferredFindTerm.trim().toLowerCase();
-    if (!t) return [];
-    // Message ids arrive as numbers; the find bar and the DOM ids are strings.
-    return messages
-      .filter((m) => (m.text || "").toLowerCase().includes(t))
-      .map((m) => String(m.id));
-  }, [messages, deferredFindTerm]);
+  // While finding, the vault already narrowed the rows to the matches, so
+  // every loaded message is one. Ids arrive as numbers; the DOM ids are strings.
+  const matchIds = useMemo(
+    () => (finding ? messages.map((m) => String(m.id)) : []),
+    [messages, finding],
+  );
 
   // Scroll the current find match into view.
   useEffect(() => {
@@ -107,8 +105,7 @@ export default function MessageView({
     el?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [activeMatch, matchIds]);
 
-  const yearMode = activeYear !== null;
-  const footerLabel = buildFooterLabel(activeYear, total, offset);
+  const footerLabel = buildFooterLabel(activeYear, total, offset, finding);
 
   return (
     <div className="flex h-full flex-col">
@@ -134,13 +131,10 @@ export default function MessageView({
 
       <MessageFindBar
         findTerm={findTerm}
-        onFindTermChange={(value) => {
-          setFindTerm(value);
-          setActiveMatch(0);
-        }}
-        matchCount={matchIds.length}
-        activeMatch={activeMatch}
-        yearMode={yearMode}
+        onFindTermChange={setFindTerm}
+        matchCount={finding ? total : 0}
+        matchPosition={offset + activeMatch}
+        activeYear={activeYear}
         onPrevMatch={() => setActiveMatch((a) => (a - 1 + matchIds.length) % matchIds.length)}
         onNextMatch={() => setActiveMatch((a) => (a + 1) % matchIds.length)}
       />
@@ -153,6 +147,7 @@ export default function MessageView({
         matchIds={matchIds}
         activeMatch={activeMatch}
         activeYear={activeYear}
+        finding={finding}
         footerLabel={footerLabel}
         offset={offset}
         total={total}
