@@ -357,10 +357,13 @@ mod tests {
             ..ExportTransforms::none()
         };
         let mut sink = FormatSink::open(tmp.path(), OutputFormat::Csv, transforms).unwrap();
-        // Obfuscation does not touch `source` bags (vendor leftovers), so drop
-        // the fixture's bag before asserting covered fields are rewritten.
-        let mut doc = message_ir::testutil::sample_document("secret");
-        doc.messages[0].source = None;
+        // The fixture's `source` bag carries the raw sender address; obfuscation
+        // must drop it, so the bag stays in and the assertion below covers it.
+        let doc = message_ir::testutil::sample_document("secret");
+        assert!(
+            doc.messages[0].source.is_some(),
+            "fixture should carry a vendor bag"
+        );
         sink.write_document(doc).unwrap();
         let result = sink.finish().unwrap();
         assert_eq!(result.obfuscated_docs, 1);
