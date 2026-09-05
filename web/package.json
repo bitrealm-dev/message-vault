@@ -17,7 +17,7 @@
     "gen:api": "npx --yes openapi-typescript@7.13.0 ../docs/src/assets/openapi.json -o src/lib/vaultApi.types.ts"
   },
   "dependencies": {
-    "@internationalized/date": "^3.12.3",
+    "@internationalized/date": "^3.12.4",
     "@tanstack/react-query": "^5.102.8",
     "@tanstack/react-virtual": "^3.14.10",
     "@tauri-apps/api": "^2",
