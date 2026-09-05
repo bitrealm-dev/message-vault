@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 
+use crate::import::ImportMode;
 use anyhow::{Result, bail};
 use clap::{Args, Command, CommandFactory, Parser, Subcommand};
 
@@ -94,7 +95,7 @@ pub struct ImportArgs {
 
     /// Import mode: replace (wipe sources found in input) or append
     #[arg(long, default_value = "replace")]
-    pub mode: String,
+    pub mode: ImportMode,
 
     /// Skip the cross-source soft-dedupe pass after import
     #[arg(long)]
@@ -267,7 +268,7 @@ async fn run_import(args: ImportArgs) -> Result<()> {
     if let Some(ref source) = args.source {
         validate_source_id(source)?;
     }
-    let mode = crate::import::ImportMode::parse(&args.mode)?;
+    let mode = args.mode;
     let media = crate::import_media::MediaMode::parse(&args.media)?;
     let db_path = args.db.clone().unwrap_or_else(|| cfg.paths.db.clone());
     let target = DbTarget::new(args.db_url.as_deref(), &db_path);
@@ -323,7 +324,7 @@ fn print_import_stats(import: &crate::import::ImportStats) {
     println!("  participants:  {}", import.participants);
     println!("  messages:      {}", import.messages);
     println!("  messages deduped: {}", import.messages_deduped);
-    if import.mode == "append" {
+    if import.mode == ImportMode::Append {
         println!("  messages appended: {}", import.messages_appended);
     }
     println!(

@@ -31,6 +31,96 @@
 
 use serde::{Deserialize, Serialize};
 
+/// What happens to a source's messages that were imported before: `replace`
+/// wipes them first, `append` keeps them and adds only new ones.
+// Every path that carries a mode, the `POST /v1/import` query, the
+// import-session body, the `import` CLI flag, `vault-push`'s settings and the
+// desktop push command, uses this type, so a misspelling cannot compile as
+// "append".
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum ImportMode {
+    /// Wipe the source's existing messages before importing.
+    Replace,
+    /// Keep existing messages and add only new ones. The default, and what
+    /// the HTTP API assumes when a request names no mode: it never removes
+    /// anything.
+    #[default]
+    Append,
+}
+
+impl ImportMode {
+    /// The wire form: `replace` or `append`.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Replace => "replace",
+            Self::Append => "append",
+        }
+    }
+}
+
+impl std::fmt::Display for ImportMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A mode string that is neither `replace` nor `append`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidImportMode(String);
+
+impl std::fmt::Display for InvalidImportMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "invalid import mode '{}' (expected replace or append)",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for InvalidImportMode {}
+
+impl std::str::FromStr for ImportMode {
+    type Err = InvalidImportMode;
+
+    /// Case-insensitive, so a CLI flag typed as `Replace` still parses.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "replace" => Ok(Self::Replace),
+            "append" => Ok(Self::Append),
+            _ => Err(InvalidImportMode(s.to_string())),
+        }
+    }
+}
+
+#[cfg(test)]
+mod import_mode_tests {
+    use super::*;
+
+    #[test]
+    fn parses_both_modes_case_insensitively() {
+        assert_eq!("replace".parse::<ImportMode>(), Ok(ImportMode::Replace));
+        assert_eq!("Append".parse::<ImportMode>(), Ok(ImportMode::Append));
+        assert_eq!(
+            "merge".parse::<ImportMode>().unwrap_err().to_string(),
+            "invalid import mode 'merge' (expected replace or append)"
+        );
+    }
+
+    #[test]
+    fn serde_uses_the_lowercase_name() {
+        assert_eq!(
+            serde_json::to_string(&ImportMode::Replace).unwrap(),
+            "\"replace\""
+        );
+        let parsed: ImportMode = serde_json::from_str("\"append\"").unwrap();
+        assert_eq!(parsed, ImportMode::Append);
+        assert_eq!(ImportMode::Append.to_string(), "append");
+    }
+}
+
 /// Derive `ToSchema` only when the `schema` feature is on.
 macro_rules! api_shape {
     ($(#[$meta:meta])* pub struct $name:ident { $($body:tt)* }) => {

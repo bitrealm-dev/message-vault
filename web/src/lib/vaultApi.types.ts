@@ -1633,7 +1633,7 @@ export interface components {
              *     `whatsappKey` posted here is dropped rather than persisted.
              */
             form?: unknown;
-            mode?: string;
+            mode?: components["schemas"]["ImportMode"];
             source: string;
             /** @description Source path, size, mtime, and message count. */
             source_fingerprint?: unknown;
@@ -1808,6 +1808,12 @@ export interface components {
             /** Format: int64 */
             upload_ms?: number | null;
         };
+        /**
+         * @description What happens to a source's messages that were imported before: `replace`
+         *     wipes them first, `append` keeps them and adds only new ones.
+         * @enum {string}
+         */
+        ImportMode: "replace" | "append";
         /** @description Import result: stats plus optional dedupe counts. */
         ImportResponse: components["schemas"]["ImportStats"] & {
             account: string;
@@ -1878,8 +1884,8 @@ export interface components {
              * @description Messages hidden as duplicates within this import.
              */
             messages_deduped: number;
-            /** @description Import mode string (`replace` or `append`). */
-            mode: string;
+            /** @description Import mode. */
+            mode: components["schemas"]["ImportMode"];
             /**
              * Format: int64
              * @description Participant rows imported.

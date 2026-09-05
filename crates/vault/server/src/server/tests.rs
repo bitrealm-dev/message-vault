@@ -1,5 +1,6 @@
 use super::*;
 use crate::extract::{Json, Path as AxumPath};
+use crate::import::ImportMode;
 use crate::import::{
     CompleteImportBody, CompleteImportIssueBody, CreateImportBody, SetImportStageBody,
     imports_active_handler, imports_complete_handler, imports_create_handler,
@@ -554,7 +555,7 @@ async fn active_session_is_empty_then_reports_the_live_one() {
 
     let body = CreateImportBody {
         source: "imessage".into(),
-        mode: "append".into(),
+        mode: ImportMode::Append,
         tool: Some("message-vault-io".into()),
         account: None,
         stage: Some("write".into()),
@@ -610,7 +611,7 @@ async fn a_stored_form_snapshot_drops_credentials() {
 
     let body = CreateImportBody {
         source: "imessage".into(),
-        mode: "append".into(),
+        mode: ImportMode::Append,
         tool: None,
         account: None,
         stage: None,
@@ -668,7 +669,7 @@ async fn imports_create_stores_source_identities() {
 
     let body = CreateImportBody {
         source: "imessage".into(),
-        mode: "append".into(),
+        mode: ImportMode::Append,
         tool: None,
         account: None,
         stage: None,
@@ -701,7 +702,7 @@ async fn a_second_session_is_refused_with_conflict() {
     let (_dir, state, token, _import_id) = test_state().await;
     let body = CreateImportBody {
         source: "imessage".into(),
-        mode: "append".into(),
+        mode: ImportMode::Append,
         tool: None,
         account: None,
         stage: None,

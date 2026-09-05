@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::AnyConnection;
 use sqlx::Connection;
 use tempfile::TempDir;
+pub use vault_api_types::ImportMode;
 
 use crate::extract::{Json, Path as AxumPath, Query};
 use axum::extract::{Request, State};
@@ -47,38 +48,6 @@ use crate::server::{
     ApiError, AppState, ImportAccess, content_type_base, is_jsonl_content_type,
     resolve_import_account, stream_body_to_file,
 };
-
-/// What happens to a source's messages that were imported before.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ImportMode {
-    /// Wipe the source's existing messages before importing.
-    Replace,
-    /// Keep existing messages and add only new ones.
-    Append,
-}
-
-impl ImportMode {
-    /// Parse `replace` or `append`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `s` is not one of those values.
-    pub fn parse(s: &str) -> Result<Self> {
-        match s.to_ascii_lowercase().as_str() {
-            "replace" => Ok(Self::Replace),
-            "append" => Ok(Self::Append),
-            other => bail!("invalid import mode '{other}' (expected replace or append)"),
-        }
-    }
-
-    /// Canonical flag value (`replace` or `append`).
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Replace => "replace",
-            Self::Append => "append",
-        }
-    }
-}
 
 /// Full import settings: paths, mode, media handling, and contact naming.
 #[derive(Debug, Clone)]
@@ -188,8 +157,8 @@ pub struct ImportStats {
     pub messages_deduped: u64,
     /// Messages added by an append-mode import.
     pub messages_appended: u64,
-    /// Import mode string (`replace` or `append`).
-    pub mode: String,
+    /// Import mode.
+    pub mode: ImportMode,
     /// Flagged phone handles (ambiguous; review note set) inserted by this import.
     pub phones_needing_review: u64,
 }
@@ -429,7 +398,7 @@ pub async fn import_jsonl_files_on_conn(
         contact_handles: contact_stats.phones,
         contacts_skipped: contact_stats.skipped,
         phones_needing_review: contact_stats.phones_needing_review,
-        mode: opts.mode.as_str().to_string(),
+        mode: opts.mode,
         ..Default::default()
     };
     let started = Instant::now();
@@ -633,18 +602,14 @@ pub(crate) struct ImportQuery {
     /// Username or UUID. Optional; when set must match the Bearer token's account.
     #[serde(default)]
     account: Option<String>,
-    #[serde(default = "default_import_mode")]
-    mode: String,
+    #[serde(default)]
+    mode: ImportMode,
     /// Run cross-source soft-dedupe after import.
     #[serde(default)]
     dedupe: bool,
     /// Optional vault import session id from POST /v1/imports.
     #[serde(default)]
     import_id: Option<i64>,
-}
-
-fn default_import_mode() -> String {
-    "append".to_string()
 }
 
 /// Import result: stats plus optional dedupe counts.
@@ -671,8 +636,8 @@ pub(crate) struct DedupeResponse {
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct CreateImportBody {
     pub(crate) source: String,
-    #[serde(default = "default_import_mode")]
-    pub(crate) mode: String,
+    #[serde(default)]
+    pub(crate) mode: ImportMode,
     #[serde(default)]
     pub(crate) tool: Option<String>,
     #[serde(default)]
@@ -943,7 +908,6 @@ pub(crate) async fn imports_create_handler(
         return Err(ApiError::BadRequest("body field source is required".into()));
     }
     validate_source_id(&body.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    ImportMode::parse(&body.mode).map_err(|e| ApiError::BadRequest(e.to_string()))?;
     let account = resolve_import_account(&auth, body.account.as_deref(), &state.db).await?;
     let stage = match body.stage.as_deref() {
         None => crate::db::vault_imports::ImportStage::Parse,
@@ -966,7 +930,7 @@ pub(crate) async fn imports_create_handler(
     let args = crate::db::vault_imports::StartImportArgs {
         account_id: &account,
         source: &body.source,
-        mode: &body.mode,
+        mode: body.mode.as_str(),
         tool: body.tool.as_deref(),
         stage,
         staging_dir: body.staging_dir.as_deref(),
@@ -1594,7 +1558,7 @@ async fn run_import_path(
         .acquire()
         .await
         .map_err(|_| ApiError::Internal(anyhow::anyhow!("vault is shutting down")))?;
-    let mode = ImportMode::parse(&query.mode).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let mode = query.mode;
 
     let cfg = Arc::clone(&state.cfg);
     let account = query

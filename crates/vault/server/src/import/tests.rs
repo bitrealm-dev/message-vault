@@ -734,7 +734,7 @@ async fn run_import_path_refuses_a_second_session_with_conflict() {
     let query = ImportQuery {
         source: "imessage".into(),
         account: Some(TEST_ACCOUNT.into()),
-        mode: "append".into(),
+        mode: ImportMode::Append,
         dedupe: false,
         import_id: None,
     };
