@@ -1,7 +1,7 @@
 use crate::emit::{ConvertExportArgs, convert_export};
 use anyhow::Result;
 use message_ir_format::{ExportTransforms, FormatSinkResult};
-use message_vault_io_core::testutil::{assert_csv_header, empty_contacts};
+use message_vault_io_core::testutil::assert_csv_header;
 use message_vault_io_core::{ExportReport, OutputFormat};
 use std::fs;
 use std::path::{Path, PathBuf};

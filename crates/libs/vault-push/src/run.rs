@@ -1739,6 +1739,7 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
         digest_cache,
         probe_existing,
         preflight_done,
+        ..
     } = args;
 
     let read_started = Instant::now();
@@ -1995,6 +1996,7 @@ struct AssetUploadStats {
     log_lines: Vec<String>,
 }
 
+#[derive(Clone, Copy)]
 struct UploadAssets<'a> {
     input: &'a Path,
     name: &'a str,
@@ -2052,17 +2054,19 @@ fn finish_asset_upload(
 
 /// One HEAD of the first queued digest for this run. If the vault already has
 /// it, enable HEAD-skip so later files do not send PUT bodies.
-fn preflight_existing_assets(
-    http: &HttpSession,
-    url: &str,
-    key: &str,
-    username: &str,
-    source: &str,
-    jobs: &[AssetUploadJob],
-    probe_existing: &AtomicBool,
-    preflight_done: &Mutex<bool>,
-    max_retries: u32,
-) -> Result<()> {
+fn preflight_existing_assets(args: UploadAssets<'_>, jobs: &[AssetUploadJob]) -> Result<()> {
+    let UploadAssets {
+        cfg,
+        http,
+        url,
+        username,
+        source,
+        probe_existing,
+        preflight_done,
+        ..
+    } = args;
+    let key = &cfg.key;
+    let max_retries = cfg.max_retries;
     if probe_existing.load(Ordering::Relaxed) {
         return Ok(());
     }
@@ -2108,7 +2112,7 @@ fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
         journal,
         journal_path,
         probe_existing,
-        preflight_done,
+        ..
     } = args;
     let mut jobs = Vec::with_capacity(unique.len());
     let mut stats = AssetUploadStats::default();
@@ -2157,17 +2161,7 @@ fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
         return Ok(stats);
     }
 
-    preflight_existing_assets(
-        http,
-        url,
-        &cfg.key,
-        username,
-        source,
-        &jobs,
-        probe_existing,
-        preflight_done,
-        cfg.max_retries,
-    )?;
+    preflight_existing_assets(args, &jobs)?;
 
     // Work-stealing style: workers pull the next job index from a shared counter.
     let results = parallel_for_each(

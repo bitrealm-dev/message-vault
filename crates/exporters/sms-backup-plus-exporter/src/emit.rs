@@ -517,7 +517,6 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
 mod tests {
     use super::*;
     use crate::types::AttachmentBlob;
-    use media::{CompressOptions, MediaMode};
     use message_ir::{
         ConversationDocument, ConversationMeta, ConversationStats, IrConversationType, IrDirection,
         IrMessage, IrMessageKind, SCHEMA_VERSION,
@@ -624,8 +623,7 @@ mod tests {
         message_vault_io_core::stage_conversation_attachments(
             std::slice::from_mut(&mut doc),
             &att_dir,
-            MediaMode::Clone,
-            &CompressOptions::default(),
+            &message_vault_io_core::MediaConfig::default(),
             |i| Ok(payloads.get(i).cloned().flatten()),
             None,
             None,

@@ -165,8 +165,6 @@ fn detect_csv_format(path: &Path) -> Result<ContactsFormat, ContactsInputError> 
     Err(ContactsInputError::unrecognized(details))
 }
 
-/// Label used in duplicate listings (always includes CSV/VCF row index).
-
 #[cfg(test)]
 mod tests {
     use super::*;

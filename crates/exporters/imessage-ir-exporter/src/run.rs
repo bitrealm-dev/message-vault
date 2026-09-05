@@ -34,7 +34,7 @@ pub fn run(config: &ExporterConfig) -> anyhow::Result<RunResult> {
 
     let options = options_from_export_config(config)?;
     let format = options.output_format;
-    let mut session = MailSession::new(options)?;
+    let session = MailSession::new(options)?;
     check_cancel(config)?;
     let sink = run_export(&session)?;
     check_cancel(config)?;

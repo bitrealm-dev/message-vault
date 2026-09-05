@@ -297,10 +297,8 @@ fn resolve_sender(
         } else {
             phone::normalize_digits_us(chat_id).unwrap_or_default()
         }
-    } else if let Some(handle) = phone::normalize_digits_us(&row.sender) {
-        handle
     } else {
-        String::new()
+        phone::normalize_digits_us(&row.sender).unwrap_or_default()
     };
 
     let display = if !contact_name.is_empty() {

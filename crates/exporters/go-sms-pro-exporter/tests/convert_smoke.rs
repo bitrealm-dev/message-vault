@@ -1,7 +1,7 @@
 use crate::emit::{ConvertExportArgs, convert_export};
 use anyhow::Result;
 use message_ir_format::{ExportTransforms, FormatSinkResult};
-use message_vault_io_core::testutil::{assert_csv_header, empty_contacts};
+use message_vault_io_core::testutil::assert_csv_header;
 use message_vault_io_core::{ExportReport, OutputFormat};
 use std::path::{Path, PathBuf};
 
@@ -39,7 +39,6 @@ fn convert_smoke_writes_csv_not_json() {
 #[test]
 fn output_equals_input_bails_before_cleaning() {
     let input = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample_export");
-    let tmp = tempfile::tempdir().expect("tempdir");
     let err = convert(input.as_path(), input.as_path()).expect_err("output == input must fail");
     assert!(
         err.to_string()

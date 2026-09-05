@@ -11,7 +11,9 @@ use message_ir_format::{
     read_conversation_json, read_conversation_jsonl, read_conversation_mbox, read_sbr_documents,
 };
 pub use message_vault_io_core::RunResult;
-use message_vault_io_core::{AttachmentJob, ExporterConfig, OutputFormat, run_attachment_jobs};
+use message_vault_io_core::{
+    AttachmentJob, ExporterConfig, MediaConfig, OutputFormat, run_attachment_jobs,
+};
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
@@ -138,8 +140,10 @@ fn apply_reexport_convert(
     run_attachment_jobs(
         &mut jobs,
         &attachments_dir,
-        transforms.media,
-        &transforms.compress,
+        &MediaConfig {
+            mode: transforms.media,
+            compress: transforms.compress.clone(),
+        },
         |i| {
             let Some(path) = sources.get(i).and_then(|p| p.as_ref()) else {
                 return Ok(None);

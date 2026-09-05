@@ -50,7 +50,7 @@ pub(crate) fn read_resolved_attachment(
         // function, but they no longer kill the run: the loader closure in
         // `emit.rs` logs them, and `run_attachment_jobs` downgrades them to
         // a `file_missing` attachment rather than aborting.
-        let temp = match decrypt_file(backup, &source) {
+        let temp = match decrypt_file(backup, source) {
             Ok(temp) => temp,
             Err(RuntimeError::BackupError(BackupError::FileNotFoundInBackup(_))) => {
                 session.options.emit_log(format!(
@@ -81,7 +81,7 @@ pub(crate) fn read_resolved_attachment(
     }
 
     if source.is_file() {
-        match fs::read(&source) {
+        match fs::read(source) {
             Ok(b) => Ok(b),
             Err(e) => {
                 session.options.emit_log(format!(

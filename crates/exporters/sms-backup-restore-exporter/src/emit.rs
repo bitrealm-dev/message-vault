@@ -77,7 +77,7 @@ pub(crate) fn convert_export(
         args.transforms,
         args.resume,
     )?;
-    let (mut documents, report) = read_sbr_documents(
+    let (documents, report) = read_sbr_documents(
         args.input,
         SbrReadOptions {
             owner_phones: args.owner_phones,
