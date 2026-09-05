@@ -14,12 +14,18 @@ import { renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  useDeleteContact,
+  useDeleteConversation,
+  useEmptyTrash,
   useRestoreContact,
   useRestoreConversation,
   useTrashContact,
   useTrashConversation,
 } from "./trash";
 import {
+  deleteContact as deleteVaultContact,
+  deleteConversation as deleteVaultConversation,
+  emptyTrash as emptyVaultTrash,
   restoreContact as restoreVaultContact,
   restoreConversation as restoreVaultConversation,
   trashContact as trashVaultContact,
@@ -32,14 +38,20 @@ vi.mock("./vaultApi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./vaultApi")>()),
   trashConversation: vi.fn(),
   restoreConversation: vi.fn(),
+  deleteConversation: vi.fn(),
   trashContact: vi.fn(),
   restoreContact: vi.fn(),
+  deleteContact: vi.fn(),
+  emptyTrash: vi.fn(),
 }));
 
 const trashConversation = vi.mocked(trashVaultConversation);
 const restoreConversation = vi.mocked(restoreVaultConversation);
+const deleteConversation = vi.mocked(deleteVaultConversation);
 const trashContact = vi.mocked(trashVaultContact);
 const restoreContact = vi.mocked(restoreVaultContact);
+const deleteContact = vi.mocked(deleteVaultContact);
+const emptyTrash = vi.mocked(emptyVaultTrash);
 
 let client: QueryClient;
 
@@ -149,6 +161,95 @@ describe("useTrashContact / useRestoreContact", () => {
       expect.arrayContaining([
         ["vault", "account-1", "contacts", "list"],
         ["vault", "account-1", "contacts", "detail", "9"],
+      ]),
+    );
+  });
+});
+
+describe("useDeleteConversation", () => {
+  it("marks everything about conversations stale, plus the trash count, contact details and storage", async () => {
+    deleteConversation.mockResolvedValue(undefined);
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+
+    const { result } = renderHook(() => useDeleteConversation(), { wrapper });
+    await result.current.mutateAsync(42);
+
+    expect(deleteConversation).toHaveBeenCalledWith(42, expect.anything());
+    // The whole `conversations` prefix, not only the list: the row is gone,
+    // so its detail, message pages and Sources panel all describe a 404 now.
+    expect(invalidatedKeys(invalidate)).toEqual(
+      expect.arrayContaining([
+        ["vault", "account-1", "conversations"],
+        ["vault", "account-1", "trash"],
+        ["vault", "account-1", "contacts", "detail"],
+        ["vault", "account-1", "storage"],
+      ]),
+    );
+  });
+
+  it("leaves the contacts list alone", async () => {
+    deleteConversation.mockResolvedValue(undefined);
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+
+    const { result } = renderHook(() => useDeleteConversation(), { wrapper });
+    await result.current.mutateAsync(42);
+
+    const keys = invalidatedKeys(invalidate);
+    expect(keys).not.toContainEqual(["vault", "account-1", "contacts", "list"]);
+    expect(keys).not.toContainEqual(["vault", "account-1", "contacts"]);
+  });
+});
+
+describe("useDeleteContact", () => {
+  it("marks the contact's list and detail, every conversation, and the contact groups stale", async () => {
+    deleteContact.mockResolvedValue(undefined);
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+
+    const { result } = renderHook(() => useDeleteContact(), { wrapper });
+    await result.current.mutateAsync(9);
+
+    expect(deleteContact).toHaveBeenCalledWith(9, expect.anything());
+    // Conversations are marked because every one the person was in now
+    // shows their handle in place of the name.
+    expect(invalidatedKeys(invalidate)).toEqual(
+      expect.arrayContaining([
+        ["vault", "account-1", "contacts", "list"],
+        ["vault", "account-1", "contacts", "detail", "9"],
+        ["vault", "account-1", "conversations"],
+        ["vault", "account-1", "contact-groups"],
+      ]),
+    );
+  });
+
+  it("leaves the trash count and storage alone: no conversation or file is deleted with a contact", async () => {
+    deleteContact.mockResolvedValue(undefined);
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+
+    const { result } = renderHook(() => useDeleteContact(), { wrapper });
+    await result.current.mutateAsync(9);
+
+    const keys = invalidatedKeys(invalidate);
+    expect(keys).not.toContainEqual(["vault", "account-1", "trash"]);
+    expect(keys).not.toContainEqual(["vault", "account-1", "storage"]);
+  });
+});
+
+describe("useEmptyTrash", () => {
+  it("marks the union of what deleting a conversation and deleting a contact mark", async () => {
+    emptyTrash.mockResolvedValue(undefined);
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+
+    const { result } = renderHook(() => useEmptyTrash(), { wrapper });
+    await result.current.mutateAsync();
+
+    expect(emptyTrash).toHaveBeenCalledTimes(1);
+    expect(invalidatedKeys(invalidate)).toEqual(
+      expect.arrayContaining([
+        ["vault", "account-1", "conversations"],
+        ["vault", "account-1", "contacts"],
+        ["vault", "account-1", "trash"],
+        ["vault", "account-1", "contact-groups"],
+        ["vault", "account-1", "storage"],
       ]),
     );
   });

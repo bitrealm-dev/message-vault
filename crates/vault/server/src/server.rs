@@ -162,6 +162,21 @@ pub fn require_delete_access(auth: &AuthIdentity) -> Result<(), ApiError> {
     ))
 }
 
+/// Allow a signed-in session that may destroy message data: the guard for
+/// permanent deletion out of the trash. Both halves matter. Trash is a GUI
+/// affair, so an API token is refused the way every trash route refuses it,
+/// and the account's own `can_delete` grant is what keeps the demo account
+/// from deleting anything while it keeps every other privilege.
+///
+/// # Errors
+///
+/// Returns forbidden when the credential is an API token or the account may
+/// not delete.
+pub fn require_full_delete_access(auth: &AuthIdentity) -> Result<(), ApiError> {
+    require_full_access(auth)?;
+    require_delete_access(auth)
+}
+
 /// Extract the Bearer credential: handlers take `auth: AuthIdentity` (or one
 /// of the capability wrappers below) instead of hand-rolling the
 /// `resolve_auth` + `require_*` preamble. Rejections are the same
@@ -230,6 +245,12 @@ auth_guard!(
     /// [`require_delete_access`].
     DeleteAccess,
     require_delete_access
+);
+auth_guard!(
+    /// Signed-in session whose account may destroy message data; wraps
+    /// [`require_full_delete_access`].
+    FullDeleteAccess,
+    require_full_delete_access
 );
 
 /// Shared server state passed to every HTTP handler.

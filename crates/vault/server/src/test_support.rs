@@ -505,6 +505,57 @@ pub async fn seed_conversation(state: &AppState, c: &SeedConversation<'_>) -> i6
     conversation_id
 }
 
+/// Store a real attachment file for the account's `imessage` source and
+/// attach it to the newest message of `conversation_id`, returning the
+/// file's path so a test can check whether a delete removed it. The MIME
+/// sidecar the store writes beside an extensionless blob is written too, so
+/// the same test can check that it went with the file.
+///
+/// `sha` stands in for the content hash; the store never reads the bytes
+/// back here, so it only has to be 64 characters long the way a real digest
+/// is. The `messages.source` slug (`imessage`) and the per-source assets
+/// directory are one and the same name, which is what lets a delete find the
+/// file from the row.
+pub async fn attach_stored_file(
+    state: &AppState,
+    account_id: &str,
+    conversation_id: i64,
+    sha: &str,
+) -> std::path::PathBuf {
+    let shard = state
+        .cfg
+        .paths
+        .assets_dir_for_account(account_id, "imessage")
+        .join(&sha[..2]);
+    std::fs::create_dir_all(&shard).unwrap();
+    let path = shard.join(format!("{sha}.jpg"));
+    std::fs::write(&path, b"jpeg bytes").unwrap();
+    std::fs::write(shard.join(format!(".{sha}.mime")), "image/jpeg").unwrap();
+
+    let mut conn = state.db.acquire().await.unwrap();
+    let message_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM messages WHERE conversation_id = $1 ORDER BY id DESC LIMIT 1",
+    )
+    .bind(conversation_id)
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO attachments (message_id, sha256, assets_path) VALUES ($1, $2, $3)")
+        .bind(message_id)
+        .bind(sha)
+        .bind(format!("{}/{sha}.jpg", &sha[..2]))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    path
+}
+
+/// 64 hex-looking characters, distinct per `tag`: the length of a SHA-256
+/// digest, for a test that stores a file under a fingerprint of its choosing.
+pub fn fake_sha256(tag: char) -> String {
+    std::iter::repeat_n(tag, 64).collect()
+}
+
 /// Give an account one conversation holding one message, so counts are
 /// non-zero.
 pub async fn seed_one_message(state: &AppState, account_id: &str) {

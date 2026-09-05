@@ -1681,6 +1681,206 @@ async fn conversation_trash_requires_auth() {
     assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
 }
 
+/// A signed-in account with one conversation already in the trash,
+/// returning the account and the conversation's id.
+async fn trashed_conversation_fixture() -> (TestVault, RegisteredAccount, i64) {
+    let vault = crate::test_support::test_vault().await;
+    let user = crate::test_support::register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+    crate::test_support::seed_one_message(&vault.state, &user.account_id).await;
+    let list: serde_json::Value =
+        crate::test_support::get_json(&vault.state, "/v1/conversations", &user.token).await;
+    let id = list["items"][0]["id"].as_i64().unwrap();
+    let status = crate::test_support::post_status(
+        &vault.state,
+        &format!("/v1/conversations/{id}/trash"),
+        &user.token,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    (vault, user, id)
+}
+
+async fn conversation_row_count(conn: &mut AnyConnection, id: i64) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM conversations WHERE id = $1")
+        .bind(id)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn conversation_delete_removes_a_trashed_conversation_for_good() {
+    let (vault, user, id) = trashed_conversation_fixture().await;
+
+    let status = crate::test_support::delete_status(
+        &vault.state,
+        &format!("/v1/conversations/{id}"),
+        &user.token,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+
+    let detail = crate::test_support::get_status(
+        &vault.state,
+        &format!("/v1/conversations/{id}"),
+        &user.token,
+    )
+    .await;
+    assert_eq!(detail, axum::http::StatusCode::NOT_FOUND);
+    let trashed: serde_json::Value =
+        crate::test_support::get_json(&vault.state, "/v1/conversations?q=trashed:any", &user.token)
+            .await;
+    assert_eq!(trashed["total"], 0, "gone from every list, trash included");
+    let mut conn = vault.conn().await;
+    assert_eq!(
+        trashed_conversation_row_count(&mut conn, &user.account_id, id).await,
+        0,
+        "the trash marker goes with the row"
+    );
+    let messages: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE account_id = $1")
+        .bind(&user.account_id)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    assert_eq!(messages, 0, "its messages are deleted with it");
+}
+
+#[tokio::test]
+async fn conversation_delete_removes_files_only_the_deleted_conversation_used() {
+    let (vault, user, doomed) = trashed_conversation_fixture().await;
+    let kept = crate::test_support::seed_conversation(
+        &vault.state,
+        &crate::test_support::SeedConversation {
+            account_id: &user.account_id,
+            handle: "+15550002",
+            conversation_type: "individual",
+            group_title: None,
+            source_file: "seed.jsonl",
+            messages: &[crate::test_support::SeedMessage {
+                source: "imessage",
+                timestamp: "2020-01-02T00:00:00Z",
+                is_from_me: false,
+                body: "hi",
+            }],
+        },
+    )
+    .await;
+    let shared = crate::test_support::fake_sha256('a');
+    let unshared = crate::test_support::fake_sha256('b');
+    let shared_file =
+        crate::test_support::attach_stored_file(&vault.state, &user.account_id, doomed, &shared)
+            .await;
+    crate::test_support::attach_stored_file(&vault.state, &user.account_id, kept, &shared).await;
+    let unshared_file =
+        crate::test_support::attach_stored_file(&vault.state, &user.account_id, doomed, &unshared)
+            .await;
+
+    let status = crate::test_support::delete_status(
+        &vault.state,
+        &format!("/v1/conversations/{doomed}"),
+        &user.token,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+
+    assert!(
+        !unshared_file.exists(),
+        "the file only this conversation used is removed"
+    );
+    assert!(
+        shared_file.exists(),
+        "the file the kept conversation shares stays"
+    );
+}
+
+#[tokio::test]
+async fn conversation_delete_refuses_a_conversation_that_is_not_in_the_trash() {
+    let vault = crate::test_support::test_vault().await;
+    let user = crate::test_support::register_via_api(&vault.state, "alice", "hunter2hunter2").await;
+    crate::test_support::seed_one_message(&vault.state, &user.account_id).await;
+    let list: serde_json::Value =
+        crate::test_support::get_json(&vault.state, "/v1/conversations", &user.token).await;
+    let id = list["items"][0]["id"].as_i64().unwrap();
+
+    let (status, body) = crate::test_support::delete_raw(
+        &vault.state,
+        &format!("/v1/conversations/{id}"),
+        &user.token,
+    )
+    .await;
+    assert_eq!(
+        status,
+        axum::http::StatusCode::CONFLICT,
+        "trash is the only door to deletion: {body}"
+    );
+    assert!(body.contains("not in the trash"), "{body}");
+    let mut conn = vault.conn().await;
+    assert_eq!(conversation_row_count(&mut conn, id).await, 1);
+}
+
+#[tokio::test]
+async fn conversation_delete_404s_for_an_unknown_id_and_for_another_accounts() {
+    let (vault, alice, alices) = trashed_conversation_fixture().await;
+    let bob = crate::test_support::register_via_api(&vault.state, "bob", "hunter2hunter2").await;
+
+    let status =
+        crate::test_support::delete_status(&vault.state, "/v1/conversations/999999", &alice.token)
+            .await;
+    assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+
+    // Bob deleting Alice's trashed conversation must 404, not 403 — a 403
+    // would confirm the id exists — and must not delete it.
+    let status = crate::test_support::delete_status(
+        &vault.state,
+        &format!("/v1/conversations/{alices}"),
+        &bob.token,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+    let mut conn = vault.conn().await;
+    assert_eq!(conversation_row_count(&mut conn, alices).await, 1);
+}
+
+#[tokio::test]
+async fn conversation_delete_needs_the_delete_permission() {
+    let (vault, user, id) = trashed_conversation_fixture().await;
+    {
+        let mut conn = vault.conn().await;
+        sqlx::query("UPDATE accounts SET can_delete = 0 WHERE id = $1")
+            .bind(&user.account_id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+    }
+
+    let status = crate::test_support::delete_status(
+        &vault.state,
+        &format!("/v1/conversations/{id}"),
+        &user.token,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
+    let mut conn = vault.conn().await;
+    assert_eq!(
+        conversation_row_count(&mut conn, id).await,
+        1,
+        "an account that may not delete keeps its trashed conversation"
+    );
+}
+
+#[tokio::test]
+async fn conversation_delete_requires_auth() {
+    let (vault, _user, id) = trashed_conversation_fixture().await;
+    let status = crate::test_support::delete_status(
+        &vault.state,
+        &format!("/v1/conversations/{id}"),
+        "not-a-token",
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
+}
+
 #[tokio::test]
 async fn conversation_restore_requires_auth() {
     let vault = crate::test_support::test_vault().await;

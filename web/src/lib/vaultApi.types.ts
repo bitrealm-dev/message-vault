@@ -561,7 +561,14 @@ export interface paths {
         get: operations["contact_detail_handler"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete a trashed contact the way a phone's Delete Contact does: the name
+         *     and the person's edits go, the contact becomes Unknown again and leaves
+         *     the trash, and every conversation it was in stays as it is, showing the
+         *     handle. Conversations are never deleted with a contact. A contact that is
+         *     not in the trash answers 409.
+         */
+        delete: operations["contact_delete_handler"];
         options?: never;
         head?: never;
         /** Rename a contact or change its linked handles. */
@@ -645,7 +652,13 @@ export interface paths {
         get: operations["conversation_detail_handler"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Permanently delete a trashed conversation: the conversation, its
+         *     messages, and any attachment file no other message still uses. Trash is
+         *     the only door to deletion, so a conversation that is not in the trash
+         *     answers 409 rather than being deleted from wherever it was.
+         */
+        delete: operations["conversation_delete_handler"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1039,6 +1052,29 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/trash": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Empty the trash: every trashed conversation is deleted for good, with
+         *     its messages and any attachment file no other message uses, and every
+         *     trashed contact loses its name and details and becomes Unknown, its
+         *     conversations untouched. Trash is the only door to permanent deletion;
+         *     this is the door for everything in it at once.
+         */
+        delete: operations["empty_trash_handler"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4201,6 +4237,60 @@ export interface operations {
             };
         };
     };
+    contact_delete_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Contact id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted: the contact is Unknown again */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The contact is not in the trash */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     contact_mutate_handler: {
         parameters: {
             query?: never;
@@ -4440,6 +4530,60 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    conversation_delete_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Conversation id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The conversation is not in the trash */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5806,6 +5950,40 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    empty_trash_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Trash emptied */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             401: {
                 headers: {

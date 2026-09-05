@@ -2702,6 +2702,75 @@
           }
         ]
       },
+      "delete": {
+        "tags": [
+          "Contacts"
+        ],
+        "summary": "Delete a trashed contact the way a phone's Delete Contact does: the name\nand the person's edits go, the contact becomes Unknown again and leaves\nthe trash, and every conversation it was in stays as it is, showing the\nhandle. Conversations are never deleted with a contact. A contact that is\nnot in the trash answers 409.",
+        "operationId": "contact_delete_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Contact id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted: the contact is Unknown again"
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The contact is not in the trash",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
       "patch": {
         "tags": [
           "Contacts"
@@ -3068,6 +3137,75 @@
           },
           "404": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Conversations"
+        ],
+        "summary": "Permanently delete a trashed conversation: the conversation, its\nmessages, and any attachment file no other message still uses. Trash is\nthe only door to deletion, so a conversation that is not in the trash\nanswers 409 rather than being deleted from wherever it was.",
+        "operationId": "conversation_delete_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Conversation id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The conversation is not in the trash",
             "content": {
               "application/json": {
                 "schema": {
@@ -5100,6 +5238,45 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/trash": {
+      "delete": {
+        "tags": [
+          "Trash"
+        ],
+        "summary": "Empty the trash: every trashed conversation is deleted for good, with\nits messages and any attachment file no other message uses, and every\ntrashed contact loses its name and details and becomes Unknown, its\nconversations untouched. Trash is the only door to permanent deletion;\nthis is the door for everything in it at once.",
+        "operationId": "empty_trash_handler",
+        "responses": {
+          "204": {
+            "description": "Trash emptied"
           },
           "401": {
             "description": "",
@@ -8264,6 +8441,10 @@
     {
       "name": "Conversations",
       "description": "Conversation list and sources"
+    },
+    {
+      "name": "Trash",
+      "description": "Empty the trash; the one door to permanent deletion, with DELETE on a trashed conversation or contact"
     },
     {
       "name": "Message tags",

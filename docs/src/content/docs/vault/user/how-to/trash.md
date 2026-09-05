@@ -1,9 +1,9 @@
 ---
 title: Trash
-description: Move a conversation or a contact to Trash, and take it back out again.
+description: Move a conversation or a contact to Trash, take it back out again, or delete it for good.
 ---
 
-**Trash** in the sidebar holds conversations and contacts you have set aside. Nothing is deleted: a trashed item keeps all of its messages, handles and group membership, and it comes back exactly as it was.
+**Trash** in the sidebar holds conversations and contacts you have set aside. Nothing in it is deleted: a trashed item keeps all of its messages, handles and group membership, and it comes back exactly as it was. Trash is also the only door to deleting something for good — an item has to be in Trash before **Delete** or **Empty Trash** can remove it.
 
 ## Move something to Trash
 
@@ -19,6 +19,20 @@ Restoring puts the item back where it came from. The row leaves Trash as soon as
 
 The search box narrows both lists at once while you are in Trash, so `ada` finds the trashed conversations and contacts that match it.
 
+## Delete for good
+
+Every trashed item also has a **Delete** button, and the pane has **Empty Trash** at the top. Each asks you to confirm first, and the dialog says what will happen, because Delete means two different things for the two kinds of item.
+
+Deleting a conversation removes it and its messages from the vault. An attachment is stored once however many messages share it, so a photo that also appears in another conversation stays; a file only the deleted messages used goes with them.
+
+Deleting a contact works the way Delete Contact works on a phone. The name and details you gave the person go, along with their Contact Group memberships, and the contact becomes Unknown again. The messages stay. Their conversations are untouched and now show the phone number or address instead of the name. A conversation is never deleted with a contact — to remove one, trash and delete it as a conversation.
+
+**Empty Trash** does both at once: every conversation in Trash is deleted, and every contact in Trash becomes Unknown. It acts on all of Trash, not only on what a search is showing.
+
+An Import Run's record under **Settings → Storage** does not change when things it brought in are later deleted. It describes the run as it happened.
+
+The demo account can trash and restore but cannot delete, so its Delete and Empty Trash buttons stay disabled.
+
 ## Find trashed items from anywhere
 
 Trash is a marker on the item, not a place its data was moved to, so search can ask about it directly. The `trashed:` operator works on Contacts, Conversations and Messages:
@@ -27,12 +41,10 @@ Trash is a marker on the item, not a place its data was moved to, so search can 
 - `trashed:no` — only items that are not trashed, which is what every search does by default
 - `trashed:any` — both
 
-Searching `trashed:yes` on Contacts shows trashed contacts in the Contacts list, but they cannot be opened from there — restore them from the Trash view.
+Searching `trashed:yes` on Contacts shows trashed contacts in the Contacts list, but they cannot be opened from there — restore or delete them from the Trash view.
 
 See [Search](/vault/user/how-to/search/) for the rest of the operators.
 
-## What is not built yet
+## Remove everything at once
 
-There is no permanent delete and no **Empty Trash** — see [issue 314](https://github.com/bitrealm-io/message-vault/issues/314). To remove all message content for an account, use the danger-zone actions under **Settings → Account**.
-
-See [Settings](/vault/user/how-to/settings/).
+To remove all message content for an account without trashing each conversation first, use the danger-zone actions under **Settings → Account**. See [Settings](/vault/user/how-to/settings/).
