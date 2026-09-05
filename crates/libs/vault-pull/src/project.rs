@@ -68,13 +68,8 @@ pub fn build_document(
 ///
 /// Returns an error when the timestamp cannot be parsed.
 pub fn to_ir_message(msg: &Message, skip_attachments: bool) -> Result<IrMessage> {
-    let timestamp_unix_ms = parse_timestamp_unix_ms(
-        msg.timestamp_utc
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(msg.timestamp.as_str()),
-    )
-    .with_context(|| format!("message {} timestamp", msg.id))?;
+    let timestamp_unix_ms = parse_timestamp_unix_ms(msg.timestamp.as_str())
+        .with_context(|| format!("message {} timestamp", msg.id))?;
 
     let service = IrService::parse(msg.service.as_deref().unwrap_or(""));
     let direction = if msg.is_from_me {

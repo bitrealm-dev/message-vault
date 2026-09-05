@@ -185,14 +185,14 @@ VALUES ($1, $2, $3, $4)
 
 const INSERT_MESSAGE_PREFIX: &str = r"
 INSERT INTO staging_messages (
-    conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
+    conversation_id, account_id, source, guid, timestamp, is_from_me,
     sender_handle_id, service, subject, body, is_announcement, is_reply,
     thread_originator_guid, thread_originator_part, num_replies, sort_order, import_id
 ) VALUES
 ";
 
 /// Bind counts must stay in lockstep with the `INSERT` column lists above.
-const MESSAGE_BIND_COLUMNS: usize = 18;
+const MESSAGE_BIND_COLUMNS: usize = 17;
 const ATTACHMENT_BIND_COLUMNS: usize = 10;
 const TAPBACK_BIND_COLUMNS: usize = 6;
 
@@ -768,7 +768,6 @@ async fn insert_message_rows(
             .bind(source)
             .bind(row.msg.guid.as_deref())
             .bind(&row.msg.timestamp)
-            .bind(row.msg.timestamp_utc.as_deref())
             .bind(row.msg.is_from_me as i64)
             .bind(row.sender_handle_id)
             .bind(row.msg.service.as_deref())
