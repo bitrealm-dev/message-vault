@@ -65,45 +65,26 @@ pub struct ApiTokenAuth {
 }
 
 /// Label validation failures.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ApiTokenLabelError {
     /// The trimmed label is empty.
+    #[error("label is required")]
     Required,
     /// The label is longer than 120 characters.
+    #[error("label must be at most 120 characters")]
     TooLong,
 }
 
-impl std::fmt::Display for ApiTokenLabelError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Required => write!(f, "label is required"),
-            Self::TooLong => write!(f, "label must be at most 120 characters"),
-        }
-    }
-}
-
-impl std::error::Error for ApiTokenLabelError {}
-
 /// Failures from creating or renaming an API token: a typed label error, or
 /// any other database error.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ApiTokenMutationError {
     /// The label failed validation.
-    InvalidLabel(ApiTokenLabelError),
+    #[error(transparent)]
+    InvalidLabel(#[from] ApiTokenLabelError),
     /// Any other database failure.
-    Other(anyhow::Error),
-}
-
-impl From<ApiTokenLabelError> for ApiTokenMutationError {
-    fn from(e: ApiTokenLabelError) -> Self {
-        Self::InvalidLabel(e)
-    }
-}
-
-impl From<anyhow::Error> for ApiTokenMutationError {
-    fn from(e: anyhow::Error) -> Self {
-        Self::Other(e)
-    }
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
 }
 
 impl From<sqlx::Error> for ApiTokenMutationError {

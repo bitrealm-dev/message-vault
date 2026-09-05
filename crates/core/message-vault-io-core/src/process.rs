@@ -53,16 +53,9 @@ pub fn is_cancelled(cancel: Option<&CancelFlag>) -> bool {
 ///
 /// Displays as `cancelled`, so callers at a `String` edge can use
 /// `.map_err(|e| e.to_string())` and `anyhow` callers can use `?`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("cancelled")]
 pub struct Cancelled;
-
-impl fmt::Display for Cancelled {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("cancelled")
-    }
-}
-
-impl std::error::Error for Cancelled {}
 
 /// Return `Err(Cancelled)` if cancel was requested.
 ///

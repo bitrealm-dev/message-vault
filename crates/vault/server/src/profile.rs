@@ -124,49 +124,22 @@ pub struct AccountProfileUpdateRequest {
 }
 
 /// Why a profile update was refused.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 enum ProfileUpdateError {
     /// The client named a handle service the profile does not support.
+    #[error("unsupported handle service: {0}")]
     UnsupportedService(String),
     /// The client named a time zone chrono-tz does not know.
+    #[error("unknown time zone: {0}; use an IANA name such as America/New_York")]
     UnknownTimeZone(String),
     /// Database failure.
-    Db(anyhow::Error),
-}
-
-impl std::fmt::Display for ProfileUpdateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::UnsupportedService(service) => {
-                write!(f, "unsupported handle service: {service}")
-            }
-            Self::UnknownTimeZone(name) => write!(
-                f,
-                "unknown time zone: {name}; use an IANA name such as America/New_York"
-            ),
-            Self::Db(e) => e.fmt(f),
-        }
-    }
-}
-
-impl std::error::Error for ProfileUpdateError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::UnsupportedService(_) | Self::UnknownTimeZone(_) => None,
-            Self::Db(err) => err.source(),
-        }
-    }
+    #[error(transparent)]
+    Db(#[from] anyhow::Error),
 }
 
 impl From<sqlx::Error> for ProfileUpdateError {
     fn from(value: sqlx::Error) -> Self {
         Self::Db(value.into())
-    }
-}
-
-impl From<anyhow::Error> for ProfileUpdateError {
-    fn from(value: anyhow::Error) -> Self {
-        Self::Db(value)
     }
 }
 

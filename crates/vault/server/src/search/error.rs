@@ -1,6 +1,5 @@
 //! What a query that cannot be compiled answers with.
 
-use std::fmt;
 use std::ops::Range;
 
 use crate::server::ApiError;
@@ -25,7 +24,8 @@ pub enum QueryErrorKind {
 }
 
 /// A refused query: a user-facing sentence and where in the input it points.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{message}")]
 pub struct QueryError {
     /// Why the query was refused.
     pub kind: QueryErrorKind,
@@ -56,14 +56,6 @@ impl QueryError {
         }
     }
 }
-
-impl fmt::Display for QueryError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for QueryError {}
 
 impl From<QueryError> for ApiError {
     fn from(e: QueryError) -> Self {

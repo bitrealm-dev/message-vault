@@ -22,7 +22,8 @@ pub enum ContactsFormat {
 const UNRECOGNIZED_CONTACTS_FORMAT: &str = "Unrecognized contacts format.";
 
 /// Probe failure for GUI preflight (short `message` + optional log `details`).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("{message}{}", detail_suffix(.details))]
 pub struct ContactsInputError {
     /// Short human-readable error (e.g. `"Unrecognized contacts format."`).
     pub message: String,
@@ -30,17 +31,14 @@ pub struct ContactsInputError {
     pub details: Vec<String>,
 }
 
-impl std::fmt::Display for ContactsInputError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.details.is_empty() {
-            write!(f, "{}", self.message)
-        } else {
-            write!(f, "{} ({})", self.message, self.details.join("; "))
-        }
+/// ` (a; b)` after the message when there are detail lines, nothing otherwise.
+fn detail_suffix(details: &[String]) -> String {
+    if details.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", details.join("; "))
     }
 }
-
-impl std::error::Error for ContactsInputError {}
 
 impl ContactsInputError {
     /// An error with a message and no detail lines.

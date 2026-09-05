@@ -509,41 +509,19 @@ pub struct DeleteAccountRequest {
 }
 
 /// Why a password change was refused.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 enum ChangePasswordError {
     /// The presented current password does not match the stored hash.
+    #[error("current password is incorrect")]
     IncorrectPassword,
     /// Database failure.
-    Db(anyhow::Error),
-}
-
-impl std::fmt::Display for ChangePasswordError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::IncorrectPassword => f.write_str("current password is incorrect"),
-            Self::Db(e) => e.fmt(f),
-        }
-    }
-}
-
-impl std::error::Error for ChangePasswordError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::IncorrectPassword => None,
-            Self::Db(err) => err.source(),
-        }
-    }
+    #[error(transparent)]
+    Db(#[from] anyhow::Error),
 }
 
 impl From<sqlx::Error> for ChangePasswordError {
     fn from(value: sqlx::Error) -> Self {
         Self::Db(value.into())
-    }
-}
-
-impl From<anyhow::Error> for ChangePasswordError {
-    fn from(value: anyhow::Error) -> Self {
-        Self::Db(value)
     }
 }
 
