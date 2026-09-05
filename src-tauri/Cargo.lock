@@ -4824,6 +4824,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "vault-api-types",
  "vault-http",
 ]
 

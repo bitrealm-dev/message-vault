@@ -6,6 +6,7 @@
 //! I/O so the desktop app and tests can build and inspect reports directly.
 
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use vault_api_types::ImportMode;
 
 use serde::{Deserialize, Serialize};
 
@@ -86,7 +87,7 @@ pub struct PushReport {
     /// Username the vault reports for that account, else the account id.
     pub username: String,
     /// `append` or `replace`.
-    pub mode: String,
+    pub mode: ImportMode,
     /// Unix seconds when the run started, as a string.
     pub started_at: String,
     /// Unix seconds when the run finished, as a string.
@@ -290,7 +291,7 @@ mod tests {
             ok: true,
             account: "acct".into(),
             username: "user".into(),
-            mode: "append".into(),
+            mode: ImportMode::Append,
             started_at: "2026-08-29T00:00:00Z".into(),
             finished_at: "2026-08-29T00:01:00Z".into(),
             elapsed_ms: 60_000,

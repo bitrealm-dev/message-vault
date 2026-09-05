@@ -9,6 +9,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use std::time::Duration;
+use vault_api_types::ImportMode;
 
 use anyhow::{Context, Result, anyhow};
 use reqwest::Method;
@@ -264,7 +265,7 @@ impl Session {
     pub(crate) fn post_import(
         &self,
         source: &str,
-        mode: &str,
+        mode: ImportMode,
         import_id: Option<i64>,
         ndjson: Vec<u8>,
     ) -> Result<ImportResponse> {
@@ -314,7 +315,7 @@ impl Session {
     pub(crate) fn start_import(
         &self,
         source: &str,
-        mode: &str,
+        mode: ImportMode,
         tool: Option<&str>,
     ) -> Result<Option<i64>> {
         let mut body = serde_json::json!({

@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use vault_push::ImportMode;
 
 use tauri::Emitter;
 use vault_push::{ProgressEvent, VaultPushConfig, run as run_push};
@@ -77,7 +78,7 @@ pub struct PushArgs {
     pub input_dir: String,
     /// Import mode. `append` adds to existing data (safe to re-run);
     /// `replace` deletes existing messages for this source, then imports.
-    pub mode: String,
+    pub mode: ImportMode,
     /// When true, ignore the journal and re-upload assets and re-import
     /// messages.
     pub force: bool,
@@ -217,7 +218,7 @@ mod tests {
             ok: true,
             account: "account".into(),
             username: "user".into(),
-            mode: "append".into(),
+            mode: ImportMode::Append,
             started_at: "2026-08-11T00:00:00Z".into(),
             finished_at: "2026-08-11T00:00:01Z".into(),
             elapsed_ms: 1_000,

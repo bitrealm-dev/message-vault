@@ -31,5 +31,6 @@ pub use run::{
     DEFAULT_PREPARE_AHEAD, DEFAULT_PREPARE_WORKERS, MAX_IMPORT_BODY_BYTES, MAX_PROXY_BODY_BYTES,
     NO_MESSAGE_COUNT_LIMIT, VaultPushConfig, authenticate, run,
 };
+pub use vault_api_types::ImportMode;
 pub use vault_http::AuthError;
 pub use vault_http::AuthInfo;

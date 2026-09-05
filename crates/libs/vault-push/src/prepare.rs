@@ -14,6 +14,7 @@ use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::Scope;
 use std::time::Instant;
+use vault_api_types::ImportMode;
 
 use anyhow::{Context, Result, bail};
 use message_ir::{ConversationDocument, ConversationHeader, IrAttachment, IrMessage};
@@ -123,7 +124,9 @@ impl<'a> PrepareContext<'a> {
 
     /// True when the journal says this conversation file already fully imported.
     pub(crate) fn already_imported(&self, name: &str) -> bool {
-        self.cfg.mode == "append" && !self.cfg.force && self.lock_journal().journal.has_file(name)
+        self.cfg.mode == ImportMode::Append
+            && !self.cfg.force
+            && self.lock_journal().journal.has_file(name)
     }
 }
 

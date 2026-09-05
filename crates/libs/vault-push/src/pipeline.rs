@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 use std::sync::Mutex;
 use std::thread::JoinHandle;
 use std::time::Instant;
+use vault_api_types::ImportMode;
 
 use anyhow::Result;
 use message_vault_io_core::check_cancel;
@@ -156,7 +157,7 @@ impl ImportBatch {
 /// Result of one import HTTP request, including timing and the batch that was sent.
 struct ImportHttpOutcome {
     batch: ImportBatch,
-    mode: String,
+    mode: ImportMode,
     request_ms: u64,
     messages_per_second: f64,
     mebibytes_per_second: f64,
@@ -381,10 +382,10 @@ impl<'a> ImportPipeline<'a> {
         if self.is_cancelled() {
             return Ok(false);
         }
-        let mode = if self.cfg.mode == "replace" && self.first_import {
-            "replace"
+        let mode = if self.cfg.mode == ImportMode::Replace && self.first_import {
+            ImportMode::Replace
         } else {
-            "append"
+            ImportMode::Append
         };
         self.inflight = Some(self.spawn_import(batch, mode));
         if wait {
@@ -398,17 +399,16 @@ impl<'a> ImportPipeline<'a> {
     /// Running the POST off the main thread lets prepare workers keep hashing
     /// and uploading attachments during the network wait. Only one import is
     /// in flight at a time.
-    fn spawn_import(&self, batch: ImportBatch, mode: &str) -> JoinHandle<ImportHttpOutcome> {
+    fn spawn_import(&self, batch: ImportBatch, mode: ImportMode) -> JoinHandle<ImportHttpOutcome> {
         let session = self.session.clone();
         let max_retries = self.cfg.max_retries;
         let import_id = self.import_id;
-        let mode = mode.to_string();
         std::thread::spawn(move || {
             let request_started = Instant::now();
             let body_bytes = batch.body.len();
             let message_count = batch.messages.len();
             let response = vault_http::with_retries(max_retries, || {
-                session.post_import(&batch.source, &mode, import_id, batch.body.clone())
+                session.post_import(&batch.source, mode, import_id, batch.body.clone())
             })
             .map_err(|error| error.to_string());
             let request_ms = elapsed_ms(request_started);

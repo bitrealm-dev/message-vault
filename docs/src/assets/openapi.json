@@ -6686,7 +6686,7 @@
             "description": "Import form snapshot, stored so the screen can be restored.\n\nCredentials are stripped before storage: a `backupPassword` or\n`whatsappKey` posted here is dropped rather than persisted."
           },
           "mode": {
-            "type": "string"
+            "$ref": "#/components/schemas/ImportMode"
           },
           "source": {
             "type": "string"
@@ -7121,6 +7121,14 @@
           }
         }
       },
+      "ImportMode": {
+        "type": "string",
+        "description": "What happens to a source's messages that were imported before: `replace`\nwipes them first, `append` keeps them and adds only new ones.",
+        "enum": [
+          "replace",
+          "append"
+        ]
+      },
       "ImportResponse": {
         "allOf": [
           {
@@ -7254,8 +7262,8 @@
             "minimum": 0
           },
           "mode": {
-            "type": "string",
-            "description": "Import mode string (`replace` or `append`)."
+            "$ref": "#/components/schemas/ImportMode",
+            "description": "Import mode."
           },
           "participants": {
             "type": "integer",

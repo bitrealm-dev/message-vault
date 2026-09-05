@@ -7,6 +7,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use vault_push::ImportMode;
 
 use httpmock::prelude::*;
 use message_ir::{
@@ -92,7 +93,7 @@ fn text_only_config(dir: &Path, base_url: String) -> VaultPushConfig {
         base_url,
         username: "alice".into(),
         key: "mv_test".into(),
-        mode: "append".into(),
+        mode: ImportMode::Append,
         continue_on_error: true,
         force: false,
         skip_attachments: false,
@@ -331,7 +332,7 @@ fn flushes_at_message_limit_and_replaces_only_first_request() {
     write_jsonl(dir.path(), &sample_doc_for("+15555550102", "guid-2"));
     write_jsonl(dir.path(), &sample_doc_for("+15555550103", "guid-3"));
     let mut cfg = text_only_config(dir.path(), server.base_url());
-    cfg.mode = "replace".into();
+    cfg.mode = ImportMode::Replace;
     cfg.batch_size = 2;
 
     let report = run(&cfg, None).unwrap();
@@ -506,7 +507,7 @@ fn profiles_attachment_upload_phases() {
         base_url: server.base_url(),
         username: "alice".into(),
         key: "mv_test".into(),
-        mode: "append".into(),
+        mode: ImportMode::Append,
         continue_on_error: false,
         force: false,
         skip_attachments: false,

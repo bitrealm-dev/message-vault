@@ -38,6 +38,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Instant;
+use vault_api_types::ImportMode;
 
 use anyhow::{Context, Result, bail};
 use message_vault_io_core::{CancelFlag, check_cancel};
@@ -95,8 +96,8 @@ pub struct VaultPushConfig {
     pub username: String,
     /// API token or session token for the vault.
     pub key: String,
-    /// `"append"` adds to existing data; `"replace"` clears then imports (with force).
-    pub mode: String,
+    /// `Append` adds to existing data; `Replace` clears then imports (with force).
+    pub mode: ImportMode,
     /// If true, keep going after one conversation fails. If false, stop early.
     pub continue_on_error: bool,
     /// If true, ignore the journal and upload/import everything again.
@@ -226,7 +227,7 @@ pub fn run(cfg: &VaultPushConfig, progress: Option<&mut ProgressFn<'_>>) -> Resu
         paths.journal.clone(),
         &session.url,
         &session.username,
-        cfg.force || cfg.mode == "replace",
+        cfg.force || cfg.mode == ImportMode::Replace,
     )?;
     let files = list_jsonl_files(&paths.input, &[&paths.journal, &paths.report, &paths.log])?;
     if files.is_empty() {
@@ -260,7 +261,7 @@ pub fn run(cfg: &VaultPushConfig, progress: Option<&mut ProgressFn<'_>>) -> Resu
         ok: counted.failed == 0 && !aborted,
         account: session.auth.account_id.clone(),
         username: session.username.clone(),
-        mode: cfg.mode.clone(),
+        mode: cfg.mode,
         started_at,
         finished_at: now_stamp(),
         elapsed_ms: elapsed_ms(run_started),
@@ -361,7 +362,7 @@ fn start_import_session(
         );
         return Some(import_id);
     }
-    match session.start_import(&source, &cfg.mode, Some("vault-push")) {
+    match session.start_import(&source, cfg.mode, Some("vault-push")) {
         Ok(Some(id)) => {
             out.show_as(
                 &format!("vault import session id={id} source={source}"),
