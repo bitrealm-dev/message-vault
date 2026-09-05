@@ -21,9 +21,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
 
+# Every job reads the repository and nothing else. The one job that writes,
+# github-release, asks for contents: write on its own. The Docker image goes
+# to Docker Hub with its own secret, not to GitHub Packages, so no job needs
+# packages: write.
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 jobs:
   # ── Always: classify what the change touches ──────────────────────────
@@ -461,6 +464,8 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
 

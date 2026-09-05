@@ -184,6 +184,12 @@ enabled. A diff that is too broad runs the Rust matrix on a README edit; a diff
 that is too narrow skips it on a code change. On a tag or a `workflow_dispatch`
 there is no base commit to diff against, so every output is `true`.
 
+`ci.yml` granted `contents: write` and `packages: write` to every job. Only
+`github-release` writes anything with the GitHub token, and the Docker image
+goes to Docker Hub under its own secret rather than to GitHub Packages. The
+workflow now grants `contents: read`, and `github-release` alone asks for
+`contents: write`.
+
 `docs.yml` took two corrections while the pull-request docs build moved into
 `ci.yml`. Its concurrency group was a bare `pages` with
 `cancel-in-progress: true`, which let any other run in that group cancel a
