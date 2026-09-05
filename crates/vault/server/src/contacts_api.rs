@@ -768,17 +768,17 @@ pub(crate) async fn address_book_load_handler(
     }
     // The loader detects VCF versus vCard CSV from the path, so the upload is
     // written to a temp file under its own name rather than being sniffed twice.
-    let dir =
-        tempfile::tempdir().map_err(|e| ApiError::Internal(format!("create temp dir: {e}")))?;
+    let dir = tempfile::tempdir()
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("create temp dir: {e}")))?;
     let name = sanitized_address_book_name(&body.filename);
     let path = dir.path().join(name);
     std::fs::write(&path, body.content.as_bytes())
-        .map_err(|e| ApiError::Internal(format!("write address book: {e}")))?;
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("write address book: {e}")))?;
 
     let mut conn = state.db.acquire().await?;
     let stats = contacts::load_contacts_if_needed(&mut conn, Some(&path), true, &auth.account_id)
         .await
-        .map_err(|e| ApiError::Internal(format!("load address book: {e}")))?;
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("load address book: {e}")))?;
     Ok(Json(AddressBookLoadResponse {
         contacts: stats.contacts,
         phones: stats.phones,
@@ -880,7 +880,7 @@ impl From<ContactEditError> for ApiError {
     fn from(error: ContactEditError) -> Self {
         match error {
             ContactEditError::Refused(message) => Self::BadRequest(message),
-            ContactEditError::Failed(cause) => Self::Internal(format!("{cause:#}")),
+            ContactEditError::Failed(cause) => Self::Internal(cause),
         }
     }
 }
@@ -1320,7 +1320,7 @@ pub(crate) async fn contact_mutate_handler(
         Err(e) => Err(e.into()),
         Ok(true) => get_contact_detail(&mut conn, &auth.account_id, contact_id)
             .await?
-            .ok_or_else(|| ApiError::Internal("contact missing after mutate".into()))
+            .ok_or_else(|| ApiError::Internal(anyhow::anyhow!("contact missing after mutate")))
             .map(Json),
     }
 }

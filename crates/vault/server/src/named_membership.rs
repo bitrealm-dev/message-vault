@@ -26,12 +26,12 @@ pub enum MembershipError {
     BadRequest(String),
     NotFound(String),
     Conflict(String),
-    Internal(String),
+    Internal(anyhow::Error),
 }
 
 impl From<sqlx::Error> for MembershipError {
     fn from(e: sqlx::Error) -> Self {
-        Self::Internal(e.to_string())
+        Self::Internal(e.into())
     }
 }
 
@@ -41,7 +41,7 @@ impl From<MembershipError> for crate::server::ApiError {
             MembershipError::BadRequest(m) => Self::BadRequest(m),
             MembershipError::NotFound(m) => Self::NotFound(m),
             MembershipError::Conflict(m) => Self::Conflict(m),
-            MembershipError::Internal(m) => Self::Internal(m),
+            MembershipError::Internal(e) => Self::Internal(e),
         }
     }
 }
@@ -229,7 +229,9 @@ async fn ensure_id(
         .await?;
     find_id(spec, conn, account_id, &name)
         .await?
-        .ok_or_else(|| MembershipError::Internal(format!("failed to ensure {} {name}", spec.label)))
+        .ok_or_else(|| {
+            MembershipError::Internal(anyhow::anyhow!("failed to ensure {} {name}", spec.label))
+        })
 }
 
 /// True when `name` is reserved and must not be created.
@@ -360,7 +362,7 @@ pub async fn set_membership(
             if let Some(hook) = spec.on_change {
                 hook(conn, account_id, id)
                     .await
-                    .map_err(|e| MembershipError::Internal(e.to_string()))?;
+                    .map_err(MembershipError::Internal)?;
             }
         }
     }
@@ -589,7 +591,7 @@ pub async fn patch_members(
             if let Some(hook) = spec.on_change {
                 hook(conn, account_id, member)
                     .await
-                    .map_err(|e| MembershipError::Internal(e.to_string()))?;
+                    .map_err(MembershipError::Internal)?;
             }
         }
     }
@@ -607,7 +609,7 @@ pub async fn patch_members(
             if let Some(hook) = spec.on_change {
                 hook(conn, account_id, member)
                     .await
-                    .map_err(|e| MembershipError::Internal(e.to_string()))?;
+                    .map_err(MembershipError::Internal)?;
             }
         }
     }

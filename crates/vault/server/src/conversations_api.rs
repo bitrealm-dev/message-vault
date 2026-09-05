@@ -290,7 +290,7 @@ async fn load_conversation_rows(
         &ids,
     )
     .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    .map_err(ApiError::Internal)?;
 
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {

@@ -804,7 +804,7 @@ fn optional_json_string(
         None => Ok(None),
         Some(v) => serde_json::to_string(v)
             .map(Some)
-            .map_err(|e| ApiError::Internal(format!("serialize {field}: {e}"))),
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("serialize {field}: {e}"))),
     }
 }
 
@@ -1006,13 +1006,13 @@ pub(crate) async fn imports_complete_handler(
     let account = resolve_import_account(&auth, None, &state.db).await?;
     validate_complete_import_issues(&body.issues)?;
     validate_import_status(body.status.as_deref())?;
-    let summary_json = match body.summary {
-        Some(summary) => Some(
-            serde_json::to_string(&summary)
-                .map_err(|e| ApiError::Internal(format!("serialize import summary: {e}")))?,
-        ),
-        None => None,
-    };
+    let summary_json =
+        match body.summary {
+            Some(summary) => Some(serde_json::to_string(&summary).map_err(|e| {
+                ApiError::Internal(anyhow::anyhow!("serialize import summary: {e}"))
+            })?),
+            None => None,
+        };
     let args = crate::db::vault_imports::CompleteImportArgs {
         ok: body.ok,
         status: body.status,
@@ -1042,7 +1042,7 @@ pub(crate) async fn imports_complete_handler(
         .map_err(
             |e| match e.downcast::<crate::db::vault_imports::ImportLookupError>() {
                 Ok(lookup) => ApiError::from(lookup),
-                Err(other) => ApiError::Internal(other.to_string()),
+                Err(other) => ApiError::Internal(other),
             },
         )?;
 
@@ -1154,7 +1154,7 @@ pub(crate) async fn import_contacts_handler(
     .bind(&started_at)
     .fetch_all(&mut *conn)
     .await
-    .map_err(|e| ApiError::Internal(format!("list import contacts: {e}")))?;
+    .map_err(|e| ApiError::Internal(anyhow::anyhow!("list import contacts: {e}")))?;
 
     let mut new_count = 0u64;
     let mut changed_count = 0u64;
@@ -1528,7 +1528,8 @@ pub(crate) async fn import_handler(
     query.account = Some(account);
 
     if is_jsonl_content_type(ct) {
-        let temp = tempfile::tempdir().map_err(|e| ApiError::Internal(format!("temp dir: {e}")))?;
+        let temp = tempfile::tempdir()
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("temp dir: {e}")))?;
         let jsonl_path = temp.path().join("_import.jsonl");
         let n = stream_body_to_file(request.into_body(), &jsonl_path, state.max_body_bytes).await?;
         if n == 0 {
@@ -1542,7 +1543,7 @@ pub(crate) async fn import_handler(
             handle.block_on(run_import_path(state, query, jsonl_path))
         })
         .await
-        .map_err(|e| ApiError::Internal(format!("import task failed: {e}")))?;
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("import task failed: {e}")))?;
         drop(temp);
         return response;
     }
@@ -1575,7 +1576,7 @@ fn import_semaphore() -> &'static tokio::sync::Semaphore {
 fn classify_import_error(err: anyhow::Error) -> ApiError {
     match ImportFailure::in_error(&err) {
         Some(failure) => ApiError::BadRequest(failure.to_string()),
-        None => ApiError::Internal(format!("{err:#}")),
+        None => ApiError::Internal(anyhow::anyhow!("{err:#}")),
     }
 }
 
@@ -1593,7 +1594,7 @@ async fn run_import_path(
     let _import_permit = import_semaphore()
         .acquire()
         .await
-        .map_err(|_| ApiError::Internal("vault is shutting down".into()))?;
+        .map_err(|_| ApiError::Internal(anyhow::anyhow!("vault is shutting down")))?;
     let mode = ImportMode::parse(&query.mode).map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
     let cfg = Arc::clone(&state.cfg);

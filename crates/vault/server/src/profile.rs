@@ -175,7 +175,7 @@ impl From<ProfileUpdateError> for ApiError {
         match e {
             err @ (ProfileUpdateError::UnsupportedService(_)
             | ProfileUpdateError::UnknownTimeZone(_)) => Self::BadRequest(err.to_string()),
-            ProfileUpdateError::Db(err) => Self::Internal(err.to_string()),
+            ProfileUpdateError::Db(err) => Self::Internal(err),
         }
     }
 }

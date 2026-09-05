@@ -369,7 +369,8 @@ pub(crate) fn parse_compress_options(
     let fps = max_fps
         .parse::<f32>()
         .map_err(|_| format!("invalid media_max_fps '{max_fps}'"))?;
-    media::compress_options_from_cli(max_resolution, fps, min_size, true).map_err(|e| e.to_string())
+    media::compress_options_from_cli(max_resolution, fps, min_size, true)
+        .map_err(|e| format!("{e:#}"))
 }
 
 /// Build the exporter config the background thread will run.

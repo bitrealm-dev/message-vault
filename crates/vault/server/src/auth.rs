@@ -40,7 +40,7 @@ pub(crate) type AuthRateLimits = Arc<Mutex<HashMap<String, VecDeque<Instant>>>>;
 fn check_auth_rate_limit(limits: &AuthRateLimits, bucket: &str) -> Result<(), ApiError> {
     let mut map = limits
         .lock()
-        .map_err(|_| ApiError::Internal("auth rate limiter poisoned".into()))?;
+        .map_err(|_| ApiError::Internal(anyhow::anyhow!("auth rate limiter poisoned")))?;
     let now = Instant::now();
     let entry = map.entry(bucket.to_string()).or_default();
     while let Some(oldest) = entry.front() {
@@ -536,7 +536,7 @@ impl From<ChangePasswordError> for ApiError {
     fn from(e: ChangePasswordError) -> Self {
         match e {
             err @ ChangePasswordError::IncorrectPassword => Self::BadRequest(err.to_string()),
-            ChangePasswordError::Db(err) => Self::Internal(err.to_string()),
+            ChangePasswordError::Db(err) => Self::Internal(err),
         }
     }
 }
@@ -693,7 +693,7 @@ pub async fn delete_account_handler(
         let root = account_root.clone();
         tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&root))
             .await
-            .map_err(|e| ApiError::Internal(format!("remove account data dir task: {e}")))?
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("remove account data dir task: {e}")))?
             .with_context(|| format!("remove account data dir {}", account_root.display()))?;
     }
 
