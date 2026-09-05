@@ -7,7 +7,7 @@ fast pre-flight that catches the mistakes not worth a round trip, and
 `check-all.sh` runs the whole set locally for anyone who wants it before
 pushing.
 
-`ci.yml` holds nine jobs on a pull request. A `changes` job diffs the branch
+`ci.yml` holds ten jobs on a pull request. A `changes` job diffs the branch
 against its base and publishes three booleans — `rust`, `web`, `docs` — and the
 heavy jobs read them:
 
@@ -22,6 +22,7 @@ heavy jobs read them:
 | `docs` | `docs` | `npm ci`, `astro check`, `astro build` — the site without rustdoc |
 | `license` | always | `check-license.sh` |
 | `docker-context` | always | `check-docker-context.sh` |
+| `version` | always | `check-version-lockstep.sh`: the four product version files and their lockfiles agree, and on a `v*` tag agree with the tag |
 
 `src-tauri`'s Clippy stays inside `check-tauri` rather than the `clippy` job,
 because its build needs the webkit and gtk system packages that job already

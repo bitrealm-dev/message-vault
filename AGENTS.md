@@ -313,9 +313,9 @@ Three version numbers are easy to mix up:
 | Docker Hub tag  | `0.8.3` (no `v`)    | `bitrealm/message-vault:0.8.3`. Also `0.8`, `latest`, and `sha-…`.                     |
 | JSONL schema    | `schema_version: 4` | Shared chat file format. Independent of the product version. Version 3 is refused, never upgraded. |
 
-**Product version files** (keep these in lockstep; current value is `0.8.3`):
+**Product version files** (keep these in lockstep; current value is `0.8.3`; CI's `version` job fails when they disagree, and on a `v*` tag when the tag disagrees with them):
 
-- `src-tauri/Cargo.toml` — bump this before tagging (this is the one CI docs call out)
+- `src-tauri/Cargo.toml` — the value the other three are compared against
 - `src-tauri/tauri.conf.json` — installer version
 - `web/package.json` — Vite SPA
 - `crates/vault/server/Cargo.toml` — vault server crate
@@ -327,7 +327,7 @@ Leave most other `Cargo.toml` files at `0.1.0`. Do not bump `web-next/` (`0.3.0`
 1. Merge the work to `main`.
 2. Move `[Unreleased]` notes in `CHANGELOG.md` under the new version heading.
 3. Set the four product version files to the new number (for example `0.8.0`).
-4. Push a git tag `v0.8.0` on that commit. Pushing the tag is what ships. Push/PR to `main` does not.
+4. Push a git tag `v0.8.0` on that commit. Pushing the tag is what ships. Push/PR to `main` does not. The `version` job fails the tag run if the four files, their lockfiles, or the changelog heading disagree with the tag, and nothing is built or published.
 
 `.github/workflows/ci.yml` then: runs fmt/test, pushes `bitrealm/message-vault`, builds Tauri installers (Linux `.deb` + AppImage, Windows `.msi`, macOS `.dmg`), and creates a GitHub Release named `Message Vault v0.8.0`. `.github/workflows/docs.yml` publishes the documentation site to bitrealm.io on the same tag; a merge to `main` does not publish it.
 
