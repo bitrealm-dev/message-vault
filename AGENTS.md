@@ -89,7 +89,7 @@ The product has two pieces:
 | Docs site              | Astro 7 + Starlight, published to GitHub Pages at bitrealm.io.                                                                    |
 | Packaging              | Docker (Node 22 + Rust image). GitHub Actions on `v*` tags builds the image and Tauri installers.                                 |
 | Helpers on PATH        | `ffmpeg` / `ffprobe` for media. `wtsexporter` (Python) for WhatsApp. `gh` for GitHub.                                             |
-| Not the product path   | Restored Next.js 16 browse app (`web-next/`, better-sqlite3).                                                                     |
+| Not the product path   | Restored Next.js 16 browse app (`web-next/`, better-sqlite3). Kept on purpose; see CLAUDE.md before proposing its removal.        |
 
 ### Directory map (`tree -L 2 message-vault`)
 
