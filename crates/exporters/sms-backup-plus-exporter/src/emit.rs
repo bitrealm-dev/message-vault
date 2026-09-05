@@ -680,6 +680,7 @@ mod tests {
             |i| Ok(payloads.get(i).cloned().flatten()),
             None,
             None,
+            None,
             &mut report,
         )
         .unwrap();

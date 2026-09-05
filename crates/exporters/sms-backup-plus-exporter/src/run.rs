@@ -32,8 +32,7 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
         bail!("no input given: pass --input PATH");
     }
 
-    let mut transforms = ExportTransforms::from_configs(&config.media, &config.obfuscate);
-    transforms.log = config.log.clone();
+    let transforms = ExportTransforms::from_config(config);
     let (report, sink) = convert_export(ConvertExportArgs {
         inputs: &config.inputs,
         output_dir: &config.output,

@@ -75,6 +75,9 @@ export function stepsFor(mode: AttachmentMediaMode): ImportStep[] {
  * without a row here is a compile error, not a silent runtime fallback.
  */
 const STEP_ROW_INDEX: Record<ImportProgressEvent["step"], (mode: AttachmentMediaMode) => number> = {
+  // Setup steps (decrypting a backup, caching tables) are part of reading
+  // the backup, so they narrate the first row rather than one of their own.
+  setup: () => 0,
   parse: () => 0,
   // Writing conversation files ("prepare") lands on the staging step, not
   // a row of its own.
@@ -113,14 +116,28 @@ export function progressHeading(steps: ImportStep[], phase: ImportPhase): string
   return HEADING_BY_LABEL.get(current.label) ?? current.label;
 }
 
-/** Whether a progress event should mark its step done. Attachments stay active until prepare. */
+/**
+ * Whether a progress event should mark its step done. Attachments stay active
+ * until prepare, and a setup event never completes the read row: its counts
+ * are "step 5 of 5", and the messages are still to be read once that lands.
+ */
 export function isProgressStepComplete(
   step: ImportProgressEvent["step"],
   done: number,
   total: number,
 ): boolean {
-  if (step === "attachments") return false;
+  if (step === "attachments" || step === "setup") return false;
   return total > 0 && done >= total;
+}
+
+/**
+ * Detail line for a setup event: the step's label with its position, so a
+ * long decrypt reads as "Deriving backup keys (1/5)" rather than a frozen
+ * "Reading backup…".
+ */
+export function setupDetail(event: Pick<ImportProgressEvent, "done" | "total" | "status">): string {
+  const label = event.status ?? "Preparing";
+  return event.total > 0 ? `${label} (${event.done}/${event.total})` : label;
 }
 
 /** Done-line for the attachment step, using the last live counts when present. */

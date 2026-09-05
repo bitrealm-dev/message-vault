@@ -2,9 +2,10 @@
 //!
 //! `extract` starts the selected exporter on a background thread and returns
 //! immediately. Progress is sent back as Tauri events:
-//! `extract:log` (one log line), `extract:progress` (bar position),
-//! `extract:finished` (a summary string or JSON object), and `extract:error`
-//! ([`ExtractErrorEvent`]).
+//! `extract:log` (one human-readable log line), `extract:progress` (one
+//! typed [`ExtractProgressEvent`], mapped from the exporter's
+//! `ProgressEvent`), `extract:finished` (a summary string or JSON object),
+//! and `extract:error` ([`ExtractErrorEvent`]).
 //!
 //! The shared cancel flag lives in [`AppState`]. `cancel` sets it to true.
 //! `extract` turns it off at the start of a job. The exporter checks it
@@ -19,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use media::{CompressOptions, MaxResolution};
 use message_vault_io_core::{
     ApplePlatform, AttachmentMedia, Exporter, ExporterConfig, Form, LogSink, OutputFormat,
-    SourceConfig, WhatsappPlatform,
+    ProgressSink, SourceConfig, WhatsappPlatform,
 };
 use tauri::Emitter;
 
@@ -32,10 +33,9 @@ use sms_backup_plus_exporter::run as run_sms_plus;
 use sms_backup_restore_exporter::run as run_sms_restore;
 use whatsapp_exporter::run as run_whatsapp;
 
-use super::events::ExtractErrorEvent;
+use super::events::{ExtractErrorEvent, ExtractProgressEvent};
 use super::jobs::{reset_and_clone_cancel, spawn_job};
 use super::last_log_line_or;
-use super::progress::{ExtractProgressStage, extract_progress_from_log};
 use crate::state::AppState;
 
 /// Ask this process to stop the export that is currently running.
@@ -217,14 +217,16 @@ pub async fn extract(
 
     let app_handle = app.clone();
     config.cancel = Some(cancel);
+    // Two channels, two jobs: log lines are for the person reading the log
+    // panel, progress events are for the bar. Nothing reads counts out of
+    // the prose.
     let log_app = app_handle.clone();
-    let progress_stage = Arc::new(Mutex::new(ExtractProgressStage::Parse));
-    let log_progress_stage = Arc::clone(&progress_stage);
     config.log = Some(LogSink::new(move |line: &str| {
         let _ = log_app.emit("extract:log", line.to_string());
-        if let Some(progress) = extract_progress_from_log(line, &log_progress_stage) {
-            let _ = log_app.emit("extract:progress", progress);
-        }
+    }));
+    let progress_app = app_handle.clone();
+    config.progress = Some(ProgressSink::new(move |event| {
+        let _ = progress_app.emit("extract:progress", ExtractProgressEvent::from(event));
     }));
 
     spawn_job(app, move || {

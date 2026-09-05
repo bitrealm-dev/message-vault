@@ -105,8 +105,7 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
     }
 
     message_vault_io_core::check_cancel(config.cancel.as_ref())?;
-    let mut transforms = ExportTransforms::from_configs(&config.media, &config.obfuscate);
-    transforms.log = config.log.clone();
+    let transforms = ExportTransforms::from_config(config);
     let needs_media_tools = transforms.needs_media_tools();
     let (report, sink) = convert_json(
         &json_path,

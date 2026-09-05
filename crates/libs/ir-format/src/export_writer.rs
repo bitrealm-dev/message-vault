@@ -9,7 +9,7 @@ use crate::write_queue::{
 use anyhow::Result;
 use media::{CompressOptions, MediaMode};
 use message_ir::{ConversationDocument, IrAttachment};
-use message_vault_io_core::{CancelFlag, ExportReport, LogSink, OutputFormat};
+use message_vault_io_core::{CancelFlag, ExportReport, LogSink, OutputFormat, ProgressSink};
 use std::path::{Path, PathBuf};
 
 /// Owns the write tail of an exporter run: output preparation, the
@@ -30,6 +30,7 @@ pub struct ExportWriter {
     media_mode: MediaMode,
     compress: CompressOptions,
     log: Option<LogSink>,
+    progress: Option<ProgressSink>,
     resume: bool,
     use_queue: bool,
     copy_attachments: bool,
@@ -53,6 +54,8 @@ pub struct ExportWriterParts {
     pub compress: CompressOptions,
     /// Log sink captured from the transforms.
     pub log: Option<LogSink>,
+    /// Progress sink captured from the transforms.
+    pub progress: Option<ProgressSink>,
 }
 
 impl ExportWriter {
@@ -82,6 +85,7 @@ impl ExportWriter {
         };
         let compress = transforms.compress.clone();
         let log = transforms.log.clone();
+        let progress = transforms.progress.clone();
         // The queue path is for the import, which is JSONL and never
         // obfuscated. Obfuscation is stateful across documents and the other
         // formats merge or embed at finish, so those keep the sink path.
@@ -98,6 +102,7 @@ impl ExportWriter {
             media_mode,
             compress,
             log,
+            progress,
             resume,
             use_queue,
             copy_attachments,
@@ -133,6 +138,11 @@ impl ExportWriter {
         self.log.as_ref()
     }
 
+    /// Progress sink captured from the transforms.
+    pub fn progress(&self) -> Option<&ProgressSink> {
+        self.progress.as_ref()
+    }
+
     /// Give up the writer and take the opened sink plus the decisions
     /// [`open`](Self::open) made, for a custom drain (see
     /// [`ExportWriterParts`]).
@@ -145,6 +155,7 @@ impl ExportWriter {
             copy_attachments: self.copy_attachments,
             compress: self.compress,
             log: self.log,
+            progress: self.progress,
         }
     }
 
@@ -189,6 +200,7 @@ impl ExportWriter {
                 units,
                 &options,
                 self.log.as_ref(),
+                self.progress.as_ref(),
                 cancel,
                 report,
             );
@@ -217,11 +229,19 @@ impl ExportWriter {
                 None => Ok(None),
             },
             self.log.as_ref(),
+            self.progress.as_ref(),
             cancel,
             report,
         )
         .map_err(anyhow::Error::msg)?;
 
-        write_documents_through_sink(documents, self.sink, self.log.as_ref(), cancel, report)
+        write_documents_through_sink(
+            documents,
+            self.sink,
+            self.log.as_ref(),
+            self.progress.as_ref(),
+            cancel,
+            report,
+        )
     }
 }

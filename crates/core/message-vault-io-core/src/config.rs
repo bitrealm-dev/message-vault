@@ -10,6 +10,7 @@ use media::{CompressOptions, MediaMode};
 
 use crate::exporters::{ApplePlatform, Exporter, WhatsappPlatform};
 use crate::process::{CancelFlag, LogSink, emit_log};
+use crate::progress::{ProgressEvent, ProgressSink, emit_progress};
 
 /// Output packaging projected from the common message.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -101,8 +102,13 @@ pub struct ExporterConfig {
     pub media: MediaConfig,
     /// Shared cancel flag for in-process jobs; CLI runs leave it unset.
     pub cancel: Option<CancelFlag>,
-    /// Mid-run progress / warnings. `None` → stderr (CLI); GUI sets a sink.
+    /// Human-readable mid-run notes and warnings. `None` → stderr; the
+    /// desktop app sets a sink and shows the lines in its log panel.
     pub log: Option<LogSink>,
+    /// Typed progress events (stage, done, total, bytes). `None` reports
+    /// nothing; the desktop app sets a sink and drives its progress bar
+    /// from the events. Log lines are never read for counts.
+    pub progress: Option<ProgressSink>,
     /// Packaging format (`csv` / `eml` / `mbox` / `json` / `jsonl` / `xml`).
     pub output_format: OutputFormat,
     /// Continue an interrupted export in the same output directory: previous
@@ -117,6 +123,11 @@ impl ExporterConfig {
     /// Send a progress or warning line to the log sink, or to stderr if none is set.
     pub fn emit_log(&self, line: impl AsRef<str>) {
         emit_log(self.log.as_ref(), line);
+    }
+
+    /// Send a typed progress event to the progress sink, if one is set.
+    pub fn emit_progress(&self, event: ProgressEvent) {
+        emit_progress(self.progress.as_ref(), event);
     }
 
     /// First input path, if any.

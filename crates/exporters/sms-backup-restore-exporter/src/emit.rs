@@ -90,6 +90,7 @@ pub(crate) fn convert_export(
             media: writer.media_mode(),
             compress,
             log: writer.log(),
+            progress: writer.progress(),
             cancel: args.cancel,
         },
     )?;

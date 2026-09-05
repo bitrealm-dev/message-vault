@@ -62,6 +62,7 @@ pub fn backup_identities(
         transforms: ExportTransforms::default(),
         output_format: OutputFormat::Jsonl,
         log: None,
+        progress: None,
         cancel: None,
         resume: false,
     };

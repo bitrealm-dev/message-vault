@@ -287,6 +287,7 @@ pub fn run(cfg: &VaultPushConfig, progress: Option<&mut ProgressFn<'_>>) -> Resu
     }
     out.log("");
     out.log(&format_push_summary(&report));
+    out.conversation_issues(&report.results);
     out.event(ProgressEvent::Log(String::new()));
     out.event(ProgressEvent::Finished(report.clone()));
     Ok(report)

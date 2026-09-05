@@ -30,7 +30,9 @@ use message_ir_format::{
     AttachmentSource, ConversationUnit, ExportWriter, ExportWriterParts, FormatSinkResult,
     WriteQueueOptions,
 };
-use message_vault_io_core::{AttachmentJob, MediaConfig, OutputFormat, run_attachment_jobs};
+use message_vault_io_core::{
+    AttachmentJob, MediaConfig, OutputFormat, ProgressEvent, run_attachment_jobs,
+};
 
 use crate::{
     attachments::read_resolved_attachment,
@@ -51,7 +53,7 @@ const DEFAULT_MESSAGE_PROGRESS_EVERY: u64 = 500;
 /// JSON Lines still batches work, but report often enough that long attachment
 /// decrypts between ticks do not look frozen on large backups.
 const JSONL_MESSAGE_PROGRESS_EVERY: u64 = 1_000;
-const CONVERSATION_PROGRESS_EVERY: u64 = 100;
+const CONVERSATION_PROGRESS_EVERY: usize = 100;
 
 const fn message_progress_every(format: OutputFormat) -> u64 {
     match format {
@@ -166,6 +168,7 @@ fn collect_conversations(
     let mut seen = 0u64;
     let mut failures = 0u64;
     let total = Message::get_count(session.data_source.db(), &session.options.query_context)?;
+    let total_messages = usize::try_from(total).unwrap_or(usize::MAX);
     let mut statement =
         Message::stream_rows(session.data_source.db(), &session.options.query_context)?;
 
@@ -200,6 +203,10 @@ fn collect_conversations(
         #[allow(clippy::manual_is_multiple_of)]
         if seen % progress_every == 0 {
             session.options.emit_log(format!("  …{seen}/{total}"));
+            session.options.emit_progress(ProgressEvent::Parse {
+                done: usize::try_from(seen).unwrap_or(usize::MAX),
+                total: total_messages,
+            });
         }
     }
 
@@ -222,12 +229,15 @@ fn write_conversations(
     conversations: BTreeMap<String, PendingConversation>,
 ) -> Result<(), RuntimeError> {
     let format = session.options.output_format;
-    let total = conversations.len() as u64;
+    let total = conversations.len();
     session.options.emit_log("");
     session
         .options
         .emit_log(format!("Preparing {total} conversation file(s)..."));
-    let mut written = 0u64;
+    session
+        .options
+        .emit_progress(ProgressEvent::Prepare { done: 0, total });
+    let mut written = 0usize;
     for (chat_identifier, convo) in conversations {
         // Cheap AtomicBool load; abort promptly when the user cancels.
         message_vault_io_core::check_cancel(session.options.cancel.as_ref())
@@ -252,6 +262,10 @@ fn write_conversations(
             session
                 .options
                 .emit_log(format!("  preparing {written}/{total}"));
+            session.options.emit_progress(ProgressEvent::Prepare {
+                done: written,
+                total,
+            });
         }
     }
     Ok(())
@@ -337,6 +351,7 @@ fn drain_conversations(
         writer_count: 0,
     };
     let log = session.options.log.clone();
+    let progress = session.options.progress.clone();
     let cancel = session.options.cancel.as_ref();
 
     let encrypted = session
@@ -371,6 +386,7 @@ fn drain_conversations(
             &options,
             &mut load,
             log.as_ref(),
+            progress.as_ref(),
             cancel,
         )
     } else {
@@ -379,6 +395,7 @@ fn drain_conversations(
             units,
             &options,
             log.as_ref(),
+            progress.as_ref(),
             cancel,
         )
     }
@@ -467,12 +484,10 @@ fn stage_conversation_attachments(
             Some(AttachmentLoad::Bytes(bytes)) => Ok(Some(bytes.clone())),
             _ => Ok(None),
         },
-        |progress| {
-            session.options.emit_log(format!(
-                "  attachments {}/{} {}/{}",
-                progress.done, progress.total, progress.bytes_done, progress.bytes_total
-            ));
-        },
+        message_vault_io_core::report_attachment_progress(
+            session.options.log.as_ref(),
+            session.options.progress.as_ref(),
+        ),
         session.options.log.as_ref(),
         cancel,
     )

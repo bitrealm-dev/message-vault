@@ -18,6 +18,9 @@ use imessage_database::{
 
 use crate::{contacts::Name, data_source::DataSource, error::RuntimeError, options::MailOptions};
 
+/// Setup steps `MailSession::new` runs before any message is read.
+const CACHE_STEPS: usize = 4;
+
 /// Cached chats, handles, contacts, and tapbacks for one conversion run.
 pub(crate) struct MailSession {
     pub options: MailOptions,
@@ -45,22 +48,22 @@ impl MailSession {
         let data_source = DataSource::from(&options)?;
 
         options.emit_log("Building cache...");
-        options.emit_log("  [1/4] Caching chats...");
+        options.setup_step(1, CACHE_STEPS, "Caching chats");
         let chatrooms = Chat::cache(data_source.db())?;
 
-        options.emit_log("  [2/4] Caching chatrooms...");
+        options.setup_step(2, CACHE_STEPS, "Caching chatrooms");
         let chatroom_participants = ChatToHandle::cache(data_source.db())?;
         let chat_handle_lookup = ChatToHandle::get_chat_lookup_map(data_source.db())?;
         let real_chatrooms = ChatToHandle::dedupe(&chatroom_participants, &chat_handle_lookup)?;
 
-        options.emit_log("  [3/4] Caching participants...");
+        options.setup_step(3, CACHE_STEPS, "Caching participants");
         let participants = Handle::cache(data_source.db())?;
         let real_participants = Handle::dedupe(&participants);
         let participants_map = data_source
             .contacts_index
             .build_participants_map(&participants, &real_participants);
 
-        options.emit_log("  [4/4] Caching tapbacks...");
+        options.setup_step(4, CACHE_STEPS, "Caching tapbacks");
         let tapbacks = Message::cache(data_source.db())?;
         options.emit_log("Cache built!");
 

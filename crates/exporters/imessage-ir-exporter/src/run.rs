@@ -114,13 +114,10 @@ fn options_from_export_config(config: &ExporterConfig) -> Result<MailOptions, Ru
         cleartext_password: source.backup_password.clone(),
         contacts_path: source.apple_contacts.clone(),
         attachment_embed,
-        transforms: {
-            let mut transforms = ExportTransforms::from_configs(&config.media, &config.obfuscate);
-            transforms.log = config.log.clone();
-            transforms
-        },
+        transforms: ExportTransforms::from_config(config),
         output_format: config.output_format,
         log: config.log.clone(),
+        progress: config.progress.clone(),
         cancel: config.cancel.clone(),
         resume: config.resume,
     })
@@ -215,6 +212,7 @@ mod tests {
             media: MediaConfig::default(),
             cancel: None,
             log: None,
+            progress: None,
             output_format: OutputFormat::Jsonl,
             resume: false,
             source: SourceConfig::Apple(apple),

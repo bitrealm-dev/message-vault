@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 
-use crate::report::{PushReport, UploadProfile, elapsed_ms, format_profile_line};
+use crate::report::{FileResult, PushReport, UploadProfile, elapsed_ms, format_profile_line};
 
 /// Events the GUI/CLI can show while a push is running.
 #[derive(Debug, Clone)]
@@ -302,6 +302,26 @@ impl<'p, 'f> Reporter<'p, 'f> {
             });
         }
     }
+
+    /// Send one Import Errors row per conversation that failed or was
+    /// skipped, so any consumer can list them without reading the report.
+    /// The log already carries the `fail` line for each failure, so this
+    /// goes to the callback only.
+    pub(crate) fn conversation_issues(&mut self, results: &[FileResult]) {
+        for result in results {
+            let (kind, fallback) = match result.status.as_str() {
+                "failed" => ("error", "upload failed"),
+                "skipped" => ("skip", "already imported or skipped"),
+                _ => continue,
+            };
+            self.event(ProgressEvent::Issue {
+                kind: kind.into(),
+                step: "upload".into(),
+                item: result.file.clone(),
+                reason: result.error.clone().unwrap_or_else(|| fallback.to_string()),
+            });
+        }
+    }
 }
 
 #[cfg(test)]
@@ -368,5 +388,70 @@ mod tests {
             })
             .collect();
         assert_eq!(shown, ["loud", "shown"]);
+    }
+
+    #[test]
+    fn conversation_issues_cover_failed_and_skipped_files_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("push.log");
+        let mut seen = Vec::new();
+        {
+            let mut cb = |event: ProgressEvent| seen.push(event);
+            let mut reporter = Reporter::open(&log_path, Some(&mut cb)).unwrap();
+            reporter.conversation_issues(&[
+                FileResult {
+                    file: "ok.jsonl".into(),
+                    status: "ok".into(),
+                    error: None,
+                    messages: 3,
+                    attachments: 0,
+                    profile: None,
+                },
+                FileResult::failed("bad.jsonl", "attachment exceeds limit"),
+                FileResult::skipped("done.jsonl"),
+                FileResult {
+                    file: "silent.jsonl".into(),
+                    status: "failed".into(),
+                    error: None,
+                    messages: 0,
+                    attachments: 0,
+                    profile: None,
+                },
+            ]);
+        }
+        let rows: Vec<(String, String, String)> = seen
+            .into_iter()
+            .map(|event| match event {
+                ProgressEvent::Issue {
+                    kind, item, reason, ..
+                } => (kind, item, reason),
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                (
+                    "error".to_string(),
+                    "bad.jsonl".to_string(),
+                    "attachment exceeds limit".to_string()
+                ),
+                (
+                    "skip".to_string(),
+                    "done.jsonl".to_string(),
+                    "already imported or skipped".to_string()
+                ),
+                (
+                    "error".to_string(),
+                    "silent.jsonl".to_string(),
+                    "upload failed".to_string()
+                ),
+            ]
+        );
+        assert_eq!(
+            fs::read_to_string(&log_path).unwrap(),
+            "",
+            "conversation issues are callback-only; the log already has the fail lines"
+        );
     }
 }
