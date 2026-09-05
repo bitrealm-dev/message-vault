@@ -324,8 +324,6 @@ pub struct ContactLoadStats {
     pub contacts: u64,
     /// Phone handles linked to contacts.
     pub phones: u64,
-    /// Contact–group links created.
-    pub groups: u64,
     /// True when loading was skipped (contacts already loaded and not forced).
     pub skipped: bool,
     /// Phone handles written with a review note (ambiguous normalized form).
@@ -337,7 +335,6 @@ struct ContactDraft {
     /// (normalized handle, review note when the value is ambiguous).
     phones: Vec<(String, Option<String>)>,
     preferred_name: Option<String>,
-    groups: Vec<String>,
 }
 
 /// Whether the address book is VCF or vCard CSV, judged by its content.
@@ -499,7 +496,6 @@ async fn load_from_vcard_csv(
         drafts.push(ContactDraft {
             phones,
             preferred_name,
-            groups: Vec::new(),
         });
     }
 
@@ -568,7 +564,6 @@ async fn load_from_vcf(
         drafts.push(ContactDraft {
             phones,
             preferred_name,
-            groups: Vec::new(),
         });
     }
 
@@ -708,19 +703,6 @@ async fn insert_contact_drafts(
                 stats.phones_needing_review += 1;
             }
         }
-
-        for group_name in &draft.groups {
-            let group_id = ensure_group(&mut tx, account_id, group_name).await?;
-            sqlx::query(
-                "INSERT INTO contact_group_members (contact_id, group_id) VALUES ($1, $2)
-                 ON CONFLICT DO NOTHING",
-            )
-            .bind(contact_id)
-            .bind(group_id)
-            .execute(&mut *tx)
-            .await?;
-            stats.groups += 1;
-        }
     }
 
     tx.commit().await?;
@@ -758,7 +740,7 @@ fn merge_duplicate_phone_drafts(drafts: Vec<ContactDraft>) -> Vec<ContactDraft> 
     merged
 }
 
-/// Fold one draft into another: keep the first name, union the phones, emails, and groups.
+/// Fold one draft into another: keep the first name, union the phones.
 fn merge_contact_draft(into: &mut ContactDraft, from: ContactDraft) {
     if into.preferred_name.is_none() {
         into.preferred_name = from.preferred_name;
@@ -768,34 +750,6 @@ fn merge_contact_draft(into: &mut ContactDraft, from: ContactDraft) {
             into.phones.push(phone);
         }
     }
-    for group in from.groups {
-        if !into
-            .groups
-            .iter()
-            .any(|existing| existing.eq_ignore_ascii_case(&group))
-        {
-            into.groups.push(group);
-        }
-    }
-}
-
-/// Id of the contact group called `name`, creating it if needed.
-async fn ensure_group(conn: &mut AnyConnection, account_id: &str, name: &str) -> Result<i64> {
-    sqlx::query(
-        "INSERT INTO contact_groups (account_id, name) VALUES ($1, $2)
-         ON CONFLICT DO NOTHING",
-    )
-    .bind(account_id)
-    .bind(name)
-    .execute(&mut *conn)
-    .await?;
-    let id: i64 =
-        sqlx::query_scalar("SELECT id FROM contact_groups WHERE account_id = $1 AND name = $2")
-            .bind(account_id)
-            .bind(name)
-            .fetch_one(&mut *conn)
-            .await?;
-    Ok(id)
 }
 
 /// Contacts are now resolved through the `handles` table during import (Task 10 of the
@@ -1067,9 +1021,15 @@ mod tests {
             .unwrap();
         assert_eq!(stats.contacts, 2);
         assert_eq!(stats.phones, 3);
-        // An address book no longer creates Contact Groups; those belong to
-        // the person, and a CATEGORIES line is not one of theirs.
-        assert_eq!(stats.groups, 0);
+        // An address book never creates Contact Groups: those belong to the
+        // person, and a CATEGORIES line is not one of theirs (#322).
+        let groups: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM contact_groups WHERE account_id = $1")
+                .bind(TEST_ACCOUNT_ID)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!(groups, 0);
 
         let preferred_name: String = sqlx::query_scalar(
             "SELECT c.preferred_name FROM contacts c

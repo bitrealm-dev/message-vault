@@ -1771,11 +1771,6 @@ export interface components {
             attachments: number;
             /**
              * Format: int64
-             * @description Contact–group links created.
-             */
-            contact_group_links: number;
-            /**
-             * Format: int64
              * @description Contact–handle links created.
              */
             contact_handles: number;
