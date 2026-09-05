@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # The web app's vault types are generated from docs/src/assets/openapi.json.
+# scratch: comment-only change to prove the classifier sends this script to the web job
 # That JSON is already pinned to the running server by a Rust test
 # (crates/vault/server/src/openapi.rs). This is the other half: it fails when
 # the checked-in TypeScript no longer matches the JSON, so a route or field
