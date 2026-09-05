@@ -317,16 +317,16 @@ mod tests {
         assert!(paths["/v1/admin/users/{id}/password"]["put"].is_object());
         assert!(paths["/v1/admin/users/{id}/messages"]["delete"].is_object());
         let import = &paths["/v1/import"]["post"]["requestBody"]["content"];
-        for ct in [
-            "application/x-ndjson",
-            "application/jsonl",
-            "multipart/form-data",
-        ] {
+        for ct in ["application/x-ndjson", "application/jsonl"] {
             assert!(
                 import.get(ct).is_some(),
                 "POST /v1/import must document {ct}"
             );
         }
+        assert!(
+            import.get("multipart/form-data").is_none(),
+            "POST /v1/import no longer accepts multipart (#337)"
+        );
         let put = &paths["/v1/assets/{sha256}"]["put"]["requestBody"]["content"];
         assert!(
             put.get("application/octet-stream").is_some(),

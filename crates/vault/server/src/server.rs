@@ -9,7 +9,7 @@
 //! router.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
@@ -620,7 +620,6 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     eprintln!("       source= required: a short name such as whatsapp or imessage");
     eprintln!("       account= optional (must match token); derived from Bearer when omitted");
     eprintln!("       Content-Type: application/jsonl  (body only; assets by sha256)");
-    eprintln!("       Content-Type: multipart/form-data   (field jsonl + file parts; remote push)");
     eprintln!(
         "       A file the vault cannot read is a 400 that names the line; export routes are read-only"
     );
@@ -796,16 +795,6 @@ pub(crate) fn is_jsonl_content_type(base: &str) -> bool {
         || base.eq_ignore_ascii_case("application/x-ndjson")
 }
 
-/// True for `multipart/form-data`.
-pub(crate) fn is_multipart_content_type(base: &str) -> bool {
-    base.eq_ignore_ascii_case("multipart/form-data")
-}
-
-/// Reject path traversal; allow only relative Normal/CurDir components.
-pub(crate) fn safe_rel_path(name: &str) -> Result<PathBuf, ApiError> {
-    crate::config::safe_rel_path(name).map_err(|e| ApiError::BadRequest(e.to_string()))
-}
-
 /// Read the whole request body into memory, failing once it passes `max_bytes`.
 pub(crate) async fn read_body_limited(
     body: axum::body::Body,
@@ -879,32 +868,6 @@ pub(crate) async fn stream_body_to_file(
         file.write_all(&chunk)
             .await
             .map_err(|e| ApiError::Internal(format!("write {}: {e}", dest.display())))?;
-    }
-    file.flush()
-        .await
-        .map_err(|e| ApiError::Internal(format!("flush {}: {e}", dest.display())))?;
-    Ok(written)
-}
-
-/// Stream one multipart field to `dest`. Returns the bytes written.
-pub(crate) async fn stream_field_to_file(
-    mut field: axum::extract::multipart::Field<'_>,
-    dest: &Path,
-) -> Result<u64, ApiError> {
-    let mut file = create_dest_file(dest).await?;
-    let mut written = 0u64;
-    while let Some(chunk) = field
-        .chunk()
-        .await
-        // Axum's own status (413 over its inner ~2 MiB body limit, see
-        // issue #334) carries the meaning, so pass it through rather than
-        // flattening to 400. ADR-0005.
-        .map_err(|e| ApiError::Status(e.status(), e.body_text()))?
-    {
-        file.write_all(&chunk)
-            .await
-            .map_err(|e| ApiError::Internal(format!("write {}: {e}", dest.display())))?;
-        written += chunk.len() as u64;
     }
     file.flush()
         .await

@@ -3557,7 +3557,7 @@
         "tags": [
           "Import"
         ],
-        "summary": "Import one message-ir JSONL body (raw or multipart) into the vault.",
+        "summary": "Import one message-ir JSONL body into the vault.",
         "operationId": "import_handler",
         "parameters": [
           {
@@ -3604,11 +3604,10 @@
           }
         ],
         "requestBody": {
-          "description": "message-ir JSONL. application/x-ndjson, application/jsonl, and multipart/form-data (field jsonl plus file parts) are accepted.",
+          "description": "message-ir JSONL as application/x-ndjson or application/jsonl. Attachments are uploaded first by SHA-256 through /v1/assets.",
           "content": {
             "application/jsonl": {},
-            "application/x-ndjson": {},
-            "multipart/form-data": {}
+            "application/x-ndjson": {}
           }
         },
         "responses": {
@@ -3674,6 +3673,16 @@
           },
           "413": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "The body is not JSON Lines (multipart/form-data is not accepted)",
             "content": {
               "application/json": {
                 "schema": {
