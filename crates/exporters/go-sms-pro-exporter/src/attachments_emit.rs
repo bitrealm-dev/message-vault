@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use go_sms_mms::ParsedPdu;
-use message_ir::{IrAttachment, PendingAttachment};
+use message_ir::PendingAttachment;
 use message_vault_io_core::digest_prefix;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -39,25 +39,4 @@ pub(super) fn queue_pdu_attachments(
         });
     }
     Ok(out)
-}
-
-/// Map a queued attachment onto the shared [`IrAttachment`] shape.
-pub(super) fn pending_attachment_to_ir(
-    a: &PendingAttachment,
-    blob_bytes: &HashMap<String, Vec<u8>>,
-) -> IrAttachment {
-    let digest = a.digest_sha256.clone();
-    let bytes = digest.as_ref().and_then(|d| blob_bytes.get(d).cloned());
-    IrAttachment {
-        path: None,
-        original_name: a.name_hint.clone(),
-        mime_type: a.mime_type(),
-        digest_sha256: digest,
-        is_sticker: false,
-        transcription: None,
-        sticker_effect: None,
-        size_bytes: bytes.as_ref().map(|b| b.len() as u64),
-        missing_reason: None,
-        bytes,
-    }
 }

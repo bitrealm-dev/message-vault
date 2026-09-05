@@ -15,6 +15,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 
 mod projection;
 #[cfg(feature = "testutil")]
@@ -830,6 +831,24 @@ impl ConversationHeader {
             conversation: doc.conversation.clone(),
         }
     }
+
+    /// The document a reader builds from a header and the messages that
+    /// followed it, at the current schema version, with its stats computed.
+    pub fn into_document(
+        self,
+        messages: Vec<IrMessage>,
+        packaging_stem_suffix: Option<String>,
+    ) -> ConversationDocument {
+        let mut doc = ConversationDocument {
+            schema_version: SCHEMA_VERSION,
+            export: self.export,
+            conversation: self.conversation,
+            messages,
+            packaging_stem_suffix,
+        };
+        doc.finalize_stats();
+        doc
+    }
 }
 
 /// Intermediate message before conversion to [`IrMessage`].
@@ -892,6 +911,26 @@ impl PendingAttachment {
     /// MIME type as an option; empty [`Self::content_type`] means `None`.
     pub fn mime_type(&self) -> Option<String> {
         (!self.content_type.is_empty()).then(|| self.content_type.clone())
+    }
+
+    /// The IR attachment for a queued one, carrying its bytes when
+    /// `blob_bytes` holds them under its digest. No path: the runner that
+    /// writes the file fills that in.
+    pub fn to_ir(&self, blob_bytes: &HashMap<String, Vec<u8>>) -> IrAttachment {
+        let digest = self.digest_sha256.clone();
+        let bytes = digest.as_ref().and_then(|d| blob_bytes.get(d).cloned());
+        IrAttachment {
+            path: None,
+            original_name: self.name_hint.clone(),
+            mime_type: self.mime_type(),
+            digest_sha256: digest,
+            is_sticker: false,
+            transcription: None,
+            sticker_effect: None,
+            size_bytes: bytes.as_ref().map(|b| b.len() as u64),
+            missing_reason: None,
+            bytes,
+        }
     }
 }
 

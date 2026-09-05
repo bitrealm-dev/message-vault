@@ -1,7 +1,7 @@
 //! Convert SMS Backup+ `.eml` trees into the shared conversation structure,
 //! then write the chosen output format via [`ExportWriter`].
 
-use crate::attachments_emit::{merge_attachments, pending_attachment_to_ir, queue_attachments};
+use crate::attachments_emit::{merge_attachments, queue_attachments};
 use crate::identity::{chat_id_for, cover_identity, name_only_key, timestamp_ms};
 use crate::parse_emit::{ParsedEmlKind, collect_eml_paths, parse_one_eml};
 use crate::types::ParsedMessage;
@@ -210,7 +210,7 @@ impl ProjectionHooks for SbpProjection<'_> {
     }
 
     fn attachment_to_ir(&self, att: &PendingAttachment, _msg: &PendingMessage) -> IrAttachment {
-        pending_attachment_to_ir(att, self.blob_bytes)
+        att.to_ir(self.blob_bytes)
     }
 
     fn source(&self, convo: &PendingConversation, msg: &PendingMessage) -> IrSource {
@@ -395,15 +395,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
     }
     let sink_result = writer.finish(
         documents,
-        &mut |att| {
-            let hint = att
-                .size_bytes
-                .or_else(|| att.bytes.as_ref().map(|b| b.len() as u64));
-            match att.bytes.take() {
-                Some(bytes) => (AttachmentSource::Bytes(bytes), hint),
-                None => (AttachmentSource::Missing, hint),
-            }
-        },
+        &mut AttachmentSource::take_bytes,
         cancel,
         &mut report,
     )?;
@@ -642,10 +634,7 @@ mod tests {
         let queued = queue_attachments(&blobs, true, &mut blob_bytes);
         assert_eq!(queued.len(), 2);
 
-        let mut atts: Vec<_> = queued
-            .iter()
-            .map(|a| pending_attachment_to_ir(a, &blob_bytes))
-            .collect();
+        let mut atts: Vec<_> = queued.iter().map(|a| a.to_ir(&blob_bytes)).collect();
         let mut report = ExportReport::default();
         let mut doc = ConversationDocument {
             schema_version: SCHEMA_VERSION,

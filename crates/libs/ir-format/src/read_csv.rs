@@ -61,15 +61,7 @@ pub fn read_conversation_csv(path: &Path) -> Result<ConversationDocument> {
         );
     }
 
-    let mut doc = ConversationDocument {
-        schema_version: SCHEMA_VERSION,
-        export: header.export,
-        conversation: header.conversation,
-        messages,
-        packaging_stem_suffix,
-    };
-    doc.finalize_stats();
-    Ok(doc)
+    Ok(header.into_document(messages, packaging_stem_suffix))
 }
 
 /// Rebuild the conversation header from the first CSV row's conversation columns.

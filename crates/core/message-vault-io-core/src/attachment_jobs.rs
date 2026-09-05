@@ -172,36 +172,13 @@ pub fn stage_conversation_attachments(
     cancel: Option<&CancelFlag>,
     report: &mut ExportReport,
 ) -> Result<(), String> {
-    let mut jobs = Vec::new();
-    for doc in documents.iter_mut() {
-        for msg in &mut doc.messages {
-            let ts = msg.timestamp_unix_ms;
-            for att in &mut msg.attachments {
-                let hint = att
-                    .size_bytes
-                    .or_else(|| att.bytes.as_ref().map(|b| b.len() as u64));
-                jobs.push(AttachmentJob {
-                    attachment: att,
-                    timestamp_unix_ms: ts,
-                    size_hint: hint,
-                });
-            }
-        }
-    }
+    let mut jobs = attachment_jobs(documents);
     run_attachment_jobs(
         &mut jobs,
         attachments_dir,
         media,
         load,
-        |progress| {
-            emit_log(
-                log,
-                format!(
-                    "  attachments {}/{} {}/{}",
-                    progress.done, progress.total, progress.bytes_done, progress.bytes_total
-                ),
-            );
-        },
+        log_attachment_progress(log),
         log,
         cancel.map(|flag| flag.as_ref()),
     )?;
@@ -212,6 +189,56 @@ pub fn stage_conversation_attachments(
         }
     }
     drop(jobs);
+    clear_attachment_bytes(documents);
+    Ok(())
+}
+
+/// The size to report for an attachment before its bytes are read: the
+/// record's own size, else the length of the bytes held in memory, else
+/// unknown (the progress total grows once the file loads).
+pub fn attachment_size_hint(att: &IrAttachment) -> Option<u64> {
+    att.size_bytes
+        .or_else(|| att.bytes.as_ref().map(|b| b.len() as u64))
+}
+
+/// One job per attachment across every document, in document order. The
+/// position in the result is the flat attachment index a `load(i)` hook
+/// receives.
+pub fn attachment_jobs(documents: &mut [ConversationDocument]) -> Vec<AttachmentJob<'_>> {
+    let mut jobs = Vec::new();
+    for doc in documents.iter_mut() {
+        for msg in &mut doc.messages {
+            let ts = msg.timestamp_unix_ms;
+            for att in &mut msg.attachments {
+                let hint = attachment_size_hint(att);
+                jobs.push(AttachmentJob {
+                    attachment: att,
+                    timestamp_unix_ms: ts,
+                    size_hint: hint,
+                });
+            }
+        }
+    }
+    jobs
+}
+
+/// The progress line every attachment run logs: files done of total, bytes
+/// done of total.
+pub fn log_attachment_progress(log: Option<&LogSink>) -> impl FnMut(AttachmentProgress) + '_ {
+    move |progress| {
+        emit_log(
+            log,
+            format!(
+                "  attachments {}/{} {}/{}",
+                progress.done, progress.total, progress.bytes_done, progress.bytes_total
+            ),
+        );
+    }
+}
+
+/// Drop the bytes held in memory on every attachment, once they have been
+/// written or are no longer wanted.
+pub fn clear_attachment_bytes(documents: &mut [ConversationDocument]) {
     for doc in documents.iter_mut() {
         for msg in &mut doc.messages {
             for att in &mut msg.attachments {
@@ -219,7 +246,6 @@ pub fn stage_conversation_attachments(
             }
         }
     }
-    Ok(())
 }
 
 /// Monotonic counter distinguishing concurrent temp files.
