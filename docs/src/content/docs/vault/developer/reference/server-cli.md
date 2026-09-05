@@ -37,7 +37,7 @@ Import and view messages in SQLite
 * `serve` — Run HTTP ingest API (`POST /v1/import` with message-ir JSONL)
 * `dump-openapi` — Write the OpenAPI document (JSON) to stdout or --output. Does not open the database
 * `dump-cli-docs` — Write this CLI's docs-site reference page (Markdown) to stdout or --output. Does not open the database
-* `process-assets` — Convert media under assets/ into browser previews under assets_converted/
+* `process-assets` — Convert media under assets/ into browser previews under `assets_converted/`
 
 
 
@@ -169,7 +169,7 @@ Write this CLI's docs-site reference page (Markdown) to stdout or --output. Does
 
 ## `message-vault-server process-assets`
 
-Convert media under assets/ into browser previews under assets_converted/
+Convert media under assets/ into browser previews under `assets_converted/`
 
 **Usage:** `message-vault-server process-assets [OPTIONS]`
 
