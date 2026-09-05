@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::config::{Config, validate_source_id};
 use crate::db::account_profile;
-use crate::db::engine;
+use crate::db::engine::DbTarget;
 use crate::db::schema;
 use crate::db::vault_imports;
 use crate::dedupe::{self, DedupeStats};
@@ -58,6 +58,48 @@ pub struct CliImportStats {
     pub dedupe: Option<DedupeStats>,
 }
 
+/// Which source ids the import writes, and where that decision came from.
+struct SourcePlan {
+    /// Source ids written (one per conversation unless overridden).
+    sources: Vec<String>,
+    /// True when the ids were read from each conversation's `export.source`.
+    from_jsonl: bool,
+}
+
+impl SourcePlan {
+    /// Use the `--source` override when given, else read every conversation
+    /// header and collect the distinct `export.source` values.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid source id, an unreadable file, or a
+    /// folder with no `export.source` anywhere.
+    fn resolve(opts: &CliImportOptions, paths: &[PathBuf], input: &Path) -> Result<Self> {
+        if let Some(source) = &opts.source_override {
+            validate_source_id(source)?;
+            return Ok(Self {
+                sources: vec![source.clone()],
+                from_jsonl: false,
+            });
+        }
+        let discovered = discover_sources(paths)?;
+        if discovered.is_empty() {
+            bail!(
+                "no conversation export.source found in {}; each conversation needs \
+                 export.source in the message-ir header (or pass --source)",
+                input.display()
+            );
+        }
+        for source in &discovered {
+            validate_source_id(source)?;
+        }
+        Ok(Self {
+            sources: discovered,
+            from_jsonl: true,
+        })
+    }
+}
+
 /// Import a folder of JSON Lines files into the vault, then optionally run
 /// cross-source duplicate hiding.
 ///
@@ -70,47 +112,51 @@ pub async fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats
     if !input.is_dir() {
         bail!("input directory does not exist: {}", input.display());
     }
-
     let paths = list_jsonl_files(input)?;
     if paths.is_empty() {
         bail!("input {} has no .jsonl files", input.display());
     }
-
+    let plan = SourcePlan::resolve(opts, &paths, input)?;
     let db_path = opts.db_path.clone().unwrap_or_else(|| cfg.paths.db.clone());
-    let account_id = opts.account_id.clone();
+    let target = DbTarget::new(opts.db_url.as_deref(), &db_path);
+    print_plan(opts, target, &plan);
 
-    let (sources, source_from_jsonl, wipe_sources) =
-        if let Some(ref override_source) = opts.source_override {
-            validate_source_id(override_source)?;
-            (
-                vec![override_source.clone()],
-                false,
-                Some(vec![override_source.clone()]),
-            )
-        } else {
-            let discovered = discover_sources(&paths)?;
-            if discovered.is_empty() {
-                bail!(
-                    "no conversation export.source found in {}; each conversation needs \
-                 export.source in the message-ir header (or pass --source)",
-                    input.display()
-                );
-            }
-            for source in &discovered {
-                validate_source_id(source)?;
-            }
-            (discovered.clone(), true, Some(discovered))
-        };
+    let pool = target.open().await?;
+    let mut conn = pool.acquire().await?;
+    schema::ensure_vault_schema(&mut conn).await?;
+    account_profile::ensure_account_row(&mut conn, &opts.account_id).await?;
 
+    let import_stats = import_under_session(cfg, opts, &mut conn, &paths, &plan).await?;
+    let dedupe = if opts.skip_dedupe {
+        None
+    } else {
+        let stats =
+            dedupe::dedupe_cross_source(&mut conn, &opts.account_id, None, opts.window_secs)
+                .await?;
+        println!(
+            "  dedupe:       fingerprints_set={} exact_hidden={} near_flagged={} (fingerprints are one per message, not duplicates)",
+            stats.keys_filled, stats.exact_flagged, stats.near_flagged
+        );
+        Some(stats)
+    };
+
+    Ok(CliImportStats {
+        input_dir: input.clone(),
+        sources: plan.sources,
+        import: import_stats,
+        dedupe,
+    })
+}
+
+/// Echo what the import is about to do so a wrong flag is visible before any
+/// row is written.
+fn print_plan(opts: &CliImportOptions, target: DbTarget<'_>, plan: &SourcePlan) {
     println!("Import");
-    println!("  account:      {}", account_id);
-    println!("  input:        {}", input.display());
-    match opts.db_url.as_deref() {
-        Some(url) => println!("  db:           {}", redact_db_url(url)),
-        None => println!("  db:           {}", db_path.display()),
-    }
-    println!("  sources:      {}", sources.join(", "));
-    if source_from_jsonl {
+    println!("  account:      {}", opts.account_id);
+    println!("  input:        {}", opts.input_dir.display());
+    println!("  db:           {target}");
+    println!("  sources:      {}", plan.sources.join(", "));
+    if plan.from_jsonl {
         println!("  source mode:  from JSONL export.source");
     } else {
         println!("  source mode:  --source override");
@@ -121,30 +167,32 @@ pub async fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats
         Some(path) => println!("  contacts:     {}", path.display()),
         None => println!("  contacts:     (none — use --contacts for VCF or vCard CSV)"),
     }
+}
 
-    let placeholder_assets = opts.assets_dir.clone().unwrap_or_else(|| {
+/// Record an import session, run the import inside it, and mark the session
+/// finished either way so the Settings import table never shows a run stuck
+/// in progress.
+///
+/// # Errors
+///
+/// Returns the import's error after the session has been marked failed.
+async fn import_under_session(
+    cfg: &Config,
+    opts: &CliImportOptions,
+    conn: &mut sqlx::pool::PoolConnection<sqlx::Any>,
+    paths: &[PathBuf],
+    plan: &SourcePlan,
+) -> Result<ImportStats> {
+    let account_id = &opts.account_id;
+    let assets_dir = opts.assets_dir.clone().unwrap_or_else(|| {
         cfg.paths
-            .assets_dir_for_account(&account_id, sources.first().expect("sources non-empty"))
+            .assets_dir_for_account(account_id, plan.sources.first().expect("sources non-empty"))
     });
-
-    let session_source = sources.join(",");
-    let pool = match opts.db_url.as_deref() {
-        Some(url) => engine::open_pool_from_url(url)
-            .await
-            .with_context(|| format!("failed to open database at {}", redact_db_url(url)))?,
-        None => engine::open_pool_for_path(&db_path)
-            .await
-            .with_context(|| format!("failed to open database {}", db_path.display()))?,
-    };
-    let mut conn = pool.acquire().await?;
-    schema::ensure_vault_schema(&mut conn).await?;
-    account_profile::ensure_account_row(&mut conn, &account_id).await?;
-
     let import_id = vault_imports::start_import(
-        &mut conn,
+        conn,
         &vault_imports::StartImportArgs {
-            account_id: &account_id,
-            source: &session_source,
+            account_id,
+            source: &plan.sources.join(","),
             mode: opts.mode.as_str(),
             tool: Some("message-vault-server"),
             stage: vault_imports::ImportStage::Parse,
@@ -158,24 +206,23 @@ pub async fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats
     .await?;
 
     let import_opts = ImportOptions {
-        assets_dir: &placeholder_assets,
-        asset_root: input,
+        assets_dir: &assets_dir,
+        asset_root: &opts.input_dir,
         contacts: opts.contacts.as_deref(),
         overwrite_contacts: opts.overwrite_contacts,
         mode: opts.mode,
         source: opts.source_override.as_deref().unwrap_or(""),
-        account_id: &account_id,
+        account_id,
         fill_content_keys: true,
         import_id: Some(import_id),
-        source_from_jsonl,
-        paths: source_from_jsonl.then_some(&cfg.paths),
+        source_from_jsonl: plan.from_jsonl,
+        paths: plan.from_jsonl.then_some(&cfg.paths),
         media: opts.media,
-        wipe_sources: wipe_sources.clone(),
+        wipe_sources: Some(plan.sources.clone()),
     };
-
     let result = import::import_jsonl_files_on_conn(
-        &mut conn,
-        &paths,
+        conn,
+        paths,
         &import_opts,
         import::ImportSchemaMode::AssumeReady,
     )
@@ -187,52 +234,8 @@ pub async fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats
         }
         Err(_) => vault_imports::CompleteImportArgs::failed(),
     };
-    vault_imports::complete_import_or_warn(&mut conn, &account_id, import_id, &complete_args).await;
-    let import_stats = result?;
-
-    let dedupe = if opts.skip_dedupe {
-        None
-    } else {
-        let dedupe_stats =
-            dedupe::dedupe_cross_source(&mut conn, &account_id, None, opts.window_secs).await?;
-        println!(
-            "  dedupe:       fingerprints_set={} exact_hidden={} near_flagged={} (fingerprints are one per message, not duplicates)",
-            dedupe_stats.keys_filled, dedupe_stats.exact_flagged, dedupe_stats.near_flagged
-        );
-        Some(dedupe_stats)
-    };
-
-    Ok(CliImportStats {
-        input_dir: input.clone(),
-        sources,
-        import: import_stats,
-        dedupe,
-    })
-}
-
-/// A database URL with credentials stripped, safe for status and error
-/// output: `postgres://user:secret@host:5432/db` prints as
-/// `postgres://host:5432/db`. Query parameters (which can carry secrets of
-/// their own) are dropped too. Inputs that are not `scheme://…` URLs print
-/// as a placeholder instead of being echoed raw.
-///
-/// Best effort: a malformed URL — a `/` or `#` inside the password, for
-/// instance — can defeat the splits and leak credentials into the error
-/// context. sqlx rejects such URLs before any output is produced, so this
-/// only ever prints URLs that failed to open for other reasons.
-pub(crate) fn redact_db_url(url: &str) -> String {
-    let Some((scheme, rest)) = url.split_once("://") else {
-        return "<db url>".to_string();
-    };
-    let rest = rest.split_once('?').map_or(rest, |(r, _)| r);
-    let (authority, path) = match rest.split_once('/') {
-        Some((authority, path)) => (authority, format!("/{path}")),
-        None => (rest, String::new()),
-    };
-    let host = authority
-        .rsplit_once('@')
-        .map_or(authority, |(_, host)| host);
-    format!("{scheme}://{host}{path}")
+    vault_imports::complete_import_or_warn(conn, account_id, import_id, &complete_args).await;
+    result
 }
 
 /// Every JSON Lines file (`.jsonl`, one JSON object per line) directly inside
@@ -311,32 +314,6 @@ pub fn discover_sources(paths: &[PathBuf]) -> Result<Vec<String>> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-
-    #[test]
-    fn redacts_credentials_from_db_url() {
-        assert_eq!(
-            redact_db_url("postgres://vault:vault@127.0.0.1:5432/vault"),
-            "postgres://127.0.0.1:5432/vault"
-        );
-        assert_eq!(
-            redact_db_url("postgres://user:pa:ss@host:5432/db?sslmode=require"),
-            "postgres://host:5432/db"
-        );
-        assert_eq!(
-            redact_db_url("postgres://user@host/db"),
-            "postgres://host/db"
-        );
-        assert_eq!(redact_db_url("postgres://user:pw@host"), "postgres://host");
-        assert_eq!(
-            redact_db_url("sqlite://data/vault.db"),
-            "sqlite://data/vault.db"
-        );
-        assert_eq!(
-            redact_db_url("sqlite:///tmp/vault.db?mode=rwc"),
-            "sqlite:///tmp/vault.db"
-        );
-        assert_eq!(redact_db_url("not-a-url"), "<db url>");
-    }
 
     #[test]
     fn discover_sources_from_ir_headers() {
