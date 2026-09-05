@@ -1,22 +1,26 @@
 name: Docs
 
+# The site at bitrealm.io describes the released product, so it publishes
+# when a release ships: the same `v*` tag push that builds the image and the
+# installers in ci.yml. A merge to main does not publish; the `docs` job in
+# ci.yml already checks and builds the site on every pull request that
+# touches docs/, so nothing broken reaches the tag. `workflow_dispatch` is
+# the override for a docs-only correction between releases.
+# Why: docs/adr/0007-ci-is-the-only-gate.md.
+
 on:
   push:
-    branches: [main]
-    paths:
-      - "docs/**"
-      - "crates/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".github/workflows/docs.yml"
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# One group for every deploy, never cancelled: a second tag or a manual run
+# queues behind the one in flight instead of cancelling a production deploy.
 concurrency:
-  group: pages-${{ github.ref }}
-  cancel-in-progress: true
+  group: pages
+  cancel-in-progress: false
 
 jobs:
   build:
