@@ -437,7 +437,20 @@ async fn promote_analyzes_import_tables_before_begin_pg() {
         .await
         .unwrap();
     assert_eq!(first.messages, 1);
-    let (analyze_after, last_analyze) = pg_messages_analyze_stat(&mut conn).await;
+    // Since Postgres 15 the cumulative statistics live in shared memory and
+    // a backend's pending counters reach them at transaction end or after
+    // PGSTAT_MIN_INTERVAL (one second), read by others through a snapshot.
+    // The ANALYZE ran; its count can lag this read by up to that interval,
+    // so wait for it rather than assert on the first look (#394).
+    let mut analyze_after = analyze_before;
+    let mut last_analyze = None;
+    for _ in 0..50 {
+        (analyze_after, last_analyze) = pg_messages_analyze_stat(&mut conn).await;
+        if analyze_after > analyze_before {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
     assert!(
         analyze_after > analyze_before,
         "ANALYZE before BEGIN must increment analyze_count on messages (before={analyze_before}, after={analyze_after}, last_analyze_before={last_analyze_before:?})"
