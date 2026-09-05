@@ -21,7 +21,7 @@ use message_ir_format::read_conversation_jsonl;
 use message_vault_io_core::{check_cancel, parallel_for_each};
 
 use crate::folder::{attachment_label, resolve_attachment, safe_rel};
-use crate::http::{self, AssetPutRequest, AssetPutResponse};
+use crate::http::{AssetPutResponse, AssetUpload};
 use crate::journal::{JournalMessage, RunJournal};
 use crate::progress::AttachmentSkip;
 use crate::project::{self, AttachmentProjection};
@@ -743,16 +743,8 @@ fn preflight_existing_asset(ctx: &PrepareContext<'_>, source: &str, digest: &str
     }
     *done = true;
     let session = ctx.session;
-    let present = vault_http::with_retries(ctx.cfg.max_retries, || {
-        http::head_asset(
-            &session.http,
-            &session.url,
-            &ctx.cfg.key,
-            &session.username,
-            source,
-            digest,
-        )
-    })?;
+    let present =
+        vault_http::with_retries(ctx.cfg.max_retries, || session.head_asset(source, digest))?;
     if present.is_some() {
         ctx.probe_existing.store(true, Ordering::Relaxed);
     }
@@ -772,30 +764,17 @@ fn upload_one_asset(
     let session = ctx.session;
     vault_http::with_retries(ctx.cfg.max_retries, || {
         if ctx.probe_existing.load(Ordering::Relaxed)
-            && let Some(existing) = http::head_asset(
-                &session.http,
-                &session.url,
-                &ctx.cfg.key,
-                &session.username,
-                source,
-                &job.digest,
-            )?
+            && let Some(existing) = session.head_asset(source, &job.digest)?
         {
             return Ok(existing);
         }
-        let response = http::put_asset(
-            &session.http,
-            AssetPutRequest {
-                base_url: &session.url,
-                key: &ctx.cfg.key,
-                username: &session.username,
-                source,
-                sha256: &job.digest,
-                file: &job.path,
-                mime: job.mime.as_deref(),
-                multipart_threshold: ctx.cfg.asset_multipart_threshold,
-            },
-        )?;
+        let response = session.put_asset(&AssetUpload {
+            source,
+            sha256: &job.digest,
+            file: &job.path,
+            mime: job.mime.as_deref(),
+            multipart_threshold: ctx.cfg.asset_multipart_threshold,
+        })?;
         if response.already_present {
             ctx.probe_existing.store(true, Ordering::Relaxed);
         }

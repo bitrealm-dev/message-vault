@@ -15,7 +15,7 @@ use std::time::Instant;
 use anyhow::Result;
 use message_vault_io_core::check_cancel;
 
-use crate::http::{self, PostImportArgs};
+use crate::http;
 use crate::journal::{JournalMessage, RunJournal};
 use crate::prepare::{ImportChunk, PreparedFile, SharedJournal};
 use crate::progress::Reporter;
@@ -399,10 +399,7 @@ impl<'a> ImportPipeline<'a> {
     /// and uploading attachments during the network wait. Only one import is
     /// in flight at a time.
     fn spawn_import(&self, batch: ImportBatch, mode: &str) -> JoinHandle<ImportHttpOutcome> {
-        let http = self.session.http.clone();
-        let url = self.session.url.clone();
-        let key = self.cfg.key.clone();
-        let username = self.session.username.clone();
+        let session = self.session.clone();
         let max_retries = self.cfg.max_retries;
         let import_id = self.import_id;
         let mode = mode.to_string();
@@ -411,18 +408,7 @@ impl<'a> ImportPipeline<'a> {
             let body_bytes = batch.body.len();
             let message_count = batch.messages.len();
             let response = vault_http::with_retries(max_retries, || {
-                http::post_import(
-                    &http,
-                    PostImportArgs {
-                        base_url: &url,
-                        key: &key,
-                        username: &username,
-                        source: &batch.source,
-                        mode: &mode,
-                        import_id,
-                        ndjson: batch.body.clone(),
-                    },
-                )
+                session.post_import(&batch.source, &mode, import_id, batch.body.clone())
             })
             .map_err(|error| error.to_string());
             let request_ms = elapsed_ms(request_started);
