@@ -191,7 +191,6 @@ mod tests {
             service: None,
             guid: None,
             timestamp: "2024-01-01T00:00:00Z".into(),
-            timestamp_utc: None,
             sort_order: 0,
             is_from_me: false,
             sender: None,

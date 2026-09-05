@@ -377,6 +377,43 @@ pub async fn delete_all_messages_for_account(
     })
 }
 
+/// The account's IANA time zone. UTC when the row is missing or the stored
+/// name is not one chrono-tz knows, so a bad value degrades to Greenwich
+/// rather than to an error on every list.
+pub async fn load_time_zone(conn: &mut AnyConnection, account_id: &str) -> Result<chrono_tz::Tz> {
+    let name: Option<String> = sqlx::query_scalar("SELECT time_zone FROM accounts WHERE id = $1")
+        .bind(account_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+    Ok(name
+        .and_then(|n| n.trim().parse::<chrono_tz::Tz>().ok())
+        .unwrap_or(chrono_tz::UTC))
+}
+
+/// Store the account's time zone.
+pub async fn set_time_zone(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    zone: chrono_tz::Tz,
+) -> Result<()> {
+    sqlx::query("UPDATE accounts SET time_zone = $1 WHERE id = $2")
+        .bind(zone.name())
+        .bind(account_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// The account's zone and today's date in it: what every search compile and
+/// every year boundary needs.
+pub async fn account_clock(
+    conn: &mut AnyConnection,
+    account_id: &str,
+) -> Result<(chrono_tz::Tz, chrono::NaiveDate)> {
+    let zone = load_time_zone(conn, account_id).await?;
+    Ok((zone, crate::search::today_in(zone)))
+}
+
 /// Load the `preferred_name` for an account, if set.
 pub async fn load_preferred_name(
     conn: &mut AnyConnection,

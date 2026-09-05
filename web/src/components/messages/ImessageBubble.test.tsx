@@ -16,7 +16,6 @@ function message(partial: Partial<Message> = {}): Message {
     service: "iMessage",
     guid: null,
     timestamp: "2026-08-11T15:04:00Z",
-    timestamp_utc: "2026-08-11T15:04:00Z",
     is_from_me: false,
     is_announcement: false,
     is_reply: false,

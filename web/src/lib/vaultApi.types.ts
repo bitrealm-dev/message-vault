@@ -1104,6 +1104,11 @@ export interface components {
             phones: string[];
             /** @description Display name, when set. */
             preferred_name?: string | null;
+            /**
+             * @description IANA time zone every message time, day and year is shown in, for
+             *     example `America/New_York`. Chosen at profile setup.
+             */
+            time_zone: string;
             /** @description Account username (falls back to the account id). */
             username: string;
         };
@@ -1115,6 +1120,11 @@ export interface components {
             preferred_name?: string | null;
             /** @description Handles to unlink from the account profile. */
             remove_handles?: components["schemas"]["ProfileHandleInput"][];
+            /**
+             * @description IANA time zone to set, for example `America/New_York`; `None` leaves
+             *     the current zone unchanged. An unknown name is a 400.
+             */
+            time_zone?: string | null;
         };
         /** @description Attachment usage and the largest files. */
         AccountStorageResponse: {
@@ -2020,10 +2030,13 @@ export interface components {
              * @description Part index of the originator (for tapbacks).
              */
             thread_originator_part?: number | null;
-            /** @description Message timestamp (local). */
+            /**
+             * @description The instant the message was sent: RFC 3339 in UTC with a `Z`
+             *     suffix. A caller shows it in the account's time zone
+             *     (`AccountProfileResponse.time_zone`); the vault stores nothing
+             *     about where the phone was.
+             */
             timestamp: string;
-            /** @description UTC timestamp, when known. */
-            timestamp_utc?: string | null;
         };
         /** @description The conversation a message belongs to. */
         MessageConversation: {
@@ -2182,10 +2195,13 @@ export interface components {
                  * @description Part index of the originator (for tapbacks).
                  */
                 thread_originator_part?: number | null;
-                /** @description Message timestamp (local). */
+                /**
+                 * @description The instant the message was sent: RFC 3339 in UTC with a `Z`
+                 *     suffix. A caller shows it in the account's time zone
+                 *     (`AccountProfileResponse.time_zone`); the vault stores nothing
+                 *     about where the phone was.
+                 */
                 timestamp: string;
-                /** @description UTC timestamp, when known. */
-                timestamp_utc?: string | null;
             }[];
             /** @description Page size used. */
             limit: number;

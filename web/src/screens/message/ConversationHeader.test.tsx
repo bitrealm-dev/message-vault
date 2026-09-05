@@ -37,6 +37,7 @@ const PROFILE = {
   account_id: "acct",
   username: "me",
   preferred_name: "Me",
+  time_zone: "UTC",
   phones: ["+15550100"],
   emails: [],
   is_admin: false,

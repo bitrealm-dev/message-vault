@@ -1,3 +1,4 @@
+import { useTimeZone } from "../../lib/timeZone";
 import MessageAttachments from "../MessageAttachments";
 import {
   bubbleBody,
@@ -15,7 +16,7 @@ export default function SmsBubble({
   isActive,
   onAttachmentClick,
 }: MessageBubbleProps) {
-  const time = formatMessageTime(message.timestamp, true);
+  const time = formatMessageTime(message.timestamp, useTimeZone(), true);
   const mine = message.is_from_me;
   const group = isGroupConversation(message);
   const body = (message.text || "").trim();

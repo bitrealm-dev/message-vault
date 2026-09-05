@@ -81,7 +81,7 @@ A file the vault cannot read comes back as a 400 whose `error` names the line, o
 - `service:` — `imessage`, `sms`, `mms`, `rcs`, `whatsapp`.
 - `source:` — the backup family it was imported from: `imessage`, `whatsapp`, `sms`.
 - `import:` — the Import Run that brought it in; `#id` or `last`.
-- `date:`, `first-message:`, `last-message:` — a day, month, year, or relative span, with comparisons and ranges.
+- `date:`, `first-message:`, `last-message:` — a day, month, year, or relative span, with comparisons and ranges. A message's `timestamp` is a UTC instant; the span's edges are midnight in the account's `time_zone` (`GET /v1/account/profile`), turned into instants before the comparison, so the same rule serves SQLite and Postgres and the `year=` filter on a conversation's messages.
 - `attachment:` — `image`, `video`, `audio`, `document`, `pdf`, `contact`, `other`, `any`, `none`.
 - `filename:` — an attachment's file name; text or a `pre*` prefix.
 - `size:` — an attachment's size, with comparisons and ranges.

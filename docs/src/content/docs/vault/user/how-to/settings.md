@@ -16,6 +16,7 @@ Administrators also see a **Users** tab, and the desktop app adds **System** and
 ## Profile
 
 - **Display name** — name shown for messages you sent
+- **Time zone** — the zone every message time, day and year is shown in, and the one `date:` searches count days in. It is chosen at profile setup, starting from the browser's zone, and can be changed here at any time
 - **Handles** — phone numbers or emails used to recognize you in imports
 
 ## Storage

@@ -23,13 +23,14 @@ fn group_chat_identity_is_sorted_handles() {
 }
 
 #[test]
-fn content_key_stable_across_whitespace_and_utc_forms() {
+fn content_key_stable_across_whitespace_and_offset_forms() {
+    // The vault stores the instant in UTC with a Z; the key hashes the epoch
+    // it names, so an offset spelling of the same instant hashes the same.
     let a = compute_content_key(
         "+14075551212",
         true,
         None,
-        Some("2015-03-12T18:04:22Z"),
-        "x",
+        "2015-03-12T18:04:22Z",
         Some("Running late"),
         &[],
     );
@@ -37,15 +38,13 @@ fn content_key_stable_across_whitespace_and_utc_forms() {
         "+14075551212",
         true,
         None,
-        Some("2015-03-12T18:04:22+00:00"),
-        "y",
+        "2015-03-12T18:04:22+00:00",
         Some("  Running   late "),
         &[],
     );
     let c = compute_content_key(
         "+14075551212",
         true,
-        None,
         None,
         "2015-03-12T14:04:22-04:00",
         Some("Running late"),
@@ -64,8 +63,7 @@ fn parallel_content_keys_match_serial() {
             "+14075551212".into(),
             "individual".into(),
             1,
-            Some("2015-03-12T18:04:22Z".into()),
-            "x".into(),
+            "2015-03-12T18:04:22Z".into(),
             Some("hi".into()),
             None,
         ),
@@ -75,8 +73,7 @@ fn parallel_content_keys_match_serial() {
             "chat-group".into(),
             "group".into(),
             0,
-            Some("2015-03-12T18:04:23Z".into()),
-            "x".into(),
+            "2015-03-12T18:04:23Z".into(),
             Some("yo".into()),
             Some("+15555550001".into()),
         ),
@@ -99,8 +96,7 @@ fn content_key_distinguishes_group_senders() {
         "group:+1|+2",
         false,
         Some("+15555550001"),
-        Some("2015-03-12T18:04:22Z"),
-        "x",
+        "2015-03-12T18:04:22Z",
         Some("same text"),
         &[],
     );
@@ -108,8 +104,7 @@ fn content_key_distinguishes_group_senders() {
         "group:+1|+2",
         false,
         Some("+15555550002"),
-        Some("2015-03-12T18:04:22Z"),
-        "x",
+        "2015-03-12T18:04:22Z",
         Some("same text"),
         &[],
     );
@@ -185,8 +180,8 @@ async fn setup_db(conn: &mut AnyConnection) {
 struct InsertMsgArgs<'a> {
     source: &'a str,
     guid: &'a str,
-    utc: &'a str,
-    local: &'a str,
+    /// The UTC instant, as the vault stores it.
+    timestamp: &'a str,
     from_me: i64,
     body: &'a str,
     sort_order: i64,
@@ -196,17 +191,16 @@ async fn insert_msg(conn: &mut AnyConnection, args: InsertMsgArgs<'_>) -> i64 {
     sqlx::query_scalar(
         r"
         INSERT INTO messages (
-            conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
+            conversation_id, account_id, source, guid, timestamp, is_from_me,
             sender_handle_id, subject, body, sort_order
-        ) VALUES (1, $1, $2, $3, $4, $5, $6, NULL, NULL, $7, $8)
+        ) VALUES (1, $1, $2, $3, $4, $5, NULL, NULL, $6, $7)
         RETURNING id
         ",
     )
     .bind(TEST_ACCOUNT_ID)
     .bind(args.source)
     .bind(args.guid)
-    .bind(args.local)
-    .bind(args.utc)
+    .bind(args.timestamp)
     .bind(args.from_me)
     .bind(args.body)
     .bind(args.sort_order)
@@ -225,8 +219,7 @@ async fn fill_missing_content_keys_skips_rows_that_already_have_keys() {
         InsertMsgArgs {
             source: "go-sms-pro",
             guid: "g-fill",
-            utc: "2015-03-12T18:04:22Z",
-            local: "2015-03-12T14:04:22-04:00",
+            timestamp: "2015-03-12T18:04:22Z",
             from_me: 1,
             body: "Need a key",
             sort_order: 0,
@@ -264,8 +257,7 @@ async fn fill_missing_content_keys_writes_multiple_rows_in_one_batch() {
             InsertMsgArgs {
                 source: "go-sms-pro",
                 guid,
-                utc: "2015-03-12T18:04:22Z",
-                local: "2015-03-12T14:04:22-04:00",
+                timestamp: "2015-03-12T18:04:22Z",
                 from_me: 1,
                 body,
                 sort_order,
@@ -307,8 +299,7 @@ async fn dedupe_cross_source_does_not_rehash_existing_keys() {
         InsertMsgArgs {
             source: "go-sms-pro",
             guid: "g-once",
-            utc: "2015-03-12T18:04:22Z",
-            local: "2015-03-12T14:04:22-04:00",
+            timestamp: "2015-03-12T18:04:22Z",
             from_me: 1,
             body: "Once",
             sort_order: 0,
@@ -335,8 +326,7 @@ async fn integration_exact_flags_cross_source() {
         InsertMsgArgs {
             source: "go-sms-pro",
             guid: "g1",
-            utc: "2015-03-12T18:04:22Z",
-            local: "2015-03-12T14:04:22-04:00",
+            timestamp: "2015-03-12T18:04:22Z",
             from_me: 1,
             body: "Running late",
             sort_order: 0,
@@ -348,8 +338,7 @@ async fn integration_exact_flags_cross_source() {
         InsertMsgArgs {
             source: "sms-backup-plus",
             guid: "g2",
-            utc: "2015-03-12T18:04:22+00:00",
-            local: "2015-03-12T14:04:22-04:00",
+            timestamp: "2015-03-12T18:04:22+00:00",
             from_me: 1,
             body: "Running late",
             sort_order: 0,
@@ -386,8 +375,7 @@ async fn integration_near_flags_within_window() {
         InsertMsgArgs {
             source: "go-sms-pro",
             guid: "g1",
-            utc: "2015-03-12T18:04:22Z",
-            local: "2015-03-12T14:04:22-04:00",
+            timestamp: "2015-03-12T18:04:22Z",
             from_me: 0,
             body: "On my way",
             sort_order: 0,
@@ -399,8 +387,7 @@ async fn integration_near_flags_within_window() {
         InsertMsgArgs {
             source: "sms-backup-plus",
             guid: "g2",
-            utc: "2015-03-12T18:04:24Z",
-            local: "2015-03-12T14:04:24-04:00",
+            timestamp: "2015-03-12T18:04:24Z",
             from_me: 0,
             body: "On my way",
             sort_order: 1,
@@ -431,8 +418,7 @@ async fn integration_negative_far_apart_not_flagged() {
         InsertMsgArgs {
             source: "go-sms-pro",
             guid: "g1",
-            utc: "2015-03-12T18:04:22Z",
-            local: "2015-03-12T14:04:22-04:00",
+            timestamp: "2015-03-12T18:04:22Z",
             from_me: 0,
             body: "On my way",
             sort_order: 0,
@@ -444,8 +430,7 @@ async fn integration_negative_far_apart_not_flagged() {
         InsertMsgArgs {
             source: "sms-backup-plus",
             guid: "g2",
-            utc: "2015-03-12T18:05:22Z",
-            local: "2015-03-12T14:05:22-04:00",
+            timestamp: "2015-03-12T18:05:22Z",
             from_me: 0,
             body: "On my way",
             sort_order: 1,
@@ -477,8 +462,7 @@ async fn integration_priority_prefers_first_imported_source() {
         InsertMsgArgs {
             source: "sms-backup-plus",
             guid: "g1",
-            utc: "2015-03-12T18:04:22Z",
-            local: "2015-03-12T14:04:22-04:00",
+            timestamp: "2015-03-12T18:04:22Z",
             from_me: 1,
             body: "Hello",
             sort_order: 0,
@@ -490,8 +474,7 @@ async fn integration_priority_prefers_first_imported_source() {
         InsertMsgArgs {
             source: "go-sms-pro",
             guid: "g2",
-            utc: "2015-03-12T18:04:22Z",
-            local: "2015-03-12T14:04:22-04:00",
+            timestamp: "2015-03-12T18:04:22Z",
             from_me: 1,
             body: "Hello",
             sort_order: 1,

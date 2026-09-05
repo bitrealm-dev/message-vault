@@ -16,7 +16,6 @@ function message(partial: Partial<Message> & Pick<Message, "conversation">): Mes
     service: "iMessage",
     guid: null,
     timestamp: "2026-08-11T15:04:00Z",
-    timestamp_utc: "2026-08-11T15:04:00Z",
     is_from_me: false,
     is_announcement: false,
     is_reply: false,
@@ -33,9 +32,16 @@ function message(partial: Partial<Message> & Pick<Message, "conversation">): Mes
 
 describe("formatMessageTime", () => {
   it("returns a non-empty locale string", () => {
-    const s = formatMessageTime("2026-08-11T15:04:00Z");
+    const s = formatMessageTime("2026-08-11T15:04:00Z", "UTC");
     expect(s.length).toBeGreaterThan(0);
     expect(s).not.toBe("Invalid Date");
+  });
+
+  it("reads the clock in the account's zone", () => {
+    // The vault stores the instant; the zone decides what the clock said.
+    const instant = "2026-08-11T15:04:00Z";
+    expect(formatMessageTime(instant, "America/New_York")).toMatch(/11:04/);
+    expect(formatMessageTime(instant, "Europe/Paris")).toMatch(/17:04|5:04/);
   });
 });
 

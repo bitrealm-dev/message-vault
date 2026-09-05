@@ -28,8 +28,9 @@ pub struct ExportPageOpts<'a> {
     pub limit: usize,
     /// Row offset.
     pub offset: usize,
-    /// The day relative dates in `query` resolve against.
-    pub today: chrono::NaiveDate,
+    /// The account's time zone and today's date in it: the zone anchors the
+    /// date words' boundaries, the day anchors relative dates in `query`.
+    pub clock: (chrono_tz::Tz, chrono::NaiveDate),
 }
 
 /// Options for one export count query.
@@ -39,8 +40,8 @@ pub struct ExportCountOpts<'a> {
     pub account_id: &'a str,
     /// Search query string, in the search language.
     pub query: &'a str,
-    /// The day relative dates in `query` resolve against.
-    pub today: chrono::NaiveDate,
+    /// The account's time zone and today's date in it.
+    pub clock: (chrono_tz::Tz, chrono::NaiveDate),
 }
 
 /// Match counts for an export query.
@@ -69,7 +70,7 @@ pub async fn export_messages(
     conn: &mut AnyConnection,
     opts: ExportPageOpts<'_>,
 ) -> Result<Page<Message>, ApiError> {
-    let filter = message_filter(engine_of(conn), opts.account_id, opts.query, opts.today)?;
+    let filter = message_filter(engine_of(conn), opts.account_id, opts.query, opts.clock)?;
     let total = count_matching_messages(conn, &filter).await?;
 
     let messages = load_messages(
@@ -103,7 +104,7 @@ pub async fn export_message_count(
     conn: &mut AnyConnection,
     opts: ExportCountOpts<'_>,
 ) -> Result<ExportCountResponse, ApiError> {
-    let filter = message_filter(engine_of(conn), opts.account_id, opts.query, opts.today)?;
+    let filter = message_filter(engine_of(conn), opts.account_id, opts.query, opts.clock)?;
     let params = filter.params();
 
     let messages = count_matching_messages(conn, &filter).await?;
@@ -193,15 +194,15 @@ pub(crate) async fn export_messages_count_handler(
 ) -> Result<Json<ExportCountResponse>, ApiError> {
     let account = resolve_import_account(&auth, query.account.as_deref(), &state.db).await?;
     let q = query.q;
-    let today = chrono::Local::now().date_naive();
 
     let mut conn = state.db.acquire().await?;
+    let clock = crate::db::account_profile::account_clock(&mut conn, &account).await?;
     let body = export_message_count(
         &mut conn,
         ExportCountOpts {
             account_id: &account,
             query: &q,
-            today,
+            clock,
         },
     )
     .await?;
@@ -234,9 +235,9 @@ pub(crate) async fn export_messages_handler(
 ) -> Result<Json<Page<Message>>, ApiError> {
     let account = resolve_import_account(&auth, query.account.as_deref(), &state.db).await?;
     let page = page_params(query.limit, query.offset, DEFAULT_EXPORT_LIMIT, None)?;
-    let today = chrono::Local::now().date_naive();
 
     let mut conn = state.db.acquire().await?;
+    let clock = crate::db::account_profile::account_clock(&mut conn, &account).await?;
     let body = export_messages(
         &mut conn,
         ExportPageOpts {
@@ -244,7 +245,7 @@ pub(crate) async fn export_messages_handler(
             query: &query.q,
             limit: page.limit,
             offset: page.offset,
-            today,
+            clock,
         },
     )
     .await?;

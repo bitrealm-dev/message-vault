@@ -121,16 +121,7 @@ fn content_key_for_row(
     group_handles: &HashMap<i64, Vec<String>>,
     shas_by_msg: &HashMap<i64, Vec<String>>,
 ) -> (i64, String) {
-    let (
-        id,
-        conversation_id,
-        chat_id,
-        conversation_type,
-        is_from_me,
-        ts,
-        body,
-        sender_norm,
-    ) = row;
+    let (id, conversation_id, chat_id, conversation_type, is_from_me, ts, body, sender_norm) = row;
     let empty: &[String] = &[];
     let shas = shas_by_msg.get(id).map(Vec::as_slice).unwrap_or(empty);
     let group_identity = if conversation_type == "group" {
@@ -571,7 +562,7 @@ fn pick_winner(cands: &[Cand], prio: &HashMap<&str, usize>) -> i64 {
 
 /// Parse an RFC3339 timestamp into Unix UTC seconds, honoring Z / ±HH:MM offsets.
 ///
-/// Strict RFC3339 is sufficient: `messages.timestamp` and `messages.timestamp_utc`
+/// Strict RFC3339 is sufficient: `messages.timestamp`
 /// are only ever written by `models::format_timestamps` (chrono's
 /// `to_rfc3339_opts(SecondsFormat::Secs, true)`), so no lenient spellings reach
 /// this path. Unparseable input yields `None`.
@@ -640,15 +631,7 @@ async fn load_near_rows(
     conn: &mut AnyConnection,
     account_id: &str,
 ) -> Result<HashMap<i64, Vec<NearRow>>> {
-    type NearDedupeRow = (
-        i64,
-        i64,
-        String,
-        i64,
-        String,
-        Option<String>,
-        String,
-    );
+    type NearDedupeRow = (i64, i64, String, i64, String, Option<String>, String);
     let msg_rows: Vec<NearDedupeRow> = sqlx::query_as(
         r"
         SELECT m.id, m.conversation_id, m.source, m.is_from_me, m.timestamp, m.body,

@@ -7,6 +7,7 @@ import { useMouseHistoryNavigation } from "./hooks/useMouseHistoryNavigation";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { canUseImportExportWithProfile } from "./lib/desktopFeatures";
 import { ThemeProvider } from "./lib/ThemeProvider";
+import { TimeZoneProvider } from "./lib/TimeZoneProvider";
 import { isTauri } from "./lib/tauri-check";
 import { useAccountProfile } from "./lib/useAccountProfile";
 import LoginScreen from "./screens/LoginScreen";
@@ -63,7 +64,13 @@ function AppRoutes() {
 
       {/* Protected routes — AuthGuard redirects to /login or /onboarding */}
       <Route element={<AuthGuard />}>
-        <Route element={<AppLayout />}>
+        <Route
+          element={
+            <TimeZoneProvider>
+              <AppLayout />
+            </TimeZoneProvider>
+          }
+        >
           <Route index element={null} />
           <Route path="contacts" element={null} />
           <Route path="group/:slug" element={null} />

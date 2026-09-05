@@ -235,7 +235,7 @@ async fn list_contacts_uses_preferred_name_and_handle_ids() {
         "",
         DEFAULT_LIST_LIMIT,
         0,
-        crate::search::tests::today(),
+        crate::search::tests::clock(),
     )
     .await
     .unwrap();
@@ -295,7 +295,7 @@ async fn list_contacts_filters_and_paginates() {
         "sam",
         DEFAULT_LIST_LIMIT,
         0,
-        crate::search::tests::today(),
+        crate::search::tests::clock(),
     )
     .await
     .unwrap();
@@ -308,21 +308,21 @@ async fn list_contacts_filters_and_paginates() {
         "handle:5555550200",
         DEFAULT_LIST_LIMIT,
         0,
-        crate::search::tests::today(),
+        crate::search::tests::clock(),
     )
     .await
     .unwrap();
     assert_eq!(by_handle.total, 1);
     assert_eq!(by_handle.items[0].name, "Sam");
 
-    let page0 = list_contacts(&mut conn, &account, "", 2, 0, crate::search::tests::today())
+    let page0 = list_contacts(&mut conn, &account, "", 2, 0, crate::search::tests::clock())
         .await
         .unwrap();
     assert_eq!(page0.total, 3);
     assert_eq!(page0.limit, 2);
     assert_eq!(page0.offset, 0);
     assert_eq!(page0.items.len(), 2);
-    let page1 = list_contacts(&mut conn, &account, "", 2, 2, crate::search::tests::today())
+    let page1 = list_contacts(&mut conn, &account, "", 2, 2, crate::search::tests::clock())
         .await
         .unwrap();
     assert_eq!(page1.total, 3);
@@ -882,7 +882,7 @@ async fn mutate_contact_bumps_last_modified_on_shape_changes() {
         "",
         DEFAULT_LIST_LIMIT,
         0,
-        crate::search::tests::today(),
+        crate::search::tests::clock(),
     )
     .await
     .unwrap();
@@ -1095,7 +1095,7 @@ async fn list_contacts_filters_has_messages_and_never_messaged() {
         "messages:>0",
         DEFAULT_LIST_LIMIT,
         0,
-        crate::search::tests::today(),
+        crate::search::tests::clock(),
     )
     .await
     .unwrap();
@@ -1108,7 +1108,7 @@ async fn list_contacts_filters_has_messages_and_never_messaged() {
         "messages:0",
         DEFAULT_LIST_LIMIT,
         0,
-        crate::search::tests::today(),
+        crate::search::tests::clock(),
     )
     .await
     .unwrap();
@@ -1137,7 +1137,7 @@ async fn list_contacts_filters_no_handle() {
         "handle:none",
         DEFAULT_LIST_LIMIT,
         0,
-        crate::search::tests::today(),
+        crate::search::tests::clock(),
     )
     .await
     .unwrap();
@@ -1190,7 +1190,7 @@ async fn list_contacts_filters_service_or() {
         "service:imessage,sms",
         DEFAULT_LIST_LIMIT,
         0,
-        crate::search::tests::today(),
+        crate::search::tests::clock(),
     )
     .await
     .unwrap();
@@ -1549,7 +1549,7 @@ async fn unknown_group_collects_contacts_missing_a_name_or_an_identity() {
         "group:unknown",
         DEFAULT_LIST_LIMIT,
         0,
-        crate::search::tests::today(),
+        crate::search::tests::clock(),
     )
     .await
     .unwrap();
@@ -1572,7 +1572,7 @@ async fn unknown_group_collects_contacts_missing_a_name_or_an_identity() {
         "group:unknown",
         DEFAULT_LIST_LIMIT,
         0,
-        crate::search::tests::today(),
+        crate::search::tests::clock(),
     )
     .await
     .unwrap();
@@ -1606,7 +1606,7 @@ async fn list_contacts_filters_by_group_and_no_group() {
         "group:Family",
         DEFAULT_LIST_LIMIT,
         0,
-        crate::search::tests::today(),
+        crate::search::tests::clock(),
     )
     .await
     .unwrap();
@@ -1620,7 +1620,7 @@ async fn list_contacts_filters_by_group_and_no_group() {
         r#"group:"Family""#,
         DEFAULT_LIST_LIMIT,
         0,
-        crate::search::tests::today(),
+        crate::search::tests::clock(),
     )
     .await
     .unwrap();
@@ -1632,7 +1632,7 @@ async fn list_contacts_filters_by_group_and_no_group() {
         "group:none",
         DEFAULT_LIST_LIMIT,
         0,
-        crate::search::tests::today(),
+        crate::search::tests::clock(),
     )
     .await
     .unwrap();

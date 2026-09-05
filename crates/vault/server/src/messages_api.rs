@@ -29,14 +29,16 @@ pub(crate) fn message_filter(
     engine: DbEngine,
     account_id: &str,
     query: &str,
-    today: chrono::NaiveDate,
+    clock: (chrono_tz::Tz, chrono::NaiveDate),
 ) -> Result<crate::search::Filter, ApiError> {
+    let (zone, today) = clock;
     Ok(crate::search::compile(crate::search::CompileRequest {
         list: crate::search::ListKind::Messages,
         query,
         account_id,
         engine,
         today,
+        zone,
     })?)
 }
 
@@ -90,13 +92,13 @@ pub(crate) async fn messages_list_handler(
         DEFAULT_LIST_LIMIT,
         Some(MAX_LIST_OFFSET),
     )?;
-    let today = chrono::Local::now().date_naive();
     let mut conn = state.db.acquire().await?;
+    let clock = crate::db::account_profile::account_clock(&mut conn, &auth.account_id).await?;
     let filter = message_filter(
         engine_of(&conn),
         &auth.account_id,
         query.q.as_deref().unwrap_or(""),
-        today,
+        clock,
     )?;
     let total = count_matching_messages(&mut conn, &filter).await?;
     let items = load_messages(

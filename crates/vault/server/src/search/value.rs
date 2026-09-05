@@ -1,6 +1,7 @@
 //! Typed values a word can take. Dates are spans, so `date:2019` is the
 //! year and `date:>2019` is after it ends; `today` is an input, never the clock.
 
+use chrono::TimeZone;
 use chrono::{Datelike, Days, NaiveDate};
 
 /// Relative spans further back than this are refused.
@@ -57,9 +58,24 @@ pub(crate) enum Value {
     Size(Cmp<i64>),
 }
 
-/// `YYYY-MM-DD`, the form timestamps are compared against as text.
-pub(crate) fn ymd(d: NaiveDate) -> String {
-    d.format("%Y-%m-%d").to_string()
+/// The instant `day` begins in `zone`, as the RFC 3339 UTC text the vault
+/// stores (`2024-01-01T05:00:00Z`), so a day or a year in the account's time
+/// zone compares against `messages.timestamp` as text on either engine. A
+/// day whose midnight falls in a daylight-saving gap starts at the first
+/// instant after the gap.
+pub(crate) fn utc_instant(zone: chrono_tz::Tz, day: NaiveDate) -> String {
+    let midnight = day.and_hms_opt(0, 0, 0).expect("midnight is a valid time");
+    let start = zone
+        .from_local_datetime(&midnight)
+        .earliest()
+        .or_else(|| {
+            zone.from_local_datetime(&(midnight + chrono::Duration::hours(1)))
+                .earliest()
+        })
+        .expect("every calendar day begins at some instant");
+    start
+        .with_timezone(&chrono::Utc)
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
 /// The first day of the month after `(y, m)`.
