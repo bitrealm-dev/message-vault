@@ -12,7 +12,6 @@ csv = { workspace = true }
 hex = { workspace = true }
 mailparse = "0.16.1"
 contacts = { path = "../../libs/contacts" }
-message-csv = { path = "../../libs/csv" }
 message-vault-io-core = { path = "../../core/message-vault-io-core" }
 message-ir = { path = "../../libs/ir" }
 message-ir-format = { path = "../../libs/ir-format" }

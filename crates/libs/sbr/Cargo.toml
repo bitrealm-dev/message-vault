@@ -6,6 +6,7 @@ description = "SMS Backup & Restore (SyncTech) XML codec"
 license = "LicenseRef-FCL-1.0-ALv2"
 
 [dependencies]
+message-ir = { workspace = true }
 anyhow = { workspace = true }
 base64 = "0.23.1"
 hex = { workspace = true }

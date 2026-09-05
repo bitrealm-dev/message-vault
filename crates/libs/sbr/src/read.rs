@@ -12,6 +12,8 @@ use std::io::BufRead;
 use std::path::Path;
 use std::sync::{Arc, LazyLock};
 
+use message_ir::valid_filename;
+
 const INSERT_ADDRESS_TOKEN: &str = "insert-address-token";
 const MMS_ADDR_FROM: &str = "137";
 const MMS_BOX_SENT: &str = "2";
@@ -292,15 +294,6 @@ fn smil_refs(parts: &[MmsPart], decoded: &[DecodedPartData]) -> (Vec<String>, Ve
             .collect()
     };
     (captures(&TEXT_SRC), captures(&IMG_SRC))
-}
-
-/// The file name trimmed, unless blank or a literal `null`/`none`.
-fn valid_filename(value: &str) -> Option<String> {
-    let value = value.trim();
-    (!value.is_empty()
-        && !value.eq_ignore_ascii_case("null")
-        && !value.eq_ignore_ascii_case("none"))
-    .then(|| value.into())
 }
 
 /// File extension for a part's content type.
