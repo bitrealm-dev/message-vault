@@ -179,6 +179,19 @@ through `PG_TEST_LOCK` and an `fs2` file lock across test binaries
 suite introduces no race. The server crate now compiles once per pull request
 instead of twice.
 
+The ruleset does not require a branch to be up to date with `main` before it
+merges, so each pull request is checked against the `main` it branched from,
+not the `main` it lands on. Two pull requests that are green on their own can
+squash-merge into a `main` that does not compile. Requiring up-to-date branches
+would prevent that at the cost of a rebase before every merge; a merge queue
+would prevent it without the rebase, at the cost of one more CI run per merge.
+Neither is in place. What is in place is detection: `ci.yml` cancels an
+in-progress run only for a `pull_request` event, never for a push to `main` or
+a tag, so every commit on `main` gets its own verdict and a bad combination
+shows up on the merge that caused it. Before this, a burst of squash merges
+cancelled every `main` run but the last — twelve merges on 2026-09-05 left
+eleven cancelled runs and one result.
+
 The `changes` job is load-bearing and worth testing before the ruleset is
 enabled. A diff that is too broad runs the Rust matrix on a README edit; a diff
 that is too narrow skips it on a code change. On a tag or a `workflow_dispatch`
