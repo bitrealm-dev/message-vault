@@ -5,7 +5,7 @@
 #
 # Stops on the first failure. Starts with ./scripts/check-pr.sh (format and
 # lint), then builds and tests the workspace and src-tauri, and runs the
-# license, Docker-context, and generated-API-type checks, cargo-deny, and
+# license, Docker-context, version-lockstep and generated-API-type checks, cargo-deny, and
 # the web and docs test/build/audit steps. Export MV_TEST_POSTGRES_URL to
 # include the Postgres-gated server suites. CI runs the same set in
 # parallel; this exists so nobody types nine commands by hand. Why the
@@ -24,6 +24,9 @@ echo "==> license consistency"
 
 echo "==> docker rust-builder copies patched crates"
 "${SCRIPT_DIR}/check-docker-context.sh"
+
+echo "==> product version lockstep"
+"${SCRIPT_DIR}/check-version-lockstep.sh"
 
 echo "==> cargo deny check advisories"
 if cargo deny --version >/dev/null 2>&1; then
