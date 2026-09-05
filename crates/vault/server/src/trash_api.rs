@@ -46,7 +46,7 @@ pub(crate) async fn remove_orphaned_files(
         Ok(())
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("asset removal task: {e}")))?
+    .map_err(|e| ApiError::Internal(anyhow::anyhow!("asset removal task: {e}")))?
 }
 
 /// The absolute paths one orphaned file occupies on disk.
@@ -86,7 +86,7 @@ fn join_under(dir: &Path, relative: &str) -> Result<PathBuf, ApiError> {
     let rel = Path::new(relative);
     let safe = rel.components().all(|c| matches!(c, Component::Normal(_)));
     if !safe || relative.is_empty() {
-        return Err(ApiError::Internal(format!(
+        return Err(ApiError::Internal(anyhow::anyhow!(
             "stored asset path {relative:?} is not a plain relative path"
         )));
     }
@@ -98,7 +98,7 @@ fn remove_if_present(path: &Path) -> Result<(), ApiError> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(ApiError::Internal(format!(
+        Err(e) => Err(ApiError::Internal(anyhow::anyhow!(
             "remove {}: {e}",
             path.display()
         ))),

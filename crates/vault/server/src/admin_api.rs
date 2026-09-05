@@ -221,7 +221,9 @@ pub async fn create_user_handler(
 
     let user = load_admin_user(&mut conn, &account_id)
         .await?
-        .ok_or_else(|| ApiError::Internal("account vanished immediately after insert".into()))?;
+        .ok_or_else(|| {
+            ApiError::Internal(anyhow::anyhow!("account vanished immediately after insert"))
+        })?;
     Ok(Json(user))
 }
 
@@ -394,8 +396,8 @@ pub async fn delete_user_handler(
     if account_root.exists() {
         tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&account_root))
             .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
+            .map_err(|e| ApiError::Internal(e.into()))?
+            .map_err(|e| ApiError::Internal(e.into()))?;
     }
     Ok(axum::http::StatusCode::NO_CONTENT)
 }

@@ -302,7 +302,7 @@ fn apply_convert_or_compress(
     let Some(output_dir) = attachments_dir.parent() else {
         return Err("attachments directory has no parent".into());
     };
-    let files = media::collect_media_files(attachments_dir).map_err(|e| e.to_string())?;
+    let files = media::collect_media_files(attachments_dir).map_err(|e| format!("{e:#}"))?;
     let mut emit = |line: &str| emit_log(log, line);
     let (report, remap) = media::process_attachment_files(
         output_dir,
@@ -311,7 +311,7 @@ fn apply_convert_or_compress(
         &media.compress,
         Some(&mut emit),
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| format!("{e:#}"))?;
     apply_remap_to_jobs(jobs, &remap, output_dir);
     for err in &report.errors {
         mark_convert_error(jobs, err);

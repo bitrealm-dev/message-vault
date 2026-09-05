@@ -53,12 +53,12 @@ pub enum SavedSearchError {
     BadRequest(String),
     NotFound(String),
     Conflict(String),
-    Internal(String),
+    Internal(anyhow::Error),
 }
 
 impl From<sqlx::Error> for SavedSearchError {
     fn from(e: sqlx::Error) -> Self {
-        Self::Internal(e.to_string())
+        Self::Internal(e.into())
     }
 }
 
@@ -68,7 +68,7 @@ impl From<SavedSearchError> for crate::server::ApiError {
             SavedSearchError::BadRequest(m) => Self::BadRequest(m),
             SavedSearchError::NotFound(m) => Self::NotFound(m),
             SavedSearchError::Conflict(m) => Self::Conflict(m),
-            SavedSearchError::Internal(m) => Self::Internal(m),
+            SavedSearchError::Internal(e) => Self::Internal(e),
         }
     }
 }
@@ -80,16 +80,16 @@ fn row_to_saved_search(row: &AnyRow) -> Result<SavedSearch> {
     Ok(SavedSearch {
         id: row
             .try_get::<i64, _>("id")
-            .map_err(|e| SavedSearchError::Internal(e.to_string()))?,
+            .map_err(|e| SavedSearchError::Internal(e.into()))?,
         name: row
             .try_get::<String, _>("name")
-            .map_err(|e| SavedSearchError::Internal(e.to_string()))?,
+            .map_err(|e| SavedSearchError::Internal(e.into()))?,
         query: row
             .try_get::<String, _>("query")
-            .map_err(|e| SavedSearchError::Internal(e.to_string()))?,
+            .map_err(|e| SavedSearchError::Internal(e.into()))?,
         kind: row
             .try_get::<String, _>("kind")
-            .map_err(|e| SavedSearchError::Internal(e.to_string()))?,
+            .map_err(|e| SavedSearchError::Internal(e.into()))?,
     })
 }
 
@@ -190,9 +190,9 @@ pub async fn create(
     .execute(&mut *conn)
     .await?;
     let Some(id) = find_id_by_name(conn, account_id, &name).await? else {
-        return Err(SavedSearchError::Internal(
-            "saved search vanished after insert".into(),
-        ));
+        return Err(SavedSearchError::Internal(anyhow::anyhow!(
+            "saved search vanished after insert"
+        )));
     };
     Ok(SavedSearch {
         id,

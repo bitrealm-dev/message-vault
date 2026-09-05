@@ -586,7 +586,7 @@ fn download_assets_parallel(args: DownloadAssetsParallelArgs<'_>) -> Result<Asse
                 .with_context(|| format!("stat after download {}", job.dest.display()))?;
             Ok(meta.len())
         })
-        .map_err(|e| e.to_string())
+        .map_err(|e| format!("{e:#}"))
     });
 
     for result in results {

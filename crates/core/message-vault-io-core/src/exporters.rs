@@ -563,7 +563,7 @@ impl Form {
             min_size,
             self.media_skip_efficient,
         )
-        .map_err(|e| e.to_string())
+        .map_err(|e| format!("{e:#}"))
     }
 }
 

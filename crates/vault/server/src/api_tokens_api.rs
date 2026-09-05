@@ -58,7 +58,7 @@ fn map_label_error(e: crate::db::api_tokens::ApiTokenMutationError) -> ApiError 
     use crate::db::api_tokens::ApiTokenMutationError;
     match e {
         ApiTokenMutationError::InvalidLabel(err) => ApiError::BadRequest(err.to_string()),
-        ApiTokenMutationError::Other(err) => ApiError::Internal(err.to_string()),
+        ApiTokenMutationError::Other(err) => ApiError::Internal(err),
     }
 }
 
@@ -308,7 +308,7 @@ mod tests {
     fn other_errors_map_to_internal() {
         let err = map_label_error(ApiTokenMutationError::Other(anyhow::anyhow!("boom")));
         match err {
-            ApiError::Internal(msg) => assert_eq!(msg, "boom"),
+            ApiError::Internal(err) => assert_eq!(err.to_string(), "boom"),
             other => panic!("expected Internal, got {other:?}"),
         }
     }

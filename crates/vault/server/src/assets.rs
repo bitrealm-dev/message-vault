@@ -689,7 +689,7 @@ async fn resolve_asset_lookup(
         }
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("asset lookup task: {e}")))?;
+    .map_err(|e| ApiError::Internal(anyhow::anyhow!("asset lookup task: {e}")))?;
     Ok((account, source_id, existing))
 }
 
@@ -768,7 +768,7 @@ pub(crate) async fn asset_get_handler(
         if e.kind() == std::io::ErrorKind::NotFound {
             ApiError::NotFound("asset file missing on disk".into())
         } else {
-            ApiError::Internal(format!("stat {}: {e}", path.display()))
+            ApiError::Internal(anyhow::anyhow!("stat {}: {e}", path.display()))
         }
     })?;
     if meta.file_type().is_symlink() || !meta.is_file() {
@@ -781,7 +781,7 @@ pub(crate) async fn asset_get_handler(
         .unwrap_or_else(|| "application/octet-stream".into());
     let file = tokio::fs::File::open(&path)
         .await
-        .map_err(|e| ApiError::Internal(format!("open {}: {e}", path.display())))?;
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("open {}: {e}", path.display())))?;
     let stream = tokio_util::io::ReaderStream::new(file);
     let body = axum::body::Body::from_stream(stream);
 
@@ -853,7 +853,9 @@ pub(crate) async fn asset_put_handler(
     let incoming_dir = assets_dir.join(".incoming");
     tokio::fs::create_dir_all(&incoming_dir)
         .await
-        .map_err(|e| ApiError::Internal(format!("mkdir {}: {e}", incoming_dir.display())))?;
+        .map_err(|e| {
+            ApiError::Internal(anyhow::anyhow!("mkdir {}: {e}", incoming_dir.display()))
+        })?;
     let tmp_path = incoming_dir.join(format!(
         "{sha256}-{}.part",
         std::time::SystemTime::now()
@@ -888,7 +890,7 @@ pub(crate) async fn asset_put_handler(
         )
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("asset upload task: {e}")))?
+    .map_err(|e| ApiError::Internal(anyhow::anyhow!("asset upload task: {e}")))?
     .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
     // Rename consumes the temp file; remove leftovers after errors / already_present races.
@@ -963,7 +965,7 @@ pub(crate) async fn asset_upload_start_handler(
         asset_uploads::start_upload(&assets_dir, &sha, bytes, mime.as_deref(), limits)
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("upload start task: {e}")))?
+    .map_err(|e| ApiError::Internal(anyhow::anyhow!("upload start task: {e}")))?
     .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
     match result {
@@ -981,9 +983,9 @@ pub(crate) async fn asset_upload_start_handler(
             assets_path: None,
             already_present: false,
         })),
-        _ => Err(ApiError::Internal(
-            "upload start returned inconsistent state".into(),
-        )),
+        _ => Err(ApiError::Internal(anyhow::anyhow!(
+            "upload start returned inconsistent state"
+        ))),
     }
 }
 
@@ -1029,7 +1031,7 @@ pub(crate) async fn asset_upload_part_handler(
         asset_uploads::put_part(&assets_dir, &sha, &uid, part, &body)
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("upload part task: {e}")))?
+    .map_err(|e| ApiError::Internal(anyhow::anyhow!("upload part task: {e}")))?
     .map_err(|e| ApiError::BadRequest(e.to_string()))?;
     Ok(Json(AssetUploadPartResponse {
         part,
@@ -1093,7 +1095,7 @@ pub(crate) async fn asset_upload_complete_handler(
         asset_uploads::complete_upload(&assets_dir, &sha, &uid)
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("upload complete task: {e}")))?
+    .map_err(|e| ApiError::Internal(anyhow::anyhow!("upload complete task: {e}")))?
     .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
     Ok(AssetPutResponse::stored(stored, already_present))
@@ -1131,7 +1133,7 @@ pub(crate) async fn asset_upload_abort_handler(
     let uid = upload_id.clone();
     tokio::task::spawn_blocking(move || asset_uploads::abort_upload(&assets_dir, &sha, &uid))
         .await
-        .map_err(|e| ApiError::Internal(format!("upload abort task: {e}")))?
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("upload abort task: {e}")))?
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }

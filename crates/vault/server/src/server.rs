@@ -307,8 +307,9 @@ pub enum ApiError {
     TooManyRequests(String),
     /// `503` — a dependency is temporarily unavailable.
     ServiceUnavailable(String),
-    /// `500` — unexpected failure.
-    Internal(String),
+    /// `500` — unexpected failure. The whole context chain goes to stderr;
+    /// the client sees a fixed string.
+    Internal(anyhow::Error),
     /// An explicit status the caller already picked, such as Axum's own
     /// answer to a rejected `Json` extraction (413 over the body limit, 415
     /// for the wrong `Content-Type`). ADR-0005 says the status carries the
@@ -329,7 +330,7 @@ impl IntoResponse for ApiError {
             Self::ServiceUnavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, m),
             Self::Internal(m) => {
                 // Keep diagnostics server-side; clients only see a stable message.
-                eprintln!("internal error: {m}");
+                eprintln!("{}", internal_error_log_line(&m));
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "internal server error".into(),
@@ -341,6 +342,12 @@ impl IntoResponse for ApiError {
     }
 }
 
+/// The stderr line for an internal error: the whole context chain, outermost
+/// first, so the operator sees the sqlx or io failure under the step that hit it.
+fn internal_error_log_line(err: &anyhow::Error) -> String {
+    format!("internal error: {err:#}")
+}
+
 impl From<crate::db::vault_imports::ImportLookupError> for ApiError {
     fn from(e: crate::db::vault_imports::ImportLookupError) -> Self {
         match e {
@@ -350,7 +357,7 @@ impl From<crate::db::vault_imports::ImportLookupError> for ApiError {
             crate::db::vault_imports::ImportLookupError::InvalidSession { message } => {
                 Self::BadRequest(message)
             }
-            crate::db::vault_imports::ImportLookupError::Db(err) => Self::Internal(err.to_string()),
+            crate::db::vault_imports::ImportLookupError::Db(err) => Self::Internal(err),
         }
     }
 }
@@ -363,20 +370,20 @@ impl From<crate::db::vault_imports::StartImportError> for ApiError {
                 // surface the same error through anyhow.
                 Self::Conflict(err.to_string())
             }
-            crate::db::vault_imports::StartImportError::Db(err) => Self::Internal(err.to_string()),
+            crate::db::vault_imports::StartImportError::Db(err) => Self::Internal(err),
         }
     }
 }
 
 impl From<sqlx::Error> for ApiError {
     fn from(e: sqlx::Error) -> Self {
-        Self::Internal(e.to_string())
+        Self::Internal(e.into())
     }
 }
 
 impl From<anyhow::Error> for ApiError {
     fn from(e: anyhow::Error) -> Self {
-        Self::Internal(e.to_string())
+        Self::Internal(e)
     }
 }
 
@@ -859,11 +866,11 @@ async fn create_dest_file(dest: &Path) -> Result<tokio::fs::File, ApiError> {
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent)
             .await
-            .map_err(|e| ApiError::Internal(format!("mkdir {}: {e}", parent.display())))?;
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("mkdir {}: {e}", parent.display())))?;
     }
     tokio::fs::File::create(dest)
         .await
-        .map_err(|e| ApiError::Internal(format!("create {}: {e}", dest.display())))
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("create {}: {e}", dest.display())))
 }
 
 /// Stream a request body to `dest`, failing once it passes `max_body_bytes`. Returns the bytes written.
@@ -886,11 +893,11 @@ pub(crate) async fn stream_body_to_file(
         }
         file.write_all(&chunk)
             .await
-            .map_err(|e| ApiError::Internal(format!("write {}: {e}", dest.display())))?;
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("write {}: {e}", dest.display())))?;
     }
     file.flush()
         .await
-        .map_err(|e| ApiError::Internal(format!("flush {}: {e}", dest.display())))?;
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("flush {}: {e}", dest.display())))?;
     Ok(written)
 }
 

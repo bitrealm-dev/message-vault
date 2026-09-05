@@ -21,6 +21,30 @@ fn jsonl_content_type_accepts_x_ndjson() {
     assert!(!is_jsonl_content_type("application/json"));
 }
 
+#[test]
+fn internal_error_log_line_keeps_the_context_chain() {
+    let err = anyhow::Error::new(std::io::Error::other("disk full"))
+        .context("write staging row")
+        .context("stage conversation chat-1");
+    assert_eq!(
+        internal_error_log_line(&err),
+        "internal error: stage conversation chat-1: write staging row: disk full"
+    );
+}
+
+#[test]
+fn internal_error_keeps_the_chain_and_answers_500() {
+    let err = ApiError::from(anyhow::anyhow!("disk full").context("stage conversation"));
+    let ApiError::Internal(inner) = &err else {
+        panic!("expected Internal, got {err:?}");
+    };
+    assert_eq!(format!("{inner:#}"), "stage conversation: disk full");
+    assert_eq!(
+        err.into_response().status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+}
+
 const TEST_ACCOUNT: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
 /// Test database with the vault schema applied. The temp dir is returned
