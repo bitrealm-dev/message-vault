@@ -1,0 +1,10 @@
+# Pin the toolchain so CI and every checkout build with the same Rust.
+# CI gates Clippy at -D warnings; on a floating stable, a new Rust release
+# can turn main red with no code change (1.98's chunks_exact_to_as_chunks
+# did exactly that on 2026-09-05). rustup reads this file everywhere —
+# local builds and the GitHub runners' preinstalled rustup alike — so the
+# version moves only when this file does. Bump it deliberately and fix any
+# new lints in the same pull request.
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]

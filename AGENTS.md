@@ -241,7 +241,7 @@ Optional: `./scripts/build-static.sh` copies `web/dist` to `static/` so the vaul
 
 Run these from the repository root unless a `cd` is shown.
 
-Rust formatter is `rustfmt`. CI gates Clippy at `-D warnings` on the workspace and on `src-tauri`. `src-tauri/` is not a workspace member, so format it with `--manifest-path`.
+Rust formatter is `rustfmt`. CI gates Clippy at `-D warnings` on the workspace and on `src-tauri`. `src-tauri/` is not a workspace member, so format it with `--manifest-path`. `rust-toolchain.toml` pins the toolchain for every checkout and for CI; bump it deliberately, in its own pull request, fixing any new Clippy lints there — a floating stable can redden `main` with no code change.
 
 ```bash
 # Check format (what CI runs)
