@@ -183,6 +183,17 @@ impl ListCtx<'_> {
         }
     }
 
+    /// Reach the rows of `list` from the base row: [`Self::contact`] for
+    /// Contacts, [`Self::conversation`] for Conversations, [`Self::message`]
+    /// for Messages. For a word whose home list is decided by data.
+    pub fn reach(&self, list: ListKind, out: &mut Sql, inner: impl FnOnce(&mut Sql)) {
+        match list {
+            ListKind::Contacts => self.contact(out, inner),
+            ListKind::Conversations => self.conversation(out, inner),
+            ListKind::Messages => self.message(out, inner),
+        }
+    }
+
     /// A WHERE fragment tying messages alias `m2` to the base row, for
     /// MIN, MAX, and COUNT subqueries. Excludes duplicates.
     pub fn messages_link(&self, m2: &str) -> String {
