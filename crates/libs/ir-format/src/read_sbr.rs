@@ -349,7 +349,6 @@ fn to_document(
     owner_handle: Option<&str>,
     report: &mut SbrReadReport,
 ) -> ConversationDocument {
-    let names = names_by_handle(conversation);
     let export = ExportMeta {
         source: EXPORT_SOURCE.into(),
         tool: EXPORT_TOOL.into(),
@@ -358,88 +357,16 @@ fn to_document(
         owner_display_name: None,
     };
     let owner = owner_sender(&export);
-    let mut messages = Vec::with_capacity(conversation.messages.len());
-    for message in &conversation.messages {
-        if message.is_from_me {
-            report.sent += 1
-        } else {
-            report.received += 1
-        }
-        let timestamp_unix_ms = message
-            .date_ms
-            .parse()
-            .unwrap_or_else(|_| (message.sort_key as i64).saturating_mul(1000));
-        let timestamp = format_local_ts(message.sort_key as i64).expect("timestamps validated");
-        let digests: Vec<_> = message
-            .attachments
-            .iter()
-            .map(|a| a.digest.clone())
-            .collect();
-        let sender = if message.is_from_me {
-            owner.clone()
-        } else {
-            (
-                message
-                    .sender_digits
-                    .as_deref()
-                    .map(phone::normalize_lenient),
-                message.sender_display_name.clone(),
-            )
-        };
-        messages.push(IrMessage {
-            guid: stable_guid(
-                id,
-                &timestamp.0,
-                message.is_from_me,
-                &message.text,
-                &digests,
-            ),
-            timestamp_unix_ms,
-            direction: if message.is_from_me {
-                IrDirection::Outgoing
-            } else {
-                IrDirection::Incoming
-            },
-            service: IrService::Sms,
-            message_kind: IrMessageKind::parse(message.message_kind),
-            sender_handle: sender.0,
-            sender_display_name: sender.1,
-            subject: (!message.subject.is_empty()).then(|| message.subject.clone()),
-            text: message.text.clone(),
-            attachments: message
-                .attachments
-                .iter()
-                .map(|a| IrAttachment {
-                    path: None,
-                    original_name: a.original_name.clone(),
-                    mime_type: a.mime_type.clone(),
-                    digest_sha256: (!a.digest.is_empty()).then(|| a.digest.clone()),
-                    is_sticker: false,
-                    transcription: None,
-                    sticker_effect: None,
-                    size_bytes: Some(a.size_bytes),
-                    missing_reason: None,
-                    bytes: a.bytes.as_ref().map(|b| b.as_ref().to_vec()),
-                })
-                .collect(),
-            imessage: None,
-            source: IrSource {
-                android_type: message.android_type.trim().parse().ok(),
-                fields: message.source_fields.clone(),
-            }
-            .into_option(),
-        });
-    }
-    let participants = conversation
-        .participant_e164s
+    let messages = conversation
+        .messages
         .iter()
-        .filter(|h| !h.is_empty())
-        .map(|handle| IrParticipant {
-            handle: Some(handle.clone()),
-            display_name: names.get(handle).cloned(),
-            // SBR conversation participants are E.164 phone numbers by
-            // construction (participant_e164s), so the type is always Phone.
-            handle_type: Some(HandleType::Phone),
+        .map(|message| {
+            if message.is_from_me {
+                report.sent += 1
+            } else {
+                report.received += 1
+            }
+            ir_message(id, message, &owner)
         })
         .collect();
     let mut document = ConversationDocument {
@@ -452,7 +379,7 @@ fn to_document(
                 ConversationKind::Group => IrConversationType::Group,
             },
             group_title: conversation.group_title.clone(),
-            participants,
+            participants: ir_participants(conversation),
             stats: ConversationStats::default(),
         },
         messages,
@@ -460,6 +387,99 @@ fn to_document(
     };
     document.finalize_stats();
     document
+}
+
+/// The IR message for one pending message. `owner` (handle, display name)
+/// stands in as the sender of anything sent from this phone; the timestamp
+/// is the record's own milliseconds when it parses, else the sort key.
+fn ir_message(
+    chat_id: &str,
+    message: &PendingMessage,
+    owner: &(Option<String>, Option<String>),
+) -> IrMessage {
+    let timestamp_unix_ms = message
+        .date_ms
+        .parse()
+        .unwrap_or_else(|_| (message.sort_key as i64).saturating_mul(1000));
+    let timestamp = format_local_ts(message.sort_key as i64).expect("timestamps validated");
+    let digests: Vec<_> = message
+        .attachments
+        .iter()
+        .map(|a| a.digest.clone())
+        .collect();
+    let (sender_handle, sender_display_name) = if message.is_from_me {
+        owner.clone()
+    } else {
+        (
+            message
+                .sender_digits
+                .as_deref()
+                .map(phone::normalize_lenient),
+            message.sender_display_name.clone(),
+        )
+    };
+    IrMessage {
+        guid: stable_guid(
+            chat_id,
+            &timestamp.0,
+            message.is_from_me,
+            &message.text,
+            &digests,
+        ),
+        timestamp_unix_ms,
+        direction: if message.is_from_me {
+            IrDirection::Outgoing
+        } else {
+            IrDirection::Incoming
+        },
+        service: IrService::Sms,
+        message_kind: IrMessageKind::parse(message.message_kind),
+        sender_handle,
+        sender_display_name,
+        subject: (!message.subject.is_empty()).then(|| message.subject.clone()),
+        text: message.text.clone(),
+        attachments: message.attachments.iter().map(ir_attachment).collect(),
+        imessage: None,
+        source: IrSource {
+            android_type: message.android_type.trim().parse().ok(),
+            fields: message.source_fields.clone(),
+        }
+        .into_option(),
+    }
+}
+
+/// The IR attachment for one pending attachment. The bytes travel with it
+/// when the XML carried them inline; a path is never known.
+fn ir_attachment(a: &PendingAttachment) -> IrAttachment {
+    IrAttachment {
+        path: None,
+        original_name: a.original_name.clone(),
+        mime_type: a.mime_type.clone(),
+        digest_sha256: (!a.digest.is_empty()).then(|| a.digest.clone()),
+        is_sticker: false,
+        transcription: None,
+        sticker_effect: None,
+        size_bytes: Some(a.size_bytes),
+        missing_reason: None,
+        bytes: a.bytes.as_ref().map(|b| b.as_ref().to_vec()),
+    }
+}
+
+/// Every participant as a phone handle, named when the XML named it. SBR
+/// participants are E.164 numbers by construction (`participant_e164s`),
+/// so the type is always Phone.
+fn ir_participants(conversation: &PendingConversation) -> Vec<IrParticipant> {
+    let names = names_by_handle(conversation);
+    conversation
+        .participant_e164s
+        .iter()
+        .filter(|h| !h.is_empty())
+        .map(|handle| IrParticipant {
+            handle: Some(handle.clone()),
+            display_name: names.get(handle).cloned(),
+            handle_type: Some(HandleType::Phone),
+        })
+        .collect()
 }
 
 /// Parse SMS Backup & Restore XML into conversation documents.

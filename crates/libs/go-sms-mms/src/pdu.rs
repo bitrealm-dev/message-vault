@@ -754,68 +754,10 @@ pub fn parse_pdu_file(
     let smil = parse_smil_refs(&data);
     let (timestamp, ts_src) = resolve_timestamp(filename_ts, &structured);
     let pdu_fields = pdu_fields_from_structured(&structured);
+    let (body, body_src) = pdu_body(&structured, &smil, &data);
+    let (attachments, atts_src) = pdu_attachments(&structured, &smil, &data);
 
-    let participants_raw = {
-        let mut parts = participants_from_structured(&structured);
-        if parts.is_empty() {
-            extract_plmn_numbers(&data)
-        } else {
-            let mut seen: HashSet<String> = parts.iter().cloned().collect();
-            for n in extract_plmn_numbers(&data) {
-                if seen.insert(n.clone()) {
-                    parts.push(n);
-                }
-            }
-            parts
-        }
-    };
-
-    let (body, body_src) = if let Some(b) = body_from_named_parts(&structured.named_parts, &smil) {
-        (b, FieldSource::Structured)
-    } else if let Some(b) = body_from_structured(&structured, &smil) {
-        (b, FieldSource::Structured)
-    } else if let Some(subject) = structured
-        .subject
-        .as_ref()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-    {
-        (decode_gosms_emojis(subject), FieldSource::Structured)
-    } else {
-        let b = extract_wap_text_body_fallback(&data);
-        let src = if b.is_empty() {
-            FieldSource::Structured
-        } else {
-            FieldSource::Heuristic
-        };
-        (b, src)
-    };
-
-    let mut attachments = attachments_from_named_parts(&structured.named_parts, &smil);
-    let mut atts_src = FieldSource::Structured;
-    if attachments.is_empty() {
-        attachments = attachments_from_structured(&structured, &smil);
-    }
-    if attachments.is_empty() {
-        let blobs = detect_attachment_blobs(&data);
-        for (i, (ext, start, end)) in blobs.into_iter().enumerate() {
-            let smil_name = smil.media_srcs.get(i).cloned();
-            attachments.push(ParsedAttachment {
-                ext,
-                data: data[start..end].to_vec(),
-                smil_name,
-            });
-        }
-        if !attachments.is_empty() {
-            atts_src = FieldSource::Heuristic;
-        }
-    }
-
-    let normalized_parts: Vec<String> = participants_raw
-        .iter()
-        .filter_map(|p| sanitize_number(p))
-        .collect();
-    let unique_parts = unique_participants(&normalized_parts);
+    let unique_parts = unique_participants(&pdu_participants(&structured, &data));
     let is_group = unique_parts.len() >= 3;
     let has_roles = structured.from.is_some()
         || !structured.to.is_empty()
@@ -845,6 +787,83 @@ pub fn parse_pdu_file(
         pdu_fields,
         decode_quality,
     }))
+}
+
+/// Sanitized participant numbers: the address headers, plus any
+/// PLMN-encoded number in the raw bytes the headers did not name. With no
+/// address headers at all, the raw scan is all there is.
+fn pdu_participants(structured: &StructuredMms, data: &[u8]) -> Vec<String> {
+    let mut parts = participants_from_structured(structured);
+    if parts.is_empty() {
+        parts = extract_plmn_numbers(data);
+    } else {
+        let mut seen: HashSet<String> = parts.iter().cloned().collect();
+        for n in extract_plmn_numbers(data) {
+            if seen.insert(n.clone()) {
+                parts.push(n);
+            }
+        }
+    }
+    parts.iter().filter_map(|p| sanitize_number(p)).collect()
+}
+
+/// The text body and where it came from: a named text part, a text part the
+/// SMIL names, the Subject header, or, as a last resort, a scan of the raw
+/// bytes for WAP text, which is heuristic when it finds anything.
+fn pdu_body(structured: &StructuredMms, smil: &SmilRefs, data: &[u8]) -> (String, FieldSource) {
+    if let Some(b) = body_from_named_parts(&structured.named_parts, smil) {
+        return (b, FieldSource::Structured);
+    }
+    if let Some(b) = body_from_structured(structured, smil) {
+        return (b, FieldSource::Structured);
+    }
+    if let Some(subject) = structured
+        .subject
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return (decode_gosms_emojis(subject), FieldSource::Structured);
+    }
+    let b = extract_wap_text_body_fallback(data);
+    let src = if b.is_empty() {
+        FieldSource::Structured
+    } else {
+        FieldSource::Heuristic
+    };
+    (b, src)
+}
+
+/// The attachments and where they came from: named parts, parts the SMIL
+/// names, or, as a last resort, media blobs detected in the raw bytes
+/// (heuristic) paired with the SMIL media names in order.
+fn pdu_attachments(
+    structured: &StructuredMms,
+    smil: &SmilRefs,
+    data: &[u8],
+) -> (Vec<ParsedAttachment>, FieldSource) {
+    let mut attachments = attachments_from_named_parts(&structured.named_parts, smil);
+    if attachments.is_empty() {
+        attachments = attachments_from_structured(structured, smil);
+    }
+    if !attachments.is_empty() {
+        return (attachments, FieldSource::Structured);
+    }
+    let attachments: Vec<ParsedAttachment> = detect_attachment_blobs(data)
+        .into_iter()
+        .enumerate()
+        .map(|(i, (ext, start, end))| ParsedAttachment {
+            ext,
+            data: data[start..end].to_vec(),
+            smil_name: smil.media_srcs.get(i).cloned(),
+        })
+        .collect();
+    let src = if attachments.is_empty() {
+        FieldSource::Structured
+    } else {
+        FieldSource::Heuristic
+    };
+    (attachments, src)
 }
 
 #[cfg(test)]
