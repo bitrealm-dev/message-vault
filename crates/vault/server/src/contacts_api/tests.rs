@@ -122,15 +122,16 @@ async fn contact_match_preserves_order_across_multiple_unknowns() {
 }
 
 #[tokio::test]
-async fn contact_match_does_not_count_a_trashed_contact_as_known() {
-    // A trashed contact is not in the user's vault as far as every other
-    // screen is concerned, and saying "you already have this person" about
-    // someone they deleted would be a lie.
+async fn contact_match_counts_a_trashed_contact_as_known() {
+    // Trash sets a person aside; it does not make them absent. An import
+    // that meets this handle attaches to the trashed contact (see
+    // `import::contact_name`), so telling the gate "this person is new"
+    // would promise a contact the import is not going to create (#328).
     let (vault, token, _account) = contacts_fixture_with_trashed_handle("+15550100").await;
     let body = serde_json::json!({ "identifiers": ["+15550100"] });
     let response =
         post_json::<serde_json::Value>(&vault.state, "/v1/contacts/match", &token, body).await;
-    assert_eq!(response["unknown"], serde_json::json!(["+15550100"]));
+    assert_eq!(response["unknown"], serde_json::json!([]));
 }
 
 #[tokio::test]

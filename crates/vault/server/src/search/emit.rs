@@ -17,6 +17,15 @@ pub(crate) const NOT_TRASHED_CONTACT: &str = "NOT EXISTS (SELECT 1 FROM trashed_
 /// Conversation `c` is not in the trash.
 pub(crate) const NOT_TRASHED_CONVERSATION: &str = "NOT EXISTS (SELECT 1 FROM trashed_conversations tc WHERE tc.account_id = c.account_id AND tc.conversation_id = c.id)";
 
+/// Conversation `conv` is not in the trash: [`NOT_TRASHED_CONVERSATION`]
+/// for a subquery whose conversations alias is not `c`. The one clause,
+/// written once, so the lists and the contact counts cannot drift apart.
+pub(crate) fn not_trashed_conversation(conv: &str) -> String {
+    format!(
+        "NOT EXISTS (SELECT 1 FROM trashed_conversations tc WHERE tc.account_id = {conv}.account_id AND tc.conversation_id = {conv}.id)"
+    )
+}
+
 /// Compile a parsed query into one parenthesised WHERE fragment.
 pub(crate) fn compile(
     list: ListKind,

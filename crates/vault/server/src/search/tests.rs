@@ -1555,6 +1555,41 @@ mod measure_words {
         );
     }
 
+    /// `messages:` on Contacts and the number in the contact drawer must
+    /// agree once something is trashed: both leave trashed conversations
+    /// out (#328). Messages in the trashed group change nobody's count.
+    #[tokio::test]
+    async fn a_contacts_message_count_leaves_trashed_conversations_out() {
+        let (pool, _dir, f) = seeded().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let before_any = run(&mut conn, ListKind::Contacts, "messages:>0").await;
+        let before_many = run(&mut conn, ListKind::Contacts, "messages:>=3").await;
+        for i in 0..5 {
+            let ts = format!("2024-06-0{}T10:00:00Z", i + 1);
+            message(
+                &mut conn,
+                ACCOUNT,
+                msg(f.trashed_conv, &ts, false, Some(f.ana_handle), "gone"),
+            )
+            .await;
+        }
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "messages:>0").await,
+            before_any
+        );
+        assert_eq!(
+            run(&mut conn, ListKind::Contacts, "messages:>=3").await,
+            before_many
+        );
+        // Asking for the trash lifts the default and the messages count.
+        assert!(
+            run(&mut conn, ListKind::Contacts, "trashed:any messages:>=3")
+                .await
+                .contains(&f.ana),
+            "with trashed:any the trashed group's messages count for Ana"
+        );
+    }
+
     #[tokio::test]
     async fn counts() {
         let (pool, _dir, f) = seeded().await;
@@ -1845,6 +1880,53 @@ mod docs {
                 lookup(word).is_some(),
                 "browse-your-messages.md tells people to search {word}:, which \
                  the language does not have"
+            );
+        }
+    }
+
+    /// The letters inside `<ListTiles on="..." />` on one table row of
+    /// `search.mdx`: which lists the row says the word applies to.
+    fn tiles_on_line(line: &str) -> Option<Vec<char>> {
+        let marker = "<ListTiles on=\"";
+        let start = line.find(marker)? + marker.len();
+        let end = start + line[start..].find('"')?;
+        Some(
+            line[start..end]
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect(),
+        )
+    }
+
+    /// The letter `search.mdx` uses for a list.
+    fn tile_letter(list: ListKind) -> char {
+        match list {
+            ListKind::Contacts => 'C',
+            ListKind::Conversations => 'V',
+            ListKind::Messages => 'M',
+        }
+    }
+
+    /// The table's per-row tiles must say the same thing as the registry's
+    /// `lists`. This drifted on the first change that touched it: `trashed:`
+    /// was registered for Messages too and the row kept saying `C V` (#328).
+    #[test]
+    fn the_page_marks_each_word_for_exactly_the_lists_the_registry_does() {
+        for line in SEARCH_PAGE.lines().filter(|l| l.starts_with("| `")) {
+            let Some(word) = words_on_line(line).next() else {
+                continue;
+            };
+            let Some(spec) = lookup(&word) else {
+                continue; // reported by the_page_lists_every_word_and_nothing_else
+            };
+            let mut documented = tiles_on_line(line)
+                .unwrap_or_else(|| panic!("search.mdx row for {word}: has no <ListTiles on=…/>"));
+            documented.sort_unstable();
+            let mut registered: Vec<char> = spec.lists.iter().map(|l| tile_letter(*l)).collect();
+            registered.sort_unstable();
+            assert_eq!(
+                documented, registered,
+                "search.mdx marks {word}: for {documented:?} but the registry says {registered:?}"
             );
         }
     }
