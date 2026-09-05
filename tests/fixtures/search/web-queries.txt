@@ -20,6 +20,9 @@ contacts	tag:Ana
 contacts	trashed:yes
 contacts	trashed:yes "guacamole night"
 contacts	trashed:yes ada
+contacts	trashed:yes ada first-message:>=2020-01-01 last-message:2021-01-01..2021-06-01 messages:>0 name:none service:imessage,sms
+contacts	trashed:yes handle:"Book Club" first-message:<2022-01-01 messages:0 handle:none
+contacts	trashed:yes handle:"Say ""Hi""" service:whatsapp
 conversations	
 conversations	ada handle:"Ann Lee" kind:direct participants:>3
 conversations	group:"Book Club"
@@ -45,6 +48,9 @@ conversations	tag:Ana
 conversations	trashed:yes
 conversations	trashed:yes "guacamole night"
 conversations	trashed:yes ada
+conversations	trashed:yes ada first-message:>=2020-01-01 last-message:2021-01-01..2021-06-01 messages:>0 name:none service:imessage,sms
+conversations	trashed:yes handle:"Book Club" first-message:<2022-01-01 messages:0 handle:none
+conversations	trashed:yes handle:"Say ""Hi""" service:whatsapp
 conversations	with:#42
 conversations	with:#42 kind:direct
 conversations	with:#42 kind:group

@@ -22,7 +22,16 @@ export type {
 } from "../../lib/searchQuery";
 export { composeCountComparison };
 
-export type AdvancedSearchMode = "messages" | "contacts";
+/**
+ * Which form the panel shows. `messages` is the conversation-list form,
+ * `contacts` the contact-list form. `trash` is the form for a screen that
+ * sends one query to both the contacts and the conversations list, so it may
+ * only offer words both accept. Every word the contacts form emits (`name:`,
+ * `handle:`, `first-message:`, `last-message:`, `messages:`, `service:`) is
+ * registered on both lists, while the messages form's `participants:` is
+ * conversations-only; so Trash shows the contacts form.
+ */
+export type AdvancedSearchMode = "messages" | "contacts" | "trash";
 
 export const EMPTY_COUNT: CountFilterInput = { comparator: "any", value: "" };
 export const EMPTY_DATE_BOUND: DateBoundFilter = { op: "any", start: "", end: "" };

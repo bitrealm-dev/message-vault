@@ -34,6 +34,30 @@ export function hasFieldToken(q: string): boolean {
   return FIELD_TOKEN_RE.test(q.replace(PHRASE_RE, " "));
 }
 
+/**
+ * The field words a query carries, lower-cased and without the leading minus,
+ * in order of appearance. Quoted phrases are removed first, as in
+ * `hasFieldToken`, so a colon inside one does not read as a word.
+ */
+export function fieldWords(q: string): string[] {
+  const words: string[] = [];
+  for (const match of q.replace(PHRASE_RE, " ").matchAll(/(^|[\s(])-?([a-z][a-z-]*):(?!\/)/gi)) {
+    const word = match[2].toLowerCase();
+    if (!words.includes(word)) words.push(word);
+  }
+  return words;
+}
+
+/**
+ * The words in `q` that `fields` (one list's registry) does not carry. A
+ * screen that sends one query to two lists uses this to tell which pane a
+ * word applies to, instead of letting the other pane answer with a 400.
+ */
+export function unsupportedFieldWords(q: string, fields: readonly SearchField[]): string[] {
+  const known = new Set(fields.map((f) => f.word));
+  return fieldWords(q).filter((w) => !known.has(w));
+}
+
 /** The free-text words of a query, with every `word:value` token removed. */
 export function stripFieldTokens(q: string): string {
   return q

@@ -390,6 +390,12 @@ function buildFixtureLines(): string[] {
   ];
   for (const input of contactsInputs) {
     addLines(lines, advancedContacts(input), ["contacts"]);
+    // Trash's Advanced Search shows this same form (AdvancedSearchMode
+    // "trash") and sends the result, behind trashed:yes, to both the
+    // contacts and the conversations list. Every word the form emits must
+    // therefore parse on both; this is the check that catches a
+    // conversations-only word (#331).
+    addLines(lines, trashed(advancedContacts(input)), ["contacts", "conversations"]);
   }
 
   return [...lines].sort();

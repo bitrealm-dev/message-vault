@@ -9,6 +9,7 @@ import {
   getConversation,
   listContacts,
   listConversations,
+  listSearchFields,
   restoreContact,
   restoreConversation,
 } from "../lib/vaultApi";
@@ -21,6 +22,7 @@ vi.mock("../lib/vaultApi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/vaultApi")>()),
   listConversations: vi.fn(),
   listContacts: vi.fn(),
+  listSearchFields: vi.fn(),
   getConversation: vi.fn(),
   restoreConversation: vi.fn(),
   restoreContact: vi.fn(),
@@ -28,6 +30,28 @@ vi.mock("../lib/vaultApi", async (importOriginal) => ({
 
 const listConversationsMock = vi.mocked(listConversations);
 const listContactsMock = vi.mocked(listContacts);
+const listSearchFieldsMock = vi.mocked(listSearchFields);
+
+/** The words each list accepts, as `GET /v1/search/fields` would say: enough of
+ * the registry (search/fields.rs) to tell a shared word from a one-list word. */
+const FIELD_WORDS = {
+  contacts: ["name", "handle", "messages", "conversations", "trashed"],
+  conversations: ["name", "handle", "messages", "participants", "trashed"],
+  messages: ["body", "from", "to", "in", "trashed"],
+} as const;
+
+function fieldsFor(list: keyof typeof FIELD_WORDS) {
+  return {
+    list,
+    items: FIELD_WORDS[list].map((word) => ({
+      word,
+      value_type: "text" as const,
+      values: [],
+      help: "",
+      example: `${word}:x`,
+    })),
+  };
+}
 const getConversationMock = vi.mocked(getConversation);
 const restoreConversationMock = vi.mocked(restoreConversation);
 const restoreContactMock = vi.mocked(restoreContact);
@@ -74,6 +98,10 @@ describe("TrashScreen", () => {
     getConversationMock.mockReset();
     restoreConversationMock.mockReset();
     restoreContactMock.mockReset();
+    listSearchFieldsMock.mockReset();
+    listSearchFieldsMock.mockImplementation(async (list) =>
+      fieldsFor(list as keyof typeof FIELD_WORDS),
+    );
     listConversationsMock.mockResolvedValue({ items: [], total: 1, limit: 1, offset: 0 });
     listContactsMock.mockResolvedValue(contactPage([]));
     getConversationMock.mockResolvedValue(conversation());
@@ -90,6 +118,27 @@ describe("TrashScreen", () => {
 
     expect(await screen.findByText(/in Trash\. Select one on the left to view it\./)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
+  });
+
+  it("explains a word one list refuses instead of asking that list", async () => {
+    // `participants:` is a conversations word. The contacts pane must not
+    // send it (the vault would answer 400) and must say who the word is for;
+    // the conversations pane still answers normally (#331).
+    renderAt("/trash?tq=participants%3A%3E3");
+
+    expect(await screen.findByText("participants: applies to conversations only")).toBeTruthy();
+    expect(await screen.findByText(/1 conversation matching this search in Trash/)).toBeTruthy();
+    expect(listContactsMock).not.toHaveBeenCalled();
+    expect(listConversationsMock).toHaveBeenCalled();
+  });
+
+  it("explains a contacts-only word in the conversations pane and lists contacts normally", async () => {
+    listContactsMock.mockResolvedValue(contactPage([contact(7, "Ada Lovelace")]));
+    renderAt("/trash?tq=conversations%3A0");
+
+    expect(await screen.findByText("conversations: applies to contacts only")).toBeTruthy();
+    expect(await screen.findByText("Ada Lovelace")).toBeTruthy();
+    expect(listConversationsMock).not.toHaveBeenCalled();
   });
 
   it("reads correctly when the trash is empty", async () => {
