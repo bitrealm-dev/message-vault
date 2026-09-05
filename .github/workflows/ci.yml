@@ -482,11 +482,16 @@ jobs:
       # minutes. macOS needs --pkg-fmt zip because tauri-cli's metadata says
       # tgz for every target it does not override, it overrides x86_64 macOS
       # but not aarch64, and its release ships only a zip for aarch64.
+      # GITHUB_TOKEN authenticates binstall's release lookup on
+      # api.github.com; unauthenticated, the 60-per-hour limit is shared by
+      # every runner on the same address and the lookup 403s.
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@v1.23.0
 
       - name: Install Tauri CLI
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: >-
           cargo binstall tauri-cli --version "^2" --no-confirm
           --strategies crate-meta-data

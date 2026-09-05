@@ -85,7 +85,12 @@ rather than quietly costing the ten minutes again. The macOS leg adds
 `--pkg-fmt zip`: `tauri-cli`'s metadata declares `tgz` and overrides only
 `x86_64-apple-darwin` to `zip`, while its release ships only a `zip` for
 `aarch64-apple-darwin`, the runner's target. A dry run of binstall 1.23.0
-against that target fails without the flag and resolves 2.11.4 with it.
+against that target fails without the flag and resolves 2.11.4 with it. The
+step also passes the workflow's `GITHUB_TOKEN`: binstall resolves the asset
+through api.github.com, and unauthenticated requests share GitHub's
+sixty-per-hour limit with every other runner on the same address, which is a
+403 in practice. A dry run on the runners without the token failed on Linux
+and macOS and passed on Windows by luck of the address.
 
 ## Why
 
