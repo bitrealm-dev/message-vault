@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import Button from "../components/Button";
 import { apiErrorMessage } from "../lib/apiErrorMessage";
+import { unsupportedFieldWords, useSearchFields } from "../lib/searchFields";
 import { trashed } from "../lib/searchQuery";
 import { useRestoreContact, useRestoreConversation } from "../lib/trash";
 import { getConversation, listContacts, listConversations } from "../lib/vaultApi";
@@ -20,7 +21,10 @@ import { useVaultQuery } from "../lib/vaultQuery";
  * the row rather than in the contact drawer.
  *
  * Both lists read the same header search term, so narrowing Trash narrows both
- * kinds at once.
+ * kinds at once. A word only one list accepts (`participants:` is a
+ * conversations word, `conversations:` a contacts word) is not sent to the
+ * list that would refuse it; that pane says which list the word applies to
+ * instead of showing the vault's 400.
  */
 
 /** How many trashed contacts this pane lists before it stops. */
@@ -39,11 +43,33 @@ const sectionHeading =
 const errorBox =
   "mb-3 rounded border border-danger-soft-border bg-danger-soft-bg px-3 py-2 text-[0.813rem] text-danger";
 
+const noteBox =
+  "mb-3 rounded border border-border bg-elevated px-3 py-2 text-[0.813rem] text-muted";
+
+/** "participants: applies to conversations only": the words a pane cannot answer, and who can. */
+function appliesOnlyTo(words: readonly string[], list: "contacts" | "conversations"): string {
+  const verb = words.length === 1 ? "applies" : "apply";
+  return `${words.map((w) => `${w}:`).join(", ")} ${verb} to ${list} only`;
+}
+
 export default function TrashScreen() {
   const [searchParams, setSearchParams] = useSearchParams();
   const search = searchParams.get("tq") || "";
   const query = trashed(search);
   const selectedId = selectedIdFromParam(searchParams.get("tsel"));
+
+  // Which typed words each list refuses. The registry is fetched once per
+  // session; until it arrives neither pane asks, so a refused word never
+  // reaches the vault as a 400.
+  const conversationFields = useSearchFields("conversations");
+  const contactFields = useSearchFields("contacts");
+  const fieldsLoading = conversationFields.loading || contactFields.loading;
+  const conversationsRefuse = fieldsLoading
+    ? []
+    : unsupportedFieldWords(query, conversationFields.fields);
+  const contactsRefuse = fieldsLoading ? [] : unsupportedFieldWords(query, contactFields.fields);
+  const askConversations = !fieldsLoading && conversationsRefuse.length === 0;
+  const askContacts = !fieldsLoading && contactsRefuse.length === 0;
 
   // Only `total` is read here; the rows themselves are rendered by the list
   // column, so one row is enough to read `total` off the page response.
@@ -55,14 +81,20 @@ export default function TrashScreen() {
     [query],
   );
 
-  const { data, isPending: loading, error } = useVaultQuery(keys.trash.count(query), fetchCount);
+  const {
+    data,
+    isPending: loading,
+    error,
+  } = useVaultQuery(keys.trash.count(query), fetchCount, { enabled: askConversations });
 
   const {
     data: contactPage,
     isPending: contactsLoading,
     error: contactsError,
-  } = useVaultQuery(keys.contacts.trashed(query), (signal) =>
-    listContacts({ q: query, limit: CONTACT_LIMIT, offset: 0 }, { signal }),
+  } = useVaultQuery(
+    keys.contacts.trashed(query),
+    (signal) => listContacts({ q: query, limit: CONTACT_LIMIT, offset: 0 }, { signal }),
+    { enabled: askContacts },
   );
 
   // AppLayout's left column sets `tsel` when a trashed conversation is clicked;
@@ -89,13 +121,14 @@ export default function TrashScreen() {
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
 
-  if (loading || contactsLoading)
+  if (fieldsLoading || (askConversations && loading) || (askContacts && contactsLoading))
     return <div className="p-6 text-[0.875rem] text-muted">Loading…</div>;
 
   const total = data ?? 0;
   const contacts = contactPage?.items ?? [];
   const searching = search.trim().length > 0;
-  const nothingInTrash = total === 0 && contacts.length === 0 && selectedId === null;
+  const nothingInTrash =
+    askConversations && askContacts && total === 0 && contacts.length === 0 && selectedId === null;
 
   return (
     <div className="max-w-[700px] p-6">
@@ -154,6 +187,10 @@ export default function TrashScreen() {
                   {apiErrorMessage(selectedError, "Could not load this conversation.")}
                 </div>
               )
+            ) : conversationsRefuse.length > 0 ? (
+              <div className={noteBox} role="status">
+                {appliesOnlyTo(conversationsRefuse, "contacts")}
+              </div>
             ) : total === 0 ? (
               <div className="text-[0.875rem] text-muted">
                 {searching ? "No conversations match this search." : "No conversations in Trash."}
@@ -179,7 +216,11 @@ export default function TrashScreen() {
                 {apiErrorMessage(restoreContact.error, "Could not restore this contact.")}
               </div>
             )}
-            {contacts.length === 0 ? (
+            {contactsRefuse.length > 0 ? (
+              <div className={noteBox} role="status">
+                {appliesOnlyTo(contactsRefuse, "conversations")}
+              </div>
+            ) : contacts.length === 0 ? (
               <div className="text-[0.875rem] text-muted">
                 {searching ? "No contacts match this search." : "No contacts in Trash."}
               </div>
