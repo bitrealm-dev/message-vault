@@ -82,6 +82,7 @@ pub(crate) fn compile(
     })
 }
 
+/// Write the SQL for one expression node, recursing into and, or, and not.
 fn emit_expr(ctx: &ListCtx<'_>, out: &mut Sql, expr: &Expr) -> Result<(), QueryError> {
     match expr {
         Expr::And(parts) | Expr::Or(parts) => {

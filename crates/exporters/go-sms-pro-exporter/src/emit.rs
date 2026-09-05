@@ -588,6 +588,7 @@ fn remove_if_exists(path: &Path) {
     }
 }
 
+/// Write `skipped_invalid_address.csv` (or remove a stale one) listing rows dropped for an unusable address.
 fn write_skipped_invalid_address_csv(
     output_dir: &Path,
     details: &[SkippedBadAddrDetail],
@@ -634,6 +635,7 @@ fn write_skipped_invalid_address_csv(
     Ok(())
 }
 
+/// Write `skipped_empty_pdu.csv` (or remove a stale one) listing stub PDU files.
 fn write_skipped_empty_pdu_csv(
     output_dir: &Path,
     details: &[SkippedEmptyPduDetail],
@@ -657,6 +659,7 @@ fn write_skipped_empty_pdu_csv(
     Ok(())
 }
 
+/// Write `skipped_no_party.csv` (or remove a stale one) listing MMS with no non-owner participant.
 fn write_skipped_no_party_csv(
     output_dir: &Path,
     details: &[SkippedNoPartyDetail],

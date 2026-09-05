@@ -53,6 +53,8 @@ pub(crate) fn transpile(sources: &[&str]) -> PgDdl {
     }
 }
 
+/// Rewrite one SQLite schema file into Postgres DDL, collecting the tables it creates and
+/// the foreign keys to add afterwards.
 fn transpile_file(
     source: &str,
     created: &mut Vec<String>,

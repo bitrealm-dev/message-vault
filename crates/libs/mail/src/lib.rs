@@ -329,6 +329,7 @@ fn escape_mboxrd_line(line: &str) -> String {
     }
 }
 
+/// Write one message as an mboxrd record: the `From_` line, then the EML with body `From ` lines escaped.
 fn write_mboxrd_record(writer: &mut impl Write, msg: &MailMessage) -> Result<()> {
     let eml = build_eml(msg)?;
     let envelope = envelope_sender(msg);
@@ -348,6 +349,7 @@ fn write_mboxrd_record(writer: &mut impl Write, msg: &MailMessage) -> Result<()>
     Ok(())
 }
 
+/// The address for the mbox `From_` line: the sender for incoming, the owner otherwise.
 fn envelope_sender(msg: &MailMessage) -> String {
     let handle = match msg.message.direction {
         IrDirection::Incoming => msg
@@ -376,6 +378,7 @@ fn envelope_sender(msg: &MailMessage) -> String {
     }
 }
 
+/// The classic `Wed Jun 30 21:49:08 1993` form of a timestamp, in UTC.
 fn mbox_asctime_utc(secs: i64) -> Result<String> {
     let dt = Utc
         .timestamp_opt(secs, 0)
@@ -385,6 +388,7 @@ fn mbox_asctime_utc(secs: i64) -> Result<String> {
     Ok(dt.format("%a %b %e %H:%M:%S %Y").to_string())
 }
 
+/// Local date and time strings for a Unix timestamp, or `None` when it cannot be represented.
 fn local_date_time_parts(secs: i64) -> Option<(String, String)> {
     let local = Local.timestamp_opt(secs, 0).single().or_else(|| {
         Utc.timestamp_opt(secs, 0)
@@ -397,6 +401,7 @@ fn local_date_time_parts(secs: i64) -> Option<(String, String)> {
     ))
 }
 
+/// The first eight hex characters of a guid, for file names.
 fn guid_prefix8(guid: &str) -> String {
     let hex: String = guid
         .chars()
@@ -438,6 +443,7 @@ fn synthetic_address(handle: &str, display_name: Option<&str>) -> Address<'stati
     Address::new_address(name, email)
 }
 
+/// The owner's address: their handle (or `me`) with the display name `Me`.
 fn owner_address(msg: &MailMessage) -> Address<'static> {
     let handle = msg.owner_handle.trim();
     let handle = if handle.is_empty() { "me" } else { handle };
@@ -468,6 +474,7 @@ fn conversation_address(msg: &MailMessage) -> Address<'static> {
     )
 }
 
+/// An address local part with the characters an email local part cannot hold replaced.
 fn sanitize_addr_local(raw: &str) -> Option<String> {
     if raw.is_empty() {
         return None;
@@ -485,6 +492,7 @@ fn sanitize_addr_local(raw: &str) -> Option<String> {
     if out.is_empty() { None } else { Some(out) }
 }
 
+/// The display name the participants list gives for `peer`.
 fn peer_display_name<'a>(msg: &'a MailMessage, peer: &str) -> Option<&'a str> {
     msg.participants
         .iter()
@@ -507,6 +515,7 @@ fn peer_display_name<'a>(msg: &'a MailMessage, peer: &str) -> Option<&'a str> {
         })
 }
 
+/// The Message-ID domain: `imessage.local` for iMessage rows, else the default.
 fn message_id_domain(msg: &MailMessage) -> &'static str {
     if msg
         .message
@@ -525,6 +534,7 @@ fn message_id_domain(msg: &MailMessage) -> &'static str {
     }
 }
 
+/// The other party's handle in a 1:1 conversation; groups have none.
 fn peer_handle(msg: &MailMessage) -> Option<&str> {
     if msg.conversation_type.eq_ignore_ascii_case("group") {
         return None;
@@ -809,6 +819,7 @@ fn mail_subject(msg: &MailMessage) -> String {
     format!("Message with {with}")
 }
 
+/// Who the subject names: the group title (or member list), or the peer.
 fn conversation_subject_label(msg: &MailMessage) -> String {
     if msg.conversation_type.eq_ignore_ascii_case("group") {
         if let Some(t) = msg

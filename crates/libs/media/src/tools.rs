@@ -12,6 +12,7 @@ struct ToolsState {
 }
 
 impl ToolsState {
+    /// The cached location of `ffmpeg` or `ffprobe`.
     fn cached(&self, name: &str) -> Option<PathBuf> {
         match name {
             "ffmpeg" => self.ffmpeg.clone(),
@@ -20,6 +21,7 @@ impl ToolsState {
         }
     }
 
+    /// Remember where `ffmpeg` or `ffprobe` was found.
     fn set_cached(&mut self, name: &str, path: Option<PathBuf>) {
         match name {
             "ffmpeg" => self.ffmpeg = path,
@@ -29,6 +31,7 @@ impl ToolsState {
     }
 }
 
+/// The process-wide tool cache.
 fn tools_state() -> &'static Mutex<ToolsState> {
     static STATE: OnceLock<Mutex<ToolsState>> = OnceLock::new();
     STATE.get_or_init(|| {
@@ -77,6 +80,7 @@ pub fn ffmpeg_available() -> bool {
     resolve_tool("ffmpeg").is_some() && resolve_tool("ffprobe").is_some()
 }
 
+/// Fail with an installation hint when ffmpeg and ffprobe are not available.
 pub(crate) fn require_ffmpeg() -> Result<()> {
     if ffmpeg_available() {
         Ok(())
@@ -89,6 +93,7 @@ pub(crate) fn require_ffmpeg() -> Result<()> {
     }
 }
 
+/// True when running `bin` with `args` exits successfully.
 fn command_ok(bin: &Path, args: &[&str]) -> bool {
     Command::new(bin)
         .args(args)
@@ -135,6 +140,7 @@ fn resolve_tool(name: &str) -> Option<PathBuf> {
     }
 }
 
+/// The tool under `dir` if it exists and runs.
 fn find_tool_in_dir(dir: &Path, name: &str) -> Option<PathBuf> {
     let candidate = dir.join(executable_name(name));
     if candidate.is_file() && command_ok(&candidate, &["-version"]) {
@@ -179,6 +185,8 @@ pub fn probe_ffmpeg_tools(dir: Option<&Path>) -> FfmpegToolsProbe {
     }
 }
 
+/// Locate a tool: in the override folder when set, else beside the program, in `lib/`,
+/// in `MESSAGE_VAULT_IO_BIN`, or on PATH.
 fn find_tool_with_override(name: &str, override_dir: Option<&Path>) -> Option<PathBuf> {
     if let Some(dir) = override_dir {
         return find_tool_in_dir(dir, name);
@@ -235,6 +243,7 @@ fn find_tool_with_override(name: &str, override_dir: Option<&Path>) -> Option<Pa
     None
 }
 
+/// The tool's file name, with `.exe` on Windows.
 fn executable_name(name: &str) -> String {
     if cfg!(windows) && !name.ends_with(".exe") {
         format!("{name}.exe")
@@ -243,6 +252,7 @@ fn executable_name(name: &str) -> String {
     }
 }
 
+/// Run ffmpeg with `args`, failing with its stderr when it exits non-zero.
 pub(crate) fn run_ffmpeg(args: &[String]) -> Result<()> {
     let ffmpeg = resolve_tool("ffmpeg").ok_or_else(|| {
         anyhow::anyhow!(
@@ -294,6 +304,7 @@ pub(crate) fn ffprobe_command() -> Result<Command> {
     Ok(cmd)
 }
 
+/// Width, height, and frame rate of a video from ffprobe.
 pub(crate) fn probe_video(path: &std::path::Path) -> Result<Probe> {
     let mut cmd = ffprobe_command()?;
     cmd.args([

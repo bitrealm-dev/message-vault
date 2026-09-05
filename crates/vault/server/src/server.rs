@@ -418,6 +418,7 @@ fn build_cors_layer(origins: &[String]) -> CorsLayer {
         .allow_headers(AllowHeaders::mirror_request())
 }
 
+/// The public auth routes with a small body limit, so password hashing cannot be fed huge requests.
 fn limited_auth_router() -> (Router<AppState>, utoipa::openapi::OpenApi) {
     let (router, spec) = crate::openapi::auth_public_openapi().split_for_parts();
     (
@@ -472,6 +473,7 @@ async fn json_body_limit_response(mut response: Response) -> Response {
     response
 }
 
+/// Assemble the full router: API routes, auth routes, the optional OpenAPI UI, CORS, and the static web app.
 pub(crate) fn http_app(state: AppState) -> Router {
     let openapi_ui = state
         .cfg
@@ -628,6 +630,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Resolve on Ctrl-C so axum drains in-flight requests before exiting.
 async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
     eprintln!("shutting down");
@@ -644,6 +647,7 @@ pub(crate) async fn health() -> (StatusCode, &'static str) {
     (StatusCode::OK, "ok\n")
 }
 
+/// Resolve a username or UUID to an account id, reporting an unknown account as a bad request.
 async fn resolve_account_ref_async(
     pool: &sqlx::AnyPool,
     account_ref: &str,
@@ -770,6 +774,7 @@ pub(crate) async fn resolve_import_account(
     Ok(auth.account_id.clone())
 }
 
+/// The `account` query value trimmed, or `None` when blank.
 pub(crate) fn nonempty_query_account(value: Option<&str>) -> Option<&str> {
     let raw = value?;
     let trimmed = raw.trim();
@@ -780,11 +785,13 @@ pub(crate) fn nonempty_query_account(value: Option<&str>) -> Option<&str> {
     }
 }
 
+/// The media type from `Content-Type` without its parameters.
 pub(crate) fn content_type_base(headers: &HeaderMap) -> Option<&str> {
     let ct = headers.get(header::CONTENT_TYPE)?.to_str().ok()?;
     Some(ct.split(';').next().unwrap_or(ct).trim())
 }
 
+/// The upload's declared media type, or `None` when it is missing or the generic octet-stream.
 pub(crate) fn upload_content_type(headers: &HeaderMap) -> Option<String> {
     let base = content_type_base(headers)?;
     if base.is_empty() || base.eq_ignore_ascii_case("application/octet-stream") {
@@ -800,6 +807,7 @@ pub(crate) fn is_jsonl_content_type(base: &str) -> bool {
         || base.eq_ignore_ascii_case("application/x-ndjson")
 }
 
+/// True for `multipart/form-data`.
 pub(crate) fn is_multipart_content_type(base: &str) -> bool {
     base.eq_ignore_ascii_case("multipart/form-data")
 }
@@ -809,6 +817,7 @@ pub(crate) fn safe_rel_path(name: &str) -> Result<PathBuf, ApiError> {
     crate::config::safe_rel_path(name).map_err(|e| ApiError::BadRequest(e.to_string()))
 }
 
+/// Read the whole request body into memory, failing once it passes `max_bytes`.
 pub(crate) async fn read_body_limited(
     body: axum::body::Body,
     max_bytes: usize,
@@ -848,6 +857,7 @@ pub(crate) async fn discard_body(
     Ok(())
 }
 
+/// Create `dest` and its parent folders for an upload.
 async fn create_dest_file(dest: &Path) -> Result<tokio::fs::File, ApiError> {
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent)
@@ -859,6 +869,7 @@ async fn create_dest_file(dest: &Path) -> Result<tokio::fs::File, ApiError> {
         .map_err(|e| ApiError::Internal(format!("create {}: {e}", dest.display())))
 }
 
+/// Stream a request body to `dest`, failing once it passes `max_body_bytes`. Returns the bytes written.
 pub(crate) async fn stream_body_to_file(
     body: axum::body::Body,
     dest: &Path,
@@ -886,6 +897,7 @@ pub(crate) async fn stream_body_to_file(
     Ok(written)
 }
 
+/// Stream one multipart field to `dest`. Returns the bytes written.
 pub(crate) async fn stream_field_to_file(
     mut field: axum::extract::multipart::Field<'_>,
     dest: &Path,

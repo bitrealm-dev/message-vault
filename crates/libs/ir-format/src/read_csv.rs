@@ -72,6 +72,7 @@ pub fn read_conversation_csv(path: &Path) -> Result<ConversationDocument> {
     Ok(doc)
 }
 
+/// Rebuild the conversation header from the first CSV row's conversation columns.
 fn header_from_row(
     cols: &HashMap<&str, usize>,
     row: &csv::StringRecord,
@@ -115,6 +116,7 @@ fn header_from_row(
     })
 }
 
+/// Rebuild one message from a CSV row.
 fn message_from_record(cols: &HashMap<&str, usize>, row: &csv::StringRecord) -> Result<IrMessage> {
     let get = |name: &str| cell(cols, row, name).unwrap_or("");
     let timestamp_unix_ms = get("timestamp_unix_ms")
@@ -199,6 +201,7 @@ fn validate_headers(headers: &[String]) -> Result<HashMap<&str, usize>> {
     Ok(cols)
 }
 
+/// The value of the named column in this row, if the column exists.
 fn cell<'a>(
     cols: &HashMap<&str, usize>,
     row: &'a csv::StringRecord,
@@ -207,10 +210,12 @@ fn cell<'a>(
     row.get(*cols.get(name)?)
 }
 
+/// True for `true`, `1`, or `yes`, ignoring case.
 fn parse_bool(s: &str) -> bool {
     matches!(s.trim().to_ascii_lowercase().as_str(), "true" | "1" | "yes")
 }
 
+/// Parse a JSON cell, treating blank and `null` as absent.
 fn parse_json_cell(s: &str) -> Option<Value> {
     let t = s.trim();
     if t.is_empty() || t == "null" {
@@ -219,6 +224,7 @@ fn parse_json_cell(s: &str) -> Option<Value> {
     serde_json::from_str(t).ok()
 }
 
+/// Participants from the `participants_json` cell; malformed JSON yields none.
 fn parse_participants(raw: &str) -> Vec<IrParticipant> {
     if raw.trim().is_empty() {
         return Vec::new();
@@ -252,6 +258,7 @@ fn parse_handle_type_cell(raw: &str) -> Option<HandleType> {
     }
 }
 
+/// Attachments from the `attachments_json` cell.
 fn parse_attachments(raw: &str) -> Result<Vec<IrAttachment>> {
     if raw.trim().is_empty() || raw.trim() == "null" {
         return Ok(Vec::new());

@@ -41,6 +41,7 @@ pub struct QueryError {
 }
 
 impl QueryError {
+    /// A query error of `kind` at `span`, with a message written for the person typing.
     pub(crate) fn new(
         kind: QueryErrorKind,
         span: Range<usize>,

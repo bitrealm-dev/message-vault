@@ -800,6 +800,7 @@ pub(crate) async fn contact_match_handler(
     Ok(Json(ContactMatchResponse { unknown }))
 }
 
+/// Handle type from the service the caller named, falling back to the handle's shape.
 fn infer_handle_type(raw: &str, service: Option<&str>) -> HandleType {
     let svc = service
         .map(|s| s.trim().to_ascii_lowercase())
@@ -812,6 +813,7 @@ fn infer_handle_type(raw: &str, service: Option<&str>) -> HandleType {
     }
 }
 
+/// Id of the handle row for `raw` that already belongs to this contact, if any.
 async fn find_contact_handle_id(
     conn: &mut AnyConnection,
     account_id: &str,
@@ -855,6 +857,7 @@ async fn find_contact_handle_id(
     Ok(id)
 }
 
+/// Insert or find the handle row for `raw`, typed by `service`, without linking it to the account owner.
 async fn ensure_handle_row(
     conn: &mut AnyConnection,
     account_id: &str,
@@ -874,6 +877,7 @@ async fn ensure_handle_row(
     Ok(id)
 }
 
+/// True when the contact belongs to this account and is not in the trash.
 async fn contact_exists(
     conn: &mut AnyConnection,
     account_id: &str,
@@ -1094,6 +1098,7 @@ pub async fn mutate_contact(
     Ok(true)
 }
 
+/// The contact that currently owns the handle when it is this one or none; an error when a different contact owns it.
 async fn require_handle_available(
     conn: &mut AnyConnection,
     account_id: &str,
@@ -1109,6 +1114,7 @@ async fn require_handle_available(
     Ok(existing)
 }
 
+/// Bump the contact's updated-at and report success, for mutations that changed nothing else.
 async fn touch_ok(conn: &mut AnyConnection, account_id: &str, contact_id: i64) -> AnyResult<bool> {
     contacts::touch_contact(conn, account_id, contact_id).await?;
     Ok(true)

@@ -75,6 +75,7 @@ impl From<SavedSearchError> for crate::server::ApiError {
 
 type Result<T> = std::result::Result<T, SavedSearchError>;
 
+/// Map one `saved_searches` row by column name.
 fn row_to_saved_search(row: &AnyRow) -> Result<SavedSearch> {
     Ok(SavedSearch {
         id: row

@@ -27,9 +27,11 @@ pub struct SeedConfig {
     pub sources: SourcesConfig,
 }
 
+/// serde default for `seed`.
 fn default_seed() -> u64 {
     42
 }
+/// serde default for `out`.
 fn default_out() -> String {
     "crates/vault/demo-seed".into()
 }
@@ -108,12 +110,15 @@ pub struct GroupsConfig {
     pub phone_only_fraction: f64,
 }
 
+/// serde default for `large_min_count`.
 fn default_large_min_count() -> usize {
     10
 }
+/// serde default for `large_participants_min`.
 fn default_large_participants_min() -> u32 {
     8
 }
+/// serde default for `large_participants_max`.
 fn default_large_participants_max() -> u32 {
     20
 }
@@ -131,6 +136,7 @@ pub struct MessagesConfig {
     pub apple_fallback_transport_fraction: f64,
 }
 
+/// serde default for `apple_fallback_transport_fraction`.
 fn default_apple_fallback_transport_fraction() -> f64 {
     0.20
 }
@@ -182,21 +188,27 @@ impl Default for SourcesConfig {
     }
 }
 
+/// serde default for `android_only_fraction`.
 fn default_android_only_fraction() -> f64 {
     0.12
 }
+/// serde default for `overlap_count`.
 fn default_overlap_count() -> usize {
     10
 }
+/// serde default for `overlap_shared_fraction`.
 fn default_overlap_shared_fraction() -> f64 {
     0.35
 }
+/// serde default for `overlap_android_extra_min`.
 fn default_overlap_android_extra_min() -> usize {
     20
 }
+/// serde default for `overlap_android_extra_max`.
 fn default_overlap_android_extra_max() -> usize {
     80
 }
+/// serde default for `whatsapp_contact_fraction`.
 fn default_whatsapp_contact_fraction() -> f64 {
     0.20
 }

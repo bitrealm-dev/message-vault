@@ -387,6 +387,7 @@ const VAULT_IMPORT_COLUMNS: &str = "id, account_id, source, tool, mode, status, 
      attachments_ms, prepare_ms, upload_ms, summary_json, stage, staging_dir, device_id, \
      form_json, source_fingerprint, source_identities";
 
+/// Map one `vault_imports` row by column position.
 fn vault_import_from_row(row: &AnyRow) -> Result<VaultImportRow, sqlx::Error> {
     Ok(VaultImportRow {
         id: row.try_get(0)?,
@@ -680,6 +681,7 @@ pub async fn complete_import(
     Ok(get_owned_import(&mut *conn, account_id, import_id).await?)
 }
 
+/// Append issue rows for an import.
 async fn insert_issues(
     conn: &mut AnyConnection,
     import_id: i64,
@@ -705,6 +707,7 @@ async fn insert_issues(
     Ok(())
 }
 
+/// Only `error` and `skip` are stored issue kinds.
 fn validate_issue_kind(kind: &str) -> Result<()> {
     match kind {
         "error" | "skip" => Ok(()),

@@ -43,6 +43,7 @@ pub struct ApiDoc;
 struct BearerAddon;
 
 impl Modify for BearerAddon {
+    /// Register the `bearer` security scheme on the generated document.
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
         let components = openapi.components.get_or_insert_default();
         components.add_security_scheme(

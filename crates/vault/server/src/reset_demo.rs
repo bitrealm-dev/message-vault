@@ -206,6 +206,7 @@ fn rename_prepared_path(source: &Path, destination: &Path) -> Result<()> {
     }
 }
 
+/// Move a file or folder even when `fs::rename` cannot (different filesystems): copy, then remove the source.
 fn move_across_devices(source: &Path, destination: &Path) -> Result<()> {
     if source.is_dir() {
         copy_dir_recursive(source, destination)?;
@@ -224,6 +225,7 @@ fn move_across_devices(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Copy a folder tree, creating `destination` as needed.
 fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
     fs::create_dir_all(destination).with_context(|| format!("create {}", destination.display()))?;
     for entry in fs::read_dir(source).with_context(|| format!("read {}", source.display()))? {
@@ -255,6 +257,7 @@ pub async fn run_reset_demo(
     run_reset_demo_for_account(bundle, config_dest, DEMO_ACCOUNT_ID, db_url).await
 }
 
+/// Rebuild the demo bundle and install it for `account_id`, on the SQLite file or at `db_url`.
 async fn run_reset_demo_for_account(
     bundle: &Path,
     config_dest: &Path,
@@ -293,6 +296,8 @@ fn refuse_url_config_without_flag(cfg: &Config, db_url: Option<&str>) -> Result<
     Ok(())
 }
 
+/// Copy the bundle's config into place and reset the account: the connection-URL path when
+/// `db_url` is set, else the SQLite snapshot-and-swap path.
 async fn prepare_config_and_reset(
     bundle: &Path,
     config_dest: &Path,
@@ -342,6 +347,9 @@ async fn prepare_config_and_reset(
     .await
 }
 
+/// Connection-URL reset (Postgres, or SQLite by URL): wipe the demo account in
+/// place, then seed and import into the live database. There is no snapshot to
+/// swap, so this path relies on the wipe being scoped to one account.
 async fn reset_prepared_bundle_at_url(
     cfg: &Config,
     bundle: &Path,
@@ -394,6 +402,8 @@ async fn reset_prepared_bundle_at_url(
     })
 }
 
+/// SQLite reset: build the new state in a prepared database next to the active one, prove
+/// nothing outside the demo account changed, then swap it in.
 async fn reset_prepared_bundle(
     cfg: &Config,
     bundle: &Path,
@@ -491,6 +501,7 @@ async fn reset_prepared_bundle(
     })
 }
 
+/// Check the bundle has its seed, the three staging folders, and the contacts file, and return their paths.
 fn validate_prepared_bundle(bundle: &Path) -> Result<PreparedBundle> {
     let demo_seed = bundle.join("config/seed.toml");
     let imessage_dir = bundle.join("staging").join(IMESSAGE_SOURCE);
@@ -518,6 +529,8 @@ fn validate_prepared_bundle(bundle: &Path) -> Result<PreparedBundle> {
     })
 }
 
+/// Copy the active database to the prepared path (checkpointing the WAL first) so the reset
+/// works on a snapshot and the live file is untouched until the swap.
 async fn prepare_database_snapshot(active: &Path, prepared: &Path) -> Result<()> {
     if active.is_file() {
         let pool = engine::open_pool_for_path(active)
@@ -627,12 +640,15 @@ async fn checkpoint_and_clean_sidecars(db: &Path, operation: &str) -> Result<()>
     Ok(())
 }
 
+/// The `-wal` or `-shm` sidecar path next to a SQLite database file.
 fn sqlite_sidecar(db: &Path, suffix: &str) -> PathBuf {
     let mut path: OsString = db.as_os_str().to_owned();
     path.push(suffix);
     PathBuf::from(path)
 }
 
+/// Refuse to install the prepared database if any non-demo account's row counts differ from
+/// the active one: a reset must only ever touch the demo account.
 async fn verify_non_demo_state_preserved(
     active: &Path,
     prepared: &Path,
@@ -651,6 +667,7 @@ async fn verify_non_demo_state_preserved(
     Ok(())
 }
 
+/// Row counts per table for every account except the demo one, used to prove a reset changed nothing else.
 async fn non_demo_state(db: &Path, demo_id: &str) -> Result<BTreeMap<String, i64>> {
     let pool = engine::open_pool_for_path(db)
         .await
@@ -702,10 +719,12 @@ struct ResetPaths<'a> {
     prepared_config: &'a Path,
 }
 
+/// Swap the prepared database, account folder, and config into their active paths.
 async fn install_reset_state(paths: &ResetPaths<'_>) -> Result<()> {
     install_reset_state_with(paths, rename_prepared_path).await
 }
 
+/// [`install_reset_state`] with the rename step injected, so tests can simulate a rename that fails midway.
 async fn install_reset_state_with<F>(paths: &ResetPaths<'_>, rename: F) -> Result<()>
 where
     F: FnMut(&Path, &Path) -> Result<()>,
@@ -720,6 +739,8 @@ where
     replace_reset_state_with(paths, rename)
 }
 
+/// The swap itself: move the active state to backups, move the prepared state in, and roll
+/// the backups back if any step fails.
 fn replace_reset_state_with<F>(paths: &ResetPaths<'_>, mut rename: F) -> Result<()>
 where
     F: FnMut(&Path, &Path) -> Result<()>,
@@ -871,6 +892,7 @@ where
     Ok(())
 }
 
+/// Remove the backups a successful swap left behind. Best effort: a leftover backup is reported, not fatal.
 fn cleanup_reset_backups(db: &Path, account: &Path, config: &Path) {
     for backup in [db, account, config] {
         if let Err(error) = remove_any_if_exists(backup) {
@@ -882,6 +904,7 @@ fn cleanup_reset_backups(db: &Path, account: &Path, config: &Path) {
     }
 }
 
+/// Remove a file or folder tree; a missing path is not an error.
 fn remove_any_if_exists(path: &Path) -> Result<()> {
     if path.is_dir() {
         fs::remove_dir_all(path).with_context(|| format!("remove {}", path.display()))?;
@@ -947,6 +970,7 @@ async fn vacuum_after_demo_url(db_url: &str) {
     vacuum_after_demo_on_pool(pool).await;
 }
 
+/// Open the SQLite file and run [`vacuum_after_demo_on_pool`]. Best effort: failures are printed, not returned.
 async fn vacuum_after_demo_path(db_path: &Path) {
     let pool = match engine::open_pool_for_path(db_path).await {
         Ok(pool) => pool,
@@ -958,6 +982,7 @@ async fn vacuum_after_demo_path(db_path: &Path) {
     vacuum_after_demo_on_pool(pool).await;
 }
 
+/// Reclaim space after the demo import replaced most rows. Best effort: a failed vacuum only costs disk space.
 async fn vacuum_after_demo_on_pool(pool: sqlx::AnyPool) {
     let mut conn = match pool.acquire().await {
         Ok(conn) => conn,
@@ -977,6 +1002,7 @@ async fn vacuum_after_demo_on_pool(pool: sqlx::AnyPool) {
     pool.close().await;
 }
 
+/// Add one import's counts onto another; the demo imports three sources in turn.
 fn merge_import_stats(into: &mut import::ImportStats, other: &import::ImportStats) {
     into.conversations += other.conversations;
     into.participants += other.participants;
@@ -992,12 +1018,14 @@ fn merge_import_stats(into: &mut import::ImportStats, other: &import::ImportStat
     into.phones_needing_review += other.phones_needing_review;
 }
 
+/// Parse `config/seed.toml` from the bundle.
 fn load_demo_seed(path: &Path) -> Result<DemoSeed> {
     let text = fs::read_to_string(path)
         .with_context(|| format!("failed to read demo seed {}", path.display()))?;
     toml::from_str(&text).with_context(|| format!("failed to parse demo seed {}", path.display()))
 }
 
+/// Open the SQLite file and seed the demo account row and profile.
 async fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) -> Result<()> {
     let pool = engine::open_pool_for_path(db_path).await?;
     let mut conn = pool.acquire().await?;
@@ -1008,6 +1036,7 @@ async fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) ->
     Ok(())
 }
 
+/// Open the database at `db_url` and seed the demo account row and profile.
 async fn seed_demo_account_at_url(db_url: &str, account_id: &str, seed: &DemoSeed) -> Result<()> {
     let pool = engine::open_pool_from_url(db_url).await?;
     let mut conn = pool.acquire().await?;
@@ -1018,6 +1047,7 @@ async fn seed_demo_account_at_url(db_url: &str, account_id: &str, seed: &DemoSee
     Ok(())
 }
 
+/// Create the demo account row and the profile fields the seed names, so the demo signs in without setup.
 async fn seed_demo_account_on_conn(
     conn: &mut sqlx::AnyConnection,
     account_id: &str,
@@ -1115,6 +1145,8 @@ async fn wipe_demo_account(cfg: &Config, account_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Delete every row and media file that belongs to the demo account at `db_url`,
+/// and nothing else.
 async fn wipe_demo_account_at_url(cfg: &Config, account_id: &str, db_url: &str) -> Result<()> {
     println!(
         "Reset demo — clearing account data in {}",
@@ -1148,6 +1180,7 @@ async fn wipe_demo_account_at_url(cfg: &Config, account_id: &str, db_url: &str) 
     Ok(())
 }
 
+/// Remove a folder tree; a missing folder is not an error.
 fn remove_tree_if_exists(path: &Path) -> Result<()> {
     if path.exists() {
         fs::remove_dir_all(path).with_context(|| format!("remove {}", path.display()))?;

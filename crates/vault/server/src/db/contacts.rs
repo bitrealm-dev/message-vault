@@ -340,6 +340,7 @@ struct ContactDraft {
     groups: Vec<String>,
 }
 
+/// Whether the address book is VCF or vCard CSV, judged by its content.
 fn contacts_file_format(path: &Path) -> Result<ContactsFormat> {
     Ok(detect_contacts_format(path)?)
 }
@@ -477,6 +478,7 @@ async fn delete_address_book_contacts(conn: &mut AnyConnection, account_id: &str
     Ok(())
 }
 
+/// Load contacts from a vCard CSV export (First Name, Last Name, Phone columns).
 async fn load_from_vcard_csv(
     conn: &mut AnyConnection,
     csv_path: &Path,
@@ -522,6 +524,7 @@ async fn load_from_vcard_csv(
     insert_contact_drafts(conn, account_id, drafts).await
 }
 
+/// Load contacts from a VCF file.
 async fn load_from_vcf(
     conn: &mut AnyConnection,
     vcf_path: &Path,
@@ -590,6 +593,7 @@ async fn load_from_vcf(
     insert_contact_drafts(conn, account_id, drafts).await
 }
 
+/// Collapse runs of whitespace to one space.
 fn collapse_inner_whitespace(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -639,6 +643,7 @@ async fn adoptable_contact_for_draft(
     Ok(None)
 }
 
+/// Insert the drafts as contacts, handles, and group links inside one transaction, merging drafts that share a phone.
 async fn insert_contact_drafts(
     conn: &mut AnyConnection,
     account_id: &str,
@@ -771,6 +776,7 @@ fn merge_duplicate_phone_drafts(drafts: Vec<ContactDraft>) -> Vec<ContactDraft> 
     merged
 }
 
+/// Fold one draft into another: keep the first name, union the phones, emails, and groups.
 fn merge_contact_draft(into: &mut ContactDraft, from: ContactDraft) {
     if into.preferred_name.is_none() {
         into.preferred_name = from.preferred_name;
@@ -791,6 +797,7 @@ fn merge_contact_draft(into: &mut ContactDraft, from: ContactDraft) {
     }
 }
 
+/// Id of the contact group called `name`, creating it if needed.
 async fn ensure_group(conn: &mut AnyConnection, account_id: &str, name: &str) -> Result<i64> {
     sqlx::query(
         "INSERT INTO contact_groups (account_id, name) VALUES ($1, $2)

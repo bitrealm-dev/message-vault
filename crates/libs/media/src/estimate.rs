@@ -195,6 +195,7 @@ fn skipped_as_efficient(
     )
 }
 
+/// Output pixels over source pixels after the resolution cap, for the size estimate.
 fn pixel_ratio(probe: &MediaProbe, compress: &CompressOptions) -> f64 {
     let source_long = f64::from(probe.width.max(probe.height));
     if source_long <= 0.0 {
@@ -205,6 +206,7 @@ fn pixel_ratio(probe: &MediaProbe, compress: &CompressOptions) -> f64 {
     ratio * ratio
 }
 
+/// Output frame rate over source frame rate after the fps cap, for the size estimate.
 fn fps_ratio(probe: &MediaProbe, compress: &CompressOptions) -> f64 {
     let Some(source) = probe.fps.filter(|f| *f > 0.0) else {
         return 1.0;

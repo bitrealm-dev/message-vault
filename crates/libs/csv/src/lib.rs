@@ -69,10 +69,12 @@ pub struct ParticipantCell {
     pub handle_type: Option<message_ir::HandleType>,
 }
 
+/// serde default for a participant cell's handle type: `Other`.
 fn default_participant_handle_type() -> Option<message_ir::HandleType> {
     Some(message_ir::HandleType::Other)
 }
 
+/// Parse a handle type cell, accepting a missing cell.
 fn deserialize_handle_type<'de, D>(de: D) -> Result<Option<message_ir::HandleType>, D::Error>
 where
     D: serde::Deserializer<'de>,

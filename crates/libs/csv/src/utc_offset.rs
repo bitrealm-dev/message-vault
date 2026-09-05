@@ -43,6 +43,7 @@ pub fn parse_utc_offset(raw: &str) -> Result<FixedOffset> {
     FixedOffset::east_opt(secs).ok_or_else(|| anyhow::anyhow!("invalid UTC offset: {raw:?}"))
 }
 
+/// Hours and minutes from `HH` or `HH:MM`.
 fn parse_hh_mm(body: &str) -> Result<(i32, i32)> {
     let parts: Vec<&str> = body.split(':').collect();
     match parts.as_slice() {

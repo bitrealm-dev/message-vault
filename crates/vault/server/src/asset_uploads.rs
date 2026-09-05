@@ -86,6 +86,7 @@ pub struct StartUpload {
     pub part_size: usize,
 }
 
+/// A fresh upload id: the current time in nanoseconds, hex-encoded.
 fn new_upload_id() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -115,14 +116,17 @@ pub fn session_dir(assets_root: &Path, sha256: &str, upload_id: &str) -> PathBuf
     assets_root.join(".incoming").join(sha256).join(upload_id)
 }
 
+/// Path of the session's manifest file.
 fn manifest_path(session: &Path) -> PathBuf {
     session.join("manifest.json")
 }
 
+/// Path of one uploaded part (1-based, zero-padded).
 fn part_path(session: &Path, part: u32) -> PathBuf {
     session.join(format!("part-{part:04}"))
 }
 
+/// How many parts a file of `bytes` needs at `part_size`.
 fn expected_part_count(bytes: u64, part_size: usize) -> u32 {
     if bytes == 0 {
         return 0;
@@ -131,6 +135,7 @@ fn expected_part_count(bytes: u64, part_size: usize) -> u32 {
     bytes.div_ceil(ps) as u32
 }
 
+/// The size of part `part` (1-based); zero when the part number is out of range.
 fn expected_part_len(bytes: u64, part_size: usize, part: u32) -> u64 {
     let count = expected_part_count(bytes, part_size);
     if part == 0 || part > count {
@@ -140,12 +145,14 @@ fn expected_part_len(bytes: u64, part_size: usize, part: u32) -> u64 {
     (bytes - start).min(part_size as u64)
 }
 
+/// Parse the session manifest.
 fn read_manifest(session: &Path) -> Result<UploadManifest> {
     let path = manifest_path(session);
     let text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
     serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))
 }
 
+/// Write the manifest through a temp file and a rename, so a crash never leaves a half-written manifest.
 fn write_manifest(session: &Path, manifest: &UploadManifest) -> Result<()> {
     let path = manifest_path(session);
     let tmp = session.join("manifest.json.tmp");
@@ -162,6 +169,7 @@ struct ManifestLock {
     _file: File,
 }
 
+/// Take the session's file lock so two part uploads cannot rewrite the manifest at once.
 fn lock_session(session: &Path) -> Result<ManifestLock> {
     let path = session.join("manifest.lock");
     let file = OpenOptions::new()

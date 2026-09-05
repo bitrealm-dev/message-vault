@@ -116,6 +116,7 @@ struct PendingConversation {
     messages: Vec<PendingMessage>,
 }
 
+/// The XML files to read: the file itself, or every `.xml` under the folder.
 fn collect_xml_paths(input: &Path) -> Result<Vec<PathBuf>> {
     if input.is_file() {
         return Ok(vec![input.to_path_buf()]);
@@ -135,6 +136,7 @@ fn collect_xml_paths(input: &Path) -> Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
+/// Add one file's parse counts onto the report.
 fn merge_stats(report: &mut SbrReadReport, stats: ParseStats) {
     report.sms_seen += stats.sms_seen;
     report.mms_seen += stats.mms_seen;
@@ -146,6 +148,7 @@ fn merge_stats(report: &mut SbrReadReport, stats: ParseStats) {
     report.skipped_bad_attachment += stats.skipped_bad_attachment;
 }
 
+/// Pending attachments for a message's decoded parts, carrying bytes only when the caller keeps them.
 fn queue_attachments(blobs: &[AttachmentBlob], keep_bytes: bool) -> Vec<PendingAttachment> {
     blobs
         .iter()
@@ -238,6 +241,7 @@ fn stage_read_attachments(
     Ok(())
 }
 
+/// The conversation id: `chat-<key>` for groups, else the guarded-normalized address.
 fn chat_id(record: &Record) -> String {
     match record.conversation_kind {
         ConversationKind::Group => format!("chat-{}", record.chat_key),
@@ -248,6 +252,7 @@ fn chat_id(record: &Record) -> String {
     }
 }
 
+/// Append a parsed SMS or MMS to its conversation, creating the conversation on first sight.
 fn add_record(
     conversations: &mut BTreeMap<String, PendingConversation>,
     record: Record,
@@ -301,12 +306,14 @@ fn add_record(
     Ok(())
 }
 
+/// Sort by time and drop later messages with the same dedupe key.
 fn dedupe(messages: &mut Vec<PendingMessage>) {
     messages.sort_by(|a, b| a.sort_key.total_cmp(&b.sort_key));
     let mut seen = HashSet::new();
     messages.retain(|m| seen.insert(m.dedupe_key.clone()));
 }
 
+/// Display names seen per sender handle across the conversation.
 fn names_by_handle(conversation: &PendingConversation) -> HashMap<String, String> {
     let mut names = HashMap::new();
     for message in &conversation.messages {
@@ -336,6 +343,7 @@ fn names_by_handle(conversation: &PendingConversation) -> HashMap<String, String
     names
 }
 
+/// Project one pending conversation into a document and fold its counts into the report.
 fn to_document(
     id: &str,
     conversation: &PendingConversation,

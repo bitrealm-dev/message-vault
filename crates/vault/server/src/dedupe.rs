@@ -123,6 +123,7 @@ pub fn compute_content_key(
     crate::assets::hex_encode(&hasher.finalize())
 }
 
+/// Fingerprint one message row from its chat identity, direction, sender, time, body, and attachment hashes.
 fn content_key_for_row(
     row: &ContentKeyRow,
     group_handles: &HashMap<i64, Vec<String>>,
@@ -162,6 +163,7 @@ fn content_key_for_row(
     (*id, key)
 }
 
+/// Fingerprint every row in parallel.
 fn hash_content_keys(
     rows: &[ContentKeyRow],
     group_handles: &HashMap<i64, Vec<String>>,
@@ -172,6 +174,7 @@ fn hash_content_keys(
         .collect()
 }
 
+/// Unix seconds from `timestamp_utc`, falling back to the local `timestamp`.
 fn resolve_utc_secs(timestamp_utc: Option<&str>, timestamp: &str) -> Option<i64> {
     timestamp_utc
         .map(str::trim)
@@ -305,6 +308,7 @@ pub async fn fill_missing_content_keys(conn: &mut AnyConnection, account_id: &st
     recompute_content_keys(conn, true, account_id).await
 }
 
+/// Bulk-insert fingerprints into the `_content_keys` temp table in chunks that fit the bind limit.
 async fn insert_content_key_rows(conn: &mut AnyConnection, keys: &[(i64, String)]) -> Result<()> {
     let total = keys.len();
     let mut written = 0usize;
@@ -333,6 +337,7 @@ async fn insert_content_key_rows(conn: &mut AnyConnection, keys: &[(i64, String)
     Ok(())
 }
 
+/// Fill `messages.content_key` for this account, every row or only the empty ones. Returns how many were written.
 async fn recompute_content_keys(
     conn: &mut AnyConnection,
     missing_only: bool,
@@ -466,6 +471,7 @@ struct Cand {
     att_count: i64,
 }
 
+/// Hide every message that shares a fingerprint with a preferred-source twin. Returns (groups, hidden).
 async fn flag_exact_content_key_dupes(
     conn: &mut AnyConnection,
     account_id: &str,
@@ -530,6 +536,7 @@ async fn flag_exact_content_key_dupes(
     Ok((groups, flagged))
 }
 
+/// The message to keep from a duplicate group: most attachments, then the earliest-imported source, then the lowest id.
 fn pick_winner(cands: &[Cand], prio: &HashMap<&str, usize>) -> i64 {
     cands
         .iter()
@@ -571,6 +578,8 @@ struct NearRow {
     att_count: i64,
 }
 
+/// Flag messages that match another within `window_secs` on chat, direction, and body but
+/// not on the exact second. Returns how many were flagged.
 async fn flag_near_time_dupes(
     conn: &mut AnyConnection,
     account_id: &str,
@@ -722,6 +731,7 @@ async fn flag_near_time_dupes(
     Ok(flagged)
 }
 
+/// Apply (message id, duplicate-of id) pairs through a temp table so one UPDATE covers them all.
 async fn apply_duplicate_flags(
     conn: &mut AnyConnection,
     table: &str,

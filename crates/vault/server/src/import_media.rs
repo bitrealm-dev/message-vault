@@ -76,6 +76,7 @@ pub fn resolve_for_store(
     }
 }
 
+/// Convert or compress one media file by kind, or `None` when it should be stored as-is.
 fn transform(
     source_path: &Path,
     mime: Option<&str>,
@@ -100,6 +101,7 @@ fn transform(
     }
 }
 
+/// JPEG under `work_dir` for an image worth converting, else `None`.
 fn transform_image(
     source_path: &Path,
     compress: bool,
@@ -131,6 +133,7 @@ fn transform_image(
     }))
 }
 
+/// MP4 under `work_dir` for a video worth converting, else `None`.
 fn transform_video(
     source_path: &Path,
     compress: bool,
@@ -156,6 +159,7 @@ fn transform_video(
     }))
 }
 
+/// MP3 under `work_dir` for an audio file worth converting, else `None`.
 fn transform_audio(
     source_path: &Path,
     compress: bool,
@@ -181,6 +185,7 @@ fn transform_audio(
     }))
 }
 
+/// A short, filesystem-safe token from the file stem, for temp file names.
 fn stem_token(path: &Path) -> String {
     path.file_stem()
         .and_then(|s| s.to_str())
@@ -191,6 +196,7 @@ fn stem_token(path: &Path) -> String {
         .collect()
 }
 
+/// Fail early when ffmpeg is not on PATH.
 fn ensure_ffmpeg() -> Result<()> {
     if media_tools::tool_on_path("ffmpeg") {
         return Ok(());

@@ -458,6 +458,7 @@ fn stage_conversation_attachments(
     Ok(())
 }
 
+/// Add one message and its attachments to the pending conversation it belongs to.
 fn collect_one(
     session: &MailSession,
     conversations: &mut BTreeMap<String, PendingConversation>,
@@ -1029,6 +1030,7 @@ fn build_mail_message(
 
     let owner_handle = message.destination_caller_id.clone().unwrap_or_default();
 
+    /// The string trimmed, or `None` when blank.
     fn nonempty(s: Option<String>) -> Option<String> {
         s.as_deref()
             .map(str::trim)

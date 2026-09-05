@@ -26,6 +26,7 @@ pub(super) fn collect_eml_paths<P: AsRef<Path>>(
     }
 
     // Preserve the previous behavior of never descending into these directories.
+    /// True for paths under folders the walk never enters.
     fn in_skipped_dir(path: &Path) -> bool {
         path.components().any(|c| {
             matches!(
@@ -91,6 +92,7 @@ pub(super) enum ParsedEmlKind {
     Cancelled,
 }
 
+/// Read and classify one EML: an archive of many messages, a single message, or something to skip.
 pub(super) fn parse_one_eml(
     eml_path: &Path,
     rel_path: String,

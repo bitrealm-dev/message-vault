@@ -231,10 +231,12 @@ fn peer_label_for(row: &RawRow, per_chat_peer: Option<&str>) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
+/// True for the literal `Me` OpenExtract writes for the owner.
 fn is_me(s: &str) -> bool {
     s.trim().eq_ignore_ascii_case("me")
 }
 
+/// The other party for a per-chat file: the first phone number seen, else the first name.
 fn infer_peer_label(rows: &[RawRow]) -> String {
     let mut phone_peer = None;
     let mut name_peer = None;
@@ -275,6 +277,7 @@ fn resolve_chat(peer: &str) -> (String, String, bool) {
     )
 }
 
+/// Whether the row is outgoing, from its direction column or its sender.
 fn resolve_is_from_me(row: &RawRow) -> bool {
     if let Some(dir) = row.direction.as_deref() {
         let d = dir.trim().to_ascii_lowercase();
@@ -288,6 +291,7 @@ fn resolve_is_from_me(row: &RawRow) -> bool {
     row.is_from_me
 }
 
+/// The sender handle and display name for a row: empty for outgoing, else the peer.
 fn resolve_sender(
     row: &RawRow,
     is_from_me: bool,
@@ -323,6 +327,7 @@ fn resolve_sender(
     (handle, display)
 }
 
+/// Unix seconds and the original string for a row's date, in RFC 3339 or OpenExtract's local formats.
 fn parse_timestamp(raw: &str) -> Option<(i64, String)> {
     let raw = raw.trim();
     if raw.is_empty() {

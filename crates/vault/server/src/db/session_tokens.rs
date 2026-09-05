@@ -19,6 +19,7 @@ pub fn generate_session_token() -> Result<String> {
     generate_prefixed_token("mv-user-")
 }
 
+/// A random 32-character token after `prefix`, from the OS random source.
 pub(crate) fn generate_prefixed_token(prefix: &str) -> Result<String> {
     let mut buf = [0u8; 32];
     fill_random(&mut buf)?;
@@ -34,6 +35,7 @@ pub fn hash_api_token(token: &str) -> String {
     crate::assets::sha256_hex(token.as_bytes())
 }
 
+/// Fill `buf` from the OS random source, refusing an all-zero result.
 fn fill_random(buf: &mut [u8]) -> Result<()> {
     rand::rngs::SysRng
         .try_fill_bytes(buf)
@@ -44,10 +46,12 @@ fn fill_random(buf: &mut [u8]) -> Result<()> {
     Ok(())
 }
 
+/// Expiry timestamp for a session issued at `now_secs`.
 fn session_expiry_unix(now_secs: u64) -> String {
     format!("{}", now_secs.saturating_add(SESSION_TTL_SECS))
 }
 
+/// Current Unix time in seconds.
 fn now_unix_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -224,6 +228,7 @@ pub async fn revoke_account_sessions(conn: &mut AnyConnection, account_id: &str)
     Ok(())
 }
 
+/// Current Unix time in seconds as a string, for timestamp columns.
 pub(crate) fn unix_secs_string() -> String {
     format!("{}", now_unix_secs())
 }

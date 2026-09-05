@@ -364,6 +364,7 @@ pub async fn update_api_token_label(
     Ok(n > 0)
 }
 
+/// Expiry timestamp `expires_in_days` after `created_at`; `Some(0)` means the caller asked for no expiry.
 fn api_token_expiry(expires_in_days: Option<u64>, created_at: &str) -> Option<String> {
     let now = created_at.parse::<u64>().unwrap_or(0);
     match expires_in_days {
@@ -379,6 +380,7 @@ fn api_token_expiry(expires_in_days: Option<u64>, created_at: &str) -> Option<St
     }
 }
 
+/// Trim a token label and reject empty or over-long ones.
 fn validate_api_token_label(label: &str) -> Result<&str, ApiTokenLabelError> {
     let label = label.trim();
     if label.is_empty() {

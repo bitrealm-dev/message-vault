@@ -158,6 +158,7 @@ pub struct ParseStats {
     pub skipped_bad_attachment: u64,
 }
 
+/// The element's attributes as a map with lower-case keys.
 fn attrs(e: &quick_xml::events::BytesStart<'_>) -> HashMap<String, String> {
     e.attributes()
         .flatten()
@@ -172,14 +173,17 @@ fn attrs(e: &quick_xml::events::BytesStart<'_>) -> HashMap<String, String> {
         .collect()
 }
 
+/// The attribute value, or an empty string.
 fn get<'a>(attrs: &'a HashMap<String, String>, key: &str) -> &'a str {
     attrs.get(key).map(String::as_str).unwrap_or("")
 }
 
+/// The attributes as an ordered map, for the vendor bag.
 fn btree(attrs: &HashMap<String, String>) -> BTreeMap<String, String> {
     attrs.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
 }
 
+/// An MMS part from a `<part>` element's attributes.
 fn part(attrs: &HashMap<String, String>) -> MmsPart {
     MmsPart {
         ct: get(attrs, "ct").into(),
@@ -192,6 +196,7 @@ fn part(attrs: &HashMap<String, String>) -> MmsPart {
     }
 }
 
+/// An MMS address from an `<addr>` element's attributes.
 fn addr(attrs: &HashMap<String, String>) -> MmsAddr {
     MmsAddr {
         address: get(attrs, "address").into(),
@@ -200,12 +205,14 @@ fn addr(attrs: &HashMap<String, String>) -> MmsAddr {
     }
 }
 
+/// A body with HTML entities decoded and line endings normalized.
 fn decode_body(raw: &str) -> String {
     html_escape::decode_html_entities(raw)
         .replace("\r\n", "\n")
         .replace('\r', "\n")
 }
 
+/// The contact name from `contact_name` or `name`, when it is a real name.
 fn name_alias(attrs: &HashMap<String, String>) -> Option<String> {
     let value = if get(attrs, "contact_name").is_empty() {
         get(attrs, "name")
@@ -216,6 +223,7 @@ fn name_alias(attrs: &HashMap<String, String>) -> Option<String> {
     (!value.is_empty() && !value.eq_ignore_ascii_case("null")).then(|| value.to_string())
 }
 
+/// The contact name as written: `contact_name`, else `name`.
 fn raw_name(attrs: &HashMap<String, String>) -> String {
     let value = get(attrs, "contact_name");
     if value.is_empty() {
@@ -225,6 +233,7 @@ fn raw_name(attrs: &HashMap<String, String>) -> String {
     }
 }
 
+/// The value trimmed, with `null` treated as empty.
 fn non_null(value: &str) -> String {
     let value = value.trim();
     if value.is_empty() || value.eq_ignore_ascii_case("null") {
@@ -234,6 +243,7 @@ fn non_null(value: &str) -> String {
     }
 }
 
+/// Every name a part goes by (name, location, file name), for SMIL matching.
 fn content_keys(part: &MmsPart) -> BTreeSet<String> {
     let mut keys = BTreeSet::new();
     for raw in [&part.name, &part.cl, &part.filename_attr] {
@@ -255,6 +265,7 @@ fn content_keys(part: &MmsPart) -> BTreeSet<String> {
 static TEXT_SRC: OnceLock<Regex> = OnceLock::new();
 static IMG_SRC: OnceLock<Regex> = OnceLock::new();
 
+/// The text and media part names a SMIL part refers to, in order.
 fn smil_refs(parts: &[MmsPart], decoded: &[DecodedPartData]) -> (Vec<String>, Vec<String>) {
     let smil = parts
         .iter()
@@ -285,6 +296,7 @@ fn smil_refs(parts: &[MmsPart], decoded: &[DecodedPartData]) -> (Vec<String>, Ve
     (captures(text), captures(image))
 }
 
+/// The file name trimmed, unless blank or a literal `null`/`none`.
 fn valid_filename(value: &str) -> Option<String> {
     let value = value.trim();
     (!value.is_empty()
@@ -293,6 +305,7 @@ fn valid_filename(value: &str) -> Option<String> {
     .then(|| value.into())
 }
 
+/// File extension for a part's content type.
 fn extension(part: &MmsPart) -> String {
     match part.ct.to_ascii_lowercase().as_str() {
         "image/jpeg" | "image/jpg" => ".jpg".into(),
@@ -344,6 +357,7 @@ enum DecodedPartData {
     Err { raw_len: usize, raw_sha256: String },
 }
 
+/// A part's `data` attribute decoded from base64, or why it could not be.
 fn decode_part_data(raw: &str) -> DecodedPartData {
     let trimmed = raw.trim();
     if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("null") {
@@ -364,6 +378,7 @@ fn decode_part_data(raw: &str) -> DecodedPartData {
     }
 }
 
+/// Attachment blobs from the MMS parts, in SMIL order when SMIL names them, counting the ones that failed to decode.
 fn attachments(
     parts: &[MmsPart],
     decoded: &[DecodedPartData],
@@ -426,6 +441,7 @@ fn attachments(
         .collect()
 }
 
+/// A part's attributes for the vendor bag, with the base64 data replaced by a marker.
 fn part_fields(part: &MmsPart, decoded: &DecodedPartData) -> BTreeMap<String, String> {
     let mut attrs = part.attrs.clone();
     if attrs
@@ -451,6 +467,7 @@ fn part_fields(part: &MmsPart, decoded: &DecodedPartData) -> BTreeMap<String, St
     attrs
 }
 
+/// One `<sms>` element as a record, counting rows skipped for a bad date or address.
 fn parse_sms(attrs: &HashMap<String, String>, stats: &mut ParseStats) -> Option<Record> {
     stats.sms_seen += 1;
     let date_ms = get(attrs, "date").to_string();
@@ -505,6 +522,7 @@ fn parse_sms(attrs: &HashMap<String, String>, stats: &mut ParseStats) -> Option<
     })
 }
 
+/// One `<mms>` element as a record, working out direction and participants from its addresses.
 fn parse_mms(
     attrs: &HashMap<String, String>,
     parts: &[MmsPart],
@@ -713,6 +731,7 @@ where
     parse_reader_with(std::io::BufReader::new(file), owners, stats, on_record)
 }
 
+/// Stream the XML, calling `on_record` for each SMS or MMS as it completes.
 fn parse_reader_with<R, F>(
     reader: R,
     owners: &HashSet<String>,

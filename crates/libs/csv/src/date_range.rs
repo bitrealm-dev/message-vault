@@ -70,6 +70,7 @@ impl DateRange {
         }
     }
 
+    /// Parse the optional start and end dates into a range; `midnight_secs` decides which zone midnight is in.
     fn parse_with(
         midnight_secs: impl Fn(NaiveDate) -> Result<i64>,
         start: Option<&str>,
@@ -124,6 +125,7 @@ impl DateRange {
     }
 }
 
+/// A `YYYY-MM-DD` date.
 fn parse_ymd(value: &str) -> Result<NaiveDate> {
     NaiveDate::parse_from_str(value, "%Y-%m-%d")
         .map_err(|_| anyhow::anyhow!("invalid date '{value}' (expected YYYY-MM-DD)"))

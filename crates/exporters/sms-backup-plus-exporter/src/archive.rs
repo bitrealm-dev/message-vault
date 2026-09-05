@@ -28,6 +28,7 @@ static ARCHIVE_SUBJECT_RE: OnceLock<Regex> = OnceLock::new();
 static MESSAGE_HEADER_RE: OnceLock<Regex> = OnceLock::new();
 static DATE_ONLY_RE: OnceLock<Regex> = OnceLock::new();
 
+/// `SMS archive <name>` subject matcher.
 fn archive_subject_re() -> &'static Regex {
     ARCHIVE_SUBJECT_RE.get_or_init(|| Regex::new(r"(?i)^SMS archive (.+)$").expect("arch subj"))
 }
@@ -50,15 +51,18 @@ fn clean_archive_contact_name(raw: &str) -> String {
     re.replace(name, "").trim().to_string()
 }
 
+/// `YYYY-MM-DD HH:MM:SS - <sender>` line matcher for archive bodies.
 fn message_header_re() -> &'static Regex {
     MESSAGE_HEADER_RE
         .get_or_init(|| Regex::new(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) - (.+)$").expect("hdr"))
 }
 
+/// `YYYY-MM-DD` matcher.
 fn date_only_re() -> &'static Regex {
     DATE_ONLY_RE.get_or_init(|| Regex::new(r"^\d{4}-\d{2}-\d{2}$").expect("date"))
 }
 
+/// The address inside a `From:` header's angle brackets, else the header text.
 fn phone_from_from_header(from_hdr: &str) -> String {
     // parseaddr-ish: extract email local-part or display
     if let Some(start) = from_hdr.find('<')
@@ -73,6 +77,7 @@ fn phone_from_from_header(from_hdr: &str) -> String {
     sanitize_number(from_hdr).unwrap_or_default()
 }
 
+/// Unix seconds from an archive line's timestamp, trying each date format the app has used.
 fn parse_archive_timestamp(date_str: &str) -> Option<f64> {
     use chrono::{Local, LocalResult, TimeZone};
     for fmt in [

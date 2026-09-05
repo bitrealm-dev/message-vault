@@ -32,6 +32,7 @@ pub(super) enum TransportFamily {
 }
 
 impl TransportFamily {
+    /// The conversation-key prefix that keeps Messages and WhatsApp chats with the same peer apart.
     fn key_prefix(self) -> &'static str {
         match self {
             Self::Messages => "messages",
@@ -390,6 +391,7 @@ fn handle_type_for(handle: &str) -> HandleType {
     }
 }
 
+/// Peer handles for a chat: the comma-separated list for groups, else the chat id itself.
 fn imazing_peers(is_group: bool, chat_id: &str) -> Vec<String> {
     if is_group {
         chat_id
@@ -402,6 +404,7 @@ fn imazing_peers(is_group: bool, chat_id: &str) -> Vec<String> {
     }
 }
 
+/// `__whatsapp` for WhatsApp chats so their files do not collide with Messages files for the same peer.
 fn imazing_packaging_stem_suffix(source_kind: &str) -> Option<String> {
     if source_kind == "whatsapp" {
         Some("__whatsapp".into())

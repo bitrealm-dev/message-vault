@@ -100,6 +100,7 @@ struct SmilRefs {
     media_srcs: Vec<String>,
 }
 
+/// Unix timestamp from a GO SMS Pro PDU file name (`I_<ts>_...`).
 fn timestamp_from_filename(name: &str) -> Option<i64> {
     let re = PDU_FILENAME_RE.get_or_init(|| Regex::new(r"^I_(?P<ts>\d+)_").expect("pdu name"));
     re.captures(name)
@@ -107,6 +108,7 @@ fn timestamp_from_filename(name: &str) -> Option<i64> {
         .and_then(|m| m.as_str().parse().ok())
 }
 
+/// Phone numbers found as `+<digits>/TYPE=PLMN` anywhere in the raw bytes, in order, once each.
 fn extract_plmn_numbers(data: &[u8]) -> Vec<String> {
     let re = PLMN_RE.get_or_init(|| BytesRegex::new(r"\+(\d{10,15})/TYPE=PLMN").expect("plmn"));
     let mut seen = std::collections::HashSet::new();
@@ -127,6 +129,7 @@ fn digits_from_mms_address(addr: &str) -> Option<String> {
     sanitize_number(trimmed).or_else(|| sanitize_number(base))
 }
 
+/// Distinct phone digit strings from the decoded addresses.
 fn participants_from_structured(msg: &StructuredMms) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut numbers = Vec::new();
@@ -140,12 +143,14 @@ fn participants_from_structured(msg: &StructuredMms) -> Vec<String> {
     numbers
 }
 
+/// True for `text.txt` or `text_N.txt`, the message body part.
 fn is_text_part_name(name: &str) -> bool {
     let re = TEXT_PART_NAME_RE
         .get_or_init(|| Regex::new(r"(?i)^text(?:_\d+)?\.txt$").expect("text name"));
     re.is_match(name)
 }
 
+/// The body text of a part, decoded by charset, with binary tail junk removed.
 fn text_from_part_data(data: &[u8], charset: Option<u64>) -> Option<String> {
     let text = decode_bytes_with_charset(data, charset)
         .replace('\0', "")
@@ -158,12 +163,14 @@ fn text_from_part_data(data: &[u8], charset: Option<u64>) -> Option<String> {
     Some(decode_gosms_emojis(&text))
 }
 
+/// True when a SMIL `src` names this part.
 fn smil_src_matches_name(src: &str, name: &str) -> bool {
     let a = normalize_content_id(src).to_ascii_lowercase();
     let b = normalize_content_id(name).to_ascii_lowercase();
     !a.is_empty() && (a == b || src.eq_ignore_ascii_case(name))
 }
 
+/// True when a SMIL `src` names this part by content id, location, or file name.
 fn part_matches_smil_src(part: &MmsPart, src: &str) -> bool {
     if let Some(cid) = &part.content_id
         && smil_src_matches_name(src, cid)
@@ -183,6 +190,7 @@ fn part_matches_smil_src(part: &MmsPart, src: &str) -> bool {
     false
 }
 
+/// The best name for a part: location, then file name, then content id.
 fn part_display_name(part: &MmsPart) -> Option<String> {
     part.content_location
         .clone()
@@ -190,6 +198,7 @@ fn part_display_name(part: &MmsPart) -> Option<String> {
         .or_else(|| part.content_id.clone())
 }
 
+/// True for `application/smil`.
 fn is_smil_content_type(ct: &str) -> bool {
     let base = ct
         .split(';')
@@ -200,11 +209,13 @@ fn is_smil_content_type(ct: &str) -> bool {
     base.contains("smil") || base == "application/smil"
 }
 
+/// True when the bytes contain a `<smil` tag.
 fn looks_like_smil_bytes(data: &[u8]) -> bool {
     let lower = data.to_ascii_lowercase();
     lower.windows(5).any(|w| w == b"<smil")
 }
 
+/// Body text from the name-scanned parts, preferring the ones SMIL marks as text.
 fn body_from_named_parts(named: &[NamedPart], smil: &SmilRefs) -> Option<String> {
     for src in &smil.text_srcs {
         for part in named {
@@ -236,6 +247,7 @@ fn body_from_named_parts(named: &[NamedPart], smil: &SmilRefs) -> Option<String>
     }
 }
 
+/// Body text from the structured parts, preferring the ones SMIL marks as text.
 fn body_from_structured(msg: &StructuredMms, smil: &SmilRefs) -> Option<String> {
     if msg.parts.is_empty() {
         return None;
@@ -287,11 +299,13 @@ fn body_from_structured(msg: &StructuredMms, smil: &SmilRefs) -> Option<String> 
     }
 }
 
+/// File extension for a part name, via its guessed MIME type.
 fn ext_from_filename(name: &str) -> Option<String> {
     let ct = content_type_from_filename(name);
     extension_for_content_type(&ct).map(|e| e.to_string())
 }
 
+/// False for stubs too small to be real media of that type.
 fn attachment_ok(ext: &str, len: usize) -> bool {
     if len < 64 && matches!(ext, ".jpg" | ".png" | ".gif") {
         return false;
@@ -302,6 +316,7 @@ fn attachment_ok(ext: &str, len: usize) -> bool {
     true
 }
 
+/// Attachments from the name-scanned parts, in SMIL order when SMIL names them.
 fn attachments_from_named_parts(named: &[NamedPart], smil: &SmilRefs) -> Vec<ParsedAttachment> {
     let use_smil = !smil.media_srcs.is_empty();
     let mut out = Vec::new();
@@ -338,6 +353,7 @@ fn attachments_from_named_parts(named: &[NamedPart], smil: &SmilRefs) -> Vec<Par
     out
 }
 
+/// Attachments from the structured parts, in SMIL order when SMIL names them.
 fn attachments_from_structured(msg: &StructuredMms, smil: &SmilRefs) -> Vec<ParsedAttachment> {
     let use_smil = !smil.media_srcs.is_empty();
     let mut out = Vec::new();
@@ -380,6 +396,7 @@ fn attachments_from_structured(msg: &StructuredMms, smil: &SmilRefs) -> Vec<Pars
     out
 }
 
+/// The bytes between `<smil` and `</smil>`, if present.
 fn extract_smil_region(data: &[u8]) -> Option<&[u8]> {
     let lower = data.to_ascii_lowercase();
     let start = lower.windows(5).position(|w| w == b"<smil")?;
@@ -390,6 +407,7 @@ fn extract_smil_region(data: &[u8]) -> Option<&[u8]> {
     Some(&data[start..end_rel])
 }
 
+/// The text and media `src` names a SMIL layout refers to, in order.
 fn parse_smil_refs(data: &[u8]) -> SmilRefs {
     let mut refs = SmilRefs::default();
     let Some(smil_bytes) = extract_smil_region(data) else {
@@ -432,6 +450,7 @@ fn parse_smil_refs(data: &[u8]) -> SmilRefs {
     refs
 }
 
+/// Cut body text at the first `IMG_` file name that binary data smeared onto it.
 fn truncate_mms_binary_tail(text: &str) -> String {
     let mut text = text.to_string();
     if let Some(img_idx) = text.find("IMG_")
@@ -456,6 +475,7 @@ fn truncate_mms_binary_tail(text: &str) -> String {
     text.trim().to_string()
 }
 
+/// True for text that is only a part name or reference, not a message body.
 fn is_mms_part_junk(text: &str) -> bool {
     let re = MMS_PART_JUNK_RE.get_or_init(|| {
         Regex::new(
@@ -466,6 +486,7 @@ fn is_mms_part_junk(text: &str) -> bool {
     re.is_match(text)
 }
 
+/// Text from `start` up to the first known part boundary.
 fn extract_text_after_marker(data: &[u8], start: usize) -> String {
     let mut end = data.len();
     for sep in TEXT_PART_END_MARKERS {
@@ -476,6 +497,7 @@ fn extract_text_after_marker(data: &[u8], start: usize) -> String {
     text_from_part_data(&data[start..end], None).unwrap_or_default()
 }
 
+/// Index of `needle` in `haystack` at or after `start`.
 fn find_bytes(haystack: &[u8], needle: &[u8], start: usize) -> Option<usize> {
     haystack[start..]
         .windows(needle.len())
@@ -513,6 +535,7 @@ fn extract_wap_text_body_fallback(data: &[u8]) -> String {
     String::new()
 }
 
+/// Media blobs found by magic bytes when no part structure decodes: (extension, start, end) triples.
 fn detect_attachment_blobs(data: &[u8]) -> Vec<(String, usize, usize)> {
     if data.len() < 32 {
         return Vec::new();
@@ -541,6 +564,7 @@ fn detect_attachment_blobs(data: &[u8]) -> Vec<(String, usize, usize)> {
     merged
 }
 
+/// Participants once each, in first-seen order.
 fn unique_participants(parts: &[String]) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     let mut unique = Vec::new();
@@ -552,10 +576,12 @@ fn unique_participants(parts: &[String]) -> Vec<String> {
     unique
 }
 
+/// True when the digits are one of the owner's numbers.
 fn is_owner_digit(digits: &str, owners: &HashSet<String>) -> bool {
     sanitize_number(digits).is_some_and(|d| owners.contains(&d))
 }
 
+/// Sender, is-from-owner, and has-from flags from the decoded addresses.
 fn roles_from_structured(
     msg: &StructuredMms,
     owners: &HashSet<String>,
@@ -632,6 +658,7 @@ fn infer_pdu_direction(
     (false, unique_parts[0].clone())
 }
 
+/// The decoded date when it is plausible, else the file-name timestamp, and which one it was.
 fn resolve_timestamp(filename_ts: i64, structured: &StructuredMms) -> (i64, FieldSource) {
     match structured.date_unix {
         Some(d) if d > 0 && d <= i64::MAX as u64 => (d as i64, FieldSource::Structured),
@@ -639,6 +666,7 @@ fn resolve_timestamp(filename_ts: i64, structured: &StructuredMms) -> (i64, Fiel
     }
 }
 
+/// Insert `key` when the value is present and non-empty.
 fn insert_nonempty(fields: &mut BTreeMap<String, String>, key: &str, value: &Option<String>) {
     if let Some(v) = value
         && !v.is_empty()
@@ -647,6 +675,7 @@ fn insert_nonempty(fields: &mut BTreeMap<String, String>, key: &str, value: &Opt
     }
 }
 
+/// The decoded headers as string fields for the vendor `source` bag.
 fn pdu_fields_from_structured(msg: &StructuredMms) -> BTreeMap<String, String> {
     let mut fields = BTreeMap::new();
     insert_nonempty(&mut fields, "subject", &msg.subject);
@@ -679,6 +708,7 @@ fn pdu_fields_from_structured(msg: &StructuredMms) -> BTreeMap<String, String> {
     fields
 }
 
+/// A quality label from how many of the four fields came from the structured decode rather than heuristics.
 fn score_decode_quality(
     body: FieldSource,
     attachments: FieldSource,

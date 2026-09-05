@@ -52,6 +52,7 @@ fn with_vault_pragmas(pool: AnyPoolOptions) -> AnyPoolOptions {
     })
 }
 
+/// `sqlite://` URL for a file path, with create-if-missing set.
 fn sqlite_url_from_path(path: &Path) -> String {
     SqliteConnectOptions::new()
         .filename(path)
@@ -60,6 +61,7 @@ fn sqlite_url_from_path(path: &Path) -> String {
         .to_string()
 }
 
+/// Pool options for SQLite: four connections plus the vault pragmas.
 fn sqlite_pool_options() -> AnyPoolOptions {
     with_vault_pragmas(AnyPoolOptions::new().max_connections(4))
 }

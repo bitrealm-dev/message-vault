@@ -584,6 +584,7 @@ impl ConversationDocument {
 /// Max peer phones included in an untitled group filename stem.
 const GROUP_FILENAME_MAX_PHONES: usize = 10;
 
+/// A file stem with anything but letters, digits, `-`, `_`, and `+` replaced by `_`.
 fn sanitize_stem(value: &str) -> String {
     value
         .chars()
@@ -597,6 +598,7 @@ fn sanitize_stem(value: &str) -> String {
         .collect()
 }
 
+/// True for a handle that is a phone number: an optional `+` then digits.
 fn is_phone_handle(value: &str) -> bool {
     let value = value.trim();
     if value.is_empty() {
@@ -609,6 +611,7 @@ fn is_phone_handle(value: &str) -> bool {
     }
 }
 
+/// The stem with `suffix` appended when there is one.
 fn with_suffix(stem: &str, suffix: Option<&str>) -> String {
     match suffix {
         Some(s) if !s.is_empty() => format!("{stem}{s}"),

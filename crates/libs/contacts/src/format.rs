@@ -43,6 +43,7 @@ impl std::fmt::Display for ContactsInputError {
 impl std::error::Error for ContactsInputError {}
 
 impl ContactsInputError {
+    /// An error with a message and no detail lines.
     fn simple(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -50,6 +51,7 @@ impl ContactsInputError {
         }
     }
 
+    /// The unrecognized-format error, with what was seen as detail lines.
     fn unrecognized(details: Vec<String>) -> Self {
         Self {
             message: UNRECOGNIZED_CONTACTS_FORMAT.into(),
@@ -64,6 +66,7 @@ pub fn detect_contacts_format(path: &Path) -> Result<ContactsFormat, ContactsInp
     detect_format(path)
 }
 
+/// VCF or vCard CSV, by extension first and then by content.
 fn detect_format(path: &Path) -> Result<ContactsFormat, ContactsInputError> {
     if !path.is_file() {
         return Err(ContactsInputError::simple("Contacts file not found"));
@@ -85,6 +88,7 @@ fn detect_format(path: &Path) -> Result<ContactsFormat, ContactsInputError> {
     detect_csv_format(path)
 }
 
+/// Confirm a file has `BEGIN:VCARD` and `END:VCARD` lines.
 fn detect_vcf_format(path: &Path) -> Result<ContactsFormat, ContactsInputError> {
     let text = fs::read_to_string(path).map_err(|e| {
         ContactsInputError::simple(format!("Could not read {}: {e}", path.display()))
@@ -113,6 +117,7 @@ fn detect_vcf_format(path: &Path) -> Result<ContactsFormat, ContactsInputError> 
     Err(ContactsInputError::unrecognized(details))
 }
 
+/// Confirm a CSV has the vCard CSV columns this reader needs.
 fn detect_csv_format(path: &Path) -> Result<ContactsFormat, ContactsInputError> {
     let file = File::open(path).map_err(|e| {
         ContactsInputError::simple(format!("Could not open {}: {e}", path.display()))

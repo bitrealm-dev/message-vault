@@ -159,6 +159,7 @@ pub fn read_vcard_csv_rows(path: &Path) -> Result<Vec<ContactCsvRow>> {
     Ok(rows)
 }
 
+/// Split a phone cell on `;` and add each non-empty number.
 fn push_phones_from_raw(raw: &str, out: &mut Vec<String>) {
     let raw = raw.trim();
     if raw.is_empty() {
