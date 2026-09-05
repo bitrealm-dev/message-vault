@@ -21,7 +21,8 @@ use sqlx::Connection;
 use crate::db::dialect;
 use crate::db::engine::DbEngine;
 
-/// Baseline DDL lives in `schema/sql/` (shared with the web app via sync script).
+/// Baseline DDL lives in `schema/sql/`. Every column there carries a comment;
+/// `tests/schema_column_comments.rs` enforces it.
 const ACCOUNTS_DDL: &str = include_str!("../../../../../schema/sql/accounts.sql");
 const MESSAGE_TABLES_DDL: &str = include_str!("../../../../../schema/sql/messages.sql");
 const STAGING_TABLES_DDL: &str = include_str!("../../../../../schema/sql/staging.sql");
