@@ -204,9 +204,13 @@ impl ListCtx<'_> {
             ListKind::Conversations => {
                 format!("{m2}.conversation_id = c.id AND {m2}.duplicate_of IS NULL")
             }
+            // A contact's message count leaves trashed conversations out, the
+            // same answer the contact drawer gives, so `messages:>0` and the
+            // number in the drawer cannot disagree once something is trashed.
             ListKind::Contacts => format!(
-                "{m2}.account_id = ct.account_id AND {m2}.duplicate_of IS NULL AND EXISTS (SELECT 1 FROM conversations c2 WHERE c2.id = {m2}.conversation_id AND {})",
-                conversation_involves("c2", "ct.id")
+                "{m2}.account_id = ct.account_id AND {m2}.duplicate_of IS NULL AND EXISTS (SELECT 1 FROM conversations c2 WHERE c2.id = {m2}.conversation_id AND {} AND {})",
+                conversation_involves("c2", "ct.id"),
+                super::emit::not_trashed_conversation("c2")
             ),
         }
     }

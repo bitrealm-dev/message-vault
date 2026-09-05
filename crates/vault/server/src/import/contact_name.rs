@@ -233,6 +233,68 @@ mod tests {
         assert_eq!(name, "Ada");
     }
 
+    /// Trash sets a person aside; it does not make them absent. A re-import
+    /// that meets their handle attaches to the trashed contact and leaves it
+    /// where the person put it, rather than minting a second contact whose
+    /// handle link would then collide with the first (#328).
+    #[tokio::test]
+    async fn an_import_reuses_a_trashed_contact_and_leaves_it_trashed() {
+        let (pool, _dir) = crate::db::engine::test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        schema::ensure_vault_schema(&mut conn).await.unwrap();
+        crate::db::account_profile::ensure_account_row(&mut conn, TEST_ACCOUNT)
+            .await
+            .unwrap();
+        let handle_id: i64 = sqlx::query_scalar(
+            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+             VALUES ($1, '+15555550950', '+15555550950', 'phone', 'imessage') RETURNING id",
+        )
+        .bind(TEST_ACCOUNT)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        let mut stats = ImportStats::default();
+        let first =
+            ensure_contact_for_handle(&mut conn, TEST_ACCOUNT, handle_id, Some("Ada"), &mut stats)
+                .await
+                .unwrap();
+        sqlx::query("INSERT INTO trashed_contacts (account_id, contact_id) VALUES ($1, $2)")
+            .bind(TEST_ACCOUNT)
+            .bind(first)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let second =
+            ensure_contact_for_handle(&mut conn, TEST_ACCOUNT, handle_id, Some("Ada"), &mut stats)
+                .await
+                .unwrap();
+
+        assert_eq!(
+            first, second,
+            "the trashed contact is reused, not duplicated"
+        );
+        let contacts: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM contacts WHERE account_id = $1")
+                .bind(TEST_ACCOUNT)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!(contacts, 1);
+        let still_trashed: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM trashed_contacts WHERE account_id = $1 AND contact_id = $2",
+        )
+        .bind(TEST_ACCOUNT)
+        .bind(first)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(
+            still_trashed, 1,
+            "an import does not restore what the person set aside"
+        );
+    }
+
     #[tokio::test]
     async fn a_second_spelling_does_not_rename_anyone() {
         let (pool, _dir) = crate::db::engine::test_pool().await;

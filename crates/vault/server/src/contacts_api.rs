@@ -20,6 +20,7 @@ use crate::db::trash::{Trashable, move_to_trash, restore};
 use crate::paging::{
     DEFAULT_LIST_LIMIT, MAX_CONTACT_SUMMARY_IDS, MAX_LIST_OFFSET, Page, PageQuery, page_params,
 };
+use crate::search::emit::{NOT_TRASHED_CONTACT, NOT_TRASHED_CONVERSATION};
 use crate::server::{ApiError, AppState, FullAccess};
 
 /// Contact row for the list: name, handles, groups.
@@ -201,18 +202,6 @@ fn involves_contact_sql() -> String {
     involves_contact_expr("$2")
 }
 
-/// Conversation `c` is not in `trashed_conversations`.
-const NOT_TRASHED_CONVERSATION_SQL: &str = "NOT EXISTS (
-               SELECT 1 FROM trashed_conversations tc
-               WHERE tc.account_id = c.account_id AND tc.conversation_id = c.id
-             )";
-
-/// Contact `ct` is not in `trashed_contacts`.
-const NOT_TRASHED_CONTACT_SQL: &str = "NOT EXISTS (
-               SELECT 1 FROM trashed_contacts tct
-               WHERE tct.account_id = ct.account_id AND tct.contact_id = ct.id
-             )";
-
 /// One page of the contact list for `q`, a query in the search language.
 ///
 /// # Errors
@@ -377,7 +366,7 @@ async fn contact_name_and_modified(
          FROM contacts ct
          WHERE ct.id = $1 AND ct.account_id = $2
            AND {not_trashed}",
-        not_trashed = NOT_TRASHED_CONTACT_SQL,
+        not_trashed = NOT_TRASHED_CONTACT,
     ))
     .bind(contact_id)
     .bind(account_id)
@@ -454,7 +443,7 @@ async fn contact_handle_stats(
              WHERE ch.account_id = $1 AND ch.contact_id = $2
              GROUP BY ch.handle_id, h.raw, h.service
              ORDER BY h.raw",
-        not_trashed_conversation = NOT_TRASHED_CONVERSATION_SQL,
+        not_trashed_conversation = NOT_TRASHED_CONVERSATION,
     ))
     .bind(account_id)
     .bind(contact_id)
@@ -493,7 +482,7 @@ async fn contact_totals(
                 WHERE m.duplicate_of IS NULL
                   AND m.conversation_id IN (SELECT id FROM involved))",
         involves_contact_sql = involves_contact_sql(),
-        not_trashed_conversation = NOT_TRASHED_CONVERSATION_SQL,
+        not_trashed_conversation = NOT_TRASHED_CONVERSATION,
     ))
     .bind(account_id)
     .bind(contact_id)
@@ -568,8 +557,8 @@ pub async fn get_contact_summaries(
          LEFT JOIN messages m ON m.conversation_id = i.conversation_id
            AND m.duplicate_of IS NULL
          GROUP BY s.id, s.name",
-        not_trashed = NOT_TRASHED_CONTACT_SQL,
-        not_trashed_conversation = NOT_TRASHED_CONVERSATION_SQL,
+        not_trashed = NOT_TRASHED_CONTACT,
+        not_trashed_conversation = NOT_TRASHED_CONVERSATION,
     );
 
     let mut q = sqlx::query_as::<_, ContactSelectionRow>(&sql);
@@ -647,7 +636,11 @@ pub(crate) struct ContactMatchResponse {
     unknown: Vec<String>,
 }
 
-/// Which of `identifiers` this account has no (non-trashed) contact for.
+/// Which of `identifiers` this account has no contact for.
+///
+/// A trashed contact still counts as known: trash sets a person aside, it
+/// does not make them absent, and an import that meets their handle reuses
+/// that contact rather than creating a second one for the same person.
 ///
 /// Matches on the same normalized form the import pipeline stores in
 /// `handles.normalized` ([`normalize_handle`]), so an export spelling like
@@ -697,9 +690,7 @@ async fn unknown_contact_identifiers(
          JOIN contact_handles ch ON ch.account_id = h.account_id AND ch.handle_id = h.id
          JOIN contacts ct ON ct.account_id = ch.account_id AND ct.id = ch.contact_id
          WHERE h.account_id = $1
-           AND h.normalized IN ({placeholders})
-           AND {not_trashed}",
-        not_trashed = NOT_TRASHED_CONTACT_SQL,
+           AND h.normalized IN ({placeholders})",
     );
     let mut q = sqlx::query_scalar::<_, String>(&sql).bind(account_id);
     for (_, normalized) in &unique {
@@ -976,7 +967,7 @@ impl ContactEditor<'_> {
              FROM contacts ct
              WHERE ct.id = $1 AND ct.account_id = $2
                AND {not_trashed}",
-            not_trashed = NOT_TRASHED_CONTACT_SQL,
+            not_trashed = NOT_TRASHED_CONTACT,
         ))
         .bind(self.contact_id)
         .bind(self.account_id)
