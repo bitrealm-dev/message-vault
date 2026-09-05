@@ -33,6 +33,12 @@ The dependency audits live in `audit.yml`, not `ci.yml`. That workflow runs
 `docs/`, triggered by a pull request that touches `Cargo.lock`,
 `web/package-lock.json` or `docs/package-lock.json`, and by a weekly schedule.
 
+Test coverage lives in `coverage.yml` for the same reason seen from the other
+side: it is a report that never fails a pull request, so it has no place in a
+workflow whose every job is required. It runs `scripts/coverage.sh`
+(cargo-llvm-cov over the workspace, with the Postgres suites live) on each push
+to `main` and on demand, and keeps the reports as a workflow artifact.
+
 The docs build on a pull request is the `docs` job in `ci.yml`, not a trigger
 on `docs.yml` — a required check that lives in a path-filtered workflow
 deadlocks every pull request that misses the filter, exactly like

@@ -7,4 +7,5 @@
 # new lints in the same pull request.
 [toolchain]
 channel = "1.98.1"
-components = ["rustfmt", "clippy"]
+# llvm-tools is what cargo-llvm-cov (scripts/coverage.sh) needs.
+components = ["rustfmt", "clippy", "llvm-tools"]

@@ -178,6 +178,7 @@ nvm use 22
 sudo apt install -y pipx && pipx ensurepath
 pipx install 'whatsapp-chat-exporter[android_backup,crypt15]'   # wtsexporter
 pipx install sqlite-web                                          # --sqlweb on port 8081
+cargo install cargo-llvm-cov --locked                             # ./scripts/coverage.sh
 ```
 
 **5. Clone and install the frontend**
@@ -268,7 +269,13 @@ cargo build --manifest-path src-tauri/Cargo.toml
 # minutes against the compose service; without the variable it is SQLite.
 docker compose -f docker-compose.pg.yml up -d
 MV_TEST_POSTGRES_URL=postgres://vault:vault@127.0.0.1:5432/vault cargo test -p message-vault-server
+
+# Test coverage for the workspace (cargo-llvm-cov). Summary on stdout,
+# HTML report at target/llvm-cov/html/index.html; --open shows it.
+./scripts/coverage.sh
 ```
+
+Coverage is a report, not a gate. `scripts/coverage.sh` needs `cargo-llvm-cov` and the `llvm-tools` component that `rust-toolchain.toml` installs; it leaves test code out of the numbers and does not measure `src-tauri`. The `Coverage` workflow (`coverage.yml`) runs the same script on every push to `main` and keeps the HTML and lcov reports as a workflow artifact for 30 days, with the summary table on the run's summary page.
 
 #### Frontend
 
