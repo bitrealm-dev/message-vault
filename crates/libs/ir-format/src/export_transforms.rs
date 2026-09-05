@@ -136,6 +136,10 @@ pub(crate) fn obfuscate_document(doc: &mut ConversationDocument, anon: &mut Obfu
         for att in &mut msg.attachments {
             obfuscate_attachment(att);
         }
+        // The vendor bag is raw source attributes and can carry the real
+        // sender address, so obfuscated output drops it whole. `android_type`
+        // goes with it: `direction` already says sent or received.
+        msg.source = None;
     }
 }
 
@@ -266,6 +270,18 @@ mod tests {
             }],
             packaging_stem_suffix: None,
         }
+    }
+
+    #[test]
+    fn obfuscate_drops_the_vendor_bag() {
+        let mut doc = message_ir::testutil::sample_document("secret");
+        assert!(doc.messages[0].source.is_some());
+        let mut anon = Obfuscator::new([7u8; 32]);
+        obfuscate_document(&mut doc, &mut anon);
+        assert!(
+            doc.messages[0].source.is_none(),
+            "obfuscated output must not carry vendor fields"
+        );
     }
 
     #[test]
