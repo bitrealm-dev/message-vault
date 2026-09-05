@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { isAndroidSmsSource, needsOwnerEmails, splitEmails } from "../lib/androidSmsSources";
 import {
   type IdentityService,
   identityOnProfile,
@@ -65,7 +66,6 @@ import {
 } from "./import/useImportJob";
 
 const DEFAULT_SOURCE = IMESSAGE_DEFAULT_METHOD;
-const SBR_SOURCE = "sms-backup-restore";
 const PATH_PROBE_DEBOUNCE_MS = 200;
 /** The server's own cap on one `/v1/contacts/match` request (`MAX_MATCH_IDENTIFIERS`,
  * `crates/vault/server/src/contacts_api.rs`) — the client batches to it rather than
@@ -170,6 +170,8 @@ export default function ImportScreen() {
   const [maxFps, setMaxFps] = useState("30");
   const [minSizeMb, setMinSizeMb] = useState("20");
   const [ownerPhones, setOwnerPhones] = useState<string[]>([]);
+  /** Owner email addresses as typed; split into a list when the import starts. */
+  const [ownerEmails, setOwnerEmails] = useState("");
   const [formatOpen, setFormatOpen] = useState(true);
   const [processingOpen, setProcessingOpen] = useState(false);
   const [force, setForce] = useState(false);
@@ -179,6 +181,7 @@ export default function ImportScreen() {
   const [profilePhonesReady, setProfilePhonesReady] = useState(false);
   const [profilePhonesError, setProfilePhonesError] = useState(false);
   const ownerPhonesSeededRef = useRef(false);
+  const ownerEmailsSeededRef = useRef(false);
   const lastImessageMethodRef = useRef<ImessageMethodId>(IMESSAGE_DEFAULT_METHOD);
   const lastWhatsappMethodRef = useRef<WhatsappMethodId>(WHATSAPP_DEFAULT_METHOD);
   const sourceChangeGenRef = useRef(0);
@@ -293,6 +296,8 @@ export default function ImportScreen() {
     // must not overwrite what was just restored.
     ownerPhonesSeededRef.current = true;
     setOwnerPhones(restored.ownerPhones);
+    ownerEmailsSeededRef.current = true;
+    setOwnerEmails(restored.ownerEmails.join(", "));
     setForce(restored.force);
     setObfuscate(restored.obfuscate);
   }
@@ -410,13 +415,15 @@ export default function ImportScreen() {
   }
 
   useEffect(() => {
-    if (source !== SBR_SOURCE) {
+    if (!isAndroidSmsSource(source)) {
       setProfilePhones([]);
       setProfilePhonesReady(false);
       setProfilePhonesError(false);
       ownerPhonesSeededRef.current = false;
+      ownerEmailsSeededRef.current = false;
       return;
     }
+    const wantsEmails = needsOwnerEmails(source);
     let cancelled = false;
     setProfilePhonesReady(false);
     setProfilePhonesError(false);
@@ -428,6 +435,13 @@ export default function ImportScreen() {
         setProfilePhones([...profile.phones]);
         setProfilePhonesError(false);
         setProfilePhonesReady(true);
+        if (wantsEmails && profile.emails.length > 0 && !ownerEmailsSeededRef.current) {
+          setOwnerEmails((current) => {
+            if (current.trim().length > 0) return current;
+            ownerEmailsSeededRef.current = true;
+            return profile.emails.join(", ");
+          });
+        }
         if (profile.phones.length === 0 || ownerPhonesSeededRef.current) return;
         setOwnerPhones((current) => {
           if (current.length > 0) return current;
@@ -634,7 +648,7 @@ export default function ImportScreen() {
     }
   };
 
-  const isSbr = source === SBR_SOURCE;
+  const isAndroidSms = isAndroidSmsSource(source);
 
   return (
     <div className={`min-w-0 p-6 ${phase === "form" ? "max-w-[640px]" : "max-w-5xl"}`}>
@@ -679,6 +693,11 @@ export default function ImportScreen() {
             ownerPhonesSeededRef.current = true;
             setOwnerPhones(phones);
           }}
+          ownerEmails={ownerEmails}
+          onOwnerEmailsChange={(value) => {
+            ownerEmailsSeededRef.current = true;
+            setOwnerEmails(value);
+          }}
           profilePhones={profilePhones}
           profilePhonesReady={profilePhonesReady}
           profilePhonesError={profilePhonesError}
@@ -704,9 +723,10 @@ export default function ImportScreen() {
               maxFps,
               minSizeMb,
               ownerPhones: flushedPhones ?? ownerPhones,
+              ownerEmails: splitEmails(ownerEmails),
               force,
               obfuscate,
-              isSbr,
+              isAndroidSms,
               attachmentRoot,
               appleContacts,
               whatsappKey,

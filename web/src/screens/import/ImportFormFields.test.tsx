@@ -66,6 +66,8 @@ function renderForm(override: Partial<ImportFormFieldsProps> = {}) {
     onMinSizeMbChange: vi.fn(),
     ownerPhones: [],
     onOwnerPhonesChange: vi.fn(),
+    ownerEmails: "",
+    onOwnerEmailsChange: vi.fn(),
     profilePhones: [],
     profilePhonesReady: true,
     profilePhonesError: false,

@@ -18,13 +18,17 @@ export function mediaExtractFields(args: {
   };
 }
 
-/** Build extract options for SMS Backup & Restore (owner phones required). */
+/**
+ * Build extract options for the Android SMS sources (owner phones required;
+ * SMS Backup+ also carries the owner's email addresses).
+ */
 export function sbrExtractFields(args: {
   attachmentMedia: AttachmentMediaMode;
   maxResolution: string;
   maxFps: string;
   minSizeMb: string;
   ownerPhones: string[];
+  ownerEmails?: string[];
   obfuscate: boolean;
 }): Pick<
   ExtractConfig,
@@ -33,11 +37,13 @@ export function sbrExtractFields(args: {
   | "media_max_fps"
   | "media_min_size"
   | "owner_phones"
+  | "owner_emails"
   | "obfuscate"
 > {
   return {
     ...mediaExtractFields(args),
     owner_phones: args.ownerPhones,
+    ...(args.ownerEmails && args.ownerEmails.length > 0 ? { owner_emails: args.ownerEmails } : {}),
     obfuscate: args.obfuscate,
   };
 }

@@ -149,6 +149,9 @@ pub struct ExtractArgs {
     pub obfuscate: Option<bool>,
     /// Owner phone numbers for Android SMS exporters (SMS Backup & Restore).
     pub owner_phones: Option<Vec<String>>,
+    /// Owner email addresses for SMS Backup+, whose archive is Gmail-backed
+    /// and needs them to tell sent mail from received.
+    pub owner_emails: Option<Vec<String>>,
     /// Alternate folder for Attachments and StickerCache (Mac and jailbreak).
     pub attachment_root: Option<String>,
     /// Path to an Apple AddressBook file (Mac and jailbreak).
@@ -196,6 +199,7 @@ pub async fn extract(
         // `Form` trims and drops empty values itself, so the raw strings can
         // pass through unchanged.
         owner_phones: args.owner_phones.unwrap_or_default(),
+        owner_emails: args.owner_emails.unwrap_or_default(),
         attachment_root: args.attachment_root.unwrap_or_default(),
         apple_contacts: args.apple_contacts.unwrap_or_default(),
         whatsapp_key: args.whatsapp_key.unwrap_or_default(),
@@ -274,6 +278,7 @@ struct ExtractOptions {
     media_min_size: String,
     obfuscate: bool,
     owner_phones: Vec<String>,
+    owner_emails: Vec<String>,
     attachment_root: String,
     apple_contacts: String,
     whatsapp_key: String,
@@ -444,6 +449,7 @@ fn build_exporter_config(
         "sms-backup-plus" => {
             form.input = path.to_string();
             form.owner_phones = options.owner_phones.join("\n");
+            form.owner_emails = options.owner_emails.join("\n");
             Exporter::SmsBackupPlus
         }
         "openextract" => {
@@ -512,6 +518,7 @@ mod tests {
             media_min_size: "20M".into(),
             obfuscate: false,
             owner_phones,
+            owner_emails: Vec::new(),
             attachment_root: String::new(),
             apple_contacts: String::new(),
             whatsapp_key: String::new(),
@@ -750,9 +757,9 @@ mod tests {
 
     #[test]
     fn sms_backup_plus_requires_owner_emails() {
-        // The Extract screen has no owner-email field, so SMS Backup+ always
-        // fails Form validation. That is the Form builders' rule and the
-        // desktop surfaces it instead of silently passing an empty list.
+        // SMS Backup+ archives are Gmail-backed, so the Form needs at least
+        // one owner email to tell sent from received; an empty list is a
+        // validation error the desktop surfaces, not something it papers over.
         let backup = tempfile::tempdir().unwrap();
         let err = build_exporter_config(
             "sms-backup-plus",
@@ -765,6 +772,27 @@ mod tests {
             err.contains("email"),
             "expected email requirement error, got {err}"
         );
+    }
+
+    #[test]
+    fn sms_backup_plus_passes_owner_phones_and_emails() {
+        let backup = tempfile::tempdir().unwrap();
+        let mut options = test_options(vec!["+15551111".into()]);
+        options.owner_emails = vec!["me@example.com".into(), "Me@Work.example".into()];
+        let config = build_exporter_config(
+            "sms-backup-plus",
+            backup.path().to_str().unwrap(),
+            "/tmp/out",
+            &options,
+        )
+        .unwrap();
+        match config.source {
+            SourceConfig::SmsBackupPlus(s) => {
+                assert_eq!(s.owner_phones, vec!["+15551111"]);
+                assert_eq!(s.owner_emails, vec!["me@example.com", "Me@Work.example"]);
+            }
+            other => panic!("expected SmsBackupPlus, got {other:?}"),
+        }
     }
 
     #[test]
