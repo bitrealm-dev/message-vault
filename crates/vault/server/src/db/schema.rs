@@ -123,7 +123,7 @@ async fn rebuild_vault_schema(conn: &mut AnyConnection) -> Result<()> {
     // `IF EXISTS` keeps this safe when an FTS table's shadow tables were
     // already removed with their parent.
     for table in &tables {
-        sqlx::query(&format!("DROP TABLE IF EXISTS \"{table}\""))
+        sqlx::query(&format!("DROP TABLE IF EXISTS {}", quote_ident(table)))
             .execute(&mut *conn)
             .await?;
     }
@@ -168,32 +168,28 @@ fn pg_vault_table_ddl() -> &'static crate::db::pg_ddl::PgDdl {
     })
 }
 
-/// Every table name the embedded Postgres DDL creates, parsed from the DDL
-/// itself so the rebuild's drop list cannot drift from what the vault
-/// installs.
+/// Every table name the embedded Postgres DDL creates, as the transpiler
+/// collected them while producing that DDL, so the rebuild's drop list
+/// cannot drift from what the vault installs.
 ///
 /// A SQLite database file belongs to the vault alone, but a Postgres schema
 /// may be shared with another application. The rebuild therefore names the
 /// vault's own tables instead of sweeping `current_schema()`.
 fn pg_vault_table_names() -> Vec<&'static str> {
-    const CREATE_TABLE: &str = "CREATE TABLE IF NOT EXISTS ";
-    let mut names: Vec<&'static str> = Vec::new();
-    for ddl in &pg_vault_table_ddl().files {
-        for line in ddl.lines() {
-            let Some(rest) = line.trim_start().strip_prefix(CREATE_TABLE) else {
-                continue;
-            };
-            let name = rest
-                .trim_start()
-                .split(|c: char| c.is_whitespace() || c == '(' || c == ';')
-                .next()
-                .unwrap_or_default();
-            if !name.is_empty() && !names.contains(&name) {
-                names.push(name);
-            }
-        }
-    }
-    names
+    pg_vault_table_ddl()
+        .tables
+        .iter()
+        .map(String::as_str)
+        .collect()
+}
+
+/// Quote `name` as a SQL identifier: wrapped in double quotes, with any
+/// double quote inside it doubled. SQLite and Postgres both read this form.
+/// Every name that reaches a `DROP TABLE` here came out of a catalog or out
+/// of the embedded DDL, and this is the one place that turns such a name
+/// into statement text.
+fn quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
 }
 
 /// Drop the vault's own tables in the current schema. Postgres twin of
@@ -211,10 +207,11 @@ async fn drop_pg_user_tables(conn: &mut AnyConnection) -> Result<()> {
     let schema: String = sqlx::query_scalar("SELECT current_schema()::text")
         .fetch_one(&mut *conn)
         .await?;
-    let schema = schema.replace('"', "\"\"");
+    let schema = quote_ident(&schema);
     for table in pg_vault_table_names() {
         sqlx::query(&format!(
-            "DROP TABLE IF EXISTS \"{schema}\".\"{table}\" CASCADE"
+            "DROP TABLE IF EXISTS {schema}.{} CASCADE",
+            quote_ident(table)
         ))
         .execute(&mut *conn)
         .await?;

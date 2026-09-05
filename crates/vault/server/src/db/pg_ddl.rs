@@ -22,6 +22,9 @@
 pub(crate) struct PgDdl {
     /// Postgres DDL per source file, same order as the input.
     pub files: Vec<String>,
+    /// Every table the files create, in creation order. The rebuild's drop
+    /// list reads this rather than parsing the DDL a second time.
+    pub tables: Vec<String>,
     /// Idempotent `ALTER TABLE ... ADD CONSTRAINT` blocks for foreign keys
     /// whose target table is created by a later file. Empty string when the
     /// sources have none.
@@ -49,8 +52,26 @@ pub(crate) fn transpile(sources: &[&str]) -> PgDdl {
         .collect();
     PgDdl {
         files,
+        tables: created,
         deferred_fks: render_deferred_fks(&deferred),
     }
+}
+
+/// The text after `CREATE TABLE IF NOT EXISTS` on a line that opens with
+/// those words, however they are spaced or cased; `None` for any other
+/// line. Matching word by word rather than against one fixed string means a
+/// `CREATE  TABLE` written with two spaces still counts as a table, so it
+/// still reaches the drop list and the drift guard.
+fn create_table_tail(line: &str) -> Option<&str> {
+    let mut rest = line.trim_start();
+    for keyword in ["CREATE", "TABLE", "IF", "NOT", "EXISTS"] {
+        let word = rest.split_whitespace().next()?;
+        if !word.eq_ignore_ascii_case(keyword) {
+            return None;
+        }
+        rest = rest[word.len()..].trim_start();
+    }
+    Some(rest)
 }
 
 /// Rewrite one SQLite schema file into Postgres DDL, collecting the tables it creates and
@@ -67,10 +88,7 @@ fn transpile_file(
     for line in source.lines() {
         let mut line = line.to_string();
 
-        if let Some(rest) = line
-            .trim_start()
-            .strip_prefix("CREATE TABLE IF NOT EXISTS ")
-        {
+        if let Some(rest) = create_table_tail(&line) {
             current_table = table_name(rest);
             created.push(current_table.clone());
         }
@@ -183,6 +201,30 @@ CREATE TABLE IF NOT EXISTS laters (
     parent_id INTEGER NOT NULL REFERENCES parents(id) ON DELETE CASCADE
 );
 ";
+
+    #[test]
+    fn lists_every_table_created_in_order() {
+        let ddl = transpile(&[PARENT, LATER]);
+        assert_eq!(ddl.tables, ["parents", "laters"]);
+    }
+
+    #[test]
+    fn create_table_is_recognised_whatever_its_spacing() {
+        // A fixed-string prefix match would let a doubly spaced statement
+        // create a table the rebuild never drops.
+        let spaced = "CREATE  TABLE IF NOT   EXISTS spaced (\n    id INTEGER PRIMARY KEY\n);\n";
+        let ddl = transpile(&[spaced]);
+        assert_eq!(ddl.tables, ["spaced"]);
+        assert_eq!(
+            create_table_tail("  create table if not exists lower (id INTEGER)"),
+            Some("lower (id INTEGER)")
+        );
+        assert_eq!(
+            create_table_tail("CREATE INDEX IF NOT EXISTS ix ON t (c)"),
+            None
+        );
+        assert_eq!(create_table_tail("CREATE TABLE"), None);
+    }
 
     #[test]
     fn integer_primary_keys_become_identities() {
