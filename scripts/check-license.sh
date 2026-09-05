@@ -12,6 +12,14 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
 EXPECTED_CARGO_LICENSE="LicenseRef-FCL-1.0-ALv2"
+# The two crates that are deliberately not FCL, and the licence each carries.
+# The helper program links GPL code, so it is GPL; the protocol crate is
+# linked by both the GPL helper and the FCL app, so it is permissive. Every
+# other crate is FCL. Why: docs/agents/licences.md.
+declare -A LICENCE_EXCEPTIONS=(
+  ["crates/helpers/imessage-reader/Cargo.toml"]="GPL-3.0-or-later"
+  ["crates/helpers/imessage-reader-protocol/Cargo.toml"]="MIT OR Apache-2.0"
+)
 EXPECTED_WEB_LICENSE="SEE LICENSE IN ../LICENSE.md"
 EXPECTED_SPEC_LICENSE="Fair Core License 1.0 (ALv2 future)"
 
@@ -24,8 +32,9 @@ if [[ "${first_line}" != "# Fair Core License, Version 1.0, ALv2 Future License"
   failures=$((failures + 1))
 fi
 
-# Every tracked Cargo.toml package declares the same FCL expression, so Cargo
-# metadata cannot silently drift back to another license. The workspace-root
+# Every tracked Cargo.toml package declares the FCL expression (or the one
+# exception listed for it above), so Cargo metadata cannot silently drift to
+# another license. The workspace-root
 # manifest has no [package] section and therefore no license field. The
 # vendored `vendor/sqlx-sqlite/` fork is third-party code and keeps upstream's
 # own license (MIT OR Apache-2.0), so it is excluded from the FCL check. The
@@ -35,8 +44,9 @@ fi
 # the exclusion in mind when the sweep seems to miss a manifest.
 while IFS= read -r manifest; do
   if grep -q '^\[package\]' "${manifest}"; then
-    if ! grep -q "^license = \"${EXPECTED_CARGO_LICENSE}\"$" "${manifest}"; then
-      echo "${manifest}: license must be \"${EXPECTED_CARGO_LICENSE}\"" >&2
+    expected="${LICENCE_EXCEPTIONS[${manifest}]:-${EXPECTED_CARGO_LICENSE}}"
+    if ! grep -q "^license = \"${expected}\"$" "${manifest}"; then
+      echo "${manifest}: license must be \"${expected}\"" >&2
       failures=$((failures + 1))
     fi
   fi

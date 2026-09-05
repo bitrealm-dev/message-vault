@@ -1,11 +1,12 @@
-# cargo-deny configuration. CI runs `cargo deny check advisories` on every PR
-# (see .github/workflows/ci.yml, job `deny`).
-#
-# Only advisories are checked today. `licenses` and `bans` are deliberately
-# deferred: imessage-ir-exporter depends on GPL-3.0-or-later
-# imessage-database, which is not GPL-compatible with the Fair Core License.
-# That coupling needs a real resolution before license/bans checks can gate
-# the build (open caveat from PR #103).
+# cargo-deny configuration. The Audit workflow (.github/workflows/audit.yml)
+# runs `cargo deny check advisories licenses bans` on the workspace and
+# `licenses bans` on src-tauri whenever a lockfile or this file changes, and
+# weekly. The policy these sections enforce is docs/agents/licences.md.
+
+[graph]
+# The desktop app and the workspace are checked for the host only; the
+# release matrix is all native builds.
+all-features = false
 
 [advisories]
 # In cargo-deny >= 0.18 vulnerability advisories always fail the check and
@@ -18,4 +19,58 @@ ignore = [
     "RUSTSEC-2024-0436", # paste unmaintained (via image/exr)
     { id = "RUSTSEC-2026-0194", reason = "quick-xml quadratic duplicate-attribute scan: pinned by imessage-database =4.2.0 -> plist =1.9.0 -> quick-xml 0.39.4; parses the user's own local macOS/iOS data, never network input. Revisit when imessage-database releases." },
     { id = "RUSTSEC-2026-0195", reason = "quick-xml unbounded namespace allocation: same chain and exposure as RUSTSEC-2026-0194." },
+]
+
+[licenses]
+# One file serves two graphs (the workspace and src-tauri), and the desktop
+# graph must not meet the GPL entries at all, so an unused entry is not a
+# finding.
+unused-allowed-license = "allow"
+# Permissive licences only, for every crate in the graph. The repository's
+# own Fair Core License is on the list so the workspace crates pass; the two
+# permissive texts the protocol crate offers are covered by MIT and
+# Apache-2.0. A copyleft licence anywhere else fails the check, and the
+# `exceptions` below are the whole list of where one is allowed.
+allow = [
+    "LicenseRef-FCL-1.0-ALv2",
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+    "BSL-1.0",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",
+    "OpenSSL",
+    "Unlicense",
+]
+# GPL is allowed on exactly four crates: the GPL libraries that read Apple
+# Messages (imessage-database, its typedstream parser crabstep, and the backup
+# decrypter crabapple) and the helper program that links them. Nothing else
+# may carry it, and `[bans]` below keeps those libraries out of every other
+# crate's dependency list.
+exceptions = [
+    { crate = "imessage-database", allow = ["GPL-3.0-or-later"] },
+    { crate = "crabstep", allow = ["GPL-3.0-or-later"] },
+    { crate = "crabapple", allow = ["GPL-3.0-or-later"] },
+    { crate = "imessage-reader", allow = ["GPL-3.0-or-later"] },
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"
+# The GPL readers may be depended on by the helper program only. A Fair Core
+# License crate that adds either one as a dependency fails here, whatever
+# the licence check says.
+deny = [
+    { crate = "imessage-database", wrappers = ["imessage-reader"] },
+    { crate = "crabapple", wrappers = ["imessage-reader"] },
+    { crate = "crabstep", wrappers = ["imessage-database"] },
 ]
