@@ -586,7 +586,185 @@ pub(crate) fn skip_unknown_mms_value(cur: &mut Cursor<'_>) -> Result<(), ()> {
     Ok(())
 }
 
-/// Decode one MMS header into `msg`. Returns `false` at the first non-header byte, where the body starts.
+/// One decoded MMS header value, before it is stored on a [`StructuredMms`].
+/// Decoding and storing are separate steps so the strict header parse and
+/// the lenient byte scan share one decoder and differ only in what they do
+/// with a value.
+pub(crate) enum HeaderValue {
+    From(String),
+    To(String),
+    Cc(String),
+    Bcc(String),
+    MessageType(String),
+    Date(u64),
+    Subject(String),
+    MessageId(String),
+    TransactionId(String),
+    Version(String),
+    MessageSize(u64),
+    MessageClass(String),
+    DeliveryTime(String),
+    Expiry(String),
+    /// A `yes`/`no` token; `None` when the byte is neither.
+    DeliveryReport(Option<&'static str>),
+    ReadReport(Option<&'static str>),
+    ReportAllowed(Option<&'static str>),
+    /// A priority token; `None` when the byte is not one.
+    Priority(Option<&'static str>),
+    Status(String),
+    ResponseStatus(String),
+    ResponseText(String),
+    SenderVisibility(String),
+    ContentType(String, HashMap<String, String>),
+    /// Content-Location and fields this decoder does not model: consumed, not kept.
+    Skipped,
+}
+
+/// How [`StructuredMms::store`] treats a field that already has a value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Store {
+    /// The header section is authoritative: a later header replaces an earlier one.
+    Overwrite,
+    /// A byte scan meets stray copies: the first value found stays.
+    KeepFirst,
+}
+
+/// Decode the value of well-known header `field` at the cursor.
+///
+/// # Errors
+///
+/// Returns `Err` when the bytes are not a valid value for the field. For
+/// Message-Size the cursor is put back where it was: GO names parts with the
+/// same wire byte (`\x8etext.txt\0`), and the named-part scanner wants to
+/// read those bytes as text.
+pub(crate) fn decode_header_value(field: u8, cur: &mut Cursor<'_>) -> Result<HeaderValue, ()> {
+    use HeaderValue as H;
+    Ok(match field {
+        MMS_FROM => H::From(decode_from_value(cur)?),
+        MMS_TO => H::To(decode_encoded_string_value(cur)?),
+        MMS_CC => H::Cc(decode_encoded_string_value(cur)?),
+        MMS_BCC => H::Bcc(decode_encoded_string_value(cur)?),
+        MMS_MESSAGE_TYPE => H::MessageType(decode_message_type_value(cur)?),
+        MMS_DATE => H::Date(decode_date_value(cur)?),
+        MMS_SUBJECT => H::Subject(decode_encoded_string_value(cur)?),
+        MMS_MESSAGE_ID => {
+            H::MessageId(decode_text_string(cur).or_else(|_| decode_encoded_string_value(cur))?)
+        }
+        MMS_TRANSACTION_ID => H::TransactionId(decode_text_string(cur)?),
+        MMS_VERSION => H::Version(decode_mms_version(cur)?),
+        MMS_MESSAGE_SIZE => {
+            let saved = cur.pos;
+            H::MessageSize(decode_long_integer(cur).inspect_err(|()| cur.pos = saved)?)
+        }
+        MMS_MESSAGE_CLASS => H::MessageClass(decode_message_class_value(cur)?),
+        MMS_DELIVERY_TIME => H::DeliveryTime(decode_expiry_or_delivery_time(cur)?),
+        MMS_EXPIRY => H::Expiry(decode_expiry_or_delivery_time(cur)?),
+        MMS_DELIVERY_REPORT => H::DeliveryReport(yes_no_token(decode_short_integer(cur)?)),
+        MMS_READ_REPORT => H::ReadReport(yes_no_token(decode_short_integer(cur)?)),
+        MMS_REPORT_ALLOWED => H::ReportAllowed(yes_no_token(decode_short_integer(cur)?)),
+        MMS_PRIORITY => H::Priority(priority_token(decode_short_integer(cur)?)),
+        MMS_STATUS => H::Status(decode_status_value(cur)?),
+        MMS_RESPONSE_STATUS => H::ResponseStatus(decode_response_status_value(cur)?),
+        MMS_RESPONSE_TEXT => H::ResponseText(decode_encoded_string_value(cur)?),
+        MMS_SENDER_VISIBILITY => H::SenderVisibility(decode_sender_visibility_value(cur)?),
+        MMS_CONTENT_TYPE => {
+            let (content_type, params) = decode_content_type_value(cur)?;
+            H::ContentType(content_type, params)
+        }
+        MMS_CONTENT_LOCATION => {
+            decode_encoded_string_value(cur)
+                .or_else(|_| decode_text_string(cur))
+                .or_else(|_| skip_unknown_mms_value(cur).map(|()| String::new()))?;
+            H::Skipped
+        }
+        _ => {
+            skip_unknown_mms_value(cur)?;
+            H::Skipped
+        }
+    })
+}
+
+impl StructuredMms {
+    /// Store one decoded header. A blank string, a zero date, and a byte that
+    /// is not a known yes/no or priority token store nothing. Returns whether
+    /// anything was stored.
+    pub(crate) fn store(&mut self, value: HeaderValue, mode: Store) -> bool {
+        use HeaderValue as H;
+        match value {
+            H::From(a) => put_text(&mut self.from, a, mode),
+            H::To(a) => push_address(&mut self.to, a),
+            H::Cc(a) => push_address(&mut self.cc, a),
+            H::Bcc(a) => push_address(&mut self.bcc, a),
+            H::MessageType(v) => put(&mut self.message_type, v, mode),
+            H::Date(d) => d > 0 && put(&mut self.date_unix, d, mode),
+            H::Subject(s) => put_text(&mut self.subject, s, mode),
+            H::MessageId(s) => put_text(&mut self.message_id, s, mode),
+            H::TransactionId(s) => put_text(&mut self.transaction_id, s, mode),
+            H::Version(v) => put(&mut self.mms_version, v, mode),
+            H::MessageSize(n) => put(&mut self.message_size, n, mode),
+            H::MessageClass(v) => put(&mut self.message_class, v, mode),
+            H::DeliveryTime(v) => put(&mut self.delivery_time, v, mode),
+            H::Expiry(v) => put(&mut self.expiry, v, mode),
+            H::DeliveryReport(t) => put_token(&mut self.delivery_report, t, mode),
+            H::ReadReport(t) => put_token(&mut self.read_report, t, mode),
+            H::ReportAllowed(t) => put_token(&mut self.report_allowed, t, mode),
+            H::Priority(t) => put_token(&mut self.priority, t, mode),
+            H::Status(v) => put(&mut self.status, v, mode),
+            H::ResponseStatus(v) => put(&mut self.response_status, v, mode),
+            H::ResponseText(v) => put_text(&mut self.response_text, v, mode),
+            H::SenderVisibility(v) => put(&mut self.sender_visibility, v, mode),
+            H::ContentType(content_type, params) => {
+                self.content_type = Some(content_type);
+                if let Some(start) = params.get("Start").or_else(|| params.get("Start-info")) {
+                    self.content_start = Some(normalize_content_id(start));
+                }
+                true
+            }
+            H::Skipped => false,
+        }
+    }
+}
+
+/// Set `slot` unless `mode` keeps an existing value. Returns whether it was set.
+fn put<T>(slot: &mut Option<T>, value: T, mode: Store) -> bool {
+    if mode == Store::KeepFirst && slot.is_some() {
+        return false;
+    }
+    *slot = Some(value);
+    true
+}
+
+/// [`put`] for text: a blank string is never stored.
+fn put_text(slot: &mut Option<String>, value: String, mode: Store) -> bool {
+    !value.is_empty() && put(slot, value, mode)
+}
+
+/// [`put`] for a token that may not have decoded to a known word.
+fn put_token(slot: &mut Option<String>, token: Option<&str>, mode: Store) -> bool {
+    match token {
+        Some(token) => put(slot, token.to_string(), mode),
+        None => false,
+    }
+}
+
+/// Append a recipient; a blank address is never stored.
+fn push_address(list: &mut Vec<String>, address: String) -> bool {
+    if address.is_empty() {
+        return false;
+    }
+    list.push(address);
+    true
+}
+
+/// Decode one MMS header into `msg`. Returns `true` at Content-Type, which
+/// ends the header section.
+///
+/// # Errors
+///
+/// Returns `Err` at the first byte that is not a well-formed header, where
+/// the caller stops reading headers. Recipients and the subject are the
+/// exception: a malformed one is dropped and decoding continues, because GO
+/// writes them loosely and the rest of the PDU is still worth keeping.
 pub(crate) fn decode_mms_header_field(
     cur: &mut Cursor<'_>,
     msg: &mut StructuredMms,
@@ -604,149 +782,32 @@ pub(crate) fn decode_mms_header_field(
         return Ok(false);
     }
     let field = decode_short_integer(cur)?;
-    match field {
-        MMS_FROM => {
-            msg.from = Some(decode_from_value(cur)?);
-            Ok(false)
-        }
-        MMS_TO => {
-            if let Ok(addr) = decode_encoded_string_value(cur)
-                && !addr.is_empty()
-            {
-                msg.to.push(addr);
-            }
-            Ok(false)
-        }
-        MMS_CC => {
-            if let Ok(addr) = decode_encoded_string_value(cur)
-                && !addr.is_empty()
-            {
-                msg.cc.push(addr);
-            }
-            Ok(false)
-        }
-        MMS_BCC => {
-            if let Ok(addr) = decode_encoded_string_value(cur)
-                && !addr.is_empty()
-            {
-                msg.bcc.push(addr);
-            }
-            Ok(false)
-        }
-        MMS_MESSAGE_TYPE => {
-            msg.message_type = Some(decode_message_type_value(cur)?);
-            Ok(false)
-        }
-        MMS_DATE => {
-            msg.date_unix = Some(decode_date_value(cur)?);
-            Ok(false)
-        }
-        MMS_SUBJECT => {
-            if let Ok(s) = decode_encoded_string_value(cur)
-                && !s.is_empty()
-            {
-                msg.subject = Some(s);
-            }
-            Ok(false)
-        }
-        MMS_MESSAGE_ID => {
-            msg.message_id =
-                Some(decode_text_string(cur).or_else(|_| decode_encoded_string_value(cur))?);
-            Ok(false)
-        }
-        MMS_TRANSACTION_ID => {
-            msg.transaction_id = Some(decode_text_string(cur)?);
-            Ok(false)
-        }
-        MMS_VERSION => {
-            msg.mms_version = Some(decode_mms_version(cur)?);
-            Ok(false)
-        }
-        MMS_MESSAGE_SIZE => {
-            // Long-integer only. GO named parts reuse wire 0x8e + filename; do not
-            // hard-fail the PDU — leave size unset and stop this header value.
-            let saved = cur.pos;
-            match decode_long_integer(cur) {
-                Ok(sz) => {
-                    msg.message_size = Some(sz);
-                    Ok(false)
-                }
-                Err(()) => {
-                    cur.pos = saved;
-                    // Signal soft stop of the header section (see decode_mms_at).
-                    Err(())
-                }
-            }
-        }
-        MMS_MESSAGE_CLASS => {
-            msg.message_class = Some(decode_message_class_value(cur)?);
-            Ok(false)
-        }
-        MMS_DELIVERY_TIME => {
-            msg.delivery_time = Some(decode_expiry_or_delivery_time(cur)?);
-            Ok(false)
-        }
-        MMS_EXPIRY => {
-            msg.expiry = Some(decode_expiry_or_delivery_time(cur)?);
-            Ok(false)
-        }
-        MMS_DELIVERY_REPORT => {
-            let v = decode_short_integer(cur)?;
-            msg.delivery_report = yes_no_token(v).map(str::to_string);
-            Ok(false)
-        }
-        MMS_READ_REPORT => {
-            let v = decode_short_integer(cur)?;
-            msg.read_report = yes_no_token(v).map(str::to_string);
-            Ok(false)
-        }
-        MMS_REPORT_ALLOWED => {
-            let v = decode_short_integer(cur)?;
-            msg.report_allowed = yes_no_token(v).map(str::to_string);
-            Ok(false)
-        }
-        MMS_PRIORITY => {
-            let v = decode_short_integer(cur)?;
-            msg.priority = priority_token(v).map(str::to_string);
-            Ok(false)
-        }
-        MMS_STATUS => {
-            msg.status = Some(decode_status_value(cur)?);
-            Ok(false)
-        }
-        MMS_RESPONSE_STATUS => {
-            msg.response_status = Some(decode_response_status_value(cur)?);
-            Ok(false)
-        }
-        MMS_RESPONSE_TEXT => {
-            msg.response_text = Some(decode_encoded_string_value(cur)?);
-            Ok(false)
-        }
-        MMS_SENDER_VISIBILITY => {
-            msg.sender_visibility = Some(decode_sender_visibility_value(cur)?);
-            Ok(false)
-        }
-        MMS_CONTENT_TYPE => {
-            let (ct, params) = decode_content_type_value(cur)?;
-            msg.content_type = Some(ct);
-            if let Some(start) = params.get("Start").or_else(|| params.get("Start-info")) {
-                msg.content_start = Some(normalize_content_id(start));
-            }
-            Ok(true) // Content-Type terminates the header section
-        }
-        MMS_CONTENT_LOCATION => {
-            let _ = decode_encoded_string_value(cur)
-                .or_else(|_| decode_text_string(cur))
-                .or_else(|_| {
-                    skip_unknown_mms_value(cur)?;
-                    Ok(String::new())
-                })?;
-            Ok(false)
-        }
-        _ => {
-            skip_unknown_mms_value(cur)?;
-            Ok(false)
-        }
+    let value = match decode_header_value(field, cur) {
+        Ok(value) => value,
+        Err(()) if matches!(field, MMS_TO | MMS_CC | MMS_BCC | MMS_SUBJECT) => return Ok(false),
+        Err(()) => return Err(()),
+    };
+    let ends_headers = matches!(value, HeaderValue::ContentType(..));
+    msg.store(value, Store::Overwrite);
+    Ok(ends_headers)
+}
+
+/// Try to read `field` as a header at `cur` during a byte scan. Returns
+/// `true` when a value was decoded and stored, in which case the scan
+/// continues from `cur.pos`. Content-Type and Content-Location are never
+/// taken from a scan: the strict parse owns them, and a stray byte followed
+/// by anything would otherwise replace a real one.
+pub(crate) fn apply_mms_header_field(
+    field: u8,
+    cur: &mut Cursor<'_>,
+    msg: &mut StructuredMms,
+) -> bool {
+    if matches!(field, MMS_CONTENT_TYPE | MMS_CONTENT_LOCATION) {
+        return false;
+    }
+    match decode_header_value(field, cur) {
+        Ok(value) => msg.store(value, Store::KeepFirst),
+        Err(()) => false,
     }
 }
 
@@ -851,206 +912,4 @@ pub(crate) fn decode_multipart_body(cur: &mut Cursor<'_>) -> Result<Vec<MmsPart>
         });
     }
     Ok(parts)
-}
-
-/// Returns `true` when the field was decoded and the outer scan cursor should advance to `cur.pos`.
-pub(crate) fn apply_mms_header_field(
-    field: u8,
-    cur: &mut Cursor<'_>,
-    msg: &mut StructuredMms,
-) -> bool {
-    match field {
-        MMS_FROM => {
-            if let Ok(addr) = decode_from_value(cur)
-                && !addr.is_empty()
-            {
-                msg.from = Some(addr);
-                return true;
-            }
-        }
-        MMS_TO => {
-            if let Ok(addr) = decode_encoded_string_value(cur)
-                && !addr.is_empty()
-            {
-                msg.to.push(addr);
-                return true;
-            }
-        }
-        MMS_CC => {
-            if let Ok(addr) = decode_encoded_string_value(cur)
-                && !addr.is_empty()
-            {
-                msg.cc.push(addr);
-                return true;
-            }
-        }
-        MMS_BCC => {
-            if let Ok(addr) = decode_encoded_string_value(cur)
-                && !addr.is_empty()
-            {
-                msg.bcc.push(addr);
-                return true;
-            }
-        }
-        MMS_DATE => {
-            if let Ok(d) = decode_date_value(cur)
-                && d > 0
-                && msg.date_unix.is_none()
-            {
-                msg.date_unix = Some(d);
-                return true;
-            }
-        }
-        MMS_SUBJECT => {
-            if let Ok(s) = decode_encoded_string_value(cur)
-                && !s.is_empty()
-                && msg.subject.is_none()
-            {
-                msg.subject = Some(s);
-                return true;
-            }
-        }
-        MMS_STATUS => {
-            if let Ok(s) = decode_status_value(cur)
-                && msg.status.is_none()
-            {
-                msg.status = Some(s);
-                return true;
-            }
-        }
-        MMS_MESSAGE_ID => {
-            if let Ok(id) = decode_text_string(cur).or_else(|_| decode_encoded_string_value(cur))
-                && !id.is_empty()
-                && msg.message_id.is_none()
-            {
-                msg.message_id = Some(id);
-                return true;
-            }
-        }
-        MMS_TRANSACTION_ID => {
-            if let Ok(id) = decode_text_string(cur)
-                && !id.is_empty()
-                && msg.transaction_id.is_none()
-            {
-                msg.transaction_id = Some(id);
-                return true;
-            }
-        }
-        MMS_VERSION => {
-            if let Ok(v) = decode_mms_version(cur)
-                && msg.mms_version.is_none()
-            {
-                msg.mms_version = Some(v);
-                return true;
-            }
-        }
-        MMS_MESSAGE_SIZE => {
-            // Only accept a real Long-integer. GO `\x8etext.txt\0` fails
-            // (length byte > 30) so scan_named_parts keeps those payloads.
-            if let Ok(sz) = decode_long_integer(cur)
-                && msg.message_size.is_none()
-            {
-                msg.message_size = Some(sz);
-                return true;
-            }
-        }
-        MMS_MESSAGE_CLASS => {
-            if let Ok(v) = decode_message_class_value(cur)
-                && msg.message_class.is_none()
-            {
-                msg.message_class = Some(v);
-                return true;
-            }
-        }
-        MMS_DELIVERY_TIME => {
-            if let Ok(v) = decode_expiry_or_delivery_time(cur)
-                && msg.delivery_time.is_none()
-            {
-                msg.delivery_time = Some(v);
-                return true;
-            }
-        }
-        MMS_EXPIRY => {
-            if let Ok(v) = decode_expiry_or_delivery_time(cur)
-                && msg.expiry.is_none()
-            {
-                msg.expiry = Some(v);
-                return true;
-            }
-        }
-        MMS_DELIVERY_REPORT => {
-            if let Ok(v) = decode_short_integer(cur)
-                && msg.delivery_report.is_none()
-            {
-                msg.delivery_report = yes_no_token(v).map(str::to_string);
-                if msg.delivery_report.is_some() {
-                    return true;
-                }
-            }
-        }
-        MMS_READ_REPORT => {
-            if let Ok(v) = decode_short_integer(cur)
-                && msg.read_report.is_none()
-            {
-                msg.read_report = yes_no_token(v).map(str::to_string);
-                if msg.read_report.is_some() {
-                    return true;
-                }
-            }
-        }
-        MMS_REPORT_ALLOWED => {
-            if let Ok(v) = decode_short_integer(cur)
-                && msg.report_allowed.is_none()
-            {
-                msg.report_allowed = yes_no_token(v).map(str::to_string);
-                if msg.report_allowed.is_some() {
-                    return true;
-                }
-            }
-        }
-        MMS_PRIORITY => {
-            if let Ok(v) = decode_short_integer(cur)
-                && msg.priority.is_none()
-            {
-                msg.priority = priority_token(v).map(str::to_string);
-                if msg.priority.is_some() {
-                    return true;
-                }
-            }
-        }
-        MMS_RESPONSE_STATUS => {
-            if let Ok(v) = decode_response_status_value(cur)
-                && msg.response_status.is_none()
-            {
-                msg.response_status = Some(v);
-                return true;
-            }
-        }
-        MMS_RESPONSE_TEXT => {
-            if let Ok(v) = decode_encoded_string_value(cur)
-                && msg.response_text.is_none()
-            {
-                msg.response_text = Some(v);
-                return true;
-            }
-        }
-        MMS_SENDER_VISIBILITY => {
-            if let Ok(v) = decode_sender_visibility_value(cur)
-                && msg.sender_visibility.is_none()
-            {
-                msg.sender_visibility = Some(v);
-                return true;
-            }
-        }
-        MMS_MESSAGE_TYPE => {
-            if let Ok(mt) = decode_message_type_value(cur)
-                && msg.message_type.is_none()
-            {
-                msg.message_type = Some(mt);
-                return true;
-            }
-        }
-        _ => {}
-    }
-    false
 }
