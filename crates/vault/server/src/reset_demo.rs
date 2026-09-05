@@ -722,166 +722,182 @@ where
     replace_reset_state_with(paths, rename)
 }
 
+/// One of the three things a reset swaps: the database file, the account
+/// folder, or the config file. Each has an active path, a prepared
+/// replacement, and a backup path the active one is moved to first so the
+/// swap can be undone.
+struct Swap<'a> {
+    /// What the paths hold, for messages: "database", "account directory", "config".
+    what: &'static str,
+    active: &'a Path,
+    prepared: &'a Path,
+    backup: PathBuf,
+    /// Whether an active file existed before the swap, so there is a backup to restore.
+    had_active: bool,
+    /// Whether the prepared file has been moved into the active path.
+    installed: bool,
+}
+
+impl<'a> Swap<'a> {
+    fn new(what: &'static str, active: &'a Path, prepared: &'a Path, backup: PathBuf) -> Self {
+        Self {
+            what,
+            active,
+            prepared,
+            backup,
+            had_active: active.exists(),
+            installed: false,
+        }
+    }
+
+    /// Move the active file to its backup path, when there is one.
+    fn back_up(&self, rename: &mut impl FnMut(&Path, &Path) -> Result<()>) -> Result<()> {
+        if !self.had_active {
+            return Ok(());
+        }
+        rename(self.active, &self.backup).with_context(|| {
+            format!(
+                "move existing {} {} into backup",
+                self.what,
+                self.active.display()
+            )
+        })
+    }
+
+    /// Move the prepared file into the active path.
+    fn install(&mut self, rename: &mut impl FnMut(&Path, &Path) -> Result<()>) -> Result<()> {
+        rename(self.prepared, self.active).with_context(|| {
+            format!(
+                "install prepared {} {} at {}",
+                self.what,
+                self.prepared.display(),
+                self.active.display()
+            )
+        })?;
+        self.installed = true;
+        Ok(())
+    }
+
+    /// Undo whatever this swap did: remove an installed file, then put the
+    /// backup back. Every step is attempted; the problems met are returned
+    /// rather than stopping at the first, so as much as possible is restored.
+    fn roll_back(&self, rename: &mut impl FnMut(&Path, &Path) -> Result<()>) -> Vec<String> {
+        let mut problems = Vec::new();
+        if self.installed
+            && let Err(error) = remove_any_if_exists(self.active)
+        {
+            problems.push(format!(
+                "remove installed {} {}: {error:#}",
+                self.what,
+                self.active.display()
+            ));
+        }
+        if self.had_active
+            && self.backup.exists()
+            && let Err(error) = rename(&self.backup, self.active)
+        {
+            problems.push(format!(
+                "restore previous {} {}: {error:#}",
+                self.what,
+                self.active.display()
+            ));
+        }
+        problems
+    }
+}
+
+impl<'a> ResetPaths<'a> {
+    /// The three swaps in install order: database, account folder, config.
+    fn swaps(&self) -> Result<[Swap<'a>; 3]> {
+        let db_backup = self
+            .prepared_db
+            .parent()
+            .context("prepared database has no parent")?
+            .join("previous-vault.db");
+        let account_backup = self
+            .prepared_account
+            .parent()
+            .context("prepared account has no parent")?
+            .join("previous-account");
+        let config_backup = sqlite_sidecar(self.prepared_config, ".previous-active");
+        Ok([
+            Swap::new("database", self.active_db, self.prepared_db, db_backup),
+            Swap::new(
+                "account directory",
+                self.active_account,
+                self.prepared_account,
+                account_backup,
+            ),
+            Swap::new(
+                "config",
+                self.active_config,
+                self.prepared_config,
+                config_backup,
+            ),
+        ])
+    }
+}
+
 /// The swap itself: move the active state to backups, move the prepared state in, and roll
 /// the backups back if any step fails.
 fn replace_reset_state_with<F>(paths: &ResetPaths<'_>, mut rename: F) -> Result<()>
 where
     F: FnMut(&Path, &Path) -> Result<()>,
 {
-    let ResetPaths {
-        active_db,
-        prepared_db,
-        active_account,
-        prepared_account,
-        active_config,
-        prepared_config,
-    } = *paths;
-    if !prepared_db.is_file() || !prepared_account.is_dir() || !prepared_config.is_file() {
+    if !paths.prepared_db.is_file()
+        || !paths.prepared_account.is_dir()
+        || !paths.prepared_config.is_file()
+    {
         bail!("prepared reset state is incomplete");
     }
-    if let Some(parent) = active_account.parent() {
+    if let Some(parent) = paths.active_account.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("create account data parent {}", parent.display()))?;
     }
-    let db_backup = prepared_db
-        .parent()
-        .context("prepared database has no parent")?
-        .join("previous-vault.db");
-    let account_backup = prepared_account
-        .parent()
-        .context("prepared account has no parent")?
-        .join("previous-account");
-    let config_backup = sqlite_sidecar(prepared_config, ".previous-active");
-    let had_db = active_db.exists();
-    let had_account = active_account.exists();
-    let had_config = active_config.exists();
-    let mut installed_db = false;
-    let mut installed_account = false;
-    let mut installed_config = false;
+    let mut swaps = paths.swaps()?;
 
-    let replacement = (|| -> Result<()> {
-        if had_db {
-            rename(active_db, &db_backup).with_context(|| {
-                format!("move existing database {} into backup", active_db.display())
-            })?;
+    let outcome = (|| -> Result<()> {
+        for swap in &swaps {
+            swap.back_up(&mut rename)?;
         }
-        if had_account {
-            rename(active_account, &account_backup).with_context(|| {
-                format!(
-                    "move existing account directory {} into backup",
-                    active_account.display()
-                )
-            })?;
+        for swap in &mut swaps {
+            swap.install(&mut rename)?;
         }
-        if had_config {
-            rename(active_config, &config_backup).with_context(|| {
-                format!(
-                    "move existing config {} into backup",
-                    active_config.display()
-                )
-            })?;
-        }
-        rename(prepared_db, active_db).with_context(|| {
-            format!(
-                "install prepared database {} at {}",
-                prepared_db.display(),
-                active_db.display()
-            )
-        })?;
-        installed_db = true;
-        rename(prepared_account, active_account).with_context(|| {
-            format!(
-                "install prepared account directory {} at {}",
-                prepared_account.display(),
-                active_account.display()
-            )
-        })?;
-        installed_account = true;
-        rename(prepared_config, active_config).with_context(|| {
-            format!(
-                "install prepared config {} at {}",
-                prepared_config.display(),
-                active_config.display()
-            )
-        })?;
-        installed_config = true;
         Ok(())
     })();
+    let Err(error) = outcome else {
+        cleanup_reset_backups(&swaps);
+        return Ok(());
+    };
 
-    if let Err(error) = replacement {
-        let mut rollback_errors = Vec::new();
-        if installed_config && let Err(rollback_error) = remove_any_if_exists(active_config) {
-            rollback_errors.push(format!(
-                "remove installed config {}: {rollback_error:#}",
-                active_config.display()
-            ));
-        }
-        if installed_account && let Err(rollback_error) = remove_any_if_exists(active_account) {
-            rollback_errors.push(format!(
-                "remove installed account directory {}: {rollback_error:#}",
-                active_account.display()
-            ));
-        }
-        if installed_db
-            && active_db.exists()
-            && let Err(rollback_error) = remove_any_if_exists(active_db)
-        {
-            rollback_errors.push(format!(
-                "remove installed database {}: {rollback_error:#}",
-                active_db.display()
-            ));
-        }
-        if had_config
-            && config_backup.exists()
-            && let Err(rollback_error) = rename(&config_backup, active_config)
-        {
-            rollback_errors.push(format!(
-                "restore previous config {}: {rollback_error:#}",
-                active_config.display()
-            ));
-        }
-        if had_account
-            && account_backup.exists()
-            && let Err(rollback_error) = rename(&account_backup, active_account)
-        {
-            rollback_errors.push(format!(
-                "restore previous account directory {}: {rollback_error:#}",
-                active_account.display()
-            ));
-        }
-        if had_db
-            && db_backup.exists()
-            && let Err(rollback_error) = rename(&db_backup, active_db)
-        {
-            rollback_errors.push(format!(
-                "restore previous database {}: {rollback_error:#}",
-                active_db.display()
-            ));
-        }
-        if rollback_errors.is_empty() {
-            cleanup_reset_backups(&db_backup, &account_backup, &config_backup);
-            return Err(error.context("replace demo account state"));
-        }
-        return Err(anyhow::anyhow!(
-            "replace demo account state: {error:#}; rollback incomplete; backups kept at {}, {}, and {}: {}",
-            db_backup.display(),
-            account_backup.display(),
-            config_backup.display(),
-            rollback_errors.join("; ")
-        ));
+    let problems: Vec<String> = swaps
+        .iter()
+        .rev()
+        .flat_map(|swap| swap.roll_back(&mut rename))
+        .collect();
+    if problems.is_empty() {
+        cleanup_reset_backups(&swaps);
+        return Err(error.context("replace demo account state"));
     }
-
-    cleanup_reset_backups(&db_backup, &account_backup, &config_backup);
-    Ok(())
+    let kept: Vec<String> = swaps
+        .iter()
+        .map(|swap| swap.backup.display().to_string())
+        .collect();
+    Err(anyhow::anyhow!(
+        "replace demo account state: {error:#}; rollback incomplete; backups kept at {}: {}",
+        kept.join(", "),
+        problems.join("; ")
+    ))
 }
 
-/// Remove the backups a successful swap left behind. Best effort: a leftover backup is reported, not fatal.
-fn cleanup_reset_backups(db: &Path, account: &Path, config: &Path) {
-    for backup in [db, account, config] {
-        if let Err(error) = remove_any_if_exists(backup) {
+/// Remove the backups once the active state is installed or restored. Failure
+/// is a warning: the state is right, only a copy is left behind.
+fn cleanup_reset_backups(swaps: &[Swap<'_>]) {
+    for swap in swaps {
+        if let Err(error) = remove_any_if_exists(&swap.backup) {
             eprintln!(
                 "warning: reset-demo installed or restored active state but could not remove backup {}: {error:#}",
-                backup.display()
+                swap.backup.display()
             );
         }
     }

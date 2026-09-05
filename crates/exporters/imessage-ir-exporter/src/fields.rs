@@ -286,153 +286,151 @@ pub(crate) fn build_balloon_value(db: &Connection, message: &Message) -> Option<
     let Variant::App(balloon) = message.variant() else {
         return None;
     };
-
     if message.is_handwriting() {
         return Some(json!({
             "kind": "handwriting",
             "bundle_id": message.balloon_bundle_id,
         }));
     }
-
     if message.is_digital_touch() {
         return Some(json!({
             "kind": "digital_touch",
             "bundle_id": message.balloon_bundle_id,
         }));
     }
-
     if message.is_poll() {
-        if let Ok(Some(poll)) = message.as_poll(db) {
-            let options: Vec<Value> = poll
-                .order
-                .iter()
-                .filter_map(|id| {
-                    let opt = poll.options.get(id)?;
-                    Some(json!({
-                        "id": id,
-                        "text": opt.text,
-                        "creator": opt.creator,
-                        "votes": opt.votes.iter().map(|v| json!({
-                            "voter": v.voter,
-                            "option_id": v.option_id,
-                        })).collect::<Vec<_>>(),
-                    }))
-                })
-                .collect();
-            return Some(json!({
-                "kind": "poll",
-                "options": options,
-            }));
-        }
-        return Some(json!({ "kind": "poll", "error": "unparseable" }));
+        return Some(poll_value(db, message));
     }
-
     let Some(payload) = message.payload_data(db) else {
-        if message.is_url() {
-            return Some(json!({
-                "kind": "url",
-                "text": message.text,
-            }));
-        }
-        return Some(json!({
-            "kind": match balloon {
-                CustomBalloon::ApplePay => "apple_pay",
-                CustomBalloon::Fitness => "fitness",
-                CustomBalloon::Slideshow => "slideshow",
-                CustomBalloon::CheckIn => "check_in",
-                CustomBalloon::FindMy => "find_my",
-                CustomBalloon::Business => "business",
-                CustomBalloon::Application(_) => "application",
-                CustomBalloon::URL => "url",
-                CustomBalloon::Handwriting => "handwriting",
-                CustomBalloon::DigitalTouch => "digital_touch",
-                CustomBalloon::Polls => "poll",
-            },
-            "bundle_id": message.balloon_bundle_id,
-            "text": message.text,
-        }));
+        return Some(payloadless_value(&balloon, message));
     };
-
     let parsed = parse_ns_keyed_archiver(&payload).ok()?;
-
     if message.is_url() {
-        let override_msg = URLMessage::get_url_message_override(&parsed).ok()?;
-        return Some(match override_msg {
-            URLOverride::Normal(b) => json!({ "kind": "url", "data": url_message_json(&b) }),
-            URLOverride::AppleMusic(b) => json!({
-                "kind": "apple_music",
-                "data": {
-                    "url": b.url,
-                    "preview": b.preview,
-                    "artist": b.artist,
-                    "album": b.album,
-                    "track_name": b.track_name,
-                    "lyrics": b.lyrics,
-                }
-            }),
-            URLOverride::Collaboration(b) => json!({
-                "kind": "collaboration",
-                "data": {
-                    "url": b.url,
-                    "title": b.title,
-                    "bundle_id": b.bundle_id,
-                }
-            }),
-            URLOverride::AppStore(b) => json!({
-                "kind": "app_store",
-                "data": {
-                    "url": b.url,
-                    "original_url": b.original_url,
-                    "app_name": b.app_name,
-                    "description": b.description,
-                    "platform": b.platform,
-                    "genre": b.genre,
-                }
-            }),
-            URLOverride::SharedPlacemark(b) => json!({
-                "kind": "placemark",
-                "data": {
-                    "url": b.url,
-                    "name": b.placemark.name,
-                    "address": b.placemark.address,
-                    "city": b.placemark.city,
-                    "state": b.placemark.state,
-                    "country": b.placemark.country,
-                    "postal_code": b.placemark.postal_code,
-                    "street": b.placemark.street,
-                }
-            }),
-        });
+        return url_override_value(&parsed);
     }
-
     let bubble = AppMessage::from_map(&parsed).ok()?;
+    Some(app_bubble_value(&balloon, message, &bubble))
+}
+
+/// The stable name of a balloon kind, as written in the `kind` field.
+fn balloon_kind_name(balloon: &CustomBalloon) -> &'static str {
     match balloon {
-        CustomBalloon::Application(bundle_id) => Some(json!({
+        CustomBalloon::ApplePay => "apple_pay",
+        CustomBalloon::Fitness => "fitness",
+        CustomBalloon::Slideshow => "slideshow",
+        CustomBalloon::CheckIn => "check_in",
+        CustomBalloon::FindMy => "find_my",
+        CustomBalloon::Business => "business",
+        CustomBalloon::Application(_) => "application",
+        CustomBalloon::URL => "url",
+        CustomBalloon::Handwriting => "handwriting",
+        CustomBalloon::DigitalTouch => "digital_touch",
+        CustomBalloon::Polls => "poll",
+    }
+}
+
+/// A poll's options and votes in display order, or an `unparseable` marker.
+fn poll_value(db: &Connection, message: &Message) -> Value {
+    let Ok(Some(poll)) = message.as_poll(db) else {
+        return json!({ "kind": "poll", "error": "unparseable" });
+    };
+    let options: Vec<Value> = poll
+        .order
+        .iter()
+        .filter_map(|id| {
+            let opt = poll.options.get(id)?;
+            Some(json!({
+                "id": id,
+                "text": opt.text,
+                "creator": opt.creator,
+                "votes": opt.votes.iter().map(|v| json!({
+                    "voter": v.voter,
+                    "option_id": v.option_id,
+                })).collect::<Vec<_>>(),
+            }))
+        })
+        .collect();
+    json!({ "kind": "poll", "options": options })
+}
+
+/// A balloon with no payload blob: only its kind, bundle id, and text are known.
+fn payloadless_value(balloon: &CustomBalloon, message: &Message) -> Value {
+    if message.is_url() {
+        return json!({ "kind": "url", "text": message.text });
+    }
+    json!({
+        "kind": balloon_kind_name(balloon),
+        "bundle_id": message.balloon_bundle_id,
+        "text": message.text,
+    })
+}
+
+/// A URL balloon's rich preview, by the override Messages stored for it.
+fn url_override_value(parsed: &plist::Value) -> Option<Value> {
+    let override_msg = URLMessage::get_url_message_override(parsed).ok()?;
+    Some(match override_msg {
+        URLOverride::Normal(b) => json!({ "kind": "url", "data": url_message_json(&b) }),
+        URLOverride::AppleMusic(b) => json!({
+            "kind": "apple_music",
+            "data": {
+                "url": b.url,
+                "preview": b.preview,
+                "artist": b.artist,
+                "album": b.album,
+                "track_name": b.track_name,
+                "lyrics": b.lyrics,
+            }
+        }),
+        URLOverride::Collaboration(b) => json!({
+            "kind": "collaboration",
+            "data": {
+                "url": b.url,
+                "title": b.title,
+                "bundle_id": b.bundle_id,
+            }
+        }),
+        URLOverride::AppStore(b) => json!({
+            "kind": "app_store",
+            "data": {
+                "url": b.url,
+                "original_url": b.original_url,
+                "app_name": b.app_name,
+                "description": b.description,
+                "platform": b.platform,
+                "genre": b.genre,
+            }
+        }),
+        URLOverride::SharedPlacemark(b) => json!({
+            "kind": "placemark",
+            "data": {
+                "url": b.url,
+                "name": b.placemark.name,
+                "address": b.placemark.address,
+                "city": b.placemark.city,
+                "state": b.placemark.state,
+                "country": b.placemark.country,
+                "postal_code": b.placemark.postal_code,
+                "street": b.placemark.street,
+            }
+        }),
+    })
+}
+
+/// An app balloon's parsed bubble. Third-party apps also carry the bundle id
+/// as parsed from the balloon's own field.
+fn app_bubble_value(balloon: &CustomBalloon, message: &Message, bubble: &AppMessage) -> Value {
+    match balloon {
+        CustomBalloon::Application(bundle_id) => json!({
             "kind": "application",
             "bundle_id": bundle_id,
             "parsed_bundle_id": parse_balloon_bundle_id(message.balloon_bundle_id.as_deref()),
-            "data": app_message_json(&bubble),
-        })),
-        other => {
-            let kind = match other {
-                CustomBalloon::ApplePay => "apple_pay",
-                CustomBalloon::Fitness => "fitness",
-                CustomBalloon::Slideshow => "slideshow",
-                CustomBalloon::CheckIn => "check_in",
-                CustomBalloon::FindMy => "find_my",
-                CustomBalloon::Business => "business",
-                CustomBalloon::URL
-                | CustomBalloon::Handwriting
-                | CustomBalloon::DigitalTouch
-                | CustomBalloon::Polls
-                | CustomBalloon::Application(_) => "app",
-            };
-            Some(json!({
-                "kind": kind,
-                "bundle_id": message.balloon_bundle_id,
-                "data": app_message_json(&bubble),
-            }))
-        }
+            "data": app_message_json(bubble),
+        }),
+        other => json!({
+            "kind": balloon_kind_name(other),
+            "bundle_id": message.balloon_bundle_id,
+            "data": app_message_json(bubble),
+        }),
     }
 }
 

@@ -576,6 +576,29 @@ struct NearRow {
     att_count: i64,
 }
 
+impl NearRow {
+    /// Whether `other`, a later row of the same conversation, is a near-time
+    /// twin of this one: same direction and sender, a different source, and
+    /// the same body or the same attachments.
+    fn is_twin_of(&self, other: &NearRow) -> bool {
+        let same_body = !self.body_norm.is_empty() && other.body_norm == self.body_norm;
+        let same_attachments = !self.att_fp.is_empty() && other.att_fp == self.att_fp;
+        other.is_from_me == self.is_from_me
+            && other.sender_norm == self.sender_norm
+            && other.source != self.source
+            && (same_body || same_attachments)
+    }
+
+    /// The row as a winner candidate.
+    fn candidate(&self) -> Cand {
+        Cand {
+            id: self.id,
+            source: self.source.clone(),
+            att_count: self.att_count,
+        }
+    }
+}
+
 /// Flag messages that match another within `window_secs` on chat, direction, and body but
 /// not on the exact second. Returns how many were flagged.
 async fn flag_near_time_dupes(
@@ -584,8 +607,22 @@ async fn flag_near_time_dupes(
     prio: &HashMap<&str, usize>,
     window_secs: i64,
 ) -> Result<u64> {
-    // Preload unflagged messages + attachment fingerprints once, then cluster in Rust.
-    // Avoids per-message attachment queries and per-candidate duplicate_of SELECTs.
+    let by_conversation = load_near_rows(conn, account_id).await?;
+    let flags = cluster_near_dupes(by_conversation, prio, window_secs);
+    if flags.is_empty() {
+        return Ok(0);
+    }
+    apply_duplicate_flags(conn, "_pass_b_flags", &flags).await?;
+    Ok(flags.len() as u64)
+}
+
+/// Every unflagged message of the account with its attachment fingerprint,
+/// grouped by conversation. Two queries and the grouping happen here so the
+/// clustering does no per-message lookups.
+async fn load_near_rows(
+    conn: &mut AnyConnection,
+    account_id: &str,
+) -> Result<HashMap<i64, Vec<NearRow>>> {
     type NearDedupeRow = (
         i64,
         i64,
@@ -611,122 +648,94 @@ async fn flag_near_time_dupes(
     .fetch_all(&mut *conn)
     .await?;
 
+    let att_rows: Vec<(i64, String)> = sqlx::query_as(
+        r#"
+        SELECT a.message_id, a.sha256
+        FROM attachments a
+        JOIN messages m ON m.id = a.message_id
+        JOIN conversations c ON c.id = m.conversation_id
+        WHERE c.account_id = $1
+          AND a.sha256 IS NOT NULL AND a.sha256 != ''
+        ORDER BY a.message_id, a.sha256
+        "#,
+    )
+    .bind(account_id)
+    .fetch_all(&mut *conn)
+    .await?;
     let mut shas_by_msg: HashMap<i64, Vec<String>> = HashMap::new();
-    {
-        let att_rows: Vec<(i64, String)> = sqlx::query_as(
-            r#"
-            SELECT a.message_id, a.sha256
-            FROM attachments a
-            JOIN messages m ON m.id = a.message_id
-            JOIN conversations c ON c.id = m.conversation_id
-            WHERE c.account_id = $1
-              AND a.sha256 IS NOT NULL AND a.sha256 != ''
-            ORDER BY a.message_id, a.sha256
-            "#,
-        )
-        .bind(account_id)
-        .fetch_all(&mut *conn)
-        .await?;
-        for (message_id, sha) in att_rows {
-            shas_by_msg.entry(message_id).or_default().push(sha);
-        }
+    for (message_id, sha) in att_rows {
+        shas_by_msg.entry(message_id).or_default().push(sha);
     }
 
-    let empty: Vec<String> = Vec::new();
-    let mut by_conv: HashMap<i64, Vec<NearRow>> = HashMap::new();
+    let mut by_conversation: HashMap<i64, Vec<NearRow>> = HashMap::new();
     for (id, conversation_id, source, is_from_me, ts_utc, ts, body, sender_norm) in msg_rows {
         let Some(secs) = resolve_utc_secs(ts_utc.as_deref(), &ts) else {
             continue;
         };
-        let shas = shas_by_msg.get(&id).unwrap_or(&empty);
-        let att_count = shas.len() as i64;
-        let att_fp = shas.join(",");
-        let sender = if is_from_me != 0 {
-            String::new()
-        } else {
-            sender_norm
-        };
-        by_conv.entry(conversation_id).or_default().push(NearRow {
-            id,
-            source,
-            is_from_me,
-            sender_norm: sender,
-            secs,
-            body_norm: normalize_body(body.as_deref()),
-            att_fp,
-            att_count,
-        });
+        let shas = shas_by_msg.remove(&id).unwrap_or_default();
+        by_conversation
+            .entry(conversation_id)
+            .or_default()
+            .push(NearRow {
+                id,
+                source,
+                is_from_me,
+                // Outgoing rows have no sender of their own.
+                sender_norm: if is_from_me != 0 {
+                    String::new()
+                } else {
+                    sender_norm
+                },
+                secs,
+                body_norm: normalize_body(body.as_deref()),
+                att_count: shas.len() as i64,
+                att_fp: shas.join(","),
+            });
     }
+    Ok(by_conversation)
+}
 
+/// Walk each conversation in time order, gather each message's twins within
+/// the window, and pick one winner per cluster. A cluster counts only when
+/// it spans two sources: same-source near-duplicates are left alone.
+/// Returns `(loser, winner)` pairs.
+fn cluster_near_dupes(
+    by_conversation: HashMap<i64, Vec<NearRow>>,
+    prio: &HashMap<&str, usize>,
+    window_secs: i64,
+) -> Vec<(i64, i64)> {
     let mut flagged_ids: HashSet<i64> = HashSet::new();
-    let mut flags: Vec<(i64, i64)> = Vec::new(); // (loser_id, winner_id)
-
-    for mut rows in by_conv.into_values() {
+    let mut flags: Vec<(i64, i64)> = Vec::new();
+    for mut rows in by_conversation.into_values() {
         rows.sort_by(|a, b| a.secs.cmp(&b.secs).then(a.id.cmp(&b.id)));
-
         for i in 0..rows.len() {
-            if flagged_ids.contains(&rows[i].id) {
+            let first = &rows[i];
+            if flagged_ids.contains(&first.id) {
                 continue;
             }
-
-            let mut cluster: Vec<Cand> = vec![Cand {
-                id: rows[i].id,
-                source: rows[i].source.clone(),
-                att_count: rows[i].att_count,
-            }];
-
-            for j in (i + 1)..rows.len() {
-                if rows[j].secs - rows[i].secs > window_secs {
-                    break;
-                }
-                if rows[j].is_from_me != rows[i].is_from_me {
-                    continue;
-                }
-                if rows[j].sender_norm != rows[i].sender_norm {
-                    continue;
-                }
-                if rows[j].source == rows[i].source {
-                    continue;
-                }
-                let body_match =
-                    !rows[i].body_norm.is_empty() && rows[j].body_norm == rows[i].body_norm;
-                let att_match = !rows[i].att_fp.is_empty() && rows[j].att_fp == rows[i].att_fp;
-                if !body_match && !att_match {
-                    continue;
-                }
-                if flagged_ids.contains(&rows[j].id) {
-                    continue;
-                }
-                cluster.push(Cand {
-                    id: rows[j].id,
-                    source: rows[j].source.clone(),
-                    att_count: rows[j].att_count,
-                });
-            }
-
+            let cluster: Vec<Cand> = std::iter::once(first)
+                .chain(
+                    rows[i + 1..]
+                        .iter()
+                        .take_while(|row| row.secs - first.secs <= window_secs)
+                        .filter(|row| first.is_twin_of(row) && !flagged_ids.contains(&row.id)),
+                )
+                .map(NearRow::candidate)
+                .collect();
             let sources: HashSet<&str> = cluster.iter().map(|c| c.source.as_str()).collect();
             if sources.len() < 2 {
                 continue;
             }
             let winner = pick_winner(&cluster, prio);
-            for c in &cluster {
-                if c.id == winner {
-                    continue;
+            for cand in &cluster {
+                if cand.id != winner {
+                    flagged_ids.insert(cand.id);
+                    flags.push((cand.id, winner));
                 }
-                flagged_ids.insert(c.id);
-                flags.push((c.id, winner));
             }
         }
     }
-
-    let flagged = flags.len() as u64;
-    if flags.is_empty() {
-        return Ok(0);
-    }
-
-    apply_duplicate_flags(conn, "_pass_b_flags", &flags).await?;
-
-    Ok(flagged)
+    flags
 }
 
 /// Apply (message id, duplicate-of id) pairs through a temp table so one UPDATE covers them all.
