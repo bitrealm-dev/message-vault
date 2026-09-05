@@ -168,7 +168,7 @@ pub(crate) fn parts_are_trivial_text_duplicate(message_text: &str, parts: Option
     }
     matches!(
         obj.get("kind").and_then(|v| v.as_str()),
-        None | Some("run") | Some("text")
+        None | Some("run" | "text")
     )
 }
 
@@ -313,33 +313,33 @@ impl ImessageCells {
             };
         };
         Self {
-            read_receipt: text_cell(&im.read_receipt_rfc3339),
+            read_receipt: text_cell(im.read_receipt_rfc3339.as_deref()),
             is_deleted: im.is_deleted,
-            send_effect: text_cell(&im.send_effect),
-            shared_location: text_cell(&im.shared_location),
-            announcement: text_cell(&im.announcement),
+            send_effect: text_cell(im.send_effect.as_deref()),
+            shared_location: text_cell(im.shared_location.as_deref()),
+            announcement: text_cell(im.announcement.as_deref()),
             is_reply: im.is_reply,
-            thread_originator_guid: text_cell(&im.in_reply_to_guid),
+            thread_originator_guid: text_cell(im.in_reply_to_guid.as_deref()),
             thread_originator_part: number_cell(im.thread_originator_part),
             num_replies: number_cell(im.num_replies),
             parts_json: parts_cell_for_csv(text, im.parts.as_ref()),
             edits_json: value_cell(im.edits.as_ref()),
             tapbacks_json: value_cell(im.tapbacks.as_ref()),
             app_json: value_cell(im.app.as_ref()),
-            balloon_bundle_id: text_cell(&im.balloon_bundle_id),
-            balloon_kind: text_cell(&im.balloon_kind),
-            associated_guid: text_cell(&im.associated_guid),
+            balloon_bundle_id: text_cell(im.balloon_bundle_id.as_deref()),
+            balloon_kind: text_cell(im.balloon_kind.as_deref()),
+            associated_guid: text_cell(im.associated_guid.as_deref()),
             associated_part: number_cell(im.associated_part),
-            tapback_kind: text_cell(&im.tapback_kind),
-            tapback_emoji: text_cell(&im.tapback_emoji),
-            tapback_action: text_cell(&im.tapback_action),
+            tapback_kind: text_cell(im.tapback_kind.as_deref()),
+            tapback_emoji: text_cell(im.tapback_emoji.as_deref()),
+            tapback_action: text_cell(im.tapback_action.as_deref()),
         }
     }
 }
 
 /// An optional string as a cell: the string, or blank.
-fn text_cell(value: &Option<String>) -> String {
-    value.clone().unwrap_or_default()
+fn text_cell(value: Option<&str>) -> String {
+    value.unwrap_or_default().to_string()
 }
 
 /// An optional number as a cell: the number, or blank.

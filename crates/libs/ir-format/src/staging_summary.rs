@@ -555,7 +555,7 @@ mod tests {
                     .unwrap();
                 IrAttachment {
                     path: Some(format!("attachments/{name}")),
-                    original_name: Some(name.clone()),
+                    original_name: Some(name),
                     mime_type: None,
                     digest_sha256: None,
                     is_sticker: false,
@@ -766,7 +766,7 @@ mod tests {
         let dir = staged_fixture_with_sizes(&[("a.png", 10), ("b.png", 20), ("c.png", 30)]);
         let mut seen = Vec::new();
         let summary = summarize_staging(dir.path(), &summary_options(), &mut |p| {
-            seen.push((p.done, p.total))
+            seen.push((p.done, p.total));
         })
         .unwrap();
         assert_eq!(seen.first(), Some(&(0, 3)));
@@ -779,7 +779,7 @@ mod tests {
         let dir = staged_fixture_with_many_attachments(250);
         let mut seen = Vec::new();
         let summary = summarize_staging(dir.path(), &summary_options(), &mut |p| {
-            seen.push((p.done, p.total))
+            seen.push((p.done, p.total));
         })
         .unwrap();
         assert_eq!(

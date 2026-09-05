@@ -208,13 +208,13 @@ fn field_term(
             let mut err = if spec.word == "import" {
                 QueryError::new(
                     QueryErrorKind::BadValue,
-                    span.clone(),
+                    span,
                     "import: needs #id or last.".to_string(),
                 )
             } else {
                 QueryError::new(
                     QueryErrorKind::BadValue,
-                    span.clone(),
+                    span,
                     format!(
                         "{word}: does not understand {}. {}",
                         piece.trim(),
@@ -245,7 +245,7 @@ impl Parser<'_> {
     }
 
     /// An unbalanced-syntax error at `span`.
-    fn unbalanced(&self, span: Range<usize>, msg: &str) -> QueryError {
+    fn unbalanced(span: Range<usize>, msg: &str) -> QueryError {
         QueryError::new(QueryErrorKind::Unbalanced, span, msg)
     }
 
@@ -253,7 +253,7 @@ impl Parser<'_> {
     fn at_operand_end(&self) -> bool {
         matches!(
             self.peek().map(|t| &t.kind),
-            None | Some(TokenKind::RParen) | Some(TokenKind::Or) | Some(TokenKind::And)
+            None | Some(TokenKind::RParen | TokenKind::Or | TokenKind::And)
         )
     }
 
@@ -264,7 +264,10 @@ impl Parser<'_> {
             let or_span = self.peek().unwrap().span.clone();
             self.i += 1;
             if self.at_operand_end() {
-                return Err(self.unbalanced(or_span, "or needs something on both sides."));
+                return Err(Self::unbalanced(
+                    or_span,
+                    "or needs something on both sides.",
+                ));
             }
             parts.push(self.parse_and(depth)?);
         }
@@ -280,12 +283,15 @@ impl Parser<'_> {
         let mut parts = vec![self.parse_unary(depth)?];
         loop {
             match self.peek().map(|t| &t.kind) {
-                None | Some(TokenKind::Or) | Some(TokenKind::RParen) => break,
+                None | Some(TokenKind::Or | TokenKind::RParen) => break,
                 Some(TokenKind::And) => {
                     let and_span = self.peek().unwrap().span.clone();
                     self.i += 1;
                     if self.at_operand_end() {
-                        return Err(self.unbalanced(and_span, "and needs something on both sides."));
+                        return Err(Self::unbalanced(
+                            and_span,
+                            "and needs something on both sides.",
+                        ));
                     }
                     parts.push(self.parse_unary(depth)?);
                 }
@@ -309,7 +315,7 @@ impl Parser<'_> {
             ));
         }
         let Some(tok) = self.peek() else {
-            return Err(self.unbalanced(
+            return Err(Self::unbalanced(
                 self.end..self.end,
                 "The search ends where a word was expected.",
             ));
@@ -318,7 +324,7 @@ impl Parser<'_> {
             let span = tok.span.clone();
             self.i += 1;
             if self.at_operand_end() {
-                return Err(self.unbalanced(span, "not needs something after it."));
+                return Err(Self::unbalanced(span, "not needs something after it."));
             }
             return Ok(Expr::Not(Box::new(self.parse_unary(depth + 1)?)));
         }
@@ -341,7 +347,10 @@ impl Parser<'_> {
             TokenKind::LParen => {
                 self.i += 1;
                 if matches!(self.peek().map(|t| &t.kind), None | Some(TokenKind::RParen)) {
-                    return Err(self.unbalanced(tok.span, "A parenthesis has nothing inside it."));
+                    return Err(Self::unbalanced(
+                        tok.span,
+                        "A parenthesis has nothing inside it.",
+                    ));
                 }
                 let inner = self.parse_or(depth + 1)?;
                 match self.peek().map(|t| &t.kind) {
@@ -349,16 +358,18 @@ impl Parser<'_> {
                         self.i += 1;
                         Ok(inner)
                     }
-                    _ => Err(self.unbalanced(tok.span, "A parenthesis never closes.")),
+                    _ => Err(Self::unbalanced(tok.span, "A parenthesis never closes.")),
                 }
             }
-            TokenKind::RParen => {
-                Err(self.unbalanced(tok.span, "A closing parenthesis has no opening one."))
-            }
-            TokenKind::Or | TokenKind::And => {
-                Err(self.unbalanced(tok.span, "or and and need something on both sides."))
-            }
-            TokenKind::Not => Err(self.unbalanced(tok.span, "not needs something after it.")),
+            TokenKind::RParen => Err(Self::unbalanced(
+                tok.span,
+                "A closing parenthesis has no opening one.",
+            )),
+            TokenKind::Or | TokenKind::And => Err(Self::unbalanced(
+                tok.span,
+                "or and and need something on both sides.",
+            )),
+            TokenKind::Not => Err(Self::unbalanced(tok.span, "not needs something after it.")),
             TokenKind::Field {
                 word,
                 value,
@@ -400,7 +411,7 @@ pub(crate) fn parse(
     };
     let expr = p.parse_or(0)?;
     if let Some(extra) = p.peek() {
-        return Err(p.unbalanced(
+        return Err(Parser::unbalanced(
             extra.span.clone(),
             "A closing parenthesis has no opening one.",
         ));

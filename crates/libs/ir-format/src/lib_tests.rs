@@ -68,7 +68,7 @@ fn writes_json_csv_jsonl_and_eml() {
     assert!(csv.contains("+15555550100")); // owner handle filled
 
     let _ = clean_previous_mail_output(tmp.path());
-    let eml_dir = write_format(tmp.path(), OutputFormat::Eml, doc.clone()).unwrap();
+    let eml_dir = write_format(tmp.path(), OutputFormat::Eml, doc).unwrap();
     assert!(eml_dir.is_dir());
 }
 
@@ -200,7 +200,7 @@ fn unified_csv_headers_for_all_sources() {
     let tmp = tempfile::tempdir().unwrap();
     let doc = sample_imessage_doc();
 
-    let csv_path = write_format(tmp.path(), OutputFormat::Csv, doc.clone()).unwrap();
+    let csv_path = write_format(tmp.path(), OutputFormat::Csv, doc).unwrap();
     let csv = fs::read_to_string(&csv_path).unwrap();
     let header_line = csv.lines().next().unwrap();
     assert_eq!(header_line, CSV_HEADERS.join(","));

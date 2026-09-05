@@ -2,40 +2,28 @@
 
 use crate::assets::extract_attachments;
 use crate::types::ParsedMessage;
-use anyhow::Result;
 use mailparse::{MailHeaderMap, ParsedMail};
 use phone::sanitize_number;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
-static SUBJECT_RE: OnceLock<Regex> = OnceLock::new();
-static ADDRESS_SPLIT_RE: OnceLock<Regex> = OnceLock::new();
-static ARCHIVE_SUBJECT_PREFIX_RE: OnceLock<Regex> = OnceLock::new();
+/// `SMS with <name>` subject matcher.
+static SUBJECT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)^SMS with (.+)$").expect("subject"));
+/// Separator matcher for multi-address headers.
+static ADDRESS_SPLIT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[~;,|]+").expect("split"));
+/// `SMS archive ` subject prefix matcher.
+static ARCHIVE_SUBJECT_PREFIX_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)^SMS archive ").expect("archive subject"));
 
 /// Android SMS/MMS type codes SMS Backup+ puts in `X-smssync-type` for sent messages
 /// (Telephony `MESSAGE_TYPE_SENT`/`OUTBOX`/… and common MMS PDU sent codes).
 const SENT_TYPES: &[&str] = &["2", "128", "4", "135", "6", "5"];
 /// Android SMS/MMS type codes for inbox / received messages.
 const RECEIVED_TYPES: &[&str] = &["1", "132", "130"];
-
-/// `SMS with <name>` subject matcher.
-fn subject_re() -> &'static Regex {
-    SUBJECT_RE.get_or_init(|| Regex::new(r"(?i)^SMS with (.+)$").expect("subject"))
-}
-
-/// Separator matcher for multi-address headers.
-fn address_split_re() -> &'static Regex {
-    ADDRESS_SPLIT_RE.get_or_init(|| Regex::new(r"[~;,|]+").expect("split"))
-}
-
-/// `SMS archive ` subject prefix matcher.
-fn archive_subject_prefix_re() -> &'static Regex {
-    ARCHIVE_SUBJECT_PREFIX_RE
-        .get_or_init(|| Regex::new(r"(?i)^SMS archive ").expect("archive subject"))
-}
 
 /// Cached headers read once per EML (avoids repeated `get_first_value` + alloc).
 #[derive(Debug, Clone)]
@@ -81,7 +69,7 @@ fn smssync_participant_numbers(raw_address: &str) -> Vec<String> {
     }
     let mut numbers = Vec::new();
     let mut seen = HashSet::new();
-    for part in address_split_re().split(raw_address) {
+    for part in ADDRESS_SPLIT_RE.split(raw_address) {
         let token = part.trim();
         if token.is_empty() {
             continue;
@@ -99,7 +87,7 @@ fn smssync_participant_numbers(raw_address: &str) -> Vec<String> {
 
 /// The contact name from an `SMS with <name>` subject, unless it is a number.
 fn contact_name_from_subject(subject: &str) -> Option<String> {
-    let caps = subject_re().captures(subject.trim())?;
+    let caps = SUBJECT_RE.captures(subject.trim())?;
     let name = caps[1].trim();
     if name.starts_with('+') || name.chars().all(|c| c.is_ascii_digit()) {
         return None;
@@ -182,7 +170,7 @@ fn is_single_sms_eml(headers: &MailHeaders) -> bool {
         return true;
     }
     let headers_blob = format!("{} {}", headers.from, headers.to);
-    subject_re().is_match(&headers.subject) && headers_blob.contains("@sms-backup-plus.local")
+    SUBJECT_RE.is_match(&headers.subject) && headers_blob.contains("@sms-backup-plus.local")
 }
 
 /// True when this looks like a flat single-message SMS Backup+ EML.
@@ -192,32 +180,24 @@ pub(crate) fn is_flat_sms_eml(headers: &MailHeaders) -> bool {
 
 /// One SMS Backup+ "flat" EML (one text per file) as a message, or `None`
 /// when the file is not one, has no readable date, or names nobody.
-///
-/// # Errors
-///
-/// Returns an error when an attachment cannot be extracted.
 pub(crate) fn parse_flat_eml_mail(
     path: &Path,
     mail: &ParsedMail<'_>,
     headers: &MailHeaders,
     owner_digits: &HashSet<String>,
     owner_emails: &[String],
-) -> Result<Option<ParsedMessage>> {
+) -> Option<ParsedMessage> {
     if !is_single_sms_eml(headers) {
-        return Ok(None);
+        return None;
     }
-    let Some(timestamp_secs) = timestamp_seconds(headers) else {
-        return Ok(None);
-    };
+    let timestamp_secs = timestamp_seconds(headers)?;
     let name_alias = contact_name_from_subject(&headers.subject);
     let addresses = FlatAddresses::from_headers(headers, name_alias.as_deref(), owner_digits);
     if addresses.is_blank() {
-        return Ok(None);
+        return None;
     }
     let sent = is_sent(headers, owner_emails);
-    let Some(conversation) = addresses.conversation(headers, sent, name_alias.as_deref()) else {
-        return Ok(None);
-    };
+    let conversation = addresses.conversation(headers, sent, name_alias.as_deref())?;
 
     let file_key = hex::encode(Sha256::digest(path.to_string_lossy().as_bytes()));
     let attachments = extract_attachments(
@@ -225,7 +205,7 @@ pub(crate) fn parse_flat_eml_mail(
         timestamp_secs * 1000.0,
         Some(&file_key[..12.min(file_key.len())]),
     );
-    Ok(Some(ParsedMessage {
+    Some(ParsedMessage {
         chat_key: conversation.chat_key,
         conversation_type: conversation.conversation_type.into(),
         group_title: conversation.group_title,
@@ -240,7 +220,7 @@ pub(crate) fn parse_flat_eml_mail(
         source_kind: "flat".into(),
         android_type: headers.smssync_type.clone(),
         eml_path: String::new(),
-    }))
+    })
 }
 
 /// The numbers on a flat EML: everyone in the SMS Backup+ address header (or
@@ -355,7 +335,7 @@ impl FlatAddresses {
 
 /// Classify whether this EML looks like a consolidated archive thread.
 pub(crate) fn is_archive_eml(headers: &MailHeaders) -> bool {
-    archive_subject_prefix_re().is_match(headers.subject.trim()) && headers.smssync_type.is_empty()
+    ARCHIVE_SUBJECT_PREFIX_RE.is_match(headers.subject.trim()) && headers.smssync_type.is_empty()
 }
 #[cfg(test)]
 mod tests {
@@ -382,9 +362,7 @@ Hello from Alice\r\n",
         let mail = mailparse::parse_mail(&bytes).unwrap();
         let headers = MailHeaders::from_mail(&mail);
         let owners = HashSet::from(["5555550100".to_string()]);
-        let msg = parse_flat_eml_mail(&path, &mail, &headers, &owners, &[])
-            .unwrap()
-            .unwrap();
+        let msg = parse_flat_eml_mail(&path, &mail, &headers, &owners, &[]).unwrap();
         assert!(!msg.is_from_me);
         assert_eq!(msg.text.trim(), "Hello from Alice");
         assert_eq!(msg.chat_key, "4075551234");
@@ -413,7 +391,6 @@ Hello\r\n",
         let headers = MailHeaders::from_mail(&mail);
         let owners = HashSet::from(["5555550100".to_string()]);
         let msg = parse_flat_eml_mail(&path, &mail, &headers, &owners, &["me@example.com".into()])
-            .unwrap()
             .unwrap();
         assert_eq!(msg.chat_key, "4075551234");
         assert!(msg.is_from_me);
@@ -445,9 +422,7 @@ old message\r\n"
         let mail = mailparse::parse_mail(&bytes).unwrap();
         let headers = MailHeaders::from_mail(&mail);
         let owners = HashSet::from(["5555550100".to_string()]);
-        let msg = parse_flat_eml_mail(&path, &mail, &headers, &owners, &[])
-            .unwrap()
-            .unwrap();
+        let msg = parse_flat_eml_mail(&path, &mail, &headers, &owners, &[]).unwrap();
         assert!((msg.timestamp_secs - 978_307_200.0).abs() < 0.001);
     }
 

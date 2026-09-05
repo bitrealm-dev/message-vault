@@ -340,14 +340,14 @@ async fn staging_skips_duplicate_guid_in_same_file_and_keeps_first_attachment() 
 
     let (_pool, mut conn) = open_verify(&db).await;
     let (body, attachments, tapbacks): (String, i64, i64) = sqlx::query_as(
-        r#"
+        r"
         SELECT m.body, COUNT(DISTINCT a.id), COUNT(DISTINCT t.id)
         FROM messages m
         LEFT JOIN attachments a ON a.message_id = m.id
         LEFT JOIN tapbacks t ON t.message_id = m.id
         WHERE m.guid = 'g-once'
         GROUP BY m.id
-        "#,
+        ",
     )
     .fetch_one(&mut *conn)
     .await
@@ -443,14 +443,14 @@ async fn append_existing_guid_adds_missing_children() {
 
     let (_pool, mut conn) = open_verify(&db).await;
     let (body, attachments, tapbacks): (String, i64, i64) = sqlx::query_as(
-        r#"
+        r"
         SELECT m.body, COUNT(DISTINCT a.id), COUNT(DISTINCT t.id)
         FROM messages m
         LEFT JOIN attachments a ON a.message_id = m.id
         LEFT JOIN tapbacks t ON t.message_id = m.id
         WHERE m.guid = 'g-children'
         GROUP BY m.id
-        "#,
+        ",
     )
     .fetch_one(&mut *conn)
     .await

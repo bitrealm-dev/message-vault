@@ -221,7 +221,7 @@ impl<'a> Pull<'a> {
         let auth =
             authenticate(&cfg.base_url, &cfg.key).map_err(|e| anyhow::anyhow!("{}", e.detail()))?;
         let account = auth.account_id.clone();
-        let username = auth.username.clone().unwrap_or_else(|| account.clone());
+        let username = auth.username.unwrap_or_else(|| account.clone());
         emit(
             out,
             ProgressEvent::Auth {

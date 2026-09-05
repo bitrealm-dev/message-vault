@@ -963,7 +963,7 @@ async fn seed_demo_account_on_conn(
     // like any other account. Reading a conversation goes through the export
     // route, so a demo account without export cannot open a single thread.
     sqlx::query(
-        r#"
+        r"
         INSERT INTO accounts (
             id, username, password_hash, preferred_name, can_import, can_export, can_delete
         )
@@ -974,7 +974,7 @@ async fn seed_demo_account_on_conn(
             can_import = excluded.can_import,
             can_export = excluded.can_export,
             can_delete = excluded.can_delete
-        "#,
+        ",
     )
     .bind(account_id)
     .bind(&seed.account.username)
@@ -988,11 +988,11 @@ async fn seed_demo_account_on_conn(
         .await?;
     for email in &seed.owner.emails {
         sqlx::query(
-            r#"
+            r"
             INSERT INTO account_emails (account_id, email, is_primary)
             VALUES ($1, $2, 0)
             ON CONFLICT DO NOTHING
-            "#,
+            ",
         )
         .bind(account_id)
         .bind(email)

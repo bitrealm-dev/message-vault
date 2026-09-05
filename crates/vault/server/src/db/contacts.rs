@@ -635,34 +635,32 @@ async fn insert_contact_drafts(
         // storing the literal word "Unknown" as someone's name; the contact is
         // then Unknown by the computed rule, which is the same thing said once.
         let preferred_name = draft.preferred_name.as_deref().unwrap_or("");
-        let contact_id =
-            match adoptable_contact_for_draft(&mut tx, account_id, &draft.phones).await? {
-                Some((existing, _origin)) => {
-                    // A card that lists a number without a name has nothing to
-                    // say about who that person is, and a name the person typed
-                    // outranks the book. `propose_name` holds both rules.
-                    propose_name(
-                        &mut tx,
-                        account_id,
-                        existing,
-                        preferred_name,
-                        Origin::AddressBook,
-                    )
-                    .await?;
-                    existing
-                }
-                None => {
-                    let created: i64 = sqlx::query_scalar(
-                        "INSERT INTO contacts (account_id, preferred_name, origin)
-                         VALUES ($1, $2, 'address_book') RETURNING id",
-                    )
-                    .bind(account_id)
-                    .bind(preferred_name)
-                    .fetch_one(&mut *tx)
-                    .await?;
-                    created
-                }
-            };
+        let contact_id = if let Some((existing, _origin)) =
+            adoptable_contact_for_draft(&mut tx, account_id, &draft.phones).await?
+        {
+            // A card that lists a number without a name has nothing to
+            // say about who that person is, and a name the person typed
+            // outranks the book. `propose_name` holds both rules.
+            propose_name(
+                &mut tx,
+                account_id,
+                existing,
+                preferred_name,
+                Origin::AddressBook,
+            )
+            .await?;
+            existing
+        } else {
+            let created: i64 = sqlx::query_scalar(
+                "INSERT INTO contacts (account_id, preferred_name, origin)
+                     VALUES ($1, $2, 'address_book') RETURNING id",
+            )
+            .bind(account_id)
+            .bind(preferred_name)
+            .fetch_one(&mut *tx)
+            .await?;
+            created
+        };
         stats.contacts += 1;
 
         for (phone, note) in &draft.phones {

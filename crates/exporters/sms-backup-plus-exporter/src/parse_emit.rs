@@ -25,20 +25,6 @@ pub(super) fn collect_eml_paths<P: AsRef<Path>>(
         bail!("at least one --input path is required");
     }
 
-    // Preserve the previous behavior of never descending into these directories.
-    /// True for paths under folders the walk never enters.
-    fn in_skipped_dir(path: &Path) -> bool {
-        path.components().any(|c| {
-            matches!(
-                c.as_os_str()
-                    .to_str()
-                    .map(str::to_ascii_lowercase)
-                    .as_deref(),
-                Some("duplicate" | "exclude" | ".git")
-            )
-        })
-    }
-
     let mut paths = Vec::new();
     for input in inputs {
         message_vault_io_core::check_cancel(cancel)?;
@@ -71,6 +57,20 @@ pub(super) fn collect_eml_paths<P: AsRef<Path>>(
         bail!("no .eml files under: {listed}");
     }
     Ok(paths)
+}
+
+/// True for paths under folders the walk never enters (`duplicate`,
+/// `exclude`, `.git`).
+fn in_skipped_dir(path: &Path) -> bool {
+    path.components().any(|c| {
+        matches!(
+            c.as_os_str()
+                .to_str()
+                .map(str::to_ascii_lowercase)
+                .as_deref(),
+            Some("duplicate" | "exclude" | ".git")
+        )
+    })
 }
 
 /// Per-file parse result produced in parallel; merged serially into conversations.
@@ -130,15 +130,14 @@ pub(super) fn parse_one_eml(
         }
     } else if is_flat_sms_eml(&headers) {
         match parse_flat_eml_mail(eml_path, &mail, &headers, owner_digits, owner_emails_lc) {
-            Ok(Some(mut msg)) => {
+            Some(mut msg) => {
                 msg.eml_path = rel_path;
                 ParsedEmlKind::Flat {
                     msg: Box::new(msg),
                     _path_display: path_display,
                 }
             }
-            Ok(None) => ParsedEmlKind::FlatNone,
-            Err(err) => ParsedEmlKind::ParseError(format!("{path_display}: {err:#}")),
+            None => ParsedEmlKind::FlatNone,
         }
     } else {
         ParsedEmlKind::NotSms

@@ -200,7 +200,7 @@ pub async fn source_priority_from_db(
     account_id: &str,
 ) -> Result<Vec<String>> {
     let rows: Vec<(String,)> = sqlx::query_as(
-        r#"
+        r"
         SELECT m.source, MIN(m.id) AS first_id
         FROM messages m
         JOIN conversations c ON c.id = m.conversation_id
@@ -209,7 +209,7 @@ pub async fn source_priority_from_db(
           AND TRIM(m.source) != ''
         GROUP BY m.source
         ORDER BY first_id ASC, m.source ASC
-        "#,
+        ",
     )
     .bind(account_id)
     .fetch_all(&mut *conn)
@@ -228,12 +228,11 @@ pub async fn dedupe_cross_source(
     near_window_secs: i64,
 ) -> Result<DedupeStats> {
     let owned_priority;
-    let priority = match source_priority {
-        Some(p) => p,
-        None => {
-            owned_priority = source_priority_from_db(conn, account_id).await?;
-            owned_priority.as_slice()
-        }
+    let priority = if let Some(p) = source_priority {
+        p
+    } else {
+        owned_priority = source_priority_from_db(conn, account_id).await?;
+        owned_priority.as_slice()
     };
     let mut stats = DedupeStats::default();
     let prio: HashMap<&str, usize> = priority
@@ -249,13 +248,13 @@ pub async fn dedupe_cross_source(
         let mut tx = conn.begin().await?;
         stats.keys_filled = fill_missing_content_keys(&mut tx, account_id).await?;
         sqlx::query(
-            r#"
+            r"
             UPDATE messages
             SET duplicate_of = NULL
             WHERE conversation_id IN (
                 SELECT id FROM conversations WHERE account_id = $1
             )
-            "#,
+            ",
         )
         .bind(account_id)
         .execute(&mut *tx)
@@ -386,7 +385,7 @@ impl ContentKeyInputs {
             "WHERE c.account_id = $1"
         };
         let sql = format!(
-            r#"
+            r"
             SELECT m.id, m.conversation_id, h.normalized, c.conversation_type,
                    m.is_from_me, m.timestamp_utc, m.timestamp, m.body,
                    hs.normalized
@@ -396,7 +395,7 @@ impl ContentKeyInputs {
             LEFT JOIN handles hs ON hs.id = m.sender_handle_id
             {filter}
             ORDER BY m.id
-            "#
+            "
         );
         let rows: Vec<ContentKeyRow> = sqlx::query_as(&sql)
             .bind(account_id)
@@ -407,7 +406,7 @@ impl ContentKeyInputs {
         }
 
         let participant_rows: Vec<(i64, String)> = sqlx::query_as(
-            r#"
+            r"
             SELECT p.conversation_id, h.normalized
             FROM participants p
             JOIN conversations c ON c.id = p.conversation_id
@@ -415,7 +414,7 @@ impl ContentKeyInputs {
             WHERE c.account_id = $1
               AND h.normalized IS NOT NULL AND h.normalized != ''
             ORDER BY p.conversation_id, h.normalized
-            "#,
+            ",
         )
         .bind(account_id)
         .fetch_all(&mut *conn)
@@ -432,7 +431,7 @@ impl ContentKeyInputs {
         let min_id = rows.first().map(|r| r.0).unwrap_or(0);
         let max_id = rows.last().map(|r| r.0).unwrap_or(0);
         let att_rows: Vec<(i64, String)> = sqlx::query_as(
-            r#"
+            r"
             SELECT a.message_id, a.sha256
             FROM attachments a
             JOIN messages m ON m.id = a.message_id
@@ -441,7 +440,7 @@ impl ContentKeyInputs {
               AND a.message_id BETWEEN $2 AND $3
               AND a.sha256 IS NOT NULL AND a.sha256 != ''
             ORDER BY a.message_id
-            "#,
+            ",
         )
         .bind(account_id)
         .bind(min_id)
@@ -470,24 +469,24 @@ impl ContentKeyInputs {
 /// which is dropped again afterwards.
 async fn apply_content_keys(conn: &mut AnyConnection, keys: &[(i64, String)]) -> Result<()> {
     for stmt in schema::split_ddl(
-        r#"
+        r"
         CREATE TEMP TABLE IF NOT EXISTS _content_keys (
             id BIGINT PRIMARY KEY,
             content_key TEXT NOT NULL
         );
         DELETE FROM _content_keys;
-        "#,
+        ",
     ) {
         sqlx::query(&stmt).execute(&mut *conn).await?;
     }
     insert_content_key_rows(conn, keys).await?;
     sqlx::query(
-        r#"
+        r"
         UPDATE messages AS m
         SET content_key = k.content_key
         FROM _content_keys AS k
         WHERE m.id = k.id
-        "#,
+        ",
     )
     .execute(&mut *conn)
     .await?;
@@ -513,7 +512,7 @@ async fn flag_exact_content_key_dupes(
     // One scan of messages + one aggregated attachment pass, then group in Rust.
     // Avoids N round-trips (one SELECT + several UPDATEs per duplicate key).
     let rows: Vec<(i64, String, String, i64)> = sqlx::query_as(
-        r#"
+        r"
         SELECT m.id, m.source, m.content_key, COALESCE(ac.n, 0)
         FROM messages m
         JOIN conversations c ON c.id = m.conversation_id
@@ -528,7 +527,7 @@ async fn flag_exact_content_key_dupes(
         ) ac ON ac.message_id = m.id
         WHERE c.account_id = $1
           AND m.content_key IS NOT NULL AND m.content_key != ''
-        "#,
+        ",
     )
     .bind(account_id)
     .fetch_all(&mut *conn)
@@ -669,7 +668,7 @@ async fn load_near_rows(
         String,
     );
     let msg_rows: Vec<NearDedupeRow> = sqlx::query_as(
-        r#"
+        r"
         SELECT m.id, m.conversation_id, m.source, m.is_from_me, m.timestamp_utc, m.timestamp, m.body,
                COALESCE(hs.normalized, '')
         FROM messages m
@@ -677,14 +676,14 @@ async fn load_near_rows(
         LEFT JOIN handles hs ON hs.id = m.sender_handle_id
         WHERE c.account_id = $1
           AND m.duplicate_of IS NULL
-        "#,
+        ",
     )
     .bind(account_id)
     .fetch_all(&mut *conn)
     .await?;
 
     let att_rows: Vec<(i64, String)> = sqlx::query_as(
-        r#"
+        r"
         SELECT a.message_id, a.sha256
         FROM attachments a
         JOIN messages m ON m.id = a.message_id
@@ -692,7 +691,7 @@ async fn load_near_rows(
         WHERE c.account_id = $1
           AND a.sha256 IS NOT NULL AND a.sha256 != ''
         ORDER BY a.message_id, a.sha256
-        "#,
+        ",
     )
     .bind(account_id)
     .fetch_all(&mut *conn)

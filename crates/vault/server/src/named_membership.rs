@@ -750,7 +750,7 @@ mod tests {
             .unwrap_err();
         match err {
             MembershipError::BadRequest(msg) => {
-                assert_eq!(msg, "Group Messages is a reserved name")
+                assert_eq!(msg, "Group Messages is a reserved name");
             }
             other => panic!("expected BadRequest, got {other:?}"),
         }
@@ -772,7 +772,7 @@ mod tests {
                 assert_eq!(
                     msg,
                     format!("name must be at most {MAX_NAME_LEN} characters")
-                )
+                );
             }
             other => panic!("expected BadRequest, got {other:?}"),
         }

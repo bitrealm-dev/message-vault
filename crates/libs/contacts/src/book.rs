@@ -205,11 +205,7 @@ pub fn resolve_contacts_cli(
     log: Option<&dyn Fn(&str)>,
 ) -> Result<(ContactsBook, Option<PathBuf>)> {
     match (contacts, vcf) {
-        (Some(path), None) => {
-            let book = ContactsBook::load_contacts_file(&path)?;
-            Ok((book, Some(path)))
-        }
-        (None, Some(path)) => {
+        (Some(path), None) | (None, Some(path)) => {
             let book = ContactsBook::load_contacts_file(&path)?;
             Ok((book, Some(path)))
         }

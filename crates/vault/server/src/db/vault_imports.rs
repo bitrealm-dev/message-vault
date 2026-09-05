@@ -358,7 +358,7 @@ pub async fn start_import(
 ) -> std::result::Result<i64, StartImportError> {
     let started_at = Utc::now().to_rfc3339();
     let inserted: std::result::Result<i64, sqlx::Error> = sqlx::query_scalar(
-        r#"
+        r"
         INSERT INTO vault_imports (
             account_id, source, tool, mode, status, started_at,
             message_count, attachment_count, bytes_uploaded,
@@ -366,7 +366,7 @@ pub async fn start_import(
             source_identities
         ) VALUES ($1, $2, $3, $4, 'running', $5, 0, 0, 0, $6, $7, $8, $9, $10, $11)
         RETURNING id
-        "#,
+        ",
     )
     .bind(args.account_id)
     .bind(args.source)
@@ -399,7 +399,7 @@ fn is_unique_violation(err: &sqlx::Error) -> bool {
     if db_err.code().as_deref() == Some("23505") {
         return true;
     }
-    matches!(db_err.code().as_deref(), Some("2067") | Some("1555"))
+    matches!(db_err.code().as_deref(), Some("2067" | "1555"))
 }
 
 /// Column list for `vault_imports`, in the order reads map to a row.
@@ -649,11 +649,11 @@ pub async fn complete_import(
         n
     } else {
         let n: i64 = sqlx::query_scalar(
-            r#"
+            r"
             SELECT COUNT(*) FROM attachments a
             JOIN messages m ON m.id = a.message_id
             WHERE m.import_id = $1 AND m.account_id = $2
-            "#,
+            ",
         )
         .bind(import_id)
         .bind(account_id)
@@ -671,7 +671,7 @@ pub async fn complete_import(
         .begin_with(dialect::begin_immediate_sql(dialect::engine_of(conn)))
         .await?;
     sqlx::query(
-        r#"
+        r"
         UPDATE vault_imports
         SET status = $1,
             finished_at = $2,
@@ -686,7 +686,7 @@ pub async fn complete_import(
             summary_json = $11,
             stage = NULL
         WHERE id = $12 AND account_id = $13
-        "#,
+        ",
     )
     .bind(status)
     .bind(finished_at)
@@ -717,11 +717,11 @@ async fn insert_issues(
 ) -> Result<()> {
     for issue in issues {
         sqlx::query(
-            r#"
+            r"
             INSERT INTO vault_import_issues (
                 import_id, kind, step, item, reason, created_at
             ) VALUES ($1, $2, $3, $4, $5, $6)
-            "#,
+            ",
         )
         .bind(import_id)
         .bind(&issue.kind)
@@ -751,12 +751,12 @@ pub async fn get_import_detail(
 ) -> std::result::Result<ImportDetail, ImportLookupError> {
     let row = get_owned_import(conn, account_id, import_id).await?;
     let issue_rows: Vec<(i64, i64, String, String, String, String, String)> = sqlx::query_as(
-        r#"
+        r"
         SELECT id, import_id, kind, step, item, reason, created_at
         FROM vault_import_issues
         WHERE import_id = $1
         ORDER BY id ASC
-        "#,
+        ",
     )
     .bind(import_id)
     .fetch_all(&mut *conn)
@@ -856,11 +856,11 @@ pub async fn list_imports_for_account(
         .map_err(Into::into)
 }
 
-const ACCOUNT_ATTACHMENTS_FROM: &str = r#"
+const ACCOUNT_ATTACHMENTS_FROM: &str = r"
         FROM attachments a
         JOIN messages m ON m.id = a.message_id
         WHERE m.account_id = $1
-        "#;
+        ";
 
 /// Total attachment bytes for an account (original size_bytes).
 pub async fn account_attachment_bytes(conn: &mut AnyConnection, account_id: &str) -> Result<i64> {
@@ -919,7 +919,7 @@ pub async fn top_attachments_by_size(
     limit: i64,
 ) -> Result<Vec<TopAttachment>> {
     let rows: Vec<TopAttachmentRow> = sqlx::query_as(
-        r#"
+        r"
             SELECT a.id,
                    a.original_name,
                    a.mime_type,
@@ -935,7 +935,7 @@ pub async fn top_attachments_by_size(
               AND COALESCE(a.size_bytes, 0) > 0
             ORDER BY a.size_bytes DESC, a.id DESC
             LIMIT $2
-            "#,
+            ",
     )
     .bind(account_id)
     .bind(limit)

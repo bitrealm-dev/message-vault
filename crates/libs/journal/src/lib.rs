@@ -160,7 +160,7 @@ mod tests {
         .unwrap();
         let mut reported = Vec::new();
         let events: Vec<TestEvent> = load_events("journal", &path, &mut |line, error| {
-            reported.push((line, error.to_string()))
+            reported.push((line, error.to_string()));
         })
         .unwrap();
         assert_eq!(events.len(), 2);

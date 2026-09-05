@@ -116,11 +116,11 @@ impl MailSession {
         &'a self,
         handle_id: Option<i32>,
         is_from_me: bool,
-        destination_caller_id: &'b Option<String>,
+        destination_caller_id: Option<&'b str>,
     ) -> &'a str {
         if is_from_me {
             if self.options.use_caller_id {
-                return destination_caller_id.as_deref().unwrap_or(ME);
+                return destination_caller_id.unwrap_or(ME);
             }
             return ME;
         } else if let Some(handle_id) = handle_id {

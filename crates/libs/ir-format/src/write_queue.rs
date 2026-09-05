@@ -826,7 +826,7 @@ mod tests {
             ),
             unit_from(
                 doc_with("+15550000002", 1),
-                vec![AttachmentSource::Path(src.clone())],
+                vec![AttachmentSource::Path(src)],
             ),
         ];
         let report = drain(&out, units, &options(MediaMode::Clone, false)).unwrap();
@@ -1201,7 +1201,7 @@ mod tests {
 
         let units = vec![unit_from(
             doc_with("+15550000001", 1),
-            vec![AttachmentSource::Path(missing.clone())],
+            vec![AttachmentSource::Path(missing)],
         )];
         let report = drain_write_queue(
             &out,

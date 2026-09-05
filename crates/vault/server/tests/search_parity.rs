@@ -132,13 +132,13 @@ async fn setup_vault(conn: &mut AnyConnection) {
     .await
     .unwrap();
     let conversation_id: i64 = sqlx::query_scalar(
-        r#"
+        r"
         INSERT INTO conversations (
             account_id, chat_handle_id, conversation_type,
             group_title, exported_at, source_file
         ) VALUES ($1, $2, 'individual', NULL, NULL, 'parity.json')
         RETURNING id
-        "#,
+        ",
     )
     .bind(ACCOUNT_ID)
     .bind(handle_id)
@@ -147,12 +147,12 @@ async fn setup_vault(conn: &mut AnyConnection) {
     .unwrap();
     for m in corpus() {
         sqlx::query(
-            r#"
+            r"
             INSERT INTO messages (
                 id, conversation_id, account_id, source, guid, timestamp,
                 is_from_me, sort_order, body, subject
             ) VALUES ($1, $2, $3, $4, $5, $6, 0, $1, $7, $8)
-            "#,
+            ",
         )
         .bind(m.k)
         .bind(conversation_id)

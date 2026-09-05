@@ -78,8 +78,8 @@ impl DataSource {
                     temp_messages_db: None,
                 })
             }
-            Platform::iOS => match decrypt_backup(options)? {
-                Some(backup) => {
+            Platform::iOS => {
+                if let Some(backup) = decrypt_backup(options)? {
                     let messages_db = TempDatabase::new(
                         get_decrypted_message_database(&backup, options)?,
                         log.clone(),
@@ -91,7 +91,7 @@ impl DataSource {
                                 log.as_ref(),
                                 format!(
                                     "Could not decrypt Contacts database from iOS backup: {e:#}; \
-                                     continuing without contacts"
+                                 continuing without contacts"
                                 ),
                             );
                             None
@@ -130,8 +130,7 @@ impl DataSource {
                         backup: Some(backup),
                         temp_messages_db: Some(messages_db),
                     })
-                }
-                None => {
+                } else {
                     let messages_path = options.get_db_path();
                     let contacts_index = Self::get_contacts_index(
                         Some(&options.db_path.join(DEFAULT_PATH_IOS)),
@@ -146,7 +145,7 @@ impl DataSource {
                         temp_messages_db: None,
                     })
                 }
-            },
+            }
         }
     }
 

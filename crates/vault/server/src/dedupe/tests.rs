@@ -151,10 +151,10 @@ async fn setup_db(conn: &mut AnyConnection) {
         .await
         .unwrap();
     sqlx::query(
-        r#"
+        r"
         INSERT INTO handles (account_id, raw, normalized, handle_type, service)
         VALUES ($1, '+14075551212', '+14075551212', 'phone', 'phone')
-        "#,
+        ",
     )
     .bind(TEST_ACCOUNT_ID)
     .execute(&mut *conn)
@@ -168,12 +168,12 @@ async fn setup_db(conn: &mut AnyConnection) {
     .await
     .unwrap();
     sqlx::query(
-        r#"
+        r"
         INSERT INTO conversations (
             account_id, chat_handle_id, conversation_type, group_title, exported_at, source_file
         )
         VALUES ($1, $2, 'individual', NULL, NULL, 't.json')
-        "#,
+        ",
     )
     .bind(TEST_ACCOUNT_ID)
     .bind(handle_id)
@@ -194,13 +194,13 @@ struct InsertMsgArgs<'a> {
 
 async fn insert_msg(conn: &mut AnyConnection, args: InsertMsgArgs<'_>) -> i64 {
     sqlx::query_scalar(
-        r#"
+        r"
         INSERT INTO messages (
             conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
             sender_handle_id, subject, body, sort_order
         ) VALUES (1, $1, $2, $3, $4, $5, $6, NULL, NULL, $7, $8)
         RETURNING id
-        "#,
+        ",
     )
     .bind(TEST_ACCOUNT_ID)
     .bind(args.source)
@@ -278,12 +278,12 @@ async fn fill_missing_content_keys_writes_multiple_rows_in_one_batch() {
         .unwrap();
     assert_eq!(filled, 3);
     let keys: Vec<(String, Option<String>)> = sqlx::query_as(
-        r#"
+        r"
         SELECT guid, content_key
         FROM messages
         WHERE guid IN ('g-multi-a', 'g-multi-b', 'g-multi-c')
         ORDER BY guid
-        "#,
+        ",
     )
     .fetch_all(&mut *conn)
     .await

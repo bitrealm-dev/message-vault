@@ -1,6 +1,14 @@
 //! WAP-209 / WAP-230 unit decoders moved out of `mms_enc`.
 
-use crate::mms_enc::*;
+use crate::mms_enc::{
+    CHARSET_UCS2, CHARSET_UTF8, MMS_BCC, MMS_CC, MMS_CONTENT_LOCATION, MMS_CONTENT_TYPE, MMS_DATE,
+    MMS_DELIVERY_REPORT, MMS_DELIVERY_TIME, MMS_EXPIRY, MMS_FROM, MMS_MESSAGE_CLASS,
+    MMS_MESSAGE_ID, MMS_MESSAGE_SIZE, MMS_MESSAGE_TYPE, MMS_PRIORITY, MMS_READ_REPORT,
+    MMS_REPORT_ALLOWED, MMS_RESPONSE_STATUS, MMS_RESPONSE_TEXT, MMS_SENDER_VISIBILITY, MMS_STATUS,
+    MMS_SUBJECT, MMS_TO, MMS_TRANSACTION_ID, MMS_VERSION, MmsPart, StructuredMms,
+    WELL_KNOWN_CONTENT_TYPES, WSP_CONTENT_DISPOSITION, WSP_CONTENT_ID, WSP_CONTENT_LOCATION,
+    decode_bytes_with_charset, normalize_content_id,
+};
 use std::collections::HashMap;
 
 /// True for MMS header fields whose value is a short integer.

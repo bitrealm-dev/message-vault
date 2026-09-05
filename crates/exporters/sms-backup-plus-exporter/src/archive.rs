@@ -22,16 +22,20 @@ use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use std::path::Path;
-use std::sync::OnceLock;
-
-static ARCHIVE_SUBJECT_RE: OnceLock<Regex> = OnceLock::new();
-static MESSAGE_HEADER_RE: OnceLock<Regex> = OnceLock::new();
-static DATE_ONLY_RE: OnceLock<Regex> = OnceLock::new();
+use std::sync::LazyLock;
 
 /// `SMS archive <name>` subject matcher.
-fn archive_subject_re() -> &'static Regex {
-    ARCHIVE_SUBJECT_RE.get_or_init(|| Regex::new(r"(?i)^SMS archive (.+)$").expect("arch subj"))
-}
+static ARCHIVE_SUBJECT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)^SMS archive (.+)$").expect("arch subj"));
+/// `YYYY-MM-DD HH:MM:SS - <sender>` line matcher for archive bodies.
+static MESSAGE_HEADER_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) - (.+)$").expect("hdr"));
+/// `YYYY-MM-DD` matcher.
+static DATE_ONLY_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\d{4}-\d{2}-\d{2}$").expect("date"));
+/// A trailing `(YYYY - YYYY)` year range on an archive contact name.
+static YEAR_RANGE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\s*\(\d{4}\s*[-–—]\s*\d{4}\)\s*$").expect("year range"));
 
 /// Clean contact name from an archive subject capture.
 ///
@@ -45,21 +49,7 @@ fn clean_archive_contact_name(raw: &str) -> String {
     if name.len() >= 5 && name.is_char_boundary(5) && name[..5].eq_ignore_ascii_case("with ") {
         name = name[5..].trim();
     }
-    static YEAR_RANGE: OnceLock<Regex> = OnceLock::new();
-    let re = YEAR_RANGE
-        .get_or_init(|| Regex::new(r"\s*\(\d{4}\s*[-–—]\s*\d{4}\)\s*$").expect("year range"));
-    re.replace(name, "").trim().to_string()
-}
-
-/// `YYYY-MM-DD HH:MM:SS - <sender>` line matcher for archive bodies.
-fn message_header_re() -> &'static Regex {
-    MESSAGE_HEADER_RE
-        .get_or_init(|| Regex::new(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) - (.+)$").expect("hdr"))
-}
-
-/// `YYYY-MM-DD` matcher.
-fn date_only_re() -> &'static Regex {
-    DATE_ONLY_RE.get_or_init(|| Regex::new(r"^\d{4}-\d{2}-\d{2}$").expect("date"))
+    YEAR_RANGE_RE.replace(name, "").trim().to_string()
 }
 
 /// The address inside a `From:` header's angle brackets, else the header text.
@@ -166,7 +156,7 @@ pub(crate) fn parse_archive_eml_mail(
     if !is_archive_eml(headers) {
         return Ok((Vec::new(), 0));
     }
-    let caps = archive_subject_re()
+    let caps = ARCHIVE_SUBJECT_RE
         .captures(headers.subject.trim())
         .context("archive subject")?;
     let peer = ArchivePeer::new(
@@ -280,12 +270,12 @@ impl ArchiveReader {
                 self.past_preamble = true;
                 return;
             }
-            if date_only_re().is_match(stripped) && self.open.is_none() {
+            if DATE_ONLY_RE.is_match(stripped) && self.open.is_none() {
                 return;
             }
             self.past_preamble = true;
         }
-        if let Some(caps) = message_header_re().captures(stripped) {
+        if let Some(caps) = MESSAGE_HEADER_RE.captures(stripped) {
             self.flush();
             self.open = Some(OpenMessage {
                 date: caps[1].to_string(),

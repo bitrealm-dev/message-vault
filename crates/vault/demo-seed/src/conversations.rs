@@ -1285,8 +1285,7 @@ fn sanitize_filename(s: &str) -> String {
         .map(|c| match c {
             '+' => 'p',
             '@' => 'a',
-            ':' => '_',
-            '/' | '\\' => '_',
+            ':' | '/' | '\\' => '_',
             _ if c.is_ascii_alphanumeric() => c,
             _ => '_',
         })

@@ -104,14 +104,14 @@ pub async fn rotate_account_session_token(
     let created_at = unix_secs_string();
     let expires_at = session_expiry_unix(now_unix_secs());
     sqlx::query(
-        r#"
+        r"
         INSERT INTO account_session_tokens (account_id, token_hash, created_at, expires_at)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT(account_id) DO UPDATE SET
             token_hash = excluded.token_hash,
             created_at = excluded.created_at,
             expires_at = excluded.expires_at
-        "#,
+        ",
     )
     .bind(account_id)
     .bind(token_hash)

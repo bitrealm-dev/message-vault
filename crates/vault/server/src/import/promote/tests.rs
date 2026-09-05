@@ -84,13 +84,13 @@ async fn promote_fts_cycle_pg() {
     .await
     .unwrap();
     let conversation_id: i64 = sqlx::query_scalar(
-        r#"
+        r"
         INSERT INTO conversations (
             account_id, chat_handle_id, conversation_type,
             group_title, exported_at, source_file
         ) VALUES ($1, $2, 'individual', NULL, NULL, 'promote.json')
         RETURNING id
-        "#,
+        ",
     )
     .bind(TEST_ACCOUNT)
     .bind(handle_id)
@@ -98,13 +98,13 @@ async fn promote_fts_cycle_pg() {
     .await
     .unwrap();
     let carriedover_id: i64 = sqlx::query_scalar(
-        r#"
+        r"
         INSERT INTO messages (
             conversation_id, account_id, source, guid, timestamp,
             is_from_me, sort_order, body
         ) VALUES ($1, $2, 'sms', 'carriedover', '2020-01-01T00:00:00Z', 0, 0, 'carriedover')
         RETURNING id
-        "#,
+        ",
     )
     .bind(conversation_id)
     .bind(TEST_ACCOUNT)
@@ -134,13 +134,13 @@ async fn promote_fts_cycle_pg() {
 
     // Raw inserts during the window skip per-row FTS work.
     let fresh_id: i64 = sqlx::query_scalar(
-        r#"
+        r"
         INSERT INTO messages (
             conversation_id, account_id, source, guid, timestamp,
             is_from_me, sort_order, body
         ) VALUES ($1, $2, 'sms', 'freshbody', '2020-01-01T00:00:00Z', 0, 0, 'freshbody')
         RETURNING id
-        "#,
+        ",
     )
     .bind(conversation_id)
     .bind(TEST_ACCOUNT)
@@ -195,12 +195,12 @@ async fn promote_fts_cycle_pg() {
     // ── Enable restores the triggers: a post-enable insert is indexed.
     schema::enable_fts_triggers_pg(&mut conn).await.unwrap();
     sqlx::query(
-        r#"
+        r"
         INSERT INTO messages (
             conversation_id, account_id, source, guid, timestamp,
             is_from_me, sort_order, body
         ) VALUES ($1, $2, 'sms', 'postenable', '2020-01-01T00:00:00Z', 0, 0, 'postenable')
-        "#,
+        ",
     )
     .bind(conversation_id)
     .bind(TEST_ACCOUNT)
@@ -225,12 +225,12 @@ async fn promote_fts_cycle_pg() {
     .await
     .unwrap();
     let staging_conv_id: i64 = sqlx::query_scalar(
-        r#"
+        r"
         INSERT INTO staging_conversations (
             account_id, chat_handle_id, conversation_type, source_file
         ) VALUES ($1, $2, 'individual', 'staged.json')
         RETURNING id
-        "#,
+        ",
     )
     .bind(TEST_ACCOUNT)
     .bind(staged_handle_id)
@@ -238,12 +238,12 @@ async fn promote_fts_cycle_pg() {
     .await
     .unwrap();
     sqlx::query(
-        r#"
+        r"
         INSERT INTO staging_messages (
             conversation_id, account_id, source, guid, timestamp,
             is_from_me, sort_order, body
         ) VALUES ($1, $2, 'sms', 'staged-guid-1', '2020-01-01T00:00:00Z', 0, 0, 'stagedbody')
-        "#,
+        ",
     )
     .bind(staging_conv_id)
     .bind(TEST_ACCOUNT)
@@ -272,12 +272,12 @@ async fn promote_fts_cycle_pg() {
 
     // And the triggers still fire for brand-new rows after the promote.
     sqlx::query(
-        r#"
+        r"
         INSERT INTO messages (
             conversation_id, account_id, source, guid, timestamp,
             is_from_me, sort_order, body
         ) VALUES ($1, $2, 'sms', 'afterpromote', '2020-01-01T00:00:00Z', 0, 0, 'afterpromote')
-        "#,
+        ",
     )
     .bind(conversation_id)
     .bind(TEST_ACCOUNT)
@@ -314,12 +314,12 @@ async fn promote_analyzes_import_tables_before_begin() {
     .await
     .unwrap();
     let staging_conv_id: i64 = sqlx::query_scalar(
-        r#"
+        r"
         INSERT INTO staging_conversations (
             account_id, chat_handle_id, conversation_type, source_file
         ) VALUES ($1, $2, 'individual', 'analyze.json')
         RETURNING id
-        "#,
+        ",
     )
     .bind(TEST_ACCOUNT)
     .bind(handle_id)
@@ -327,12 +327,12 @@ async fn promote_analyzes_import_tables_before_begin() {
     .await
     .unwrap();
     sqlx::query(
-        r#"
+        r"
         INSERT INTO staging_messages (
             conversation_id, account_id, source, guid, timestamp,
             is_from_me, sort_order, body
         ) VALUES ($1, $2, 'sms', 'analyze-guid-1', '2020-01-01T00:00:00Z', 0, 0, 'analyzebody')
-        "#,
+        ",
     )
     .bind(staging_conv_id)
     .bind(TEST_ACCOUNT)
@@ -355,12 +355,12 @@ async fn promote_analyzes_import_tables_before_begin() {
     );
 
     sqlx::query(
-        r#"
+        r"
         INSERT INTO staging_messages (
             conversation_id, account_id, source, guid, timestamp,
             is_from_me, sort_order, body
         ) VALUES ($1, $2, 'sms', 'analyze-guid-2', '2020-01-01T00:00:01Z', 0, 1, 'second')
-        "#,
+        ",
     )
     .bind(staging_conv_id)
     .bind(TEST_ACCOUNT)
@@ -401,12 +401,12 @@ async fn promote_analyzes_import_tables_before_begin_pg() {
     .await
     .unwrap();
     let staging_conv_id: i64 = sqlx::query_scalar(
-        r#"
+        r"
         INSERT INTO staging_conversations (
             account_id, chat_handle_id, conversation_type, source_file
         ) VALUES ($1, $2, 'individual', 'analyze-pg.json')
         RETURNING id
-        "#,
+        ",
     )
     .bind(TEST_ACCOUNT)
     .bind(handle_id)
@@ -414,12 +414,12 @@ async fn promote_analyzes_import_tables_before_begin_pg() {
     .await
     .unwrap();
     sqlx::query(
-        r#"
+        r"
         INSERT INTO staging_messages (
             conversation_id, account_id, source, guid, timestamp,
             is_from_me, sort_order, body
         ) VALUES ($1, $2, 'sms', 'analyze-pg-guid-1', '2020-01-01T00:00:00Z', 0, 0, 'analyzebody')
-        "#,
+        ",
     )
     .bind(staging_conv_id)
     .bind(TEST_ACCOUNT)
@@ -455,12 +455,12 @@ async fn promote_analyzes_import_tables_before_begin_pg() {
     );
 
     sqlx::query(
-        r#"
+        r"
         INSERT INTO staging_messages (
             conversation_id, account_id, source, guid, timestamp,
             is_from_me, sort_order, body
         ) VALUES ($1, $2, 'sms', 'analyze-pg-guid-2', '2020-01-01T00:00:01Z', 0, 1, 'second')
-        "#,
+        ",
     )
     .bind(staging_conv_id)
     .bind(TEST_ACCOUNT)

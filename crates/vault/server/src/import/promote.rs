@@ -92,7 +92,7 @@ const PROMOTE_INDEX_DROP_MIN_STAGING: i64 = 5_000;
 /// The column list and SELECT every staged-message insert shares; the caller
 /// adds its WHERE tail and ordering. Rows are inserted in staging id order so
 /// the production ids follow it, which the id-map zip relies on.
-const INSERT_MESSAGES_FROM_STAGING: &str = r#"
+const INSERT_MESSAGES_FROM_STAGING: &str = r"
         INSERT INTO messages (
             conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
             sender_handle_id, service, subject, body, is_announcement, is_reply,
@@ -106,16 +106,16 @@ const INSERT_MESSAGES_FROM_STAGING: &str = r#"
         FROM staging_messages sm
         JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
         WHERE sm.account_id = $1
-"#;
+";
 
 /// The staged message ids the inserts above select, in the same order; the
 /// caller adds the same WHERE tail.
-const STAGED_MESSAGE_IDS: &str = r#"
+const STAGED_MESSAGE_IDS: &str = r"
         SELECT sm.id
         FROM staging_messages sm
         JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
         WHERE sm.account_id = $1
-"#;
+";
 
 const IN_ID_RANGE: &str = " AND sm.id > $2 AND sm.id <= $3 ORDER BY sm.id";
 const WITH_GUID_IN_ID_RANGE: &str =
@@ -124,7 +124,7 @@ const WITHOUT_GUID: &str = " AND (sm.guid IS NULL OR sm.guid = '') ORDER BY sm.i
 
 impl Promote<'_> {
     /// Log the start of a phase and return its clock.
-    fn begin(&self, msg: impl std::fmt::Display) -> Instant {
+    fn begin(msg: impl std::fmt::Display) -> Instant {
         promote_log(msg);
         Instant::now()
     }
@@ -180,12 +180,12 @@ impl Promote<'_> {
                 .bind(self.account_id)
                 .fetch_one(&mut *self.tx)
                 .await?;
-        let phase = self.begin(format_args!("{staged} staging conversations → production…"));
+        let phase = Self::begin(format_args!("{staged} staging conversations → production…"));
         let max_before: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM conversations")
             .fetch_one(&mut *self.tx)
             .await?;
         sqlx::query(
-            r#"
+            r"
             INSERT INTO conversations (
                 account_id, chat_handle_id, conversation_type,
                 group_title, exported_at, source_file
@@ -200,13 +200,13 @@ impl Promote<'_> {
                 group_title = COALESCE(excluded.group_title, conversations.group_title),
                 exported_at = COALESCE(excluded.exported_at, conversations.exported_at),
                 source_file = excluded.source_file
-            "#,
+            ",
         )
         .bind(self.account_id)
         .execute(&mut *self.tx)
         .await?;
         sqlx::query(
-            r#"
+            r"
             INSERT INTO _promote_conv_map (staging_id, prod_id)
             SELECT sc.id, c.id
             FROM staging_conversations sc
@@ -214,7 +214,7 @@ impl Promote<'_> {
               ON c.account_id = sc.account_id
              AND c.chat_handle_id = sc.chat_handle_id
             WHERE sc.account_id = $1
-            "#,
+            ",
         )
         .bind(self.account_id)
         .execute(&mut *self.tx)
@@ -235,25 +235,25 @@ impl Promote<'_> {
     /// Insert the staged participants under their production conversations.
     async fn promote_participants(&mut self) -> Result<()> {
         let staged: i64 = sqlx::query_scalar(
-            r#"
+            r"
             SELECT COUNT(*) FROM staging_participants
             WHERE conversation_id IN (
                 SELECT id FROM staging_conversations WHERE account_id = $1
             )
-            "#,
+            ",
         )
         .bind(self.account_id)
         .fetch_one(&mut *self.tx)
         .await?;
-        let phase = self.begin(format_args!("{staged} staging participants → production…"));
+        let phase = Self::begin(format_args!("{staged} staging participants → production…"));
         self.stats.participants = sqlx::query(
-            r#"
+            r"
             INSERT INTO participants (conversation_id, handle_id, contact_id, name_alias)
             SELECT cm.prod_id, sp.handle_id, sp.contact_id, sp.name_alias
             FROM staging_participants sp
             JOIN _promote_conv_map cm ON cm.staging_id = sp.conversation_id
             ON CONFLICT DO NOTHING
-            "#,
+            ",
         )
         .execute(&mut *self.tx)
         .await?
@@ -273,12 +273,12 @@ impl Promote<'_> {
     /// ones that the map also names.
     async fn promote_messages(&mut self) -> Result<i64> {
         let total: i64 = sqlx::query_scalar(
-            r#"
+            r"
             SELECT COUNT(*) FROM staging_messages
             WHERE conversation_id IN (
                 SELECT id FROM staging_conversations WHERE account_id = $1
             )
-            "#,
+            ",
         )
         .bind(self.account_id)
         .fetch_one(&mut *self.tx)
@@ -294,7 +294,7 @@ impl Promote<'_> {
             .await?;
         let rebuild_indexes = should_drop_messages_secondary_indexes(total, existing);
         if rebuild_indexes {
-            let phase = self.begin(format_args!(
+            let phase = Self::begin(format_args!(
                 "dropping secondary message indexes (staging={total} existing={existing})…"
             ));
             schema::drop_messages_secondary_indexes(&mut self.tx).await?;
@@ -309,7 +309,7 @@ impl Promote<'_> {
         let msg_map = self.insert_messages(total).await?;
 
         if rebuild_indexes {
-            let phase = self.begin("rebuilding secondary message indexes…");
+            let phase = Self::begin("rebuilding secondary message indexes…");
             schema::create_messages_secondary_indexes(&mut self.tx).await?;
             self.done(
                 phase,
@@ -327,7 +327,7 @@ impl Promote<'_> {
             ));
         }
 
-        let phase = self.begin(format_args!(
+        let phase = Self::begin(format_args!(
             "writing message id map ({} pairs)…",
             msg_map.len()
         ));
@@ -341,7 +341,7 @@ impl Promote<'_> {
     /// Postgres disables every trigger on the message tables (same effect,
     /// and the triggers are simply re-enabled instead of reinstalled).
     async fn pause_fts_triggers(&mut self) -> Result<()> {
-        let phase = self.begin("pausing FTS triggers…");
+        let phase = Self::begin("pausing FTS triggers…");
         if self.engine == DbEngine::Postgres {
             schema::disable_fts_triggers_pg(&mut self.tx).await?;
         } else {
@@ -355,12 +355,12 @@ impl Promote<'_> {
     /// staging-to-production id map. Nothing staged means nothing inserted.
     async fn insert_messages(&mut self, total: i64) -> Result<HashMap<i64, i64>> {
         let bounds: (Option<i64>, Option<i64>) = sqlx::query_as(
-            r#"
+            r"
             SELECT MIN(sm.id), MAX(sm.id)
             FROM staging_messages sm
             JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
             WHERE sm.account_id = $1
-            "#,
+            ",
         )
         .bind(self.account_id)
         .fetch_one(&mut *self.tx)
@@ -390,7 +390,7 @@ impl Promote<'_> {
         let mut max_before = self.max_message_id().await?;
         let mut inserted_total = 0u64;
         for (chunk, lo, hi) in message_chunks(min_id, max_id) {
-            let phase = self.begin(format_args!(
+            let phase = Self::begin(format_args!(
                 "inserting messages chunk {chunk} (staging id {}..{hi}, replace)…",
                 lo + 1
             ));
@@ -431,7 +431,7 @@ impl Promote<'_> {
         let mut msg_map = HashMap::new();
         let mut inserted_total = 0u64;
         for (chunk, lo, hi) in message_chunks(min_id, max_id) {
-            let phase = self.begin(format_args!(
+            let phase = Self::begin(format_args!(
                 "inserting messages chunk {chunk} (staging id {}..{hi}, append)…",
                 lo + 1
             ));
@@ -452,7 +452,7 @@ impl Promote<'_> {
             );
         }
 
-        let phase = self.begin("inserting messages with empty guids…");
+        let phase = Self::begin("inserting messages with empty guids…");
         let max_before = self.max_message_id().await?;
         let sql = format!("{INSERT_MESSAGES_FROM_STAGING}{WITHOUT_GUID}");
         let inserted_empty = sqlx::query(&sql)
@@ -556,7 +556,7 @@ impl Promote<'_> {
             q.execute(&mut *self.tx).await?;
         }
         sqlx::query(
-            r#"
+            r"
             INSERT INTO _promote_msg_map (staging_id, prod_id)
             SELECT sm.id, m.id
             FROM staging_messages sm
@@ -569,7 +569,7 @@ impl Promote<'_> {
               AND sm.guid IS NOT NULL
               AND sm.guid != ''
             ON CONFLICT(staging_id) DO UPDATE SET prod_id = excluded.prod_id
-            "#,
+            ",
         )
         .bind(self.account_id)
         .execute(&mut *self.tx)
@@ -580,9 +580,9 @@ impl Promote<'_> {
     /// Insert the staged attachments under their production messages,
     /// skipping any row production already has field for field.
     async fn promote_attachments(&mut self) -> Result<()> {
-        let phase = self.begin("bulk-inserting attachments…");
+        let phase = Self::begin("bulk-inserting attachments…");
         self.stats.attachments = sqlx::query(
-            r#"
+            r"
             INSERT INTO attachments (
                 message_id, path, original_name, mime_type, is_sticker, transcription,
                 sha256, assets_path, size_bytes, missing_reason
@@ -606,7 +606,7 @@ impl Promote<'_> {
                   AND a.size_bytes IS NOT DISTINCT FROM sa.size_bytes
                   AND a.missing_reason IS NOT DISTINCT FROM sa.missing_reason
             )
-            "#,
+            ",
         )
         .execute(&mut *self.tx)
         .await?
@@ -621,9 +621,9 @@ impl Promote<'_> {
     /// Insert the staged tapbacks under their production messages, skipping
     /// any row production already has field for field.
     async fn promote_tapbacks(&mut self) -> Result<()> {
-        let phase = self.begin("bulk-inserting tapbacks…");
+        let phase = Self::begin("bulk-inserting tapbacks…");
         self.stats.tapbacks = sqlx::query(
-            r#"
+            r"
             INSERT INTO tapbacks (
                 message_id, part_index, kind, emoji, is_from_me, sender_handle_id
             )
@@ -641,7 +641,7 @@ impl Promote<'_> {
                   AND t.is_from_me = st.is_from_me
                   AND t.sender_handle_id IS NOT DISTINCT FROM st.sender_handle_id
             )
-            "#,
+            ",
         )
         .execute(&mut *self.tx)
         .await?
@@ -656,7 +656,7 @@ impl Promote<'_> {
     /// Index the new messages (those above `messages_before`) for full-text
     /// search in one pass, then put the per-row triggers back.
     async fn index_fts(&mut self, messages_before: i64) -> Result<()> {
-        let phase = self.begin("bulk-indexing FTS for new messages…");
+        let phase = Self::begin("bulk-indexing FTS for new messages…");
         let indexed =
             schema::index_messages_fts_from_promote_map(&mut self.tx, messages_before).await?;
         if self.engine == DbEngine::Postgres {
@@ -670,7 +670,7 @@ impl Promote<'_> {
 
     /// Fill the dedupe content keys the new rows are missing.
     async fn fill_content_keys(&mut self) -> Result<()> {
-        let phase = self.begin("filling content keys…");
+        let phase = Self::begin("filling content keys…");
         let keys = crate::dedupe::fill_missing_content_keys(&mut self.tx, self.account_id).await?;
         self.done(phase, format!("content keys filled={keys}"));
         Ok(())
@@ -678,7 +678,7 @@ impl Promote<'_> {
 
     /// Commit and return the counts.
     async fn commit(self) -> Result<PromoteStats> {
-        let phase = self.begin("committing transaction…");
+        let phase = Self::begin("committing transaction…");
         let Promote {
             tx, stats, started, ..
         } = self;

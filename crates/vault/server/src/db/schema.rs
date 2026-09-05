@@ -526,7 +526,7 @@ pub(crate) async fn index_messages_fts_from_promote_map(
 ) -> Result<u64> {
     if dialect::engine_of(conn) == DbEngine::Postgres {
         let n = sqlx::query(
-            r#"
+            r"
             UPDATE messages SET search_tsv = fts.vec
             FROM (
                 SELECT mm.prod_id,
@@ -542,7 +542,7 @@ pub(crate) async fn index_messages_fts_from_promote_map(
                 ) a ON a.message_id = mm.prod_id
             ) fts
             WHERE messages.id = fts.prod_id
-            "#,
+            ",
         )
         .bind(min_new_message_id)
         .execute(&mut *conn)
@@ -550,7 +550,7 @@ pub(crate) async fn index_messages_fts_from_promote_map(
         return Ok(n.rows_affected());
     }
     let n = sqlx::query(
-        r#"
+        r"
         INSERT INTO messages_fts(rowid, body, subject, attachment_text)
         SELECT
             m.id,
@@ -568,7 +568,7 @@ pub(crate) async fn index_messages_fts_from_promote_map(
             SELECT DISTINCT prod_id FROM _promote_msg_map WHERE prod_id > $1
         ) mm
         JOIN messages m ON m.id = mm.prod_id
-        "#,
+        ",
     )
     .bind(min_new_message_id)
     .execute(&mut *conn)
@@ -614,13 +614,13 @@ pub async fn delete_messages_for_source(
     .execute(&mut *conn)
     .await?;
     let n = sqlx::query(
-        r#"
+        r"
         DELETE FROM messages
         WHERE source = $1
           AND conversation_id IN (
               SELECT id FROM conversations WHERE account_id = $2
           )
-        "#,
+        ",
     )
     .bind(source)
     .bind(account_id)

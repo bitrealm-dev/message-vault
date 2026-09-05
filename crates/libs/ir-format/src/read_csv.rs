@@ -47,7 +47,7 @@ pub fn read_conversation_csv(path: &Path) -> Result<ConversationDocument> {
         bail!("CSV has no data rows: {}", path.display());
     }
 
-    let header = header_from_row(&cols, &rows[0])?;
+    let header = header_from_row(&cols, &rows[0]);
     let packaging_stem_suffix = path
         .file_stem()
         .and_then(|n| n.to_str())
@@ -65,10 +65,7 @@ pub fn read_conversation_csv(path: &Path) -> Result<ConversationDocument> {
 }
 
 /// Rebuild the conversation header from the first CSV row's conversation columns.
-fn header_from_row(
-    cols: &HashMap<&str, usize>,
-    row: &csv::StringRecord,
-) -> Result<ConversationHeader> {
+fn header_from_row(cols: &HashMap<&str, usize>, row: &csv::StringRecord) -> ConversationHeader {
     let get = |name: &str| cell(cols, row, name).unwrap_or("");
     let mut participants = parse_participants(get("participants_json"));
     // Legacy files predate handle_type in the participants cell. For
@@ -89,7 +86,7 @@ fn header_from_row(
             Some(t.to_string())
         }
     };
-    Ok(ConversationHeader {
+    ConversationHeader {
         schema_version: SCHEMA_VERSION,
         export: ExportMeta {
             source: get("export_source").to_string(),
@@ -105,7 +102,7 @@ fn header_from_row(
             participants,
             stats: ConversationStats::default(),
         },
-    })
+    }
 }
 
 /// Rebuild one message from a CSV row.

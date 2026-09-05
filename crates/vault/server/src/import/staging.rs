@@ -171,48 +171,48 @@ pub(super) struct StagingInserts {
     handles: HandleIdCache,
 }
 
-const INSERT_CONVERSATION: &str = r#"
+const INSERT_CONVERSATION: &str = r"
 INSERT INTO staging_conversations (
     account_id, chat_handle_id, conversation_type, group_title, exported_at, source_file
 ) VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id
-"#;
+";
 
-const INSERT_PARTICIPANT: &str = r#"
+const INSERT_PARTICIPANT: &str = r"
 INSERT INTO staging_participants (conversation_id, handle_id, contact_id, name_alias)
 VALUES ($1, $2, $3, $4)
-"#;
+";
 
-const INSERT_MESSAGE_PREFIX: &str = r#"
+const INSERT_MESSAGE_PREFIX: &str = r"
 INSERT INTO staging_messages (
     conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
     sender_handle_id, service, subject, body, is_announcement, is_reply,
     thread_originator_guid, thread_originator_part, num_replies, sort_order, import_id
 ) VALUES
-"#;
+";
 
 /// Bind counts must stay in lockstep with the `INSERT` column lists above.
 const MESSAGE_BIND_COLUMNS: usize = 18;
 const ATTACHMENT_BIND_COLUMNS: usize = 10;
 const TAPBACK_BIND_COLUMNS: usize = 6;
 
-const INSERT_MESSAGE_SUFFIX: &str = r#"
+const INSERT_MESSAGE_SUFFIX: &str = r"
 ON CONFLICT DO NOTHING
 RETURNING id, sort_order
-"#;
+";
 
-const INSERT_ATTACHMENT_PREFIX: &str = r#"
+const INSERT_ATTACHMENT_PREFIX: &str = r"
 INSERT INTO staging_attachments (
     message_id, path, original_name, mime_type, is_sticker, transcription,
     sha256, assets_path, size_bytes, missing_reason
 ) VALUES
-"#;
+";
 
-const INSERT_TAPBACK_PREFIX: &str = r#"
+const INSERT_TAPBACK_PREFIX: &str = r"
 INSERT INTO staging_tapbacks (
     message_id, part_index, kind, emoji, is_from_me, sender_handle_id
 ) VALUES
-"#;
+";
 
 impl StagingInserts {
     /// Fresh insert state for one import run.

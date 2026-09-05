@@ -15,7 +15,7 @@ use std::path::Path;
 // Only the `#[cfg(test)]` fixture builders below own paths.
 #[cfg(test)]
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 use anyhow::{Context, Result, anyhow};
 use hmac::{Hmac, KeyInit, Mac};
@@ -37,22 +37,13 @@ const REL_IMAGE: &str = "attachments/placeholder.jpg";
 const REL_VIDEO: &str = "attachments/placeholder.mp4";
 const REL_OTHER: &str = "attachments/placeholder.bin";
 
-fn email_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}").expect("email re")
-    })
-}
-
-fn url_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r#"(?i)\b(?:https?://|www\.)[^\s<>"'\)\]]+"#).expect("url re"))
-}
-
-fn phone_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\+?\d[\d\-\s().]{4,}\d").expect("phone re"))
-}
+static EMAIL_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}").expect("email re")
+});
+static URL_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?i)\b(?:https?://|www\.)[^\s<>"'\)\]]+"#).expect("url re"));
+static PHONE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\+?\d[\d\-\s().]{4,}\d").expect("phone re"));
 
 /// ITU-T E.164 country calling codes, longest-first for greedy prefix match.
 const COUNTRY_CALLING_CODES: &[&str] = &[
@@ -441,16 +432,16 @@ fn find_structured_spans(raw: &str) -> Vec<(usize, usize, StructuredKind)> {
     let mut covered = vec![false; raw.len()];
     let mut spans = Vec::new();
 
-    push_trimmed_spans(url_re(), StructuredKind::Url, raw, &mut covered, &mut spans);
+    push_trimmed_spans(&URL_RE, StructuredKind::Url, raw, &mut covered, &mut spans);
     push_trimmed_spans(
-        email_re(),
+        &EMAIL_RE,
         StructuredKind::Email,
         raw,
         &mut covered,
         &mut spans,
     );
 
-    for m in phone_re().find_iter(raw) {
+    for m in PHONE_RE.find_iter(raw) {
         let p = m.as_str();
         let digit_count = p.chars().filter(|c| c.is_ascii_digit()).count();
         if digit_count < 5 {
@@ -593,27 +584,23 @@ pub fn resolve_obfuscator_with_log(
     seed_hex: Option<&str>,
     log: Option<&dyn Fn(&str)>,
 ) -> Result<Obfuscator> {
-    let key = match seed_hex {
-        Some(s) => {
-            let s = s.trim();
-            check_seed_hex(s).map_err(|e| anyhow!(e))?;
-            let bytes = hex::decode(s).context("invalid obfuscate seed (expected hex)")?;
-            key_from_seed_bytes(&bytes)
-        }
-        None => {
-            let mut seed = [0u8; OBFUSCATE_SEED_BYTES];
-            rand::rng().fill_bytes(&mut seed);
-            let hex_key = hex::encode(seed);
-            let msg =
-                format!("obfuscate-seed: {hex_key}  (save to reproduce; not written to output)");
-            match log {
-                Some(emit) => emit(&msg),
-                None => {
-                    let _ = writeln!(std::io::stderr(), "{msg}");
-                }
+    let key = if let Some(s) = seed_hex {
+        let s = s.trim();
+        check_seed_hex(s).map_err(|e| anyhow!(e))?;
+        let bytes = hex::decode(s).context("invalid obfuscate seed (expected hex)")?;
+        key_from_seed_bytes(&bytes)
+    } else {
+        let mut seed = [0u8; OBFUSCATE_SEED_BYTES];
+        rand::rng().fill_bytes(&mut seed);
+        let hex_key = hex::encode(seed);
+        let msg = format!("obfuscate-seed: {hex_key}  (save to reproduce; not written to output)");
+        match log {
+            Some(emit) => emit(&msg),
+            None => {
+                let _ = writeln!(std::io::stderr(), "{msg}");
             }
-            key_from_seed_bytes(&seed)
         }
+        key_from_seed_bytes(&seed)
     };
     Ok(Obfuscator::new(key))
 }
@@ -687,7 +674,7 @@ fn obfuscate_export_csv_file(input: &Path, output: &Path, anon: &mut Obfuscator)
     let mut rows: Vec<csv::StringRecord> = Vec::new();
     for result in rdr.records() {
         let record = result?;
-        rows.push(obfuscate_export_record(&headers, &record, anon)?);
+        rows.push(obfuscate_export_record(&headers, &record, anon));
     }
 
     let tmp = output.with_extension("csv.tmp");
@@ -709,7 +696,7 @@ fn obfuscate_export_record(
     headers: &csv::StringRecord,
     record: &csv::StringRecord,
     anon: &mut Obfuscator,
-) -> Result<csv::StringRecord> {
+) -> csv::StringRecord {
     let mut out = csv::StringRecord::new();
     let mut sender_handle_original = String::new();
     for (i, header) in headers.iter().enumerate() {
@@ -758,7 +745,7 @@ fn obfuscate_export_record(
         };
         out.push_field(&new_val);
     }
-    Ok(out)
+    out
 }
 
 #[cfg(test)]

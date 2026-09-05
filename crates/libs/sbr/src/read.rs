@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::BufRead;
 use std::path::Path;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, LazyLock};
 
 const INSERT_ADDRESS_TOKEN: &str = "insert-address-token";
 const MMS_ADDR_FROM: &str = "137";
@@ -262,8 +262,10 @@ fn content_keys(part: &MmsPart) -> BTreeSet<String> {
     keys
 }
 
-static TEXT_SRC: OnceLock<Regex> = OnceLock::new();
-static IMG_SRC: OnceLock<Regex> = OnceLock::new();
+static TEXT_SRC: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?i)<text[^>]+src=["']([^"']+)["']"#).expect("valid regex"));
+static IMG_SRC: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?i)<img[^>]+src=["']([^"']+)["']"#).expect("valid regex"));
 
 /// The text and media part names a SMIL part refers to, in order.
 fn smil_refs(parts: &[MmsPart], decoded: &[DecodedPartData]) -> (Vec<String>, Vec<String>) {
@@ -284,16 +286,12 @@ fn smil_refs(parts: &[MmsPart], decoded: &[DecodedPartData]) -> (Vec<String>, Ve
             }
         })
         .unwrap_or_default();
-    let text = TEXT_SRC
-        .get_or_init(|| Regex::new(r#"(?i)<text[^>]+src=["']([^"']+)["']"#).expect("valid regex"));
-    let image = IMG_SRC
-        .get_or_init(|| Regex::new(r#"(?i)<img[^>]+src=["']([^"']+)["']"#).expect("valid regex"));
     let captures = |re: &Regex| {
         re.captures_iter(&smil)
             .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
             .collect()
     };
-    (captures(text), captures(image))
+    (captures(&TEXT_SRC), captures(&IMG_SRC))
 }
 
 /// The file name trimmed, unless blank or a literal `null`/`none`.
@@ -862,7 +860,7 @@ pub fn infer_owner_phones(path: &Path) -> Result<Vec<String>> {
     let (mut buf, mut in_sent, mut counts) = (Vec::new(), false, HashMap::<String, u64>::new());
     loop {
         match xml.read_event_into(&mut buf) {
-            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+            Ok(Event::Start(e) | Event::Empty(e)) => {
                 match e.name().as_ref().to_ascii_lowercase().as_slice() {
                     b"mms" => in_sent = get(&attrs(&e), "msg_box").trim() == MMS_BOX_SENT,
                     b"addr" if in_sent => {

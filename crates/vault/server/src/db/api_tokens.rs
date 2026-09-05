@@ -210,11 +210,11 @@ pub async fn create_api_token(
     let expires_at = api_token_expiry(expires_in_days, &created_at);
     let label_owned = label.to_string();
     sqlx::query(
-        r#"
+        r"
         INSERT INTO account_api_tokens
             (id, account_id, label, token_hash, can_import, can_export, can_delete, token_hint, created_at, expires_at, disabled)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0)
-        "#,
+        ",
     )
     .bind(id.as_str())
     .bind(account_id)

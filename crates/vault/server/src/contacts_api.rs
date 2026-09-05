@@ -368,8 +368,7 @@ async fn contact_name_and_modified(
                 last_modified
          FROM contacts ct
          WHERE ct.id = $1 AND ct.account_id = $2
-           AND {not_trashed}",
-        not_trashed = NOT_TRASHED_CONTACT,
+           AND {NOT_TRASHED_CONTACT}",
     ))
     .bind(contact_id)
     .bind(account_id)
@@ -441,12 +440,11 @@ async fn contact_handle_stats(
                       SELECT 1 FROM participants p
                       WHERE p.conversation_id = c.id AND p.handle_id = ch.handle_id
                     ))
-               AND {not_trashed_conversation}
+               AND {NOT_TRASHED_CONVERSATION}
              LEFT JOIN messages m ON m.conversation_id = c.id AND m.duplicate_of IS NULL
              WHERE ch.account_id = $1 AND ch.contact_id = $2
              GROUP BY ch.handle_id, h.raw, h.service
              ORDER BY h.raw",
-        not_trashed_conversation = NOT_TRASHED_CONVERSATION,
     ))
     .bind(account_id)
     .bind(contact_id)
@@ -537,14 +535,14 @@ pub async fn get_contact_summaries(
             FROM contacts ct
             WHERE ct.account_id = $1
               AND ct.id IN ({placeholders})
-              AND {not_trashed}
+              AND {NOT_TRASHED_CONTACT}
          ),
          involved AS (
             SELECT selected.id AS contact_id, c.id AS conversation_id, c.conversation_type
             FROM selected
             JOIN conversations c ON c.account_id = selected.account_id
               AND {involves}
-              AND {not_trashed_conversation}
+              AND {NOT_TRASHED_CONVERSATION}
          )
          SELECT
             s.id,
@@ -560,8 +558,6 @@ pub async fn get_contact_summaries(
          LEFT JOIN messages m ON m.conversation_id = i.conversation_id
            AND m.duplicate_of IS NULL
          GROUP BY s.id, s.name",
-        not_trashed = NOT_TRASHED_CONTACT,
-        not_trashed_conversation = NOT_TRASHED_CONVERSATION,
     );
 
     let mut q = sqlx::query_as::<_, ContactSelectionRow>(&sql);
@@ -762,8 +758,7 @@ pub(crate) async fn address_book_load_handler(
 ) -> Result<Json<AddressBookLoadResponse>, ApiError> {
     if body.content.len() > MAX_ADDRESS_BOOK_BYTES {
         return Err(ApiError::BadRequest(format!(
-            "address book is larger than {} bytes",
-            MAX_ADDRESS_BOOK_BYTES
+            "address book is larger than {MAX_ADDRESS_BOOK_BYTES} bytes"
         )));
     }
     if body.content.trim().is_empty() {
@@ -969,8 +964,7 @@ impl ContactEditor<'_> {
             "SELECT ct.id
              FROM contacts ct
              WHERE ct.id = $1 AND ct.account_id = $2
-               AND {not_trashed}",
-            not_trashed = NOT_TRASHED_CONTACT,
+               AND {NOT_TRASHED_CONTACT}",
         ))
         .bind(self.contact_id)
         .bind(self.account_id)
