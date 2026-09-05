@@ -364,68 +364,30 @@ pub async fn import_jsonl_files_on_conn(
         fs::create_dir_all(opts.assets_dir)
             .with_context(|| format!("failed to create {}", opts.assets_dir.display()))?;
     }
-
     if schema_mode == ImportSchemaMode::Ensure {
         schema::ensure_vault_schema(conn).await?;
     }
     crate::db::account_profile::ensure_account_row(conn, opts.account_id).await?;
 
-    if let Some(path) = opts.contacts {
-        println!("  sql:      loading contacts from {}…", path.display());
-    } else {
-        println!("  sql:      contacts load skipped (no --contacts address book)");
-    }
-    let _ = io::stdout().flush();
-    let contact_stats = contacts::load_contacts_if_needed(
-        conn,
-        opts.contacts,
-        opts.overwrite_contacts,
-        opts.account_id,
-    )
-    .await?;
-    if contact_stats.skipped {
-        println!("  sql:      contacts skipped (already loaded or no address book)");
-    } else {
-        println!(
-            "  sql:      contacts={} phones={} groups={}",
-            contact_stats.contacts, contact_stats.phones, contact_stats.groups
-        );
-    }
+    let contact_stats = load_contacts_step(conn, opts).await?;
     if schema_mode == ImportSchemaMode::Ensure {
-        println!("  sql:      ensuring schema + resetting staging for account…");
-        let _ = io::stdout().flush();
+        say("  sql:      ensuring schema + resetting staging for account…");
     } else {
-        println!("  sql:      resetting staging for account…");
-        let _ = io::stdout().flush();
+        say("  sql:      resetting staging for account…");
     }
     schema::reset_staging_for_account(conn, opts.account_id).await?;
-    let wipe_sources: Vec<String> = if opts.mode == ImportMode::Replace {
-        if opts.source_from_jsonl {
-            opts.wipe_sources.clone().unwrap_or_default()
-        } else {
-            vec![opts.source.to_string()]
-        }
-    } else {
-        Vec::new()
-    };
-    for source in &wipe_sources {
-        validate_source_id(source)?;
-    }
-    let _ = io::stdout().flush();
-
-    let total_files = paths.len();
-    println!(
+    let wipe_sources = sources_to_wipe(opts)?;
+    say(&format!(
         "  import:   {} JSONL file{}",
-        total_files,
-        if total_files == 1 { "" } else { "s" }
-    );
+        paths.len(),
+        if paths.len() == 1 { "" } else { "s" }
+    ));
     if opts.mode == ImportMode::Replace {
-        let wiped = wipe_sources.join(", ");
-        println!("  import:   will wipe source(s) '{wiped}' after staging succeeds");
+        say(&format!(
+            "  import:   will wipe source(s) '{}' after staging succeeds",
+            wipe_sources.join(", ")
+        ));
     }
-    let _ = io::stdout().flush();
-
-    let media_work = TempDir::new().context("temp dir for import-time media rewrite")?;
 
     let mut stats = ImportStats {
         contacts: contact_stats.contacts,
@@ -436,14 +398,116 @@ pub async fn import_jsonl_files_on_conn(
         mode: opts.mode.as_str().to_string(),
         ..Default::default()
     };
-    let mut asset_stats = AssetStats::default();
     let started = Instant::now();
+    let asset_stats = stage_all_files(conn, paths, opts, &mut stats, started).await?;
+
+    say(&format!(
+        "  import:   promoting staging → production ({:.0}s so far)…",
+        started.elapsed().as_secs_f64()
+    ));
+    promote_step(conn, opts, &wipe_sources, &mut stats).await?;
+    schema::reset_staging_for_account(conn, opts.account_id).await?;
+
+    stats.assets_copied = asset_stats.copied;
+    stats.assets_deduped = asset_stats.deduped;
+    stats.assets_missing = asset_stats.missing;
+    say(&format!(
+        "  import:   finished in {:.1}s  files={} msgs={} attachments={} assets_copied={}",
+        started.elapsed().as_secs_f64(),
+        stats.files,
+        stats.messages,
+        stats.attachments,
+        stats.assets_copied
+    ));
+    Ok(stats)
+}
+
+/// Print one progress line and flush, so a long import shows movement even
+/// when stdout is a pipe.
+fn say(line: &str) {
+    println!("{line}");
+    let _ = io::stdout().flush();
+}
+
+/// Load the address book named by `--contacts`, if any, and report what happened.
+///
+/// # Errors
+///
+/// Returns an error when the address book cannot be read or written.
+async fn load_contacts_step(
+    conn: &mut AnyConnection,
+    opts: &ImportOptions<'_>,
+) -> Result<contacts::ContactLoadStats> {
+    match opts.contacts {
+        Some(path) => say(&format!(
+            "  sql:      loading contacts from {}…",
+            path.display()
+        )),
+        None => say("  sql:      contacts load skipped (no --contacts address book)"),
+    }
+    let contact_stats = contacts::load_contacts_if_needed(
+        conn,
+        opts.contacts,
+        opts.overwrite_contacts,
+        opts.account_id,
+    )
+    .await?;
+    if contact_stats.skipped {
+        say("  sql:      contacts skipped (already loaded or no address book)");
+    } else {
+        say(&format!(
+            "  sql:      contacts={} phones={} groups={}",
+            contact_stats.contacts, contact_stats.phones, contact_stats.groups
+        ));
+    }
+    Ok(contact_stats)
+}
+
+/// The source ids a replace-mode import wipes once staging succeeds: the
+/// ones found in the files, or the single `--source` override. Append mode
+/// wipes nothing.
+///
+/// # Errors
+///
+/// Returns an error when a source id is invalid.
+fn sources_to_wipe(opts: &ImportOptions<'_>) -> Result<Vec<String>> {
+    let wipe_sources = match (opts.mode, opts.source_from_jsonl) {
+        (ImportMode::Replace, true) => opts.wipe_sources.clone().unwrap_or_default(),
+        (ImportMode::Replace, false) => vec![opts.source.to_string()],
+        (ImportMode::Append, _) => Vec::new(),
+    };
+    for source in &wipe_sources {
+        validate_source_id(source)?;
+    }
+    Ok(wipe_sources)
+}
+
+/// How many files to stage per transaction before committing and starting a
+/// new one, so a long import is not one giant transaction.
+const STAGING_COMMIT_EVERY: usize = 50;
+
+/// Stage every file into the staging tables, committing every
+/// [`STAGING_COMMIT_EVERY`] files, and print progress along the way.
+///
+/// # Errors
+///
+/// Returns an error when a file cannot be read, a row cannot be written, or
+/// a transaction cannot be committed.
+async fn stage_all_files(
+    conn: &mut AnyConnection,
+    paths: &[PathBuf],
+    opts: &ImportOptions<'_>,
+    stats: &mut ImportStats,
+    started: Instant,
+) -> Result<AssetStats> {
+    let total_files = paths.len();
     let progress_every = if total_files <= 20 {
         1usize
     } else {
         (total_files / 40).max(10)
     };
-    const STAGING_COMMIT_EVERY: usize = 50;
+    let media_work = TempDir::new().context("temp dir for import-time media rewrite")?;
+    let mut asset_stats = AssetStats::default();
 
     // Staging writes need the write lock up front on SQLite (IMMEDIATE) so
     // two imports for different accounts cannot race into SQLITE_BUSY at the
@@ -471,17 +535,15 @@ pub async fn import_jsonl_files_on_conn(
         let n = idx + 1;
         if n == 1 || n == total_files || n % progress_every == 0 {
             let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("?");
-            println!(
+            say(&format!(
                 "  import:   [{n}/{total_files}] {name}  msgs={} attachments={} assets_copied={} missing={}  ({:.0}s)",
                 stats.messages,
                 stats.attachments,
                 asset_stats.copied,
                 asset_stats.missing,
                 started.elapsed().as_secs_f64()
-            );
-            let _ = io::stdout().flush();
+            ));
         }
-
         if n % STAGING_COMMIT_EVERY == 0 && n < total_files {
             tx.commit().await?;
             tx = conn
@@ -491,18 +553,29 @@ pub async fn import_jsonl_files_on_conn(
     }
     drop(stmts);
     tx.commit().await?;
+    Ok(asset_stats)
+}
 
-    println!(
-        "  import:   promoting staging → production ({:.0}s so far)…",
-        started.elapsed().as_secs_f64()
-    );
-    let _ = io::stdout().flush();
+/// Move staged rows into production and fold the promote counts into `stats`.
+///
+/// In append mode the promote step is the only place the final row counts
+/// are known, so they replace the staging counts.
+///
+/// # Errors
+///
+/// Returns an error when the promote transaction fails.
+async fn promote_step(
+    conn: &mut AnyConnection,
+    opts: &ImportOptions<'_>,
+    wipe_sources: &[String],
+    stats: &mut ImportStats,
+) -> Result<()> {
     let promote_stats = promote::promote_append(
         conn,
         opts.mode,
         opts.account_id,
         opts.fill_content_keys,
-        &wipe_sources,
+        wipe_sources,
     )
     .await?;
     stats.messages_deduped += promote_stats.messages_deduped;
@@ -514,23 +587,7 @@ pub async fn import_jsonl_files_on_conn(
         stats.attachments = promote_stats.attachments;
         stats.tapbacks = promote_stats.tapbacks;
     }
-
-    schema::reset_staging_for_account(conn, opts.account_id).await?;
-
-    stats.assets_copied = asset_stats.copied;
-    stats.assets_deduped = asset_stats.deduped;
-    stats.assets_missing = asset_stats.missing;
-
-    println!(
-        "  import:   finished in {:.1}s  files={} msgs={} attachments={} assets_copied={}",
-        started.elapsed().as_secs_f64(),
-        stats.files,
-        stats.messages,
-        stats.attachments,
-        stats.assets_copied
-    );
-
-    Ok(stats)
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]

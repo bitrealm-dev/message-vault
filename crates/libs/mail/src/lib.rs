@@ -564,9 +564,49 @@ fn opt_header<'m>(
     }
 }
 
+/// Serialize one message as an RFC 5322 `.eml`: envelope addresses, the
+/// Message Vault headers every source carries, the iMessage-only headers,
+/// then the text body and one MIME part per attachment.
 fn build_eml(msg: &MailMessage) -> Result<Vec<u8>> {
-    let is_group = msg.conversation_type.eq_ignore_ascii_case("group");
-    let (from, to) = if is_group {
+    let (from, to) = envelope_addresses(msg);
+    let date_secs = msg.message.timestamp_unix_ms.div_euclid(1000);
+    let message_id = format!("{}@{}", msg.message.guid, message_id_domain(msg));
+    let mut builder = MessageBuilder::new()
+        .from(from)
+        .to(to)
+        .subject(mail_subject(msg))
+        .date(Date::new(date_secs))
+        .message_id(message_id);
+    builder = conversation_headers(builder, msg);
+    builder = imessage_headers(builder, msg);
+    builder = attachment_meta_header(builder, msg);
+    builder = builder.text_body(msg.message.text.clone());
+    for (i, att) in msg.attachments.iter().enumerate() {
+        let mime = att
+            .meta
+            .mime_type
+            .as_deref()
+            .filter(|m| !m.is_empty())
+            .unwrap_or("application/octet-stream");
+        let filename = att
+            .meta
+            .original_name
+            .clone()
+            .unwrap_or_else(|| format!("attachment-{i}"));
+        builder = builder.attachment(mime, filename, att.bytes.clone());
+    }
+    builder
+        .write_to_vec()
+        .context("serialize message with mail-builder")
+}
+
+/// Who the mail is from and to.
+///
+/// A group chat is addressed as the chat itself, with the sender (or the
+/// owner) on the other side. A 1:1 chat is addressed peer-to-owner or
+/// owner-to-peer by direction.
+fn envelope_addresses(msg: &MailMessage) -> (Address<'static>, Address<'static>) {
+    if msg.conversation_type.eq_ignore_ascii_case("group") {
         let from = match msg.message.direction {
             IrDirection::Incoming => {
                 let sender = msg
@@ -580,38 +620,44 @@ fn build_eml(msg: &MailMessage) -> Result<Vec<u8>> {
             }
             IrDirection::Outgoing => owner_address(msg),
         };
-        (from, conversation_address(msg))
-    } else {
-        let peer = peer_handle(msg)
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| {
-                let id = msg.chat_identifier.trim();
-                if id.is_empty() { "unknown" } else { id }
-            });
-        let peer_name = peer_display_name(msg, peer);
-        match msg.message.direction {
-            IrDirection::Incoming => (
-                synthetic_address(
-                    peer,
-                    peer_name.or(msg.message.sender_display_name.as_deref()),
-                ),
-                owner_address(msg),
+        return (from, conversation_address(msg));
+    }
+    let peer = peer_handle(msg)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            let id = msg.chat_identifier.trim();
+            if id.is_empty() { "unknown" } else { id }
+        });
+    let peer_name = peer_display_name(msg, peer);
+    match msg.message.direction {
+        IrDirection::Incoming => (
+            synthetic_address(
+                peer,
+                peer_name.or(msg.message.sender_display_name.as_deref()),
             ),
-            IrDirection::Outgoing => (owner_address(msg), synthetic_address(peer, peer_name)),
-        }
-    };
+            owner_address(msg),
+        ),
+        IrDirection::Outgoing => (owner_address(msg), synthetic_address(peer, peer_name)),
+    }
+}
 
-    let subject = mail_subject(msg);
-    let date_secs = msg.message.timestamp_unix_ms.div_euclid(1000);
-    let message_id = format!("{}@{}", msg.message.guid, message_id_domain(msg));
+/// Append every `Some` value as a header, in the order given.
+fn optional_headers<'m>(
+    mut builder: MessageBuilder<'m>,
+    values: impl IntoIterator<Item = (&'static str, Option<String>)>,
+) -> MessageBuilder<'m> {
+    for (name, value) in values {
+        builder = opt_header(builder, name, value.as_deref());
+    }
+    builder
+}
 
-    let mut builder = MessageBuilder::new()
-        .from(from)
-        .to(to)
-        .subject(subject)
-        .date(Date::new(date_secs))
-        .message_id(message_id)
+/// The headers that identify the conversation, the export, and the people in
+/// it. The first block is always present; the rest appear when the source
+/// recorded them.
+fn conversation_headers<'m>(builder: MessageBuilder<'m>, msg: &MailMessage) -> MessageBuilder<'m> {
+    let mut builder = builder
         .header(
             headers::CHAT_IDENTIFIER,
             Text::new(msg.chat_identifier.clone()),
@@ -643,206 +689,115 @@ fn build_eml(msg: &MailMessage) -> Result<Vec<u8>> {
             headers::EXPORT_TOOL_VERSION,
             Text::new(msg.export_tool_version.clone()),
         );
-
     builder = opt_header(builder, headers::GROUP_TITLE, msg.group_title.as_deref());
-
     if msg.conversation_type.eq_ignore_ascii_case("group") || !msg.participants.is_empty() {
         let participants_json =
             serde_json::to_string(&msg.participants).unwrap_or_else(|_| "[]".into());
         builder = builder.header(headers::PARTICIPANTS, Text::new(participants_json));
     }
-
-    builder = opt_header(
-        builder,
-        headers::SENDER_HANDLE,
-        msg.message.sender_handle.as_deref(),
-    );
-    builder = opt_header(
-        builder,
-        headers::SENDER_DISPLAY_NAME,
-        msg.message.sender_display_name.as_deref(),
-    );
-    builder = opt_header(
-        builder,
-        headers::OWNER_HANDLE,
-        Some(msg.owner_handle.trim()),
-    );
-    builder = opt_header(
-        builder,
-        headers::OWNER_DISPLAY_NAME,
-        msg.owner_display_name.as_deref(),
-    );
-    builder = opt_header(builder, headers::SUBJECT, msg.message.subject.as_deref());
-
     let source = msg.message.source.as_ref();
-    builder = opt_header(
+    optional_headers(
         builder,
-        headers::ANDROID_TYPE,
-        source
-            .and_then(|src| src.android_type)
-            .map(|t| t.to_string())
-            .as_deref(),
-    );
-    builder = opt_header(
-        builder,
-        headers::SOURCE_FIELDS,
-        source
-            .filter(|src| !src.fields.is_empty())
-            .map(|src| serde_json::to_string(&src.fields).unwrap_or_default())
-            .as_deref(),
-    );
+        [
+            (headers::SENDER_HANDLE, msg.message.sender_handle.clone()),
+            (
+                headers::SENDER_DISPLAY_NAME,
+                msg.message.sender_display_name.clone(),
+            ),
+            (
+                headers::OWNER_HANDLE,
+                Some(msg.owner_handle.trim().to_string()),
+            ),
+            (headers::OWNER_DISPLAY_NAME, msg.owner_display_name.clone()),
+            (headers::SUBJECT, msg.message.subject.clone()),
+            (
+                headers::ANDROID_TYPE,
+                source
+                    .and_then(|src| src.android_type)
+                    .map(|t| t.to_string()),
+            ),
+            (
+                headers::SOURCE_FIELDS,
+                source
+                    .filter(|src| !src.fields.is_empty())
+                    .map(|src| serde_json::to_string(&src.fields).unwrap_or_default()),
+            ),
+        ],
+    )
+}
 
-    let im = msg.im();
-    builder = opt_header(
-        builder,
-        headers::IS_REPLY,
-        im.is_some_and(|i| i.is_reply).then_some("true"),
-    );
-    if let Some(guid) = im
-        .and_then(|i| i.in_reply_to_guid.as_deref())
-        .filter(|s| !s.is_empty())
-    {
+/// The headers only iMessage rows carry: reply threading, effects, edits,
+/// tapbacks, and app balloons. Rows from other services add nothing here.
+fn imessage_headers<'m>(builder: MessageBuilder<'m>, msg: &MailMessage) -> MessageBuilder<'m> {
+    let Some(im) = msg.im() else {
+        return builder;
+    };
+    let mut builder = opt_header(builder, headers::IS_REPLY, im.is_reply.then_some("true"));
+    if let Some(guid) = im.in_reply_to_guid.as_deref().filter(|s| !s.is_empty()) {
         let mid = format!("{guid}@{}", message_id_domain(msg));
         builder = builder
             .in_reply_to(mid.clone())
             .references(mid)
             .header(headers::THREAD_ORIGINATOR_GUID, Text::new(guid.to_string()));
     }
-    builder = opt_header(
+    optional_headers(
         builder,
-        headers::THREAD_ORIGINATOR_PART,
-        im.and_then(|i| i.thread_originator_part)
-            .map(|p| p.to_string())
-            .as_deref(),
-    );
-    builder = opt_header(
-        builder,
-        headers::NUM_REPLIES,
-        im.and_then(|i| i.num_replies)
-            .map(|n| n.to_string())
-            .as_deref(),
-    );
-    builder = opt_header(
-        builder,
-        headers::IS_DELETED,
-        im.is_some_and(|i| i.is_deleted).then_some("true"),
-    );
-    builder = opt_header(
-        builder,
-        headers::SEND_EFFECT,
-        im.and_then(|i| i.send_effect.as_deref()),
-    );
-    builder = opt_header(
-        builder,
-        headers::SHARED_LOCATION,
-        im.and_then(|i| i.shared_location.as_deref()),
-    );
-    builder = opt_header(
-        builder,
-        headers::ANNOUNCEMENT,
-        im.and_then(|i| i.announcement.as_deref()),
-    );
-    builder = opt_header(
-        builder,
-        headers::READ_RECEIPT,
-        im.and_then(|i| i.read_receipt_rfc3339.as_deref()),
-    );
-    builder = opt_header(
-        builder,
-        headers::PARTS,
-        value_as_string(im.and_then(|i| i.parts.as_ref())).as_deref(),
-    );
-    builder = opt_header(
-        builder,
-        headers::EDITS,
-        value_as_string(im.and_then(|i| i.edits.as_ref())).as_deref(),
-    );
-    builder = opt_header(
-        builder,
-        headers::APP,
-        value_as_string(im.and_then(|i| i.app.as_ref())).as_deref(),
-    );
-    builder = opt_header(
-        builder,
-        headers::BALLOON_BUNDLE_ID,
-        im.and_then(|i| i.balloon_bundle_id.as_deref()),
-    );
-    builder = opt_header(
-        builder,
-        headers::BALLOON_KIND,
-        im.and_then(|i| i.balloon_kind.as_deref()),
-    );
-    builder = opt_header(
-        builder,
-        headers::TAPBACKS,
-        value_as_string(im.and_then(|i| i.tapbacks.as_ref())).as_deref(),
-    );
-    builder = opt_header(
-        builder,
-        headers::ASSOCIATED_GUID,
-        im.and_then(|i| i.associated_guid.as_deref()),
-    );
-    builder = opt_header(
-        builder,
-        headers::ASSOCIATED_PART,
-        im.and_then(|i| i.associated_part)
-            .map(|p| p.to_string())
-            .as_deref(),
-    );
-    builder = opt_header(
-        builder,
-        headers::TAPBACK_KIND,
-        im.and_then(|i| i.tapback_kind.as_deref()),
-    );
-    builder = opt_header(
-        builder,
-        headers::TAPBACK_EMOJI,
-        im.and_then(|i| i.tapback_emoji.as_deref()),
-    );
-    builder = opt_header(
-        builder,
-        headers::TAPBACK_ACTION,
-        im.and_then(|i| i.tapback_action.as_deref()),
-    );
+        [
+            (
+                headers::THREAD_ORIGINATOR_PART,
+                im.thread_originator_part.map(|p| p.to_string()),
+            ),
+            (headers::NUM_REPLIES, im.num_replies.map(|n| n.to_string())),
+            (
+                headers::IS_DELETED,
+                im.is_deleted.then(|| "true".to_string()),
+            ),
+            (headers::SEND_EFFECT, im.send_effect.clone()),
+            (headers::SHARED_LOCATION, im.shared_location.clone()),
+            (headers::ANNOUNCEMENT, im.announcement.clone()),
+            (headers::READ_RECEIPT, im.read_receipt_rfc3339.clone()),
+            (headers::PARTS, value_as_string(im.parts.as_ref())),
+            (headers::EDITS, value_as_string(im.edits.as_ref())),
+            (headers::APP, value_as_string(im.app.as_ref())),
+            (headers::BALLOON_BUNDLE_ID, im.balloon_bundle_id.clone()),
+            (headers::BALLOON_KIND, im.balloon_kind.clone()),
+            (headers::TAPBACKS, value_as_string(im.tapbacks.as_ref())),
+            (headers::ASSOCIATED_GUID, im.associated_guid.clone()),
+            (
+                headers::ASSOCIATED_PART,
+                im.associated_part.map(|p| p.to_string()),
+            ),
+            (headers::TAPBACK_KIND, im.tapback_kind.clone()),
+            (headers::TAPBACK_EMOJI, im.tapback_emoji.clone()),
+            (headers::TAPBACK_ACTION, im.tapback_action.clone()),
+        ],
+    )
+}
 
-    if !msg.attachments.is_empty() {
-        let meta: Vec<AttachmentMetaCell<'_>> = msg
-            .attachments
-            .iter()
-            .map(|a| AttachmentMetaCell {
-                path: None,
-                original_name: a.meta.original_name.as_deref(),
-                mime_type: a.meta.mime_type.as_deref(),
-                is_sticker: a.is_sticker,
-                transcription: a.transcription.as_deref(),
-                sticker_effect: a.sticker_effect.as_deref(),
-                digest_sha256: a.meta.digest_sha256.as_deref(),
-            })
-            .collect();
-        let meta_json = serde_json::to_string(&meta).unwrap_or_else(|_| "[]".into());
-        builder = builder.header(headers::ATTACHMENT_META, Text::new(meta_json));
+/// One JSON header listing every attachment's metadata, so a reader can see
+/// what was attached without decoding the MIME parts.
+fn attachment_meta_header<'m>(
+    builder: MessageBuilder<'m>,
+    msg: &MailMessage,
+) -> MessageBuilder<'m> {
+    if msg.attachments.is_empty() {
+        return builder;
     }
-
-    builder = builder.text_body(msg.message.text.clone());
-
-    for (i, att) in msg.attachments.iter().enumerate() {
-        let mime = att
-            .meta
-            .mime_type
-            .as_deref()
-            .filter(|m| !m.is_empty())
-            .unwrap_or("application/octet-stream");
-        let filename = att
-            .meta
-            .original_name
-            .clone()
-            .unwrap_or_else(|| format!("attachment-{i}"));
-        builder = builder.attachment(mime, filename, att.bytes.clone());
-    }
-
-    builder
-        .write_to_vec()
-        .context("serialize message with mail-builder")
+    let meta: Vec<AttachmentMetaCell<'_>> = msg
+        .attachments
+        .iter()
+        .map(|a| AttachmentMetaCell {
+            path: None,
+            original_name: a.meta.original_name.as_deref(),
+            mime_type: a.meta.mime_type.as_deref(),
+            is_sticker: a.is_sticker,
+            transcription: a.transcription.as_deref(),
+            sticker_effect: a.sticker_effect.as_deref(),
+            digest_sha256: a.meta.digest_sha256.as_deref(),
+        })
+        .collect();
+    let meta_json = serde_json::to_string(&meta).unwrap_or_else(|_| "[]".into());
+    builder.header(headers::ATTACHMENT_META, Text::new(meta_json))
 }
 
 /// Stable conversation label for mail `Subject` (never message-body preview).
