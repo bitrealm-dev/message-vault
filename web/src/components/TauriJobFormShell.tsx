@@ -4,7 +4,10 @@ import Button from "./Button";
 import ProgressBar from "./ProgressBar";
 
 export type TauriJobFormShellProps = {
-  title: string;
+  /** Screen heading. Omit when the caller already sits under a heading (Settings tabs). */
+  title?: string;
+  /** Wrapper classes. Standalone screens keep the default; an embedded tool passes its own. */
+  className?: string;
   children: ReactNode;
   startLabel: string;
   runningLabel?: string;
@@ -21,6 +24,7 @@ export type TauriJobFormShellProps = {
 
 export default function TauriJobFormShell({
   title,
+  className = "max-w-[700px] p-6",
   children,
   startLabel,
   runningLabel,
@@ -41,8 +45,8 @@ export default function TauriJobFormShell({
   const disabled = running || startDisabled;
 
   return (
-    <div className="max-w-[700px] p-6">
-      <h2 className="m-0 mb-6">{title}</h2>
+    <div className={className}>
+      {title ? <h2 className="m-0 mb-6">{title}</h2> : null}
       {intro}
       {children}
 
