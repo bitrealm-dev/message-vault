@@ -203,6 +203,7 @@ Work from the repository root. The vault process must be running before the webs
 ./scripts/run-vault-dev.sh --reset-demo    # wipe data/, seed the sample inbox (needs ffmpeg)
 ./scripts/run-vault-dev.sh --reset         # wipe data/, start empty
 ./scripts/run-vault-dev.sh --sqlweb        # also SQLite browser at http://127.0.0.1:8081
+./scripts/run-vault-dev.sh --release       # optimized build; combines with any flag above
 ```
 
 `--reset` and `--reset-demo` cannot be combined. `--reset-demo` also rewrites `config/config.toml` from the example (CORS for Vite `:5173` enabled). Later sessions omit `--reset-demo` so the existing database stays.
