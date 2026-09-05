@@ -19,7 +19,6 @@ use futures_util::StreamExt;
 use serde::Serialize;
 use sqlx::AnyConnection;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::Mutex;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::services::ServeDir;
@@ -32,6 +31,7 @@ use crate::db::engine::{self, DbEngine};
 use crate::db::permissions::Permissions;
 use crate::db::schema;
 use crate::db::session_tokens;
+use crate::keyed_locks::KeyedLocks;
 
 /// What a Bearer credential is allowed to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -267,10 +267,10 @@ pub struct AppState {
     /// rows (the temporary import area) for that tenant are not wiped mid-run.
     /// Different accounts may overlap at the lock layer; SQLite write-ahead
     /// logging plus `busy_timeout` serialize writers.
-    pub(crate) account_import_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    pub(crate) account_import_locks: KeyedLocks,
     /// Serialize multipart complete per (account, sha256) so two clients cannot
     /// race `store_verified` on the same SHA-256 fingerprint.
-    pub(crate) asset_complete_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    pub(crate) asset_complete_locks: KeyedLocks,
     /// Sliding-window hit counts for the unauthenticated auth endpoints. Held
     /// here, not in a static, so tests in one binary cannot rate-limit each
     /// other; a served vault has a single state, so the limit still spans it.
@@ -601,8 +601,8 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         cfg: Arc::new(cfg),
         db: pool,
         db_engine: engine,
-        account_import_locks: Arc::new(Mutex::new(HashMap::new())),
-        asset_complete_locks: Arc::new(Mutex::new(HashMap::new())),
+        account_import_locks: KeyedLocks::default(),
+        asset_complete_locks: KeyedLocks::default(),
         auth_rate_limits: Arc::new(std::sync::Mutex::new(HashMap::new())),
         upload_limits,
         max_body_bytes,
@@ -928,8 +928,8 @@ pub(crate) async fn test_app_state(pool: sqlx::AnyPool, data_dir: &Path) -> AppS
         }),
         db: pool,
         db_engine: DbEngine::Sqlite,
-        account_import_locks: Arc::new(Mutex::new(HashMap::new())),
-        asset_complete_locks: Arc::new(Mutex::new(HashMap::new())),
+        account_import_locks: KeyedLocks::default(),
+        asset_complete_locks: KeyedLocks::default(),
         auth_rate_limits: Arc::new(std::sync::Mutex::new(HashMap::new())),
         upload_limits: asset_uploads::UploadLimits::default(),
         max_body_bytes: asset_uploads::DEFAULT_MAX_BYTES as usize,

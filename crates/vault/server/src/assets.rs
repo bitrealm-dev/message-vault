@@ -13,7 +13,6 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::sync::Mutex;
 
 use crate::extract::{Json, Path as AxumPath, Query};
 use axum::extract::{Request, State};
@@ -1079,14 +1078,10 @@ pub(crate) async fn asset_upload_complete_handler(
         return Ok(AssetPutResponse::stored(stored, true));
     }
 
-    let lock_key = format!("{account}:{sha256}");
-    let complete_lock = {
-        let mut map = state.asset_complete_locks.lock().await;
-        map.entry(lock_key)
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone()
-    };
-    let _guard = complete_lock.lock().await;
+    let _guard = state
+        .asset_complete_locks
+        .lock(format!("{account}:{sha256}"))
+        .await;
 
     let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
     let sha = sha256.clone();
