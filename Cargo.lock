@@ -504,7 +504,6 @@ name = "contacts"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clap",
  "csv",
  "message-ir",
  "phone",
@@ -1070,7 +1069,6 @@ dependencies = [
  "go-sms-mms",
  "hex",
  "media",
- "message-csv",
  "message-ir",
  "message-ir-format",
  "message-vault-io-core",
@@ -1814,7 +1812,6 @@ dependencies = [
  "csv",
  "message-ir",
  "serde",
- "serde_json",
  "tempfile",
 ]
 
@@ -1831,11 +1828,9 @@ dependencies = [
  "anyhow",
  "chrono",
  "csv",
- "hex",
  "message-ir",
  "serde",
  "serde_json",
- "sha2 0.11.0",
 ]
 
 [[package]]
@@ -1876,7 +1871,6 @@ name = "message-reexport"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clap",
  "csv",
  "media",
  "message-ir",
@@ -2055,7 +2049,6 @@ name = "obfuscate"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clap",
  "csv",
  "hex",
  "hmac 0.13.0",
@@ -2782,6 +2775,7 @@ dependencies = [
  "base64 0.23.1",
  "hex",
  "html-escape",
+ "message-ir",
  "phone",
  "quick-xml 0.42.0",
  "regex",
@@ -3004,7 +2998,6 @@ dependencies = [
  "hex",
  "mailparse",
  "media",
- "message-csv",
  "message-ir",
  "message-ir-format",
  "message-vault-io-core",
@@ -3021,9 +3014,7 @@ name = "sms-backup-restore-exporter"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "contacts",
  "media",
- "message-csv",
  "message-ir",
  "message-ir-format",
  "message-vault-io-core",
@@ -3879,7 +3870,6 @@ dependencies = [
  "anyhow",
  "chrono",
  "hex",
- "httpmock",
  "journal",
  "media",
  "message-ir",

@@ -10,7 +10,6 @@ anyhow = { workspace = true }
 csv = { workspace = true }
 message-ir = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

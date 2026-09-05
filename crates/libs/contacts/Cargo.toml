@@ -7,7 +7,6 @@ description = "VCF / contacts CSV name↔phone resolution for message-vault-io"
 
 [dependencies]
 anyhow = { workspace = true }
-clap = { workspace = true }
 csv = { workspace = true }
 message-ir = { path = "../ir" }
 phone = { path = "../phone" }
