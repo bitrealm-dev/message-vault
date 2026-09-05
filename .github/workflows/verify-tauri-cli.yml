@@ -1,0 +1,42 @@
+name: Verify tauri-cli install (temporary)
+
+# Throwaway: times the binstall steps from ci.yml's release matrix on all
+# three runners without cutting a tag. Delete after reading the numbers.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: tauri-cli (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux
+          - os: windows-latest
+            label: windows
+          - os: macos-latest
+            label: macos
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@v1.23.0
+
+      - name: Install Tauri CLI
+        shell: bash
+        run: >-
+          cargo binstall tauri-cli --version "^2" --no-confirm
+          --strategies crate-meta-data
+          ${{ matrix.os == 'macos-latest' && '--pkg-fmt zip' || '' }}
+
+      - name: Report
+        shell: bash
+        run: |
+          cargo tauri --version
+          uname -m || true
