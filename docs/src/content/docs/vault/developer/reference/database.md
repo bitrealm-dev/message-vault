@@ -160,7 +160,7 @@ deleting underlying rows.
 Baseline table definitions live in
 [`schema/sql/`](https://github.com/bitrealm-io/message-vault/blob/main/schema/sql/).
 Rust loads them from [`src/db/schema.rs`](https://github.com/bitrealm-io/message-vault/blob/main/crates/vault/server/src/db/schema.rs).
-After editing the SQL files, run `node scripts/sync-vault-schema.mjs` so the web
-app’s generated copy stays in sync.
+Every column carries a `--` comment on the line above it; a server test fails
+when one is missing.
 
 Related: [Import from a backup](/vault/user/import-from-a-backup/) (desktop) and [Extract to files](/vault/user/how-to/extract-to-files/) (JSONL on disk).
