@@ -3,6 +3,7 @@ import { apiErrorMessage } from "../../lib/apiErrorMessage";
 import { formatMonthYear } from "../../lib/formatDate";
 import { useTrashConversation } from "../../lib/trash";
 import type { Conversation } from "../../lib/types";
+import ContactGroupFromConversation from "./ContactGroupFromConversation";
 import YearChipBar from "./YearChipBar";
 
 export default function ConversationHeader({
@@ -130,6 +131,7 @@ export default function ConversationHeader({
         >
           {trashConversation.isPending ? "Moving to trash…" : "Move to trash"}
         </button>
+        <ContactGroupFromConversation conversation={conversation} />
       </div>
 
       {trashConversation.error && (
