@@ -10,8 +10,10 @@ import { ThemeProvider } from "./lib/ThemeProvider";
 import { TimeZoneProvider } from "./lib/TimeZoneProvider";
 import { isTauri } from "./lib/tauri-check";
 import { useAccountProfile } from "./lib/useAccountProfile";
+import { useMustChangePassword } from "./lib/useMustChangePassword";
 import LoginScreen from "./screens/LoginScreen";
 import OnboardingScreen from "./screens/OnboardingScreen";
+import SetPasswordScreen from "./screens/SetPasswordScreen";
 
 /**
  * Import and export only ever run in the desktop app, so their code — the
@@ -44,10 +46,17 @@ function ImportExportRoute({ children }: { children: ReactNode }) {
 
 function AppRoutes() {
   const { isAuthenticated, needsOnboarding } = useAuth();
+  const { mustChange: mustChangePassword } = useMustChangePassword();
   useMouseHistoryNavigation();
 
-  // Where a signed-in visitor to the login screen should go next.
-  const signedInDestination = <Navigate to={needsOnboarding ? "/onboarding" : "/"} replace />;
+  // Where a signed-in visitor to the login screen should go next. Same order
+  // of urgency the AuthGuard uses: the password before the profile.
+  const signedInDestination = (
+    <Navigate
+      to={mustChangePassword ? "/set-password" : needsOnboarding ? "/onboarding" : "/"}
+      replace
+    />
+  );
 
   return (
     <Routes>
@@ -56,9 +65,25 @@ function AppRoutes() {
       {/* Registration is now the second tab of the login card, not its own screen. */}
       <Route path="/register" element={<Navigate to="/login" replace />} />
       <Route
+        path="/set-password"
+        element={
+          isAuthenticated && mustChangePassword ? (
+            <SetPasswordScreen />
+          ) : (
+            <Navigate to="/" replace />
+          )
+        }
+      />
+      <Route
         path="/onboarding"
         element={
-          isAuthenticated && needsOnboarding ? <OnboardingScreen /> : <Navigate to="/" replace />
+          isAuthenticated && mustChangePassword ? (
+            <Navigate to="/set-password" replace />
+          ) : isAuthenticated && needsOnboarding ? (
+            <OnboardingScreen />
+          ) : (
+            <Navigate to="/" replace />
+          )
         }
       />
 

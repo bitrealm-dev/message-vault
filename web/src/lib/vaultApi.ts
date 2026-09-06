@@ -85,6 +85,26 @@ export function deleteAccount(body: Schema["DeleteAccountRequest"]): Promise<voi
   return apiClient.post<void>("/v1/auth/delete-account", body);
 }
 
+// ── The vault itself ────────────────────────────────────────────────────────
+
+/**
+ * What state this vault is in, for the screen a signed-out visitor sees.
+ *
+ * The vault reports one value rather than the facts behind it, so the rule
+ * joining "does an owner exist" to "is registration open" is stated once, on
+ * the server. See `docs/adr/0008-the-vault-owner-holds-no-messages.md`.
+ */
+export function getVaultState(opts?: VaultRequestOptions): Promise<Schema["VaultResponse"]> {
+  return apiClient.get<Schema["VaultResponse"]>("/v1/vault", opts);
+}
+
+/** Claim an unclaimed vault by creating its owner. Returns their session. */
+export function claimVault(
+  body: Schema["ClaimVaultRequest"],
+): Promise<Schema["AuthTokenResponse"]> {
+  return apiClient.post<Schema["AuthTokenResponse"]>("/v1/vault/claim", body);
+}
+
 // ── Account ─────────────────────────────────────────────────────────────────
 
 export function getAccountProfile(

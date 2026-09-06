@@ -5,6 +5,7 @@ import { initialLoginServerUrl } from "../lib/authGuards";
 import { isTauri } from "../lib/tauri-check";
 import { accentLink, authCard, authCardBody, authScreenTitle, pageCenter } from "../lib/uiStyles";
 import { useVaultHealth } from "../lib/useVaultHealth";
+import { useVaultState } from "../lib/useVaultState";
 import { checkVaultHealth, type VaultHealthStatus } from "../lib/vaultHealth";
 import LocalAuthTabs from "./auth/LocalAuthTabs";
 import VaultSettingsScreen from "./auth/VaultSettingsScreen";
@@ -57,6 +58,11 @@ export default function LoginScreen() {
   // heal itself the moment the vault comes back. Nothing else probes: the
   // settings screen asks explicitly, with Test.
   const health = useVaultHealth(state === "disconnected" ? address : null);
+
+  // Which forms this card offers is the vault's answer, not a guess made here.
+  // Asked only once the address is reachable, so an unreachable vault reports
+  // "disconnected" rather than a failed state query.
+  const { state: vaultState } = useVaultState(state === "connected" ? address : null);
 
   // Two connects can be in flight at once — the background self-heal for the
   // address already saved, and the explicit reconnect for one just typed — so
@@ -176,8 +182,16 @@ export default function LoginScreen() {
               <h1 className={`${authScreenTitle} mb-2`}>Message Vault</h1>
               <VaultStatus state={state} className="mb-5 text-center" />
 
-              {hasConnectedOnce ? (
-                <LocalAuthTabs serverUrl={address} disabled={state !== "connected"} />
+              {/* The card waits for the vault's own answer as well as for the
+                  connection: which forms belong here is the vault's to say, and
+                  showing a login to an unclaimed vault would offer a door that
+                  opens onto nothing. */}
+              {hasConnectedOnce && vaultState ? (
+                <LocalAuthTabs
+                  serverUrl={address}
+                  vaultState={vaultState}
+                  disabled={state !== "connected"}
+                />
               ) : (
                 <FormSkeleton dimmed={state === "disconnected"} />
               )}

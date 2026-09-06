@@ -75,3 +75,6 @@ config/contacts.vcf
 # Local npm cache and scratch dirs
 /.npm-cache/
 /.tmp/
+
+# Playwright MCP session artifacts (snapshots, screenshots, console logs)
+.playwright-mcp/
