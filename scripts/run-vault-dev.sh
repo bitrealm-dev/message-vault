@@ -30,13 +30,18 @@ RESET=0
 SQLWEB=0
 SQLWEB_PID=""
 RELEASE=0
+OWNER=0
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [--reset | --reset-demo] [--sqlweb] [--release]
+Usage: $(basename "$0") [--reset | --reset-demo] [--owner] [--sqlweb] [--release]
 
   --reset       Wipe data/ and start with an empty vault
   --reset-demo  Wipe data/ and seed the sample inbox
+  --owner       Claim the vault as admin/admin. Combine with --reset for an
+                empty claimed vault; without it, --reset leaves the vault
+                unclaimed so the Create Vault Owner screen is reachable.
+                Rejected with --reset-demo, which claims the vault itself.
   --sqlweb      Start sqlite-web on http://127.0.0.1:8081 (needs sqlite_web on PATH)
   --release     Build and run the optimized binary (seed and serve)
   -h, --help
@@ -47,6 +52,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --reset) RESET=1 ;;
     --reset-demo) DEMO=1 ;;
+    --owner) OWNER=1 ;;
     --release) RELEASE=1 ;;
     --demo)
       echo "error: --demo was renamed to --reset-demo (always wipes data/ and reseeds)" >&2
@@ -68,6 +74,11 @@ done
 
 if [[ "${RESET}" -eq 1 && "${DEMO}" -eq 1 ]]; then
   echo "error: use either --reset or --reset-demo, not both" >&2
+  exit 1
+fi
+
+if [[ "${OWNER}" -eq 1 && "${DEMO}" -eq 1 ]]; then
+  echo "error: --reset-demo claims the vault itself; drop --owner" >&2
   exit 1
 fi
 
@@ -164,11 +175,19 @@ if [[ "${DEMO}" -eq 1 ]]; then
   vault process-assets --config "${CONFIG}" \
     || echo "warning: process-assets failed; UI still works"
 elif [[ "${RESET}" -eq 1 ]]; then
-  echo "Empty data/ (create an account in the web UI)."
+  echo "Empty data/ (claim the vault in the web UI, or pass --owner)."
 elif [[ ! -f data/vault.db ]]; then
-  echo "Empty data/ (pass --reset-demo to seed a sample inbox, or create an account in the web UI)."
+  echo "Empty data/ (pass --reset-demo to seed a sample inbox, or --owner to claim the vault)."
 else
   echo "Vault DB present; leaving it in place."
+fi
+
+# Claiming is separate from seeding: --reset alone leaves the vault unclaimed,
+# which is the only way to reach the Create Vault Owner screen in dev.
+if [[ "${OWNER}" -eq 1 ]]; then
+  echo "Claiming the vault as admin/admin…"
+  vault create-owner --config "${CONFIG}" --username admin --password admin \
+    || echo "warning: create-owner failed (already claimed?); leaving the vault as it is"
 fi
 
 echo

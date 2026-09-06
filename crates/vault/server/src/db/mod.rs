@@ -18,3 +18,4 @@ pub mod session_tokens;
 pub mod sql;
 pub mod trash;
 pub mod vault_imports;
+pub mod vault_settings;
