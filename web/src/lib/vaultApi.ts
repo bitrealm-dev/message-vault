@@ -105,6 +105,63 @@ export function claimVault(
   return apiClient.post<Schema["AuthTokenResponse"]>("/v1/vault/claim", body);
 }
 
+// ── The vault owner's account management ────────────────────────────────────
+
+/** The accounts of this vault. The owner's own is not among them. */
+export function listAccounts(opts?: VaultRequestOptions): Promise<Schema["ListAccountsResponse"]> {
+  return apiClient.get<Schema["ListAccountsResponse"]>("/v1/owner/accounts", opts);
+}
+
+/** Create an account. Its holder must replace this password at first sign-in. */
+export function createAccount(
+  body: Schema["CreateAccountRequest"],
+): Promise<Schema["ManagedAccount"]> {
+  return apiClient.post<Schema["ManagedAccount"]>("/v1/owner/accounts", body);
+}
+
+/** Change an account's disabled flag or its import, export and delete grants. */
+export function updateAccount(
+  accountId: string,
+  body: Schema["PatchAccountRequest"],
+): Promise<Schema["ManagedAccount"]> {
+  return apiClient.patch<Schema["ManagedAccount"]>(
+    `/v1/owner/accounts/${encodeURIComponent(accountId)}`,
+    body,
+  );
+}
+
+/** Set an account's password, ending its sessions. */
+export function setAccountPassword(
+  accountId: string,
+  body: Schema["SetPasswordRequest"],
+): Promise<void> {
+  return apiClient.put<void>(`/v1/owner/accounts/${encodeURIComponent(accountId)}/password`, body);
+}
+
+/** Delete an account: its login, profile, contacts, and every message it owns. */
+export function deleteAccountById(accountId: string): Promise<void> {
+  return apiClient.delete<void>(`/v1/owner/accounts/${encodeURIComponent(accountId)}`);
+}
+
+/** Destroy one account's messages. The account, its contacts and login survive. */
+export function deleteAccountMessages(accountId: string): Promise<unknown> {
+  return apiClient.delete<unknown>(`/v1/owner/accounts/${encodeURIComponent(accountId)}/messages`);
+}
+
+/** Settings that belong to the whole vault. */
+export function getVaultSettings(
+  opts?: VaultRequestOptions,
+): Promise<Schema["VaultSettingsResponse"]> {
+  return apiClient.get<Schema["VaultSettingsResponse"]>("/v1/owner/vault-settings", opts);
+}
+
+/** Change the vault's settings. Omitted fields are left alone. */
+export function updateVaultSettings(
+  body: Schema["PatchVaultSettingsRequest"],
+): Promise<Schema["VaultSettingsResponse"]> {
+  return apiClient.patch<Schema["VaultSettingsResponse"]>("/v1/owner/vault-settings", body);
+}
+
 // ── Account ─────────────────────────────────────────────────────────────────
 
 export function getAccountProfile(

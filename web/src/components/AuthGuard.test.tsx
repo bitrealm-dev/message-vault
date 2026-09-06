@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthGuard } from "./AuthGuard";
 
 const profileState = vi.hoisted(() => ({
-  profile: null as { must_change_password: boolean } | null,
+  profile: null as { must_change_password: boolean; is_owner?: boolean } | null,
   loading: false,
 }));
 const authState = vi.hoisted(() => ({ isAuthenticated: true, needsOnboarding: false }));
@@ -41,6 +41,7 @@ function renderGuard() {
         <Route path="/login" element={<div>login</div>} />
         <Route path="/set-password" element={<div>set password</div>} />
         <Route path="/onboarding" element={<div>onboarding</div>} />
+        <Route path="/admin" element={<div>owner console</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -74,6 +75,21 @@ describe("AuthGuard", () => {
     renderGuard();
 
     expect(screen.getByText("onboarding")).toBeInTheDocument();
+  });
+
+  it("sends the vault owner to their console, not into the message shell", () => {
+    profileState.profile = { must_change_password: false, is_owner: true };
+    renderGuard();
+
+    expect(screen.getByText("owner console")).toBeInTheDocument();
+    expect(screen.queryByText("the vault")).not.toBeInTheDocument();
+  });
+
+  it("makes the owner set a password it still owes before reaching the console", () => {
+    profileState.profile = { must_change_password: true, is_owner: true };
+    renderGuard();
+
+    expect(screen.getByText("set password")).toBeInTheDocument();
   });
 
   it("lets an account that owes nothing through", () => {

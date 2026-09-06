@@ -10,9 +10,11 @@ import { ThemeProvider } from "./lib/ThemeProvider";
 import { TimeZoneProvider } from "./lib/TimeZoneProvider";
 import { isTauri } from "./lib/tauri-check";
 import { useAccountProfile } from "./lib/useAccountProfile";
+import { useIsVaultOwner } from "./lib/useIsVaultOwner";
 import { useMustChangePassword } from "./lib/useMustChangePassword";
 import LoginScreen from "./screens/LoginScreen";
 import OnboardingScreen from "./screens/OnboardingScreen";
+import OwnerConsole from "./screens/OwnerConsole";
 import SetPasswordScreen from "./screens/SetPasswordScreen";
 
 /**
@@ -47,13 +49,22 @@ function ImportExportRoute({ children }: { children: ReactNode }) {
 function AppRoutes() {
   const { isAuthenticated, needsOnboarding } = useAuth();
   const { mustChange: mustChangePassword } = useMustChangePassword();
+  const { isOwner } = useIsVaultOwner();
   useMouseHistoryNavigation();
 
   // Where a signed-in visitor to the login screen should go next. Same order
   // of urgency the AuthGuard uses: the password before the profile.
   const signedInDestination = (
     <Navigate
-      to={mustChangePassword ? "/set-password" : needsOnboarding ? "/onboarding" : "/"}
+      to={
+        mustChangePassword
+          ? "/set-password"
+          : isOwner
+            ? "/admin"
+            : needsOnboarding
+              ? "/onboarding"
+              : "/"
+      }
       replace
     />
   );
@@ -64,6 +75,13 @@ function AppRoutes() {
       <Route path="/login" element={isAuthenticated ? signedInDestination : <LoginScreen />} />
       {/* Registration is now the second tab of the login card, not its own screen. */}
       <Route path="/register" element={<Navigate to="/login" replace />} />
+      {/* The vault owner's console, outside the AuthGuard's message shell:
+          the owner holds no messages, so none of what that shell frames
+          exists for them. */}
+      <Route
+        path="/admin"
+        element={isAuthenticated && isOwner ? <OwnerConsole /> : <Navigate to="/" replace />}
+      />
       <Route
         path="/set-password"
         element={
