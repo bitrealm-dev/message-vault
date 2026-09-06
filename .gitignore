@@ -68,7 +68,8 @@ config/contacts.vcf
 /web-next/node_modules/
 /web-next/.next/
 /web-next/out/
-.claude/
+.claude/*
+!.claude/skills/
 .worktrees/
 .superpowers/
 
