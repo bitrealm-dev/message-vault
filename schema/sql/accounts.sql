@@ -11,10 +11,11 @@ CREATE TABLE IF NOT EXISTS accounts (
     -- IANA time zone (for example America/New_York) every message time, day and year is
     -- read in. Chosen at profile setup; a message records only the instant it arrived.
     time_zone TEXT NOT NULL DEFAULT 'UTC',
-    -- 1 = may manage users through /v1/admin/*; 0 = ordinary account.
-    is_admin INTEGER NOT NULL DEFAULT 0,
     -- 1 = may not sign in and existing sessions are refused; 0 = active.
     disabled INTEGER NOT NULL DEFAULT 0,
+    -- 1 = the vault owner chose this password, so the account holder must
+    -- replace it before the session goes anywhere; cleared on the change.
+    must_change_password INTEGER NOT NULL DEFAULT 0,
     -- 1 = may call the import endpoints.
     can_import INTEGER NOT NULL DEFAULT 1,
     -- 1 = may call the export endpoints.
@@ -99,6 +100,16 @@ CREATE TABLE IF NOT EXISTS account_prefs (
     -- Preference value stored as text.
     value TEXT NOT NULL,
     PRIMARY KEY (account_id, key)
+);
+
+-- Settings that belong to the whole vault rather than to one account. Exactly
+-- one row, so the vault owner reads and writes it without an id.
+CREATE TABLE IF NOT EXISTS vault_settings (
+    -- Always 1: the vault has one settings record.
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    -- 1 = anyone reaching the vault may create their own account; 0 = only
+    -- the vault owner creates accounts. Off until the owner turns it on.
+    public_registration INTEGER NOT NULL DEFAULT 0
 );
 
 -- Process-wide schema markers (for example FTS trigger install flag).

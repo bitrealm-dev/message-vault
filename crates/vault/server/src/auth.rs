@@ -15,7 +15,7 @@ use sqlx::{AnyConnection, AnyPool};
 
 use crate::db::{account_profile, api_tokens, schema, session_tokens};
 use crate::dedupe;
-use crate::server::{ApiError, AppState, AuthIdentity, FullAccess};
+use crate::server::{ApiError, AppState, AuthIdentity, FullAccess, SignedIn};
 
 /// Max password bytes accepted before hashing (registration / login / change).
 const MAX_PASSWORD_BYTES: usize = 1024;
@@ -238,8 +238,6 @@ pub(crate) struct AuthCheckResponse {
     account_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     username: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    admin: Option<bool>,
 }
 
 /// Check the Bearer token and return the account it resolves to, its username,
@@ -282,7 +280,6 @@ pub(crate) async fn auth_check(
         sources,
         account_id: Some(account_id),
         username,
-        admin: None,
     }))
 }
 
@@ -381,14 +378,6 @@ pub async fn register_handler(
 
     require_username_free(&mut tx, &username).await?;
 
-    let first_account = account_profile::vault_has_no_real_accounts(&mut tx).await?;
-
-    if first_account && password_plain.is_empty() {
-        return Err(ApiError::BadRequest(
-            "the vault's first account must set a password".into(),
-        ));
-    }
-
     account_profile::insert_account(
         &mut tx,
         &account_id,
@@ -398,10 +387,6 @@ pub async fn register_handler(
     )
     .await
     .map_err(|e| ApiError::BadRequest(e.to_string()))?;
-
-    if first_account {
-        account_profile::set_admin(&mut tx, &account_id, true).await?;
-    }
 
     if let Some(ref phone) = phone {
         account_profile::upsert_account_phone(&mut tx, &account_id, phone)
@@ -554,6 +539,10 @@ async fn change_password_on_conn(
         return Err(ChangePasswordError::IncorrectPassword);
     }
     account_profile::update_password_hash(&mut tx, account_id, new_hash).await?;
+    // Whatever brought the account here, it now carries a password its holder
+    // chose, so the mark the vault owner set comes off in the same
+    // transaction as the hash it refers to.
+    account_profile::set_must_change_password(&mut tx, account_id, false).await?;
     api_tokens::delete_all_api_tokens(&mut tx, account_id).await?;
     let token = session_tokens::rotate_account_session_token(&mut tx, account_id).await?;
     tx.commit().await?;
@@ -609,7 +598,7 @@ pub async fn logout_handler(
 )]
 pub async fn change_password_handler(
     State(state): State<AppState>,
-    FullAccess(auth): FullAccess,
+    SignedIn(auth): SignedIn,
     Json(req): Json<ChangePasswordRequest>,
 ) -> Result<Json<ChangePasswordResponse>, ApiError> {
     let new_password = req.new_password.trim();
@@ -662,13 +651,6 @@ pub async fn delete_account_handler(
     let account_root = state.cfg.paths.data_dir.join(&account_id);
 
     let mut conn = state.db.acquire().await?;
-    if account_profile::is_last_admin(&mut conn, &account_id).await?
-        && account_profile::other_real_account_exists(&mut conn, &account_id).await?
-    {
-        return Err(ApiError::BadRequest(
-            "you are the only administrator; promote another account before deleting yours".into(),
-        ));
-    }
     let password_hash = account_profile::load_password_hash(&mut conn, &account_id).await?;
     let has_local_password = matches!(password_hash.as_deref(), Some(hash) if !hash.is_empty());
     if has_local_password {

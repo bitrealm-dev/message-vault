@@ -137,72 +137,6 @@ async fn auth_check_refuses_an_account_query_naming_someone_else() {
     assert_eq!(status, axum::http::StatusCode::OK, "alice naming herself");
 }
 
-#[tokio::test]
-async fn first_real_account_becomes_admin_and_second_does_not() {
-    let (_dir, mut conn) = test_conn().await;
-
-    // The demo account exists first and must not count.
-    account_profile::insert_account(
-        &mut conn,
-        account_profile::DEMO_ACCOUNT_ID,
-        "demo",
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-    assert!(
-        account_profile::vault_has_no_real_accounts(&mut conn)
-            .await
-            .unwrap(),
-        "the demo account must not occupy first place"
-    );
-
-    account_profile::insert_account(&mut conn, "acct-1", "alice", None, None)
-        .await
-        .unwrap();
-    assert!(
-        !account_profile::vault_has_no_real_accounts(&mut conn)
-            .await
-            .unwrap()
-    );
-}
-
-#[tokio::test]
-async fn last_admin_is_protected() {
-    let (_dir, mut conn) = test_conn().await;
-    account_profile::insert_account(&mut conn, "acct-1", "alice", None, None)
-        .await
-        .unwrap();
-    account_profile::set_admin(&mut conn, "acct-1", true)
-        .await
-        .unwrap();
-    account_profile::insert_account(&mut conn, "acct-2", "bob", None, None)
-        .await
-        .unwrap();
-
-    assert!(
-        account_profile::is_last_admin(&mut conn, "acct-1")
-            .await
-            .unwrap()
-    );
-    assert!(
-        !account_profile::is_last_admin(&mut conn, "acct-2")
-            .await
-            .unwrap()
-    );
-
-    account_profile::set_admin(&mut conn, "acct-2", true)
-        .await
-        .unwrap();
-    assert!(
-        !account_profile::is_last_admin(&mut conn, "acct-1")
-            .await
-            .unwrap(),
-        "with two admins neither is the last"
-    );
-}
-
 async fn password_change_setup() -> (
     tempfile::TempDir,
     sqlx::pool::PoolConnection<sqlx::Any>,
@@ -437,90 +371,6 @@ async fn change_password_transaction_rolls_back_every_credential() {
 }
 
 #[tokio::test]
-async fn register_grants_admin_to_the_first_user_only() {
-    let vault = test_vault().await;
-    let state = vault.state.clone();
-
-    let first = register_via_api(&state, "alice", "hunter2hunter2").await;
-    let second = register_via_api(&state, "bob", "hunter2hunter2").await;
-
-    let mut conn = state.db.acquire().await.unwrap();
-    assert!(
-        account_profile::load_account_auth(&mut conn, &first.account_id)
-            .await
-            .unwrap()
-            .unwrap()
-            .is_admin
-    );
-    assert!(
-        !account_profile::load_account_auth(&mut conn, &second.account_id)
-            .await
-            .unwrap()
-            .unwrap()
-            .is_admin
-    );
-}
-
-#[tokio::test]
-async fn first_account_registration_requires_a_password() {
-    let vault = test_vault().await;
-    let state = vault.state.clone();
-
-    let status = post_status(
-        &state,
-        "/v1/auth/register",
-        "irrelevant-no-token-needed",
-        serde_json::json!({ "username": "passwordless-first" }),
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::BAD_REQUEST,
-        "the vault's first account must not be created without a password \
-         (it becomes an administrator)"
-    );
-
-    let mut conn = state.db.acquire().await.unwrap();
-    assert!(
-        account_profile::vault_has_no_real_accounts(&mut conn)
-            .await
-            .unwrap(),
-        "the rejected registration must not have created an account"
-    );
-}
-
-#[tokio::test]
-async fn second_account_may_still_register_without_a_password() {
-    let vault = test_vault().await;
-    let state = vault.state.clone();
-    let _first = register_via_api(&state, "has-a-password", "hunter2hunter2").await;
-
-    let status = post_status(
-        &state,
-        "/v1/auth/register",
-        "irrelevant-no-token-needed",
-        serde_json::json!({ "username": "passwordless-second" }),
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "only the first (admin-granting) account requires a password"
-    );
-
-    let mut conn = state.db.acquire().await.unwrap();
-    let account_id = account_profile::lookup_account_ref(&mut conn, "passwordless-second")
-        .await
-        .unwrap()
-        .unwrap();
-    let auth = account_profile::load_account_auth(&mut conn, &account_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(!auth.is_admin);
-}
-
-#[tokio::test]
 async fn disabled_account_cannot_sign_in() {
     let vault = test_vault().await;
     let state = vault.state.clone();
@@ -538,85 +388,133 @@ async fn disabled_account_cannot_sign_in() {
 }
 
 // -----------------------------------------------------------------
-// Self-service account deletion vs. the last administrator
+// Registration and self-service account deletion
 // -----------------------------------------------------------------
 
+/// Registration never grants anything beyond an ordinary account. The vault
+/// owner is claimed at a fixed id, never promoted from whoever arrived first.
 #[tokio::test]
-async fn solo_admin_can_delete_their_own_account() {
+async fn registration_never_produces_the_vault_owner() {
     let vault = test_vault().await;
     let state = vault.state.clone();
-    let admin = register_via_api(&state, "solo-admin", "hunter2hunter2").await;
 
-    let status = post_status(
-        &state,
-        "/v1/auth/delete-account",
-        &admin.token,
-        serde_json::json!({ "confirm": true, "current_password": "hunter2hunter2" }),
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::NO_CONTENT,
-        "the only administrator on their own vault must still be able to leave"
-    );
+    let first = register_via_api(&state, "alice", "hunter2hunter2").await;
+    let second = register_via_api(&state, "bob", "hunter2hunter2").await;
+
+    assert_ne!(first.account_id, account_profile::OWNER_ACCOUNT_ID);
+    assert_ne!(second.account_id, account_profile::OWNER_ACCOUNT_ID);
 
     let mut conn = state.db.acquire().await.unwrap();
     assert!(
-        account_profile::username_for_account(&mut conn, &admin.account_id)
-            .await
-            .unwrap()
-            .is_none(),
-        "the account must actually be gone"
+        !account_profile::vault_is_claimed(&mut conn).await.unwrap(),
+        "registering accounts does not claim the vault"
+    );
+
+    let auth = account_profile::load_account_auth(&mut conn, &first.account_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        !auth.must_change_password,
+        "an account that chose its own password owes no change"
     );
 }
 
+/// Any account may register without a password. The rule that the first one
+/// had to set one existed only because it became the administrator, and no
+/// registration does that now.
 #[tokio::test]
-async fn last_admin_with_another_account_present_is_refused() {
+async fn an_account_may_register_without_a_password() {
     let vault = test_vault().await;
     let state = vault.state.clone();
-    let admin = register_via_api(&state, "team-admin", "hunter2hunter2").await;
-    let _other = register_via_api(&state, "team-member", "hunter2hunter2").await;
 
     let status = post_status(
         &state,
-        "/v1/auth/delete-account",
-        &admin.token,
-        serde_json::json!({ "confirm": true, "current_password": "hunter2hunter2" }),
+        "/v1/auth/register",
+        "irrelevant-no-token-needed",
+        serde_json::json!({ "username": "passwordless-first" }),
     )
     .await;
-    assert_eq!(
-        status,
-        StatusCode::BAD_REQUEST,
-        "the last administrator must not be able to strand the other account"
-    );
+    assert_eq!(status, StatusCode::OK);
+}
+
+/// Claiming the vault puts a row at the owner id and nowhere else.
+#[tokio::test]
+async fn claiming_the_vault_creates_exactly_one_owner() {
+    let vault = test_vault().await;
+    let state = vault.state.clone();
 
     let mut conn = state.db.acquire().await.unwrap();
-    assert!(
-        account_profile::username_for_account(&mut conn, &admin.account_id)
-            .await
-            .unwrap()
-            .is_some(),
-        "the refused deletion must not have removed the account"
+    assert!(!account_profile::vault_is_claimed(&mut conn).await.unwrap());
+    drop(conn);
+
+    let owner = crate::test_support::claim_vault_as_owner(&state, "keeper", "hunter2hunter2").await;
+    assert_eq!(owner.account_id, account_profile::OWNER_ACCOUNT_ID);
+
+    let mut conn = state.db.acquire().await.unwrap();
+    assert!(account_profile::vault_is_claimed(&mut conn).await.unwrap());
+    let owners: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE id = $1")
+        .bind(account_profile::OWNER_ACCOUNT_ID)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    assert_eq!(owners, 1);
+}
+
+/// The owner needs `/v1/auth/change-password`, which `FullAccess` would have
+/// refused: it is one of the two routes a principal points at its own record.
+#[tokio::test]
+async fn the_owner_can_change_their_own_password() {
+    let vault = test_vault().await;
+    let state = vault.state.clone();
+    let owner = crate::test_support::claim_vault_as_owner(&state, "keeper", "hunter2hunter2").await;
+
+    let _changed: serde_json::Value = crate::test_support::post_json(
+        &state,
+        "/v1/auth/change-password",
+        &owner.token,
+        serde_json::json!({
+            "current_password": "hunter2hunter2",
+            "new_password": "keeperschoice",
+        }),
+    )
+    .await;
+
+    assert_eq!(
+        login_status(&state, "keeper", "keeperschoice").await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        login_status(&state, "keeper", "hunter2hunter2").await,
+        StatusCode::UNAUTHORIZED
     );
 }
 
+/// Account deletion is uniform now: nothing stands above an account, so
+/// nothing refuses the deletion on the vault's behalf.
 #[tokio::test]
-async fn non_admin_account_deletion_is_unaffected_by_the_last_admin_check() {
+async fn an_account_can_delete_itself() {
     let vault = test_vault().await;
     let state = vault.state.clone();
-    let _admin = register_via_api(&state, "org-admin", "hunter2hunter2").await;
-    let member = register_via_api(&state, "org-member", "hunter2hunter2").await;
+    let alice = register_via_api(&state, "alice", "hunter2hunter2").await;
+    let _bob = register_via_api(&state, "bob", "hunter2hunter2").await;
 
     let status = post_status(
         &state,
         "/v1/auth/delete-account",
-        &member.token,
+        &alice.token,
         serde_json::json!({ "confirm": true, "current_password": "hunter2hunter2" }),
     )
     .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
     assert_eq!(
-        status,
-        StatusCode::NO_CONTENT,
-        "an ordinary account must be able to delete itself regardless of the admin count"
+        login_status(&state, "alice", "hunter2hunter2").await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        login_status(&state, "bob", "hunter2hunter2").await,
+        StatusCode::OK,
+        "the other account is untouched"
     );
 }

@@ -200,8 +200,8 @@ async fn assert_current_schema_contract(conn: &mut AnyConnection) {
             "password_hash",
             "preferred_name",
             "time_zone",
-            "is_admin",
             "disabled",
+            "must_change_password",
             "can_import",
             "can_export",
             "can_delete"
@@ -529,7 +529,7 @@ async fn fresh_accounts_default_to_full_permissions() {
         .await
         .unwrap();
     let row: (i64, i64, i64, i64) = sqlx::query_as(
-        "SELECT is_admin, can_import, can_export, can_delete FROM accounts WHERE id = $1",
+        "SELECT must_change_password, can_import, can_export, can_delete FROM accounts WHERE id = $1",
     )
     .bind(A1)
     .fetch_one(&mut *conn)

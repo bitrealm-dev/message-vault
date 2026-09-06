@@ -35,7 +35,7 @@ use crate::server::AppState;
         (name = "Trash", description = "Empty the trash; the one door to permanent deletion, with DELETE on a trashed conversation or contact"),
         (name = "Message tags", description = "Tags on conversations"),
         (name = "Search", description = "The words the search language accepts"),
-        (name = "Admin", description = "User management for administrators")
+        (name = "Owner", description = "Account management for the vault owner")
     )
 )]
 /// OpenAPI document definition assembled from the utoipa-annotated handlers.
@@ -152,12 +152,12 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(crate::assets::asset_upload_part_handler))
         .routes(routes!(crate::assets::asset_upload_complete_handler))
         .routes(routes!(crate::assets::asset_upload_abort_handler))
-        .routes(routes!(crate::admin_api::list_users_handler))
-        .routes(routes!(crate::admin_api::create_user_handler))
-        .routes(routes!(crate::admin_api::patch_user_handler))
-        .routes(routes!(crate::admin_api::set_user_password_handler))
-        .routes(routes!(crate::admin_api::delete_user_messages_handler))
-        .routes(routes!(crate::admin_api::delete_user_handler))
+        .routes(routes!(crate::owner_api::list_accounts_handler))
+        .routes(routes!(crate::owner_api::create_account_handler))
+        .routes(routes!(crate::owner_api::patch_account_handler))
+        .routes(routes!(crate::owner_api::set_account_password_handler))
+        .routes(routes!(crate::owner_api::delete_account_messages_handler))
+        .routes(routes!(crate::owner_api::delete_account_handler))
 }
 
 /// Pretty OpenAPI JSON. Same string the CLI writes and the stale-spec test compares.
@@ -313,23 +313,23 @@ mod tests {
     }
 
     #[test]
-    fn dump_includes_admin_paths() {
+    fn dump_includes_owner_paths() {
         let v: serde_json::Value = serde_json::from_str(&dump_openapi_json()).unwrap();
         let paths = v["paths"].as_object().unwrap();
         for p in [
-            "/v1/admin/users",
-            "/v1/admin/users/{id}",
-            "/v1/admin/users/{id}/password",
-            "/v1/admin/users/{id}/messages",
+            "/v1/owner/accounts",
+            "/v1/owner/accounts/{id}",
+            "/v1/owner/accounts/{id}/password",
+            "/v1/owner/accounts/{id}/messages",
         ] {
             assert!(paths.contains_key(p), "missing {p}");
         }
-        assert!(paths["/v1/admin/users"]["get"].is_object());
-        assert!(paths["/v1/admin/users"]["post"].is_object());
-        assert!(paths["/v1/admin/users/{id}"]["patch"].is_object());
-        assert!(paths["/v1/admin/users/{id}"]["delete"].is_object());
-        assert!(paths["/v1/admin/users/{id}/password"]["put"].is_object());
-        assert!(paths["/v1/admin/users/{id}/messages"]["delete"].is_object());
+        assert!(paths["/v1/owner/accounts"]["get"].is_object());
+        assert!(paths["/v1/owner/accounts"]["post"].is_object());
+        assert!(paths["/v1/owner/accounts/{id}"]["patch"].is_object());
+        assert!(paths["/v1/owner/accounts/{id}"]["delete"].is_object());
+        assert!(paths["/v1/owner/accounts/{id}/password"]["put"].is_object());
+        assert!(paths["/v1/owner/accounts/{id}/messages"]["delete"].is_object());
         let import = &paths["/v1/import"]["post"]["requestBody"]["content"];
         for ct in ["application/x-ndjson", "application/jsonl"] {
             assert!(

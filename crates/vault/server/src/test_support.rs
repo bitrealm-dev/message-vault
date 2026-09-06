@@ -5,7 +5,7 @@
 //! Distinct from `server.rs`'s `test_state()`, which returns a four-tuple
 //! `(TempDir, AppState, String, i64)` for handler-level tests that call a
 //! handler function directly. This module drives the whole stack over real
-//! HTTP, for tests in `auth.rs`, `admin_api.rs`, `api_tokens_api.rs`, and
+//! HTTP, for tests in `auth.rs`, `owner_api.rs`, `api_tokens_api.rs`, and
 //! any route whose contract is worth checking end to end.
 
 use axum::http::StatusCode;
@@ -208,6 +208,47 @@ pub async fn register_via_api(
     RegisteredAccount {
         account_id: body["account_id"].as_str().unwrap().to_string(),
         username: body["username"].as_str().unwrap().to_string(),
+        token: body["token"].as_str().unwrap().to_string(),
+    }
+}
+
+/// Claim the test vault: create its owner directly, then sign in as them.
+///
+/// There is no HTTP route for this in PR 1 — claiming over HTTP arrives with
+/// `GET /v1/vault` — so the row goes in through `insert_account` at the
+/// well-known owner id, exactly as `create-owner` does it from a shell.
+pub async fn claim_vault_as_owner(
+    state: &AppState,
+    username: &str,
+    password: &str,
+) -> RegisteredAccount {
+    let hash = crate::auth::hash_password(password).expect("hash the owner password");
+    let mut conn = state.db.acquire().await.expect("acquire for claim");
+    crate::db::account_profile::insert_account(
+        &mut conn,
+        crate::db::account_profile::OWNER_ACCOUNT_ID,
+        username,
+        Some(&hash),
+        None,
+    )
+    .await
+    .expect("insert the vault owner");
+    drop(conn);
+
+    let (status, text) = request(
+        state,
+        reqwest::Method::POST,
+        "/v1/auth/login",
+        None,
+        Some(json_body(
+            serde_json::json!({ "username": username, "password": password }),
+        )),
+    )
+    .await;
+    let body: serde_json::Value = expect_ok("owner login", status, &text);
+    RegisteredAccount {
+        account_id: crate::db::account_profile::OWNER_ACCOUNT_ID.to_string(),
+        username: username.to_string(),
         token: body["token"].as_str().unwrap().to_string(),
     }
 }

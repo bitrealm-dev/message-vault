@@ -4,7 +4,6 @@ pub mod cli;
 pub mod cli_docs;
 pub mod config;
 
-pub(crate) mod admin_api;
 pub(crate) mod api_tokens_api;
 pub(crate) mod asset_uploads;
 pub(crate) mod assets;
@@ -27,6 +26,8 @@ pub(crate) mod named_membership;
 pub(crate) mod named_set_api;
 pub(crate) mod openapi;
 pub(crate) mod operation_lock;
+pub(crate) mod owner_api;
+pub(crate) mod owner_cli;
 pub(crate) mod paging;
 pub(crate) mod process_assets;
 pub(crate) mod profile;
