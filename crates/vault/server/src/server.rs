@@ -38,13 +38,16 @@ use crate::keyed_locks::KeyedLocks;
 /// What a Bearer credential is allowed to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthCapability {
-    /// Signed-in session. Carries the account's own permissions.
+    /// Signed-in session on an ordinary account. Carries the account's own
+    /// permissions.
     Session {
-        /// The account may manage users.
-        is_admin: bool,
         /// What the account may do.
         permissions: Permissions,
     },
+    /// Signed-in vault owner. Carries no permissions at all, so every guard
+    /// that asks for one refuses it and the owner cannot reach message data.
+    /// See `docs/adr/0008-the-vault-owner-holds-no-messages.md`.
+    Owner,
     /// Named API token. Already intersected with its owner's permissions.
     ApiToken(Permissions),
 }
@@ -60,25 +63,32 @@ pub struct AuthIdentity {
 
 impl AuthIdentity {
     /// What this credential may do, account and token already intersected.
+    /// The vault owner has nothing: holding no messages is what the owner is.
     pub fn permissions(&self) -> Permissions {
         match self.capability {
-            AuthCapability::Session { permissions, .. } | AuthCapability::ApiToken(permissions) => {
+            AuthCapability::Session { permissions } | AuthCapability::ApiToken(permissions) => {
                 permissions
             }
+            AuthCapability::Owner => Permissions::none(),
         }
     }
 
-    /// True only for a signed-in administrator, never for an API token.
-    pub fn is_admin(&self) -> bool {
-        matches!(
-            self.capability,
-            AuthCapability::Session { is_admin: true, .. }
-        )
+    /// True only for the signed-in vault owner. An API token can never be the
+    /// owner, because no token resolves to [`AuthCapability::Owner`].
+    pub fn is_owner(&self) -> bool {
+        matches!(self.capability, AuthCapability::Owner)
     }
 
-    /// True when the credential is a signed-in session rather than a token.
+    /// True when the credential is a signed-in session on an ordinary account:
+    /// not a token, and not the vault owner.
     pub fn is_session(&self) -> bool {
         matches!(self.capability, AuthCapability::Session { .. })
+    }
+
+    /// True when a person signed in, whether as the vault owner or on an
+    /// ordinary account. False for every API token.
+    pub fn is_signed_in(&self) -> bool {
+        self.is_session() || self.is_owner()
     }
 }
 
@@ -97,17 +107,35 @@ pub fn require_full_access(auth: &AuthIdentity) -> Result<(), ApiError> {
     ))
 }
 
-/// Reject anything that is not a signed-in administrator.
+/// Reject anything that is not the signed-in vault owner.
 ///
 /// # Errors
 ///
 /// Returns forbidden for ordinary sessions and for every API token.
-pub fn require_admin(auth: &AuthIdentity) -> Result<(), ApiError> {
-    if auth.is_admin() {
+pub fn require_owner(auth: &AuthIdentity) -> Result<(), ApiError> {
+    if auth.is_owner() {
         return Ok(());
     }
     Err(ApiError::Forbidden(
-        "this endpoint requires an administrator session".into(),
+        "this endpoint requires the vault owner's session".into(),
+    ))
+}
+
+/// Allow any signed-in person, vault owner or ordinary account, and reject
+/// API tokens. The guard for the routes a principal points at its own record —
+/// changing its password, reading and editing its profile — which the vault
+/// owner needs as much as anyone.
+///
+/// # Errors
+///
+/// Returns forbidden when the credential is a named API token.
+pub fn require_signed_in(auth: &AuthIdentity) -> Result<(), ApiError> {
+    if auth.is_signed_in() {
+        return Ok(());
+    }
+    Err(ApiError::Forbidden(
+        "this endpoint requires a signed-in session; use an API token only for import/export"
+            .into(),
     ))
 }
 
@@ -222,9 +250,15 @@ auth_guard!(
     require_full_access
 );
 auth_guard!(
-    /// Signed-in administrator session; wraps [`require_admin`].
-    Admin,
-    require_admin
+    /// Signed-in vault owner; wraps [`require_owner`].
+    Owner,
+    require_owner
+);
+auth_guard!(
+    /// Any signed-in person, owner or ordinary account; wraps
+    /// [`require_signed_in`].
+    SignedIn,
+    require_signed_in
 );
 auth_guard!(
     /// Credential that may import; wraps [`require_import_access`].
@@ -317,6 +351,27 @@ pub enum ApiError {
     /// for the wrong `Content-Type`). ADR-0005 says the status carries the
     /// meaning, so these must not be flattened to 400.
     Status(StatusCode, String),
+}
+
+/// The message a person reads when the failure does not travel over HTTP —
+/// the CLI, a log line, a test assertion. The client-facing body is built by
+/// [`IntoResponse`], which hides an internal error's detail; here the whole
+/// context chain is shown, because the reader is the operator.
+impl std::fmt::Display for ApiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unauthorized(m)
+            | Self::Forbidden(m)
+            | Self::BadRequest(m)
+            | Self::Conflict(m)
+            | Self::NotFound(m)
+            | Self::MethodNotAllowed(m)
+            | Self::TooManyRequests(m)
+            | Self::ServiceUnavailable(m)
+            | Self::Status(_, m) => f.write_str(m),
+            Self::Internal(e) => f.write_str(&error_chain(e)),
+        }
+    }
 }
 
 impl IntoResponse for ApiError {
@@ -736,9 +791,14 @@ pub async fn resolve_auth_on_conn(
         return Err(ApiError::Forbidden("this account is disabled".into()));
     }
 
+    // A session on the owner's account resolves to `Owner`, which carries no
+    // permissions. An API token never does, whichever account issued it, so
+    // no token can reach `/v1/owner/*`.
     let capability = match credential {
+        Credential::Session if account_profile::is_vault_owner(&account_id) => {
+            AuthCapability::Owner
+        }
         Credential::Session => AuthCapability::Session {
-            is_admin: auth.is_admin,
             permissions: auth.permissions,
         },
         Credential::ApiToken(tok_permissions) => {

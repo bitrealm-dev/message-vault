@@ -9,7 +9,7 @@ use sqlx::AnyConnection;
 use sqlx::Connection;
 
 use crate::db::account_profile;
-use crate::server::{ApiError, AppState, DeleteAccess, FullAccess};
+use crate::server::{ApiError, AppState, DeleteAccess, FullAccess, SignedIn};
 
 /// The signed-in account's profile.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -29,8 +29,11 @@ pub struct AccountProfileResponse {
     pub emails: Vec<String>,
     /// True for the seeded demo account (cannot be deleted).
     pub is_demo: bool,
-    /// May manage users.
-    pub is_admin: bool,
+    /// True for the vault owner: manages accounts, holds no messages.
+    pub is_owner: bool,
+    /// The vault owner chose this password; it must be replaced before the
+    /// account can be used.
+    pub must_change_password: bool,
     /// May call the import endpoints.
     pub can_import: bool,
     /// May call the export endpoints.
@@ -64,7 +67,8 @@ async fn load_response(
         phones: profile.phones,
         emails: profile.emails,
         is_demo: account_profile::is_demo_account(account_id),
-        is_admin: auth.is_admin,
+        is_owner: account_profile::is_vault_owner(account_id),
+        must_change_password: auth.must_change_password,
         can_import: auth.permissions.import,
         can_export: auth.permissions.export,
         can_delete: auth.permissions.delete,
@@ -86,7 +90,7 @@ async fn load_response(
 )]
 pub async fn account_profile_handler(
     State(state): State<AppState>,
-    FullAccess(auth): FullAccess,
+    SignedIn(auth): SignedIn,
 ) -> Result<Json<AccountProfileResponse>, ApiError> {
     let account_id = auth.account_id;
 
@@ -291,7 +295,7 @@ fn parse_profile_service(
 )]
 pub async fn account_profile_update_handler(
     State(state): State<AppState>,
-    FullAccess(auth): FullAccess,
+    SignedIn(auth): SignedIn,
     Json(req): Json<AccountProfileUpdateRequest>,
 ) -> Result<Json<AccountProfileResponse>, ApiError> {
     let account_id = auth.account_id;

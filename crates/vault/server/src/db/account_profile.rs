@@ -232,76 +232,34 @@ pub fn is_demo_account(account_id: &str) -> bool {
     account_id == DEMO_ACCOUNT_ID
 }
 
-/// True when the vault holds no account a person registered — the demo account
-/// does not count, so a `--reset-demo` vault still grants admin to its first
-/// real user.
-pub async fn vault_has_no_real_accounts(conn: &mut AnyConnection) -> Result<bool> {
+/// Stable id for the vault owner. A vault has one owner or none, and this id
+/// is what makes "one" structural: there is no flag to set, no second owner to
+/// create, and nothing to promote. A vault holding no row at this id is
+/// unclaimed. See `docs/adr/0008-the-vault-owner-holds-no-messages.md`.
+pub const OWNER_ACCOUNT_ID: &str = "00000000-0000-0000-0000-00000000a001";
+
+/// True when `account_id` is the vault owner.
+pub fn is_vault_owner(account_id: &str) -> bool {
+    account_id == OWNER_ACCOUNT_ID
+}
+
+/// True when this vault has an owner: the vault is claimed.
+pub async fn vault_is_claimed(conn: &mut AnyConnection) -> Result<bool> {
     schema::ensure_accounts_schema(conn).await?;
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE id != $1")
-        .bind(DEMO_ACCOUNT_ID)
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE id = $1")
+        .bind(OWNER_ACCOUNT_ID)
         .fetch_one(&mut *conn)
         .await?;
-    Ok(count == 0)
-}
-
-/// True when `account_id` is an administrator and no other *usable* account
-/// is — a disabled admin cannot sign in and so cannot administer the vault,
-/// and must not be counted as "another admin" here. Without this, the vault
-/// could be disabled into a state with zero credentials able to reach
-/// `/v1/admin/*` and no way back in short of hand-editing the database.
-pub async fn is_last_admin(conn: &mut AnyConnection, account_id: &str) -> Result<bool> {
-    schema::ensure_accounts_schema(conn).await?;
-    let others: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM accounts WHERE is_admin = 1 AND disabled = 0 AND id != $1",
-    )
-    .bind(account_id)
-    .fetch_one(&mut *conn)
-    .await?;
-    if others > 0 {
-        return Ok(false);
-    }
-    let self_admin: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM accounts WHERE is_admin = 1 AND disabled = 0 AND id = $1",
-    )
-    .bind(account_id)
-    .fetch_one(&mut *conn)
-    .await?;
-    Ok(self_admin > 0)
-}
-
-/// True when a non-demo account other than `account_id` exists. Used to allow
-/// a solo administrator (the only account on their own vault) to delete their
-/// own account, while still refusing when doing so would strand other users
-/// with no administrator left to manage them.
-pub async fn other_real_account_exists(conn: &mut AnyConnection, account_id: &str) -> Result<bool> {
-    schema::ensure_accounts_schema(conn).await?;
-    let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE id != $1 AND id != $2")
-            .bind(account_id)
-            .bind(DEMO_ACCOUNT_ID)
-            .fetch_one(&mut *conn)
-            .await?;
     Ok(count > 0)
 }
 
-/// Grant or revoke the administrative flag.
-pub async fn set_admin(conn: &mut AnyConnection, account_id: &str, is_admin: bool) -> Result<()> {
-    schema::ensure_accounts_schema(conn).await?;
-    sqlx::query("UPDATE accounts SET is_admin = $1 WHERE id = $2")
-        .bind(is_admin as i32)
-        .bind(account_id)
-        .execute(&mut *conn)
-        .await?;
-    Ok(())
-}
-
-/// An account's administrative flag, disabled flag, and permissions.
+/// An account's disabled flag, forced-password-change flag, and permissions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AccountAuth {
-    /// May manage users.
-    pub is_admin: bool,
     /// May not sign in; existing sessions are refused.
     pub disabled: bool,
+    /// The vault owner chose this password; the holder must replace it.
+    pub must_change_password: bool,
     /// What this account may do.
     pub permissions: crate::db::permissions::Permissions,
 }
@@ -313,19 +271,35 @@ pub async fn load_account_auth(
 ) -> Result<Option<AccountAuth>> {
     schema::ensure_accounts_schema(conn).await?;
     let row: Option<(i64, i64, i64, i64, i64)> = sqlx::query_as(
-        "SELECT is_admin, disabled, can_import, can_export, can_delete
+        "SELECT disabled, must_change_password, can_import, can_export, can_delete
          FROM accounts WHERE id = $1",
     )
     .bind(account_id)
     .fetch_optional(&mut *conn)
     .await?;
-    Ok(
-        row.map(|(is_admin, disabled, import, export, delete)| AccountAuth {
-            is_admin: is_admin != 0,
+    Ok(row.map(
+        |(disabled, must_change, import, export, delete)| AccountAuth {
             disabled: disabled != 0,
+            must_change_password: must_change != 0,
             permissions: crate::db::permissions::Permissions::from_ints(import, export, delete),
-        }),
-    )
+        },
+    ))
+}
+
+/// Mark an account so its holder must replace the password the vault owner
+/// chose for it, or clear the mark once they have.
+pub async fn set_must_change_password(
+    conn: &mut AnyConnection,
+    account_id: &str,
+    must_change: bool,
+) -> Result<()> {
+    schema::ensure_accounts_schema(conn).await?;
+    sqlx::query("UPDATE accounts SET must_change_password = $1 WHERE id = $2")
+        .bind(i32::from(must_change))
+        .bind(account_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
 }
 
 /// Counts from deleting one account's messages.

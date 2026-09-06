@@ -139,35 +139,6 @@ export function deleteApiToken(id: string): Promise<void> {
   return apiClient.delete<void>(`/v1/account/api-tokens/${encodeURIComponent(id)}`);
 }
 
-// ── Administration ──────────────────────────────────────────────────────────
-
-export function listUsers(opts?: VaultRequestOptions): Promise<Schema["ListUsersResponse"]> {
-  return apiClient.get<Schema["ListUsersResponse"]>("/v1/admin/users", opts);
-}
-
-export function createUser(body: Schema["CreateUserRequest"]): Promise<unknown> {
-  return apiClient.post<unknown>("/v1/admin/users", body);
-}
-
-export function updateUser(accountId: string, body: Schema["PatchUserRequest"]): Promise<unknown> {
-  return apiClient.patch<unknown>(`/v1/admin/users/${encodeURIComponent(accountId)}`, body);
-}
-
-export function setUserPassword(
-  accountId: string,
-  body: Schema["SetPasswordRequest"],
-): Promise<void> {
-  return apiClient.put<void>(`/v1/admin/users/${encodeURIComponent(accountId)}/password`, body);
-}
-
-export function deleteUser(accountId: string): Promise<void> {
-  return apiClient.delete<void>(`/v1/admin/users/${encodeURIComponent(accountId)}`);
-}
-
-export function deleteUserMessages(accountId: string): Promise<unknown> {
-  return apiClient.delete<unknown>(`/v1/admin/users/${encodeURIComponent(accountId)}/messages`);
-}
-
 // ── Assets ──────────────────────────────────────────────────────────────────
 
 /**

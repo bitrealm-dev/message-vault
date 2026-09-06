@@ -1,9 +1,11 @@
-//! Administrator user management. Every route requires an administrator
-//! session. Responses carry account metadata, counts, and storage sizes —
-//! never message content. Multitenancy stays inviolable here: an
-//! administrator manages accounts, not the contents of other people's
-//! vaults, so nothing in this module reads `messages.body`,
-//! `attachments.transcription`, or any other content column.
+//! Account management for the vault owner. Every route requires the owner's
+//! session; no API token ever resolves to the owner, so none can reach here.
+//!
+//! Responses carry account metadata, counts, and storage sizes — never
+//! message content. Multitenancy stays inviolable here: the owner manages
+//! accounts, not the contents of other people's vaults, so nothing in this
+//! module reads `messages.body`, `attachments.transcription`, or any other
+//! content column. See `docs/adr/0008-the-vault-owner-holds-no-messages.md`.
 
 use crate::extract::{Json, Path};
 use axum::extract::State;
@@ -11,19 +13,20 @@ use serde::{Deserialize, Serialize};
 use sqlx::{AnyConnection, Connection};
 
 use crate::db::account_profile;
-use crate::server::{Admin, ApiError, AppState};
+use crate::server::{ApiError, AppState, Owner};
 
-/// One account as an administrator sees it.
+/// One account as the vault owner sees it: who it is and what it holds, never
+/// what it says.
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
-pub struct AdminUser {
+pub struct ManagedAccount {
     /// Account id.
     pub account_id: String,
     /// Login username.
     pub username: String,
-    /// May manage users.
-    pub is_admin: bool,
     /// May not sign in.
     pub disabled: bool,
+    /// Still carries the password the owner chose, and must replace it.
+    pub must_change_password: bool,
     /// May call the import endpoints.
     pub can_import: bool,
     /// May call the export endpoints.
@@ -36,31 +39,27 @@ pub struct AdminUser {
     pub storage_bytes: i64,
 }
 
-/// Every account in the vault.
+/// Every account in the vault except the owner's own.
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
-pub struct ListUsersResponse {
+pub struct ListAccountsResponse {
     /// One row per account.
-    pub items: Vec<AdminUser>,
+    pub items: Vec<ManagedAccount>,
 }
 
-/// Body for creating an account as an administrator.
+/// Body for creating an account as the vault owner.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct CreateUserRequest {
+pub struct CreateAccountRequest {
     /// Login username.
     pub username: String,
-    /// Initial password. Must satisfy the vault's password policy.
+    /// Initial password. Must satisfy the vault's password policy. The
+    /// account holder is made to replace it at first sign-in, so it survives
+    /// exactly one session.
     pub password: String,
-    /// Grant the administrative flag. Default false.
-    #[serde(default)]
-    pub is_admin: bool,
 }
 
 /// Body for changing an account's flags. Omitted fields are left alone.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct PatchUserRequest {
-    /// Grant or revoke administration.
-    #[serde(default)]
-    pub is_admin: Option<bool>,
+pub struct PatchAccountRequest {
     /// Disable or re-enable sign-in.
     #[serde(default)]
     pub disabled: Option<bool>,
@@ -75,7 +74,7 @@ pub struct PatchUserRequest {
     pub can_delete: Option<bool>,
 }
 
-/// Body for an administrator setting someone's password.
+/// Body for the vault owner setting someone's password.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SetPasswordRequest {
     /// The new password. Must satisfy the vault's password policy.
@@ -95,30 +94,30 @@ async fn account_message_count(
     )
 }
 
-/// Load one account's admin-facing row: flags, message count, storage bytes.
+/// Load one account's owner-facing row: flags, message count, storage bytes.
 /// `None` when the account no longer exists.
-async fn load_admin_user(
+async fn load_managed_account(
     conn: &mut AnyConnection,
     account_id: &str,
-) -> Result<Option<AdminUser>, ApiError> {
+) -> Result<Option<ManagedAccount>, ApiError> {
     let row: Option<(String, i64, i64, i64, i64, i64)> = sqlx::query_as(
-        "SELECT username, is_admin, disabled, can_import, can_export, can_delete
+        "SELECT username, disabled, must_change_password, can_import, can_export, can_delete
          FROM accounts WHERE id = $1",
     )
     .bind(account_id)
     .fetch_optional(&mut *conn)
     .await?;
-    let Some((username, is_admin, disabled, import, export, delete)) = row else {
+    let Some((username, disabled, must_change, import, export, delete)) = row else {
         return Ok(None);
     };
     let message_count = account_message_count(conn, account_id).await?;
     let storage_bytes =
         crate::db::vault_imports::account_attachment_bytes(conn, account_id).await?;
-    Ok(Some(AdminUser {
+    Ok(Some(ManagedAccount {
         account_id: account_id.to_string(),
         username,
-        is_admin: is_admin != 0,
         disabled: disabled != 0,
+        must_change_password: must_change != 0,
         can_import: import != 0,
         can_export: export != 0,
         can_delete: delete != 0,
@@ -127,14 +126,20 @@ async fn load_admin_user(
     }))
 }
 
-/// Return `404 Not Found` unless an account with this id exists.
-async fn require_account_exists(
+/// Return `404 Not Found` unless an account with this id exists and is one
+/// the owner manages.
+///
+/// The owner's own id is reported as absent rather than forbidden. It is
+/// absent from the list for the same reason: the list holds the users of this
+/// vault, and the owner is not one of them.
+async fn require_managed_account(
     conn: &mut AnyConnection,
     account_id: &str,
 ) -> Result<(), ApiError> {
-    if account_profile::username_for_account(conn, account_id)
-        .await?
-        .is_none()
+    if account_profile::is_vault_owner(account_id)
+        || account_profile::username_for_account(conn, account_id)
+            .await?
+            .is_none()
     {
         return Err(ApiError::NotFound(format!(
             "account {account_id} not found"
@@ -143,57 +148,62 @@ async fn require_account_exists(
     Ok(())
 }
 
-/// List every account with its flags, message count, and storage use.
+/// List the accounts this vault holds, with their flags, message count, and
+/// storage use. The owner's own account is not among them.
 #[utoipa::path(
     get,
-    path = "/v1/admin/users",
-    tag = "Admin",
+    path = "/v1/owner/accounts",
+    tag = "Owner",
+    operation_id = "owner_list_accounts",
     security(("bearer" = [])),
     responses(
-        (status = 200, body = ListUsersResponse),
+        (status = 200, body = ListAccountsResponse),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody)
     )
 )]
-pub async fn list_users_handler(
+pub async fn list_accounts_handler(
     State(state): State<AppState>,
-    Admin(_auth): Admin,
-) -> Result<Json<ListUsersResponse>, ApiError> {
+    Owner(_auth): Owner,
+) -> Result<Json<ListAccountsResponse>, ApiError> {
     let mut conn = state.db.acquire().await?;
-    let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM accounts ORDER BY username")
-        .fetch_all(&mut *conn)
-        .await?;
+    let ids: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM accounts WHERE id != $1 ORDER BY username")
+            .bind(account_profile::OWNER_ACCOUNT_ID)
+            .fetch_all(&mut *conn)
+            .await?;
 
     let mut items = Vec::with_capacity(ids.len());
     for id in ids {
-        if let Some(user) = load_admin_user(&mut conn, &id).await? {
-            items.push(user);
+        if let Some(account) = load_managed_account(&mut conn, &id).await? {
+            items.push(account);
         }
     }
-    Ok(Json(ListUsersResponse { items }))
+    Ok(Json(ListAccountsResponse { items }))
 }
 
-/// Create an account as an administrator. Never grants the first-account
-/// administrator flag automatically — this endpoint could not have been
-/// called unless an administrator already exists.
+/// Create an account. The owner picks the first password and the account
+/// holder replaces it at first sign-in, so the owner's choice survives one
+/// session and no longer.
 #[utoipa::path(
     post,
-    path = "/v1/admin/users",
-    tag = "Admin",
+    path = "/v1/owner/accounts",
+    tag = "Owner",
+    operation_id = "owner_create_account",
     security(("bearer" = [])),
-    request_body = CreateUserRequest,
+    request_body = CreateAccountRequest,
     responses(
-        (status = 200, body = AdminUser),
+        (status = 200, body = ManagedAccount),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody)
     )
 )]
-pub async fn create_user_handler(
+pub async fn create_account_handler(
     State(state): State<AppState>,
-    Admin(_auth): Admin,
-    Json(req): Json<CreateUserRequest>,
-) -> Result<Json<AdminUser>, ApiError> {
+    Owner(_auth): Owner,
+    Json(req): Json<CreateAccountRequest>,
+) -> Result<Json<ManagedAccount>, ApiError> {
     let username = crate::auth::normalize_username(&req.username);
     if !crate::auth::is_valid_username(&username) {
         return Err(ApiError::BadRequest(
@@ -204,9 +214,9 @@ pub async fn create_user_handler(
     let password_hash = crate::auth::hash_password(&req.password)?;
 
     let mut conn = state.db.acquire().await?;
-    // insert_account and the optional set_admin must land together: a failure
-    // between them must not leave an account that exists without the admin
-    // flag the caller asked for (mirrors auth::register_handler).
+    // The insert and the forced-change mark must land together: a failure
+    // between them would leave an account whose holder keeps the password the
+    // owner chose, which is the one thing this pair exists to prevent.
     let mut tx = conn.begin().await?;
     crate::auth::require_username_free(&mut tx, &username).await?;
 
@@ -214,58 +224,49 @@ pub async fn create_user_handler(
     account_profile::insert_account(&mut tx, &account_id, &username, Some(&password_hash), None)
         .await
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    if req.is_admin {
-        account_profile::set_admin(&mut tx, &account_id, true).await?;
-    }
+    account_profile::set_must_change_password(&mut tx, &account_id, true).await?;
     tx.commit().await?;
 
-    let user = load_admin_user(&mut conn, &account_id)
+    let account = load_managed_account(&mut conn, &account_id)
         .await?
         .ok_or_else(|| {
             ApiError::Internal(anyhow::anyhow!("account vanished immediately after insert"))
         })?;
-    Ok(Json(user))
+    Ok(Json(account))
 }
 
-/// Change an account's administrative, disabled, or permission flags.
+/// Change an account's disabled flag or its import, export and delete
+/// permissions.
 ///
-/// Refuses (`400`) a request that would demote, disable, or otherwise leave
-/// the vault without an administrator.
+/// Clearing `can_import` or `can_export` also narrows every API token that
+/// account has already issued, because a token's permissions are intersected
+/// with its account's on every request. The owner restrains the account and
+/// the tokens follow, without ever seeing one.
 #[utoipa::path(
     patch,
-    path = "/v1/admin/users/{id}",
-    tag = "Admin",
+    path = "/v1/owner/accounts/{id}",
+    tag = "Owner",
+    operation_id = "owner_patch_account",
     security(("bearer" = [])),
     params(("id" = String, Path, description = "Account id to modify")),
-    request_body = PatchUserRequest,
+    request_body = PatchAccountRequest,
     responses(
-        (status = 200, body = AdminUser),
+        (status = 200, body = ManagedAccount),
         (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody),
         (status = 404, body = crate::server::ErrorBody)
     )
 )]
-pub async fn patch_user_handler(
+pub async fn patch_account_handler(
     State(state): State<AppState>,
     Path(target): Path<String>,
-    Admin(_auth): Admin,
-    Json(req): Json<PatchUserRequest>,
-) -> Result<Json<AdminUser>, ApiError> {
+    Owner(_auth): Owner,
+    Json(req): Json<PatchAccountRequest>,
+) -> Result<Json<ManagedAccount>, ApiError> {
     let mut conn = state.db.acquire().await?;
-    require_account_exists(&mut conn, &target).await?;
+    require_managed_account(&mut conn, &target).await?;
 
-    if (req.is_admin == Some(false) || req.disabled == Some(true))
-        && account_profile::is_last_admin(&mut conn, &target).await?
-    {
-        return Err(ApiError::BadRequest(
-            "this is the only administrator; promote another account first".into(),
-        ));
-    }
-
-    if let Some(is_admin) = req.is_admin {
-        account_profile::set_admin(&mut conn, &target, is_admin).await?;
-    }
     // Column names come from this compile-time array, never from the
     // request, so formatting them into the SQL is safe; values stay bound.
     let flags = [
@@ -277,26 +278,27 @@ pub async fn patch_user_handler(
     for (column, value) in flags {
         let Some(value) = value else { continue };
         sqlx::query(&format!("UPDATE accounts SET {column} = $1 WHERE id = $2"))
-            .bind(value as i32)
+            .bind(i32::from(value))
             .bind(&target)
             .execute(&mut *conn)
             .await?;
     }
 
-    let user = load_admin_user(&mut conn, &target)
+    let account = load_managed_account(&mut conn, &target)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("account {target} not found")))?;
-    Ok(Json(user))
+    Ok(Json(account))
 }
 
-/// Set an account's password as an administrator. Invalidates that
-/// account's existing session (unlike a self-service password change, which
-/// leaves other sessions alone) — after this call the target must sign in
-/// again with the new password.
+/// Set an account's password. Invalidates that account's existing session
+/// (unlike a self-service password change, which leaves other sessions alone)
+/// — after this call the account holder must sign in again with the new
+/// password, and replace it once they do.
 #[utoipa::path(
     put,
-    path = "/v1/admin/users/{id}/password",
-    tag = "Admin",
+    path = "/v1/owner/accounts/{id}/password",
+    tag = "Owner",
+    operation_id = "owner_set_account_password",
     security(("bearer" = [])),
     params(("id" = String, Path, description = "Account id whose password is set")),
     request_body = SetPasswordRequest,
@@ -308,29 +310,30 @@ pub async fn patch_user_handler(
         (status = 404, body = crate::server::ErrorBody)
     )
 )]
-pub async fn set_user_password_handler(
+pub async fn set_account_password_handler(
     State(state): State<AppState>,
     Path(target): Path<String>,
-    Admin(_auth): Admin,
+    Owner(_auth): Owner,
     Json(req): Json<SetPasswordRequest>,
 ) -> Result<axum::http::StatusCode, ApiError> {
     crate::auth::validate_password_policy(&req.password)?;
     let hash = crate::auth::hash_password(&req.password)?;
 
     let mut conn = state.db.acquire().await?;
-    require_account_exists(&mut conn, &target).await?;
+    require_managed_account(&mut conn, &target).await?;
     account_profile::update_password_hash(&mut conn, &target, &hash).await?;
+    account_profile::set_must_change_password(&mut conn, &target, true).await?;
     crate::db::session_tokens::revoke_account_sessions(&mut conn, &target).await?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 /// Destroy one account's conversations, messages, and attachments. The
-/// account itself, its contacts, and its login survive. Refuses (`400`)
-/// nothing here — deleting messages never affects the last-admin rule.
+/// account itself, its contacts, and its login survive.
 #[utoipa::path(
     delete,
-    path = "/v1/admin/users/{id}/messages",
-    tag = "Admin",
+    path = "/v1/owner/accounts/{id}/messages",
+    tag = "Owner",
+    operation_id = "owner_delete_account_messages",
     security(("bearer" = [])),
     params(("id" = String, Path, description = "Account whose messages are destroyed")),
     responses(
@@ -340,13 +343,13 @@ pub async fn set_user_password_handler(
         (status = 404, body = crate::server::ErrorBody)
     )
 )]
-pub async fn delete_user_messages_handler(
+pub async fn delete_account_messages_handler(
     State(state): State<AppState>,
     Path(target): Path<String>,
-    Admin(_auth): Admin,
+    Owner(_auth): Owner,
 ) -> Result<Json<crate::profile::DeleteMessagesResponse>, ApiError> {
     let mut conn = state.db.acquire().await?;
-    require_account_exists(&mut conn, &target).await?;
+    require_managed_account(&mut conn, &target).await?;
 
     let stats = account_profile::delete_all_messages_for_account(&mut conn, &target).await?;
     crate::profile::remove_account_asset_trees(
@@ -362,34 +365,30 @@ pub async fn delete_user_messages_handler(
     }))
 }
 
-/// Permanently delete an account: login, profile, contacts, and every
-/// message it owns. Refuses (`400`) deleting the vault's last administrator.
+/// Permanently delete an account: login, profile, contacts, and every message
+/// it owns. The demo account is deleted like any other, which is how a demo
+/// vault is cleared into a real one.
 #[utoipa::path(
     delete,
-    path = "/v1/admin/users/{id}",
-    tag = "Admin",
+    path = "/v1/owner/accounts/{id}",
+    tag = "Owner",
+    operation_id = "owner_delete_account",
     security(("bearer" = [])),
     params(("id" = String, Path, description = "Account id to delete")),
     responses(
         (status = 204, description = "Account deleted"),
-        (status = 400, body = crate::server::ErrorBody),
         (status = 401, body = crate::server::ErrorBody),
         (status = 403, body = crate::server::ErrorBody),
         (status = 404, body = crate::server::ErrorBody)
     )
 )]
-pub async fn delete_user_handler(
+pub async fn delete_account_handler(
     State(state): State<AppState>,
     Path(target): Path<String>,
-    Admin(_auth): Admin,
+    Owner(_auth): Owner,
 ) -> Result<axum::http::StatusCode, ApiError> {
     let mut conn = state.db.acquire().await?;
-    require_account_exists(&mut conn, &target).await?;
-    if account_profile::is_last_admin(&mut conn, &target).await? {
-        return Err(ApiError::BadRequest(
-            "this is the only administrator; promote another account first".into(),
-        ));
-    }
+    require_managed_account(&mut conn, &target).await?;
 
     account_profile::delete_account(&mut conn, &target).await?;
     let account_root = state.cfg.paths.data_dir.join(&target);

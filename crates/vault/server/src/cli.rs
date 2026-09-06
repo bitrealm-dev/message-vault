@@ -52,6 +52,50 @@ pub enum Commands {
 
     /// Convert media under assets/ into browser previews under `assets_converted/`
     ProcessAssets(ProcessAssetsArgs),
+
+    /// Claim an unclaimed vault by creating its owner. Refuses a vault that
+    /// already has one.
+    CreateOwner(CreateOwnerArgs),
+
+    /// Set a new password for the vault owner, ending their sessions. Refuses
+    /// a vault that has no owner yet.
+    ResetOwnerPassword(ResetOwnerPasswordArgs),
+}
+
+/// Options for `create-owner`.
+#[derive(Debug, Args)]
+pub struct CreateOwnerArgs {
+    /// Login username for the vault owner
+    #[arg(long)]
+    pub username: String,
+
+    /// Password for the vault owner; must satisfy the vault's password policy
+    #[arg(long)]
+    pub password: String,
+
+    /// Path to config.toml
+    #[arg(long, default_value = "config/config.toml")]
+    pub config: PathBuf,
+
+    /// Connection URL (postgres://… or sqlite://…; overrides `[database]` url)
+    #[arg(long)]
+    pub db_url: Option<String>,
+}
+
+/// Options for `reset-owner-password`.
+#[derive(Debug, Args)]
+pub struct ResetOwnerPasswordArgs {
+    /// New password for the vault owner; must satisfy the password policy
+    #[arg(long)]
+    pub password: String,
+
+    /// Path to config.toml
+    #[arg(long, default_value = "config/config.toml")]
+    pub config: PathBuf,
+
+    /// Connection URL (postgres://… or sqlite://…; overrides `[database]` url)
+    #[arg(long)]
+    pub db_url: Option<String>,
 }
 
 /// Options for `import`.
@@ -250,7 +294,34 @@ pub async fn run(cli: Cli) -> Result<()> {
         Commands::DumpOpenapi(args) => crate::openapi::write_openapi(args.output.as_deref()),
         Commands::DumpCliDocs(args) => crate::cli_docs::write_cli_docs(args.output.as_deref()),
         Commands::ProcessAssets(args) => run_process_assets(args).await,
+        Commands::CreateOwner(args) => run_create_owner(args).await,
+        Commands::ResetOwnerPassword(args) => run_reset_owner_password(args).await,
     }
+}
+
+/// Claim the vault and report the owner's username.
+async fn run_create_owner(args: CreateOwnerArgs) -> Result<()> {
+    let username = crate::owner_cli::create_owner(
+        &args.config,
+        args.db_url.as_deref(),
+        &args.username,
+        &args.password,
+    )
+    .await?;
+    println!("Vault claimed. Sign in as {username}.");
+    Ok(())
+}
+
+/// Set the vault owner's password and report the username to sign in with.
+async fn run_reset_owner_password(args: ResetOwnerPasswordArgs) -> Result<()> {
+    let username = crate::owner_cli::reset_owner_password(
+        &args.config,
+        args.db_url.as_deref(),
+        &args.password,
+    )
+    .await?;
+    println!("Owner password set. Sign in as {username}.");
+    Ok(())
 }
 
 /// Reject a negative dedupe window before any database is opened.

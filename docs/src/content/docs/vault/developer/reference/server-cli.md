@@ -21,6 +21,8 @@ This document contains the help content for the `message-vault-server` command-l
 * [`message-vault-server dump-openapi`↴](#message-vault-server-dump-openapi)
 * [`message-vault-server dump-cli-docs`↴](#message-vault-server-dump-cli-docs)
 * [`message-vault-server process-assets`↴](#message-vault-server-process-assets)
+* [`message-vault-server create-owner`↴](#message-vault-server-create-owner)
+* [`message-vault-server reset-owner-password`↴](#message-vault-server-reset-owner-password)
 
 ## `message-vault-server`
 
@@ -38,6 +40,8 @@ Import and view messages in SQLite
 * `dump-openapi` — Write the OpenAPI document (JSON) to stdout or --output. Does not open the database
 * `dump-cli-docs` — Write this CLI's docs-site reference page (Markdown) to stdout or --output. Does not open the database
 * `process-assets` — Convert media under assets/ into browser previews under `assets_converted/`
+* `create-owner` — Claim an unclaimed vault by creating its owner. Refuses a vault that already has one
+* `reset-owner-password` — Set a new password for the vault owner, ending their sessions. Refuses a vault that has no owner yet
 
 
 
@@ -185,6 +189,39 @@ Convert media under assets/ into browser previews under `assets_converted/`
 * `--skip-audio` — Skip audio conversion
 * `--db <DB>` — Override SQLite database path from config
 * `--source <SOURCE>` — Only process this source id
+
+
+
+## `message-vault-server create-owner`
+
+Claim an unclaimed vault by creating its owner. Refuses a vault that already has one
+
+**Usage:** `message-vault-server create-owner [OPTIONS] --username <USERNAME> --password <PASSWORD>`
+
+###### **Options:**
+
+* `--username <USERNAME>` — Login username for the vault owner
+* `--password <PASSWORD>` — Password for the vault owner; must satisfy the vault's password policy
+* `--config <CONFIG>` — Path to config.toml
+
+  Default value: `config/config.toml`
+* `--db-url <DB_URL>` — Connection URL (postgres://… or sqlite://…; overrides `[database]` url)
+
+
+
+## `message-vault-server reset-owner-password`
+
+Set a new password for the vault owner, ending their sessions. Refuses a vault that has no owner yet
+
+**Usage:** `message-vault-server reset-owner-password [OPTIONS] --password <PASSWORD>`
+
+###### **Options:**
+
+* `--password <PASSWORD>` — New password for the vault owner; must satisfy the password policy
+* `--config <CONFIG>` — Path to config.toml
+
+  Default value: `config/config.toml`
+* `--db-url <DB_URL>` — Connection URL (postgres://… or sqlite://…; overrides `[database]` url)
 
 
 

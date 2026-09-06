@@ -3,30 +3,19 @@ import { useSearchParams } from "react-router-dom";
 import { canUseConvert } from "../lib/desktopFeatures";
 import { parseSelectKey } from "../lib/selectKey";
 import { isTauri } from "../lib/tauri-check";
-import { useAccountProfile } from "../lib/useAccountProfile";
 import { AccountSettingsPanel } from "./settings/AccountSettingsPanel";
-import { AdminUsersPanel } from "./settings/AdminUsersPanel";
 import { AppearanceSection } from "./settings/AppearanceSection";
 import { ConvertSection } from "./settings/ConvertSection";
 import { ProfileSettingsPanel } from "./settings/ProfileSettingsPanel";
 import { StorageSection } from "./settings/StorageSection";
 import { SystemSection } from "./settings/SystemSection";
 
-const ALL_TABS = [
-  "account",
-  "profile",
-  "users",
-  "storage",
-  "system",
-  "convert",
-  "appearance",
-] as const;
+const ALL_TABS = ["account", "profile", "storage", "system", "convert", "appearance"] as const;
 type SettingsTab = (typeof ALL_TABS)[number];
 
 const TAB_LABELS: Record<SettingsTab, string> = {
   account: "Account",
   profile: "Profile",
-  users: "Users",
   storage: "Storage",
   system: "System",
   convert: "Convert",
@@ -34,14 +23,12 @@ const TAB_LABELS: Record<SettingsTab, string> = {
 };
 
 /**
- * Tabs this person can open, in display order. Users exists for
- * administrators only, so `?tab=users` can never land a non-admin on a panel
- * that will 403. Convert is a desktop-only tool: it runs `message-reexport`
- * in the desktop process, so a browser visiting the website never sees it.
+ * Tabs this person can open, in display order. Convert is a desktop-only
+ * tool: it runs `message-reexport` in the desktop process, so a browser
+ * visiting the website never sees it.
  */
-function visibleTabs(isAdmin: boolean, isDesktop: boolean): SettingsTab[] {
+function visibleTabs(isDesktop: boolean): SettingsTab[] {
   return ALL_TABS.filter((id) => {
-    if (id === "users") return isAdmin;
     if (id === "convert") return canUseConvert(isDesktop);
     return true;
   });
@@ -66,9 +53,7 @@ function tabClassName({ isSelected }: { isSelected: boolean }) {
 
 export default function SettingsScreen() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { profile } = useAccountProfile();
-  const isAdmin = profile?.is_admin === true;
-  const tabs = visibleTabs(isAdmin, isTauri());
+  const tabs = visibleTabs(isTauri());
   const tab = tabFromSearchParam(searchParams.get("tab"), tabs);
 
   return (
@@ -106,11 +91,6 @@ export default function SettingsScreen() {
         <TabPanel id="profile" className="mt-6">
           <ProfileSettingsPanel />
         </TabPanel>
-        {isAdmin ? (
-          <TabPanel id="users" className="mt-6">
-            <AdminUsersPanel />
-          </TabPanel>
-        ) : null}
         <TabPanel id="storage" className="mt-6">
           <StorageSection />
         </TabPanel>

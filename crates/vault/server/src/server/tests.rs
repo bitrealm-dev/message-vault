@@ -843,16 +843,17 @@ async fn literal_contact_routes_are_not_captured_by_the_id_route() {
 async fn import_endpoint_honors_can_import_flag() {
     let vault = crate::test_support::test_vault().await;
     let state = vault.state.clone();
-    let admin =
-        crate::test_support::register_via_api(&state, "import-guard-admin", "hunter2hunter2").await;
+    let owner =
+        crate::test_support::claim_vault_as_owner(&state, "import-guard-keeper", "hunter2hunter2")
+            .await;
     let user =
         crate::test_support::register_via_api(&state, "import-guard-user", "hunter2hunter2").await;
 
     assert_eq!(
         crate::test_support::patch_status(
             &state,
-            &format!("/v1/admin/users/{}", user.account_id),
-            &admin.token,
+            &format!("/v1/owner/accounts/{}", user.account_id),
+            &owner.token,
             serde_json::json!({ "can_import": false }),
         )
         .await,
@@ -867,8 +868,8 @@ async fn import_endpoint_honors_can_import_flag() {
     assert_eq!(
         crate::test_support::patch_status(
             &state,
-            &format!("/v1/admin/users/{}", user.account_id),
-            &admin.token,
+            &format!("/v1/owner/accounts/{}", user.account_id),
+            &owner.token,
             serde_json::json!({ "can_import": true }),
         )
         .await,
@@ -888,16 +889,17 @@ async fn import_endpoint_honors_can_import_flag() {
 async fn export_endpoint_honors_can_export_flag() {
     let vault = crate::test_support::test_vault().await;
     let state = vault.state.clone();
-    let admin =
-        crate::test_support::register_via_api(&state, "export-guard-admin", "hunter2hunter2").await;
+    let owner =
+        crate::test_support::claim_vault_as_owner(&state, "export-guard-keeper", "hunter2hunter2")
+            .await;
     let user =
         crate::test_support::register_via_api(&state, "export-guard-user", "hunter2hunter2").await;
 
     assert_eq!(
         crate::test_support::patch_status(
             &state,
-            &format!("/v1/admin/users/{}", user.account_id),
-            &admin.token,
+            &format!("/v1/owner/accounts/{}", user.account_id),
+            &owner.token,
             serde_json::json!({ "can_export": false }),
         )
         .await,
@@ -912,8 +914,8 @@ async fn export_endpoint_honors_can_export_flag() {
     assert_eq!(
         crate::test_support::patch_status(
             &state,
-            &format!("/v1/admin/users/{}", user.account_id),
-            &admin.token,
+            &format!("/v1/owner/accounts/{}", user.account_id),
+            &owner.token,
             serde_json::json!({ "can_export": true }),
         )
         .await,

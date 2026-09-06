@@ -508,419 +508,6 @@
         ]
       }
     },
-    "/v1/admin/users": {
-      "get": {
-        "tags": [
-          "Admin"
-        ],
-        "summary": "List every account with its flags, message count, and storage use.",
-        "operationId": "list_users_handler",
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ListUsersResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      },
-      "post": {
-        "tags": [
-          "Admin"
-        ],
-        "summary": "Create an account as an administrator. Never grants the first-account\nadministrator flag automatically — this endpoint could not have been\ncalled unless an administrator already exists.",
-        "operationId": "create_user_handler",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateUserRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AdminUser"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/v1/admin/users/{id}": {
-      "delete": {
-        "tags": [
-          "Admin"
-        ],
-        "summary": "Permanently delete an account: login, profile, contacts, and every\nmessage it owns. Refuses (`400`) deleting the vault's last administrator.",
-        "operationId": "delete_user_handler",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account id to delete",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Account deleted"
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      },
-      "patch": {
-        "tags": [
-          "Admin"
-        ],
-        "summary": "Change an account's administrative, disabled, or permission flags.",
-        "description": "Refuses (`400`) a request that would demote, disable, or otherwise leave\nthe vault without an administrator.",
-        "operationId": "patch_user_handler",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account id to modify",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchUserRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AdminUser"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/v1/admin/users/{id}/messages": {
-      "delete": {
-        "tags": [
-          "Admin"
-        ],
-        "summary": "Destroy one account's conversations, messages, and attachments. The\naccount itself, its contacts, and its login survive. Refuses (`400`)\nnothing here — deleting messages never affects the last-admin rule.",
-        "operationId": "delete_user_messages_handler",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account whose messages are destroyed",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeleteMessagesResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/v1/admin/users/{id}/password": {
-      "put": {
-        "tags": [
-          "Admin"
-        ],
-        "summary": "Set an account's password as an administrator. Invalidates that\naccount's existing session (unlike a self-service password change, which\nleaves other sessions alone) — after this call the target must sign in\nagain with the new password.",
-        "operationId": "set_user_password_handler",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Account id whose password is set",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SetPasswordRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Password set"
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
     "/v1/assets/{sha256}": {
       "get": {
         "tags": [
@@ -4922,6 +4509,409 @@
         ]
       }
     },
+    "/v1/owner/accounts": {
+      "get": {
+        "tags": [
+          "Owner"
+        ],
+        "summary": "List the accounts this vault holds, with their flags, message count, and\nstorage use. The owner's own account is not among them.",
+        "operationId": "owner_list_accounts",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListAccountsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Owner"
+        ],
+        "summary": "Create an account. The owner picks the first password and the account\nholder replaces it at first sign-in, so the owner's choice survives one\nsession and no longer.",
+        "operationId": "owner_create_account",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedAccount"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/owner/accounts/{id}": {
+      "delete": {
+        "tags": [
+          "Owner"
+        ],
+        "summary": "Permanently delete an account: login, profile, contacts, and every message\nit owns. The demo account is deleted like any other, which is how a demo\nvault is cleared into a real one.",
+        "operationId": "owner_delete_account",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account id to delete",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Account deleted"
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "Owner"
+        ],
+        "summary": "Change an account's disabled flag or its import, export and delete\npermissions.",
+        "description": "Clearing `can_import` or `can_export` also narrows every API token that\naccount has already issued, because a token's permissions are intersected\nwith its account's on every request. The owner restrains the account and\nthe tokens follow, without ever seeing one.",
+        "operationId": "owner_patch_account",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account id to modify",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedAccount"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/owner/accounts/{id}/messages": {
+      "delete": {
+        "tags": [
+          "Owner"
+        ],
+        "summary": "Destroy one account's conversations, messages, and attachments. The\naccount itself, its contacts, and its login survive.",
+        "operationId": "owner_delete_account_messages",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account whose messages are destroyed",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteMessagesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/owner/accounts/{id}/password": {
+      "put": {
+        "tags": [
+          "Owner"
+        ],
+        "summary": "Set an account's password. Invalidates that account's existing session\n(unlike a self-service password change, which leaves other sessions alone)\n— after this call the account holder must sign in again with the new\npassword, and replace it once they do.",
+        "operationId": "owner_set_account_password",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account id whose password is set",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Password set"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/saved-searches": {
       "get": {
         "tags": [
@@ -5319,7 +5309,8 @@
           "phones",
           "emails",
           "is_demo",
-          "is_admin",
+          "is_owner",
+          "must_change_password",
           "can_import",
           "can_export",
           "can_delete"
@@ -5348,13 +5339,17 @@
             },
             "description": "Email addresses linked to the account."
           },
-          "is_admin": {
-            "type": "boolean",
-            "description": "May manage users."
-          },
           "is_demo": {
             "type": "boolean",
             "description": "True for the seeded demo account (cannot be deleted)."
+          },
+          "is_owner": {
+            "type": "boolean",
+            "description": "True for the vault owner: manages accounts, holds no messages."
+          },
+          "must_change_password": {
+            "type": "boolean",
+            "description": "The vault owner chose this password; it must be replaced before the\naccount can be used."
           },
           "phones": {
             "type": "array",
@@ -5562,61 +5557,6 @@
             "format": "int64",
             "description": "Identities written with a review note (an ambiguous number).",
             "minimum": 0
-          }
-        }
-      },
-      "AdminUser": {
-        "type": "object",
-        "description": "One account as an administrator sees it.",
-        "required": [
-          "account_id",
-          "username",
-          "is_admin",
-          "disabled",
-          "can_import",
-          "can_export",
-          "can_delete",
-          "message_count",
-          "storage_bytes"
-        ],
-        "properties": {
-          "account_id": {
-            "type": "string",
-            "description": "Account id."
-          },
-          "can_delete": {
-            "type": "boolean",
-            "description": "May destroy message data."
-          },
-          "can_export": {
-            "type": "boolean",
-            "description": "May call the export endpoints."
-          },
-          "can_import": {
-            "type": "boolean",
-            "description": "May call the import endpoints."
-          },
-          "disabled": {
-            "type": "boolean",
-            "description": "May not sign in."
-          },
-          "is_admin": {
-            "type": "boolean",
-            "description": "May manage users."
-          },
-          "message_count": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Messages this account owns."
-          },
-          "storage_bytes": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Attachment bytes this account owns."
-          },
-          "username": {
-            "type": "string",
-            "description": "Login username."
           }
         }
       },
@@ -5838,12 +5778,6 @@
           "account_id": {
             "type": [
               "string",
-              "null"
-            ]
-          },
-          "admin": {
-            "type": [
-              "boolean",
               "null"
             ]
           },
@@ -6573,6 +6507,24 @@
           }
         }
       },
+      "CreateAccountRequest": {
+        "type": "object",
+        "description": "Body for creating an account as the vault owner.",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "description": "Initial password. Must satisfy the vault's password policy. The\naccount holder is made to replace it at first sign-in, so it survives\nexactly one session."
+          },
+          "username": {
+            "type": "string",
+            "description": "Login username."
+          }
+        }
+      },
       "CreateApiTokenRequest": {
         "type": "object",
         "description": "Body for creating a token: label, permissions, optional expiry.",
@@ -6729,28 +6681,6 @@
           "id": {
             "type": "integer",
             "format": "int64"
-          }
-        }
-      },
-      "CreateUserRequest": {
-        "type": "object",
-        "description": "Body for creating an account as an administrator.",
-        "required": [
-          "username",
-          "password"
-        ],
-        "properties": {
-          "is_admin": {
-            "type": "boolean",
-            "description": "Grant the administrative flag. Default false."
-          },
-          "password": {
-            "type": "string",
-            "description": "Initial password. Must satisfy the vault's password policy."
-          },
-          "username": {
-            "type": "string",
-            "description": "Login username."
           }
         }
       },
@@ -7374,6 +7304,22 @@
           }
         }
       },
+      "ListAccountsResponse": {
+        "type": "object",
+        "description": "Every account in the vault except the owner's own.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagedAccount"
+            },
+            "description": "One row per account."
+          }
+        }
+      },
       "ListApiTokensResponse": {
         "type": "object",
         "description": "The account's named API tokens.",
@@ -7399,22 +7345,6 @@
           "messages"
         ]
       },
-      "ListUsersResponse": {
-        "type": "object",
-        "description": "Every account in the vault.",
-        "required": [
-          "items"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/AdminUser"
-            },
-            "description": "One row per account."
-          }
-        }
-      },
       "LoginRequest": {
         "type": "object",
         "description": "Username and password.",
@@ -7425,6 +7355,61 @@
           "password": {
             "type": "string",
             "description": "Login password."
+          },
+          "username": {
+            "type": "string",
+            "description": "Login username."
+          }
+        }
+      },
+      "ManagedAccount": {
+        "type": "object",
+        "description": "One account as the vault owner sees it: who it is and what it holds, never\nwhat it says.",
+        "required": [
+          "account_id",
+          "username",
+          "disabled",
+          "must_change_password",
+          "can_import",
+          "can_export",
+          "can_delete",
+          "message_count",
+          "storage_bytes"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "description": "Account id."
+          },
+          "can_delete": {
+            "type": "boolean",
+            "description": "May destroy message data."
+          },
+          "can_export": {
+            "type": "boolean",
+            "description": "May call the export endpoints."
+          },
+          "can_import": {
+            "type": "boolean",
+            "description": "May call the import endpoints."
+          },
+          "disabled": {
+            "type": "boolean",
+            "description": "May not sign in."
+          },
+          "message_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Messages this account owns."
+          },
+          "must_change_password": {
+            "type": "boolean",
+            "description": "Still carries the password the owner chose, and must replace it."
+          },
+          "storage_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Attachment bytes this account owns."
           },
           "username": {
             "type": "string",
@@ -8064,7 +8049,7 @@
           }
         }
       },
-      "PatchUserRequest": {
+      "PatchAccountRequest": {
         "type": "object",
         "description": "Body for changing an account's flags. Omitted fields are left alone.",
         "properties": {
@@ -8095,13 +8080,6 @@
               "null"
             ],
             "description": "Disable or re-enable sign-in."
-          },
-          "is_admin": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "Grant or revoke administration."
           }
         }
       },
@@ -8292,7 +8270,7 @@
       },
       "SetPasswordRequest": {
         "type": "object",
-        "description": "Body for an administrator setting someone's password.",
+        "description": "Body for the vault owner setting someone's password.",
         "required": [
           "password"
         ],
@@ -8461,8 +8439,8 @@
       "description": "The words the search language accepts"
     },
     {
-      "name": "Admin",
-      "description": "User management for administrators"
+      "name": "Owner",
+      "description": "Account management for the vault owner"
     }
   ]
 }
