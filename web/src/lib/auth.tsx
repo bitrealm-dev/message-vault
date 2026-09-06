@@ -24,6 +24,7 @@ interface AuthState {
 }
 
 interface Profile {
+  is_owner?: boolean;
   preferred_name?: string | null;
   phones?: string[];
   emails?: string[];
@@ -31,6 +32,12 @@ interface Profile {
 
 /** True when the profile has no name, phone, or email yet — the user still needs setup. */
 function profileNeedsOnboarding(profile: Profile): boolean {
+  // The vault owner has no profile to set up: no name shown against messages,
+  // no time zone to read them in, and no handles that mark a message as
+  // theirs, because they hold no messages. Profile setup would ask three
+  // questions with no answer.
+  if (profile.is_owner === true) return false;
+
   const hasName = !!profile.preferred_name?.trim();
   const hasPhone = (profile.phones?.length ?? 0) > 0;
   const hasEmail = (profile.emails?.length ?? 0) > 0;

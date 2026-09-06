@@ -16,13 +16,25 @@ vi.mock("../lib/tauri-check", () => ({
   isTauri: () => false,
 }));
 
+import { VaultProviders } from "../test/vaultProviders";
 import LoginScreen from "./LoginScreen";
 
-/** Answer `/health` as a healthy vault. Returns the underlying fetch mock. */
-function stubVault() {
-  const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => ({
+/**
+ * Answer `/health` as a healthy vault and `/v1/vault` with the state given.
+ *
+ * The state decides which forms the card offers, so a test that says nothing
+ * about it gets `open` — the two-tab card, which is what most of these tests
+ * are about. Returns the underlying fetch mock.
+ */
+function stubVault(state: "unclaimed" | "closed" | "open" = "open") {
+  // `/health` is read with `text()`; the API client reads `status` and
+  // `json()`. Both shapes come back from the one stub so a test does not have
+  // to know which of the two a given screen used.
+  const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => ({
     ok: true,
-    text: async () => "",
+    status: 200,
+    text: async () => (String(url).includes("/v1/vault") ? JSON.stringify({ state }) : ""),
+    json: async () => ({ state }),
   }));
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
@@ -30,9 +42,11 @@ function stubVault() {
 
 function renderScreen() {
   render(
-    <MemoryRouter>
-      <LoginScreen />
-    </MemoryRouter>,
+    <VaultProviders>
+      <MemoryRouter>
+        <LoginScreen />
+      </MemoryRouter>
+    </VaultProviders>,
   );
 }
 
@@ -284,9 +298,20 @@ describe("LoginScreen", () => {
       vi.fn(
         async (
           url: string,
-        ): Promise<{ ok: boolean; status?: number; text: () => Promise<string> }> => {
+        ): Promise<{
+          ok: boolean;
+          status?: number;
+          text: () => Promise<string>;
+          json?: () => Promise<unknown>;
+        }> => {
           if (String(url).startsWith("http://127.0.0.1:8080")) {
-            return { ok: true, text: async () => "" };
+            // Healthy, and open, so the card offers the two tabs this test looks for.
+            return {
+              ok: true,
+              status: 200,
+              text: async () => JSON.stringify({ state: "open" }),
+              json: async () => ({ state: "open" }),
+            };
           }
           return { ok: false, status: 503, text: async () => "" };
         },
@@ -359,7 +384,14 @@ describe("LoginScreen", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
-        return healthy ? { ok: true, text: async () => "" } : { ok: false, status: 503 };
+        return healthy
+          ? {
+              ok: true,
+              status: 200,
+              text: async () => JSON.stringify({ state: "open" }),
+              json: async () => ({ state: "open" }),
+            }
+          : { ok: false, status: 503 };
       }),
     );
     renderScreen();

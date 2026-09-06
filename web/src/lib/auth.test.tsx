@@ -7,6 +7,7 @@ import { VaultProviders } from "../test/vaultProviders";
 
 const post = vi.fn();
 const get = vi.fn();
+const getProfile = vi.fn();
 const setTokenFn = vi.fn();
 const setBaseUrl = vi.fn();
 const isTauri = vi.fn();
@@ -25,12 +26,13 @@ vi.mock("./api", () => ({
   setBaseUrl: (...args: unknown[]) => setBaseUrl(...args),
 }));
 
-// The two vault calls auth.tsx makes, faked by name. Everything else in
-// vaultApi stays real, since other modules in this graph import from it.
+// The vault calls auth.tsx makes, faked by name. Everything else in vaultApi
+// stays real, since other modules in this graph import from it.
 vi.mock("./vaultApi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./vaultApi")>()),
   logout: (...args: unknown[]) => post(...args),
   checkAuth: (...args: unknown[]) => get(...args),
+  getAccountProfile: (...args: unknown[]) => getProfile(...args),
 }));
 
 vi.mock("./tauri-check", () => ({
@@ -251,5 +253,75 @@ describe("AuthProvider logout", () => {
       await handler({ preventDefault: vi.fn() });
     });
     expect(destroy).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * Profile setup asks for a display name, a time zone, and the handles that
+ * mark a message as yours. The vault owner has no answer to any of them: it
+ * holds no messages, so no name is shown against one, no zone reads one, and
+ * no handle marks one. Sending the owner there was a real bug, caught in the
+ * browser and pinned here.
+ */
+describe("who profile setup is for", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    currentToken = null;
+    post.mockReset();
+    get.mockReset();
+    setTokenFn.mockReset();
+    setBaseUrl.mockReset();
+    getProfile.mockReset();
+    isTauri.mockReturnValue(false);
+    post.mockResolvedValue({ ok: true });
+  });
+
+  async function signIn(profile: Record<string, unknown>) {
+    getProfile.mockResolvedValue(profile);
+    const { AuthProvider, useAuth } = await import("./auth");
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <VaultProviders>
+          <AuthProvider>{children}</AuthProvider>
+        </VaultProviders>
+      ),
+    });
+    await act(async () => {
+      await result.current.login("http://127.0.0.1:8080", "session-token", "acct-1");
+    });
+    return result;
+  }
+
+  it("does not send the vault owner to profile setup", async () => {
+    const result = await signIn({
+      is_owner: true,
+      preferred_name: null,
+      phones: [],
+      emails: [],
+    });
+
+    expect(result.current.needsOnboarding).toBe(false);
+  });
+
+  it("still sends an ordinary account with an empty profile to setup", async () => {
+    const result = await signIn({
+      is_owner: false,
+      preferred_name: null,
+      phones: [],
+      emails: [],
+    });
+
+    expect(result.current.needsOnboarding).toBe(true);
+  });
+
+  it("leaves an ordinary account that has a name alone", async () => {
+    const result = await signIn({
+      is_owner: false,
+      preferred_name: "Sam",
+      phones: [],
+      emails: [],
+    });
+
+    expect(result.current.needsOnboarding).toBe(false);
   });
 });
