@@ -1005,6 +1005,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/owner/vault-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the vault's settings. */
+        get: operations["owner_vault_settings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Change the vault's settings. */
+        patch: operations["owner_patch_vault_settings"];
+        trace?: never;
+    };
     "/v1/saved-searches": {
         parameters: {
             query?: never;
@@ -1081,6 +1099,48 @@ export interface paths {
          *     this is the door for everything in it at once.
          */
         delete: operations["empty_trash_handler"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/vault": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Report whether this vault is unclaimed, closed, or open. */
+        get: operations["vault_state"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/vault/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Claim an unclaimed vault by creating its owner.
+         * @description Unauthenticated, because a vault with no owner has no credential that
+         *     could authorize this. Whoever reaches an unclaimed vault first may claim
+         *     it: the vault is self-hosted, so its operator installs the software,
+         *     claims the vault, and publishes the port, in that order and at times of
+         *     their choosing. An unclaimed vault is also empty, so a lost race destroys
+         *     nothing and announces itself at once.
+         */
+        post: operations["claim_vault"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1294,6 +1354,13 @@ export interface components {
         ChangePasswordResponse: {
             /** @description Replacement session token after password change (previous sessions are revoked). */
             token: string;
+        };
+        /** @description Body for claiming a vault. */
+        ClaimVaultRequest: {
+            /** @description Password for the vault owner. Must satisfy the vault's password policy. */
+            password: string;
+            /** @description Login username for the vault owner. */
+            username: string;
         };
         /** @description Final stats and issues for a finished import session. */
         CompleteImportBody: {
@@ -2277,6 +2344,11 @@ export interface components {
             /** @description Disable or re-enable sign-in. */
             disabled?: boolean | null;
         };
+        /** @description Body for changing the vault's settings. Omitted fields are left alone. */
+        PatchVaultSettingsRequest: {
+            /** @description Let anyone reaching the vault create their own account, or stop them. */
+            public_registration?: boolean | null;
+        };
         /** @description One handle to link or unlink, with its platform service. */
         ProfileHandleInput: {
             /** @description Raw handle value, e.g. `+15555550100` or `alex@example.com`. */
@@ -2405,6 +2477,24 @@ export interface components {
          * @enum {string}
          */
         ValueType: "text" | "name" | "person" | "choice" | "date" | "count" | "size" | "flag";
+        /** @description The vault's state, for the screen a signed-out person sees. */
+        VaultResponse: {
+            /**
+             * @description `unclaimed` shows Create Vault Owner alone; `closed` shows Login alone;
+             *     `open` shows Login and Create Account.
+             */
+            state: components["schemas"]["VaultState"];
+        };
+        /** @description The vault settings the owner controls. */
+        VaultSettingsResponse: {
+            /** @description Anyone reaching the vault may create their own account. */
+            public_registration: boolean;
+        };
+        /**
+         * @description What state a vault is in, from outside.
+         * @enum {string}
+         */
+        VaultState: "unclaimed" | "closed" | "open";
     };
     responses: never;
     parameters: never;
@@ -3417,6 +3507,15 @@ export interface operations {
             };
             /** @description Invalid input */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Public registration is off */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5749,6 +5848,80 @@ export interface operations {
             };
         };
     };
+    owner_vault_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultSettingsResponse"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    owner_patch_vault_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchVaultSettingsRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultSettingsResponse"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     saved_searches_list_handler: {
         parameters: {
             query?: never;
@@ -6021,6 +6194,74 @@ export interface operations {
                 };
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    vault_state: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultResponse"];
+                };
+            };
+        };
+    };
+    claim_vault: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClaimVaultRequest"];
+            };
+        };
+        responses: {
+            /** @description Vault claimed; session issued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthTokenResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Already claimed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

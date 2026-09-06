@@ -35,7 +35,8 @@ use crate::server::AppState;
         (name = "Trash", description = "Empty the trash; the one door to permanent deletion, with DELETE on a trashed conversation or contact"),
         (name = "Message tags", description = "Tags on conversations"),
         (name = "Search", description = "The words the search language accepts"),
-        (name = "Owner", description = "Account management for the vault owner")
+        (name = "Owner", description = "Account management for the vault owner"),
+        (name = "Vault", description = "The vault's own state: claiming it, and what a signed-out visitor may do")
     )
 )]
 /// OpenAPI document definition assembled from the utoipa-annotated handlers.
@@ -59,6 +60,8 @@ pub fn auth_public_openapi() -> OpenApiRouter<AppState> {
     OpenApiRouter::with_openapi(ApiDoc::openapi())
         .routes(routes!(crate::auth::register_handler))
         .routes(routes!(crate::auth::login_handler))
+        .routes(routes!(crate::vault_api::vault_state_handler))
+        .routes(routes!(crate::vault_api::claim_vault_handler))
 }
 
 /// Health, session-backed auth, account settings, and browse routes.
@@ -158,6 +161,8 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(crate::owner_api::set_account_password_handler))
         .routes(routes!(crate::owner_api::delete_account_messages_handler))
         .routes(routes!(crate::owner_api::delete_account_handler))
+        .routes(routes!(crate::vault_api::vault_settings_handler))
+        .routes(routes!(crate::vault_api::patch_vault_settings_handler))
 }
 
 /// Pretty OpenAPI JSON. Same string the CLI writes and the stale-spec test compares.

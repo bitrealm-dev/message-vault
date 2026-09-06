@@ -109,6 +109,8 @@ The first run uses `--reset-demo`. Later sessions, start with no flags so `data/
 
 `--reset` wipes `data/` and starts empty (no sample inbox). Don't combine `--reset` and `--reset-demo`. `--sqlweb` works with any of these.
 
+`--reset` alone leaves the vault **unclaimed**, so the first screen is Create Vault Owner — which is the only way to reach that screen in dev. Add `--owner` to claim it as `admin`/`admin` instead and land on the login. `--reset-demo` claims the vault itself, so it rejects `--owner`.
+
 ### Start the vault on Postgres (optional)
 
 Same flags as the SQLite script, against the compose Postgres on
@@ -118,7 +120,8 @@ Same flags as the SQLite script, against the compose Postgres on
 ./scripts/run-vault-pg-dev.sh --reset-demo
 ```
 
-Sign in as username `demo` with an empty password. `--reset` wipes the
+Sign in as username `demo` with an empty password, or as `admin` with the
+password `admin` to manage accounts. `--reset` wipes the
 Postgres volume and `data/` and starts empty. A run with no flags keeps
 the volume. Stopping the script (Ctrl+C) stops the Postgres container
 and keeps the volume. Do not run this at the same time as
@@ -132,7 +135,7 @@ Install the frontend packages once, then start the Vite UI. Vite is the local we
 cd web && npm ci && npm run dev
 ```
 
-Open **http://localhost:5173**. Sign in as username `demo` with an empty password. That account holds invented messages and can do everything a real account can, so import and other writes are testable on it; `./scripts/run-vault-dev.sh --reset-demo` puts it back.
+Open **http://localhost:5173**. Sign in as username `demo` with an empty password. That account holds invented messages and can do everything a real account can, so import and other writes are testable on it; `./scripts/run-vault-dev.sh --reset-demo` puts it back. Signing in as `admin` with the password `admin` reaches the same vault as its owner, which manages accounts and reads no messages.
 
 Later sessions, skip `npm ci` unless `web/package-lock.json` changed.
 

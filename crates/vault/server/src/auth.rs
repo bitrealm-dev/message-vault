@@ -37,7 +37,7 @@ pub(crate) type AuthRateLimits = Arc<Mutex<HashMap<String, VecDeque<Instant>>>>;
 
 /// Reject when `bucket` has seen at least [`AUTH_RATE_MAX`] hits in
 /// [`AUTH_RATE_WINDOW`].
-fn check_auth_rate_limit(limits: &AuthRateLimits, bucket: &str) -> Result<(), ApiError> {
+pub(crate) fn check_auth_rate_limit(limits: &AuthRateLimits, bucket: &str) -> Result<(), ApiError> {
     check_auth_rate_limit_at(limits, bucket, Instant::now())
 }
 
@@ -343,6 +343,7 @@ pub(crate) async fn require_username_free(
     responses(
         (status = 200, description = "Session issued", body = AuthTokenResponse),
         (status = 400, description = "Invalid input", body = crate::server::ErrorBody),
+        (status = 403, description = "Public registration is off", body = crate::server::ErrorBody),
         (status = 429, description = "Rate limited", body = crate::server::ErrorBody)
     )
 )]
@@ -357,6 +358,21 @@ pub async fn register_handler(
         ));
     }
     check_auth_rate_limit(&state.auth_rate_limits, &format!("register:{username}"))?;
+
+    // Registering is the vault's only self-service door, and it is shut
+    // unless the vault owner has opened it. An unclaimed vault is shut too:
+    // its first act is being claimed, not being joined.
+    {
+        let mut conn = state.db.acquire().await?;
+        if !crate::db::vault_settings::load(&mut conn)
+            .await?
+            .public_registration
+        {
+            return Err(ApiError::Forbidden(
+                "this vault does not accept new accounts; ask its owner for one".into(),
+            ));
+        }
+    }
 
     let password_plain = req.password.as_deref().unwrap_or("").to_string();
     if !password_plain.is_empty() {

@@ -92,6 +92,10 @@ pub fn on_postgres() -> bool {
 }
 
 /// An empty vault with schema applied and no accounts.
+///
+/// Public registration is turned on, because most of the suite reaches the
+/// vault through `register_via_api` and a real vault ships with it off. Tests
+/// whose subject is the closed vault turn it back off and say so.
 pub async fn test_vault() -> TestVault {
     let (pool, tmp) = crate::db::engine::test_pool().await;
     {
@@ -100,6 +104,9 @@ pub async fn test_vault() -> TestVault {
             .await
             .unwrap();
         crate::db::schema::ensure_accounts_schema(&mut conn)
+            .await
+            .unwrap();
+        crate::db::vault_settings::set_public_registration(&mut conn, true)
             .await
             .unwrap();
     }
