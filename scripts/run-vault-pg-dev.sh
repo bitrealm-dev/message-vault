@@ -24,14 +24,17 @@ COMPOSE=(docker compose -f docker-compose.pg.yml)
 DB_URL="postgres://vault:vault@127.0.0.1:5432/vault"
 DEMO=0
 RESET=0
+OWNER=0
 RELEASE=0
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [--reset | --reset-demo] [--release]
+Usage: $(basename "$0") [--reset | --reset-demo] [--owner] [--release]
 
   --reset       Wipe the Postgres volume and data/, start empty
   --reset-demo  Wipe the Postgres volume and data/, seed the sample inbox
+  --owner       Claim the vault as admin/admin (rejected with --reset-demo,
+                which claims the vault itself)
   --release     Build and run the optimized binary (seed and serve)
   -h, --help
 EOF
@@ -41,6 +44,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --reset) RESET=1 ;;
     --reset-demo) DEMO=1 ;;
+    --owner) OWNER=1 ;;
     --release) RELEASE=1 ;;
     --demo)
       echo "error: --demo was renamed to --reset-demo (always wipes data/ and reseeds)" >&2
@@ -62,6 +66,11 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+if [[ "${OWNER}" -eq 1 && "${DEMO}" -eq 1 ]]; then
+  echo "error: --reset-demo claims the vault itself; drop --owner" >&2
+  exit 1
+fi
 
 if [[ "${RESET}" -eq 1 && "${DEMO}" -eq 1 ]]; then
   echo "error: use either --reset or --reset-demo, not both" >&2
@@ -151,9 +160,18 @@ if [[ "${DEMO}" -eq 1 ]]; then
   "${CARGO_RUN[@]}" -- reset-demo --config "${CONFIG}" --db-url "${DB_URL}"
   write_host_dev_config
 elif [[ "${RESET}" -eq 1 ]]; then
-  echo "Empty Postgres (create an account in the web UI)."
+  echo "Empty Postgres (claim the vault in the web UI, or pass --owner)."
 else
   echo "Postgres volume present; leaving it in place."
+fi
+
+# Claiming is separate from seeding: --reset alone leaves the vault unclaimed,
+# which is the only way to reach the Create Vault Owner screen in dev.
+if [[ "${OWNER}" -eq 1 ]]; then
+  echo "Claiming the vault as admin/admin…"
+  "${CARGO_RUN[@]}" -- create-owner --config "${CONFIG}" --db-url "${DB_URL}" \
+    --username admin --password admin \
+    || echo "warning: create-owner failed (already claimed?); leaving the vault as it is"
 fi
 
 echo

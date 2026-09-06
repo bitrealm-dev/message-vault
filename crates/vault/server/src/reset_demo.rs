@@ -946,10 +946,44 @@ async fn seed_demo_account(target: DbTarget<'_>, account_id: &str, seed: &DemoSe
     let mut conn = pool.acquire().await?;
     schema::ensure_vault_schema(&mut conn).await?;
     seed_demo_account_on_conn(&mut conn, account_id, seed).await?;
+    seed_demo_owner_on_conn(&mut conn).await?;
     conn.close().await?;
     pool.close().await;
     Ok(())
 }
+/// Credentials the demo vault's owner signs in with. A demo vault is
+/// throwaway, so these are the obvious pair rather than a secret; they exist
+/// only here, because the claim route and `create-owner` both run the
+/// password policy and `admin` is five characters.
+pub const DEMO_OWNER_USERNAME: &str = "admin";
+const DEMO_OWNER_PASSWORD: &str = "admin";
+
+/// Claim the demo vault.
+///
+/// Without an owner, a seeded vault would be unclaimed and the entry screen
+/// would offer Create Vault Owner and no login at all — so the documented
+/// "sign in as `demo`" would reach a screen with nowhere to type it. The row
+/// is written directly, the way the demo account's own row is, which is what
+/// lets the password be shorter than the policy allows.
+async fn seed_demo_owner_on_conn(conn: &mut sqlx::AnyConnection) -> Result<()> {
+    let hash = crate::auth::hash_password(DEMO_OWNER_PASSWORD)?;
+    sqlx::query(
+        r"
+        INSERT INTO accounts (id, username, password_hash)
+        VALUES ($1, $2, $3)
+        ON CONFLICT(id) DO UPDATE SET
+            username = excluded.username,
+            password_hash = excluded.password_hash
+        ",
+    )
+    .bind(account_profile::OWNER_ACCOUNT_ID)
+    .bind(DEMO_OWNER_USERNAME)
+    .bind(&hash)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 /// Create the demo account row and the profile fields the seed names, so the demo signs in without setup.
 async fn seed_demo_account_on_conn(
     conn: &mut sqlx::AnyConnection,
