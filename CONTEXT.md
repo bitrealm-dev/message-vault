@@ -91,6 +91,40 @@ is the only door to permanent deletion; something must be trashed before it
 can be deleted, one item at a time or all at once with Empty Trash.
 _Avoid_: Deleted, Archive, Hidden, Bin
 
+### Signing in
+
+**Account**:
+One person's store inside a vault: the login they sign in with, and the
+conversations, contacts, and handles that store holds. A vault holds many
+accounts and keeps each one's data isolated from the others, so nothing an
+account holds is visible to another. An account is not finished until
+profile setup finishes.
+_Avoid_: Login, Profile, Tenant, Workspace
+
+**Vault Owner**:
+The one account that manages a vault's other accounts and settings, and the
+only account that has no vault of its own. The vault owner creates, disables
+and deletes accounts, resets their passwords, deletes their message data, and
+decides whether strangers may sign up. The owner never reads a message: the
+account list shows a name, a message count and a storage total, and nothing
+of what those messages say. There is exactly one, it cannot be deleted, and
+no other account can be given its powers.
+_Avoid_: Admin, Administrator, Superuser, Root
+
+**Claiming**:
+Making a vault's owner. A vault with no owner is unclaimed and offers only
+the Create Vault Owner screen; claiming it is what that screen does. A
+claimed vault is closed or open, depending on whether it lets strangers
+create their own accounts.
+_Avoid_: Setup, First run, Provisioning
+
+**User**:
+The person operating Message Vault, in the browser or in the desktop app. A
+user has an account in the vault, and "user" is the colloquial word for that
+account: User names the person at the keyboard, Account names the record
+they sign in to and the data it holds.
+_Avoid_: Member, Operator, End user
+
 ### Moving messages in and out
 
 **Export**:
