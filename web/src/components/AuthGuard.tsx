@@ -1,5 +1,6 @@
 import { Navigate, Outlet } from "react-router-dom";
 import { useAuth } from "../lib/auth";
+import { useIsVaultOwner } from "../lib/useIsVaultOwner";
 import { useMustChangePassword } from "../lib/useMustChangePassword";
 
 /**
@@ -13,6 +14,7 @@ import { useMustChangePassword } from "../lib/useMustChangePassword";
 export function AuthGuard() {
   const { isAuthenticated, needsOnboarding } = useAuth();
   const { mustChange, loading } = useMustChangePassword();
+  const { isOwner } = useIsVaultOwner();
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
@@ -27,6 +29,12 @@ export function AuthGuard() {
 
   if (mustChange) {
     return <Navigate to="/set-password" replace />;
+  }
+
+  // The owner holds no messages, so every route under this guard is empty for
+  // them. Their console is the whole of what they have.
+  if (isOwner) {
+    return <Navigate to="/admin" replace />;
   }
 
   if (needsOnboarding) {

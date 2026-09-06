@@ -57,7 +57,8 @@ describe("keys", () => {
     expect(keys.savedSearches.all).toEqual(["saved-searches"]);
     expect(keys.accountProfile.all).toEqual(["account-profile"]);
     expect(keys.apiTokens.all).toEqual(["api-tokens"]);
-    expect(keys.adminUsers.all).toEqual(["admin-users"]);
+    expect(keys.ownerAccounts.all).toEqual(["owner-accounts"]);
+    expect(keys.vaultSettings.all).toEqual(["vault-settings"]);
   });
 
   it("puts each list's search words under one prefix", () => {

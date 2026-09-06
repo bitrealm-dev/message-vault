@@ -63,7 +63,9 @@ export const keys = {
   },
   accountProfile: { all: ["account-profile"] as const },
   apiTokens: { all: ["api-tokens"] as const },
-  adminUsers: { all: ["admin-users"] as const },
+  /** The accounts the vault owner manages, and the vault's own settings. */
+  ownerAccounts: { all: ["owner-accounts"] as const },
+  vaultSettings: { all: ["vault-settings"] as const },
   storage: {
     all: ["storage"] as const,
     overview: ["storage", "overview"] as const,
